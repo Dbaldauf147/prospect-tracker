@@ -386,6 +386,28 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
     return { mapped, unmatched, unmapped: nameMapList.length - mapped - unmatched };
   }, [nameMapList, referenceSet]);
 
+  // Interval-data availability for each name-map row, resolved against the
+  // list loaded in the first section. Look the utility up by its mapped
+  // reference name when one is set (the canonical app name lines up best
+  // with the interval list), otherwise by the uploaded name. Keyed by the
+  // row's original index so the filtered table can read it directly. When
+  // no interval list is loaded the map stays empty and the column shows a
+  // muted hint instead of a status.
+  const availabilityByIdx = useMemo(() => {
+    const out = new Map();
+    if (!listNames.length) return out;
+    for (let i = 0; i < nameMapList.length; i++) {
+      const r = nameMapList[i];
+      const lookupName = String(r.mappedTo || '').trim() || String(r.name || '').trim();
+      if (!lookupName) continue;
+      const hit = findFuzzyMatch(lookupName, listNames, { threshold: 40 });
+      if (!hit) { out.set(i, { inList: false }); continue; }
+      const intervalRaw = intervalByName.get(hit.name);
+      out.set(i, { inList: true, available: intervalIsAvailable(intervalRaw), interval: intervalRaw || '' });
+    }
+    return out;
+  }, [nameMapList, listNames, intervalByName]);
+
   const card = { flex: 1, minWidth: 140, padding: '0.75rem 1rem', borderRadius: 8, border: '1px solid var(--color-border)', background: '#fff' };
   const cardNum = { fontSize: '1.4rem', fontWeight: 700, lineHeight: 1.1 };
   const cardLabel = { fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 2 };
@@ -629,6 +651,7 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
                   <th style={{ padding: '0.4rem 0.5rem' }}>Country</th>
                   <th style={{ padding: '0.4rem 0.5rem' }}>Map to known utility</th>
                   <th style={{ padding: '0.4rem 0.5rem' }}>Status</th>
+                  <th style={{ padding: '0.4rem 0.5rem' }}>Interval Data</th>
                 </tr>
               </thead>
               <tbody>
@@ -664,11 +687,26 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
                           </span>
                         )}
                       </td>
+                      <td style={{ padding: '0.4rem 0.5rem' }}>
+                        {list.length === 0 ? (
+                          <span style={{ color: '#CBD5E1' }} title="Upload an interval-data list in the section above to resolve availability.">—</span>
+                        ) : !availabilityByIdx.get(idx)?.inList ? (
+                          <span style={{ color: '#92400E', fontWeight: 600 }}>Not in list</span>
+                        ) : availabilityByIdx.get(idx).available ? (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#166534', fontWeight: 600 }}>
+                            <span aria-hidden="true">✓</span>{availabilityByIdx.get(idx).interval || 'Available'}
+                          </span>
+                        ) : (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#B91C1C', fontWeight: 600 }}>
+                            <span aria-hidden="true">✗</span>{availabilityByIdx.get(idx).interval || 'Not available'}
+                          </span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
                 {filteredNameMap.length === 0 && (
-                  <tr><td colSpan={6} style={{ padding: '0.75rem 0.5rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>No rows match “{nameMapFilter}”.</td></tr>
+                  <tr><td colSpan={7} style={{ padding: '0.75rem 0.5rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>No rows match “{nameMapFilter}”.</td></tr>
                 )}
               </tbody>
             </table>
