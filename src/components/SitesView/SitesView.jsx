@@ -5583,9 +5583,16 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       r += 2;
     }
 
+    // The savings tables carry the raw deregulation status ('yes' for
+    // deregulated US / Canadian states, 'Limited', country-level
+    // 'Deregulated', etc.). 'yes' is an internal flag — surface it as the
+    // human-readable "Deregulated" in the exported Indicative Savings tabs
+    // so every deregulated market reads consistently.
+    const displayDeregStatus = (s) => (s === 'yes' ? 'Deregulated' : s);
+
     const electricCols = [
       { label: 'ST / Prov / Country', get: (g) => g.state },
-      { label: 'Deregulated Status', get: (g) => g.status },
+      { label: 'Deregulated Status', get: (g) => displayDeregStatus(g.status) },
       { label: 'Total Sites', get: (g) => g.totalSites, numFmt: '#,##0', sumKey: 'totalSites' },
       { label: 'Deregulated Sites', get: (g) => g.deregulatedSites, numFmt: '#,##0', sumKey: 'deregulatedSites' },
       { label: 'Deregulated Consumption kWh/yr', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
@@ -5631,7 +5638,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     ];
     const gasCols = [
       { label: 'ST / Prov / Country', get: (g) => g.state },
-      { label: 'Deregulated Status', get: (g) => g.status },
+      { label: 'Deregulated Status', get: (g) => displayDeregStatus(g.status) },
       { label: 'Sites', get: (g) => g.totalSites, numFmt: '#,##0', sumKey: 'totalSites' },
       { label: 'Deregulated Sites', get: (g) => g.deregulatedSites, numFmt: '#,##0', sumKey: 'deregulatedSites' },
       { label: 'Deregulated Consumption Dth/yr', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
