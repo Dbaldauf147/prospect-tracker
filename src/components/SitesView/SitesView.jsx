@@ -6413,6 +6413,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // savings concentration reads at a glance.
     {
       const ws = wb.addWorksheet('Hedging Analysis', {
+        // Hidden by default — supporting illustrative tab, surfaced only
+        // when a reader unhides it. Same treatment as Gas Market Timing
+        // and Floating vs Hedging Example.
+        state: 'hidden',
         properties: { tabColor: { argb: SE_GREEN_DARK } },
         views: [{ showGridLines: false, state: 'frozen', ySplit: 6 }],
       });
@@ -6891,6 +6895,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // allocation curve per strategy).
     {
       const ws = wb.addWorksheet('Gas Market Timing', {
+        // Hidden by default — supporting illustrative tab, surfaced only
+        // when a reader unhides it.
+        state: 'hidden',
         properties: { tabColor: { argb: SE_GREEN_DARK } },
         views: [{ showGridLines: false, state: 'frozen', ySplit: 6 }],
       });
@@ -7262,6 +7269,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // column is an Excel formula so edits update live.
     {
       const ws = wb.addWorksheet('Floating vs Hedging Example', {
+        // Hidden by default — supporting illustrative tab, surfaced only
+        // when a reader unhides it.
+        state: 'hidden',
         properties: { tabColor: { argb: SE_GREEN_DARK } },
         views: [{ showGridLines: false }],
       });
