@@ -7741,6 +7741,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const ws = wb.addWorksheet('Alerts Catalog', {
         properties: { tabColor: { argb: SE_GREEN } },
         views: [{ showGridLines: false, state: 'frozen', ySplit: 3 }],
+        // Hidden by default (like the Methodology tab) so the workbook
+        // opens on the headline sheets. Right-click any visible tab →
+        // Unhide → Alerts Catalog to see the reference list.
+        state: 'hidden',
       });
       const COLS = 5;
       ws.columns = [34, 12, 38, 24, 56].map(w => ({ width: w }));
