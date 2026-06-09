@@ -3194,10 +3194,25 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             const entry = commodity === 'electric'
               ? ELECTRIC_DEREGULATION[state]
               : GAS_DEREGULATION[state];
-            bandStatus = entry?.status || 'no';
-            bandRange = entry?.range ?? '';
-            bandLowPct = entry?.lowPct ?? null;
-            bandHighPct = entry?.highPct ?? null;
+            if (entry) {
+              bandStatus = entry.status;
+              bandRange = entry.range ?? '';
+              bandLowPct = entry.lowPct ?? null;
+              bandHighPct = entry.highPct ?? null;
+            } else {
+              // State absent from the curated list. Leave it provisionally
+              // regulated ('no') but arm the standard 2 - 4 % deregulated
+              // band so any site here whose utility classifies as
+              // deregulated (e.g. CO / Xcel) still accrues indicative
+              // savings. The post-loop map promotes the bucket to a
+              // visible deregulated row once we know it actually carries
+              // deregulated sites; otherwise it stays folded into the
+              // regulated-markets summary with the band unused.
+              bandStatus = 'no';
+              bandRange = '2 - 4%';
+              bandLowPct = 0.02;
+              bandHighPct = 0.04;
+            }
           }
           g = {
             // `state` here is the bucket label that lands in the ST /
@@ -3395,7 +3410,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         // from the COUNTRY_DEREGULATION reference. Pull straight off the
         // bucket so the source-of-truth lookup happens in exactly one
         // place.
-        const status = g.status;
+        // US/CA states absent from the curated deregulation list still
+        // surface as their own deregulated rows when their utilities
+        // classify as deregulated (e.g. CO / Xcel) — otherwise they'd be
+        // folded into the regulated-markets summary despite carrying real
+        // deregulated spend. Promote the status here so the visibility +
+        // folding logic downstream treats them as the deregulated markets
+        // they are. Buckets with no deregulated sites keep 'no' and stay
+        // folded.
+        const status = (!g.isCountry && g.status === 'no' && g.deregulatedSites > 0)
+          ? 'yes'
+          : g.status;
         const range = g.range ?? '';
         const { lowPct, highPct } = pctsFor(g);
         const hasPct = lowPct != null && highPct != null;
