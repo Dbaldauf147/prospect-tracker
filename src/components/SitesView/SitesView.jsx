@@ -7711,7 +7711,39 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         to:   { row: r - 1, column: 5 },
       };
 
-      // ---- Section 4: Property Type Estimates (per site) ----
+      // ---- Section 4: Indicative savings range by state / province ----
+      // The per-jurisdiction savings reference behind the Indicative
+      // Savings (Power / Gas) tabs: each deregulated state / province and
+      // the savings range applied to its deregulated annual spend. The
+      // country-level equivalent lives in section 3 (Deregulated / Some
+      // deregulation countries earn the flat 2 – 4 % motion).
+      blank();
+      blank();
+      sectionBanner('4. Indicative Savings Range by State / Province');
+      paragraph('Per-state / province deregulation status and the indicative savings range applied to that jurisdiction\'s deregulated annual spend on the Indicative Savings tabs. "Deregulated" markets earn the listed range; "Limited" / "Large load only" markets are surfaced for visibility but resolve to 0 %. States / provinces not listed are treated as regulated and earn no commodity savings. Country-level markets apply a flat 2 – 4 % when the country is Deregulated / Some deregulation — see section 3.');
+      blank();
+
+      const savingsStatusLabel = (s) => (s === 'yes' ? 'Deregulated' : s);
+      const savingsRefRow = (code, entry) => dataRow(
+        [code, savingsStatusLabel(entry.status), entry.range || '', entry.lowPct ?? '', entry.highPct ?? '', '', ''],
+        [null, null, null, '0.0%', '0.0%', null, null]
+      );
+
+      // Electric power.
+      headerRow(['State / Prov (Electric Power)', 'Deregulated Status', 'Indicative Savings Range', 'Low %', 'High %', '', '']);
+      Object.entries(ELECTRIC_DEREGULATION)
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .forEach(([code, entry]) => savingsRefRow(code, entry));
+
+      blank();
+
+      // Natural gas.
+      headerRow(['State / Prov (Natural Gas)', 'Deregulated Status', 'Indicative Savings Range', 'Low %', 'High %', '', '']);
+      Object.entries(GAS_DEREGULATION)
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .forEach(([code, entry]) => savingsRefRow(code, entry));
+
+      // ---- Section 5: Property Type Estimates (per site) ----
       // The per-site application of the section 1 & 2 reference profiles:
       // estimated annual consumption (scaled by Size_ft² when provided)
       // and expected utility-account counts for each site that carried a
@@ -7719,7 +7751,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       if (propertyTypeSiteRows.length > 0) {
         blank();
         blank();
-        sectionBanner('4. Property Type Estimates — Per Site');
+        sectionBanner('5. Property Type Estimates — Per Site');
         paragraph('Per-site application of the reference profiles above: estimated annual consumption (scaled linearly by Size_ft² when provided) and expected utility-account counts. The Total row sums the numeric columns; account labels such as "Multiple" / "0 – 1" / "N/A" map to 3 / 0.5 / 0 for that roll-up while the per-site cell keeps the original label.');
         blank();
         const ptCols = [
