@@ -8265,6 +8265,16 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       else if (status === 'unmapped') b.unmapped++;
       else b.notInList++;
     };
+    // A site "has access" when its utility's Status reads available /
+    // positive; explicit negatives (no / not available / pending / …)
+    // read as no-access. Blank / unknown returns null and is left out of
+    // both counts. Drives the access split on the State Breakdown tab.
+    const statusHasAccess = (v) => {
+      const s = String(v ?? '').trim().toLowerCase();
+      if (!s) return null;
+      if (/^(no|n|none|false|0|unavailable|not\s*available|no\s*access|n\/a|na|tbd|unknown|pending|-)$/.test(s)) return false;
+      return true;
+    };
 
     // Per-site detail rows + per-state (NAM) and per-country (Global)
     // buckets for the two maps.
@@ -8273,6 +8283,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     const countryBuckets = new Map(); // normalized country -> { total, mapped, unmapped, notInList }
     const stateBuckets = new Map(); // `${country}|||${state}` -> { country, state, total, mapped, unmapped, notInList }
     let totMapped = 0, totUnmapped = 0, totNotInList = 0;
+    let totAccessYes = 0, totAccessNo = 0;
     for (const r of rows) {
       const siteName = siteNameColumn ? String(r[siteNameColumn] || '').trim() : '';
       const electricUtility = String(r.__electric__ || '').trim();
@@ -8284,6 +8295,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       if (cls.status === 'mapped') totMapped++;
       else if (cls.status === 'unmapped') totUnmapped++;
       else totNotInList++;
+      // Utility access (from the Status column) + requirements text,
+      // surfaced per state on the State Breakdown tab.
+      const access = statusHasAccess(cls.rowStatus);
+      if (access === true) totAccessYes++;
+      else if (access === false) totAccessNo++;
       if (country) {
         let cb = countryBuckets.get(country);
         if (!cb) { cb = { total: 0, mapped: 0, unmapped: 0, notInList: 0 }; countryBuckets.set(country, cb); }
@@ -8293,8 +8309,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       {
         const sKey = `${rawCountry}|||${stateDisplay}`;
         let sb = stateBuckets.get(sKey);
-        if (!sb) { sb = { country: rawCountry, state: stateDisplay, total: 0, mapped: 0, unmapped: 0, notInList: 0 }; stateBuckets.set(sKey, sb); }
+        if (!sb) { sb = { country: rawCountry, state: stateDisplay, total: 0, mapped: 0, unmapped: 0, notInList: 0, accessYes: 0, accessNo: 0, requirements: new Set() }; stateBuckets.set(sKey, sb); }
         bumpBucket(sb, cls.status);
+        if (access === true) sb.accessYes++;
+        else if (access === false) sb.accessNo++;
+        if (cls.requirements) sb.requirements.add(cls.requirements);
       }
       detailRows.push({
         siteName,
@@ -8738,6 +8757,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         { label: 'Unmapped', get: (s) => s.unmapped, width: 12, numFmt: '#,##0' },
         { label: 'Not in List', get: (s) => s.notInList, width: 12, numFmt: '#,##0' },
         { label: '% Mapped', get: (s) => (s.total ? s.mapped / s.total : 0), width: 12, numFmt: '0%' },
+        { label: 'Has Access', get: (s) => s.accessYes, width: 12, numFmt: '#,##0' },
+        { label: 'No Access', get: (s) => s.accessNo, width: 12, numFmt: '#,##0' },
+        { label: '% With Access', get: (s) => (s.total ? s.accessYes / s.total : 0), width: 13, numFmt: '0%' },
+        { label: 'Requirements / Comments', get: (s) => [...s.requirements].map(x => `• ${x}`).join('\n'), width: 46, numFmt: null, wrap: true },
       ];
       ws.columns = cols.map(c => ({ width: c.width }));
       const head = ws.getRow(1);
@@ -8761,16 +8784,19 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           const v = c.get(s);
           cell.value = (v === '' || v == null) ? ' ' : v;
           cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          cell.alignment = { vertical: c.wrap ? 'top' : 'middle', horizontal: 'left', indent: 1, wrapText: !!c.wrap };
           if (c.numFmt) cell.numFmt = c.numFmt;
           cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } }, right: { style: 'hair', color: { argb: SE_BORDER } } };
         });
-        row.height = 18;
+        // Grow the row when the requirements cell carries multiple
+        // bullets so every line stays visible.
+        const reqLines = s.requirements ? s.requirements.size : 0;
+        row.height = reqLines > 1 ? Math.min(18 + (reqLines - 1) * 14, 120) : 18;
       });
       // Total row.
       const total = totMapped + totUnmapped + totNotInList;
       const totalRow = ws.getRow(2 + stateRows.length);
-      const totVals = ['Total', '', total, totMapped, totUnmapped, totNotInList, total ? totMapped / total : 0];
+      const totVals = ['Total', '', total, totMapped, totUnmapped, totNotInList, total ? totMapped / total : 0, totAccessYes, totAccessNo, total ? totAccessYes / total : 0, ''];
       totVals.forEach((v, i) => {
         const cell = totalRow.getCell(i + 1);
         cell.value = v;
