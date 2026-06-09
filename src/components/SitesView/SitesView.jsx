@@ -319,6 +319,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   const [uploadError, setUploadError] = useState('');
   const [utilityBusy, setUtilityBusy] = useState(false);
   const [mappingModal, setMappingModal] = useState(null);
+  // Column-mapping modal for the Fallback Zips upload — mirrors
+  // mappingModal but only needs City / State / Zip.
+  const [zipFbMappingModal, setZipFbMappingModal] = useState(null);
   const [dragOver, setDragOver] = useState(false);
   // Picker for "Save to Company": null = closed, '' = open & empty,
   // string = open & user is typing. saveStatus drives the button
@@ -908,10 +911,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     setUtility(null);
   }
 
-  // Upload the city + state → zip fallback table. The file just needs
-  // City, State, and Zip columns; we auto-detect them and store one
-  // { city, state, zip } record per usable row. No mapping modal — the
-  // three columns are unambiguous enough to detect directly.
+  // Upload the city + state → zip fallback table. The file needs City,
+  // State, and Zip columns. We auto-detect them as a starting point but
+  // open a column-mapping modal so the user can confirm or correct the
+  // picks before importing — the actual build runs in
+  // executeZipFallbackImport once they confirm.
   async function handleZipFallbackFileSelect(e) {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -920,15 +924,41 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     setZipFallbackBusy(true);
     try {
       const buf = await file.arrayBuffer();
-      const { rows, headers } = parseBestSheet(new Uint8Array(buf));
-      const cityCol = detectColumn(headers, [/^city$/i, /city/i, /municipality/i, /town/i]);
-      const stateCol = detectColumn(headers, [/^state$/i, /\bstate\b/i, /province/i, /region/i]);
-      const zipCol = detectColumn(headers, [/zip.?postal/i, /^zip\s*code$/i, /^postal\s*code$/i, /^zip$/i, /zip/i, /postal/i]);
-      if (!cityCol || !stateCol || !zipCol) {
-        const missing = [!cityCol && 'City', !stateCol && 'State', !zipCol && 'Zip'].filter(Boolean).join(', ');
-        setUploadError(`Fallback zip file needs City, State, and Zip columns — couldn't find: ${missing}.`);
+      const { rows, headers, sheetName } = parseBestSheet(new Uint8Array(buf));
+      if (!rows.length) {
+        setUploadError('No data rows found in the fallback zip file.');
         return;
       }
+      const mapping = {
+        city: detectColumn(headers, [/^city$/i, /city/i, /municipality/i, /town/i]) || '',
+        state: detectColumn(headers, [/^state$/i, /\bstate\b/i, /province/i, /region/i]) || '',
+        zip: detectColumn(headers, [/zip.?postal/i, /^zip\s*code$/i, /^postal\s*code$/i, /^zip$/i, /zip/i, /postal/i]) || '',
+      };
+      setZipFbMappingModal({ rows, headers, mapping, fileName: file.name, sheetName });
+    } catch (err) {
+      setUploadError(err?.message || 'Failed to read the fallback zip file');
+    } finally {
+      setZipFallbackBusy(false);
+    }
+  }
+
+  // Finalize the Fallback Zips import from the mapping modal's column
+  // choices: build one { city, state, zip } record per usable row,
+  // de-duped on (state, city), then persist.
+  async function executeZipFallbackImport() {
+    if (!zipFbMappingModal) return;
+    const { rows, mapping, fileName } = zipFbMappingModal;
+    const cityCol = mapping.city;
+    const stateCol = mapping.state;
+    const zipCol = mapping.zip;
+    if (!cityCol || !stateCol || !zipCol) {
+      const missing = [!cityCol && 'City', !stateCol && 'State', !zipCol && 'Zip'].filter(Boolean).join(', ');
+      setUploadError(`Map all three columns first — still need: ${missing}.`);
+      return;
+    }
+    setUploadError('');
+    setZipFallbackBusy(true);
+    try {
       const list = [];
       const seen = new Set();
       for (const r of rows) {
@@ -948,7 +978,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         return;
       }
       const meta = {
-        fileName: file.name,
+        fileName,
         rowCount: rows.length,
         entryCount: list.length,
         columns: { city: cityCol, state: stateCol, zip: zipCol },
@@ -956,8 +986,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       };
       await saveZipFallback(list, meta);
       setZipFallback({ list, meta });
+      setZipFbMappingModal(null);
     } catch (err) {
-      setUploadError(err?.message || 'Failed to read the fallback zip file');
+      setUploadError(err?.message || 'Failed to save the fallback zip list');
     } finally {
       setZipFallbackBusy(false);
     }
@@ -9983,6 +10014,95 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
                     disabled={utilityBusy || missingRequired.length > 0}
                   >
                     {utilityBusy ? 'Importing…' : 'Import Utility Lookup'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })(),
+        document.body
+      )}
+
+      {zipFbMappingModal && createPortal(
+        (() => {
+          const TARGET_FIELDS = [
+            { key: 'city', label: 'City', required: true },
+            { key: 'state', label: 'State', required: true },
+            { key: 'zip', label: 'Zip / Postal Code', required: true },
+          ];
+          const targetForHeader = {};
+          for (const t of TARGET_FIELDS) {
+            const h = zipFbMappingModal.mapping[t.key];
+            if (h) targetForHeader[h] = t.key;
+          }
+          function setTargetForHeader(header, targetKey) {
+            setZipFbMappingModal(m => {
+              if (!m) return m;
+              const next = { ...m.mapping };
+              for (const t of TARGET_FIELDS) {
+                if (next[t.key] === header) next[t.key] = '';
+              }
+              if (targetKey) next[targetKey] = header;
+              return { ...m, mapping: next };
+            });
+          }
+          const missingRequired = TARGET_FIELDS
+            .filter(t => t.required && !zipFbMappingModal.mapping[t.key])
+            .map(t => t.label);
+          return (
+            <div className={styles.modalBackdrop} onClick={() => !zipFallbackBusy && setZipFbMappingModal(null)}>
+              <div className={styles.modalCard} onClick={e => e.stopPropagation()} style={{ maxWidth: 720, width: '90vw' }}>
+                <div className={styles.modalHeader}>
+                  <h3 className={styles.modalTitle}>Fallback Zips — Column Mapping</h3>
+                  <button className={styles.modalClose} onClick={() => setZipFbMappingModal(null)} disabled={zipFallbackBusy}>×</button>
+                </div>
+                <p className={styles.modalHelp}>
+                  {zipFbMappingModal.rows.length.toLocaleString()} rows found{zipFbMappingModal.sheetName ? ` on sheet "${zipFbMappingModal.sheetName}"` : ''}. Pick which column maps to City, State, and Zip (or leave one on "Ignore"). All three are required to estimate zips for sites missing one.
+                </p>
+                {missingRequired.length > 0 && (
+                  <div style={{ margin: '0 0 0.5rem', padding: '0.4rem 0.6rem', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 6, fontSize: '0.75rem', color: '#991B1B', fontWeight: 600 }}>
+                    Still need to map: {missingRequired.join(', ')}
+                  </div>
+                )}
+                <div style={{ maxHeight: '60vh', overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: 6 }}>
+                  {zipFbMappingModal.headers.map(h => {
+                    const target = targetForHeader[h] || '';
+                    return (
+                      <div
+                        key={h}
+                        className={styles.modalRow}
+                        style={{ borderBottom: '1px solid #F1F5F9', padding: '0.4rem 0.6rem' }}
+                      >
+                        <div className={styles.modalLabel} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={h}>
+                          {h}
+                        </div>
+                        <span style={{ color: '#94A3B8', fontSize: '0.75rem' }}>→</span>
+                        <select
+                          className={`${styles.modalSelect} ${target ? styles.modalSelectMapped : ''}`}
+                          value={target}
+                          onChange={e => setTargetForHeader(h, e.target.value)}
+                          disabled={zipFallbackBusy}
+                        >
+                          <option value="">— Ignore —</option>
+                          {TARGET_FIELDS.map(t => (
+                            <option key={t.key} value={t.key}>
+                              {t.label}{t.required ? ' *' : ''}
+                            </option>
+                          ))}
+                        </select>
+                        {target && <span style={{ color: '#10B981', fontSize: '0.75rem', fontWeight: 600 }}>✓</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className={styles.modalActions}>
+                  <button className={styles.modalCancel} onClick={() => setZipFbMappingModal(null)} disabled={zipFallbackBusy}>Cancel</button>
+                  <button
+                    className={styles.modalConfirm}
+                    onClick={executeZipFallbackImport}
+                    disabled={zipFallbackBusy || missingRequired.length > 0}
+                  >
+                    {zipFallbackBusy ? 'Importing…' : 'Import Fallback Zips'}
                   </button>
                 </div>
               </div>
