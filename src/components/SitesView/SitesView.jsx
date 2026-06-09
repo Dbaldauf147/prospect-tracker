@@ -177,6 +177,22 @@ function gacOpportunity(state, kwh) {
   return { tier: 'low', label: 'Class B (small load)' };
 }
 
+// The utility-provider lookup is North-America-centric: the bundled
+// utility database (zip → utility, plus the known-utility fuzzy list)
+// only covers the United States, Puerto Rico, Canada, and Mexico. For a
+// site in any other country a zip can still collide with a US zip and
+// resolve a bogus provider, so we gate the lookup to those four. An
+// empty / unknown country defaults to in-scope — uploads without a
+// Country column are overwhelmingly US, matching the prior behavior.
+function isUtilityLookupCountry(rawCountry) {
+  const c = String(rawCountry || '').trim();
+  if (!c) return true;
+  return /^(u\.?\s*s\.?\s*a?\.?|united states( of america)?)$/i.test(c)
+    || /^(pr|puerto\s*rico)$/i.test(c)
+    || /^(ca|can|canada)$/i.test(c)
+    || /^(mx|mex|m[eé]xico)$/i.test(c);
+}
+
 // Inline autocomplete input used by supplier cells in the Utility
 // Lookup table. Filters the bundled ENERGY_SUPPLIERS list by the
 // typed substring; Enter commits the highlighted match (or the typed
@@ -1031,6 +1047,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const elec = pickFirstConsumption(r, consumption.electric, toKwh, normalizeElectricUom(electricUomRaw));
       const gas = pickFirstConsumption(r, consumption.gas, toTherms, normalizeGasUom(gasUomRaw));
       const inputCountry = countryOverride ? String(r[countryOverride] || '').trim() : '';
+      // Gate the utility-provider lookup to the four supported countries
+      // (US / Puerto Rico / Canada / Mexico). Out-of-scope sites skip the
+      // zip → utility match and the vendor-name → known-utility match so
+      // a colliding US zip or a coincidental name match can't fabricate a
+      // provider. Rates, consumption, suppliers, etc. are unaffected.
+      const lookupAllowed = isUtilityLookupCountry(inputCountry);
       // Country-rate fallback. When the state rate didn't resolve
       // (non-US sites, or US sites whose state code we couldn't
       // derive), look up an indicative commercial rate from the
@@ -1156,7 +1178,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // sticks per-name across rows + refreshes.
       const classifyVendorToken = (raw) => {
         const supplier = matchVendorToSupplier(raw);
-        const utility = !supplier ? matchVendorToUtility(raw) : null;
+        // Only promote a vendor token to a looked-up utility for in-scope
+        // countries; elsewhere it stays an (un-looked-up) supplier token.
+        const utility = (!supplier && lookupAllowed) ? matchVendorToUtility(raw) : null;
         const kind = supplier ? 'supplier' : (utility ? 'utility' : null);
         const canonical = supplier?.canonical || utility?.canonical || null;
         const score = (supplier?.score ?? utility?.score) || null;
@@ -1199,8 +1223,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         id: i,
         __zipNorm__: zip,
         __supplierSuggestions__: supplierSuggestions,
-        __electric__: match?.electric || electricUtilityTokens[0]?.canonical || null,
-        __gas__: match?.gas || gasUtilityTokens[0]?.canonical || null,
+        __electric__: (lookupAllowed ? match?.electric : null) || electricUtilityTokens[0]?.canonical || null,
+        __gas__: (lookupAllowed ? match?.gas : null) || gasUtilityTokens[0]?.canonical || null,
         __electricVendorRaw__: rawElectric || null,
         __electricVendorMatchScore__: electricUtilityVendorScore,
         __electricVendorMatchKind__: electricUtilityTokens.length ? 'utility' : null,
@@ -1211,7 +1235,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         __gasSupplierTokens__: gasSupplierDisplayTokens,
         __electricUtilityTokens__: electricUtilityTokens,
         __gasUtilityTokens__: gasUtilityTokens,
-        __water__: match?.water,
+        __water__: lookupAllowed ? match?.water : undefined,
         __address__: addressOverride ? String(r[addressOverride] || '').trim() || null : null,
         __city__: (cityOverride ? String(r[cityOverride] || '').trim() : '') || match?.city,
         __country__: inputCountry || match?.country,
