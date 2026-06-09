@@ -3237,18 +3237,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
               bandLowPct = entry.lowPct ?? null;
               bandHighPct = entry.highPct ?? null;
             } else {
-              // State absent from the curated list. Leave it provisionally
-              // regulated ('no') but arm the standard 2 - 4 % deregulated
-              // band so any site here whose utility classifies as
-              // deregulated (e.g. CO / Xcel) still accrues indicative
-              // savings. The post-loop map promotes the bucket to a
-              // visible deregulated row once we know it actually carries
-              // deregulated sites; otherwise it stays folded into the
-              // regulated-markets summary with the band unused.
+              // State absent from the curated list → regulated market
+              // ('no'). The curated ELECTRIC_DEREGULATION /
+              // GAS_DEREGULATION maps are the source of truth for which
+              // states are deregulated; an unlisted state carries zero
+              // commodity savings and folds into the regulated-markets
+              // summary downstream. The band is left unset so no site here
+              // can accrue indicative savings.
               bandStatus = 'no';
-              bandRange = '2 - 4%';
-              bandLowPct = 0.02;
-              bandHighPct = 0.04;
+              bandRange = '';
+              bandLowPct = null;
+              bandHighPct = null;
             }
           }
           g = {
@@ -3350,9 +3349,23 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         // Country buckets defer to the country reference for the dereg
         // classification — the per-utility classifier is keyed off US
         // naming patterns and would mis-classify international utilities.
+        //
+        // US/CA buckets: the curated ELECTRIC_DEREGULATION /
+        // GAS_DEREGULATION maps are the source of truth for whether the
+        // STATE is a deregulated market (g.status !== 'no' means it's in
+        // the curated list as deregulated or limited). Only inside such a
+        // market does the per-utility classifier decide which SITES count
+        // — excluding municipals / coops on a regulated tariff (e.g.
+        // CPS Energy / Austin Energy in TX). A state absent from the map
+        // (g.status === 'no') is a regulated market with zero commodity
+        // savings, so none of its sites count — even though the heuristic
+        // classifier would otherwise default an unrecognized utility name
+        // (e.g. "Duke Energy Florida") to Deregulated and wrongly surface
+        // the regulated state as a deregulated row.
         const isDereg = isCountryBucket
           ? (g.status === 'Deregulated' || g.status === 'Some deregulation')
-          : (classifyUtility(provider) === 'Deregulated' || !!r[supplierKey]);
+          : (g.status !== 'no'
+             && (classifyUtility(provider) === 'Deregulated' || !!r[supplierKey]));
         if (!isDereg) continue;
         g.deregulatedSites += 1;
         const consumption = r[consumptionKey];
@@ -3447,17 +3460,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         // from the COUNTRY_DEREGULATION reference. Pull straight off the
         // bucket so the source-of-truth lookup happens in exactly one
         // place.
-        // US/CA states absent from the curated deregulation list still
-        // surface as their own deregulated rows when their utilities
-        // classify as deregulated (e.g. CO / Xcel) — otherwise they'd be
-        // folded into the regulated-markets summary despite carrying real
-        // deregulated spend. Promote the status here so the visibility +
-        // folding logic downstream treats them as the deregulated markets
-        // they are. Buckets with no deregulated sites keep 'no' and stay
-        // folded.
-        const status = (!g.isCountry && g.status === 'no' && g.deregulatedSites > 0)
-          ? 'yes'
-          : g.status;
+        // Status comes straight off the bucket's curated band. US/CA
+        // states absent from the deregulation map stay 'no' (regulated)
+        // and fold into the regulated-markets summary downstream — the
+        // per-site loop above only accrues deregulated sites/spend inside
+        // states the curated map actually lists as deregulated, so a
+        // regulated state never carries deregulated spend to promote.
+        const status = g.status;
         const range = g.range ?? '';
         const { lowPct, highPct } = pctsFor(g);
         const hasPct = lowPct != null && highPct != null;
