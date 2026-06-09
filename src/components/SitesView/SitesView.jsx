@@ -4321,9 +4321,20 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ctx.textBaseline = 'alphabetic';
         ctx.fillText(headerLabel, originX + MAP_W / 2, originY - 10);
 
+        // Clip every map layer to the panel rectangle so geometry that
+        // projects past an edge — chiefly Mexico's southern tip, which
+        // extends below NA_LAT_MIN — is cut off flush with the grey
+        // boundary instead of bleeding onto the white canvas beneath the
+        // map. The title above is drawn before this clip so it stays
+        // visible.
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(originX, originY, MAP_W, MAP_H);
+        ctx.clip();
+
         // Panel background uses the no-sites grey instead of the old
-        // slate ocean tint so Mexico's southern edge (clipped at the
-        // canvas's southern edge) blends into the background instead of
+        // slate ocean tint so Mexico's southern edge (now clipped at the
+        // panel's southern edge) blends into the background instead of
         // showing a hard line where Mexico meets the panel.
         ctx.fillStyle = NO_SITES_FILL;
         ctx.fillRect(originX, originY, MAP_W, MAP_H);
@@ -4349,6 +4360,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           ctx.fillStyle = shadeForCount(STATUS_FILL[tier], count);
           drawFeature(project, feat.rings);
         }
+
+        ctx.restore();
       };
 
       drawPanel(PAD,             TITLE_H, ngStatusByKey, 'Natural Gas Markets');
