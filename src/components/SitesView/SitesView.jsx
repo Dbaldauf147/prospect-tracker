@@ -8221,17 +8221,16 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     return null;
   }
 
-  // Styled multi-tab interval-data workbook, launched from the Utility
-  // Mapping page's "Export Site Mapping" button. Two sheets:
-  //   1. NAM — a North-America dot map, one dot per state / province sized
-  //      by total portfolio sites and shaded by the share of those sites
-  //      whose electric utility carries interval data (grey = every site
-  //      in the state is unmapped against the interval list). A per-state
-  //      breakdown table sits below the map.
-  //   2. Site Detail — one row per site with its interval-data status.
-  // `intervalList` is the uploaded utility → interval-availability list
-  // (rows of { name, interval }) passed up from UtilityMappingView, which
-  // is the same list its first section resolves availability from.
+  // Styled multi-tab utility-mapping workbook, launched from the Utility
+  // Mapping page's "Download Analysis" button. Sheets:
+  //   1. NAM — a North-America choropleth: each state / province shaded by
+  //      the share of its portfolio sites mapped to a known utility.
+  //   2. Global — the same, country-level, for the whole world.
+  //   3. Site Detail — one row per site with its mapping state, the matched
+  //      uploaded name, mapped-to utility, Status, and Requirements / Comments.
+  //   4. State Breakdown — one row per state / province with mapping counts.
+  // `nameMapList` is the Utility Name Mapping table passed up from
+  // UtilityMappingView; each site's electric utility is classified against it.
   async function exportUtilityMappingAnalysis(nameMapList) {
     if (!rows.length) {
       throw new Error('No sites available to export — re-check the uploaded file or the Site Name column mapping.');
@@ -8249,15 +8248,16 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     const knownSet = new Set((knownUtilityNames || []).map(n => String(n || '').trim()).filter(Boolean));
     const classify = (utility) => {
       const u = String(utility || '').trim();
-      if (!u) return { status: 'notInList', detail: 'No electric utility on the site', matched: '', mappedTo: '', rowStatus: '' };
+      if (!u) return { status: 'notInList', detail: 'No electric utility on the site', matched: '', mappedTo: '', rowStatus: '', requirements: '' };
       const hit = mapNames.length ? findFuzzyMatch(u, mapNames, { threshold: 40 }) : null;
-      if (!hit) return { status: 'notInList', detail: 'Utility not in the Utility Name Mapping table', matched: '', mappedTo: '', rowStatus: '' };
+      if (!hit) return { status: 'notInList', detail: 'Utility not in the Utility Name Mapping table', matched: '', mappedTo: '', rowStatus: '', requirements: '' };
       const row = byName.get(hit.name) || {};
       const mappedTo = String(row.mappedTo || '').trim();
       const rowStatus = String(row.status || '').trim();
-      if (mappedTo && knownSet.has(mappedTo)) return { status: 'mapped', detail: 'Mapped to a known utility', matched: hit.name, mappedTo, rowStatus };
-      if (mappedTo) return { status: 'unmapped', detail: 'Mapped value is not a known utility', matched: hit.name, mappedTo, rowStatus };
-      return { status: 'unmapped', detail: 'In the mapping table but not yet mapped', matched: hit.name, mappedTo: '', rowStatus };
+      const requirements = String(row.requirements || '').trim();
+      if (mappedTo && knownSet.has(mappedTo)) return { status: 'mapped', detail: 'Mapped to a known utility', matched: hit.name, mappedTo, rowStatus, requirements };
+      if (mappedTo) return { status: 'unmapped', detail: 'Mapped value is not a known utility', matched: hit.name, mappedTo, rowStatus, requirements };
+      return { status: 'unmapped', detail: 'In the mapping table but not yet mapped', matched: hit.name, mappedTo: '', rowStatus, requirements };
     };
     const bumpBucket = (b, status) => {
       b.total++;
@@ -8271,6 +8271,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     const detailRows = [];
     const buckets = new Map(); // key -> { center, total, mapped, unmapped, notInList, label, stateCode, countryLabel }
     const countryBuckets = new Map(); // normalized country -> { total, mapped, unmapped, notInList }
+    const stateBuckets = new Map(); // `${country}|||${state}` -> { country, state, total, mapped, unmapped, notInList }
     let totMapped = 0, totUnmapped = 0, totNotInList = 0;
     for (const r of rows) {
       const siteName = siteNameColumn ? String(r[siteNameColumn] || '').trim() : '';
@@ -8278,6 +8279,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const rawCountry = String(r.__country__ || '').trim();
       const country = normalizeCountryName(rawCountry) || rawCountry;
       const stateCode = String(r.__state__ || '').trim().toUpperCase();
+      const stateDisplay = r.__stateProvinceDisplay__ || stateCode || '—';
       const cls = classify(electricUtility);
       if (cls.status === 'mapped') totMapped++;
       else if (cls.status === 'unmapped') totUnmapped++;
@@ -8287,14 +8289,22 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         if (!cb) { cb = { total: 0, mapped: 0, unmapped: 0, notInList: 0 }; countryBuckets.set(country, cb); }
         bumpBucket(cb, cls.status);
       }
+      // State / province breakdown across the whole portfolio (NAM + intl).
+      {
+        const sKey = `${rawCountry}|||${stateDisplay}`;
+        let sb = stateBuckets.get(sKey);
+        if (!sb) { sb = { country: rawCountry, state: stateDisplay, total: 0, mapped: 0, unmapped: 0, notInList: 0 }; stateBuckets.set(sKey, sb); }
+        bumpBucket(sb, cls.status);
+      }
       detailRows.push({
         siteName,
-        state: r.__stateProvinceDisplay__ || stateCode || '',
+        state: stateDisplay,
         country: rawCountry,
         electricUtility,
         matched: cls.matched,
         mappedTo: cls.mappedTo,
         rowStatus: cls.rowStatus,
+        requirements: cls.requirements,
         status: cls.status === 'mapped' ? 'Mapped' : (cls.status === 'unmapped' ? 'Unmapped' : 'Not in mapping list'),
         detail: cls.detail,
       });
@@ -8666,6 +8676,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         { label: 'Matched Uploaded Name', get: (s) => s.matched, width: 28 },
         { label: 'Mapped-To Known Utility', get: (s) => s.mappedTo, width: 28 },
         { label: 'Status', get: (s) => s.rowStatus, width: 18 },
+        { label: 'Requirements / Comments', get: (s) => s.requirements, width: 36 },
         { label: 'Mapping State', get: (s) => s.status, width: 18 },
         { label: 'Detail', get: (s) => s.detail, width: 34 },
       ];
@@ -8698,6 +8709,69 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         });
         row.height = 18;
       });
+      ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols.length } };
+    }
+
+    // ---- Sheet 4: State Breakdown ----
+    // One row per state / province (across every country in the portfolio)
+    // with its utility-mapping coverage, so the user can scan jurisdictions
+    // without reading the map.
+    {
+      const ws = wb.addWorksheet('State Breakdown', {
+        properties: { tabColor: { argb: SE_GREEN } },
+        views: [{ showGridLines: false, state: 'frozen', ySplit: 1 }],
+      });
+      const cols = [
+        { label: 'ST / Prov', get: (s) => s.state, width: 16, numFmt: null },
+        { label: 'Country', get: (s) => s.country, width: 18, numFmt: null },
+        { label: 'Total Sites', get: (s) => s.total, width: 12, numFmt: '#,##0' },
+        { label: 'Mapped', get: (s) => s.mapped, width: 12, numFmt: '#,##0' },
+        { label: 'Unmapped', get: (s) => s.unmapped, width: 12, numFmt: '#,##0' },
+        { label: 'Not in List', get: (s) => s.notInList, width: 12, numFmt: '#,##0' },
+        { label: '% Mapped', get: (s) => (s.total ? s.mapped / s.total : 0), width: 12, numFmt: '0%' },
+      ];
+      ws.columns = cols.map(c => ({ width: c.width }));
+      const head = ws.getRow(1);
+      cols.forEach((c, i) => {
+        const cell = head.getCell(i + 1);
+        cell.value = c.label;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+        cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } }, right: { style: 'hair', color: { argb: 'FFFFFFFF' } } };
+      });
+      head.height = 28;
+      const stateRows = Array.from(stateBuckets.values()).sort((a, b) =>
+        b.total - a.total ||
+        String(a.country).localeCompare(String(b.country)) ||
+        String(a.state).localeCompare(String(b.state)));
+      stateRows.forEach((s, ri) => {
+        const row = ws.getRow(2 + ri);
+        cols.forEach((c, i) => {
+          const cell = row.getCell(i + 1);
+          const v = c.get(s);
+          cell.value = (v === '' || v == null) ? ' ' : v;
+          cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          if (c.numFmt) cell.numFmt = c.numFmt;
+          cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } }, right: { style: 'hair', color: { argb: SE_BORDER } } };
+        });
+        row.height = 18;
+      });
+      // Total row.
+      const total = totMapped + totUnmapped + totNotInList;
+      const totalRow = ws.getRow(2 + stateRows.length);
+      const totVals = ['Total', '', total, totMapped, totUnmapped, totNotInList, total ? totMapped / total : 0];
+      totVals.forEach((v, i) => {
+        const cell = totalRow.getCell(i + 1);
+        cell.value = v;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        if (cols[i].numFmt) cell.numFmt = cols[i].numFmt;
+        cell.border = { top: { style: 'thin', color: { argb: SE_GREEN_DARK } }, bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+      });
+      totalRow.height = 20;
       ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols.length } };
     }
 
