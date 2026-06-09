@@ -3504,19 +3504,32 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         views: [{ showGridLines: false }],
       });
       // The legend now lives on the map canvas itself (matching the
-      // NAM View treatment), so the worksheet only needs MAP_COLS
-      // for the title band, summary tables, and image area.
+      // NAM View treatment). COLS spans out to column T so the green
+      // title band covers the full width of the two-panel map image,
+      // exactly like the NAM View.
       const MAP_COLS = 14;
-      const COLS = MAP_COLS;
+      const LEGEND_COLS = 6;
+      const COLS = MAP_COLS + LEGEND_COLS;
       // Widen the columns the summary tables use for large numbers
       // — Load (kWh / Dth) and Cost — so a comma-formatted figure
       // like "12,345,678" or "$1,234,567" doesn't get truncated.
       // Columns E (5) and G (7) are the user-visible big-number
       // columns on the Country level view; F and H benefit too.
       const NUMERIC_WIDE_COLS = new Set([5, 6, 7, 8]);
-      ws.columns = Array.from({ length: MAP_COLS }, (_, i) => ({
-        width: NUMERIC_WIDE_COLS.has(i + 1) ? 17 : 12,
-      }));
+      ws.columns = [
+        ...Array.from({ length: MAP_COLS }, (_, i) => ({
+          width: NUMERIC_WIDE_COLS.has(i + 1) ? 17 : 12,
+        })),
+        // Cols O–T kept narrow so the worksheet's right edge sits next
+        // to the two-panel map image instead of leaving a wide empty
+        // band — the title band merges through column T to span the map.
+        { width: 4 },
+        { width: 6 },
+        { width: 6 },
+        { width: 12 },
+        { width: 12 },
+        { width: 12 },
+      ];
 
       // Bucket sites by (country, state-or-province) and look up the
       // dereg tier + map coordinates. The lookup chain is:
@@ -3681,8 +3694,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // (hue) and portfolio site count (darker = more sites); countries
       // with no sites stay light grey. No dots or site-count labels — the
       // choropleth alone carries the distribution.
-      const MAP_W = 900;
-      const MAP_H = 450; // 2:1 equirectangular aspect
+      // Same panel dimensions as the NAM View so the two sheets' maps
+      // are identically sized.
+      const MAP_W = 800;
+      const MAP_H = 500;
       const PAD = 16;
       const TITLE_H = 36;
       const LEGEND_H = 70;
@@ -3774,10 +3789,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // COUNTRY_DEREGULATION entry for the chosen commodity (gas / electric)
       // — portfolio has sites → status hue shaded by density; no sites →
       // uniform light grey so the sites-having countries dominate visually.
+      // The world is 2:1 (360° × 180°); fit it into the NAM-sized panel
+      // while preserving that aspect so it isn't vertically stretched,
+      // then centre it (the panel is taller than 2:1, so a thin ocean
+      // band sits above and below the map).
+      const worldScale = Math.min(MAP_W / 360, MAP_H / 180);
+      const worldOffX = (MAP_W - 360 * worldScale) / 2;
+      const worldOffY = (MAP_H - 180 * worldScale) / 2;
       const drawPanel = (originX, commodity, headerLabel) => {
         const project = (lng, lat) => [
-          originX + ((lng + 180) / 360) * MAP_W,
-          TITLE_H + ((90 - lat) / 180) * MAP_H,
+          originX + worldOffX + (lng + 180) * worldScale,
+          TITLE_H + worldOffY + (90 - lat) * worldScale,
         ];
         // Panel header above the map.
         ctx.fillStyle = '#0F172A';
@@ -3878,11 +3900,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       });
 
       // Overview table sits just below the map image. Anchored at
-      // row 30 so the table starts before the image bleeds into
-      // taller cell heights below it — the Country level view
-      // follows immediately underneath (the country header recalcs
+      // row 39 (same as the NAM View) so it clears the bottom edge of
+      // the now NAM-sized 638-px map image above — the Country level
+      // view follows immediately underneath (the country header recalcs
       // its row offset from this constant).
-      const SUMMARY_START = 30;
+      const SUMMARY_START = 39;
       ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
       const sumHdr = ws.getCell(SUMMARY_START, 1);
       sumHdr.value = 'Overview';
