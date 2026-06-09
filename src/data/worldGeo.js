@@ -6,8 +6,12 @@
 // The map graphic is a public-domain blank political world map
 // (Wikimedia Commons File:BlankMap-World-Equirectangular.svg)
 // bundled at src/assets/world-map.png. Country polygons for
-// choropleth coloring come from world-atlas's countries-110m.json
-// (TopoJSON, ~108 KB) decoded inline below.
+// choropleth coloring come from world-atlas's countries-50m.json
+// (TopoJSON, ~750 KB) decoded inline below. The 50m resolution
+// replaces the older 110m file so coastlines and borders (Europe in
+// particular — Norway's fjords, the Adriatic, the Aegean, plus
+// microstates like Malta, Andorra, Liechtenstein and the Faroes)
+// render with real detail instead of the blocky 110m outlines.
 
 // ---------------- TopoJSON decoder ----------------
 // Minimal decoder for the world-atlas TopoJSON shape — accepts a
@@ -21,7 +25,7 @@
 // recover real lng/lat. Negative arc indices mean the arc is reversed
 // (twoComplementsNot via `~i`).
 
-import countriesTopology from './countries-110m.json';
+import countriesTopology from './countries-50m.json';
 import naAdmin1 from './naAdmin1.json';
 
 function decodeArcs(topology) {
@@ -69,7 +73,7 @@ export function getCountryFeatures() {
     name: g.properties?.name || '',
     rings: buildRingsFromGeometry(g, arcs),
   }));
-  // In countries-110m the "France" feature is a single MultiPolygon that
+  // In the world-atlas countries file the "France" feature is a single MultiPolygon that
   // lumps French Guiana (South America, lng ~ -54) in with metropolitan
   // France. That made French Guiana inherit France's deregulation hue on
   // the world maps even though it carries no portfolio sites. Split the
