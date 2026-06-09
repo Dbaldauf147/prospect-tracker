@@ -37,6 +37,48 @@ const NAME_MAP_FIELDS = [
   { key: 'country', label: 'Country', required: false, match: (h) => /\b(country|nation)\b/i.test(h) },
 ];
 
+// Paste-status import: a utility-name column plus the status to attach to
+// each matched row. Statuses are merged onto the existing name-map rows by
+// matching the pasted name to the uploaded name (exact first, then fuzzy).
+const STATUS_FIELDS = [
+  { key: 'name', label: 'Utility Name', required: true, match: (h) => /\b(utility|provider|lse|ldc|company|name)\b/i.test(h) },
+  { key: 'status', label: 'Status', required: true, match: (h) => /\bstatus\b|\bstage\b|\bstate\s*of\b|disposition|outreach/i.test(h) },
+];
+
+// Column model for the Utility Name Mapping table. Drives header order,
+// default widths, per-column search, resize, and the visibility toggle.
+// `status` is a user-editable / pasteable free-text field stored on each
+// row; `mapping` is the derived known-utility indicator.
+const NAME_MAP_COLUMNS = [
+  { key: 'name', label: 'Uploaded Utility', width: 240 },
+  { key: 'commodity', label: 'Commodity', width: 120 },
+  { key: 'state', label: 'State', width: 90 },
+  { key: 'country', label: 'Country', width: 90 },
+  { key: 'mappedTo', label: 'Map to known utility', width: 320 },
+  { key: 'status', label: 'Status', width: 170 },
+  { key: 'mapping', label: 'Mapping', width: 140 },
+  { key: 'interval', label: 'Interval Data', width: 140 },
+];
+
+const COL_WIDTHS_KEY = 'utility-name-map-col-widths';
+const COL_VISIBLE_KEY = 'utility-name-map-col-visible';
+const MIN_COL_WIDTH = 60;
+
+// Read a persisted column-preference object from localStorage, merged onto
+// the defaults so a newly-added column always has a value.
+function loadColPref(key, defaults) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return { ...defaults };
+    return { ...defaults, ...JSON.parse(raw) };
+  } catch {
+    return { ...defaults };
+  }
+}
+
+const DEFAULT_COL_WIDTHS = Object.fromEntries(NAME_MAP_COLUMNS.map(c => [c.key, c.width]));
+const DEFAULT_COL_VISIBLE = Object.fromEntries(NAME_MAP_COLUMNS.map(c => [c.key, true]));
+
 function pickColumn(headers, re, fallback = '') {
   return headers.find(h => re.test(String(h))) || fallback;
 }
@@ -76,8 +118,52 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
   const [nameMapBusy, setNameMapBusy] = useState(false);
   const [nameMapError, setNameMapError] = useState('');
   const [showNameMapPaste, setShowNameMapPaste] = useState(false);
+  const [showStatusPaste, setShowStatusPaste] = useState(false);
   const [nameMapFilter, setNameMapFilter] = useState('');
   const nameMapFileRef = useRef(null);
+
+  // ---- Name-map table: column widths / visibility / per-column search ---
+  const [colWidths, setColWidths] = useState(() => loadColPref(COL_WIDTHS_KEY, DEFAULT_COL_WIDTHS));
+  const [colVisible, setColVisible] = useState(() => loadColPref(COL_VISIBLE_KEY, DEFAULT_COL_VISIBLE));
+  const [colSearch, setColSearch] = useState({}); // key -> query string
+  const [showColMenu, setShowColMenu] = useState(false);
+  const resizingRef = useRef(null);
+
+  useEffect(() => { try { localStorage.setItem(COL_WIDTHS_KEY, JSON.stringify(colWidths)); } catch { /* ignore */ } }, [colWidths]);
+  useEffect(() => { try { localStorage.setItem(COL_VISIBLE_KEY, JSON.stringify(colVisible)); } catch { /* ignore */ } }, [colVisible]);
+
+  // Close the column-visibility menu on any outside click.
+  useEffect(() => {
+    if (!showColMenu) return undefined;
+    const close = () => setShowColMenu(false);
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [showColMenu]);
+
+  // Column resize: drag the handle on a header's right edge. We read the
+  // live width off a ref so the move handler stays stable across renders.
+  const onResizeMove = useCallback((e) => {
+    const r = resizingRef.current;
+    if (!r) return;
+    const w = Math.max(MIN_COL_WIDTH, r.startWidth + (e.clientX - r.startX));
+    setColWidths(prev => ({ ...prev, [r.key]: w }));
+  }, []);
+  const onResizeEnd = useCallback(() => {
+    resizingRef.current = null;
+    document.removeEventListener('mousemove', onResizeMove);
+    document.removeEventListener('mouseup', onResizeEnd);
+  }, [onResizeMove]);
+  const onResizeStart = useCallback((key, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizingRef.current = { key, startX: e.clientX, startWidth: colWidths[key] ?? DEFAULT_COL_WIDTHS[key] };
+    document.addEventListener('mousemove', onResizeMove);
+    document.addEventListener('mouseup', onResizeEnd);
+  }, [colWidths, onResizeMove, onResizeEnd]);
+
+  const toggleColumn = useCallback((key) => {
+    setColVisible(prev => ({ ...prev, [key]: prev[key] === false }));
+  }, []);
 
   // Restore any previously-uploaded list on mount.
   useEffect(() => {
@@ -257,6 +343,47 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
     });
   }, []);
 
+  // Update an arbitrary editable field on a single row (e.g. the pasteable
+  // free-text `status`) and persist.
+  const setRowField = useCallback((idx, key, value) => {
+    setNameMapList(prev => {
+      const next = prev.map((r, i) => (i === idx ? { ...r, [key]: value } : r));
+      saveListToIDB(NAME_MAP_LIST_KEY, next).catch(() => { /* best-effort */ });
+      return next;
+    });
+  }, []);
+
+  // Merge a pasted "utility name → status" list onto the existing rows.
+  // Match the pasted name to each uploaded name by exact (case-insensitive)
+  // hit first, then fuzzy match so minor spelling differences still land.
+  const handleStatusPasteImport = useCallback(async (parsed) => {
+    const pasted = (parsed || []).filter(p => String(p.name || '').trim());
+    const byName = new Map();
+    for (const p of pasted) {
+      const k = String(p.name).trim().toLowerCase();
+      if (!byName.has(k)) byName.set(k, String(p.status ?? '').trim());
+    }
+    const pastedNames = pasted.map(p => p.name);
+    let matched = 0;
+    setNameMapList(prev => {
+      const next = prev.map(r => {
+        const key = String(r.name || '').trim().toLowerCase();
+        let status = byName.has(key) ? byName.get(key) : undefined;
+        if (status === undefined && pastedNames.length) {
+          const hit = findFuzzyMatch(r.name, pastedNames, { threshold: 60 });
+          if (hit) status = byName.get(String(hit.name).trim().toLowerCase());
+        }
+        if (status === undefined) return r;
+        matched++;
+        return { ...r, status };
+      });
+      saveListToIDB(NAME_MAP_LIST_KEY, next).catch(() => { /* best-effort */ });
+      return next;
+    });
+    setShowStatusPaste(false);
+    setNameMapError(matched ? '' : 'No pasted statuses matched an uploaded utility name.');
+  }, []);
+
   function downloadNameMapTemplate() {
     const ws = XLSX.utils.aoa_to_sheet([
       ['Utility', 'Commodity', 'State', 'Country'],
@@ -363,17 +490,6 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
   }, [referenceUtilityNames]);
   const referenceSet = useMemo(() => new Set(referenceOptions), [referenceOptions]);
 
-  // Filtered view of the uploaded name-map rows. Keep the original index
-  // on each row so edits write back to the right entry in nameMapList.
-  const filteredNameMap = useMemo(() => {
-    const q = nameMapFilter.trim().toLowerCase();
-    const indexed = nameMapList.map((r, idx) => ({ r, idx }));
-    if (!q) return indexed;
-    return indexed.filter(({ r }) =>
-      String(r.name || '').toLowerCase().includes(q) ||
-      String(r.mappedTo || '').toLowerCase().includes(q));
-  }, [nameMapList, nameMapFilter]);
-
   const nameMapStats = useMemo(() => {
     let mapped = 0;
     let unmatched = 0; // mappedTo set but not a known reference name
@@ -408,9 +524,131 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
     return out;
   }, [nameMapList, listNames, intervalByName]);
 
+  // Plain-text value of a column for a row — used by both the per-column
+  // header search and (for derived columns) as the display fallback. The
+  // `mapping` and `interval` columns have no stored field, so their text is
+  // computed from the same logic the cells render.
+  const getColText = useCallback((key, r, idx) => {
+    switch (key) {
+      case 'mapping': {
+        const v = String(r.mappedTo || '').trim();
+        if (!v) return 'Unmapped';
+        return referenceSet.has(v) ? 'Mapped' : 'Not a known utility';
+      }
+      case 'interval': {
+        if (!list.length) return '';
+        const a = availabilityByIdx.get(idx);
+        if (!a?.inList) return 'Not in list';
+        return a.available ? (a.interval || 'Available') : (a.interval || 'Not available');
+      }
+      default:
+        return String(r[key] ?? '');
+    }
+  }, [referenceSet, availabilityByIdx, list.length]);
+
+  // Filtered view of the uploaded name-map rows. Keep the original index on
+  // each row so edits write back to the right entry in nameMapList. Rows
+  // must pass the global filter (name/mapped) AND every active per-column
+  // header search.
+  const filteredNameMap = useMemo(() => {
+    const q = nameMapFilter.trim().toLowerCase();
+    const colQueries = NAME_MAP_COLUMNS
+      .map(c => [c.key, String(colSearch[c.key] || '').trim().toLowerCase()])
+      .filter(([, val]) => val);
+    const indexed = nameMapList.map((r, idx) => ({ r, idx }));
+    if (!q && !colQueries.length) return indexed;
+    return indexed.filter(({ r, idx }) => {
+      if (q && !(
+        String(r.name || '').toLowerCase().includes(q) ||
+        String(r.mappedTo || '').toLowerCase().includes(q)
+      )) return false;
+      for (const [key, val] of colQueries) {
+        if (!getColText(key, r, idx).toLowerCase().includes(val)) return false;
+      }
+      return true;
+    });
+  }, [nameMapList, nameMapFilter, colSearch, getColText]);
+
+  const visibleColumns = useMemo(
+    () => NAME_MAP_COLUMNS.filter(c => colVisible[c.key] !== false),
+    [colVisible],
+  );
+  const tableWidth = useMemo(
+    () => visibleColumns.reduce((sum, c) => sum + (colWidths[c.key] ?? c.width), 0),
+    [visibleColumns, colWidths],
+  );
+
   const card = { flex: 1, minWidth: 140, padding: '0.75rem 1rem', borderRadius: 8, border: '1px solid var(--color-border)', background: '#fff' };
   const cardNum = { fontSize: '1.4rem', fontWeight: 700, lineHeight: 1.1 };
   const cardLabel = { fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 2 };
+
+  const cellInputStyle = { width: '100%', boxSizing: 'border-box', padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 5, fontSize: '0.78rem', fontFamily: 'inherit', background: '#fff' };
+
+  // Render a single table cell for a column key. Editable columns (mappedTo,
+  // status) render inputs; mapping / interval render derived indicators.
+  function renderCell(key, r, idx) {
+    switch (key) {
+      case 'name':
+        return <span style={{ fontWeight: 600, color: '#1E293B' }}>{r.name}</span>;
+      case 'commodity':
+      case 'state':
+      case 'country':
+        return r[key] ? <span style={{ color: 'var(--color-text-muted)' }}>{r[key]}</span> : <span style={{ color: '#CBD5E1' }}>—</span>;
+      case 'mappedTo':
+        return (
+          <input
+            type="text"
+            list="utility-name-map-options"
+            value={r.mappedTo || ''}
+            onChange={e => setRowMapping(idx, e.target.value)}
+            placeholder="— pick a known utility —"
+            style={cellInputStyle}
+          />
+        );
+      case 'status':
+        return (
+          <input
+            type="text"
+            value={r.status || ''}
+            onChange={e => setRowField(idx, 'status', e.target.value)}
+            placeholder="—"
+            style={cellInputStyle}
+          />
+        );
+      case 'mapping': {
+        const v = String(r.mappedTo || '').trim();
+        const known = !!v && referenceSet.has(v);
+        if (!v) return <span style={{ color: '#92400E', fontWeight: 600 }}>Unmapped</span>;
+        return known ? (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#166534', fontWeight: 600 }}>
+            <span aria-hidden="true">✓</span>Mapped
+          </span>
+        ) : (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#B91C1C', fontWeight: 600 }} title="This value isn't one of the app's known utility names.">
+            <span aria-hidden="true">⚠</span>Not a known utility
+          </span>
+        );
+      }
+      case 'interval': {
+        if (list.length === 0) {
+          return <span style={{ color: '#CBD5E1' }} title="Upload an interval-data list in the section above to resolve availability.">—</span>;
+        }
+        const a = availabilityByIdx.get(idx);
+        if (!a?.inList) return <span style={{ color: '#92400E', fontWeight: 600 }}>Not in list</span>;
+        return a.available ? (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#166534', fontWeight: 600 }}>
+            <span aria-hidden="true">✓</span>{a.interval || 'Available'}
+          </span>
+        ) : (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#B91C1C', fontWeight: 600 }}>
+            <span aria-hidden="true">✗</span>{a.interval || 'Not available'}
+          </span>
+        );
+      }
+      default:
+        return null;
+    }
+  }
 
   return (
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '0.75rem 1rem 2rem' }}>
@@ -574,6 +812,15 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
               title="Paste utility rows copied from Excel / Google Sheets and map the columns."
               style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', color: '#1E293B' }}
             >📋 Paste Data</button>
+            {nameMapList.length > 0 && (
+              <button
+                type="button"
+                disabled={nameMapBusy}
+                onClick={() => { setNameMapError(''); setShowStatusPaste(true); }}
+                title="Paste a utility-name + status list to fill the Status column, matched by name."
+                style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', color: '#1E293B' }}
+              >📋 Paste Status</button>
+            )}
             <button
               type="button"
               disabled={nameMapBusy}
@@ -629,87 +876,106 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
               )}
             </div>
 
-            <input
-              type="text"
-              value={nameMapFilter}
-              onChange={e => setNameMapFilter(e.target.value)}
-              placeholder="Filter by uploaded or mapped name…"
-              style={{ width: 'min(360px, 100%)', padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 6, fontSize: '0.8rem', fontFamily: 'inherit', marginBottom: '0.5rem' }}
-            />
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+              <input
+                type="text"
+                value={nameMapFilter}
+                onChange={e => setNameMapFilter(e.target.value)}
+                placeholder="Filter by uploaded or mapped name…"
+                style={{ width: 'min(360px, 100%)', padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 6, fontSize: '0.8rem', fontFamily: 'inherit' }}
+              />
+              {/* Column-visibility menu. The wrapper stops the document click
+                  listener from closing the menu when interacting inside it. */}
+              <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
+                <button
+                  type="button"
+                  onClick={() => setShowColMenu(s => !s)}
+                  title="Choose which columns are visible."
+                  style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', color: '#1E293B' }}
+                >▦ Columns ▾</button>
+                {showColMenu && (
+                  <div style={{ position: 'absolute', zIndex: 20, top: '100%', left: 0, marginTop: 4, background: '#fff', border: '1px solid var(--color-border)', borderRadius: 6, boxShadow: '0 4px 16px rgba(15, 23, 42, 0.15)', padding: '0.4rem', minWidth: 200 }}>
+                    {NAME_MAP_COLUMNS.map(c => (
+                      <label key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0.25rem 0.35rem', fontSize: '0.78rem', cursor: 'pointer', color: '#1E293B' }}>
+                        <input
+                          type="checkbox"
+                          checked={colVisible[c.key] !== false}
+                          onChange={() => toggleColumn(c.key)}
+                        />
+                        {c.label}
+                      </label>
+                    ))}
+                    <div style={{ borderTop: '1px solid var(--color-border)', marginTop: 4, paddingTop: 4 }}>
+                      <button
+                        type="button"
+                        onClick={() => { setColVisible({ ...DEFAULT_COL_VISIBLE }); setColWidths({ ...DEFAULT_COL_WIDTHS }); }}
+                        style={{ width: '100%', padding: '0.3rem 0.4rem', border: 'none', background: 'transparent', borderRadius: 4, fontSize: '0.75rem', cursor: 'pointer', fontFamily: 'inherit', color: '#475569', textAlign: 'left' }}
+                      >Reset columns &amp; widths</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
 
             {/* One shared datalist backs every row's input. */}
             <datalist id="utility-name-map-options">
               {referenceOptions.map(n => <option key={n} value={n} />)}
             </datalist>
 
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-              <thead>
-                <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--color-border)' }}>
-                  <th style={{ padding: '0.4rem 0.5rem' }}>Uploaded Utility</th>
-                  <th style={{ padding: '0.4rem 0.5rem' }}>Commodity</th>
-                  <th style={{ padding: '0.4rem 0.5rem' }}>State</th>
-                  <th style={{ padding: '0.4rem 0.5rem' }}>Country</th>
-                  <th style={{ padding: '0.4rem 0.5rem' }}>Map to known utility</th>
-                  <th style={{ padding: '0.4rem 0.5rem' }}>Status</th>
-                  <th style={{ padding: '0.4rem 0.5rem' }}>Interval Data</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredNameMap.map(({ r, idx }) => {
-                  const v = String(r.mappedTo || '').trim();
-                  const known = !!v && referenceSet.has(v);
-                  return (
-                    <tr key={idx} style={{ borderBottom: '1px solid var(--color-border)' }}>
-                      <td style={{ padding: '0.4rem 0.5rem', fontWeight: 600, color: '#1E293B' }}>{r.name}</td>
-                      <td style={{ padding: '0.4rem 0.5rem', color: 'var(--color-text-muted)' }}>{r.commodity || <span style={{ color: '#CBD5E1' }}>—</span>}</td>
-                      <td style={{ padding: '0.4rem 0.5rem', color: 'var(--color-text-muted)' }}>{r.state || <span style={{ color: '#CBD5E1' }}>—</span>}</td>
-                      <td style={{ padding: '0.4rem 0.5rem', color: 'var(--color-text-muted)' }}>{r.country || <span style={{ color: '#CBD5E1' }}>—</span>}</td>
-                      <td style={{ padding: '0.4rem 0.5rem' }}>
+            <div style={{ overflowX: 'auto', border: '1px solid var(--color-border)', borderRadius: 6 }}>
+              <table style={{ borderCollapse: 'collapse', fontSize: '0.8rem', tableLayout: 'fixed', width: tableWidth }}>
+                <colgroup>
+                  {visibleColumns.map(c => (
+                    <col key={c.key} style={{ width: colWidths[c.key] ?? c.width }} />
+                  ))}
+                </colgroup>
+                <thead>
+                  <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--color-border)' }}>
+                    {visibleColumns.map(c => (
+                      <th key={c.key} style={{ padding: '0.4rem 0.5rem', position: 'relative', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                        {c.label}
+                        {/* Drag handle on the right edge to resize this column. */}
+                        <span
+                          onMouseDown={e => onResizeStart(c.key, e)}
+                          title="Drag to resize"
+                          style={{ position: 'absolute', top: 0, right: 0, width: 8, height: '100%', cursor: 'col-resize', userSelect: 'none' }}
+                        />
+                      </th>
+                    ))}
+                  </tr>
+                  <tr style={{ borderBottom: '1px solid var(--color-border)', background: '#F8FAFC' }}>
+                    {visibleColumns.map(c => (
+                      <th key={c.key} style={{ padding: '0.2rem 0.4rem' }}>
                         <input
                           type="text"
-                          list="utility-name-map-options"
-                          value={r.mappedTo || ''}
-                          onChange={e => setRowMapping(idx, e.target.value)}
-                          placeholder="— pick a known utility —"
-                          style={{ width: 'min(320px, 100%)', padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 5, fontSize: '0.78rem', fontFamily: 'inherit', background: '#fff' }}
+                          value={colSearch[c.key] || ''}
+                          onChange={e => setColSearch(prev => ({ ...prev, [c.key]: e.target.value }))}
+                          placeholder="Search…"
+                          style={{ width: '100%', boxSizing: 'border-box', padding: '0.2rem 0.35rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.72rem', fontFamily: 'inherit', fontWeight: 400 }}
                         />
-                      </td>
-                      <td style={{ padding: '0.4rem 0.5rem' }}>
-                        {!v ? (
-                          <span style={{ color: '#92400E', fontWeight: 600 }}>Unmapped</span>
-                        ) : known ? (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#166534', fontWeight: 600 }}>
-                            <span aria-hidden="true">✓</span>Mapped
-                          </span>
-                        ) : (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#B91C1C', fontWeight: 600 }} title="This value isn't one of the app's known utility names.">
-                            <span aria-hidden="true">⚠</span>Not a known utility
-                          </span>
-                        )}
-                      </td>
-                      <td style={{ padding: '0.4rem 0.5rem' }}>
-                        {list.length === 0 ? (
-                          <span style={{ color: '#CBD5E1' }} title="Upload an interval-data list in the section above to resolve availability.">—</span>
-                        ) : !availabilityByIdx.get(idx)?.inList ? (
-                          <span style={{ color: '#92400E', fontWeight: 600 }}>Not in list</span>
-                        ) : availabilityByIdx.get(idx).available ? (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#166534', fontWeight: 600 }}>
-                            <span aria-hidden="true">✓</span>{availabilityByIdx.get(idx).interval || 'Available'}
-                          </span>
-                        ) : (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#B91C1C', fontWeight: 600 }}>
-                            <span aria-hidden="true">✗</span>{availabilityByIdx.get(idx).interval || 'Not available'}
-                          </span>
-                        )}
-                      </td>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredNameMap.map(({ r, idx }) => (
+                    <tr key={idx} style={{ borderBottom: '1px solid var(--color-border)' }}>
+                      {visibleColumns.map(c => (
+                        <td
+                          key={c.key}
+                          style={{ padding: '0.4rem 0.5rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: (c.key === 'mappedTo' || c.key === 'status') ? 'normal' : 'nowrap', color: (c.key === 'commodity' || c.key === 'state' || c.key === 'country') ? 'var(--color-text-muted)' : undefined }}
+                        >
+                          {renderCell(c.key, r, idx)}
+                        </td>
+                      ))}
                     </tr>
-                  );
-                })}
-                {filteredNameMap.length === 0 && (
-                  <tr><td colSpan={7} style={{ padding: '0.75rem 0.5rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>No rows match “{nameMapFilter}”.</td></tr>
-                )}
-              </tbody>
-            </table>
+                  ))}
+                  {filteredNameMap.length === 0 && (
+                    <tr><td colSpan={visibleColumns.length} style={{ padding: '0.75rem 0.5rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>No rows match the current filters.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </>
         )}
       </div>
@@ -727,6 +993,15 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
           fields={NAME_MAP_FIELDS}
           onClose={() => setShowNameMapPaste(false)}
           onImport={handleNameMapPasteImport}
+        />
+      )}
+
+      {showStatusPaste && (
+        <UtilityPasteImportModal
+          title="Paste utility statuses"
+          fields={STATUS_FIELDS}
+          onClose={() => setShowStatusPaste(false)}
+          onImport={handleStatusPasteImport}
         />
       )}
     </div>
