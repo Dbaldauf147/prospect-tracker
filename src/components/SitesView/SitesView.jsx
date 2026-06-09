@@ -33,7 +33,12 @@ import { saveIndicativeAnalysis, deleteIndicativeAnalysis } from '../../utils/fi
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
 import { classifyUtility } from '../../utils/utilityClassify';
-import { buildCityStateZipIndex, estimateZipFromCityState } from '../../utils/zipEstimate';
+import { buildCityStateZipIndex, buildCityStateZipFallback, estimateZipFromCityState } from '../../utils/zipEstimate';
+import {
+  saveZipFallback,
+  loadZipFallback,
+  clearZipFallback,
+} from '../../utils/zipFallbackStore';
 import { ENERGY_SUPPLIERS } from '../../data/energySuppliers';
 import { isRegulatedRateOpportunity } from '../../data/regulatedRateOpportunities';
 import {
@@ -305,6 +310,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   const [sitesLoaded, setSitesLoaded] = useState(false);
   const [utility, setUtility] = useState(null); // { zipMap, meta }
   const [utilityLoaded, setUtilityLoaded] = useState(false);
+  // User-uploaded city + state → zip fallback table: { list, meta }.
+  // Supplies a zip for sites that arrive with a city + state but no zip,
+  // taking precedence over the zips inferred from the utility lookup.
+  const [zipFallback, setZipFallback] = useState(null);
+  const [zipFallbackBusy, setZipFallbackBusy] = useState(false);
   const [search, setSearch] = useState('');
   const [uploadError, setUploadError] = useState('');
   const [utilityBusy, setUtilityBusy] = useState(false);
@@ -419,13 +429,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   // { rows, headers, mapping: { zip, electric, gas, water } }
   const sitesFileRef = useRef(null);
   const utilityFileRef = useRef(null);
+  const zipFallbackFileRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [sites, util] = await Promise.all([
+      const [sites, util, zipFb] = await Promise.all([
         loadListFromIDB(SITES_STORAGE_KEY),
         loadUtilityRates(),
+        loadZipFallback(),
       ]);
       if (cancelled) return;
       const sitesArr = Array.isArray(sites) ? sites : [];
@@ -470,6 +482,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       }
       setUtility(util);
       setUtilityLoaded(true);
+      setZipFallback(zipFb);
     })();
     return () => { cancelled = true; };
   }, []);
@@ -895,6 +908,67 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     setUtility(null);
   }
 
+  // Upload the city + state → zip fallback table. The file just needs
+  // City, State, and Zip columns; we auto-detect them and store one
+  // { city, state, zip } record per usable row. No mapping modal — the
+  // three columns are unambiguous enough to detect directly.
+  async function handleZipFallbackFileSelect(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setUploadError('');
+    setZipFallbackBusy(true);
+    try {
+      const buf = await file.arrayBuffer();
+      const { rows, headers } = parseBestSheet(new Uint8Array(buf));
+      const cityCol = detectColumn(headers, [/^city$/i, /city/i, /municipality/i, /town/i]);
+      const stateCol = detectColumn(headers, [/^state$/i, /\bstate\b/i, /province/i, /region/i]);
+      const zipCol = detectColumn(headers, [/zip.?postal/i, /^zip\s*code$/i, /^postal\s*code$/i, /^zip$/i, /zip/i, /postal/i]);
+      if (!cityCol || !stateCol || !zipCol) {
+        const missing = [!cityCol && 'City', !stateCol && 'State', !zipCol && 'Zip'].filter(Boolean).join(', ');
+        setUploadError(`Fallback zip file needs City, State, and Zip columns — couldn't find: ${missing}.`);
+        return;
+      }
+      const list = [];
+      const seen = new Set();
+      for (const r of rows) {
+        const city = String(r[cityCol] ?? '').trim();
+        const state = String(r[stateCol] ?? '').trim();
+        const zip = normalizeZip(r[zipCol]);
+        if (!city || !state || !zip) continue;
+        // De-dupe on (state, city) keeping the first zip seen so a tidy
+        // count is shown and the index build is deterministic.
+        const key = `${state.toLowerCase()}|${city.toLowerCase()}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        list.push({ city, state, zip });
+      }
+      if (!list.length) {
+        setUploadError('No usable City / State / Zip rows found in the fallback file.');
+        return;
+      }
+      const meta = {
+        fileName: file.name,
+        rowCount: rows.length,
+        entryCount: list.length,
+        columns: { city: cityCol, state: stateCol, zip: zipCol },
+        importedAt: Date.now(),
+      };
+      await saveZipFallback(list, meta);
+      setZipFallback({ list, meta });
+    } catch (err) {
+      setUploadError(err?.message || 'Failed to read the fallback zip file');
+    } finally {
+      setZipFallbackBusy(false);
+    }
+  }
+
+  async function handleClearZipFallback() {
+    if (!window.confirm('Remove the uploaded fallback zip list?')) return;
+    await clearZipFallback();
+    setZipFallback(null);
+  }
+
   const zipColumn = useMemo(() => {
     if (!sitesData.length) return '';
     const headers = Object.keys(sitesData[0]);
@@ -1032,6 +1106,14 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     [utility]
   );
 
+  // Explicit city + state → zip map from the user-uploaded fallback list.
+  // Consulted ahead of cityStateZipIndex when a site has no zip of its
+  // own, so the user's authoritative mapping wins over an inferred zip.
+  const zipFallbackIndex = useMemo(
+    () => buildCityStateZipFallback(zipFallback?.list),
+    [zipFallback]
+  );
+
   const rows = useMemo(() => {
     return cleanSitesData.map((r, i) => {
       const cityColInput = cityOverride ? String(r[cityOverride] || '').trim() : '';
@@ -1042,8 +1124,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // estimate then feeds the zip → utility / state / rate match below
       // exactly like an uploaded zip would, flagged via __zipEstimated__
       // so the UI can render it as modeled rather than measured.
-      const zipEstimate = (!uploadedZip && cityStateZipIndex)
-        ? estimateZipFromCityState(cityStateZipIndex, cityColInput, stateColInput)
+      const zipEstimate = (!uploadedZip && (cityStateZipIndex || zipFallbackIndex))
+        ? estimateZipFromCityState(cityStateZipIndex, cityColInput, stateColInput, zipFallbackIndex)
         : null;
       const zip = uploadedZip || zipEstimate?.zip || '';
       const zipEstimated = !uploadedZip && !!zipEstimate;
@@ -1247,6 +1329,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         __zipNorm__: zip,
         __zipEstimated__: zipEstimated,
         __zipEstimateCount__: zipEstimate?.candidateCount || 0,
+        __zipEstimateSource__: zipEstimate?.source || null,
         __supplierSuggestions__: supplierSuggestions,
         __electric__: (lookupAllowed ? match?.electric : null) || electricUtilityTokens[0]?.canonical || null,
         __gas__: (lookupAllowed ? match?.gas : null) || gasUtilityTokens[0]?.canonical || null,
@@ -1321,7 +1404,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         __matched__: !!match || electricUtilityTokens.length > 0 || gasUtilityTokens.length > 0,
       };
     });
-  }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, segmentOverride, siteDescriptionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
+  }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, segmentOverride, siteDescriptionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
@@ -1398,9 +1481,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           if (k === zipColumn && row.__zipNorm__) {
             if (row.__zipEstimated__) {
               const n = row.__zipEstimateCount__;
+              const where = `${row.__city__ || 'this city'}${row.__state__ ? `, ${row.__state__}` : ''}`;
+              const title = row.__zipEstimateSource__ === 'fallback'
+                ? `Estimated zip — this site had no zip, so it uses ${row.__zipNorm__} from the uploaded fallback zip list for ${where}.`
+                : `Estimated zip — this site had no zip, so it borrows ${row.__zipNorm__} from ${n} known location${n === 1 ? '' : 's'} in ${where} in the utility lookup.`;
               return (
                 <span
-                  title={`Estimated zip — this site had no zip, so it borrows ${row.__zipNorm__} from ${n} known location${n === 1 ? '' : 's'} in ${row.__city__ || 'this city'}${row.__state__ ? `, ${row.__state__}` : ''} in the utility lookup.`}
+                  title={title}
                   style={{ color: '#94A3B8', fontStyle: 'italic' }}
                 >{row.__zipNorm__} (est)</span>
               );
@@ -2147,6 +2234,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   })), [rows, siteNameColumn]);
 
   const utilMeta = utility?.meta || null;
+  const zipFbMeta = zipFallback?.meta || null;
 
   // Virginia's retail-choice program is gated on individual-site load:
   // only sites consuming more than 45,000 MWh/yr (5 MW × 8,760 hr) can
@@ -9408,6 +9496,49 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         {utilityLoaded && utility && utilMeta?.importedAt && (
           <span style={{ color: '#94A3B8', fontSize: '0.7rem', marginLeft: 'auto' }}>
             Imported {new Date(utilMeta.importedAt).toLocaleDateString()}
+          </span>
+        )}
+      </div>
+
+      {/* Fallback zip table — supplies a zip for sites that arrive with a
+          city + state but no zip, ahead of the zips inferred from the
+          utility lookup. */}
+      <div className={styles.utilityBar}>
+        <input
+          ref={zipFallbackFileRef}
+          type="file"
+          accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          onChange={handleZipFallbackFileSelect}
+          style={{ display: 'none' }}
+        />
+        {zipFbMeta ? (
+          <>
+            <span className={styles.utilityBarLoaded}>
+              ✓ Fallback zip list loaded: {zipFbMeta.entryCount?.toLocaleString() || '?'} city/state → zip entries
+              {zipFbMeta.fileName && <> · <span style={{ color: '#64748B', fontWeight: 500 }}>{zipFbMeta.fileName}</span></>}
+            </span>
+            <button
+              className={styles.utilityBarButton}
+              onClick={() => zipFallbackFileRef.current?.click()}
+              disabled={zipFallbackBusy}
+            >Replace</button>
+            <button className={styles.utilityBarDanger} onClick={handleClearZipFallback} disabled={zipFallbackBusy}>Clear</button>
+          </>
+        ) : (
+          <>
+            <span className={styles.utilityBarEmpty}>
+              No fallback zip list loaded. Upload a file with City / State / Zip columns to estimate zips for sites missing one.
+            </span>
+            <button
+              className={styles.utilityBarButton}
+              onClick={() => zipFallbackFileRef.current?.click()}
+              disabled={zipFallbackBusy}
+            >{zipFallbackBusy ? 'Working…' : 'Upload Fallback Zips'}</button>
+          </>
+        )}
+        {zipFbMeta?.importedAt && (
+          <span style={{ color: '#94A3B8', fontSize: '0.7rem', marginLeft: 'auto' }}>
+            Imported {new Date(zipFbMeta.importedAt).toLocaleDateString()}
           </span>
         )}
       </div>
