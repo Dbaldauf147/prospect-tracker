@@ -4528,6 +4528,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   const [activeTab, setActiveTab] = useState('opps');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  // Dedicated Start Date range for the "By Source" tab. Kept separate
+  // from the (hidden) global dateFrom/dateTo so the source summary can
+  // be scoped to a time window without touching the other tabs.
+  const [sourceFrom, setSourceFrom] = useState('');
+  const [sourceTo, setSourceTo] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [activityFilter, setActivityFilter] = useState('all');
   const [showHiddenByFilter, setShowHiddenByFilter] = useState(false);
@@ -6729,6 +6734,89 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     },
   ], [toggleHideService]);
 
+  // Leads grouped by Source for the "By Source" tab, scoped to the
+  // tab's own Start Date range. Mirrors serviceBreakdown's shape
+  // (count / wins / win rate / % of total) but keyed on the Source
+  // field and computed off every record rather than `prefiltered`, so
+  // the time-range filter here is the only thing narrowing the set.
+  const sourceBreakdown = useMemo(() => {
+    if (activeTab !== 'bySource') return { rows: [], total: 0 };
+    const fromTs = sourceFrom ? Date.parse(sourceFrom) : null;
+    const toTs = sourceTo ? Date.parse(sourceTo) + 86399999 : null;
+    const stats = {};
+    let total = 0;
+    for (const r of records) {
+      if (fromTs != null || toTs != null) {
+        const raw = r['Start Date'];
+        const ts = raw ? Date.parse(raw) : NaN;
+        if (isNaN(ts)) continue;
+        if (fromTs != null && ts < fromTs) continue;
+        if (toTs != null && ts > toTs) continue;
+      }
+      const raw = (r['Source'] || '').trim();
+      const cleaned = raw && raw !== '-' && raw !== '#N/A' ? raw : '';
+      const source = cleaned || '(Unspecified)';
+      const stage = (r['Stage'] || '').trim();
+      if (!stats[source]) stats[source] = { total: 0, wins: 0, losses: 0 };
+      stats[source].total += 1;
+      if (stage === 'Sold') stats[source].wins += 1;
+      else if (stage === 'Not Sold') stats[source].losses += 1;
+      total += 1;
+    }
+    const rows = Object.entries(stats)
+      .map(([source, s]) => {
+        const decided = s.wins + s.losses;
+        return {
+          source,
+          count: s.total,
+          wins: s.wins,
+          winRate: decided > 0 ? (s.wins / decided) * 100 : null,
+          percent: total > 0 ? (s.total / total) * 100 : 0,
+        };
+      })
+      .sort((a, b) => b.count - a.count);
+    return { rows, total };
+  }, [activeTab, records, sourceFrom, sourceTo]);
+
+  const sourceColumns = useMemo(() => [
+    { key: 'source', label: 'Source', defaultWidth: 240 },
+    {
+      key: 'count',
+      label: 'Leads',
+      defaultWidth: 90,
+      render: (row) => <div style={{ textAlign: 'right', fontWeight: 600 }}>{row.count}</div>,
+    },
+    {
+      key: 'wins',
+      label: 'Wins',
+      defaultWidth: 90,
+      render: (row) => <div style={{ textAlign: 'right' }}>{row.wins}</div>,
+    },
+    {
+      key: 'winRate',
+      label: 'Win Rate',
+      defaultWidth: 110,
+      render: (row) => (
+        <div style={{ textAlign: 'right' }}>
+          {row.winRate == null ? '—' : `${row.winRate.toFixed(1)}%`}
+        </div>
+      ),
+    },
+    {
+      key: 'percent',
+      label: '% of Total',
+      defaultWidth: 220,
+      render: (row) => (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span style={{ minWidth: '48px', textAlign: 'right' }}>{row.percent.toFixed(1)}%</span>
+          <div className={styles.serviceBar} style={{ flex: 1 }}>
+            <div className={styles.serviceBarFill} style={{ width: `${row.percent}%` }} />
+          </div>
+        </div>
+      ),
+    },
+  ], []);
+
   return (
     <div className={styles.wrapper}>
       {syncError && (
@@ -7142,6 +7230,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           onClick={() => setActiveTab('services')}
         >By Service</button>
         <button
+          className={activeTab === 'bySource' ? styles.tabActive : styles.tab}
+          onClick={() => setActiveTab('bySource')}
+        >By Source</button>
+        <button
           className={activeTab === 'stageDays' ? styles.tabActive : styles.tab}
           onClick={() => setActiveTab('stageDays')}
         >Days in Stage</button>
@@ -7362,6 +7454,52 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             alwaysVisible={['scope']}
             rowStyle={(row) => row._hidden ? { opacity: 0.5 } : undefined}
             emptyMessage="No services to display."
+            settings={settings}
+            updateSettings={updateSettings}
+          />
+        </>
+      )}
+
+      {activeTab === 'bySource' && (
+        <>
+          <div className={styles.searchRow}>
+            <label className={styles.filterLabel}>
+              From
+              <input
+                type="date"
+                className={styles.filterInput}
+                value={sourceFrom}
+                max={sourceTo || undefined}
+                onChange={e => setSourceFrom(e.target.value)}
+              />
+            </label>
+            <label className={styles.filterLabel}>
+              To
+              <input
+                type="date"
+                className={styles.filterInput}
+                value={sourceTo}
+                min={sourceFrom || undefined}
+                onChange={e => setSourceTo(e.target.value)}
+              />
+            </label>
+            {(sourceFrom || sourceTo) && (
+              <button
+                className={styles.clearFiltersBtn}
+                onClick={() => { setSourceFrom(''); setSourceTo(''); }}
+              >Clear range</button>
+            )}
+            <span className={styles.resultCount}>
+              {sourceBreakdown.rows.length} source{sourceBreakdown.rows.length === 1 ? '' : 's'} · {sourceBreakdown.total} total lead{sourceBreakdown.total === 1 ? '' : 's'}
+              {(sourceFrom || sourceTo) ? ' in range' : ''}
+            </span>
+          </div>
+          <DataTable
+            tableId="opps2-source"
+            columns={sourceColumns}
+            rows={sourceBreakdown.rows.map(r => ({ ...r, id: r.source }))}
+            alwaysVisible={['source']}
+            emptyMessage="No leads to display for this time range."
             settings={settings}
             updateSettings={updateSettings}
           />
