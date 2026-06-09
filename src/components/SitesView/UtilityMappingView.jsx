@@ -28,13 +28,17 @@ const NAME_MAP_LIST_KEY = 'utility-name-map-list-override';
 const NAME_MAP_SUGGEST_THRESHOLD = 45;
 
 // Column-mapping fields for the name-map upload / paste. Utility Name is
-// the only required column; commodity / state / country are optional
-// metadata carried alongside each name.
+// the only required column; commodity / state / country / interval-data
+// status are optional metadata carried alongside each name. The status
+// column lets the uploaded list declare interval-data availability
+// directly (a "Status" / "Available" / "Interval Data" column), instead
+// of only deriving it from the list in the first section.
 const NAME_MAP_FIELDS = [
   { key: 'name', label: 'Utility Name', required: true, match: (h) => /\b(utility|provider|lse|ldc|company|name)\b/i.test(h) },
   { key: 'commodity', label: 'Commodity', required: false, match: (h) => /commodity|fuel|\bservice\s*type\b|\b(electric|electricity|gas|water)\b/i.test(h) },
   { key: 'state', label: 'State / Province', required: false, match: (h) => /\b(state|province|st|prov|region)\b/i.test(h) },
   { key: 'country', label: 'Country', required: false, match: (h) => /\b(country|nation)\b/i.test(h) },
+  { key: 'status', label: 'Interval Data', required: false, match: (h) => /status|availab|interval|\bami\b|granular|smart\s*meter|green\s*button/i.test(h) },
 ];
 
 function pickColumn(headers, re, fallback = '') {
@@ -205,6 +209,7 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
       const commodityCol = pickColumn(headers, /commodity|fuel|\bservice\s*type\b|\b(electric|electricity|gas|water)\b/i);
       const stateCol = pickColumn(headers, /\b(state|province|st|prov|region)\b/i);
       const countryCol = pickColumn(headers, /\b(country|nation)\b/i);
+      const statusCol = pickColumn(headers, /status|availab|interval|\bami\b|granular|smart\s*meter|green\s*button/i);
       const parsed = rows
         .map(r => ({
           ...r,
@@ -212,6 +217,7 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
           commodity: commodityCol ? String(r[commodityCol] ?? '').trim() : '',
           state: stateCol ? String(r[stateCol] ?? '').trim() : '',
           country: countryCol ? String(r[countryCol] ?? '').trim() : '',
+          status: statusCol ? String(r[statusCol] ?? '').trim() : '',
           _fileName: file.name,
           _nameCol: nameCol,
         }))
@@ -259,12 +265,12 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
 
   function downloadNameMapTemplate() {
     const ws = XLSX.utils.aoa_to_sheet([
-      ['Utility', 'Commodity', 'State', 'Country'],
-      ['Pacific Gas & Electric', 'Electric', 'CA', 'USA'],
-      ['Consolidated Edison', 'Gas', 'NY', 'USA'],
-      ['Hydro One', 'Electric', 'ON', 'Canada'],
+      ['Utility', 'Commodity', 'State', 'Country', 'Interval Data'],
+      ['Pacific Gas & Electric', 'Electric', 'CA', 'USA', 'Available'],
+      ['Consolidated Edison', 'Gas', 'NY', 'USA', 'Hourly'],
+      ['Hydro One', 'Electric', 'ON', 'Canada', 'No'],
     ]);
-    ws['!cols'] = [{ wch: 32 }, { wch: 14 }, { wch: 10 }, { wch: 14 }];
+    ws['!cols'] = [{ wch: 32 }, { wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 16 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Utilities');
     const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
@@ -386,24 +392,30 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
     return { mapped, unmatched, unmapped: nameMapList.length - mapped - unmatched };
   }, [nameMapList, referenceSet]);
 
-  // Interval-data availability for each name-map row, resolved against the
-  // list loaded in the first section. Look the utility up by its mapped
-  // reference name when one is set (the canonical app name lines up best
-  // with the interval list), otherwise by the uploaded name. Keyed by the
-  // row's original index so the filtered table can read it directly. When
-  // no interval list is loaded the map stays empty and the column shows a
-  // muted hint instead of a status.
+  // Interval-data availability for each name-map row, keyed by the row's
+  // original index so the filtered table can read it directly. The status
+  // column from the uploaded list wins when present — the user told us
+  // availability directly. Otherwise we derive it from the list loaded in
+  // the first section, looking the utility up by its mapped reference name
+  // when one is set (the canonical app name lines up best with the
+  // interval list), else by the uploaded name. Rows with neither an
+  // imported status nor a list match fall through to "Not in list".
   const availabilityByIdx = useMemo(() => {
     const out = new Map();
-    if (!listNames.length) return out;
     for (let i = 0; i < nameMapList.length; i++) {
       const r = nameMapList[i];
+      const status = String(r.status || '').trim();
+      if (status) {
+        out.set(i, { inList: true, available: intervalIsAvailable(status), interval: status, source: 'imported' });
+        continue;
+      }
+      if (!listNames.length) continue;
       const lookupName = String(r.mappedTo || '').trim() || String(r.name || '').trim();
       if (!lookupName) continue;
       const hit = findFuzzyMatch(lookupName, listNames, { threshold: 40 });
       if (!hit) { out.set(i, { inList: false }); continue; }
       const intervalRaw = intervalByName.get(hit.name);
-      out.set(i, { inList: true, available: intervalIsAvailable(intervalRaw), interval: intervalRaw || '' });
+      out.set(i, { inList: true, available: intervalIsAvailable(intervalRaw), interval: intervalRaw || '', source: 'derived' });
     }
     return out;
   }, [nameMapList, listNames, intervalByName]);
@@ -601,7 +613,7 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
         {nameMapList.length === 0 ? (
           <div style={{ marginTop: '1rem', padding: '1.5rem', borderRadius: 8, border: '1px dashed var(--color-border)', background: '#F8FAFC', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
             No utility list uploaded yet. Upload (or paste) a list with a utility-name column — plus optional Commodity,
-            State, and Country columns — and each name will be matched against the {referenceOptions.length.toLocaleString()} known
+            State, Country, and Interval Data (status) columns — and each name will be matched against the {referenceOptions.length.toLocaleString()} known
             utilities so you can confirm the mapping.
           </div>
         ) : (
@@ -688,19 +700,27 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
                         )}
                       </td>
                       <td style={{ padding: '0.4rem 0.5rem' }}>
-                        {list.length === 0 ? (
-                          <span style={{ color: '#CBD5E1' }} title="Upload an interval-data list in the section above to resolve availability.">—</span>
-                        ) : !availabilityByIdx.get(idx)?.inList ? (
-                          <span style={{ color: '#92400E', fontWeight: 600 }}>Not in list</span>
-                        ) : availabilityByIdx.get(idx).available ? (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#166534', fontWeight: 600 }}>
-                            <span aria-hidden="true">✓</span>{availabilityByIdx.get(idx).interval || 'Available'}
-                          </span>
-                        ) : (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#B91C1C', fontWeight: 600 }}>
-                            <span aria-hidden="true">✗</span>{availabilityByIdx.get(idx).interval || 'Not available'}
-                          </span>
-                        )}
+                        {(() => {
+                          const a = availabilityByIdx.get(idx);
+                          // No imported status and no list match. Distinguish
+                          // "nothing to resolve against yet" from "looked but
+                          // didn't find it".
+                          if (!a || !a.inList) {
+                            return (a || list.length > 0)
+                              ? <span style={{ color: '#92400E', fontWeight: 600 }}>Not in list</span>
+                              : <span style={{ color: '#CBD5E1' }} title="Map a Status column when importing, or load an interval-data list in the section above.">—</span>;
+                          }
+                          const titleSrc = a.source === 'imported' ? 'From the uploaded Status column.' : 'Derived from the interval-data list above.';
+                          return a.available ? (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#166534', fontWeight: 600 }} title={titleSrc}>
+                              <span aria-hidden="true">✓</span>{a.interval || 'Available'}
+                            </span>
+                          ) : (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#B91C1C', fontWeight: 600 }} title={titleSrc}>
+                              <span aria-hidden="true">✗</span>{a.interval || 'Not available'}
+                            </span>
+                          );
+                        })()}
                       </td>
                     </tr>
                   );
