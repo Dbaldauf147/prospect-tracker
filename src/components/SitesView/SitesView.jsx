@@ -8433,7 +8433,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         >Utility Mapping</button>
       </div>
       {mainTab === 'mapping' ? (
-        <UtilityMappingView siteUtilities={siteUtilities} />
+        <UtilityMappingView siteUtilities={siteUtilities} referenceUtilityNames={knownUtilityNames} />
       ) : (
     <div
       className={styles.wrapper}
