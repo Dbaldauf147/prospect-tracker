@@ -69,6 +69,27 @@ export function getCountryFeatures() {
     name: g.properties?.name || '',
     rings: buildRingsFromGeometry(g, arcs),
   }));
+  // In countries-110m the "France" feature is a single MultiPolygon that
+  // lumps French Guiana (South America, lng ~ -54) in with metropolitan
+  // France. That made French Guiana inherit France's deregulation hue on
+  // the world maps even though it carries no portfolio sites. Split the
+  // far-western rings into their own "French Guiana" feature so each
+  // renderer colours it independently — with no COUNTRY_DEREGULATION
+  // entry and no sites it falls through to the neutral no-sites grey,
+  // matching every other unlisted territory.
+  const france = _decodedCountries.find(f => f.name === 'France');
+  if (france) {
+    const guiana = [];
+    const metro = [];
+    for (const ring of france.rings) {
+      const maxLng = Math.max(...ring.map(p => p[0]));
+      (maxLng < -20 ? guiana : metro).push(ring);
+    }
+    if (guiana.length) {
+      france.rings = metro;
+      _decodedCountries.push({ id: france.id, name: 'French Guiana', rings: guiana });
+    }
+  }
   return _decodedCountries;
 }
 
