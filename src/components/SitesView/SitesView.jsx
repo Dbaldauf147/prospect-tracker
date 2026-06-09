@@ -8338,41 +8338,35 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         }
       };
 
+      // Choropleth — each NA state / province is filled by the share of its
+      // portfolio sites whose electric utility is mapped to a known utility
+      // (light → dark green). States with no portfolio sites stay light grey.
+      // Mirrors the filled-map style of the Indicative Savings export.
+      const lerp = (a, b, t) => a + (b - a) * t;
+      const GREEN_LIGHT = [220, 252, 231]; // #DCFCE7
+      const GREEN_DARK = [4, 120, 87];     // #047857
+      const NO_SITES_FILL = '#E5E7EB';
+      const NO_SITES_STROKE = '#9CA3AF';
+      const pctFill = (b) => {
+        const t = b.total ? b.mapped / b.total : 0;
+        return `rgb(${Math.round(lerp(GREEN_LIGHT[0], GREEN_DARK[0], t))},${Math.round(lerp(GREEN_LIGHT[1], GREEN_DARK[1], t))},${Math.round(lerp(GREEN_LIGHT[2], GREEN_DARK[2], t))})`;
+      };
+
       ctx.save();
       ctx.beginPath(); ctx.rect(originX, originY, MAP_W, MAP_H); ctx.clip();
       ctx.fillStyle = '#F1F5F9'; ctx.fillRect(originX, originY, MAP_W, MAP_H); // ocean
       const countryFeatures = getCountryFeatures();
       const naFeatures = getNAAdmin1Features();
-      for (const feat of countryFeatures) drawFeature(feat.rings, '#E5E7EB', '#9CA3AF');
-      for (const feat of naFeatures) drawFeature(feat.rings, '#ECEEF1', '#CBD5E1');
-      ctx.restore();
-
-      // Dots — size by total sites, shade by % of sites mapped to a known
-      // utility. A state with no utilities in the mapping table renders grey.
-      const maxTotal = Math.max(1, ...Array.from(buckets.values()).map(b => b.total));
-      const lerp = (a, b, t) => a + (b - a) * t;
-      const GREEN_LIGHT = [187, 247, 208]; // #BBF7D0
-      const GREEN_DARK = [4, 120, 87];     // #047857
-      const GRAY = 'rgb(156,163,175)';     // #9CA3AF
-      const pctFill = (b) => {
-        if (b.mapped + b.unmapped === 0) return GRAY; // no utilities in the mapping table
-        const t = b.mapped / b.total;
-        return `rgb(${Math.round(lerp(GREEN_LIGHT[0], GREEN_DARK[0], t))},${Math.round(lerp(GREEN_LIGHT[1], GREEN_DARK[1], t))},${Math.round(lerp(GREEN_LIGHT[2], GREEN_DARK[2], t))})`;
-      };
-      ctx.save();
-      ctx.beginPath(); ctx.rect(originX, originY, MAP_W, MAP_H); ctx.clip();
-      // Draw larger dots first so small ones stay visible on top.
-      const drawOrder = Array.from(buckets.values()).sort((a, b) => b.total - a.total);
-      for (const b of drawOrder) {
-        const [px, py] = project(b.center[0], b.center[1]);
-        const radius = 6 + 24 * Math.sqrt(b.total / maxTotal);
-        ctx.beginPath(); ctx.arc(px, py, radius, 0, Math.PI * 2);
-        ctx.globalAlpha = 0.85; ctx.fillStyle = pctFill(b); ctx.fill(); ctx.globalAlpha = 1;
-        ctx.lineWidth = 1.2; ctx.strokeStyle = '#0F172A'; ctx.stroke();
+      // Mexico + other country outlines as a light-grey backdrop.
+      for (const feat of countryFeatures) drawFeature(feat.rings, NO_SITES_FILL, NO_SITES_STROKE);
+      // States / provinces shaded by mapping coverage; hairline borders.
+      for (const feat of naFeatures) {
+        const b = buckets.get(`${feat.admin}/${feat.postal}`);
+        drawFeature(feat.rings, b ? pctFill(b) : NO_SITES_FILL, NO_SITES_STROKE);
       }
       ctx.restore();
 
-      // Legend — gradient bar (0–100 % mapped) + grey swatch.
+      // Legend — gradient bar (0–100 % mapped) + grey "no sites" swatch.
       const legendY = originY + MAP_H + PAD;
       ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; ctx.font = '13px Nunito Sans, Arial, sans-serif';
       const gradX = originX, gradW = 280, gradH = 16;
@@ -8380,17 +8374,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       grad.addColorStop(0, `rgb(${GREEN_LIGHT.join(',')})`);
       grad.addColorStop(1, `rgb(${GREEN_DARK.join(',')})`);
       ctx.fillStyle = grad; ctx.fillRect(gradX, legendY, gradW, gradH);
-      ctx.strokeStyle = '#9CA3AF'; ctx.lineWidth = 0.8; ctx.strokeRect(gradX, legendY, gradW, gradH);
+      ctx.strokeStyle = NO_SITES_STROKE; ctx.lineWidth = 0.8; ctx.strokeRect(gradX, legendY, gradW, gradH);
       ctx.fillStyle = '#0F172A';
       ctx.fillText('0%', gradX, legendY + gradH + 13);
       ctx.textAlign = 'right'; ctx.fillText('100 % mapped to a known utility', gradX + gradW, legendY + gradH + 13);
       ctx.textAlign = 'left';
       const gx = gradX + gradW + 48;
-      ctx.fillStyle = GRAY; ctx.fillRect(gx, legendY, gradH, gradH);
-      ctx.strokeStyle = '#9CA3AF'; ctx.strokeRect(gx, legendY, gradH, gradH);
-      ctx.fillStyle = '#0F172A'; ctx.fillText('No utilities in the mapping table', gx + gradH + 8, legendY + gradH / 2);
-      ctx.fillStyle = '#475569'; ctx.font = '12px Nunito Sans, Arial, sans-serif';
-      ctx.fillText('Dot size = total portfolio sites in the state / province', gx, legendY + gradH + 13);
+      ctx.fillStyle = NO_SITES_FILL; ctx.fillRect(gx, legendY, gradH, gradH);
+      ctx.strokeStyle = NO_SITES_STROKE; ctx.strokeRect(gx, legendY, gradH, gradH);
+      ctx.fillStyle = '#0F172A'; ctx.fillText('No portfolio sites', gx + gradH + 8, legendY + gradH / 2);
 
       const dataUrl = canvas.toDataURL('image/png');
       const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
@@ -8406,7 +8398,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       ws.mergeCells(2, 1, 2, COLS);
       const sub = ws.getCell(2, 1);
-      sub.value = `${detailRows.length} site${detailRows.length === 1 ? '' : 's'} · ${totMapped} mapped to a known utility · ${totUnmapped} in the table but unmapped · ${totNotInList} not in the mapping list. Each NA state / province is a dot sized by site count and shaded by the share of its sites whose electric utility is mapped to a known utility (grey = no utilities in the Utility Name Mapping table).`;
+      sub.value = `${detailRows.length} site${detailRows.length === 1 ? '' : 's'} · ${totMapped} mapped to a known utility · ${totUnmapped} in the table but unmapped · ${totNotInList} not in the mapping list. Each NA state / province is shaded by the share of its portfolio sites whose electric utility is mapped to a known utility (light → dark green); states with no portfolio sites stay light grey.`;
       sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
       sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
       ws.getRow(2).height = 36;
@@ -8516,40 +8508,34 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         }
       };
 
+      const lerp = (a, b, t) => a + (b - a) * t;
+      const GREEN_LIGHT = [220, 252, 231]; // #DCFCE7
+      const GREEN_DARK = [4, 120, 87];     // #047857
+      const NO_SITES_FILL = '#E5E7EB';
+      const NO_SITES_STROKE = '#9CA3AF';
+      const pctFill = (b) => {
+        const t = b.total ? b.mapped / b.total : 0;
+        return `rgb(${Math.round(lerp(GREEN_LIGHT[0], GREEN_DARK[0], t))},${Math.round(lerp(GREEN_LIGHT[1], GREEN_DARK[1], t))},${Math.round(lerp(GREEN_LIGHT[2], GREEN_DARK[2], t))})`;
+      };
+
+      // Choropleth — each country filled by the share of its portfolio sites
+      // mapped to a known utility; countries with no sites stay light grey.
       ctx.save();
       ctx.beginPath(); ctx.rect(originX, originY, MAP_W, MAP_H); ctx.clip();
       ctx.fillStyle = '#F1F5F9'; ctx.fillRect(originX, originY, MAP_W, MAP_H); // ocean
-      for (const feat of getCountryFeatures()) drawFeature(feat.rings, '#E5E7EB', '#9CA3AF');
-      ctx.restore();
-
-      const lerp = (a, b, t) => a + (b - a) * t;
-      const GREEN_LIGHT = [187, 247, 208];
-      const GREEN_DARK = [4, 120, 87];
-      const GRAY = 'rgb(156,163,175)';
-      const pctFill = (b) => {
-        if (b.mapped + b.unmapped === 0) return GRAY;
-        const t = b.mapped / b.total;
-        return `rgb(${Math.round(lerp(GREEN_LIGHT[0], GREEN_DARK[0], t))},${Math.round(lerp(GREEN_LIGHT[1], GREEN_DARK[1], t))},${Math.round(lerp(GREEN_LIGHT[2], GREEN_DARK[2], t))})`;
-      };
-      // Dots, largest first. Countries without a known centroid are
-      // dropped from the map but kept in the breakdown table below.
-      const maxCountryTotal = Math.max(1, ...Array.from(countryBuckets.values()).map(b => b.total));
-      let globalNoCenter = 0;
-      ctx.save();
-      ctx.beginPath(); ctx.rect(originX, originY, MAP_W, MAP_H); ctx.clip();
-      const ordered = Array.from(countryBuckets.entries()).sort((a, b) => b[1].total - a[1].total);
-      for (const [country, b] of ordered) {
-        const center = COUNTRY_CENTERS[country];
-        if (!center) { globalNoCenter++; continue; }
-        const [px, py] = project(center[0], center[1]);
-        const radius = 5 + 20 * Math.sqrt(b.total / maxCountryTotal);
-        ctx.beginPath(); ctx.arc(px, py, radius, 0, Math.PI * 2);
-        ctx.globalAlpha = 0.85; ctx.fillStyle = pctFill(b); ctx.fill(); ctx.globalAlpha = 1;
-        ctx.lineWidth = 1.2; ctx.strokeStyle = '#0F172A'; ctx.stroke();
+      const drawnKeys = new Set();
+      for (const feat of getCountryFeatures()) {
+        const key = TOPO_NAME_TO_DEREG_KEY[feat.name] || feat.name;
+        const b = countryBuckets.get(key);
+        if (b) drawnKeys.add(key);
+        drawFeature(feat.rings, b ? pctFill(b) : NO_SITES_FILL, NO_SITES_STROKE);
       }
       ctx.restore();
+      // Portfolio countries with no matching polygon — shown in the table only.
+      let globalNoFeature = 0;
+      for (const key of countryBuckets.keys()) if (!drawnKeys.has(key)) globalNoFeature++;
 
-      // Legend.
+      // Legend — gradient bar (0–100 % mapped) + grey "no sites" swatch.
       const legendY = originY + MAP_H + PAD;
       ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; ctx.font = '13px Nunito Sans, Arial, sans-serif';
       const gradX = originX, gradW = 280, gradH = 16;
@@ -8557,17 +8543,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       grad.addColorStop(0, `rgb(${GREEN_LIGHT.join(',')})`);
       grad.addColorStop(1, `rgb(${GREEN_DARK.join(',')})`);
       ctx.fillStyle = grad; ctx.fillRect(gradX, legendY, gradW, gradH);
-      ctx.strokeStyle = '#9CA3AF'; ctx.lineWidth = 0.8; ctx.strokeRect(gradX, legendY, gradW, gradH);
+      ctx.strokeStyle = NO_SITES_STROKE; ctx.lineWidth = 0.8; ctx.strokeRect(gradX, legendY, gradW, gradH);
       ctx.fillStyle = '#0F172A';
       ctx.fillText('0%', gradX, legendY + gradH + 13);
       ctx.textAlign = 'right'; ctx.fillText('100 % mapped to a known utility', gradX + gradW, legendY + gradH + 13);
       ctx.textAlign = 'left';
       const gx = gradX + gradW + 48;
-      ctx.fillStyle = GRAY; ctx.fillRect(gx, legendY, gradH, gradH);
-      ctx.strokeStyle = '#9CA3AF'; ctx.strokeRect(gx, legendY, gradH, gradH);
-      ctx.fillStyle = '#0F172A'; ctx.fillText('No utilities in the mapping table', gx + gradH + 8, legendY + gradH / 2);
-      ctx.fillStyle = '#475569'; ctx.font = '12px Nunito Sans, Arial, sans-serif';
-      ctx.fillText('Dot size = total portfolio sites in the country', gx, legendY + gradH + 13);
+      ctx.fillStyle = NO_SITES_FILL; ctx.fillRect(gx, legendY, gradH, gradH);
+      ctx.strokeStyle = NO_SITES_STROKE; ctx.strokeRect(gx, legendY, gradH, gradH);
+      ctx.fillStyle = '#0F172A'; ctx.fillText('No portfolio sites', gx + gradH + 8, legendY + gradH / 2);
 
       const dataUrl = canvas.toDataURL('image/png');
       const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
@@ -8582,8 +8566,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       ws.mergeCells(2, 1, 2, COLS);
       const sub = ws.getCell(2, 1);
-      const noCenterNote = globalNoCenter > 0 ? ` (${globalNoCenter} countr${globalNoCenter === 1 ? 'y' : 'ies'} without a map centroid shown in the table only)` : '';
-      sub.value = `${countryBuckets.size} countr${countryBuckets.size === 1 ? 'y' : 'ies'} across the portfolio. Each is a dot sized by site count and shaded by the share of its sites mapped to a known utility (grey = no utilities in the mapping table).${noCenterNote}`;
+      const noFeatureNote = globalNoFeature > 0 ? ` (${globalNoFeature} countr${globalNoFeature === 1 ? 'y' : 'ies'} without a map outline shown in the table only)` : '';
+      sub.value = `${countryBuckets.size} countr${countryBuckets.size === 1 ? 'y' : 'ies'} across the portfolio. Each country is shaded by the share of its portfolio sites mapped to a known utility (light → dark green); countries with no portfolio sites stay light grey.${noFeatureNote}`;
       sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
       sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
       ws.getRow(2).height = 36;
