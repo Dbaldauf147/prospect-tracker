@@ -7,6 +7,7 @@ import {
 } from '../../utils/uploadedListStore';
 import { parseBestSheet } from '../../utils/xlsxParse';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
+import { UtilityPasteImportModal } from './UtilityPasteImportModal';
 import styles from './SitesView.module.css';
 
 // IndexedDB key for the uploaded "utilities → interval data availability"
@@ -40,6 +41,7 @@ export function UtilityMappingView({ siteUtilities = [] }) {
   const [meta, setMeta] = useState(null); // { fileName, count, nameCol, intervalCol }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [showPaste, setShowPaste] = useState(false);
   const fileRef = useRef(null);
 
   // Restore any previously-uploaded list on mount.
@@ -101,6 +103,24 @@ export function UtilityMappingView({ siteUtilities = [] }) {
     await clearListFromIDB(INTERVAL_LIST_KEY);
     setList([]);
     setMeta(null);
+  }, []);
+
+  // Pasted data arrives already parsed + column-mapped by the modal, in
+  // the same row shape as handleUpload's `parsed`. Persist it the same
+  // way so it survives refresh / Firestore sync.
+  const handlePasteImport = useCallback(async (parsed, pasteMeta) => {
+    setBusy(true);
+    setError('');
+    try {
+      await saveListToIDB(INTERVAL_LIST_KEY, parsed);
+      setList(parsed);
+      setMeta(pasteMeta);
+      setShowPaste(false);
+    } catch (err) {
+      setError(err?.message || 'Failed to import the pasted utilities.');
+    } finally {
+      setBusy(false);
+    }
   }, []);
 
   function downloadTemplate() {
@@ -202,6 +222,13 @@ export function UtilityMappingView({ siteUtilities = [] }) {
           <button
             type="button"
             disabled={busy}
+            onClick={() => { setError(''); setShowPaste(true); }}
+            title="Paste utility rows copied from Excel / Google Sheets and map the columns."
+            style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', color: '#1E293B' }}
+          >📋 Paste Data</button>
+          <button
+            type="button"
+            disabled={busy}
             onClick={() => fileRef.current?.click()}
             title="Upload an Excel/CSV list of utilities with an interval-data-availability column."
             style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
@@ -298,6 +325,13 @@ export function UtilityMappingView({ siteUtilities = [] }) {
             </tbody>
           </table>
         </>
+      )}
+
+      {showPaste && (
+        <UtilityPasteImportModal
+          onClose={() => setShowPaste(false)}
+          onImport={handlePasteImport}
+        />
       )}
     </div>
   );
