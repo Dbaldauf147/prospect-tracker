@@ -28,13 +28,15 @@ const NAME_MAP_LIST_KEY = 'utility-name-map-list-override';
 const NAME_MAP_SUGGEST_THRESHOLD = 45;
 
 // Column-mapping fields for the name-map upload / paste. Utility Name is
-// the only required column; commodity / state / country are optional
-// metadata carried alongside each name.
+// the only required column; commodity / state / country / status are
+// optional metadata carried alongside each name. (Status can also be
+// pasted on its own later via the Paste Status flow / STATUS_FIELDS.)
 const NAME_MAP_FIELDS = [
   { key: 'name', label: 'Utility Name', required: true, match: (h) => /\b(utility|provider|lse|ldc|company|name)\b/i.test(h) },
   { key: 'commodity', label: 'Commodity', required: false, match: (h) => /commodity|fuel|\bservice\s*type\b|\b(electric|electricity|gas|water)\b/i.test(h) },
   { key: 'state', label: 'State / Province', required: false, match: (h) => /\b(state|province|st|prov|region)\b/i.test(h) },
   { key: 'country', label: 'Country', required: false, match: (h) => /\b(country|nation)\b/i.test(h) },
+  { key: 'status', label: 'Status', required: false, match: (h) => /\bstatus\b|\bstage\b|disposition|outreach|\bactive\b|availab/i.test(h) },
 ];
 
 // Paste-status import: a utility-name column plus the status to attach to
@@ -291,6 +293,7 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
       const commodityCol = pickColumn(headers, /commodity|fuel|\bservice\s*type\b|\b(electric|electricity|gas|water)\b/i);
       const stateCol = pickColumn(headers, /\b(state|province|st|prov|region)\b/i);
       const countryCol = pickColumn(headers, /\b(country|nation)\b/i);
+      const statusCol = pickColumn(headers, /\bstatus\b|\bstage\b|disposition|outreach|\bactive\b|availab/i);
       const parsed = rows
         .map(r => ({
           ...r,
@@ -298,6 +301,7 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
           commodity: commodityCol ? String(r[commodityCol] ?? '').trim() : '',
           state: stateCol ? String(r[stateCol] ?? '').trim() : '',
           country: countryCol ? String(r[countryCol] ?? '').trim() : '',
+          status: statusCol ? String(r[statusCol] ?? '').trim() : '',
           _fileName: file.name,
           _nameCol: nameCol,
         }))
