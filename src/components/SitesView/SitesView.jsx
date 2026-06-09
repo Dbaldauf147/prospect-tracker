@@ -1219,6 +1219,20 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         // lookups); else the raw mapped value so non-US provinces still
         // display.
         __state__: state || stateColInput || null,
+        // Display value for the export's State / Province columns. US and
+        // Canadian sites keep the 2-letter code (TX, ON); every other
+        // country shows the full subdivision name exactly as uploaded —
+        // a derived US code from a zip-prefix / name collision (e.g. a
+        // German postal code resolving to "NY") must never override it.
+        __stateProvinceDisplay__: (() => {
+          const resolvedCountry = inputCountry || match?.country || '';
+          const isUS = /^(united states|usa|us)$/i.test(resolvedCountry);
+          const isCA = /^(canada|ca)$/i.test(resolvedCountry);
+          const countryLabel = normalizeCountryName(resolvedCountry) || resolvedCountry;
+          return (isUS || isCA)
+            ? (state || stateColInput || countryLabel || '')
+            : (stateColInput || countryLabel || '');
+        })(),
         __propertyTypeRaw__: inputPropertyType || null,
         __propertyType__: canonicalPropertyType,
         __segment__: segment,
@@ -2457,7 +2471,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       if (hasAny(r.__electricSupplier__, r.__electricContractName__, r.__electricProductType__, r.__electricStart__, r.__electricEnd__, r.__electricContractPrice__)) {
         out.push({
           'Site': name,
-          'State': r.__state__ || '',
+          'State': r.__stateProvinceDisplay__ || '',
           'Country': r.__country__ || '',
           'Commodity': 'Electric',
           'Utility': r.__electric__ || '',
@@ -2476,7 +2490,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       if (hasAny(r.__gasSupplier__, r.__gasContractName__, r.__gasProductType__, r.__gasStart__, r.__gasEnd__, r.__gasContractPrice__)) {
         out.push({
           'Site': name,
-          'State': r.__state__ || '',
+          'State': r.__stateProvinceDisplay__ || '',
           'Country': r.__country__ || '',
           'Commodity': 'Gas',
           'Utility': r.__gas__ || '',
@@ -5885,10 +5899,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         };
         const stateCode = effectiveStateCode(r);
         const rawCountry = String(r.__country__ || '').trim();
-        // Use the canonical country label when there's no state so the
-        // ST / Prov / Country column on Site Detail matches the by-
-        // state sheet's bucket labels for international sites.
-        const canonicalCountry = stateCode ? '' : (normalizeCountryName(rawCountry) || rawCountry);
+        // ST / Prov column: US/CA sites show the 2-letter code, every
+        // other country shows the full subdivision name from the upload
+        // (falling back to the country label when no state was given).
+        // Computed once at row build time so this sheet and the Contract
+        // Overview tab stay in sync. See __stateProvinceDisplay__.
+        const stateProvince = r.__stateProvinceDisplay__ || '';
         // US/CA reg-rate motion is per-utility curated; country sites
         // pick up the reg-rate flag from the Power Rate Optimization
         // column on the country reference instead.
@@ -5934,7 +5950,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const allFlags = [mxFlag, propertyTypeFlag].filter(Boolean).join('\n');
         return {
           siteName: siteNameColumn ? String(r[siteNameColumn] || '').trim() : '',
-          state: stateCode || canonicalCountry,
+          state: stateProvince,
           zip: r.__zipNorm__ || '',
           country,
           // Prefer the canonical property type so the value here lines
