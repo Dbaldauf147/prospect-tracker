@@ -2942,6 +2942,20 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       if (isCFE(utility)) return '★ Potential Mexico sourcing opportunity (CFE, > 6,000,000 kWh/yr)';
       return '';
     };
+    // ST / Prov only applies to US and Canada sites. International
+    // uploads sometimes carry a US-state-like code in the state column
+    // (e.g. a France site tagged "GA"); that value is meaningless
+    // abroad, so we ignore it and let those sites bucket / label by
+    // country instead. Returns the cleaned state code for US/CA sites,
+    // '' otherwise.
+    const effectiveStateCode = (r) => {
+      const rawCountry = String(r.__country__ || '').trim();
+      const isUS = /^(united states|usa|us)$/i.test(rawCountry);
+      const isCA = /^(canada|ca)$/i.test(rawCountry);
+      if (!isUS && !isCA) return '';
+      return String(r.__state__ || '').trim();
+    };
+
     // Both commodities use a per-state curated savings range — see
     // ELECTRIC_DEREGULATION and GAS_DEREGULATION above for the
     // canonical status / range / lowPct / highPct lookup.
@@ -3097,7 +3111,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // Per-site detail kept for the Monthly Savings Breakdown sheet.
       const siteRows = [];
       for (const r of rows) {
-        const state = r.__state__ || '';
+        const state = effectiveStateCode(r);
         // International (non-US/Canada) sites bucket by country —
         // pulled from the row's resolved country tag and matched against
         // the COUNTRY_DEREGULATION reference. Falls back to skipping the
@@ -5869,7 +5883,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           if (trimmed) return trimmed;
           return supplierPresent ? 'TBD' : '';
         };
-        const stateCode = r.__state__ || '';
+        const stateCode = effectiveStateCode(r);
         const rawCountry = String(r.__country__ || '').trim();
         // Use the canonical country label when there's no state so the
         // ST / Prov / Country column on Site Detail matches the by-
@@ -5903,8 +5917,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         // Mexico flag: Baja sites are off CFE's grid so they don't
         // get tagged at all. Other Mexican sites get either the
         // sourcing-opportunity flag (CFE + > 6 GWh/yr) or the
-        // too-low-consumption flag (< 6 GWh/yr).
-        const mxFlag = mexicoSiteFlag(country, stateCode, electricUtility, kwh);
+        // too-low-consumption flag (< 6 GWh/yr). Pass the raw state
+        // string here (not the US/CA-only stateCode) so the Baja
+        // exclusion still sees a "Baja California" tag on Mexican rows.
+        const mxFlag = mexicoSiteFlag(country, r.__state__ || '', electricUtility, kwh);
         // Property-type mapping flag: when the upload carried a raw
         // property-type value but normalizePropertyType couldn't
         // resolve it to a canonical entry, the per-property-type
