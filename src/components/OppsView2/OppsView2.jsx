@@ -4515,6 +4515,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // state for any user who happens to refresh before the load
   // resolves.
   const hydratedRef = useRef(false);
+  // State mirror of hydratedRef so effects can re-run *after* the initial
+  // load + reconcile settles. A ref alone doesn't trigger a re-render, so
+  // the once-per-day NFAT clear needs this to fire against the final
+  // reconciled data instead of the intermediate IndexedDB cache paint.
+  const [hydrated, setHydrated] = useState(false);
   const firestoreSaveTimerRef = useRef(null);
   // _updatedAt timestamp of the most recent blob we wrote to Firestore.
   // The onSnapshot listener compares against this to skip our own echoes.
@@ -5020,6 +5025,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     let cancelled = false;
     let painted = false;
     hydratedRef.current = false;
+    setHydrated(false);
     setLoading(true);
 
     function applyResult(next) {
@@ -5126,6 +5132,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       }
       setLoading(false);
       hydratedRef.current = true;
+      setHydrated(true);
     }
 
     idbPromise.then(res => {
@@ -5822,9 +5829,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // per-user localStorage), and sits alongside the 2 PM sweep above —
   // the sweep keeps clearing morning marks at 2 PM during the day.
   useEffect(() => {
-    // Wait until opps have actually loaded — running before records
-    // arrive would stamp the day "cleared" and skip the real clear once
-    // the data hydrates.
+    // Wait until the initial load + reconcile has fully settled. Keying
+    // this on `hydrated` (not on records arriving) is what makes the clear
+    // stick: the cache paints first, but reconcile then does a full
+    // setData replace with the merged copy that still carries yesterday's
+    // marks. Running before that replace would clear the cache paint, burn
+    // the once-per-day localStorage flag, and then get clobbered by the
+    // reconcile — leaving yesterday's marks in place for the rest of the
+    // day. Gating on hydration guarantees we clear the final dataset.
+    if (!hydrated) return;
     if (!data?.records?.length) return;
     const today = easternDateStr();
     if (userLsGet(NFAT_DAILY_CLEAR_KEY) === today) return;
@@ -5847,7 +5860,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       return { ...prev, records: nextRecords };
     });
     userLsSet(NFAT_DAILY_CLEAR_KEY, today);
-  }, [data?.records?.length]);
+    // Intentionally keyed on `hydrated` alone — we want this to fire once,
+    // right after load settles, reading the records from the guard above.
+  }, [hydrated]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const headers = data?.headers || [];
   const columnLinks = data?.columnLinks || {};
