@@ -33,6 +33,7 @@ import { saveIndicativeAnalysis, deleteIndicativeAnalysis } from '../../utils/fi
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
 import { classifyUtility } from '../../utils/utilityClassify';
+import { buildCityStateZipIndex, estimateZipFromCityState } from '../../utils/zipEstimate';
 import { ENERGY_SUPPLIERS } from '../../data/energySuppliers';
 import { isRegulatedRateOpportunity } from '../../data/regulatedRateOpportunities';
 import {
@@ -1020,16 +1021,37 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     return hit ? { canonical: hit.name, score: hit.score } : null;
   }
 
+  // Reverse index (city + state → zips) built from the loaded utility
+  // lookup so a site that arrives without a zip — but with a city and
+  // state — can borrow a representative zip from the other locations we
+  // already know live in that same city. Rebuilt only when the utility
+  // file changes. See src/utils/zipEstimate.js.
+  const cityStateZipIndex = useMemo(
+    () => buildCityStateZipIndex(utility?.zipMap),
+    [utility]
+  );
+
   const rows = useMemo(() => {
     return cleanSitesData.map((r, i) => {
-      const zip = zipColumn ? normalizeZip(r[zipColumn]) : '';
+      const cityColInput = cityOverride ? String(r[cityOverride] || '').trim() : '';
+      const stateColInput = stateColumnOverride ? String(r[stateColumnOverride] || '').trim() : '';
+      const uploadedZip = zipColumn ? normalizeZip(r[zipColumn]) : '';
+      // When the row has no zip of its own, estimate one from its city +
+      // state using zips already present in the utility lookup. The
+      // estimate then feeds the zip → utility / state / rate match below
+      // exactly like an uploaded zip would, flagged via __zipEstimated__
+      // so the UI can render it as modeled rather than measured.
+      const zipEstimate = (!uploadedZip && cityStateZipIndex)
+        ? estimateZipFromCityState(cityStateZipIndex, cityColInput, stateColInput)
+        : null;
+      const zip = uploadedZip || zipEstimate?.zip || '';
+      const zipEstimated = !uploadedZip && !!zipEstimate;
       const match = utility?.zipMap && zip ? utility.zipMap[zip] : null;
       // State resolution for indicative rates + the deregulation map.
       // Prefer the utility file's zip match, then the zip prefix, then
       // a mapped State column — but only when that column normalizes to
       // a real US state code, so international provinces ("Milan",
       // "SP") don't false-map and still fall through to country rates.
-      const stateColInput = stateColumnOverride ? String(r[stateColumnOverride] || '').trim() : '';
       const state = match?.state || zipToState(zip) || normalizeState(stateColInput);
       // Property type + customer segment resolve first: the segment
       // (commercial vs industrial) picks which state-rate column
@@ -1222,6 +1244,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ...r,
         id: i,
         __zipNorm__: zip,
+        __zipEstimated__: zipEstimated,
+        __zipEstimateCount__: zipEstimate?.candidateCount || 0,
         __supplierSuggestions__: supplierSuggestions,
         __electric__: (lookupAllowed ? match?.electric : null) || electricUtilityTokens[0]?.canonical || null,
         __gas__: (lookupAllowed ? match?.gas : null) || gasUtilityTokens[0]?.canonical || null,
@@ -1237,7 +1261,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         __gasUtilityTokens__: gasUtilityTokens,
         __water__: lookupAllowed ? match?.water : undefined,
         __address__: addressOverride ? String(r[addressOverride] || '').trim() || null : null,
-        __city__: (cityOverride ? String(r[cityOverride] || '').trim() : '') || match?.city,
+        __city__: cityColInput || match?.city,
         __country__: inputCountry || match?.country,
         // Canonical US code when resolved (drives rates + deregulation
         // lookups); else the raw mapped value so non-US provinces still
@@ -1296,7 +1320,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         __matched__: !!match || electricUtilityTokens.length > 0 || gasUtilityTokens.length > 0,
       };
     });
-  }, [cleanSitesData, zipColumn, utility, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, segmentOverride, siteDescriptionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
+  }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, segmentOverride, siteDescriptionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
@@ -1313,13 +1337,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   // zip code (drives utility / supplier matching), electric kWh
   // (actual-from-file or property-type estimate), and gas therms.
   const missingStats = useMemo(() => {
-    if (!rows.length) return { total: 0, anyMissing: 0, noZip: 0, noElectric: 0, noGas: 0, samples: [] };
+    if (!rows.length) return { total: 0, anyMissing: 0, noZip: 0, noElectric: 0, noGas: 0, estimatedZip: 0, samples: [] };
     let anyMissing = 0;
     let noZip = 0;
     let noElectric = 0;
     let noGas = 0;
+    let estimatedZip = 0;
     const samples = [];
     for (const r of rows) {
+      if (r.__zipEstimated__) estimatedZip += 1;
       const missingZip = !r.__zipNorm__;
       const missingElectric = r.__kwh__ == null;
       const missingGas = r.__therms__ == null;
@@ -1338,7 +1364,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         samples.push(`${name} — ${flags}`);
       }
     }
-    return { total: rows.length, anyMissing, noZip, noElectric, noGas, samples };
+    return { total: rows.length, anyMissing, noZip, noElectric, noGas, estimatedZip, samples };
   }, [rows]);
 
   const columns = useMemo(() => {
@@ -1368,7 +1394,18 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ...(i === 0 ? { sticky: true } : {}),
         render: (row) => {
           const v = row[k];
-          if (k === zipColumn && row.__zipNorm__) return row.__zipNorm__;
+          if (k === zipColumn && row.__zipNorm__) {
+            if (row.__zipEstimated__) {
+              const n = row.__zipEstimateCount__;
+              return (
+                <span
+                  title={`Estimated zip — this site had no zip, so it borrows ${row.__zipNorm__} from ${n} known location${n === 1 ? '' : 's'} in ${row.__city__ || 'this city'}${row.__state__ ? `, ${row.__state__}` : ''} in the utility lookup.`}
+                  style={{ color: '#94A3B8', fontStyle: 'italic' }}
+                >{row.__zipNorm__} (est)</span>
+              );
+            }
+            return row.__zipNorm__;
+          }
           if (v == null || v === '') return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
           return isDate ? fmtShortDate(v) : String(v);
         },
@@ -9290,6 +9327,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
                 >
                   <span aria-hidden="true">✓</span>
                   <span>All {missingStats.total} site{missingStats.total === 1 ? '' : 's'} have zip + electric + gas data</span>
+                </span>
+              )}
+              {missingStats.estimatedZip > 0 && (
+                <span
+                  title={`${missingStats.estimatedZip} site${missingStats.estimatedZip === 1 ? '' : 's'} had no zip code, so a representative zip was estimated from the city + state using zips already in the utility lookup. Estimated zips show "(est)" in the zip column and drive the utility / state / rate match like a real zip.`}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 8, padding: '0.2rem 0.55rem', borderRadius: 999, background: '#EFF6FF', border: '1px solid #BFDBFE', color: '#1E40AF', fontSize: '0.72rem', fontWeight: 600 }}
+                >
+                  <span aria-hidden="true">📍</span>
+                  <span>{missingStats.estimatedZip} zip{missingStats.estimatedZip === 1 ? '' : 's'} estimated from city + state</span>
                 </span>
               )}
             </div>
