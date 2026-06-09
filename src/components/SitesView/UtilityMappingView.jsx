@@ -681,7 +681,7 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
             Map your Utility Lookup portfolio to interval-data availability using an uploaded list of utilities.
           </div>
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <input
             ref={fileRef}
             type="file"
@@ -709,17 +709,25 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
             title="Upload an Excel/CSV list of utilities with an interval-data-availability column."
             style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
           >{busy ? 'Working…' : (list.length ? 'Replace Utilities List' : 'Upload Utilities List')}</button>
-          {siteUtilities.length > 0 && (
-            <button
-              type="button"
-              disabled={busy || exporting || list.length === 0}
-              onClick={handleExportSiteMapping}
-              title={list.length === 0
-                ? 'Upload an interval-data list first so each site can be classified.'
-                : 'Export a styled workbook: a North-America map of sites by interval-data coverage, plus a per-site detail tab.'}
-              style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: (busy || exporting || list.length === 0) ? 'not-allowed' : 'pointer', fontFamily: 'inherit', color: '#1E293B', opacity: list.length === 0 ? 0.5 : 1 }}
-            >{exporting ? 'Exporting…' : '⬇ Export Site Mapping'}</button>
-          )}
+          {(() => {
+            const noSites = siteUtilities.length === 0;
+            const noList = list.length === 0;
+            const disabled = busy || exporting || noSites || noList;
+            const title = noSites
+              ? 'Upload your site list on the Utility Lookup tab first.'
+              : noList
+                ? 'Upload (or paste) an interval-data list above first so each site can be classified.'
+                : 'Download the styled analysis: a North-America interval-data coverage map plus a per-site detail tab.';
+            return (
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={handleExportSiteMapping}
+                title={title}
+                style={{ padding: '0.4rem 0.9rem', border: '1px solid', borderColor: disabled ? 'var(--color-border)' : '#009530', background: disabled ? '#F1F5F9' : '#009530', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit', color: disabled ? '#94A3B8' : '#fff' }}
+              >{exporting ? 'Exporting…' : '⬇ Download Analysis'}</button>
+            );
+          })()}
           {list.length > 0 && (
             <button
               type="button"
