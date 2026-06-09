@@ -171,6 +171,38 @@ export const CA_MARKETS = [
   { code: 'YT', name: 'Yukon',                    category: 'REG_NG_EP' },
 ];
 
+// Map a free-text Canadian province / territory value to its 2-letter
+// postal code: a code already ("ON"), a full name ("Ontario"), or an
+// accented / aliased variant ("Québec", "Quebec", "Newfoundland"). Returns
+// null when nothing matches. This mirrors normalizeState (which is US-only)
+// so Canadian sites resolve to the codes the province-centre table and the
+// admin-1 map polygons key on, instead of staying as raw province names.
+const _PROVINCE_CODES = new Set(CA_MARKETS.map(m => m.code));
+const _PROVINCE_NAME_TO_CODE = (() => {
+  const m = {};
+  for (const { code, name } of CA_MARKETS) m[name.toLowerCase()] = code;
+  // Common aliases / unaccented + shorthand variants beyond the
+  // canonical names above (the only accented name is "Québec").
+  return Object.assign(m, {
+    'quebec': 'QC',
+    'newfoundland': 'NL',
+    'newfoundland & labrador': 'NL',
+    'labrador': 'NL',
+    'pei': 'PE',
+    'nwt': 'NT',
+    'yukon territory': 'YT',
+  });
+})();
+export function normalizeProvince(value) {
+  if (!value) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const code2 = raw.toUpperCase().replace(/[^A-Z]/g, '');
+  if (code2.length === 2 && _PROVINCE_CODES.has(code2)) return code2;
+  const key = raw.toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ').trim();
+  return _PROVINCE_NAME_TO_CODE[key] || null;
+}
+
 export function naCategoryFor(stateCode, isUS, isCA) {
   if (!stateCode) return null;
   const code = String(stateCode).toUpperCase();

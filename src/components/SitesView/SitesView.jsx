@@ -56,6 +56,7 @@ import {
   US_MARKETS,
   CA_MARKETS,
   naCategoryFor,
+  normalizeProvince,
 } from '../../data/naMarkets';
 import {
   COUNTRY_CENTERS,
@@ -8271,10 +8272,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   // Mapping page's "Download Analysis" button. Sheets:
   //   1. NAM — a North-America choropleth: each state / province shaded by
   //      the share of its portfolio sites mapped to a known utility.
-  //   2. Global — the same, country-level, for the whole world.
-  //   3. Site Detail — one row per site with its mapping state, the matched
+  //   2. Site Detail — one row per site with its mapping state, the matched
   //      uploaded name, mapped-to utility, Status, and Requirements / Comments.
-  //   4. State Breakdown — one row per state / province with mapping counts.
+  //   3. State Breakdown — one row per state / province with mapping counts,
+  //      unique-utility count, and the Has Access split (sorted by most
+  //      Has Access sites).
   // `nameMapList` is the Utility Name Mapping table passed up from
   // UtilityMappingView; each site's electric utility is classified against it.
   async function exportUtilityMappingAnalysis(nameMapList) {
@@ -8322,43 +8324,50 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       return true;
     };
 
-    // Per-site detail rows + per-state (NAM) and per-country (Global)
-    // buckets for the two maps.
+    // Per-site detail rows + per-state (NAM) buckets for the choropleth.
     const detailRows = [];
     const buckets = new Map(); // key -> { center, total, mapped, unmapped, notInList, label, stateCode, countryLabel }
-    const countryBuckets = new Map(); // normalized country -> { total, mapped, unmapped, notInList }
-    const stateBuckets = new Map(); // `${country}|||${state}` -> { country, state, total, mapped, unmapped, notInList }
+    const stateBuckets = new Map(); // `${country}|||${state}` -> { country, state, total, mapped, unmapped, notInList, accessYes, accessNo, utilities:Set, requirements:Set }
+    const allUtilities = new Set(); // distinct electric utilities portfolio-wide (for the State Breakdown total row)
     let totMapped = 0, totUnmapped = 0, totNotInList = 0;
     let totAccessYes = 0, totAccessNo = 0;
     for (const r of rows) {
       const siteName = siteNameColumn ? String(r[siteNameColumn] || '').trim() : '';
       const electricUtility = String(r.__electric__ || '').trim();
+      const utilityKey = electricUtility.toLowerCase();
       const rawCountry = String(r.__country__ || '').trim();
       const country = normalizeCountryName(rawCountry) || rawCountry;
-      const stateCode = String(r.__state__ || '').trim().toUpperCase();
+      const isUS = /^(united states|usa|us)$/i.test(country);
+      const isCA = /^(canada|ca)$/i.test(country);
+      // US sites already resolve __state__ to a 2-letter code via the zip
+      // lookup; Canadian sites keep whatever province string was uploaded
+      // ("Ontario", "Québec", "ON"), so normalize it to the 2-letter postal
+      // code the province-centre table and the admin-1 map polygons key on —
+      // otherwise provinces never match a map bucket and stay unfilled.
+      const rawState = String(r.__state__ || '').trim();
+      const stateCode = isCA
+        ? (normalizeProvince(r.__stateProvinceDisplay__) || normalizeProvince(rawState) || rawState.toUpperCase())
+        : rawState.toUpperCase();
       const stateDisplay = r.__stateProvinceDisplay__ || stateCode || '—';
       const cls = classify(electricUtility);
       if (cls.status === 'mapped') totMapped++;
       else if (cls.status === 'unmapped') totUnmapped++;
       else totNotInList++;
+      if (utilityKey) allUtilities.add(utilityKey);
       // Utility access (from the Status column) + requirements text,
       // surfaced per state on the State Breakdown tab.
       const access = statusHasAccess(cls.rowStatus);
       if (access === true) totAccessYes++;
       else if (access === false) totAccessNo++;
-      if (country) {
-        let cb = countryBuckets.get(country);
-        if (!cb) { cb = { total: 0, mapped: 0, unmapped: 0, notInList: 0 }; countryBuckets.set(country, cb); }
-        bumpBucket(cb, cls.status);
-      }
       // State / province breakdown across the whole portfolio (NAM + intl).
       {
         const sKey = `${rawCountry}|||${stateDisplay}`;
         let sb = stateBuckets.get(sKey);
-        if (!sb) { sb = { country: rawCountry, state: stateDisplay, total: 0, mapped: 0, unmapped: 0, notInList: 0, accessYes: 0, accessNo: 0, requirements: new Set() }; stateBuckets.set(sKey, sb); }
+        if (!sb) { sb = { country: rawCountry, state: stateDisplay, total: 0, mapped: 0, unmapped: 0, notInList: 0, accessYes: 0, accessNo: 0, utilities: new Set(), requirements: new Set() }; stateBuckets.set(sKey, sb); }
         bumpBucket(sb, cls.status);
         if (access === true) sb.accessYes++;
         else if (access === false) sb.accessNo++;
+        if (utilityKey) sb.utilities.add(utilityKey);
         if (cls.requirements) sb.requirements.add(cls.requirements);
       }
       detailRows.push({
@@ -8373,8 +8382,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         status: cls.status === 'mapped' ? 'Mapped' : (cls.status === 'unmapped' ? 'Unmapped' : 'Not in mapping list'),
         detail: cls.detail,
       });
-      const isUS = /^(united states|usa|us)$/i.test(country);
-      const isCA = /^(canada|ca)$/i.test(country);
       let center = null, label = '', countryLabel = '';
       if (isUS && US_STATE_CENTERS[stateCode]) { center = US_STATE_CENTERS[stateCode]; label = `${stateCode}, USA`; countryLabel = 'United States'; }
       else if (isCA && CANADA_PROVINCE_CENTERS[stateCode]) { center = CANADA_PROVINCE_CENTERS[stateCode]; label = `${stateCode}, Canada`; countryLabel = 'Canada'; }
@@ -8569,173 +8576,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       totalRow.height = 20;
     }
 
-    // ---- Sheet 2: Global utility-mapping dot map ----
-    // World view so non-NA sites are represented too: one dot per country
-    // at its centroid, sized by total portfolio sites and shaded by the
-    // share mapped to a known utility (grey = no utilities in the mapping
-    // table). NA countries appear as single aggregated dots here; the NAM
-    // sheet carries the state-level detail.
-    {
-      const COLS = 16;
-      const ws = wb.addWorksheet('Global', {
-        properties: { tabColor: { argb: SE_GREEN } },
-        views: [{ showGridLines: false }],
-      });
-      ws.columns = Array.from({ length: COLS }, () => ({ width: 12 }));
-
-      const MAP_W = 960, MAP_H = 480, PAD = 16, TITLE_H = 30, LEGEND_H = 70;
-      const W = MAP_W + PAD * 2;
-      const H = TITLE_H + MAP_H + LEGEND_H + PAD * 2;
-      const canvas = document.createElement('canvas');
-      canvas.width = W; canvas.height = H;
-      const ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, W, H);
-
-      // Equirectangular world fit into the panel, aspect preserved.
-      const originX = PAD, originY = TITLE_H + PAD;
-      const worldScale = Math.min(MAP_W / 360, MAP_H / 180);
-      const worldOffX = (MAP_W - 360 * worldScale) / 2;
-      const worldOffY = (MAP_H - 180 * worldScale) / 2;
-      const project = (lng, lat) => [
-        originX + worldOffX + (lng + 180) * worldScale,
-        originY + worldOffY + (90 - lat) * worldScale,
-      ];
-      const drawFeature = (rings, fill, stroke) => {
-        ctx.fillStyle = fill; ctx.strokeStyle = stroke; ctx.lineWidth = 0.5;
-        for (const ring of rings) {
-          const subRings = []; let cur = []; let prevLng = null;
-          for (const pt of ring) {
-            if (prevLng !== null && Math.abs(pt[0] - prevLng) > 180) { if (cur.length > 2) subRings.push(cur); cur = []; }
-            cur.push(pt); prevLng = pt[0];
-          }
-          if (cur.length > 2) subRings.push(cur);
-          for (const sr of subRings) {
-            ctx.beginPath();
-            for (let i = 0; i < sr.length; i++) { const [px, py] = project(sr[i][0], sr[i][1]); if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py); }
-            ctx.closePath(); ctx.fill(); ctx.stroke();
-          }
-        }
-      };
-
-      const lerp = (a, b, t) => a + (b - a) * t;
-      const GREEN_LIGHT = [220, 252, 231]; // #DCFCE7
-      const GREEN_DARK = [4, 120, 87];     // #047857
-      const NO_SITES_FILL = '#E5E7EB';
-      const NO_SITES_STROKE = '#9CA3AF';
-      const pctFill = (b) => {
-        const t = b.total ? b.mapped / b.total : 0;
-        return `rgb(${Math.round(lerp(GREEN_LIGHT[0], GREEN_DARK[0], t))},${Math.round(lerp(GREEN_LIGHT[1], GREEN_DARK[1], t))},${Math.round(lerp(GREEN_LIGHT[2], GREEN_DARK[2], t))})`;
-      };
-
-      // Choropleth — each country filled by the share of its portfolio sites
-      // mapped to a known utility; countries with no sites stay light grey.
-      ctx.save();
-      ctx.beginPath(); ctx.rect(originX, originY, MAP_W, MAP_H); ctx.clip();
-      ctx.fillStyle = '#F1F5F9'; ctx.fillRect(originX, originY, MAP_W, MAP_H); // ocean
-      const drawnKeys = new Set();
-      for (const feat of getCountryFeatures()) {
-        const key = TOPO_NAME_TO_DEREG_KEY[feat.name] || feat.name;
-        const b = countryBuckets.get(key);
-        if (b) drawnKeys.add(key);
-        drawFeature(feat.rings, b ? pctFill(b) : NO_SITES_FILL, NO_SITES_STROKE);
-      }
-      ctx.restore();
-      // Portfolio countries with no matching polygon — shown in the table only.
-      let globalNoFeature = 0;
-      for (const key of countryBuckets.keys()) if (!drawnKeys.has(key)) globalNoFeature++;
-
-      // Legend — gradient bar (0–100 % mapped) + grey "no sites" swatch.
-      const legendY = originY + MAP_H + PAD;
-      ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; ctx.font = '13px Nunito Sans, Arial, sans-serif';
-      const gradX = originX, gradW = 280, gradH = 16;
-      const grad = ctx.createLinearGradient(gradX, 0, gradX + gradW, 0);
-      grad.addColorStop(0, `rgb(${GREEN_LIGHT.join(',')})`);
-      grad.addColorStop(1, `rgb(${GREEN_DARK.join(',')})`);
-      ctx.fillStyle = grad; ctx.fillRect(gradX, legendY, gradW, gradH);
-      ctx.strokeStyle = NO_SITES_STROKE; ctx.lineWidth = 0.8; ctx.strokeRect(gradX, legendY, gradW, gradH);
-      ctx.fillStyle = '#0F172A';
-      ctx.fillText('0%', gradX, legendY + gradH + 13);
-      ctx.textAlign = 'right'; ctx.fillText('100 % mapped to a known utility', gradX + gradW, legendY + gradH + 13);
-      ctx.textAlign = 'left';
-      const gx = gradX + gradW + 48;
-      ctx.fillStyle = NO_SITES_FILL; ctx.fillRect(gx, legendY, gradH, gradH);
-      ctx.strokeStyle = NO_SITES_STROKE; ctx.strokeRect(gx, legendY, gradH, gradH);
-      ctx.fillStyle = '#0F172A'; ctx.fillText('No portfolio sites', gx + gradH + 8, legendY + gradH / 2);
-
-      const dataUrl = canvas.toDataURL('image/png');
-      const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
-
-      ws.mergeCells(1, 1, 1, COLS);
-      const title = ws.getCell(1, 1);
-      title.value = 'Utility Mapping Coverage — Global';
-      title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
-      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(1).height = 30;
-
-      ws.mergeCells(2, 1, 2, COLS);
-      const sub = ws.getCell(2, 1);
-      const noFeatureNote = globalNoFeature > 0 ? ` (${globalNoFeature} countr${globalNoFeature === 1 ? 'y' : 'ies'} without a map outline shown in the table only)` : '';
-      sub.value = `${countryBuckets.size} countr${countryBuckets.size === 1 ? 'y' : 'ies'} across the portfolio. Each country is shaded by the share of its portfolio sites mapped to a known utility (light → dark green); countries with no portfolio sites stay light grey.${noFeatureNote}`;
-      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
-      sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
-      ws.getRow(2).height = 36;
-
-      ws.addImage(imageId, { tl: { col: 0, row: 3 }, ext: { width: W, height: H } });
-
-      const SUMMARY_START = 3 + Math.ceil(H / 15) + 2;
-      ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
-      const sumHdr = ws.getCell(SUMMARY_START, 1);
-      sumHdr.value = 'Utility Mapping by Country';
-      sumHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
-      sumHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-      sumHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(SUMMARY_START).height = 22;
-
-      const tableHeaderRow = SUMMARY_START + 1;
-      const breakdownCols = ['Country', 'Total Sites', 'Mapped', 'Unmapped', 'Not in List', '% Mapped'];
-      const hdr = ws.getRow(tableHeaderRow);
-      breakdownCols.forEach((label, i) => {
-        const cell = hdr.getCell(i + 1);
-        cell.value = label;
-        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-        cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
-        cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
-      });
-      hdr.height = 24;
-      const cbRows = Array.from(countryBuckets.entries())
-        .sort((a, b) => b[1].total - a[1].total || a[0].localeCompare(b[0]));
-      cbRows.forEach(([country, b], i) => {
-        const row = ws.getRow(tableHeaderRow + 1 + i);
-        const vals = [country, b.total, b.mapped, b.unmapped, b.notInList, b.total ? b.mapped / b.total : 0];
-        const fmts = [null, '#,##0', '#,##0', '#,##0', '#,##0', '0%'];
-        vals.forEach((v, ci) => {
-          const cell = row.getCell(ci + 1);
-          cell.value = v;
-          cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-          if (fmts[ci]) cell.numFmt = fmts[ci];
-          cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } } };
-        });
-        row.height = 18;
-      });
-      const total = totMapped + totUnmapped + totNotInList;
-      const totalRow = ws.getRow(tableHeaderRow + 1 + cbRows.length);
-      const totVals = ['Total', total, totMapped, totUnmapped, totNotInList, total ? totMapped / total : 0];
-      const totFmts = [null, '#,##0', '#,##0', '#,##0', '#,##0', '0%'];
-      totVals.forEach((v, ci) => {
-        const cell = totalRow.getCell(ci + 1);
-        cell.value = v;
-        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-        if (totFmts[ci]) cell.numFmt = totFmts[ci];
-        cell.border = { top: { style: 'thin', color: { argb: SE_GREEN_DARK } }, bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
-      });
-      totalRow.height = 20;
-    }
-
     // ---- Sheet 3: Site Detail ----
     {
       const ws = wb.addWorksheet('Site Detail', {
@@ -8802,6 +8642,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         { label: 'Mapped', get: (s) => s.mapped, width: 12, numFmt: '#,##0' },
         { label: 'Unmapped', get: (s) => s.unmapped, width: 12, numFmt: '#,##0' },
         { label: 'Not in List', get: (s) => s.notInList, width: 12, numFmt: '#,##0' },
+        { label: 'Unique Utilities', get: (s) => (s.utilities ? s.utilities.size : 0), width: 14, numFmt: '#,##0' },
         { label: '% Mapped', get: (s) => (s.total ? s.mapped / s.total : 0), width: 12, numFmt: '0%' },
         { label: 'Has Access', get: (s) => s.accessYes, width: 12, numFmt: '#,##0' },
         { label: 'No Access', get: (s) => s.accessNo, width: 12, numFmt: '#,##0' },
@@ -8819,7 +8660,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } }, right: { style: 'hair', color: { argb: 'FFFFFFFF' } } };
       });
       head.height = 28;
+      // Sort by states with the most "Has Access" sites first, then by total
+      // sites, then alphabetically.
       const stateRows = Array.from(stateBuckets.values()).sort((a, b) =>
+        b.accessYes - a.accessYes ||
         b.total - a.total ||
         String(a.country).localeCompare(String(b.country)) ||
         String(a.state).localeCompare(String(b.state)));
@@ -8842,7 +8686,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // Total row.
       const total = totMapped + totUnmapped + totNotInList;
       const totalRow = ws.getRow(2 + stateRows.length);
-      const totVals = ['Total', '', total, totMapped, totUnmapped, totNotInList, total ? totMapped / total : 0, totAccessYes, totAccessNo, total ? totAccessYes / total : 0, ''];
+      const totVals = ['Total', '', total, totMapped, totUnmapped, totNotInList, allUtilities.size, total ? totMapped / total : 0, totAccessYes, totAccessNo, total ? totAccessYes / total : 0, ''];
       totVals.forEach((v, i) => {
         const cell = totalRow.getCell(i + 1);
         cell.value = v;
