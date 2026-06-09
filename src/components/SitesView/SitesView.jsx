@@ -4687,9 +4687,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       };
 
       // Composite canvas — two panels side by side, each with its own
-      // legend strip underneath.
-      const MAP_W = 600;
-      const MAP_H = 520;
+      // legend strip underneath. Same panel dimensions as the NAM View so
+      // the two sheets' maps are identically sized; the cosine-corrected
+      // projection below centres Europe within the wider panel.
+      const MAP_W = 800;
+      const MAP_H = 500;
       const PAD = 16;
       const TITLE_H = 36;
       const LEGEND_H = 70;
@@ -4844,8 +4846,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       });
 
       // Overview tier table — same rollup shape as the NAM View, scoped
-      // to European sites. Anchored clear of the bottom of the map image.
-      const SUMMARY_START = 40;
+      // to European sites. Anchored at row 39 (same as the NAM View) to
+      // clear the bottom edge of the now NAM-sized 638-px map image.
+      const SUMMARY_START = 39;
       ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
       const sumHdr = ws.getCell(SUMMARY_START, 1);
       sumHdr.value = 'Europe Overview';
