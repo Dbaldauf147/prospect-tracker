@@ -4561,6 +4561,411 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       }
     }
 
+    // ---- Europe View sheet -------------------------------------
+    // Same two-panel choropleth treatment as the NAM View, scoped to
+    // Europe. Country-level resolution (no per-region breakout): every
+    // country is shaded by its COUNTRY_DEREGULATION status for the panel's
+    // commodity (Natural Gas left, Electric Power right) and darkened by
+    // its portfolio site count; countries with no sites stay light grey.
+    // A site counts as European when its country resolves to a
+    // COUNTRY_DEREGULATION entry whose region starts with "Europe" (covers
+    // "Europe" and the trans-continental "Europe/Asia" entries).
+    {
+      const ws = wb.addWorksheet('Europe View', {
+        properties: { tabColor: { argb: SE_GREEN_DARK } },
+        views: [{ showGridLines: false }],
+      });
+      const MAP_COLS = 14;
+      const LEGEND_COLS = 6;
+      const COLS = MAP_COLS + LEGEND_COLS;
+      const NUMERIC_WIDE_COLS = new Set([4, 5, 6, 7]);
+      ws.columns = [
+        ...Array.from({ length: MAP_COLS }, (_, i) => ({
+          width: NUMERIC_WIDE_COLS.has(i + 1) ? 17 : 12,
+        })),
+        { width: 4 }, { width: 6 }, { width: 6 },
+        { width: 12 }, { width: 12 }, { width: 12 },
+      ];
+
+      // NAM-style palette + helpers. statusTier returns dereg/some/reg/
+      // unknown for a country; tierToStatus folds it into the chart's
+      // dereg/limited/reg categories so the chips read the same as NAM.
+      const STATUS_FILL = {
+        reg:     '#94A3B8', // slate
+        dereg:   '#10B981', // emerald
+        limited: '#F59E0B', // amber
+      };
+      const STATUS_LABEL = {
+        reg:     'Regulated',
+        dereg:   'Deregulated',
+        limited: 'Limited Deregulation',
+      };
+      const NO_SITES_FILL   = '#E5E7EB';
+      const NO_SITES_STROKE = '#9CA3AF';
+      const tierToStatus = (tier) => {
+        if (tier === 'dereg') return 'dereg';
+        if (tier === 'some')  return 'limited';
+        return 'reg'; // 'reg' or 'unknown' both fall through
+      };
+      const argbFromHex = (hex) => 'FF' + String(hex).replace(/^#/, '').toUpperCase();
+
+      // Bucket European sites by country + aggregate load / cost. One row
+      // pass feeds the map (buckets), the Overview tier table
+      // (electric/gasTierAgg), and the per-country table (countryAggs).
+      const isEuropean = (c) => !!c && String(c.region || '').startsWith('Europe');
+      const finite = (v) => (typeof v === 'number' && Number.isFinite(v)) ? v : 0;
+      const buckets = new Map();
+      const countryAggs = new Map();
+      const blankTierAgg = () => ({ kwh: 0, therms: 0, cost: 0 });
+      const electricTierAgg = { dereg: blankTierAgg(), some: blankTierAgg(), reg: blankTierAgg(), unknown: blankTierAgg() };
+      const gasTierAgg      = { dereg: blankTierAgg(), some: blankTierAgg(), reg: blankTierAgg(), unknown: blankTierAgg() };
+      let euSiteCount = 0;
+      for (const r of rows) {
+        const rawCountry = String(r.__country__ || '').trim();
+        const country = normalizeCountryName(rawCountry) || rawCountry;
+        const c = COUNTRY_DEREGULATION[country];
+        if (!isEuropean(c)) continue;
+        euSiteCount++;
+        const eTier = statusTier(c.electric);
+        const gTier = statusTier(c.gas);
+        if (!buckets.has(country)) buckets.set(country, { elecTier: eTier, gasTier: gTier, count: 0 });
+        buckets.get(country).count++;
+        const kwh = finite(r.__kwh__);
+        const therms = finite(r.__therms__);
+        const eCost = finite(r.__electricCostActual__) || finite(r.__electricCostEstimated__);
+        const gCost = finite(r.__gasCostActual__) || finite(r.__gasCostEstimated__);
+        electricTierAgg[eTier].kwh += kwh; electricTierAgg[eTier].cost += eCost;
+        gasTierAgg[gTier].therms += therms; gasTierAgg[gTier].cost += gCost;
+        let agg = countryAggs.get(country);
+        if (!agg) {
+          agg = {
+            country,
+            elecTierKey: eTier, gasTierKey: gTier,
+            elecStatus: STATUS_LABEL[tierToStatus(eTier)],
+            gasStatus:  STATUS_LABEL[tierToStatus(gTier)],
+            sites: 0, kwh: 0, therms: 0, cost: 0,
+          };
+          countryAggs.set(country, agg);
+        }
+        agg.sites++; agg.kwh += kwh; agg.therms += therms; agg.cost += eCost + gCost;
+      }
+
+      // Tier roll-up for the Overview table — site counts per tier from
+      // the buckets, load + cost already attributed per row above.
+      let elecDereg = 0, elecSome = 0, elecReg = 0, elecUnknown = 0;
+      let gasDereg = 0, gasSome = 0, gasReg = 0, gasUnknown = 0;
+      let mappedSites = 0;
+      for (const b of buckets.values()) {
+        mappedSites += b.count;
+        if (b.elecTier === 'dereg') elecDereg += b.count;
+        else if (b.elecTier === 'some') elecSome += b.count;
+        else if (b.elecTier === 'reg') elecReg += b.count;
+        else elecUnknown += b.count;
+        if (b.gasTier === 'dereg') gasDereg += b.count;
+        else if (b.gasTier === 'some') gasSome += b.count;
+        else if (b.gasTier === 'reg') gasReg += b.count;
+        else gasUnknown += b.count;
+      }
+
+      // Site-count → fill shading. Sqrt scaling keeps a single-site
+      // country visibly tinted while the densest market hits the full
+      // status hue plus a 20 % darken.
+      const maxSiteCount = Math.max(1, ...Array.from(buckets.values()).map(b => b.count));
+      const argbToRgb = (hex) => {
+        const h = String(hex).replace(/^#/, '').replace(/^FF/i, '');
+        return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+      };
+      const rgbToHex = (rgb) => '#' + rgb.map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+      const shadeForCount = (statusHex, count) => {
+        if (count <= 0) return NO_SITES_FILL;
+        const [r, g, b] = argbToRgb(statusHex);
+        const t = Math.sqrt(count / maxSiteCount);
+        const sat  = 0.45 + 0.55 * t;
+        const dark = 0.20 * t;
+        const blend = (c) => (c * sat + 255 * (1 - sat)) * (1 - dark);
+        return rgbToHex([blend(r), blend(g), blend(b)]);
+      };
+
+      // Composite canvas — two panels side by side, each with its own
+      // legend strip underneath.
+      const MAP_W = 600;
+      const MAP_H = 520;
+      const PAD = 16;
+      const TITLE_H = 36;
+      const LEGEND_H = 70;
+      const W = MAP_W * 2 + PAD * 3;
+      const H = TITLE_H + MAP_H + LEGEND_H + PAD * 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = H;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, W, H);
+
+      // Europe bounding box. Iceland (~-22°) to western Russia / Turkey
+      // (~45°E), Mediterranean (~34°N) up to the top of Norway (~72°N).
+      // Longitude is compressed by cos(mid-latitude) so Europe isn't
+      // stretched horizontally the way a raw equirectangular projection
+      // would render it; the drawn map is then centred in the panel.
+      const EU_LNG_MIN = -25, EU_LNG_MAX = 45;
+      const EU_LAT_MIN = 34, EU_LAT_MAX = 72;
+      const EU_MID_LAT = (EU_LAT_MIN + EU_LAT_MAX) / 2;
+      const EU_LNG_K = Math.cos(EU_MID_LAT * Math.PI / 180);
+      const euLngSpan = (EU_LNG_MAX - EU_LNG_MIN) * EU_LNG_K;
+      const euLatSpan = EU_LAT_MAX - EU_LAT_MIN;
+      const euScale = Math.min(MAP_W / euLngSpan, MAP_H / euLatSpan);
+      const euOffX = (MAP_W - euLngSpan * euScale) / 2;
+      const euOffY = (MAP_H - euLatSpan * euScale) / 2;
+      const projectInto = (originX, originY) => (lng, lat) => [
+        originX + euOffX + (lng - EU_LNG_MIN) * EU_LNG_K * euScale,
+        originY + euOffY + (EU_LAT_MAX - lat) * euScale,
+      ];
+
+      // Antimeridian-aware feature drawing (Russia wraps past 180°).
+      const drawFeature = (project, rings) => {
+        for (const ring of rings) {
+          const subRings = [];
+          let cur = [];
+          let prevLng = null;
+          for (const pt of ring) {
+            if (prevLng !== null && Math.abs(pt[0] - prevLng) > 180) {
+              if (cur.length > 2) subRings.push(cur);
+              cur = [];
+            }
+            cur.push(pt);
+            prevLng = pt[0];
+          }
+          if (cur.length > 2) subRings.push(cur);
+          for (const sr of subRings) {
+            ctx.beginPath();
+            for (let i = 0; i < sr.length; i++) {
+              const [px, py] = project(sr[i][0], sr[i][1]);
+              if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+          }
+        }
+      };
+
+      const countryFeatures = getCountryFeatures();
+
+      const drawPanel = (originX, commodity, headerLabel) => {
+        const project = projectInto(originX, TITLE_H);
+        // Panel header above the map.
+        ctx.fillStyle = '#0F172A';
+        ctx.font = 'bold 18px Nunito Sans, Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText(headerLabel, originX + MAP_W / 2, TITLE_H - 10);
+
+        // Clip every layer to the panel so geometry outside the Europe
+        // box (the rest of Asia / Africa) is cut flush with the edge.
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(originX, TITLE_H, MAP_W, MAP_H);
+        ctx.clip();
+
+        // Light ocean tint so land with no sites (grey) stays distinct.
+        ctx.fillStyle = '#F1F5F9';
+        ctx.fillRect(originX, TITLE_H, MAP_W, MAP_H);
+
+        ctx.lineWidth = 0.5;
+        ctx.strokeStyle = NO_SITES_STROKE;
+        for (const feat of countryFeatures) {
+          const derGKey = TOPO_NAME_TO_DEREG_KEY[feat.name] || feat.name;
+          const c = COUNTRY_DEREGULATION[derGKey];
+          const tier = c ? statusTier(commodity === 'gas' ? c.gas : c.electric) : 'unknown';
+          const status = tierToStatus(tier);
+          const sites = buckets.get(derGKey)?.count || 0;
+          ctx.fillStyle = sites > 0 ? shadeForCount(STATUS_FILL[status], sites) : NO_SITES_FILL;
+          drawFeature(project, feat.rings);
+        }
+        ctx.restore();
+      };
+
+      drawPanel(PAD,             'gas',      'Natural Gas Markets');
+      drawPanel(PAD * 2 + MAP_W, 'electric', 'Electric Power Markets');
+
+      // Per-panel legends along the bottom — same chip set on both maps.
+      const SWATCH = 22;
+      const GAP_SWATCH_LABEL = 8;
+      const GAP_ITEMS = 22;
+      ctx.font = '13px Nunito Sans, Arial, sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      const itemW = (label) => SWATCH + GAP_SWATCH_LABEL + ctx.measureText(label).width;
+      const drawPanelLegend = (originX) => {
+        const labels = [
+          { color: STATUS_FILL.dereg,   label: STATUS_LABEL.dereg },
+          { color: STATUS_FILL.limited, label: STATUS_LABEL.limited },
+          { color: STATUS_FILL.reg,     label: STATUS_LABEL.reg },
+          { color: NO_SITES_FILL,       label: 'No portfolio sites' },
+        ];
+        const totalW = labels.reduce((a, it) => a + itemW(it.label), 0) + GAP_ITEMS * (labels.length - 1);
+        let cursorX = originX + (MAP_W - totalW) / 2;
+        const legendY = TITLE_H + MAP_H + PAD * 2;
+        for (const it of labels) {
+          ctx.fillStyle = it.color;
+          ctx.fillRect(cursorX, legendY, SWATCH, SWATCH);
+          ctx.strokeStyle = NO_SITES_STROKE;
+          ctx.lineWidth = 0.8;
+          ctx.strokeRect(cursorX, legendY, SWATCH, SWATCH);
+          ctx.fillStyle = '#0F172A';
+          ctx.fillText(it.label, cursorX + SWATCH + GAP_SWATCH_LABEL, legendY + SWATCH / 2);
+          cursorX += itemW(it.label) + GAP_ITEMS;
+        }
+      };
+      drawPanelLegend(PAD);
+      drawPanelLegend(PAD * 2 + MAP_W);
+
+      const dataUrl = canvas.toDataURL('image/png');
+      const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
+
+      // Title band.
+      ws.mergeCells(1, 1, 1, COLS);
+      const title = ws.getCell(1, 1);
+      title.value = 'Europe View — Site Distribution by Market';
+      title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(1).height = 30;
+
+      ws.mergeCells(2, 1, 2, COLS);
+      const sub = ws.getCell(2, 1);
+      sub.value = `${euSiteCount} Europe site${euSiteCount === 1 ? '' : 's'} across ${buckets.size} countr${buckets.size === 1 ? 'y' : 'ies'}. Natural Gas (left) and Electric Power (right) maps each shade every country by its market status (hue) and portfolio site count (darker = more sites); countries with no sites stay light grey.`;
+      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+      sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      ws.getRow(2).height = 36;
+
+      ws.addImage(imageId, {
+        tl: { col: 0, row: 3 },
+        ext: { width: W, height: H },
+      });
+
+      // Overview tier table — same rollup shape as the NAM View, scoped
+      // to European sites. Anchored clear of the bottom of the map image.
+      const SUMMARY_START = 40;
+      ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
+      const sumHdr = ws.getCell(SUMMARY_START, 1);
+      sumHdr.value = 'Europe Overview';
+      sumHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      sumHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      sumHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(SUMMARY_START).height = 22;
+
+      const tableHeaderRow = SUMMARY_START + 1;
+      const overviewHeaders = ['Tier', 'Electric Sites', 'Electric %', 'Gas Sites', 'Gas %', 'Load (kWh)', 'Load (Dth)', 'Total Cost ($)'];
+      const hdr = ws.getRow(tableHeaderRow);
+      overviewHeaders.forEach((label, i) => {
+        const cell = hdr.getCell(i + 1);
+        cell.value = label;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      });
+      hdr.height = 22;
+      const tierRows = [
+        ['Deregulated',           'dereg',   elecDereg,   gasDereg],
+        ['Limited Deregulation',  'some',    elecSome,    gasSome],
+        ['Regulated / unlikely',  'reg',     elecReg,     gasReg],
+        ['No data',               'unknown', elecUnknown, gasUnknown],
+      ];
+      const pct = (n) => mappedSites > 0 ? n / mappedSites : 0;
+      tierRows.forEach((tr, i) => {
+        const r = ws.getRow(tableHeaderRow + 1 + i);
+        const [label, tierKey, eSites, gSites] = tr;
+        const kwh = electricTierAgg[tierKey]?.kwh || 0;
+        const therms = gasTierAgg[tierKey]?.therms || 0;
+        const cost = (electricTierAgg[tierKey]?.cost || 0) + (gasTierAgg[tierKey]?.cost || 0);
+        r.getCell(1).value = label;
+        r.getCell(2).value = eSites;
+        r.getCell(3).value = pct(eSites);
+        r.getCell(4).value = gSites;
+        r.getCell(5).value = pct(gSites);
+        r.getCell(6).value = Math.round(kwh);
+        r.getCell(7).value = Math.round(therms / 10);
+        r.getCell(8).value = Math.round(cost);
+        r.getCell(3).numFmt = '0.0%';
+        r.getCell(5).numFmt = '0.0%';
+        r.getCell(6).numFmt = '#,##0';
+        r.getCell(7).numFmt = '#,##0';
+        r.getCell(8).numFmt = '"$"#,##0';
+        for (let ci = 1; ci <= overviewHeaders.length; ci++) {
+          r.getCell(ci).font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          r.getCell(ci).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          r.getCell(ci).border = {
+            bottom: { style: 'hair', color: { argb: SE_BORDER } },
+            right:  { style: 'hair', color: { argb: SE_BORDER } },
+          };
+        }
+        r.height = 20;
+      });
+
+      // Per-country deregulation table — only countries with portfolio
+      // sites (same rule as the NAM state table), ranked by Annual Cost
+      // descending then country name. NG / EP status cells are tinted with
+      // their tier hue so the table reads like the map legend.
+      const euCountryRows = [...countryAggs.values()]
+        .sort((a, b) => (b.cost - a.cost) || String(a.country).localeCompare(String(b.country)));
+      if (euCountryRows.length > 0) {
+        const cHdrRow = tableHeaderRow + tierRows.length + 3;
+        ws.mergeCells(cHdrRow, 1, cHdrRow, COLS);
+        const cHdr = ws.getCell(cHdrRow, 1);
+        cHdr.value = 'Country deregulation status';
+        cHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+        cHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        cHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        ws.getRow(cHdrRow).height = 22;
+
+        const cTblHdrRow = cHdrRow + 1;
+        const cCols = ['Country', 'Natural Gas', 'Electric Power', 'Sites', 'Load (kWh)', 'Load (Dth)', 'Annual Cost ($)'];
+        const cHdrCells = ws.getRow(cTblHdrRow);
+        cCols.forEach((label, i) => {
+          const cell = cHdrCells.getCell(i + 1);
+          cell.value = label;
+          cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        });
+        cHdrCells.height = 22;
+
+        euCountryRows.forEach((cr, i) => {
+          const rr = ws.getRow(cTblHdrRow + 1 + i);
+          rr.getCell(1).value = cr.country;
+          rr.getCell(2).value = cr.gasStatus;
+          rr.getCell(3).value = cr.elecStatus;
+          rr.getCell(4).value = cr.sites;
+          rr.getCell(5).value = Math.round(cr.kwh);
+          rr.getCell(6).value = Math.round(cr.therms / 10);
+          rr.getCell(7).value = Math.round(cr.cost);
+          rr.getCell(4).numFmt = '#,##0';
+          rr.getCell(5).numFmt = '#,##0';
+          rr.getCell(6).numFmt = '#,##0';
+          rr.getCell(7).numFmt = '"$"#,##0';
+          for (let ci = 1; ci <= cCols.length; ci++) {
+            rr.getCell(ci).font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            rr.getCell(ci).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+            rr.getCell(ci).border = {
+              bottom: { style: 'hair', color: { argb: SE_BORDER } },
+              right:  { style: 'hair', color: { argb: SE_BORDER } },
+            };
+          }
+          // Tint the status cells with their tier hue (amber gets dark
+          // text, the darker green / slate get white) so the table mirrors
+          // the map's colour key.
+          const tintStatusCell = (cell, tierKey) => {
+            const status = tierToStatus(tierKey);
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: argbFromHex(STATUS_FILL[status]) } };
+            cell.font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: status === 'limited' ? SE_TEXT_DARK : 'FFFFFFFF' } };
+          };
+          tintStatusCell(rr.getCell(2), cr.gasTierKey);
+          tintStatusCell(rr.getCell(3), cr.elecTierKey);
+          rr.height = 20;
+        });
+      }
+    }
+
     // The second tab in the workbook is always named "Indicative
     // Savings" now — the old "Indicative Savings by State"
     // formulation was confusing when the portfolio happened to be
