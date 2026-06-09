@@ -3449,6 +3449,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           consumption: Math.round(g.consumption),
           spend: Math.round(g.spend),
           range,
+          // European country buckets resolve to a "TBD" band (no
+          // committed lowPct/highPct) — flagged here so the by-state
+          // writer shows TBD in the Low/High cells and a flat $0/0 % in
+          // the savings columns instead of a formula that errors against
+          // the empty percentage inputs.
+          isTbd: range === 'TBD',
           // Per-state flags joined with newlines so the cell wraps
           // visibly on the by-state sheet. Electric: small market
           // (< $1M dereg spend), Risk Management consideration
@@ -5254,7 +5260,14 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const TOO_LOW_FILL = 'FFFEEAD2';
       const isTooLow = (row) => {
         const flags = String(row?.flags || '');
-        return flags.includes('small electric market') || flags.includes('too low for sourcing');
+        if (flags.includes('small electric market') || flags.includes('too low for sourcing')) return true;
+        // Deregulated markets that surface no deregulated spend have
+        // nothing to pursue — tint them amber like the small markets so
+        // the user can scan past them. Catches rows like OH whose status
+        // is Deregulated but every site there is regulated / carries no
+        // spend on file, which the "small market" flag (spend > 0) skips.
+        if (!row?.isParent && !(Number(row?.spend) > 0)) return true;
+        return false;
       };
       // Hide regulated leaf rows outright. Statuses 'no' (US/CA per-
       // state regulated), 'Regulated', 'Unlikely', and 'No opportunity'
@@ -5294,7 +5307,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           // a mix of children; user edits happen on the per-state
           // rows nested below.
           if ((c.editable === 'lowPct' || c.editable === 'highPct') && !row.isParent) {
-            if (typeof v === 'number' && Number.isFinite(v)) cell.value = v;
+            // European markets carry no committed range — show "TBD"
+            // text rather than a blank (which reads as 0 %) or a number.
+            if (row.isTbd) {
+              cell.value = 'TBD';
+              cell.ignoredErrors = { numberStoredAsText: true };
+            }
+            else if (typeof v === 'number' && Number.isFinite(v)) cell.value = v;
             else writeBlank(cell, !!c.numFmt);
             cell.font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: SE_TEXT_DARK } };
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: INPUT_FILL } };
@@ -5318,7 +5337,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             // Parent aggregate rows have no editable Low/High cells
             // to point at, so write the precomputed mid value as a
             // plain number instead of a formula referencing blanks.
-            if (lowRef && highRef && !row.isParent) {
+            if (lowRef && highRef && !row.isParent && !row.isTbd) {
               const formula = `IF(${SCENARIO_REF}="Conservative",${lowRef},IF(${SCENARIO_REF}="Aggressive",${highRef},(${lowRef}+${highRef})/2))`;
               cell.value = { formula, result: midResult };
               cell.ignoredErrors = { formula: true, formulaRange: true, numberStoredAsText: true };
@@ -5331,7 +5350,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             const spendRef = cellRef('spend', r);
             const pctRef = cellRef('savingsPct', r);
             const midResult = (v && typeof v === 'object' && Number.isFinite(v.mid)) ? Math.round(v.mid) : 0;
-            if (spendRef && pctRef && !row.isParent) {
+            if (spendRef && pctRef && !row.isParent && !row.isTbd) {
               cell.value = { formula: `${spendRef}*${pctRef}`, result: midResult };
               cell.ignoredErrors = { formula: true, formulaRange: true, numberStoredAsText: true };
             } else {
@@ -5347,7 +5366,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             const annualRef = cellRef('annualSavings', r);
             const N = c.yearGate;
             const midResult = (v && typeof v === 'object' && Number.isFinite(v.mid)) ? Math.round(v.mid * (N || 1)) : 0;
-            if (annualRef && N && !row.isParent) {
+            if (annualRef && N && !row.isParent && !row.isTbd) {
               cell.value = {
                 formula: `IF(--${YEARS_REF}>=${N},${annualRef}*${N},0)`,
                 result: midResult,
