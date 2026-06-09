@@ -431,18 +431,19 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
     URL.revokeObjectURL(url);
   }
 
-  // Export the styled site interval-data mapping (NAM map + Site Detail).
-  // The geographic render + per-site classification live in SitesView
-  // (which holds the full uploaded site rows + geo data); we hand it the
-  // interval list this view already loaded.
+  // Export the styled utility-mapping analysis (NAM + Global maps + Site
+  // Detail). The geographic render + per-site classification live in
+  // SitesView (which holds the full uploaded site rows + geo data); we
+  // hand it the Utility Name Mapping table this view maintains so each
+  // site's electric utility is classified by its mapping there.
   async function handleExportSiteMapping() {
     if (!onExportSiteMapping) return;
     setError('');
     setExporting(true);
     try {
-      await onExportSiteMapping(list);
+      await onExportSiteMapping(nameMapList);
     } catch (err) {
-      setError(err?.message || 'Failed to export the site interval-data mapping.');
+      setError(err?.message || 'Failed to export the utility-mapping analysis.');
     } finally {
       setExporting(false);
     }
@@ -711,13 +712,13 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
           >{busy ? 'Working…' : (list.length ? 'Replace Utilities List' : 'Upload Utilities List')}</button>
           {(() => {
             const noSites = siteUtilities.length === 0;
-            const noList = list.length === 0;
-            const disabled = busy || exporting || noSites || noList;
+            const noMap = nameMapList.length === 0;
+            const disabled = busy || exporting || noSites || noMap;
             const title = noSites
               ? 'Upload your site list on the Utility Lookup tab first.'
-              : noList
-                ? 'Upload (or paste) an interval-data list above first so each site can be classified.'
-                : 'Download the styled analysis: a North-America interval-data coverage map plus a per-site detail tab.';
+              : noMap
+                ? 'Load the Utility Name Mapping table below first so each site’s utility can be classified.'
+                : 'Download the styled analysis: NAM + Global utility-mapping coverage maps plus a per-site detail tab.';
             return (
               <button
                 type="button"
@@ -739,11 +740,11 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
         </div>
       </div>
 
-      {(siteUtilities.length === 0 || list.length === 0) && (
+      {(siteUtilities.length === 0 || nameMapList.length === 0) && (
         <div style={{ margin: '0.25rem 0 0', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
           <strong>⬇ Download Analysis</strong> is disabled until both inputs are loaded:
           {' '}sites on the <strong>Utility Lookup</strong> tab ({siteUtilities.length > 0 ? '✓ loaded' : 'not loaded'})
-          {' '}and an interval-data list here ({list.length > 0 ? '✓ loaded' : 'upload or paste one above'}).
+          {' '}and the <strong>Utility Name Mapping</strong> table below ({nameMapList.length > 0 ? '✓ loaded' : 'upload or paste a list in that section'}).
         </div>
       )}
 
