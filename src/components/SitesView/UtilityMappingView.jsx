@@ -739,6 +739,14 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
         </div>
       </div>
 
+      {(siteUtilities.length === 0 || list.length === 0) && (
+        <div style={{ margin: '0.25rem 0 0', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+          <strong>⬇ Download Analysis</strong> is disabled until both inputs are loaded:
+          {' '}sites on the <strong>Utility Lookup</strong> tab ({siteUtilities.length > 0 ? '✓ loaded' : 'not loaded'})
+          {' '}and an interval-data list here ({list.length > 0 ? '✓ loaded' : 'upload or paste one above'}).
+        </div>
+      )}
+
       {error && (
         <div style={{ margin: '0.5rem 0', padding: '0.5rem 0.75rem', borderRadius: 6, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', fontSize: '0.8rem' }}>
           {error}
