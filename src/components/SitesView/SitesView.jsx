@@ -2955,6 +2955,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     const SE_BORDER = 'FFD4DDE1';
     const SE_GREEN = 'FF3DCD58';
     const SE_SLATE = 'FF475569';
+    // Amber used to flag estimated / indicative values on the Site Detail
+    // sheet (modeled consumption, rate-derived cost, indicative rates).
+    const SE_EST = 'FFB45309';
 
     // Mexico-specific helpers. Baja California / Baja California Sur
     // run on a grid separate from CFE's national system, so they
@@ -5848,19 +5851,22 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       { label: 'Country', get: (s) => s.country, width: 18 },
       { label: 'Zip', get: (s) => s.zip, width: 9 },
       { label: 'Property Type', get: (s) => s.propertyType, width: 22 },
+      { label: 'Size (ft²)', get: (s) => s.sqft, numFmt: '#,##0', width: 12 },
       { label: 'Electric Utility', get: (s) => s.electricUtility, width: 22 },
       { label: 'Electric Supplier', get: (s) => s.electricSupplier, width: 22 },
       { label: 'Electric Market', get: (s) => s.electricMarket, width: 18 },
       { label: 'Reg. Rate Savings Opportunity', get: (s) => s.regRateOpportunity, width: 28 },
-      { label: 'Annual Electric (kWh)', get: (s) => s.kwh, numFmt: '#,##0', width: 18 },
-      { label: 'Total Electric Cost', get: (s) => s.electricCost, numFmt: '"$"#,##0', width: 16 },
+      { label: 'Annual Electric (kWh)', get: (s) => s.kwh, numFmt: '#,##0', width: 18, estimated: (s) => s.kwhEstimated },
+      { label: 'Electric Rate ($/kWh)', get: (s) => s.electricRate, numFmt: '"$"0.0000', width: 16, estimated: () => true },
+      { label: 'Total Electric Cost', get: (s) => s.electricCost, numFmt: '"$"#,##0', width: 16, estimated: (s) => s.electricCostEstimated },
       { label: 'Electric Contract Start', get: (s) => s.electricStart, width: 18, numFmt: 'm/d/yyyy', dateColumn: true },
       { label: 'Electric Contract End', get: (s) => s.electricEnd, width: 18, numFmt: 'm/d/yyyy', dateColumn: true },
       { label: 'Gas Utility', get: (s) => s.gasUtility, width: 22 },
       { label: 'Gas Supplier', get: (s) => s.gasSupplier, width: 22 },
       { label: 'Gas Market', get: (s) => s.gasMarket, width: 18 },
-      { label: 'Annual Gas (Dth)', get: (s) => s.dth, numFmt: '#,##0', width: 16 },
-      { label: 'Total Natural Gas Cost', get: (s) => s.gasCost, numFmt: '"$"#,##0', width: 18 },
+      { label: 'Annual Gas (Dth)', get: (s) => s.dth, numFmt: '#,##0', width: 16, estimated: (s) => s.thermsEstimated },
+      { label: 'Gas Rate ($/Dth)', get: (s) => s.gasRate, numFmt: '"$"0.00', width: 14, estimated: () => true },
+      { label: 'Total Natural Gas Cost', get: (s) => s.gasCost, numFmt: '"$"#,##0', width: 18, estimated: (s) => s.gasCostEstimated },
       { label: 'Gas Contract Start', get: (s) => s.gasStart, width: 18, numFmt: 'm/d/yyyy', dateColumn: true },
       { label: 'Gas Contract End', get: (s) => s.gasEnd, width: 18, numFmt: 'm/d/yyyy', dateColumn: true },
       // Per-site Mexico-sourcing flag (any Mexican site with > 1 MWh
@@ -5875,7 +5881,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     const detailHeader = detailSheet.getRow(1);
     detailCols.forEach((c, i) => {
       const cell = detailHeader.getCell(i + 1);
-      cell.value = c.label;
+      // Mark columns that can carry estimated / indicative data with a
+      // dagger; the legend below the table explains it.
+      cell.value = c.estimated ? `${c.label} †` : c.label;
       cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
       cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
@@ -5982,11 +5990,16 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           // the upload's raw value wasn't recognized, surface it as-is
           // (the Flags column already calls out the unrecognized case).
           propertyType: r.__propertyType__ || r.__propertyTypeRaw__ || '',
+          // Mapped property size (sq ft) when the user provided one.
+          sqft: (typeof r.__propertySizeFt2__ === 'number' && Number.isFinite(r.__propertySizeFt2__)) ? Math.round(r.__propertySizeFt2__) : null,
           electricUtility,
           electricSupplier,
           electricMarket,
           regRateOpportunity: isRegRateOpportunity ? 'Yes' : '',
           kwh,
+          // Indicative $/kWh used to derive the estimated cost. Always an
+          // indicative (state / country) rate, never a billed tariff.
+          electricRate: (typeof r.__electricRate__ === 'number' && Number.isFinite(r.__electricRate__)) ? r.__electricRate__ : null,
           electricCost: typeof r.__electricCost__ === 'number' ? Math.round(r.__electricCost__) : null,
           electricStart: tbdIfMissing(r.__electricStart__, !!electricSupplier),
           electricEnd: tbdIfMissing(r.__electricEnd__, !!electricSupplier),
@@ -5994,10 +6007,19 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           gasSupplier,
           gasMarket,
           dth,
+          // __gasRate__ is $/therm; ×10 → $/Dth to match the Dth column.
+          gasRate: (typeof r.__gasRate__ === 'number' && Number.isFinite(r.__gasRate__)) ? r.__gasRate__ * 10 : null,
           gasCost: typeof r.__gasCost__ === 'number' ? Math.round(r.__gasCost__) : null,
           gasStart: tbdIfMissing(r.__gasStart__, !!gasSupplier),
           gasEnd: tbdIfMissing(r.__gasEnd__, !!gasSupplier),
           flags: allFlags,
+          // Estimate flags drive the italic-amber "estimated data" call-out
+          // on the matching columns. Consumption is modeled from the
+          // property type; cost is estimated when no actual $ was provided.
+          kwhEstimated: !!r.__kwhFromEstimate__,
+          thermsEstimated: !!r.__thermsFromEstimate__,
+          electricCostEstimated: r.__electricCostActual__ == null && typeof r.__electricCost__ === 'number',
+          gasCostEstimated: r.__gasCostActual__ == null && typeof r.__gasCost__ === 'number',
         };
       })
       .filter(s => s.siteName)
@@ -6021,7 +6043,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         } else {
           cell.value = ceilForFmt(v, c.numFmt);
         }
-        cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+        // Estimated / indicative values render italic + amber so the
+        // user can see at a glance which numbers are modeled rather than
+        // taken from the uploaded file. Skip the styling on blank cells.
+        const isEst = !!c.estimated && c.estimated(s) && v !== '' && v != null;
+        cell.font = isEst
+          ? { name: 'Nunito Sans', size: 10, italic: true, color: { argb: SE_EST } }
+          : { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
         // Flags can carry multiple newline-separated lines; wrap so
         // the user sees both the Mexico flag and the property-type
         // warning when they fire on the same row. Other columns stay
@@ -6048,6 +6076,18 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         from: { row: 1, column: 1 },
         to: { row: 1 + sitesForDetail.length, column: detailCols.length },
       };
+    }
+    // Legend for the estimated-data call-out: one row below the table,
+    // spanning the width so it reads as a footnote rather than data.
+    {
+      const legendRowIdx = 2 + sitesForDetail.length + 1;
+      const legendRow = detailSheet.getRow(legendRowIdx);
+      const legendCell = legendRow.getCell(1);
+      legendCell.value = '† Columns that can contain estimated data. Italic amber values are estimated — annual consumption is modeled from the property type, costs are derived from indicative rates when no actual cost was provided, and the rate columns are indicative ($/kWh and $/Dth), not billed tariffs. Upright black values come from the uploaded file.';
+      legendCell.font = { name: 'Nunito Sans', size: 9, italic: true, color: { argb: SE_EST } };
+      legendCell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+      detailSheet.mergeCells(legendRowIdx, 1, legendRowIdx, Math.min(detailCols.length, 8));
+      legendRow.height = 42;
     }
 
     // ---- Third sheet: Monthly Savings Breakdown ---------------------
