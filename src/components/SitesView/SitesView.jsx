@@ -4489,10 +4489,24 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // the same US_MARKETS + CA_MARKETS dataset that drives the
       // North America Markets sheet, so the two tabs stay in sync.
       // Portfolio site counts + load + cost roll in from stateAggs;
-      // states / provinces with no sites still render with zeros so
-      // the user gets a full reference without flipping tabs. The
-      // Markets legend is appended directly below the table.
-      {
+      // only states / provinces that actually have portfolio sites are
+      // listed (no-site markets are omitted). The Markets legend is
+      // appended directly below the table.
+      //
+      // Rank by Annual Cost descending — largest portfolio markets at
+      // the top; ties fall back to alphabetical by code.
+      const marketRows = [
+        ...US_MARKETS.map(m => ({ ...m, country: 'United States', countryKey: 'US' })),
+        ...CA_MARKETS.map(m => ({ ...m, country: 'Canada',        countryKey: 'CA' })),
+      ]
+        .filter(m => (stateAggs.get(`${m.countryKey}/${m.code}`)?.sites || 0) > 0)
+        .sort((a, b) => {
+          const aCost = stateAggs.get(`${a.countryKey}/${a.code}`)?.cost || 0;
+          const bCost = stateAggs.get(`${b.countryKey}/${b.code}`)?.cost || 0;
+          if (bCost !== aCost) return bCost - aCost;
+          return String(a.code).localeCompare(String(b.code));
+        });
+      if (marketRows.length > 0) {
         const stateHdrRow = tableHeaderRow + tierRows.length + 3;
         ws.mergeCells(stateHdrRow, 1, stateHdrRow, COLS);
         const sHdr = ws.getCell(stateHdrRow, 1);
@@ -4520,18 +4534,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         });
         sHdrCells.height = 26;
 
-        // Rank by Annual Cost descending — largest portfolio markets
-        // at the top, states / provinces with no sites (cost = 0)
-        // fall to the bottom sorted alphabetically by code.
-        const marketRows = [
-          ...US_MARKETS.map(m => ({ ...m, country: 'United States', countryKey: 'US' })),
-          ...CA_MARKETS.map(m => ({ ...m, country: 'Canada',        countryKey: 'CA' })),
-        ].sort((a, b) => {
-          const aCost = stateAggs.get(`${a.countryKey}/${a.code}`)?.cost || 0;
-          const bCost = stateAggs.get(`${b.countryKey}/${b.code}`)?.cost || 0;
-          if (bCost !== aCost) return bCost - aCost;
-          return String(a.code).localeCompare(String(b.code));
-        });
         marketRows.forEach((m, i) => {
           const cat = NA_CATEGORIES[m.category];
           const agg = stateAggs.get(`${m.countryKey}/${m.code}`);
