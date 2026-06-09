@@ -8167,6 +8167,326 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     return null;
   }
 
+  // Styled multi-tab interval-data workbook, launched from the Utility
+  // Mapping page's "Export Site Mapping" button. Two sheets:
+  //   1. NAM — a North-America dot map, one dot per state / province sized
+  //      by total portfolio sites and shaded by the share of those sites
+  //      whose electric utility carries interval data (grey = every site
+  //      in the state is unmapped against the interval list). A per-state
+  //      breakdown table sits below the map.
+  //   2. Site Detail — one row per site with its interval-data status.
+  // `intervalList` is the uploaded utility → interval-availability list
+  // (rows of { name, interval }) passed up from UtilityMappingView, which
+  // is the same list its first section resolves availability from.
+  async function exportSiteIntervalMapping(intervalList) {
+    if (!rows.length) {
+      throw new Error('No sites available to export — re-check the uploaded file or the Site Name column mapping.');
+    }
+    const list = Array.isArray(intervalList) ? intervalList : [];
+    const listNames = list.map(x => x.name).filter(Boolean);
+    const intervalByName = new Map();
+    for (const x of list) if (x.name) intervalByName.set(x.name, x.interval);
+    // Same availability rule the Utility Mapping view uses: blanks /
+    // negatives / placeholders are unavailable, anything else counts.
+    const intervalIsAvailable = (v) => {
+      const s = String(v ?? '').trim().toLowerCase();
+      if (!s) return false;
+      return !/^(no|n|none|false|0|unavailable|not\s*available|n\/a|na|tbd|unknown|-)$/.test(s);
+    };
+    const classify = (utility) => {
+      const u = String(utility || '').trim();
+      if (!u) return { status: 'unmapped', detail: 'No electric utility on site', matched: '', interval: '' };
+      const hit = listNames.length ? findFuzzyMatch(u, listNames, { threshold: 40 }) : null;
+      if (!hit) return { status: 'unmapped', detail: 'Utility not found in interval list', matched: '', interval: '' };
+      const iv = String(intervalByName.get(hit.name) ?? '');
+      return intervalIsAvailable(iv)
+        ? { status: 'available', detail: 'Interval data available', matched: hit.name, interval: iv }
+        : { status: 'none', detail: 'No interval data', matched: hit.name, interval: iv };
+    };
+
+    // Per-site detail rows + per-state buckets for the map.
+    const detailRows = [];
+    const buckets = new Map(); // key -> { center, total, available, none, unmapped, label, stateCode, countryLabel }
+    let totAvailable = 0, totNone = 0, totUnmapped = 0;
+    for (const r of rows) {
+      const siteName = siteNameColumn ? String(r[siteNameColumn] || '').trim() : '';
+      const electricUtility = String(r.__electric__ || '').trim();
+      const rawCountry = String(r.__country__ || '').trim();
+      const country = normalizeCountryName(rawCountry) || rawCountry;
+      const stateCode = String(r.__state__ || '').trim().toUpperCase();
+      const cls = classify(electricUtility);
+      if (cls.status === 'available') totAvailable++;
+      else if (cls.status === 'none') totNone++;
+      else totUnmapped++;
+      detailRows.push({
+        siteName,
+        state: r.__stateProvinceDisplay__ || stateCode || '',
+        country: rawCountry,
+        electricUtility,
+        matched: cls.matched,
+        interval: cls.interval,
+        status: cls.status === 'available' ? 'Available' : (cls.status === 'none' ? 'Not available' : 'Unmapped'),
+        detail: cls.detail,
+      });
+      const isUS = /^(united states|usa|us)$/i.test(country);
+      const isCA = /^(canada|ca)$/i.test(country);
+      let center = null, label = '', countryLabel = '';
+      if (isUS && US_STATE_CENTERS[stateCode]) { center = US_STATE_CENTERS[stateCode]; label = `${stateCode}, USA`; countryLabel = 'United States'; }
+      else if (isCA && CANADA_PROVINCE_CENTERS[stateCode]) { center = CANADA_PROVINCE_CENTERS[stateCode]; label = `${stateCode}, Canada`; countryLabel = 'Canada'; }
+      if (!center) continue;
+      const key = `${isUS ? 'US' : 'CA'}/${stateCode}`;
+      let b = buckets.get(key);
+      if (!b) { b = { center, total: 0, available: 0, none: 0, unmapped: 0, label, stateCode, countryLabel }; buckets.set(key, b); }
+      b.total++;
+      if (cls.status === 'available') b.available++;
+      else if (cls.status === 'none') b.none++;
+      else b.unmapped++;
+    }
+
+    const { Workbook } = await import('exceljs');
+    const SE_GREEN_DARK = 'FF009530';
+    const SE_GREEN = 'FF3DCD58';
+    const SE_GREEN_LIGHT = 'FFE6F7EC';
+    const SE_TEXT_DARK = 'FF1E293B';
+    const SE_BORDER = 'FFD4DDE1';
+    const SE_SLATE = 'FF475569';
+    const wb = new Workbook();
+    wb.creator = 'Schneider Electric · Prospect Tracker';
+
+    // ---- Sheet 1: NAM interval-data dot map ----
+    {
+      const COLS = 16;
+      const ws = wb.addWorksheet('NAM', {
+        properties: { tabColor: { argb: SE_GREEN_DARK } },
+        views: [{ showGridLines: false }],
+      });
+      ws.columns = Array.from({ length: COLS }, () => ({ width: 12 }));
+
+      // Composite canvas — single NA panel with a gradient legend below.
+      const MAP_W = 900, MAP_H = 520, PAD = 16, TITLE_H = 30, LEGEND_H = 70;
+      const W = MAP_W + PAD * 2;
+      const H = TITLE_H + MAP_H + LEGEND_H + PAD * 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = H;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, W, H);
+
+      const NA_LNG_MIN = -170, NA_LNG_MAX = -52, NA_LAT_MIN = 18, NA_LAT_MAX = 84;
+      const originX = PAD, originY = TITLE_H + PAD;
+      const project = (lng, lat) => [
+        originX + ((lng - NA_LNG_MIN) / (NA_LNG_MAX - NA_LNG_MIN)) * MAP_W,
+        originY + ((NA_LAT_MAX - lat) / (NA_LAT_MAX - NA_LAT_MIN)) * MAP_H,
+      ];
+      // Split rings that cross the antimeridian (Alaska's Aleutians) so we
+      // don't draw a connector across the whole panel.
+      const drawFeature = (rings, fill, stroke) => {
+        ctx.fillStyle = fill; ctx.strokeStyle = stroke; ctx.lineWidth = 0.5;
+        for (const ring of rings) {
+          const subRings = []; let cur = []; let prevLng = null;
+          for (const pt of ring) {
+            if (prevLng !== null && Math.abs(pt[0] - prevLng) > 180) { if (cur.length > 2) subRings.push(cur); cur = []; }
+            cur.push(pt); prevLng = pt[0];
+          }
+          if (cur.length > 2) subRings.push(cur);
+          for (const sr of subRings) {
+            ctx.beginPath();
+            for (let i = 0; i < sr.length; i++) { const [px, py] = project(sr[i][0], sr[i][1]); if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py); }
+            ctx.closePath(); ctx.fill(); ctx.stroke();
+          }
+        }
+      };
+
+      ctx.save();
+      ctx.beginPath(); ctx.rect(originX, originY, MAP_W, MAP_H); ctx.clip();
+      ctx.fillStyle = '#F1F5F9'; ctx.fillRect(originX, originY, MAP_W, MAP_H); // ocean
+      const countryFeatures = getCountryFeatures();
+      const naFeatures = getNAAdmin1Features();
+      for (const feat of countryFeatures) drawFeature(feat.rings, '#E5E7EB', '#9CA3AF');
+      for (const feat of naFeatures) drawFeature(feat.rings, '#ECEEF1', '#CBD5E1');
+      ctx.restore();
+
+      // Dots — size by total sites, shade by % of sites with interval
+      // data. A state where every site is unmapped renders grey.
+      const maxTotal = Math.max(1, ...Array.from(buckets.values()).map(b => b.total));
+      const lerp = (a, b, t) => a + (b - a) * t;
+      const GREEN_LIGHT = [187, 247, 208]; // #BBF7D0
+      const GREEN_DARK = [4, 120, 87];     // #047857
+      const GRAY = 'rgb(156,163,175)';     // #9CA3AF
+      const pctFill = (b) => {
+        if (b.available + b.none === 0) return GRAY; // all sites unmapped
+        const t = b.available / b.total;
+        return `rgb(${Math.round(lerp(GREEN_LIGHT[0], GREEN_DARK[0], t))},${Math.round(lerp(GREEN_LIGHT[1], GREEN_DARK[1], t))},${Math.round(lerp(GREEN_LIGHT[2], GREEN_DARK[2], t))})`;
+      };
+      ctx.save();
+      ctx.beginPath(); ctx.rect(originX, originY, MAP_W, MAP_H); ctx.clip();
+      // Draw larger dots first so small ones stay clickable on top.
+      const drawOrder = Array.from(buckets.values()).sort((a, b) => b.total - a.total);
+      for (const b of drawOrder) {
+        const [px, py] = project(b.center[0], b.center[1]);
+        const radius = 6 + 24 * Math.sqrt(b.total / maxTotal);
+        ctx.beginPath(); ctx.arc(px, py, radius, 0, Math.PI * 2);
+        ctx.globalAlpha = 0.85; ctx.fillStyle = pctFill(b); ctx.fill(); ctx.globalAlpha = 1;
+        ctx.lineWidth = 1.2; ctx.strokeStyle = '#0F172A'; ctx.stroke();
+      }
+      ctx.restore();
+
+      // Legend — gradient bar (0–100 % interval data) + grey swatch.
+      const legendY = originY + MAP_H + PAD;
+      ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; ctx.font = '13px Nunito Sans, Arial, sans-serif';
+      const gradX = originX, gradW = 260, gradH = 16;
+      const grad = ctx.createLinearGradient(gradX, 0, gradX + gradW, 0);
+      grad.addColorStop(0, `rgb(${GREEN_LIGHT.join(',')})`);
+      grad.addColorStop(1, `rgb(${GREEN_DARK.join(',')})`);
+      ctx.fillStyle = grad; ctx.fillRect(gradX, legendY, gradW, gradH);
+      ctx.strokeStyle = '#9CA3AF'; ctx.lineWidth = 0.8; ctx.strokeRect(gradX, legendY, gradW, gradH);
+      ctx.fillStyle = '#0F172A';
+      ctx.fillText('0%', gradX, legendY + gradH + 13);
+      ctx.textAlign = 'right'; ctx.fillText('100 % of sites with interval data', gradX + gradW, legendY + gradH + 13);
+      ctx.textAlign = 'left';
+      const gx = gradX + gradW + 48;
+      ctx.fillStyle = GRAY; ctx.fillRect(gx, legendY, gradH, gradH);
+      ctx.strokeStyle = '#9CA3AF'; ctx.strokeRect(gx, legendY, gradH, gradH);
+      ctx.fillStyle = '#0F172A'; ctx.fillText('All sites unmapped', gx + gradH + 8, legendY + gradH / 2);
+      ctx.fillStyle = SE_SLATE.replace('FF', '#'); ctx.font = '12px Nunito Sans, Arial, sans-serif';
+      ctx.fillText('Dot size = total portfolio sites in the state / province', gx, legendY + gradH + 13);
+
+      const dataUrl = canvas.toDataURL('image/png');
+      const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
+
+      // Title + subtitle bands.
+      ws.mergeCells(1, 1, 1, COLS);
+      const title = ws.getCell(1, 1);
+      title.value = 'Interval Data Coverage — North America';
+      title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(1).height = 30;
+
+      ws.mergeCells(2, 1, 2, COLS);
+      const sub = ws.getCell(2, 1);
+      const mapped = totAvailable + totNone;
+      sub.value = `${detailRows.length} site${detailRows.length === 1 ? '' : 's'} · ${totAvailable} with interval data · ${totNone} without · ${totUnmapped} unmapped. Each NA state / province is a dot sized by site count and shaded by the share of its sites with interval data (grey = all sites unmapped against the uploaded interval list).`;
+      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+      sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      ws.getRow(2).height = 36;
+
+      ws.addImage(imageId, { tl: { col: 0, row: 3 }, ext: { width: W, height: H } });
+
+      // Per-state breakdown table below the map.
+      const SUMMARY_START = 3 + Math.ceil(H / 15) + 2;
+      ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
+      const sumHdr = ws.getCell(SUMMARY_START, 1);
+      sumHdr.value = 'Interval Data by State / Province';
+      sumHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      sumHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      sumHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(SUMMARY_START).height = 22;
+
+      const tableHeaderRow = SUMMARY_START + 1;
+      const breakdownCols = ['State / Prov', 'Country', 'Total Sites', 'Interval Available', 'No Interval', 'Unmapped', '% With Interval'];
+      const hdr = ws.getRow(tableHeaderRow);
+      breakdownCols.forEach((label, i) => {
+        const cell = hdr.getCell(i + 1);
+        cell.value = label;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+        cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+      });
+      hdr.height = 24;
+      const breakdown = Array.from(buckets.values())
+        .sort((a, b) => b.total - a.total || a.label.localeCompare(b.label));
+      breakdown.forEach((b, i) => {
+        const row = ws.getRow(tableHeaderRow + 1 + i);
+        const vals = [b.stateCode, b.countryLabel, b.total, b.available, b.none, b.unmapped, b.total ? b.available / b.total : 0];
+        const fmts = [null, null, '#,##0', '#,##0', '#,##0', '#,##0', '0%'];
+        vals.forEach((v, ci) => {
+          const cell = row.getCell(ci + 1);
+          cell.value = v;
+          cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          if (fmts[ci]) cell.numFmt = fmts[ci];
+          cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } } };
+        });
+        row.height = 18;
+      });
+      // Total row.
+      const totalRow = ws.getRow(tableHeaderRow + 1 + breakdown.length);
+      const totVals = ['Total', '', mapped + totUnmapped, totAvailable, totNone, totUnmapped, (mapped + totUnmapped) ? totAvailable / (mapped + totUnmapped) : 0];
+      const totFmts = [null, null, '#,##0', '#,##0', '#,##0', '#,##0', '0%'];
+      totVals.forEach((v, ci) => {
+        const cell = totalRow.getCell(ci + 1);
+        cell.value = v;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        if (totFmts[ci]) cell.numFmt = totFmts[ci];
+        cell.border = { top: { style: 'thin', color: { argb: SE_GREEN_DARK } }, bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+      });
+      totalRow.height = 20;
+    }
+
+    // ---- Sheet 2: Site Detail ----
+    {
+      const ws = wb.addWorksheet('Site Detail', {
+        properties: { tabColor: { argb: SE_GREEN } },
+        views: [{ showGridLines: false, state: 'frozen', ySplit: 1 }],
+      });
+      const cols = [
+        { label: 'Site Name', get: (s) => s.siteName, width: 30 },
+        { label: 'ST / Prov', get: (s) => s.state, width: 12 },
+        { label: 'Country', get: (s) => s.country, width: 16 },
+        { label: 'Electric Utility', get: (s) => s.electricUtility, width: 28 },
+        { label: 'Matched List Entry', get: (s) => s.matched, width: 28 },
+        { label: 'Interval Value', get: (s) => s.interval, width: 16 },
+        { label: 'Interval Data Status', get: (s) => s.status, width: 18 },
+        { label: 'Detail', get: (s) => s.detail, width: 32 },
+      ];
+      ws.columns = cols.map(c => ({ width: c.width }));
+      const head = ws.getRow(1);
+      cols.forEach((c, i) => {
+        const cell = head.getCell(i + 1);
+        cell.value = c.label;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+        cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } }, right: { style: 'hair', color: { argb: 'FFFFFFFF' } } };
+      });
+      head.height = 30;
+      // Available → Not available → Unmapped, then site name.
+      const order = { Available: 0, 'Not available': 1, Unmapped: 2 };
+      const sorted = detailRows.slice().sort((a, b) =>
+        (order[a.status] - order[b.status]) || String(a.siteName).localeCompare(String(b.siteName)));
+      const STATUS_TEXT = { Available: 'FF166534', 'Not available': 'FFB91C1C', Unmapped: 'FF92400E' };
+      sorted.forEach((s, ri) => {
+        const row = ws.getRow(2 + ri);
+        cols.forEach((c, i) => {
+          const cell = row.getCell(i + 1);
+          const v = c.get(s);
+          cell.value = (v === '' || v == null) ? ' ' : v;
+          const isStatus = c.label === 'Interval Data Status';
+          cell.font = { name: 'Nunito Sans', size: 10, bold: isStatus, color: { argb: isStatus ? (STATUS_TEXT[s.status] || SE_TEXT_DARK) : SE_TEXT_DARK } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } }, right: { style: 'hair', color: { argb: SE_BORDER } } };
+        });
+        row.height = 18;
+      });
+      ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols.length } };
+    }
+
+    const buf = await wb.xlsx.writeBuffer();
+    const fileName = `Site Interval Data Mapping - ${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   // Schneider Electric branded export — title band, green headers,
   // Nunito Sans everywhere, frozen header row, auto-filter, tab
   // colour. One sheet per overview plus the raw-data sheet.
@@ -8568,7 +8888,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         >Utility Mapping</button>
       </div>
       {mainTab === 'mapping' ? (
-        <UtilityMappingView siteUtilities={siteUtilities} referenceUtilityNames={knownUtilityNames} />
+        <UtilityMappingView siteUtilities={siteUtilities} referenceUtilityNames={knownUtilityNames} onExportSiteMapping={exportSiteIntervalMapping} />
       ) : (
     <div
       className={styles.wrapper}

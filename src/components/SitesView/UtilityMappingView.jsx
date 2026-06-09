@@ -106,10 +106,11 @@ function intervalIsAvailable(v) {
   return !/^(no|n|none|false|0|unavailable|not\s*available|n\/a|na|tbd|unknown|-)$/.test(s);
 }
 
-export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames = [] }) {
+export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames = [], onExportSiteMapping }) {
   const [list, setList] = useState([]); // [{ name, interval, _raw }]
   const [meta, setMeta] = useState(null); // { fileName, count, nameCol, intervalCol }
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
   const [showPaste, setShowPaste] = useState(false);
   const fileRef = useRef(null);
@@ -430,69 +431,21 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
     URL.revokeObjectURL(url);
   }
 
-  // Export a per-site interval-data mapping built from the sites uploaded
-  // on the Utility Lookup tab. Each site's electric utility is matched
-  // against the uploaded interval list (same fuzzy matcher / threshold as
-  // the roll-up table) and bucketed into: interval data Available, Not
-  // available, or Unmapped (no utility on the site, or the utility isn't
-  // in the list). One row per site so the buyer can filter by status.
-  function downloadSiteIntervalMapping() {
-    if (!siteUtilities.length) return;
-    const rows = siteUtilities.map((s) => {
-      const utility = String(s.electricUtility || '').trim();
-      let status, detail, matched = '', intervalVal = '';
-      if (!utility) {
-        status = 'Unmapped';
-        detail = 'No electric utility on site';
-      } else {
-        const hit = listNames.length ? findFuzzyMatch(utility, listNames, { threshold: 40 }) : null;
-        if (!hit) {
-          status = 'Unmapped';
-          detail = 'Utility not found in interval list';
-        } else {
-          matched = hit.name;
-          intervalVal = String(intervalByName.get(hit.name) ?? '');
-          if (intervalIsAvailable(intervalVal)) {
-            status = 'Available';
-            detail = 'Interval data available';
-          } else {
-            status = 'Not available';
-            detail = 'No interval data';
-          }
-        }
-      }
-      return {
-        'Site Name': s.siteName || '',
-        'ST / Prov': s.state || '',
-        'Electric Utility': utility,
-        'Matched List Entry': matched,
-        'Interval Value': intervalVal,
-        'Interval Data Status': status,
-        Detail: detail,
-      };
-    });
-    // Group Available → Not available → Unmapped, then alphabetical.
-    const order = { Available: 0, 'Not available': 1, Unmapped: 2 };
-    rows.sort((a, b) =>
-      (order[a['Interval Data Status']] - order[b['Interval Data Status']]) ||
-      String(a['Site Name']).localeCompare(String(b['Site Name'])));
-
-    const header = ['Site Name', 'ST / Prov', 'Electric Utility', 'Matched List Entry', 'Interval Value', 'Interval Data Status', 'Detail'];
-    const aoa = [header, ...rows.map(r => header.map(h => r[h]))];
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [{ wch: 34 }, { wch: 10 }, { wch: 28 }, { wch: 28 }, { wch: 16 }, { wch: 18 }, { wch: 30 }];
-    ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: aoa.length - 1, c: header.length - 1 } }) };
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Site Interval Mapping');
-    const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    const url = URL.createObjectURL(new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'Site Interval Data Mapping.xlsx';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+  // Export the styled site interval-data mapping (NAM map + Site Detail).
+  // The geographic render + per-site classification live in SitesView
+  // (which holds the full uploaded site rows + geo data); we hand it the
+  // interval list this view already loaded.
+  async function handleExportSiteMapping() {
+    if (!onExportSiteMapping) return;
+    setError('');
+    setExporting(true);
+    try {
+      await onExportSiteMapping(list);
+    } catch (err) {
+      setError(err?.message || 'Failed to export the site interval-data mapping.');
+    } finally {
+      setExporting(false);
+    }
   }
 
   // Resolve each list entry's interval value by utility name. Names are
@@ -759,13 +712,13 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
           {siteUtilities.length > 0 && (
             <button
               type="button"
-              disabled={busy || list.length === 0}
-              onClick={downloadSiteIntervalMapping}
+              disabled={busy || exporting || list.length === 0}
+              onClick={handleExportSiteMapping}
               title={list.length === 0
                 ? 'Upload an interval-data list first so each site can be classified.'
-                : 'Export one row per uploaded site: interval data Available / Not available / Unmapped.'}
-              style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: (busy || list.length === 0) ? 'not-allowed' : 'pointer', fontFamily: 'inherit', color: '#1E293B', opacity: list.length === 0 ? 0.5 : 1 }}
-            >⬇ Export Site Mapping</button>
+                : 'Export a styled workbook: a North-America map of sites by interval-data coverage, plus a per-site detail tab.'}
+              style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: (busy || exporting || list.length === 0) ? 'not-allowed' : 'pointer', fontFamily: 'inherit', color: '#1E293B', opacity: list.length === 0 ? 0.5 : 1 }}
+            >{exporting ? 'Exporting…' : '⬇ Export Site Mapping'}</button>
           )}
           {list.length > 0 && (
             <button
