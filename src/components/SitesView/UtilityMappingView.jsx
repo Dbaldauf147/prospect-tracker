@@ -106,10 +106,11 @@ function intervalIsAvailable(v) {
   return !/^(no|n|none|false|0|unavailable|not\s*available|n\/a|na|tbd|unknown|-)$/.test(s);
 }
 
-export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames = [] }) {
+export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames = [], onExportSiteMapping }) {
   const [list, setList] = useState([]); // [{ name, interval, _raw }]
   const [meta, setMeta] = useState(null); // { fileName, count, nameCol, intervalCol }
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
   const [showPaste, setShowPaste] = useState(false);
   const fileRef = useRef(null);
@@ -430,6 +431,23 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
     URL.revokeObjectURL(url);
   }
 
+  // Export the styled site interval-data mapping (NAM map + Site Detail).
+  // The geographic render + per-site classification live in SitesView
+  // (which holds the full uploaded site rows + geo data); we hand it the
+  // interval list this view already loaded.
+  async function handleExportSiteMapping() {
+    if (!onExportSiteMapping) return;
+    setError('');
+    setExporting(true);
+    try {
+      await onExportSiteMapping(list);
+    } catch (err) {
+      setError(err?.message || 'Failed to export the site interval-data mapping.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
   // Resolve each list entry's interval value by utility name. Names are
   // matched fuzzily (same matcher the Utility Lookup uses) so "PG&E" in
   // the portfolio lines up with "Pacific Gas & Electric" in the list.
@@ -663,7 +681,7 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
             Map your Utility Lookup portfolio to interval-data availability using an uploaded list of utilities.
           </div>
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <input
             ref={fileRef}
             type="file"
@@ -691,6 +709,25 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
             title="Upload an Excel/CSV list of utilities with an interval-data-availability column."
             style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
           >{busy ? 'Working…' : (list.length ? 'Replace Utilities List' : 'Upload Utilities List')}</button>
+          {(() => {
+            const noSites = siteUtilities.length === 0;
+            const noList = list.length === 0;
+            const disabled = busy || exporting || noSites || noList;
+            const title = noSites
+              ? 'Upload your site list on the Utility Lookup tab first.'
+              : noList
+                ? 'Upload (or paste) an interval-data list above first so each site can be classified.'
+                : 'Download the styled analysis: a North-America interval-data coverage map plus a per-site detail tab.';
+            return (
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={handleExportSiteMapping}
+                title={title}
+                style={{ padding: '0.4rem 0.9rem', border: '1px solid', borderColor: disabled ? 'var(--color-border)' : '#009530', background: disabled ? '#F1F5F9' : '#009530', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit', color: disabled ? '#94A3B8' : '#fff' }}
+              >{exporting ? 'Exporting…' : '⬇ Download Analysis'}</button>
+            );
+          })()}
           {list.length > 0 && (
             <button
               type="button"
