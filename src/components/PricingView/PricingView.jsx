@@ -958,6 +958,8 @@ function LinkedToPanel({
   removeLinkedToDefault,
   lineItemServices,
   setLineItemServices,
+  lineItemIgnored,
+  setLineItemIgnored,
   solutionsOptions,
 }) {
   const opt = workbook?.options.find(o => o.optionNumber === activeOption) || workbook?.options[0];
@@ -3234,6 +3236,8 @@ export function PricingView({ settings } = {}) {
           removeLinkedToDefault={removeLinkedToDefault}
           lineItemServices={lineItemServices}
           setLineItemServices={setLineItemServices}
+          lineItemIgnored={lineItemIgnored}
+          setLineItemIgnored={setLineItemIgnored}
           solutionsOptions={solutionsOptions}
         />
       )}
