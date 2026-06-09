@@ -3499,7 +3499,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // dot radius scales with site count. Map is rendered to a canvas
     // and embedded as a PNG because ExcelJS doesn't write charts.
     {
-      const ws = wb.addWorksheet('Global View', {
+      const ws = wb.addWorksheet('Global', {
         properties: { tabColor: { argb: SE_GREEN_DARK } },
         views: [{ showGridLines: false }],
       });
@@ -4017,7 +4017,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // bottom table breaks out per US state / Canadian province
     // rather than rolling up to the country level.
     {
-      const ws = wb.addWorksheet('NAM View', {
+      const ws = wb.addWorksheet('NAM', {
         properties: { tabColor: { argb: SE_GREEN_DARK } },
         views: [{ showGridLines: false }],
       });
@@ -4571,7 +4571,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // COUNTRY_DEREGULATION entry whose region starts with "Europe" (covers
     // "Europe" and the trans-continental "Europe/Asia" entries).
     {
-      const ws = wb.addWorksheet('Europe View', {
+      const ws = wb.addWorksheet('Europe', {
         properties: { tabColor: { argb: SE_GREEN_DARK } },
         views: [{ showGridLines: false }],
       });
