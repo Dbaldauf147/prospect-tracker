@@ -2956,6 +2956,20 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       if (isCFE(utility)) return '★ Potential Mexico sourcing opportunity (CFE, > 6,000,000 kWh/yr)';
       return '';
     };
+    // ST / Prov only applies to US and Canada sites. International
+    // uploads sometimes carry a US-state-like code in the state column
+    // (e.g. a France site tagged "GA"); that value is meaningless
+    // abroad, so we ignore it and let those sites bucket / label by
+    // country instead. Returns the cleaned state code for US/CA sites,
+    // '' otherwise.
+    const effectiveStateCode = (r) => {
+      const rawCountry = String(r.__country__ || '').trim();
+      const isUS = /^(united states|usa|us)$/i.test(rawCountry);
+      const isCA = /^(canada|ca)$/i.test(rawCountry);
+      if (!isUS && !isCA) return '';
+      return String(r.__state__ || '').trim();
+    };
+
     // Both commodities use a per-state curated savings range — see
     // ELECTRIC_DEREGULATION and GAS_DEREGULATION above for the
     // canonical status / range / lowPct / highPct lookup.
@@ -3111,7 +3125,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // Per-site detail kept for the Monthly Savings Breakdown sheet.
       const siteRows = [];
       for (const r of rows) {
-        const state = r.__state__ || '';
+        const state = effectiveStateCode(r);
         // International (non-US/Canada) sites bucket by country —
         // pulled from the row's resolved country tag and matched against
         // the COUNTRY_DEREGULATION reference. Falls back to skipping the
@@ -3513,24 +3527,37 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // dot radius scales with site count. Map is rendered to a canvas
     // and embedded as a PNG because ExcelJS doesn't write charts.
     {
-      const ws = wb.addWorksheet('Global View', {
+      const ws = wb.addWorksheet('Global', {
         properties: { tabColor: { argb: SE_GREEN_DARK } },
         views: [{ showGridLines: false }],
       });
       // The legend now lives on the map canvas itself (matching the
-      // NAM View treatment), so the worksheet only needs MAP_COLS
-      // for the title band, summary tables, and image area.
+      // NAM View treatment). COLS spans out to column T so the green
+      // title band covers the full width of the two-panel map image,
+      // exactly like the NAM View.
       const MAP_COLS = 14;
-      const COLS = MAP_COLS;
+      const LEGEND_COLS = 6;
+      const COLS = MAP_COLS + LEGEND_COLS;
       // Widen the columns the summary tables use for large numbers
       // — Load (kWh / Dth) and Cost — so a comma-formatted figure
       // like "12,345,678" or "$1,234,567" doesn't get truncated.
       // Columns E (5) and G (7) are the user-visible big-number
       // columns on the Country level view; F and H benefit too.
       const NUMERIC_WIDE_COLS = new Set([5, 6, 7, 8]);
-      ws.columns = Array.from({ length: MAP_COLS }, (_, i) => ({
-        width: NUMERIC_WIDE_COLS.has(i + 1) ? 17 : 12,
-      }));
+      ws.columns = [
+        ...Array.from({ length: MAP_COLS }, (_, i) => ({
+          width: NUMERIC_WIDE_COLS.has(i + 1) ? 17 : 12,
+        })),
+        // Cols O–T kept narrow so the worksheet's right edge sits next
+        // to the two-panel map image instead of leaving a wide empty
+        // band — the title band merges through column T to span the map.
+        { width: 4 },
+        { width: 6 },
+        { width: 6 },
+        { width: 12 },
+        { width: 12 },
+        { width: 12 },
+      ];
 
       // Bucket sites by (country, state-or-province) and look up the
       // dereg tier + map coordinates. The lookup chain is:
@@ -3695,8 +3722,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // (hue) and portfolio site count (darker = more sites); countries
       // with no sites stay light grey. No dots or site-count labels — the
       // choropleth alone carries the distribution.
-      const MAP_W = 900;
-      const MAP_H = 450; // 2:1 equirectangular aspect
+      // Same panel dimensions as the NAM View so the two sheets' maps
+      // are identically sized.
+      const MAP_W = 800;
+      const MAP_H = 500;
       const PAD = 16;
       const TITLE_H = 36;
       const LEGEND_H = 70;
@@ -3788,10 +3817,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // COUNTRY_DEREGULATION entry for the chosen commodity (gas / electric)
       // — portfolio has sites → status hue shaded by density; no sites →
       // uniform light grey so the sites-having countries dominate visually.
+      // The world is 2:1 (360° × 180°); fit it into the NAM-sized panel
+      // while preserving that aspect so it isn't vertically stretched,
+      // then centre it (the panel is taller than 2:1, so a thin ocean
+      // band sits above and below the map).
+      const worldScale = Math.min(MAP_W / 360, MAP_H / 180);
+      const worldOffX = (MAP_W - 360 * worldScale) / 2;
+      const worldOffY = (MAP_H - 180 * worldScale) / 2;
       const drawPanel = (originX, commodity, headerLabel) => {
         const project = (lng, lat) => [
-          originX + ((lng + 180) / 360) * MAP_W,
-          TITLE_H + ((90 - lat) / 180) * MAP_H,
+          originX + worldOffX + (lng + 180) * worldScale,
+          TITLE_H + worldOffY + (90 - lat) * worldScale,
         ];
         // Panel header above the map.
         ctx.fillStyle = '#0F172A';
@@ -3892,11 +3928,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       });
 
       // Overview table sits just below the map image. Anchored at
-      // row 30 so the table starts before the image bleeds into
-      // taller cell heights below it — the Country level view
-      // follows immediately underneath (the country header recalcs
+      // row 39 (same as the NAM View) so it clears the bottom edge of
+      // the now NAM-sized 638-px map image above — the Country level
+      // view follows immediately underneath (the country header recalcs
       // its row offset from this constant).
-      const SUMMARY_START = 30;
+      const SUMMARY_START = 39;
       ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
       const sumHdr = ws.getCell(SUMMARY_START, 1);
       sumHdr.value = 'Overview';
@@ -4031,7 +4067,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // bottom table breaks out per US state / Canadian province
     // rather than rolling up to the country level.
     {
-      const ws = wb.addWorksheet('NAM View', {
+      const ws = wb.addWorksheet('NAM', {
         properties: { tabColor: { argb: SE_GREEN_DARK } },
         views: [{ showGridLines: false }],
       });
@@ -4585,7 +4621,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // COUNTRY_DEREGULATION entry whose region starts with "Europe" (covers
     // "Europe" and the trans-continental "Europe/Asia" entries).
     {
-      const ws = wb.addWorksheet('Europe View', {
+      const ws = wb.addWorksheet('Europe', {
         properties: { tabColor: { argb: SE_GREEN_DARK } },
         views: [{ showGridLines: false }],
       });
@@ -4701,9 +4737,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       };
 
       // Composite canvas — two panels side by side, each with its own
-      // legend strip underneath.
-      const MAP_W = 600;
-      const MAP_H = 520;
+      // legend strip underneath. Same panel dimensions as the NAM View so
+      // the two sheets' maps are identically sized; the cosine-corrected
+      // projection below centres Europe within the wider panel.
+      const MAP_W = 800;
+      const MAP_H = 500;
       const PAD = 16;
       const TITLE_H = 36;
       const LEGEND_H = 70;
@@ -4858,8 +4896,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       });
 
       // Overview tier table — same rollup shape as the NAM View, scoped
-      // to European sites. Anchored clear of the bottom of the map image.
-      const SUMMARY_START = 40;
+      // to European sites. Anchored at row 39 (same as the NAM View) to
+      // clear the bottom edge of the now NAM-sized 638-px map image.
+      const SUMMARY_START = 39;
       ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
       const sumHdr = ws.getCell(SUMMARY_START, 1);
       sumHdr.value = 'Europe Overview';
@@ -5858,7 +5897,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           if (trimmed) return trimmed;
           return supplierPresent ? 'TBD' : '';
         };
-        const stateCode = r.__state__ || '';
+        const stateCode = effectiveStateCode(r);
         const rawCountry = String(r.__country__ || '').trim();
         // ST / Prov column: US/CA sites show the 2-letter code, every
         // other country shows the full subdivision name from the upload
@@ -5894,8 +5933,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         // Mexico flag: Baja sites are off CFE's grid so they don't
         // get tagged at all. Other Mexican sites get either the
         // sourcing-opportunity flag (CFE + > 6 GWh/yr) or the
-        // too-low-consumption flag (< 6 GWh/yr).
-        const mxFlag = mexicoSiteFlag(country, stateCode, electricUtility, kwh);
+        // too-low-consumption flag (< 6 GWh/yr). Pass the raw state
+        // string here (not the US/CA-only stateCode) so the Baja
+        // exclusion still sees a "Baja California" tag on Mexican rows.
+        const mxFlag = mexicoSiteFlag(country, r.__state__ || '', electricUtility, kwh);
         // Property-type mapping flag: when the upload carried a raw
         // property-type value but normalizePropertyType couldn't
         // resolve it to a canonical entry, the per-property-type
@@ -6180,14 +6221,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       };
     }
 
-    // ---- Property Type Estimates sheet ------------------------------
+    // ---- Property Type Estimates (per site) -------------------------
     // Reference-table-driven estimate of annual consumption and the
     // expected utility-account count per commodity, keyed off the
     // Property Type column on the source sheet. Optional Size_ft2
     // column scales the consumption numbers proportionally to the
     // reference Size_ft2 baked into the table; account counts are
     // independent of size. Skips sites with no recognized property
-    // type, and skips the whole sheet when no site carried one.
+    // type. These per-site rows are rendered as a section on the hidden
+    // Methodology tab (no longer a standalone sheet).
     const propertyTypeSiteRows = rows
       .map((r) => {
         const canonicalType = r.__propertyType__;
@@ -6212,112 +6254,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         };
       })
       .filter(Boolean);
-
-    if (propertyTypeSiteRows.length > 0) {
-      const ws = wb.addWorksheet('Property Type Estimates', {
-        properties: { tabColor: { argb: SE_GREEN } },
-        views: [{ showGridLines: false, state: 'frozen', ySplit: 2, xSplit: 1 }],
-      });
-      const ptCols = [
-        { label: 'Site Name',                  width: 28, get: (s) => s.siteName },
-        { label: 'ST / Prov / Country',        width: 22, get: (s) => s.state || s.country },
-        { label: 'Property Type',              width: 30, get: (s) => s.propertyType },
-        { label: 'Category',                   width: 11, get: (s) => s.category },
-        { label: 'Size (ft²)',                 width: 13, get: (s) => s.sizeFt2 ?? '', numFmt: '#,##0' },
-        { label: 'Reference Size (ft²)',       width: 16, get: (s) => s.referenceSizeFt2 ?? '', numFmt: '#,##0' },
-        { label: 'Est. Annual Electric (kWh)', width: 22, get: (s) => s.electricKwh ?? '', numFmt: '#,##0' },
-        { label: 'Est. Annual Gas (Dth)',      width: 18, get: (s) => s.gasDth ?? '', numFmt: '#,##0' },
-        { label: 'Est. Annual Gas (kWh equiv)', width: 22, get: (s) => s.gasKwh ?? '', numFmt: '#,##0' },
-        { label: 'Est. Total Energy (kWh equiv)', width: 24, get: (s) => s.totalKwh ?? '', numFmt: '#,##0' },
-        { label: 'Water Accounts',    width: 13, get: (s) => s.accounts?.water?.label ?? '',    sumValue: (s) => s.accounts?.water?.count ?? 0,    numFmt: '0.##' },
-        { label: 'Steam Accounts',    width: 13, get: (s) => s.accounts?.steam?.label ?? '',    sumValue: (s) => s.accounts?.steam?.count ?? 0,    numFmt: '0.##' },
-        { label: 'Gas Accounts',      width: 14, get: (s) => s.accounts?.gas?.label ?? '',      sumValue: (s) => s.accounts?.gas?.count ?? 0,      numFmt: '0.##' },
-        { label: 'Electric Accounts', width: 14, get: (s) => s.accounts?.electric?.label ?? '', sumValue: (s) => s.accounts?.electric?.count ?? 0, numFmt: '0.##' },
-        { label: 'Waste Accounts',    width: 13, get: (s) => s.accounts?.waste?.label ?? '',    sumValue: (s) => s.accounts?.waste?.count ?? 0,    numFmt: '0.##' },
-      ];
-      ws.columns = ptCols.map((c) => ({ width: c.width }));
-
-      ws.mergeCells(1, 1, 1, ptCols.length);
-      const ptTitle = ws.getCell(1, 1);
-      ptTitle.value = 'Property Type Estimates';
-      ptTitle.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
-      ptTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-      ptTitle.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(1).height = 28;
-
-      const ptHdr = ws.getRow(2);
-      ptCols.forEach((c, i) => {
-        const cell = ptHdr.getCell(i + 1);
-        cell.value = c.label;
-        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-        cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
-        cell.border = {
-          bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
-          right:  { style: 'hair', color: { argb: 'FFFFFFFF' } },
-        };
-      });
-      ptHdr.height = 36;
-
-      propertyTypeSiteRows.forEach((s, idx) => {
-        const dataRow = ws.getRow(3 + idx);
-        ptCols.forEach((c, i) => {
-          const cell = dataRow.getCell(i + 1);
-          const v = c.get(s);
-          if (v === '' || v == null) {
-            writeBlank(cell, !!c.numFmt);
-          } else {
-            cell.value = v;
-          }
-          cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-          if (c.numFmt) cell.numFmt = c.numFmt;
-          cell.border = {
-            bottom: { style: 'hair', color: { argb: SE_BORDER } },
-            right:  { style: 'hair', color: { argb: SE_BORDER } },
-          };
-        });
-        dataRow.height = 18;
-      });
-
-      // Totals row — sum the numeric columns (consumption + the
-      // count-fields-via-sumValue accessor for accounts). "Multiple"
-      // is treated as 3 for totals; the label still reads "Multiple"
-      // on the per-site row so the user keeps the qualitative signal.
-      const totalIdx = 3 + propertyTypeSiteRows.length;
-      const totalRow = ws.getRow(totalIdx);
-      ptCols.forEach((c, i) => {
-        const cell = totalRow.getCell(i + 1);
-        if (i === 0) {
-          cell.value = 'Total';
-        } else if (c.sumValue) {
-          const sum = propertyTypeSiteRows.reduce((a, s) => a + (Number(c.sumValue(s)) || 0), 0);
-          cell.value = Math.round(sum * 100) / 100;
-        } else if (c.numFmt && c.label.startsWith('Est.')) {
-          const sum = propertyTypeSiteRows.reduce((a, s) => {
-            const v = c.get(s);
-            return a + (Number.isFinite(Number(v)) ? Number(v) : 0);
-          }, 0);
-          cell.value = Math.round(sum);
-        } else {
-          writeBlank(cell, !!c.numFmt);
-        }
-        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-        if (c.numFmt) cell.numFmt = c.numFmt;
-        cell.border = {
-          top:    { style: 'thin', color: { argb: SE_GREEN_DARK } },
-          bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
-        };
-      });
-      totalRow.height = 20;
-
-      ws.autoFilter = {
-        from: { row: 2, column: 1 },
-        to:   { row: 2 + propertyTypeSiteRows.length, column: ptCols.length },
-      };
-    }
 
     // ---- Contract Overview sheet ------------------------------------
     // One row per (site, commodity) where any contract field is filled
@@ -7597,8 +7533,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         // → Methodology to see the reference tables when needed.
         state: 'hidden',
       });
-      const COLS = 7;
-      ws.columns = [38, 13, 17, 19, 17, 21, 24].map(w => ({ width: w }));
+      // 15 columns wide: the three reference sections use columns 1–7,
+      // and the per-site Property Type Estimates section (section 4)
+      // uses all 15. Title band + section banners merge across COLS so
+      // they span the full width of the widest section.
+      const COLS = 15;
+      ws.columns = [38, 13, 17, 19, 17, 21, 24, 18, 22, 24, 13, 13, 14, 14, 13].map(w => ({ width: w }));
 
       let r = 1;
 
@@ -7739,6 +7679,95 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         from: { row: countryTableHeaderRow, column: 1 },
         to:   { row: r - 1, column: 5 },
       };
+
+      // ---- Section 4: Property Type Estimates (per site) ----
+      // The per-site application of the section 1 & 2 reference profiles:
+      // estimated annual consumption (scaled by Size_ft² when provided)
+      // and expected utility-account counts for each site that carried a
+      // recognized property type. Moved here from its own standalone tab.
+      if (propertyTypeSiteRows.length > 0) {
+        blank();
+        blank();
+        sectionBanner('4. Property Type Estimates — Per Site');
+        paragraph('Per-site application of the reference profiles above: estimated annual consumption (scaled linearly by Size_ft² when provided) and expected utility-account counts. The Total row sums the numeric columns; account labels such as "Multiple" / "0 – 1" / "N/A" map to 3 / 0.5 / 0 for that roll-up while the per-site cell keeps the original label.');
+        blank();
+        const ptCols = [
+          { label: 'Site Name',                     get: (s) => s.siteName },
+          { label: 'ST / Prov / Country',           get: (s) => s.state || s.country },
+          { label: 'Property Type',                 get: (s) => s.propertyType },
+          { label: 'Category',                      get: (s) => s.category },
+          { label: 'Size (ft²)',                    get: (s) => s.sizeFt2 ?? '', numFmt: '#,##0' },
+          { label: 'Reference Size (ft²)',          get: (s) => s.referenceSizeFt2 ?? '', numFmt: '#,##0' },
+          { label: 'Est. Annual Electric (kWh)',    get: (s) => s.electricKwh ?? '', numFmt: '#,##0' },
+          { label: 'Est. Annual Gas (Dth)',         get: (s) => s.gasDth ?? '', numFmt: '#,##0' },
+          { label: 'Est. Annual Gas (kWh equiv)',   get: (s) => s.gasKwh ?? '', numFmt: '#,##0' },
+          { label: 'Est. Total Energy (kWh equiv)', get: (s) => s.totalKwh ?? '', numFmt: '#,##0' },
+          { label: 'Water Accounts',    get: (s) => s.accounts?.water?.label ?? '',    sumValue: (s) => s.accounts?.water?.count ?? 0,    numFmt: '0.##' },
+          { label: 'Steam Accounts',    get: (s) => s.accounts?.steam?.label ?? '',    sumValue: (s) => s.accounts?.steam?.count ?? 0,    numFmt: '0.##' },
+          { label: 'Gas Accounts',      get: (s) => s.accounts?.gas?.label ?? '',      sumValue: (s) => s.accounts?.gas?.count ?? 0,      numFmt: '0.##' },
+          { label: 'Electric Accounts', get: (s) => s.accounts?.electric?.label ?? '', sumValue: (s) => s.accounts?.electric?.count ?? 0, numFmt: '0.##' },
+          { label: 'Waste Accounts',    get: (s) => s.accounts?.waste?.label ?? '',    sumValue: (s) => s.accounts?.waste?.count ?? 0,    numFmt: '0.##' },
+        ];
+        // Header row.
+        ptCols.forEach((c, i) => {
+          const cell = ws.getCell(r, i + 1);
+          cell.value = c.label;
+          cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+          cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+          cell.border = {
+            bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+            right:  { style: 'hair', color: { argb: 'FFFFFFFF' } },
+          };
+        });
+        ws.getRow(r).height = 36;
+        r += 1;
+        // Per-site data rows.
+        propertyTypeSiteRows.forEach((s) => {
+          ptCols.forEach((c, i) => {
+            const cell = ws.getCell(r, i + 1);
+            const v = c.get(s);
+            cell.value = (v === '' || v == null) ? ' ' : v;
+            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+            if (c.numFmt) cell.numFmt = c.numFmt;
+            cell.border = {
+              bottom: { style: 'hair', color: { argb: SE_BORDER } },
+              right:  { style: 'hair', color: { argb: SE_BORDER } },
+            };
+          });
+          ws.getRow(r).height = 18;
+          r += 1;
+        });
+        // Totals row — "Multiple" counts as 3, "0 – 1" as 0.5, "N/A" as 0.
+        ptCols.forEach((c, i) => {
+          const cell = ws.getCell(r, i + 1);
+          if (i === 0) {
+            cell.value = 'Total';
+          } else if (c.sumValue) {
+            const sum = propertyTypeSiteRows.reduce((a, s) => a + (Number(c.sumValue(s)) || 0), 0);
+            cell.value = Math.round(sum * 100) / 100;
+          } else if (c.numFmt && c.label.startsWith('Est.')) {
+            const sum = propertyTypeSiteRows.reduce((a, s) => {
+              const v = c.get(s);
+              return a + (Number.isFinite(Number(v)) ? Number(v) : 0);
+            }, 0);
+            cell.value = Math.round(sum);
+          } else {
+            cell.value = ' ';
+          }
+          cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          if (c.numFmt) cell.numFmt = c.numFmt;
+          cell.border = {
+            top:    { style: 'thin', color: { argb: SE_GREEN_DARK } },
+            bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          };
+        });
+        ws.getRow(r).height = 20;
+        r += 1;
+      }
     }
 
     // Findings & Recommendations rule catalog. Lists every alert
@@ -7757,6 +7786,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const ws = wb.addWorksheet('Alerts Catalog', {
         properties: { tabColor: { argb: SE_GREEN } },
         views: [{ showGridLines: false, state: 'frozen', ySplit: 3 }],
+        // Hidden by default (like the Methodology tab) so the workbook
+        // opens on the headline sheets. Right-click any visible tab →
+        // Unhide → Alerts Catalog to see the reference list.
+        state: 'hidden',
       });
       const COLS = 5;
       ws.columns = [34, 12, 38, 24, 56].map(w => ({ width: w }));
@@ -8432,7 +8465,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         >Utility Mapping</button>
       </div>
       {mainTab === 'mapping' ? (
-        <UtilityMappingView siteUtilities={siteUtilities} />
+        <UtilityMappingView siteUtilities={siteUtilities} referenceUtilityNames={knownUtilityNames} />
       ) : (
     <div
       className={styles.wrapper}
