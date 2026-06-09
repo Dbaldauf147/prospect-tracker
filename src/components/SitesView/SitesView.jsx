@@ -1407,6 +1407,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             }
             return row.__zipNorm__;
           }
+          if (k === zipColumn) {
+            // No uploaded zip, and the site's city + state didn't resolve
+            // to a known zip in the utility lookup, so there was nothing
+            // to estimate from.
+            return (
+              <span
+                title="This site has no zip code, and its city + state didn't match any zip in the utility lookup — so none could be estimated."
+                style={{ color: 'var(--color-text-muted)', fontStyle: 'italic' }}
+              >no estimate available</span>
+            );
+          }
           if (v == null || v === '') return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
           return isDate ? fmtShortDate(v) : String(v);
         },
