@@ -1699,7 +1699,7 @@ function BfoCompanyNameCell({ account, prospects, updateProspect }) {
   );
 }
 
-function ContactCell({ value, onChange, account, prospects, updateProspect, hubspotContacts, onOpenContact, onOpenCompany }) {
+function ContactCell({ value, onChange, account, peOwner, prospects, updateProspect, hubspotContacts, onOpenContact, onOpenCompany }) {
   // Single boolean for popover state — the popover handles both
   // viewing currently tagged contacts and adding new ones (from the
   // company roster or as a custom one-off tag), so the picker/view
@@ -1714,21 +1714,66 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
 
   const matched = useMemo(() => findProspectForAccount(account, prospects), [account, prospects]);
 
-  // Build the contact roster for this opp's company. Pull from two
-  // sources and dedupe by name (case-insensitive):
-  //   1. The HubSpot contacts cache, filtered by company === Account
+  // The opp's PE Owner (when set) is itself a company in the Table View,
+  // so resolve it to a prospect too — its contacts get folded into the
+  // same roster below so the user can tag the PE firm's people alongside
+  // the deal company's.
+  const peOwnerStr = String(peOwner || '').trim();
+  const peMatched = useMemo(
+    () => (peOwnerStr ? findProspectForAccount(peOwnerStr, prospects) : null),
+    [peOwnerStr, prospects],
+  );
+  const peLabel = (peMatched?.company || peOwnerStr || '').trim();
+
+  // Build the contact roster for this opp. Pull from two sources and
+  // dedupe by name (case-insensitive):
+  //   1. The HubSpot contacts cache, filtered by company match
   //   2. Any contacts attached directly to the matched prospect record
-  // The HubSpot cache is the primary source (most of the user's
-  // contacts live there); prospect.contacts is a fallback for
-  // accounts that were curated manually.
+  // Each contact is gathered against the deal company AND, when the opp
+  // has a PE Owner, that PE firm — tagged with its source company so the
+  // mixed list stays legible. The HubSpot cache is the primary source
+  // (most of the user's contacts live there); prospect.contacts is a
+  // fallback for accounts that were curated manually.
   const contactOptions = useMemo(() => {
-    if (!account && !matched) return [];
-    const accountKeys = companyMatchKeys(account);
-    const matchedKeys = matched ? companyMatchKeys(matched.company) : new Set();
-    const domains = prospectEmailDomains(matched);
+    if (!account && !matched && !peMatched) return [];
+    // A reusable predicate: does this HubSpot contact belong to the
+    // company described by `keys` / `names` / `domains`? Mirrors the
+    // three-way match the cell has always used (key intersection, fuzzy
+    // name, email domain) so the PE side matches identically.
+    const makeMatcher = (keys, names, domains) => (c) => {
+      const ck = companyMatchKeys(c?.company);
+      if (ck.size > 0) {
+        for (const k of ck) if (keys.has(k)) return true;
+      }
+      if (c?.company) {
+        for (const n of names) if (n && companyNameMatches(c.company, n)) return true;
+      }
+      if (domains.size > 0) {
+        const d = contactEmailDomain(c?.email);
+        if (d && domains.has(d)) return true;
+      }
+      return false;
+    };
+    const accountKeys = new Set([
+      ...companyMatchKeys(account),
+      ...(matched ? companyMatchKeys(matched.company) : []),
+    ]);
+    const matchesCompany = makeMatcher(
+      accountKeys,
+      [account, matched?.company],
+      prospectEmailDomains(matched),
+    );
+    const peKeys = new Set([
+      ...companyMatchKeys(peOwnerStr),
+      ...(peMatched ? companyMatchKeys(peMatched.company) : []),
+    ]);
+    const matchesPe = peLabel
+      ? makeMatcher(peKeys, [peOwnerStr, peMatched?.company], prospectEmailDomains(peMatched))
+      : () => false;
+
     const seen = new Set();
     const out = [];
-    const pushContact = (raw) => {
+    const pushContact = (raw, source, company) => {
       if (!raw) return;
       const name = [raw.firstname, raw.lastname].filter(Boolean).join(' ').trim()
         || String(raw.email || '').trim();
@@ -1740,45 +1785,21 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
         name,
         email: String(raw.email || '').trim(),
         jobtitle: String(raw.jobtitle || '').trim(),
+        source,
+        company,
       });
     };
+    // Deal company wins on a tie (checked first), so a contact shared by
+    // both rosters is labeled with the deal company, not the PE firm.
     for (const c of (hubspotContacts || [])) {
-      // Three ways a HubSpot contact qualifies:
-      //   1. Their Company key intersects the Account or matched-prospect
-      //      key sets (fast path, catches the URW-style aliases).
-      //   2. The fuzzy companyNameMatches helper (acronym / containment)
-      //      pairs the contact's Company with either the Account string
-      //      or the matched prospect's name — this is what catches
-      //      "Brookfield" contacts against an Account of "Brookfield
-      //      (NAM Multifamily)".
-      //   3. Their email domain matches one of the matched prospect's
-      //      registered domains (emailDomain field + website), which
-      //      is exactly the fallback the ProspectModal's contacts panel
-      //      uses.
-      const ck = companyMatchKeys(c?.company);
-      let hit = false;
-      if (ck.size > 0) {
-        for (const k of ck) {
-          if (accountKeys.has(k) || matchedKeys.has(k)) { hit = true; break; }
-        }
-      }
-      if (!hit && c?.company) {
-        if (companyNameMatches(c.company, account) ||
-            (matched?.company && companyNameMatches(c.company, matched.company))) {
-          hit = true;
-        }
-      }
-      if (!hit && domains.size > 0) {
-        const d = contactEmailDomain(c?.email);
-        if (d && domains.has(d)) hit = true;
-      }
-      if (!hit) continue;
-      pushContact(c);
+      if (matchesCompany(c)) pushContact(c, 'company', matched?.company || account);
+      else if (matchesPe(c)) pushContact(c, 'pe', peLabel);
     }
-    for (const c of (matched?.contacts || [])) pushContact(c);
+    for (const c of (matched?.contacts || [])) pushContact(c, 'company', matched?.company || account);
+    for (const c of (peMatched?.contacts || [])) pushContact(c, 'pe', peLabel);
     out.sort((a, b) => a.name.localeCompare(b.name));
     return out;
-  }, [account, hubspotContacts, matched]);
+  }, [account, hubspotContacts, matched, peOwnerStr, peMatched, peLabel]);
 
   const selected = useMemo(() => parseMulti(value), [value]);
   const selectedSet = useMemo(() => new Set(selected.map(s => s.toLowerCase())), [selected]);
@@ -2125,6 +2146,7 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
               marginBottom: '0.3rem',
             }}>
               + Add from {matched?.company || account || 'this company'}
+              {peLabel && <> &amp; {peLabel} <span style={{ color: '#7C3AED' }}>(PE Owner)</span></>}
             </div>
             <input
               type="text"
@@ -2166,7 +2188,19 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
                       color: isTagged ? '#166534' : '#1E293B',
                       fontWeight: isTagged ? 600 : 500,
                       whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                    }}>{opt.name}</div>
+                    }}>
+                      {opt.name}
+                      {opt.source === 'pe' && (
+                        <span
+                          title={`PE Owner — ${opt.company}`}
+                          style={{
+                            marginLeft: 6, padding: '0 5px', fontSize: '0.62rem', fontWeight: 700,
+                            color: '#6D28D9', background: '#F3E8FF', border: '1px solid #DDD6FE',
+                            borderRadius: 999, verticalAlign: 'middle', whiteSpace: 'nowrap',
+                          }}
+                        >PE</span>
+                      )}
+                    </div>
                     {opt.email && (
                       <div style={{
                         fontSize: '0.72rem',
@@ -3306,6 +3340,7 @@ export function OppInfoModal({
           value={value}
           onChange={onChange}
           account={opp['Account']}
+          peOwner={opp['PE Owner']}
           prospects={prospects}
           updateProspect={updateProspect}
           hubspotContacts={hubspotContacts}
@@ -6474,6 +6509,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 value={row[h]}
                 onChange={(v) => updateOppField(row._id, h, v)}
                 account={row['Account']}
+                peOwner={row['PE Owner']}
                 prospects={prospects}
                 updateProspect={updateProspect}
                 hubspotContacts={hubspotContacts}
