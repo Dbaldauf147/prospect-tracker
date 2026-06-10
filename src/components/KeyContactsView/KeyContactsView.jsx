@@ -10,6 +10,7 @@ import { toggleContactInEvents } from '../../utils/eventsStore';
 import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { checkCity, checkState } from '../../utils/locationStandardize';
+import { getStateForCity, lookupStateForCity } from '../../data/cities';
 import { useDraftCampaignQueue, toggleQueuedContact, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 
 // Click-to-edit cell used inside the All Contacts table. Idle state
@@ -651,6 +652,35 @@ function KeyContactsViewInner({
         updateSettings({ contactLocalFields: nextLocal });
       }
     }
+  }
+
+  // When a City is committed inline, auto-fill State and Country the
+  // same way the Edit HubSpot Contact popup does: try the curated city
+  // list first (fast, handles ambiguous-name cities by leaving State
+  // alone), then fall back to the Nominatim geocoder. Only blank fields
+  // are filled — a State/Country the user already entered is never
+  // overridden. `current` carries the row's existing state/country so
+  // we know what's safe to fill.
+  async function autoFillLocationFromCity(contact, cityValue, current = {}) {
+    const city = (cityValue || '').trim();
+    if (!city) return;
+    const hasState = !!String(current.state || '').trim();
+    const hasCountry = !!String(current.country || '').trim();
+    // Mirror the popup: if a State is already present we leave the
+    // location alone entirely rather than second-guessing it.
+    if (hasState) return;
+    let state = '';
+    let country = '';
+    const local = getStateForCity(city);
+    if (local) {
+      state = local.state || '';
+      country = local.country || '';
+    } else {
+      const result = await lookupStateForCity(city, current.country);
+      if (result) { state = result.state || ''; country = result.country || ''; }
+    }
+    if (state && !hasState) await inlineUpdateField(contact, 'state', state);
+    if (country && !hasCountry) await inlineUpdateField(contact, 'country', country);
   }
 
   async function applyHideTag(contactIds) {
@@ -2750,6 +2780,7 @@ function KeyContactsViewInner({
                         const [city = '', state = ''] = String(v || '').split(',').map(s => s.trim());
                         await inlineUpdateField(c.raw || c, 'city', city);
                         if ((c.state || '') !== state) await inlineUpdateField(c.raw || c, 'state', state);
+                        await autoFillLocationFromCity(c.raw || c, city, { state: state || c.state, country: c.country });
                       }}
                       textColor="#64748B"
                       placeholder="—"
@@ -2762,7 +2793,10 @@ function KeyContactsViewInner({
                       return (
                         <InlineCell
                           value={c.city}
-                          onCommit={v => inlineUpdateField(c.raw || c, 'city', v)}
+                          onCommit={async (v) => {
+                            await inlineUpdateField(c.raw || c, 'city', v);
+                            await autoFillLocationFromCity(c.raw || c, v, { state: c.state, country: c.country });
+                          }}
                           textColor="#64748B"
                           placeholder="—"
                           fontSize="0.7rem"
