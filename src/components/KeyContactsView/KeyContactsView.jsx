@@ -1259,10 +1259,23 @@ function KeyContactsViewInner({
   // nearby. The chosen location persists alongside the other view prefs.
   const travelEnabled = storagePrefix === 'all-contacts';
   const isTravel = travelEnabled && viewMode === 'travel';
-  // Everything that isn't the By Company rollup renders the flat contacts
-  // table (All Contacts + Travel share the same table, Travel just adds a
-  // location filter on top).
-  const isContactList = viewMode !== 'companies';
+  // "By Location" rollup — contacts counted by State and City. Like
+  // Travel, it's an All Contacts–only view.
+  const isGeography = travelEnabled && viewMode === 'geography';
+  // Everything that isn't the By Company rollup or the By Location rollup
+  // renders the flat contacts table (All Contacts + Travel share the same
+  // table, Travel just adds a location filter on top).
+  const isContactList = viewMode !== 'companies' && viewMode !== 'geography';
+  // Expanded states in the By Location view (state → its cities).
+  const [geoExpanded, setGeoExpanded] = useState(() => new Set());
+  function toggleGeo(key) {
+    setGeoExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
   const [travelState, setTravelState] = useState(() => localStorage.getItem(lsKey('travel-state')) || '');
   const [travelCity, setTravelCity] = useState(() => localStorage.getItem(lsKey('travel-city')) || '');
   useEffect(() => { try { localStorage.setItem(lsKey('travel-state'), travelState); } catch {} }, [travelState]);
@@ -2040,6 +2053,37 @@ function KeyContactsViewInner({
     return true;
   });
 
+  // Geography rollup for the By Location view — contacts grouped by State,
+  // then City within each state. Built from filteredContacts so the search
+  // box and the Key / Active / Client category pills narrow it the same way
+  // they narrow the table. States and cities are ordered by count (desc),
+  // then alphabetically; blanks collapse into a "(no value)" bucket.
+  const NO_LOCATION = '(no value)';
+  const geoSummary = useMemo(() => {
+    const byState = new Map();
+    for (const c of filteredContacts) {
+      const state = String(c.state || '').trim() || NO_LOCATION;
+      const city = String(c.city || '').trim() || NO_LOCATION;
+      let entry = byState.get(state);
+      if (!entry) { entry = { state, total: 0, cities: new Map() }; byState.set(state, entry); }
+      entry.total += 1;
+      entry.cities.set(city, (entry.cities.get(city) || 0) + 1);
+    }
+    const states = [...byState.values()].map(s => ({
+      state: s.state,
+      total: s.total,
+      cities: [...s.cities.entries()]
+        .map(([city, count]) => ({ city, count }))
+        .sort((a, b) => b.count - a.count || a.city.localeCompare(b.city)),
+    }));
+    states.sort((a, b) => b.total - a.total || a.state.localeCompare(b.state));
+    return states;
+  }, [filteredContacts]);
+  const geoTotals = useMemo(() => ({
+    contacts: geoSummary.reduce((n, s) => n + s.total, 0),
+    states: geoSummary.length,
+  }), [geoSummary]);
+
   function toggle(key) {
     setExpanded(prev => {
       const next = new Set(prev);
@@ -2064,6 +2108,7 @@ function KeyContactsViewInner({
               { key: 'contacts', label: 'All Contacts' },
               { key: 'companies', label: 'By Company' },
               ...(travelEnabled ? [{ key: 'travel', label: 'Travel' }] : []),
+              ...(travelEnabled ? [{ key: 'geography', label: 'By Location' }] : []),
             ].map((opt, i) => (
               <button
                 key={opt.key}
@@ -2407,7 +2452,7 @@ function KeyContactsViewInner({
           type="text"
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder={isContactList
+          placeholder={isContactList || isGeography
             ? `Search ${flatContacts.length} contact${flatContacts.length === 1 ? '' : 's'}…`
             : `Search ${rows.length} compan${rows.length === 1 ? 'y' : 'ies'}…`}
           style={{ width: '100%', maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
@@ -2987,6 +3032,63 @@ function KeyContactsViewInner({
               </div>
             );
           })()
+        ) : isGeography ? (
+          geoSummary.length === 0 ? (
+            <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
+              <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No contacts to summarize</div>
+              <div style={{ fontSize: '0.78rem' }}>{emptyDetail}</div>
+            </div>
+          ) : (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: '0.6rem' }}>
+                <span style={{ fontSize: '0.72rem', color: '#475569' }}>
+                  <strong style={{ color: '#1E293B' }}>{geoTotals.contacts}</strong> contact{geoTotals.contacts === 1 ? '' : 's'} across{' '}
+                  <strong style={{ color: '#1E293B' }}>{geoTotals.states}</strong> state{geoTotals.states === 1 ? '' : 's'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setGeoExpanded(new Set(geoSummary.map(s => s.state)))}
+                  style={{ padding: '0.25rem 0.55rem', fontSize: '0.68rem', fontWeight: 600, border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', color: '#475569', cursor: 'pointer', fontFamily: 'inherit' }}
+                >Expand all</button>
+                <button
+                  type="button"
+                  onClick={() => setGeoExpanded(new Set())}
+                  style={{ padding: '0.25rem 0.55rem', fontSize: '0.68rem', fontWeight: 600, border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', color: '#475569', cursor: 'pointer', fontFamily: 'inherit' }}
+                >Collapse all</button>
+              </div>
+              <div style={{ background: '#fff', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px', padding: '0.5rem 0.9rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0', fontSize: '0.62rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  <span>State / City</span>
+                  <span style={{ textAlign: 'right' }}>Contacts</span>
+                </div>
+                {geoSummary.map(s => {
+                  const open = geoExpanded.has(s.state);
+                  return (
+                    <div key={s.state}>
+                      <div
+                        onClick={() => toggleGeo(s.state)}
+                        title={open ? 'Click to collapse cities' : 'Click to show cities'}
+                        style={{ display: 'grid', gridTemplateColumns: '1fr 120px', alignItems: 'center', padding: '0.5rem 0.9rem', borderBottom: '1px solid #F1F5F9', cursor: 'pointer', background: open ? '#F8FAFC' : '#fff' }}
+                      >
+                        <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1E293B', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ color: '#94A3B8', fontSize: '0.7rem', width: 10, flexShrink: 0 }}>{open ? '▾' : '▸'}</span>
+                          {s.state}
+                          <span style={{ color: '#94A3B8', fontWeight: 500, fontSize: '0.7rem' }}>({s.cities.length} {s.cities.length === 1 ? 'city' : 'cities'})</span>
+                        </span>
+                        <span style={{ textAlign: 'right', fontSize: '0.8rem', fontWeight: 700, color: '#1E293B' }}>{s.total}</span>
+                      </div>
+                      {open && s.cities.map(ct => (
+                        <div key={ct.city} style={{ display: 'grid', gridTemplateColumns: '1fr 120px', alignItems: 'center', padding: '0.35rem 0.9rem 0.35rem 2.1rem', borderBottom: '1px solid #F8FAFC', background: '#fff' }}>
+                          <span style={{ fontSize: '0.75rem', color: '#475569' }}>{ct.city}</span>
+                          <span style={{ textAlign: 'right', fontSize: '0.75rem', color: '#475569' }}>{ct.count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )
         ) : rows.length === 0 ? (
           <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
             <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>{emptyTitle}</div>
