@@ -2477,9 +2477,15 @@ function NotSoldFollowUpModal({ opp, reasonOptions, onSave, onClose }) {
     background: '#fff', color: 'var(--color-text)',
   };
 
+  // Only dismiss when the press *started* on the backdrop. Drag-selecting text
+  // in a field and releasing the mouse over the dimmed backdrop otherwise fires
+  // a click on the overlay that would close the popup mid-selection.
+  const backdropMouseDown = useRef(false);
+
   return createPortal(
     <div
-      onClick={onClose}
+      onMouseDown={(e) => { backdropMouseDown.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && backdropMouseDown.current) onClose(); }}
       style={{
         position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
         zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -2605,9 +2611,15 @@ function SoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, onC
     background: '#fff', color: 'var(--color-text)',
   };
 
+  // Only dismiss when the press *started* on the backdrop. Drag-selecting text
+  // in a field and releasing the mouse over the dimmed backdrop otherwise fires
+  // a click on the overlay that would close the popup mid-selection.
+  const backdropMouseDown = useRef(false);
+
   return createPortal(
     <div
-      onClick={onClose}
+      onMouseDown={(e) => { backdropMouseDown.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && backdropMouseDown.current) onClose(); }}
       style={{
         position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
         zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -2738,9 +2750,15 @@ function LeadQuotedAmountModal({ opp, onSave, onClose }) {
     background: '#fff', color: 'var(--color-text)',
   };
 
+  // Only dismiss when the press *started* on the backdrop. Drag-selecting text
+  // in a field and releasing the mouse over the dimmed backdrop otherwise fires
+  // a click on the overlay that would close the popup mid-selection.
+  const backdropMouseDown = useRef(false);
+
   return createPortal(
     <div
-      onClick={onClose}
+      onMouseDown={(e) => { backdropMouseDown.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && backdropMouseDown.current) onClose(); }}
       style={{
         position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
         zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -2859,9 +2877,15 @@ function QuotedFollowUpModal({ opp, chanceOptions, onSave, onClose }) {
     background: '#fff', color: 'var(--color-text)',
   };
 
+  // Only dismiss when the press *started* on the backdrop. Drag-selecting text
+  // in a field and releasing the mouse over the dimmed backdrop otherwise fires
+  // a click on the overlay that would close the popup mid-selection.
+  const backdropMouseDown = useRef(false);
+
   return createPortal(
     <div
-      onClick={onClose}
+      onMouseDown={(e) => { backdropMouseDown.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && backdropMouseDown.current) onClose(); }}
       style={{
         position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
         zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -3009,9 +3033,15 @@ function FollowUpStatusModal({ opp, statusOptions, onSave, onClose }) {
     background: '#fff', color: 'var(--color-text)',
   };
 
+  // Only dismiss when the press *started* on the backdrop. Drag-selecting text
+  // in a field and releasing the mouse over the dimmed backdrop otherwise fires
+  // a click on the overlay that would close the popup mid-selection.
+  const backdropMouseDown = useRef(false);
+
   return createPortal(
     <div
-      onClick={onClose}
+      onMouseDown={(e) => { backdropMouseDown.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && backdropMouseDown.current) onClose(); }}
       style={{
         position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
         zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -3246,9 +3276,14 @@ export function OppInfoModal({
       />
     );
   };
+  // Only dismiss when the press *started* on the backdrop, so drag-selecting
+  // text in a field and releasing over the backdrop doesn't close the popup.
+  const backdropMouseDown = useRef(false);
+
   return createPortal(
     <div
-      onClick={onClose}
+      onMouseDown={(e) => { backdropMouseDown.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && backdropMouseDown.current) onClose(); }}
       style={{
         position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
         zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -4280,9 +4315,16 @@ function NextStepsEditor({ opp, onClose, updateOppField }) {
 
   const account = String(opp?.['Account'] || '').trim() || '(no account)';
 
+  // Only treat a backdrop click as "close" when the press *started* on the
+  // backdrop. Without this, drag-selecting text in a field and releasing the
+  // mouse over the dimmed backdrop fires a click whose target is the overlay,
+  // which would close the popup mid-selection.
+  const backdropMouseDown = useRef(false);
+
   return (
     <div
-      onClick={onClose}
+      onMouseDown={(e) => { backdropMouseDown.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && backdropMouseDown.current) onClose(); }}
       style={{
         position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.5)',
         display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10001,
