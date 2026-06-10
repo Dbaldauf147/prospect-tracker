@@ -76,6 +76,41 @@ function companiesMatch(a, b) {
   return false;
 }
 
+// Stricter matcher used only for tying an Opps record's Account to a
+// company name (the PE firm or one of its portfolio companies). The
+// general `companiesMatch` above is deliberately loose so contact/DM
+// lookups catch acronyms and partial names — but that looseness
+// over-counts opportunities: a single shared word (e.g. a portfolio
+// company called "Origin" matching an unrelated "Origin Bank" deal) or a
+// 60%-length substring would inflate a firm's active/total. Here we only
+// accept an exact normalized match or a full multi-word phrase that one
+// account name contains in the other, so the PE Opps count reflects deals
+// that genuinely belong to the firm or its portfolio companies.
+const CO_SUFFIX_RE = /\b(inc|incorporated|llc|ltd|limited|corp|corporation|co|company|lp|llp|plc|holdings?)\b\.?/gi;
+function normalizeAccount(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(CO_SUFFIX_RE, ' ')
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function accountMatchesCompany(companyName, oppAccount) {
+  const a = normalizeAccount(companyName);
+  const b = normalizeAccount(oppAccount);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const aWords = a.split(' ');
+  const bWords = b.split(' ');
+  const [shortW, longW] = aWords.length <= bWords.length ? [aWords, bWords] : [bWords, aWords];
+  // Require the shorter side to be a multi-word phrase appearing verbatim
+  // (with word boundaries) inside the longer one. A single shared word is
+  // never enough — that's what produced the false-positive opp counts.
+  if (shortW.length < 2) return false;
+  return (' ' + longW.join(' ') + ' ').includes(' ' + shortW.join(' ') + ' ');
+}
+
 // Reads Opps 2 — the canonical opps store. Local IndexedDB first for
 // speed; falls back to the user's Firestore `opps2Data` doc when the
 // local cache is empty (e.g. fresh browser, never opened Opps 2 here
@@ -128,9 +163,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
   // Persisted column widths + sort so the layout survives reloads.
-  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, pcDownload: 120, opps: 100, ratio: 120, clients: 110, keyContacts: 120, caseStudy: 110, discovery: 100, piloting: 100, existingPartnership: 150, notSold: 100 };
+  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, pcDownload: 120, ratio: 120, clients: 110, keyContacts: 120, caseStudy: 110, discovery: 100, piloting: 100, existingPartnership: 150, notSold: 100 };
   // company is sticky and always shown — every other column is opt-in.
-  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'pcDownload', 'opps', 'ratio', 'clients', 'keyContacts', 'caseStudy', 'discovery', 'piloting', 'existingPartnership', 'notSold'];
+  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'pcDownload', 'ratio', 'clients', 'keyContacts', 'caseStudy', 'discovery', 'piloting', 'existingPartnership', 'notSold'];
   const [colWidths, setColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
@@ -328,7 +363,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       if (!name) continue;
       for (const r of oppsRecords) {
         const acct = (r['Account'] || '').toLowerCase();
-        if (companiesMatch(name, acct)) list.push(r);
+        if (accountMatchesCompany(name, acct)) list.push(r);
       }
       if (list.length > 0) map.set(p.id, list);
     }
@@ -408,7 +443,6 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
   // Per-firm stage stats — the row-level data behind the stages table.
   //   decisionMakerNames  : DM contacts on this PE firm (or its PCs)
   //   pcMappingCount      : portfolio companies linked via peOwner
-  //   pcOppsCount         : PCs that have ≥1 opp (any stage)
   //   activeOpps, totalOpps : aggregated across the PE firm + all PCs,
   //                           active = non-closed non-invalid stage;
   //                           total = every non-invalid stage
@@ -441,19 +475,13 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       const metInPersonCount = dmEntries.filter(e => e.metInPerson).length;
       const nycCount = dmEntries.filter(e => /(new york|nyc)/i.test(e.city || '')).length;
 
-      // PC Opps — PCs with ≥1 opp.
-      let pcOppsCount = 0;
-      for (const p of portfolio) {
-        if ((oppsByProspectId.get(p.id) || []).length > 0) pcOppsCount++;
-      }
-
       // Aggregate opps for the PE firm itself + every portfolio company.
       // We re-scan the Opps records so we also catch opps that land
       // directly on the PE firm's account name (not just its PCs).
       let active = 0;
       let total = 0;
       // The individual opp records behind the active/total counts, so the
-      // PC Opps 2/4 column can show *which* opps are included on hover.
+      // PE Opps column can show *which* opps are included on hover.
       const oppsTip = [];
       const oppsNames = [firmName, ...portfolio.map(p => (p.company || '').toLowerCase().trim()).filter(Boolean)];
       for (const r of oppsRecords) {
@@ -461,7 +489,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         if (INVALID_STAGES.has(stage)) continue;
         const acct = (r['Account'] || '').toLowerCase();
         if (!acct) continue;
-        if (!oppsNames.some(n => companiesMatch(n, acct))) continue;
+        if (!oppsNames.some(n => accountMatchesCompany(n, acct))) continue;
         total++;
         const isActive = !CLOSED_STAGES.has(stage);
         if (isActive) active++;
@@ -512,7 +540,6 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         // entries in its portfolioCompanies array — independent of
         // how many separate prospects reference it via peOwner.
         pcMapped: Array.isArray(pe.portfolioCompanies) && pe.portfolioCompanies.length > 0,
-        pcOppsCount,
         activeOpps: active,
         totalOpps: total,
         oppsTip,
@@ -524,7 +551,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       });
     }
     return out;
-  }, [peFirms, portfolioByPe, oppsByProspectId, decisionMakers, keyContacts, oppsRecords]);
+  }, [peFirms, portfolioByPe, decisionMakers, keyContacts, oppsRecords]);
 
   const sortedPeFirms = useMemo(() => {
     const arr = [...peFirms];
@@ -551,9 +578,6 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
           break;
         case 'mapping':
           cmp = (sa.pcMapped ? 1 : 0) - (sb.pcMapped ? 1 : 0);
-          break;
-        case 'opps':
-          cmp = (sa.pcOppsCount || 0) - (sb.pcOppsCount || 0);
           break;
         case 'ratio':
           cmp = (sa.activeOpps || 0) - (sb.activeOpps || 0);
@@ -712,7 +736,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
           {colMenuOpen && (() => {
             const COL_LABELS = {
               company: 'PE firm', peAum: 'PE AUM', geography: 'Geography', dm: 'Decision Maker Found?',
-              met: 'Met in Person', mapping: 'PC Mapping', pcDownload: 'PC Download', opps: 'PC Opps', ratio: 'PC Opps 2/4',
+              met: 'Met in Person', mapping: 'PC Mapping', pcDownload: 'PC Download', ratio: 'PE Opps',
               clients: 'PC Clients', keyContacts: 'Key Contacts', caseStudy: 'Case Study',
               discovery: 'Discovery', piloting: 'Piloting', existingPartnership: 'Existing Partnership',
               notSold: 'Not Sold',
@@ -774,8 +798,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
             { key: 'met',     label: 'Met in Person', align: 'left', tip: 'Met-in-person count / total decision makers, plus how many of them list New York / NYC as their city' },
             { key: 'mapping', label: 'PC Mapping', align: 'center', tip: 'Yes when the PE firm has entries in its Portfolio Companies tab; No otherwise' },
             { key: 'pcDownload', label: 'PC Download', align: 'center', tip: 'Download this PE firm\'s mapped portfolio companies (from its Portfolio Companies tab) as an Excel file' },
-            { key: 'opps',    label: 'PC Opps', align: 'center',    tip: 'Count of portfolio companies that have at least one opportunity in the Opps tab' },
-            { key: 'ratio',   label: 'PC Opps 2/4', align: 'center', tip: 'Active / total opps aggregated across the PE firm plus every portfolio company' },
+            { key: 'ratio',   label: 'PE Opps', align: 'center', tip: 'Active / total opps aggregated across the PE firm plus every portfolio company' },
             { key: 'clients', label: 'PC Clients', align: 'center',  tip: 'Portfolio companies currently set to status = Client' },
             { key: 'keyContacts', label: 'Key Contacts', align: 'center', tip: 'Count of HubSpot contacts tagged "Dan Key Target" across the PE firm plus its portfolio companies' },
             { key: 'caseStudy', label: 'Case Study', align: 'center', tip: 'Yes when the PE firm or any of its portfolio companies has "Case Study Created?" set to Yes on its company page' },
@@ -989,12 +1012,6 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                           </div>
                         );
                       })()}
-
-                      {visibleCols.has('opps') && (
-                      <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.pcOppsCount || 0) > 0 ? '#7C3AED' : '#CBD5E1' }}>
-                        {stats.pcOppsCount || 0}
-                      </div>
-                      )}
 
                       {visibleCols.has('ratio') && (() => {
                         const oppsTip = stats.oppsTip || [];
