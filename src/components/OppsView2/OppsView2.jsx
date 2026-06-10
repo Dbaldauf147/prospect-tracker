@@ -199,6 +199,10 @@ function findCloseDerivedColumns(headers) {
 const TRACKED_STAGES = ['Not Started', 'Lead', 'Qualifying', 'Quoting', 'Quoted', 'Contracting', 'Agreement Sent'];
 const TRACKED_STAGES_SET = new Set(TRACKED_STAGES);
 
+// Closed (won/lost) stages — an opp in one of these is no longer active.
+// Mirrors the in-component CLOSED_STAGES used by the activity filter.
+const CLOSED_STAGES_SET = new Set(['Sold', 'Not Sold']);
+
 // Stage-specific "stalled too long" thresholds. An opp that has sat in
 // one of these stages for more than `days` calendar days surfaces in the
 // Days-in-Stage "Needs action" buckets with the paired suggestion. Stages
@@ -729,6 +733,16 @@ function oppStageStall(row) {
   const days = enteredISO ? -daysFromToday(enteredISO) : null;
   const rule = stageActionFor(stage, days);
   return rule ? { days, suggestion: rule.suggestion, limit: rule.days } : null;
+}
+
+// "Quoted Amount Missing" flag: an active opp (stage isn't a closed Sold /
+// Not Sold) that has advanced past "Not Started" but still has no value in
+// its Quoted Amount cell. Blank sentinels ("-", "#N/A", …) count as missing.
+function oppMissingQuotedAmount(row) {
+  const stage = String(row?.['Stage'] || '').trim();
+  if (!stage || stage === 'Not Started') return false;
+  if (CLOSED_STAGES_SET.has(stage)) return false;
+  return bfoFieldMissing(row?.['Quoted Amount']);
 }
 
 // One-shot Call-In ascending sort used during initial hydration. Rows
@@ -6679,6 +6693,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     const flagSummary = (row) => {
       const parts = [];
       if (oppMissingBfoAddress(row)) parts.push('Missing BFO Address');
+      if (oppMissingQuotedAmount(row)) parts.push('Quoted Amount Missing');
       const stall = oppStageStall(row);
       if (stall && !row?._ignoreStallFlag) parts.push(`Stalled: ${stall.suggestion}`);
       return parts.join('; ');
@@ -6691,15 +6706,17 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       getSortValue: (row) => {
         let n = 0;
         if (oppMissingBfoAddress(row)) n += 1;
+        if (oppMissingQuotedAmount(row)) n += 1;
         if (oppStageStall(row) && !row?._ignoreStallFlag) n += 1;
         return n;
       },
       exportValue: (row) => flagSummary(row),
       render: (row) => {
         const missingAddr = oppMissingBfoAddress(row);
+        const missingQuote = oppMissingQuotedAmount(row);
         const stall = oppStageStall(row);
         const ignored = !!row?._ignoreStallFlag;
-        if (!missingAddr && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+        if (!missingAddr && !missingQuote && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
         return (
           <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
             {missingAddr && (
@@ -6707,6 +6724,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 title="Has a BFO Opportunity Name but no BFO Address — add the BFO Address."
                 style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
               >⚠ No BFO Address</span>
+            )}
+            {missingQuote && (
+              <span
+                title={`Active opp in "${String(row['Stage'] || '').trim()}" with no Quoted Amount — add the Quoted Amount.`}
+                style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
+              >⚠ Quoted Amount Missing</span>
             )}
             {stall && !ignored && (
               <>
