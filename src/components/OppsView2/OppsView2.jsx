@@ -55,10 +55,48 @@ import styles from './OppsView2.module.css';
 // array of field names.
 const OPP_DETAIL_HIDDEN_FIELDS_KEY = 'opp-detail-hidden-fields';
 
-// Stores the Eastern calendar date (YYYY-MM-DD) on which we last ran the
-// first-load-of-the-day "blank all No Further Action Today" clear, so it
-// fires only once per Eastern day per user.
-const NFAT_DAILY_CLEAR_KEY = 'opps2-nfat-daily-clear-date';
+// Per-user localStorage key holding the "No Further Action Today" clear
+// schedules — one per mark type. These replace the old fixed
+// start-of-day blank-all + 2 PM X sweep with user-configured
+// day-of-week + time schedules set from the toolbar button.
+const NFAT_SCHEDULES_KEY = 'opps2-nfat-schedules';
+
+// The three things a schedule can clear from the tristate column:
+// ✓ checks, ✗ X marks, or any non-blank value. Each gets its own
+// independent schedule (days of week + time of day).
+const NFAT_SCHEDULE_TYPES = ['check', 'x', 'any'];
+const NFAT_TYPE_LABELS = { check: '✓ Check marks', x: '✗ X marks', any: 'Any value' };
+
+function defaultNfatSchedules() {
+  const base = { enabled: false, days: [1, 2, 3, 4, 5], time: '06:00', lastRunAt: 0 };
+  return { check: { ...base }, x: { ...base }, any: { ...base } };
+}
+
+// Load the saved schedules, merged onto defaults so a partial/older
+// stored shape still yields a complete config for every type.
+function loadNfatSchedules() {
+  const def = defaultNfatSchedules();
+  try {
+    const raw = userLsGet(NFAT_SCHEDULES_KEY);
+    if (!raw) return def;
+    const parsed = JSON.parse(raw);
+    for (const t of NFAT_SCHEDULE_TYPES) {
+      if (parsed && parsed[t]) def[t] = { ...def[t], ...parsed[t] };
+    }
+  } catch { /* fall back to defaults */ }
+  return def;
+}
+
+// True when the tristate "No Further Action Today" value matches the
+// clear type: 'check' for ✓/yes, 'x' for ✗/no, 'any' for anything set.
+function nfatValueMatches(value, type) {
+  const cur = String(value || '').trim().toLowerCase();
+  if (cur === '') return false;
+  if (type === 'any') return true;
+  if (type === 'check') return cur === 'yes' || cur === 'true' || cur === '✓';
+  if (type === 'x') return cur === 'no' || cur === 'false' || cur === '✗';
+  return false;
+}
 
 function loadHiddenDetailFields() {
   try {
@@ -586,40 +624,39 @@ function easternWallToUtcMs(year, month, day, hour, minute) {
   return guess + (guess - obs);
 }
 
-// The most recent 2 PM (14:00) America/New_York boundary. The
-// No-Further-Action-Today auto-clear uses this as its cutoff: every X
-// marked before today's 2 PM Eastern clears at 2 PM, while a mark made
-// after 2 PM persists until 2 PM the next day. Before 2 PM Eastern the
-// boundary is yesterday's 2 PM, so morning marks stay until 2 PM.
-function mostRecent2pmEasternMs(nowMs = Date.now()) {
+// Eastern calendar parts (+ weekday, 0=Sun..6=Sat) for a UTC ms instant.
+// Used to align the configurable No-Further-Action-Today clear schedules
+// to Eastern days/times for every user, independent of browser timezone.
+function easternDayParts(ms) {
   const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York',
-    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short',
   });
-  const readParts = (ms) => {
-    const out = {};
-    for (const p of fmt.formatToParts(new Date(ms))) {
-      if (p.type !== 'literal') out[p.type] = p.value;
-    }
-    return out;
-  };
-  let parts = readParts(nowMs);
-  // Before 2 PM Eastern, the active boundary is yesterday's 2 PM — read
-  // the calendar date from ~24h earlier so DST never skews the day.
-  if ((Number(parts.hour) % 24) < 14) parts = readParts(nowMs - 24 * 60 * 60 * 1000);
-  return easternWallToUtcMs(Number(parts.year), Number(parts.month), Number(parts.day), 14, 0);
+  const out = {};
+  for (const p of fmt.formatToParts(new Date(ms))) {
+    if (p.type !== 'literal') out[p.type] = p.value;
+  }
+  const dow = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[out.weekday];
+  return { year: Number(out.year), month: Number(out.month), day: Number(out.day), dow };
 }
 
-// Today's calendar date (YYYY-MM-DD) in America/New_York. Used by the
-// once-per-day "blank all No Further Action Today" clear so the day
-// boundary is Eastern midnight for every user/device, independent of
-// the browser's local timezone.
-function easternDateStr(nowMs = Date.now()) {
-  const fmt = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/New_York',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-  });
-  return fmt.format(new Date(nowMs)); // en-CA yields YYYY-MM-DD
+// The most recent scheduled occurrence (UTC ms) at or before `nowMs` for
+// a schedule that fires on the given Eastern weekdays at "HH:MM" Eastern.
+// Returns null when nothing matches within the last week. The scheduler
+// compares this against the schedule's lastRunAt: a newer occurrence means
+// the clear is due — which also lets it catch up if the app was closed
+// across a scheduled time.
+function mostRecentNfatScheduleMs(days, time, nowMs = Date.now()) {
+  if (!Array.isArray(days) || !days.length) return null;
+  const [hh, mm] = String(time || '').split(':').map(n => parseInt(n, 10));
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+  for (let k = 0; k < 8; k++) {
+    const p = easternDayParts(nowMs - k * 24 * 60 * 60 * 1000);
+    if (!days.includes(p.dow)) continue;
+    const occ = easternWallToUtcMs(p.year, p.month, p.day, hh, mm);
+    if (occ <= nowMs) return occ;
+  }
+  return null;
 }
 
 // Values the Opps Google sheet uses to mean "no data" in cells where
@@ -4375,6 +4412,124 @@ function Opps2BackupsModal({ onRestore, onClose }) {
   );
 }
 
+// Modal for configuring the "No Further Action Today" clear schedules.
+// Each mark type (✓ checks, ✗ X marks, any value) gets an independent
+// schedule: an on/off toggle, the Eastern weekdays it runs on, and a
+// time of day. Also offers a "Clear now" button per type. Times run in
+// Eastern and only fire while the app is open in a browser (catching up
+// on the next open if a scheduled time was missed).
+function NfatScheduleModal({ schedules, onSave, onClearNow, onClose }) {
+  const [draft, setDraft] = useState(() => {
+    const def = defaultNfatSchedules();
+    for (const t of NFAT_SCHEDULE_TYPES) {
+      if (schedules?.[t]) def[t] = { ...def[t], ...schedules[t] };
+    }
+    return def;
+  });
+  const WEEKDAYS = [
+    { v: 0, label: 'Sun' }, { v: 1, label: 'Mon' }, { v: 2, label: 'Tue' },
+    { v: 3, label: 'Wed' }, { v: 4, label: 'Thu' }, { v: 5, label: 'Fri' },
+    { v: 6, label: 'Sat' },
+  ];
+  const patch = (type, changes) =>
+    setDraft(d => ({ ...d, [type]: { ...d[type], ...changes } }));
+  const toggleDay = (type, v) =>
+    setDraft(d => {
+      const set = new Set(d[type].days || []);
+      if (set.has(v)) set.delete(v); else set.add(v);
+      return { ...d, [type]: { ...d[type], days: [...set].sort((a, b) => a - b) } };
+    });
+  const save = () => {
+    // Re-baseline lastRunAt to now for every type so saving never
+    // retro-fires a scheduled time that already passed earlier today —
+    // only future occurrences trigger a clear.
+    const now = Date.now();
+    const next = {};
+    for (const t of NFAT_SCHEDULE_TYPES) next[t] = { ...draft[t], lastRunAt: now };
+    onSave(next);
+    onClose();
+  };
+  const clearNow = (type) => {
+    const n = onClearNow(type);
+    window.alert(n > 0
+      ? `Cleared ${NFAT_TYPE_LABELS[type]} from ${n} row${n === 1 ? '' : 's'}.`
+      : `No matching "${NFAT_TYPE_LABELS[type]}" values to clear.`);
+  };
+
+  return createPortal(
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: 'var(--color-surface, #fff)', color: 'var(--color-text)', borderRadius: 8, padding: '1.25rem', width: 'min(560px, 94vw)', maxHeight: '85vh', overflow: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.3)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+          <h3 style={{ margin: 0, fontSize: '1.05rem' }}>Clear “No Further Action Today”</h3>
+          <button type="button" onClick={onClose} style={{ background: 'transparent', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: 'inherit' }}>×</button>
+        </div>
+        <p style={{ marginTop: 0, fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+          Set a schedule for each mark type, or clear it right now. Schedules run on the chosen days at the chosen time (US Eastern) and only fire while this app is open — a missed time catches up the next time you open it.
+        </p>
+        {NFAT_SCHEDULE_TYPES.map(type => {
+          const s = draft[type];
+          return (
+            <div key={type} style={{ border: '1px solid var(--color-border)', borderRadius: 6, padding: '0.75rem', marginBottom: '0.75rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 600, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={!!s.enabled}
+                    onChange={e => patch(type, { enabled: e.target.checked })}
+                  />
+                  {NFAT_TYPE_LABELS[type]}
+                </label>
+                <button
+                  type="button"
+                  onClick={() => clearNow(type)}
+                  style={{ padding: '0.3rem 0.6rem', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', color: 'inherit' }}
+                  title={`Clear ${NFAT_TYPE_LABELS[type]} now`}
+                >Clear now</button>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', alignItems: 'center', opacity: s.enabled ? 1 : 0.5 }}>
+                {WEEKDAYS.map(d => {
+                  const on = (s.days || []).includes(d.v);
+                  return (
+                    <button
+                      key={d.v}
+                      type="button"
+                      disabled={!s.enabled}
+                      onClick={() => toggleDay(type, d.v)}
+                      style={{
+                        padding: '0.25rem 0.5rem', borderRadius: 'var(--radius-md)',
+                        border: `1px solid ${on ? '#2563EB' : 'var(--color-border)'}`,
+                        background: on ? '#2563EB' : 'transparent',
+                        color: on ? '#fff' : 'inherit',
+                        fontSize: '0.74rem', fontWeight: 600,
+                        cursor: s.enabled ? 'pointer' : 'not-allowed',
+                      }}
+                    >{d.label}</button>
+                  );
+                })}
+                <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem' }}>
+                  at
+                  <input
+                    type="time"
+                    value={s.time || '06:00'}
+                    disabled={!s.enabled}
+                    onChange={e => patch(type, { time: e.target.value })}
+                    style={{ padding: '0.2rem 0.3rem', fontFamily: 'inherit', fontSize: '0.8rem' }}
+                  />
+                </span>
+              </div>
+            </div>
+          );
+        })}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
+          <button type="button" onClick={onClose} style={{ padding: '0.4rem 0.8rem', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', fontWeight: 600, cursor: 'pointer', color: 'inherit' }}>Cancel</button>
+          <button type="button" onClick={save} style={{ padding: '0.4rem 0.9rem', background: '#2563EB', border: '1px solid #2563EB', borderRadius: 'var(--radius-md)', fontWeight: 600, cursor: 'pointer', color: '#fff' }}>Save schedule</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 export function OppsView2({ settings, updateSettings, prospects = [], updateProspect, onSelectProspect } = {}) {
   const { user } = useAuth();
   // Seeded with DEFAULT_HEADERS so the table renders columns immediately;
@@ -5438,41 +5593,45 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     }
   }, [data]);
 
-  // Manually blank the entire "No Further Action Today" column on demand.
-  // This is the same operation as the start-of-day auto-clear (and 2 PM
-  // sweep), just triggered from the toolbar so the user can wipe the
-  // column whenever they like. Clears the value, drops the `_nfatSetAt`
-  // tracking stamp, and bumps `_rowUpdatedAt` so the cleared value wins
-  // the cross-device merge over a stale mark on another device.
-  const clearNoFurtherAction = useCallback(() => {
-    const records = dataRef.current?.records || [];
-    const marked = records.filter(
-      r => String(r?.['No Further Action Today'] || '').trim() !== ''
-    ).length;
-    if (!marked) {
-      window.alert('No "No Further Action Today" values to clear.');
-      return;
-    }
-    const ok = window.confirm(
-      `Clear "No Further Action Today" for ${marked} row${marked === 1 ? '' : 's'}? `
-      + 'This blanks the column for every row.'
+  // Configurable per-type clear schedules (✓ / ✗ / any), persisted in
+  // per-user localStorage. The toolbar button opens a modal to edit these.
+  const [nfatSchedules, setNfatSchedules] = useState(loadNfatSchedules);
+  const [nfatScheduleOpen, setNfatScheduleOpen] = useState(false);
+  const saveNfatSchedules = useCallback((next) => {
+    setNfatSchedules(next);
+    try { userLsSet(NFAT_SCHEDULES_KEY, JSON.stringify(next)); } catch { /* quota */ }
+  }, []);
+
+  // Blank the matching "No Further Action Today" cells for a given clear
+  // type ('check' → ✓, 'x' → ✗, 'any' → anything set). Shared by the
+  // configurable schedules and the modal's "Clear now" buttons. Clears the
+  // value, drops the `_nfatSetAt` tracking stamp, and bumps
+  // `_rowUpdatedAt` so the cleared value wins the cross-device merge over
+  // a stale mark on another device. Returns the number of rows cleared.
+  const clearNfat = useCallback((type) => {
+    const recs = dataRef.current?.records || [];
+    const count = recs.reduce(
+      (n, r) => n + (nfatValueMatches(r?.['No Further Action Today'], type) ? 1 : 0),
+      0,
     );
-    if (!ok) return;
-    setData(prev => {
-      const recs = prev?.records || [];
-      let touched = false;
-      const next = recs.map(r => {
-        if (String(r?.['No Further Action Today'] || '').trim() === '') return r;
-        touched = true;
-        const copy = { ...r };
-        copy['No Further Action Today'] = '';
-        delete copy._nfatSetAt;
-        copy._rowUpdatedAt = Date.now();
-        return copy;
+    if (count > 0) {
+      setData(prev => {
+        const rs = prev?.records || [];
+        let touched = false;
+        const next = rs.map(r => {
+          if (!nfatValueMatches(r?.['No Further Action Today'], type)) return r;
+          touched = true;
+          const copy = { ...r };
+          copy['No Further Action Today'] = '';
+          delete copy._nfatSetAt;
+          copy._rowUpdatedAt = Date.now();
+          return copy;
+        });
+        if (!touched) return prev;
+        return { ...prev, records: next };
       });
-      if (!touched) return prev;
-      return { ...prev, records: next };
-    });
+    }
+    return count;
   }, []);
 
   // Fire an immediate off-site backup to cloud storage (server-side, all
@@ -5826,85 +5985,36 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     });
   }, []);
 
-  // Sweep stale "No Further Action Today" X's. The rule is: every row
-  // whose NFAT was marked BEFORE the most recent 2 PM Eastern boundary
-  // gets cleared back to blank — so X's reset at 2 PM each day. We re-run
-  // the sweep on mount and every minute the tab is open, so a tab left
-  // open across 2 PM self-clears without a reload.
+  // Run the configured "No Further Action Today" clear schedules. For each
+  // enabled type, if its most recent scheduled occurrence (Eastern weekday
+  // + time) is newer than the last time it ran, the clear fires — which
+  // also catches up a scheduled time that passed while the app was closed.
+  // We re-check on mount (after hydration) and every minute the tab is
+  // open, so a tab left open across a scheduled time self-clears. Gating on
+  // `hydrated` ensures we clear the reconciled dataset, not the cache paint.
   useEffect(() => {
-    const sweep = () => {
-      const cutoff = mostRecent2pmEasternMs();
-      setData(prev => {
-        const records = prev?.records || [];
-        let touched = false;
-        const nextRecords = records.map(r => {
-          const nfat = String(r?.['No Further Action Today'] || '').trim().toLowerCase();
-          if (nfat !== 'no') return r;
-          const setAt = Date.parse(r?._nfatSetAt || '');
-          // Missing / unparseable stamp counts as old — that covers any
-          // X rows imported from the Google sheet before this field
-          // existed, and also any X set before this code shipped.
-          if (Number.isFinite(setAt) && setAt >= cutoff) return r;
-          touched = true;
-          const copy = { ...r };
-          copy['No Further Action Today'] = '';
-          delete copy._nfatSetAt;
-          // Bump the row clock so the cleared value wins the cross-device
-          // merge. Without this the swept row keeps yesterday's
-          // _rowUpdatedAt, ties the stale 'no' still sitting on another
-          // device, and mergeOpps2Datasets's tie-break keeps that stale mark.
-          copy._rowUpdatedAt = Date.now();
-          return copy;
-        });
-        if (!touched) return prev;
-        return { ...prev, records: nextRecords };
-      });
+    if (!hydrated) return undefined;
+    const tick = () => {
+      const now = Date.now();
+      let changed = false;
+      const next = { ...nfatSchedules };
+      for (const type of NFAT_SCHEDULE_TYPES) {
+        const s = next[type];
+        if (!s?.enabled) continue;
+        const occ = mostRecentNfatScheduleMs(s.days, s.time, now);
+        if (occ == null || (s.lastRunAt || 0) >= occ) continue;
+        clearNfat(type);
+        next[type] = { ...s, lastRunAt: now };
+        changed = true;
+      }
+      // Persist the advanced lastRunAt stamps so a missed-run catch-up
+      // doesn't re-fire on the next tick / reload.
+      if (changed) saveNfatSchedules(next);
     };
-    sweep();
-    const t = window.setInterval(sweep, 60_000);
+    tick();
+    const t = window.setInterval(tick, 60_000);
     return () => window.clearInterval(t);
-  }, []);
-
-  // First load of each Eastern calendar day: blank EVERY "No Further
-  // Action Today" value, regardless of when it was marked. This is a
-  // start-of-day reset that runs once per Eastern day (tracked in
-  // per-user localStorage), and sits alongside the 2 PM sweep above —
-  // the sweep keeps clearing morning marks at 2 PM during the day.
-  useEffect(() => {
-    // Wait until the initial load + reconcile has fully settled. Keying
-    // this on `hydrated` (not on records arriving) is what makes the clear
-    // stick: the cache paints first, but reconcile then does a full
-    // setData replace with the merged copy that still carries yesterday's
-    // marks. Running before that replace would clear the cache paint, burn
-    // the once-per-day localStorage flag, and then get clobbered by the
-    // reconcile — leaving yesterday's marks in place for the rest of the
-    // day. Gating on hydration guarantees we clear the final dataset.
-    if (!hydrated) return;
-    if (!data?.records?.length) return;
-    const today = easternDateStr();
-    if (userLsGet(NFAT_DAILY_CLEAR_KEY) === today) return;
-    setData(prev => {
-      const records = prev?.records || [];
-      let touched = false;
-      const nextRecords = records.map(r => {
-        const nfat = String(r?.['No Further Action Today'] || '').trim();
-        if (nfat === '') return r;
-        touched = true;
-        const copy = { ...r };
-        copy['No Further Action Today'] = '';
-        delete copy._nfatSetAt;
-        // Bump the row clock so the cleared value wins the cross-device
-        // merge over a stale mark still sitting on another device.
-        copy._rowUpdatedAt = Date.now();
-        return copy;
-      });
-      if (!touched) return prev;
-      return { ...prev, records: nextRecords };
-    });
-    userLsSet(NFAT_DAILY_CLEAR_KEY, today);
-    // Intentionally keyed on `hydrated` alone — we want this to fire once,
-    // right after load settles, reading the records from the guard above.
-  }, [hydrated]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [hydrated, nfatSchedules, clearNfat, saveNfatSchedules]);
 
   const headers = data?.headers || [];
   const columnLinks = data?.columnLinks || {};
@@ -6472,7 +6582,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       : [oppNumCol, ...withInfo, actions];
   }, [headers, columnLinks, listRegistry, updateOppField, deleteOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks, massEditOn, oppNumberById, filteredRowIds]);
 
-  const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);
 
   // Rows the current Date / Status / Show / Hide-history filters allow.
@@ -6529,15 +6638,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     }
     return searched;
   }, [prefiltered, search, showOnlySelected, selectedIds]);
-
-  const stageCounts = useMemo(() => {
-    const counts = {};
-    for (const r of prefiltered) {
-      const stage = r['Stage'] || 'Unknown';
-      counts[stage] = (counts[stage] || 0) + 1;
-    }
-    return counts;
-  }, [prefiltered]);
 
   const serviceBreakdown = useMemo(() => {
     // The breakdown only shows on the "By Service" tab. Skipping the
@@ -6928,14 +7028,14 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           >Bulk import</button>
           <button
             type="button"
-            onClick={clearNoFurtherAction}
+            onClick={() => setNfatScheduleOpen(true)}
             style={{
               padding: '0.45rem 0.85rem', background: 'transparent',
               border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
               fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
               color: 'var(--color-text)', cursor: 'pointer',
             }}
-            title="Blank the No Further Action Today column for every row"
+            title="Schedule automatic clears of the No Further Action Today column (✓ / ✗ / any), or clear now"
           >Clear No Further Action</button>
           <button
             type="button"
@@ -7033,6 +7133,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         <Opps2BackupsModal
           onRestore={restoreOpps2Backup}
           onClose={() => setBackupsOpen(false)}
+        />
+      )}
+
+      {nfatScheduleOpen && (
+        <NfatScheduleModal
+          schedules={nfatSchedules}
+          onSave={saveNfatSchedules}
+          onClearNow={clearNfat}
+          onClose={() => setNfatScheduleOpen(false)}
         />
       )}
 
@@ -7340,21 +7449,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
 
       {activeTab === 'opps' && (
         <>
-          <div className={styles.summary}>
-            {stageOrder.filter(s => stageCounts[s]).map(stage => (
-              <div key={stage} className={styles.summaryChip}>
-                <span className={styles.summaryChipValue}>{stageCounts[stage]}</span>
-                <span className={styles.summaryChipLabel}>{stage}</span>
-              </div>
-            ))}
-            {Object.keys(stageCounts).filter(s => !stageOrder.includes(s) && s !== 'Unknown').map(stage => (
-              <div key={stage} className={styles.summaryChip}>
-                <span className={styles.summaryChipValue}>{stageCounts[stage]}</span>
-                <span className={styles.summaryChipLabel}>{stage}</span>
-              </div>
-            ))}
-          </div>
-
           <div className={styles.searchRow}>
             <input
               className={styles.searchInput}
