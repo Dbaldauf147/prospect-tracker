@@ -516,7 +516,13 @@ function enrichOverviewFromPortfolio(overview, portfolioRows) {
 }
 
 // ── Inline HubSpot Contact Editor ──
-const TAG_OPTIONS = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Efficiency / Renewables', 'Dan Key Target', 'Decision Maker', 'Met In Person', 'Test', 'EU', 'Hide', 'Left'];
+// "Met In Person" is no longer offered as a selectable tag — it's surfaced
+// as a dedicated checkbox in the editor below. Under the hood the flag is
+// still persisted as a `dans_tags` value (so existing tagged contacts show
+// up checked automatically and the PE Portfolio "Met in Person" counts keep
+// working); the checkbox just reads/writes that one value.
+const MET_IN_PERSON_TAG = 'Met In Person';
+const TAG_OPTIONS = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Efficiency / Renewables', 'Dan Key Target', 'Decision Maker', 'Test', 'EU', 'Hide', 'Left'];
 
 // Portfolio-company sector scoring. Each sector has a 1-10 fit score; the tier
 // bucket (High/Medium/Low) is derived from the score for color-coding only.
@@ -563,7 +569,11 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
-  const knownTagsLower = new Set(tagOptions.map(t => t.toLowerCase()));
+  // "Met In Person" is handled by its own checkbox, never as a tag chip —
+  // strip it from the offered options regardless of what a caller passes in.
+  const metLower = MET_IN_PERSON_TAG.toLowerCase();
+  const visibleTagOptions = tagOptions.filter(t => t.toLowerCase() !== metLower);
+  const knownTagsLower = new Set(visibleTagOptions.map(t => t.toLowerCase()));
 
   const cid = contact.id || contact.vid;
   const savedNote = (cid && contactNotes[cid]) || contact.notes || contact.hs_content_membership_notes || contact.message || '';
@@ -610,11 +620,17 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   const [checkedTags, setCheckedTags] = useState(() =>
     new Set(parsedTags.filter(t => knownTagsLower.has(t.toLowerCase())).map(t => {
       // Normalise to the canonical casing
-      return tagOptions.find(o => o.toLowerCase() === t.toLowerCase()) || t;
+      return visibleTagOptions.find(o => o.toLowerCase() === t.toLowerCase()) || t;
     }))
   );
-  // Any extra tags not in TAG_OPTIONS are kept verbatim
-  const extraTags = parsedTags.filter(t => !knownTagsLower.has(t.toLowerCase()));
+  // "Met In Person" is its own checkbox; seed it from the existing tag value
+  // so contacts already tagged show up checked.
+  const [metInPerson, setMetInPerson] = useState(() =>
+    parsedTags.some(t => t.toLowerCase() === metLower)
+  );
+  // Any extra tags not in TAG_OPTIONS are kept verbatim (excluding the
+  // met-in-person flag, which is reattached from its checkbox on save).
+  const extraTags = parsedTags.filter(t => !knownTagsLower.has(t.toLowerCase()) && t.toLowerCase() !== metLower);
 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -799,18 +815,19 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // resolves. Reset whenever the user edits city/state manually.
   const [cityLookupStatus, setCityLookupStatus] = useState('');
 
-  function buildTagsStringFrom(set) {
-    return [...set, ...extraTags].join(';');
+  function buildTagsStringFrom(set, met = metInPerson) {
+    const parts = [...set, ...extraTags];
+    if (met) parts.push(MET_IN_PERSON_TAG);
+    return parts.join(';');
   }
 
   function buildTagsString() {
     return buildTagsStringFrom(checkedTags);
   }
 
-  async function persistTags(nextSet) {
+  async function persistDansTags(tagsStr) {
     const cid = contact.id || contact.vid;
     if (!cid) return; // new contact — save will include tags on create
-    const tagsStr = buildTagsStringFrom(nextSet);
     setTagsSaveStatus('Saving tag…');
     try {
       const res = await apiFetch(`/api/hubspot?action=update-contact`, {
@@ -841,7 +858,15 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     setCheckedTags(prev => {
       const next = new Set(prev);
       next.has(tag) ? next.delete(tag) : next.add(tag);
-      persistTags(next);
+      persistDansTags(buildTagsStringFrom(next));
+      return next;
+    });
+  }
+
+  function toggleMetInPerson() {
+    setMetInPerson(prev => {
+      const next = !prev;
+      persistDansTags(buildTagsStringFrom(checkedTags, next));
       return next;
     });
   }
@@ -1474,7 +1499,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
             </button>
             {tagsOpen && (
               <div style={{ marginTop: '2px', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#fff', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
-                {tagOptions.map(tag => {
+                {visibleTagOptions.map(tag => {
                   const bucket = BUCKETS.find(b => b.tag === tag.toLowerCase());
                   return (
                     <label key={tag} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.45rem 0.7rem', cursor: 'pointer', borderBottom: '1px solid #F1F5F9', background: checkedTags.has(tag) ? (bucket?.headerBg || '#F0F9FF') : '#fff' }}
@@ -1496,6 +1521,21 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                 })}
               </div>
             )}
+          </div>
+          <div
+            style={{ gridColumn: 'span 2' }}
+            onMouseDown={e => e.stopPropagation()}
+            onClick={e => e.stopPropagation()}
+          >
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.55rem', cursor: 'pointer', padding: '0.4rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: '6px', background: metInPerson ? '#F0F9FF' : '#fff' }}>
+              <input
+                type="checkbox"
+                checked={metInPerson}
+                onChange={toggleMetInPerson}
+                style={{ accentColor: '#0078D4', width: '15px', height: '15px', cursor: 'pointer' }}
+              />
+              <span style={{ fontSize: '0.8rem', fontWeight: metInPerson ? 600 : 500, color: metInPerson ? '#0369A1' : '#374151' }}>Met In Person</span>
+            </label>
           </div>
         </div>
         {error && <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: '#FEF2F2', borderRadius: '6px', fontSize: '0.75rem', color: '#DC2626' }}>{error}</div>}

@@ -1396,7 +1396,10 @@ function KeyContactsViewInner({
   // ad-hoc on a prior contact still shows up in the dropdown the
   // next time they open it.
   const tagOptionsList = useMemo(() => {
-    const CURATED = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Efficiency / Renewables', 'Dan Key Target', 'Decision Maker', 'Met In Person', 'EU', 'Hide', 'Left'];
+    // "Met In Person" is edited via a dedicated checkbox in the contact
+    // editor, not as a curated tag — but it can still surface here (from
+    // existing contact data) so the tag filter keeps working.
+    const CURATED = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Efficiency / Renewables', 'Dan Key Target', 'Decision Maker', 'EU', 'Hide', 'Left'];
     const seen = new Set();
     const out = [];
     const push = (t) => {
