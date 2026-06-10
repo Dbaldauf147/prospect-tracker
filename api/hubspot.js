@@ -254,6 +254,47 @@ function normalizeContactPropertiesForHubSpot(props) {
   return next;
 }
 
+// HubSpot rejects a contact write with a 400 when a `dans_tags` value
+// isn't one of the enumeration's registered options (e.g. the curated
+// "Met In Person" tag the UI offers but that was never added to the
+// property). Detect that specific failure so the caller can register
+// the missing option and retry instead of surfacing a dead-end error.
+function isDansTagsOptionError(status, text) {
+  if (status !== 400 || !text) return false;
+  return /was not one of the allowed options/i.test(text) && /dans_tags/i.test(text);
+}
+
+// Register any `dans_tags` values that aren't already options on the
+// property, appending them so the subsequent contact write validates.
+// Values are matched case-insensitively against existing option values
+// to avoid creating near-duplicate options.
+async function ensureDansTagsOptions(token, tagsStr) {
+  const wanted = String(tagsStr || '').split(';').map(s => s.trim()).filter(Boolean);
+  if (!wanted.length) return;
+  const prop = await hubspotFetch('/crm/v3/properties/contacts/dans_tags', token);
+  const existing = (prop.options || []).map(o => ({ label: o.label, value: o.value, displayOrder: o.displayOrder, hidden: o.hidden }));
+  const existingLower = new Set(existing.map(o => String(o.value).toLowerCase()));
+  const toAdd = [];
+  const seen = new Set();
+  for (const tag of wanted) {
+    const key = tag.toLowerCase();
+    if (existingLower.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    toAdd.push(tag);
+  }
+  if (!toAdd.length) return;
+  const newOptions = toAdd.map((t, i) => ({ label: t, value: t, displayOrder: existing.length + i, hidden: false }));
+  const res = await fetch(`${BASE}/crm/v3/properties/contacts/dans_tags`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ options: [...existing, ...newOptions] }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to register tag option(s) [${toAdd.join(', ')}]: ${text.slice(0, 200)}`);
+  }
+}
+
 async function getContactsByCompany(token, companyName) {
   const data = await hubspotFetch(
     `/crm/v3/objects/contacts/search`,
@@ -451,11 +492,21 @@ async function handler(req, res) {
         return res.status(400).json({ error: 'Email is required to create a contact' });
       }
       const cleanProps = normalizeContactPropertiesForHubSpot(properties);
-      const createRes = await fetch(`${BASE}/crm/v3/objects/contacts`, {
+      const postContact = () => fetch(`${BASE}/crm/v3/objects/contacts`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ properties: cleanProps }),
       });
+      let createRes = await postContact();
+      // Self-heal a missing dans_tags option (e.g. "Met In Person") the
+      // same way update-contact does: register it, then retry once.
+      if (!createRes.ok && typeof cleanProps.dans_tags === 'string') {
+        const peekText = await createRes.clone().text();
+        if (isDansTagsOptionError(createRes.status, peekText)) {
+          await ensureDansTagsOptions(token, cleanProps.dans_tags);
+          createRes = await postContact();
+        }
+      }
       if (createRes.ok) {
         const created = await createRes.json();
         return res.json({ success: true, contact: { id: created.id, ...created.properties } });
@@ -545,14 +596,28 @@ async function handler(req, res) {
           }
         }
       }
-      const updateRes = await fetch(`${BASE}/crm/v3/objects/contacts/${contactId}`, {
+      const patchContact = () => fetch(`${BASE}/crm/v3/objects/contacts/${contactId}`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ properties: cleanProps }),
       });
+      let updateRes = await patchContact();
       if (!updateRes.ok) {
         const text = await updateRes.text();
-        throw new Error(`Update failed ${updateRes.status}: ${text.slice(0, 300)}`);
+        // Self-heal the "tag was not one of the allowed options" case:
+        // register the missing dans_tags option(s) on the property, then
+        // retry the write once. Lets curated UI tags (e.g. "Met In
+        // Person") save without a manual HubSpot property edit.
+        if (typeof cleanProps.dans_tags === 'string' && isDansTagsOptionError(updateRes.status, text)) {
+          await ensureDansTagsOptions(token, cleanProps.dans_tags);
+          updateRes = await patchContact();
+          if (!updateRes.ok) {
+            const retryText = await updateRes.text();
+            throw new Error(`Update failed ${updateRes.status}: ${retryText.slice(0, 300)}`);
+          }
+        } else {
+          throw new Error(`Update failed ${updateRes.status}: ${text.slice(0, 300)}`);
+        }
       }
       const updated = await updateRes.json();
       return res.json({ success: true, contact: { id: updated.id, ...updated.properties }, companyAssignment });
