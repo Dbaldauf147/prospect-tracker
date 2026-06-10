@@ -5438,6 +5438,43 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     }
   }, [data]);
 
+  // Manually blank the entire "No Further Action Today" column on demand.
+  // This is the same operation as the start-of-day auto-clear (and 2 PM
+  // sweep), just triggered from the toolbar so the user can wipe the
+  // column whenever they like. Clears the value, drops the `_nfatSetAt`
+  // tracking stamp, and bumps `_rowUpdatedAt` so the cleared value wins
+  // the cross-device merge over a stale mark on another device.
+  const clearNoFurtherAction = useCallback(() => {
+    const records = dataRef.current?.records || [];
+    const marked = records.filter(
+      r => String(r?.['No Further Action Today'] || '').trim() !== ''
+    ).length;
+    if (!marked) {
+      window.alert('No "No Further Action Today" values to clear.');
+      return;
+    }
+    const ok = window.confirm(
+      `Clear "No Further Action Today" for ${marked} row${marked === 1 ? '' : 's'}? `
+      + 'This blanks the column for every row.'
+    );
+    if (!ok) return;
+    setData(prev => {
+      const recs = prev?.records || [];
+      let touched = false;
+      const next = recs.map(r => {
+        if (String(r?.['No Further Action Today'] || '').trim() === '') return r;
+        touched = true;
+        const copy = { ...r };
+        copy['No Further Action Today'] = '';
+        delete copy._nfatSetAt;
+        copy._rowUpdatedAt = Date.now();
+        return copy;
+      });
+      if (!touched) return prev;
+      return { ...prev, records: next };
+    });
+  }, []);
+
   // Fire an immediate off-site backup to cloud storage (server-side, all
   // collections — not just Opps 2). Handy to click right before a risky
   // edit so there's a fresh cloud copy independent of this browser.
@@ -6889,6 +6926,17 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             }}
             title="Paste data from a Google Sheet with the same columns and review the mapping before importing"
           >Bulk import</button>
+          <button
+            type="button"
+            onClick={clearNoFurtherAction}
+            style={{
+              padding: '0.45rem 0.85rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
+              fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
+              color: 'var(--color-text)', cursor: 'pointer',
+            }}
+            title="Blank the No Further Action Today column for every row"
+          >Clear No Further Action</button>
           <button
             type="button"
             onClick={exportBackup}
