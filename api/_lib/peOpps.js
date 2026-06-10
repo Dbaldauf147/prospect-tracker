@@ -146,11 +146,12 @@ export async function loadPeFirms(db, uid, email) {
 }
 
 // ---- PE Stages board (mirror PEStagesTab.exportToExcel) ------------------
-const PE_STAGE_ORDER = ['Discovery', 'Piloting', 'Existing Partnership'];
+const PE_STAGE_ORDER = ['Discovery', 'Piloting', 'Existing Partnership', 'Not Sold'];
 const PE_STAGE_META = [
   { stage: 'Discovery', accent: '2563EB', bg: 'EFF6FF', border: 'BFDBFE' },
   { stage: 'Piloting', accent: 'D97706', bg: 'FFFBEB', border: 'FDE68A' },
   { stage: 'Existing Partnership', accent: '059669', bg: 'ECFDF5', border: 'A7F3D0' },
+  { stage: 'Not Sold', accent: 'DC2626', bg: 'FEF2F2', border: 'FECACA' },
   { stage: 'Unassigned', accent: '64748B', bg: 'F8FAFC', border: 'E2E8F0' },
 ];
 

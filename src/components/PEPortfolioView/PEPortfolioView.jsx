@@ -128,9 +128,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
   // Persisted column widths + sort so the layout survives reloads.
-  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, pcDownload: 120, opps: 100, ratio: 120, clients: 110, keyContacts: 120, caseStudy: 110, discovery: 100, piloting: 100, existingPartnership: 150 };
+  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, pcDownload: 120, opps: 100, ratio: 120, clients: 110, keyContacts: 120, caseStudy: 110, discovery: 100, piloting: 100, existingPartnership: 150, notSold: 100 };
   // company is sticky and always shown — every other column is opt-in.
-  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'pcDownload', 'opps', 'ratio', 'clients', 'keyContacts', 'caseStudy', 'discovery', 'piloting', 'existingPartnership'];
+  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'pcDownload', 'opps', 'ratio', 'clients', 'keyContacts', 'caseStudy', 'discovery', 'piloting', 'existingPartnership', 'notSold'];
   const [colWidths, setColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
@@ -149,6 +149,12 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         if (!localStorage.getItem('pe-portfolio:cols-pe-stage')) {
           next.add('discovery'); next.add('piloting'); next.add('existingPartnership');
           try { localStorage.setItem('pe-portfolio:cols-pe-stage', '1'); } catch {}
+        }
+        // One-time migration: reveal the Not Sold PE Stage column for
+        // users whose saved set predates it.
+        if (!localStorage.getItem('pe-portfolio:cols-not-sold')) {
+          next.add('notSold');
+          try { localStorage.setItem('pe-portfolio:cols-not-sold', '1'); } catch {}
         }
         // One-time migration: reveal the PC Download column for users
         // whose saved set predates it.
@@ -560,6 +566,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         case 'existingPartnership':
           cmp = (a.peStage === 'Existing Partnership' ? 1 : 0) - (b.peStage === 'Existing Partnership' ? 1 : 0);
           break;
+        case 'notSold':
+          cmp = (a.peStage === 'Not Sold' ? 1 : 0) - (b.peStage === 'Not Sold' ? 1 : 0);
+          break;
         default:
           cmp = 0;
       }
@@ -593,7 +602,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
             {subtab === 'portfolio'
               ? <>Every prospect with Type = <code>Private Equity</code>, sorted by pipeline from their portfolio companies. Opportunity counts come from the <strong>Opps</strong> tab (same as the Opps column in My Accounts).</>
               : subtab === 'stages'
-              ? <>PE firms grouped by their <strong>PE Stage</strong> (set in each firm's company popup): <code>Discovery</code>, <code>Piloting</code>, and <code>Existing Partnership</code>.</>
+              ? <>PE firms grouped by their <strong>PE Stage</strong> (set in each firm's company popup): <code>Discovery</code>, <code>Piloting</code>, <code>Existing Partnership</code>, and <code>Not Sold</code>.</>
               : subtab === 'companies'
               ? <>Every mapped <strong>portfolio company</strong> across all PE firms (from each firm's Portfolio Companies tab), merged into one searchable, filterable table. <strong>Opportunity Score</strong> is ranked within each PC's own firm — matching that firm's export.</>
               : <>Every opportunity from the <strong>Opps 2</strong> tab with Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>}
@@ -695,6 +704,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
               met: 'Met in Person', mapping: 'PC Mapping', pcDownload: 'PC Download', opps: 'PC Opps', ratio: 'PC Opps 2/4',
               clients: 'PC Clients', keyContacts: 'Key Contacts', caseStudy: 'Case Study',
               discovery: 'Discovery', piloting: 'Piloting', existingPartnership: 'Existing Partnership',
+              notSold: 'Not Sold',
             };
             return (
               <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', zIndex: 100, minWidth: 200, padding: '0.3rem 0' }}>
@@ -761,6 +771,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
             { key: 'discovery', label: 'Discovery', align: 'center', tip: 'Checked when this PE firm\'s PE Stage (set in its company popup) is Discovery' },
             { key: 'piloting', label: 'Piloting', align: 'center', tip: 'Checked when this PE firm\'s PE Stage (set in its company popup) is Piloting' },
             { key: 'existingPartnership', label: 'Existing Partnership', align: 'center', tip: 'Checked when this PE firm\'s PE Stage (set in its company popup) is Existing Partnership' },
+            { key: 'notSold', label: 'Not Sold', align: 'center', tip: 'Checked when this PE firm\'s PE Stage (set in its company popup) is Not Sold' },
           ];
           const HEADER_COLUMNS = ALL_HEADER_COLUMNS.filter(c => visibleCols.has(c.key));
           const GRID = `${HEADER_COLUMNS.map(c => `${colWidths[c.key] || DEFAULT_COL_WIDTHS[c.key] || 110}px`).join(' ')} 28px`;
@@ -1014,6 +1025,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                         { key: 'discovery', stage: 'Discovery' },
                         { key: 'piloting', stage: 'Piloting' },
                         { key: 'existingPartnership', stage: 'Existing Partnership' },
+                        { key: 'notSold', stage: 'Not Sold' },
                       ].map(({ key, stage }) => visibleCols.has(key) && (
                         <div
                           key={key}
@@ -1237,8 +1249,8 @@ function PEAllCompaniesTab({ firms, onSelectProspect }) {
 }
 
 // PE firms laid out as a Kanban board by engagement stage (peStage):
-// one column per stage — Discovery, Piloting, Existing Partnership, plus
-// an Unassigned column for firms with no stage set — so the user can
+// one column per stage — Discovery, Piloting, Existing Partnership, Not Sold,
+// plus an Unassigned column for firms with no stage set — so the user can
 // scan which PE relationships sit at each phase. Cards link back to the
 // firm's company popup; stage is set per firm in that popup's "PE Stage"
 // dropdown. The whole board (respecting the search filter) exports to
@@ -1249,6 +1261,7 @@ function PEStagesTab({ firms, portfolioByPe, onSelectProspect }) {
     { stage: 'Discovery', accent: '#2563EB', bg: '#EFF6FF', border: '#BFDBFE' },
     { stage: 'Piloting', accent: '#D97706', bg: '#FFFBEB', border: '#FDE68A' },
     { stage: 'Existing Partnership', accent: '#059669', bg: '#ECFDF5', border: '#A7F3D0' },
+    { stage: 'Not Sold', accent: '#DC2626', bg: '#FEF2F2', border: '#FECACA' },
     { stage: 'Unassigned', accent: '#64748B', bg: '#F8FAFC', border: '#E2E8F0' },
   ];
   const stageOf = (pe) => (PE_STAGES.includes(pe.peStage) ? pe.peStage : 'Unassigned');
