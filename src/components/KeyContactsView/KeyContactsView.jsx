@@ -984,10 +984,7 @@ function KeyContactsViewInner({
       { label: 'State',         width: 16, get: ({ contact: c }) => c.state || '' },
       { label: 'Country',       width: 16, get: ({ contact: c }) => c.country || '' },
       { label: 'LinkedIn URL',  width: 30, get: ({ contact: c }) => c.hs_linkedin_url || c.linkedin_url || '' },
-      { label: 'Met In Person', width: 14, get: ({ contact: c }) => {
-        const t = String(c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-        return t.includes('met in person') ? 'Yes' : '';
-      } },
+      { label: 'Met In Person', width: 14, get: ({ contact: c }) => resolveMetInPerson(c) ? 'Yes' : '' },
       { label: 'Events',        width: 30, get: ({ contact: c }) => contactEvents[String(c.id || '')] || '' },
       { label: 'Tags',          width: 30, get: ({ contact: c }) => c.dans_tags || c.dan_s_tags || c.dans_tag || '' },
     ];
@@ -1570,6 +1567,17 @@ function KeyContactsViewInner({
     [showSuggestedCompany, prospects, hubspotCache]
   );
 
+  // "Met In Person" is now a local checkbox (settings.contactMetInPerson),
+  // not a HubSpot tag. Prefer the saved local value; fall back to the legacy
+  // HubSpot tag for contacts that haven't been touched yet, so existing
+  // tagged contacts keep counting until they're explicitly set.
+  const metInPersonMap = settings?.contactMetInPerson || {};
+  const resolveMetInPerson = useCallback((c) => {
+    const id = String(c?.id || c?.vid || '');
+    if (id && Object.prototype.hasOwnProperty.call(metInPersonMap, id)) return !!metInPersonMap[id];
+    return metInPersonSelector(c);
+  }, [metInPersonMap, metInPersonSelector]);
+
   const keyContacts = useMemo(() => {
     const out = [];
     const localFields = settings?.contactLocalFields || {};
@@ -1634,7 +1642,7 @@ function KeyContactsViewInner({
         city: String(c.city || '').trim(),
         state: String(c.state || '').trim(),
         country: String(c.country || '').trim(),
-        metInPerson: metInPersonSelector(c),
+        metInPerson: resolveMetInPerson(c),
         company,
         domain,
         suggestedCompany: companyGuessIndex ? guessCompanyForContact(c, companyGuessIndex) : '',
@@ -1642,7 +1650,7 @@ function KeyContactsViewInner({
       });
     }
     return out;
-  }, [hubspotCache, FREE_MAIL, contactSelector, metInPersonSelector, activeOppCompanies, unmappedOnly, prospects, companyGuessIndex, settings?.contactLocalFields]);
+  }, [hubspotCache, FREE_MAIL, contactSelector, resolveMetInPerson, activeOppCompanies, unmappedOnly, prospects, companyGuessIndex, settings?.contactLocalFields]);
 
   // Count of contacts the "unmapped past 30 days" filter WOULD yield,
   // computed independently from the active filters above so we can
@@ -1702,12 +1710,12 @@ function KeyContactsViewInner({
         name: [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'Unknown',
         company,
         domain,
-        metInPerson: tags.includes('met in person'),
+        metInPerson: resolveMetInPerson(c),
         city: String(c.city || '').trim(),
       });
     }
     return out;
-  }, [hubspotCache, FREE_MAIL]);
+  }, [hubspotCache, FREE_MAIL, resolveMetInPerson]);
 
   // Build one row per distinct company that has ≥1 Dan Key Target contact.
   // Each row is anchored to a prospect when one matches by name OR domain;
@@ -3294,6 +3302,11 @@ function KeyContactsViewInner({
               if (!partner && !kids) delete next[contactId];
               else next[contactId] = { partner, kids };
               updateSettings({ contactFamilies: next });
+            }}
+            contactMetInPerson={settings?.contactMetInPerson || {}}
+            onSaveMetInPerson={(contactId, met) => {
+              const current = settings?.contactMetInPerson || {};
+              updateSettings({ contactMetInPerson: { ...current, [contactId]: !!met } });
             }}
             events={settings?.events || []}
             onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settings?.events || [], eventId, c) })}

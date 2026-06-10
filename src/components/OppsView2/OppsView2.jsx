@@ -5309,6 +5309,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     else next[cid] = { partner, kids };
     updateSettings({ contactFamilies: next });
   }, [settings?.contactFamilies, updateSettings]);
+  const saveContactMetInPerson = useCallback((cid, met) => {
+    const cur = settings?.contactMetInPerson || {};
+    updateSettings({ contactMetInPerson: { ...cur, [cid]: !!met } });
+  }, [settings?.contactMetInPerson, updateSettings]);
 
   // Hydration — load the user's saved opps. Both stores are kicked off
   // in parallel, but we paint whichever resolves first (IndexedDB
@@ -7552,6 +7556,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           onSaveToAlsoMap={(m) => updateSettings({ toAlsoMap: m })}
           contactFamilies={settings?.contactFamilies || {}}
           onSaveFamily={saveContactFamily}
+          contactMetInPerson={settings?.contactMetInPerson || {}}
+          onSaveMetInPerson={saveContactMetInPerson}
           events={settings?.events || []}
           onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settings?.events || [], eventId, c) })}
           companyContacts={(hubspotContacts || []).filter(c => {

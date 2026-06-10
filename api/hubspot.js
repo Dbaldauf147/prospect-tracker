@@ -233,10 +233,17 @@ const DANS_TAGS_ALIASES = {
 function normalizeDansTagsForHubSpot(raw) {
   if (raw == null) return raw;
   const parts = String(raw).split(';').map(s => s.trim()).filter(Boolean);
-  const out = parts.map(t => {
-    const key = t.replace(/\s+/g, ' ');
-    return DANS_TAGS_ALIASES[key] || DANS_TAGS_ALIASES[key.toLowerCase()] || t;
-  });
+  const out = parts
+    // "Met In Person" is tracked locally in Prospect Tracker (a checkbox on
+    // the contact editor), not in HubSpot — it was removed from the
+    // `dans_tags` enumeration, so writing it back triggers a 400. Drop it
+    // from every contact write so legacy-tagged contacts save cleanly and
+    // the value is never (re-)recorded in HubSpot.
+    .filter(t => t.replace(/\s+/g, ' ').toLowerCase() !== 'met in person')
+    .map(t => {
+      const key = t.replace(/\s+/g, ' ');
+      return DANS_TAGS_ALIASES[key] || DANS_TAGS_ALIASES[key.toLowerCase()] || t;
+    });
   const seen = new Set();
   const deduped = [];
   for (const t of out) {
