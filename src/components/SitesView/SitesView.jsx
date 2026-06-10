@@ -127,6 +127,7 @@ function detectSitesMapping(headers) {
   const siteName = headers.find(h => /\b(site\s*name|site|property|location|facility|building|name)\b/i.test(String(h))) || headers[0];
   return {
     siteName,
+    companyName: detectColumn(headers, [/^company\s*name$/i, /^company$/i, /\bcompany\b/i, /\bportfolio\b/i, /parent\s*(co|company|org)/i, /\baccount\s*name\b/i, /\bcustomer\s*name\b/i, /\borganization\b/i, /\bclient\b/i]) || '',
     address: detectColumn(headers, [/^address$/i, /^street\s*address$/i, /street/i, /\baddress\b/i]) || '',
     city: detectColumn(headers, [/^city$/i, /^town$/i, /^municipality$/i, /\bcity\b/i]) || '',
     state: detectColumn(headers, [/^state$/i, /^province$/i, /^state\s*\/\s*province$/i, /\bstate\b/i, /\bregion\b/i]) || '',
@@ -355,6 +356,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   // descriptive (don't drive any computation). Surface on the on-page
   // table and in the Indicative Savings Site Detail / Contract
   // Overview sheets when mapped.
+  // Optional Company Name column from the upload — purely descriptive
+  // (doesn't drive any computation). Surfaced on the on-page table and
+  // used to name the Indicative Savings export file.
+  const [companyNameOverride, setCompanyNameOverride] = useState(null);
   const [addressOverride, setAddressOverride] = useState(null);
   const [cityOverride, setCityOverride] = useState(null);
   const [stateColumnOverride, setStateColumnOverride] = useState(null);
@@ -455,6 +460,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const persistedHeaders = Object.keys(sitesArr[0]);
         const m = detectSitesMapping(persistedHeaders);
         setSiteNameOverride(m.siteName || null);
+        setCompanyNameOverride(m.companyName || null);
         setZipColOverride(m.zip || null);
         setElectricColOverride(m.electric || '__none__');
         setGasColOverride(m.gas || '__none__');
@@ -598,6 +604,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     const safe = (v) => (v && headerSet.has(v)) ? v : '';
     const mapping = {
       siteName:              safe(noneToEmpty(siteNameOverride)),
+      companyName:           safe(noneToEmpty(companyNameOverride)),
       address:               safe(noneToEmpty(addressOverride)),
       city:                  safe(noneToEmpty(cityOverride)),
       state:                 safe(noneToEmpty(stateColumnOverride)),
@@ -658,7 +665,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // pass-through column ends up rendered on the Utility Lookup
       // table even though the user only wanted these specific fields.
       const TARGET_KEYS = [
-        'siteName', 'address', 'city', 'state', 'zip', 'country',
+        'siteName', 'companyName', 'address', 'city', 'state', 'zip', 'country',
         'propertyType', 'segment', 'siteDescription', 'propertySize',
         'electric', 'electricUom', 'gas', 'gasUom',
         'electricCost', 'gasCost',
@@ -691,6 +698,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         try { localStorage.removeItem('utility-lookup:supplier-overrides'); } catch {}
       }
       setSiteNameOverride(mapping.siteName || null);
+      setCompanyNameOverride(mapping.companyName || null);
       setZipColOverride(mapping.zip || null);
       setElectricColOverride(mapping.electric || '__none__');
       setGasColOverride(mapping.gas || '__none__');
@@ -1214,6 +1222,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const resolvedCountryRateName = (electricRateSource === 'country' || gasRateSource === 'country')
         ? normalizeCountryRateName(resolvedCountryForRate)
         : null;
+      const inputCompanyName = companyNameOverride ? String(r[companyNameOverride] || '').trim() : '';
       const inputSiteDescription = siteDescriptionOverride ? String(r[siteDescriptionOverride] || '').trim() : '';
       // Loose numeric parse for the optional Size_ft2 column — strips
       // commas, "sf"/"sqft" suffixes, etc.
@@ -1396,6 +1405,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             ? (state || stateColInput || countryLabel || '')
             : (stateColInput || countryLabel || '');
         })(),
+        __companyName__: inputCompanyName || null,
         __propertyTypeRaw__: inputPropertyType || null,
         __propertyType__: canonicalPropertyType,
         __segment__: segment,
@@ -1435,7 +1445,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         __matched__: !!match || electricUtilityTokens.length > 0 || gasUtilityTokens.length > 0,
       };
     });
-  }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, segmentOverride, siteDescriptionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
+  }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, companyNameOverride, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, segmentOverride, siteDescriptionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
@@ -1547,6 +1557,25 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         },
       };
     });
+    // Company Name — the company / portfolio each site belongs to, from
+    // the optional mapped Company Name column. Purely descriptive; also
+    // drives the Indicative Savings export's file name.
+    const companyNameCol = {
+      key: 'companyName',
+      label: 'Company Name',
+      defaultWidth: 200,
+      render: (row) => {
+        const v = row.__companyName__;
+        if (!v) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
+        return (
+          <span
+            title={v}
+            style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-primary)', display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          >{v}</span>
+        );
+      },
+      exportValue: (row) => row.__companyName__ || '',
+    };
     const makeUtilityCol = (key, label, color) => ({
       key,
       label,
@@ -2011,6 +2040,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     });
     return [
       ...base,
+      companyNameCol,
       makeStateCol(),
       makeUtilityCol('electric', 'Electric Utility', { bg: '#FEF3C7', border: '#FCD34D', text: '#92400E' }),
       makeSupplierCol('electric', 'Electric Supplier'),
@@ -2837,6 +2867,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
     const COMMON_FIELDS = [
       { label: 'Site Name', required: true, hint: 'Row label. Required so the row isn\'t filtered as blank. Enter on the Electric Power tab — the Gas tab pulls Site Name from there via formula.' },
+      { label: 'Company Name', greenHeader: true, hint: 'Company / portfolio the site belongs to. Optional reference field — shown as a column on the Utility Lookup page and used to name the Indicative Savings export file. Enter on the Electric Power tab — the Gas tab pulls from there via formula.' },
       { label: 'Address', greenHeader: true, hint: 'Street address of the site. Optional reference field. Enter on the Electric Power tab — the Gas tab pulls from there via formula.' },
       { label: 'City', greenHeader: true, hint: 'City / town of the site. Optional reference field. Enter on the Electric Power tab — the Gas tab pulls from there via formula.' },
       { label: 'State / Province', greenHeader: true, hint: 'State or province. Optional reference field — auto-derived from Zip for US / Canada when blank. Enter on the Electric Power tab — the Gas tab pulls from there via formula.' },
@@ -3074,7 +3105,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     if (!prospect?.id) return;
     setSaveStatus({ state: 'saving', message: `Saving to ${prospect.company || 'company'}…` });
     try {
-      const result = await exportIndicativeSavings({ returnBuffer: true });
+      const result = await exportIndicativeSavings({ returnBuffer: true, companyName: prospect.company });
       if (!result) {
         setSaveStatus({ state: 'error', message: 'Nothing to save — load sites first.' });
         return;
@@ -3106,7 +3137,34 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     }
   }
 
-  async function exportIndicativeSavings({ returnBuffer = false } = {}) {
+  // Pick a single company name to label the export with. Prefers an
+  // explicit override (e.g. the company a "Save to Company" save is
+  // bound to), otherwise the most common value in the mapped Company
+  // Name column. Returns '' when nothing is available.
+  function deriveExportCompanyName(override) {
+    const explicit = String(override || '').trim();
+    if (explicit) return explicit;
+    const counts = new Map();
+    for (const r of rows) {
+      const name = String(r.__companyName__ || '').trim();
+      if (!name) continue;
+      counts.set(name, (counts.get(name) || 0) + 1);
+    }
+    let best = '';
+    let bestCount = 0;
+    for (const [name, count] of counts) {
+      if (count > bestCount) { best = name; bestCount = count; }
+    }
+    return best;
+  }
+
+  // Strip characters that browsers / OSes reject in download file names
+  // and collapse the leftover whitespace.
+  function sanitizeFileNamePart(s) {
+    return String(s).replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
+  async function exportIndicativeSavings({ returnBuffer = false, companyName = null } = {}) {
     // The button is gated on sitesData.length, but the export reads
     // from `rows` — which strips entries without a Site Name when a
     // mapping is set. If every uploaded row is blank at the site-
@@ -8482,7 +8540,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ],
       });
     }
-    const fileName = `Indicative Savings by State - ${new Date().toISOString().slice(0, 10)}.xlsx`;
+    // Name the file after the company when one is available — e.g.
+    // "Acme Corp_Indicative Savings Analysis.xlsx". Falls back to a
+    // dated generic name when no company name is mapped.
+    const exportCompany = sanitizeFileNamePart(deriveExportCompanyName(companyName));
+    const fileName = exportCompany
+      ? `${exportCompany}_Indicative Savings Analysis.xlsx`
+      : `Indicative Savings Analysis - ${new Date().toISOString().slice(0, 10)}.xlsx`;
     if (returnBuffer) return { buffer: buf, fileName };
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
@@ -9834,6 +9898,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         (() => {
           const TARGET_FIELDS = [
             { key: 'siteName', label: 'Site Name', required: true, hint: 'Row label / blank-row filter.' },
+            { key: 'companyName', label: 'Company Name', required: false, hint: 'Company / portfolio the site belongs to. Surfaced as a column on the Utility Lookup page and used to name the Indicative Savings export file (e.g. "Acme Corp_Indicative Savings Analysis.xlsx").' },
             { key: 'address', label: 'Address', required: false, hint: 'Street address of the site. Optional reference field — surfaced on the Site Detail and Contract Overview tabs of the Indicative Savings export.' },
             { key: 'city', label: 'City', required: false, hint: 'City / town of the site. Optional reference field. Falls back to the utility-rates file lookup when blank.' },
             { key: 'state', label: 'State / Province', required: false, hint: 'State or province. Optional reference field. Auto-derived from Zip for US / Canada sites when blank.' },
