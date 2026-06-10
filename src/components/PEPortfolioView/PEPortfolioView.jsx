@@ -145,7 +145,7 @@ function useOppsRecords(userId) {
   return [records, setRecords];
 }
 
-export function PEPortfolioView({ prospects = [], onSelectProspect }) {
+export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonMap = {} }) {
   const { user } = useAuth();
   const [subtab, setSubtab] = useState('portfolio');
   const [showClosed, setShowClosed] = useState(false);
@@ -390,16 +390,23 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       const at = email.lastIndexOf('@');
       const rawDomain = at >= 0 ? email.slice(at + 1).trim() : '';
       const domain = rawDomain && !FREE_MAIL.has(rawDomain) ? rawDomain : '';
+      // "Met In Person" is now a local Prospect Tracker checkbox
+      // (settings.contactMetInPerson), not a HubSpot tag — prefer the saved
+      // local value, falling back to the legacy tag for untouched contacts.
+      const cmId = String(c.id || c.vid || '');
+      const metInPerson = (cmId && Object.prototype.hasOwnProperty.call(metInPersonMap, cmId))
+        ? !!metInPersonMap[cmId]
+        : tags.includes('met in person');
       out.push({
         name: [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'Unknown',
         company,
         domain,
-        metInPerson: tags.includes('met in person'),
+        metInPerson,
         city: String(c.city || '').trim(),
       });
     }
     return out;
-  }, [hubspotCache, FREE_MAIL]);
+  }, [hubspotCache, FREE_MAIL, metInPersonMap]);
 
   // Same flat-list pattern for the "Dan Key Target" tag.
   const keyContacts = useMemo(() => {

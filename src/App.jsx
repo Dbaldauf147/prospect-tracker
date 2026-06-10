@@ -322,7 +322,7 @@ function App() {
           ) : view === 'agents' ? (
             <AgentsView prospects={prospects} settings={settings} updateProspect={updateProspect} />
           ) : view === 'pe' ? (
-            <PEPortfolioView prospects={prospects} onSelectProspect={handleSelect} />
+            <PEPortfolioView prospects={prospects} onSelectProspect={handleSelect} metInPersonMap={settings.contactMetInPerson || {}} />
           ) : view === 'contacts' ? (
             <ContactsView
               prospects={prospects}

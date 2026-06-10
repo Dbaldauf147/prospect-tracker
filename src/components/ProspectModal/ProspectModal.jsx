@@ -565,7 +565,7 @@ const PORTFOLIO_FIELD_OPTIONS = [
 // fallback) now lives in ../../data/cities so the All Contacts table
 // can share the exact same auto-fill behavior as this modal.
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, events = [], onToggleContactEvent, companyContacts = [], emailDomains = [], companyNames = [] }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, events = [], onToggleContactEvent, companyContacts = [], emailDomains = [], companyNames = [] }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -623,10 +623,19 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       return visibleTagOptions.find(o => o.toLowerCase() === t.toLowerCase()) || t;
     }))
   );
-  // "Met In Person" is its own checkbox; seed it from the existing tag value
-  // so contacts already tagged show up checked.
-  const [metInPerson, setMetInPerson] = useState(() =>
-    parsedTags.some(t => t.toLowerCase() === metLower)
+  // "Met In Person" is its own checkbox, stored locally (never in HubSpot).
+  // Prefer the saved local value; for contacts that haven't been touched
+  // yet, fall back to the legacy HubSpot tag so anyone already tagged shows
+  // up checked.
+  const metCid = contact.id || contact.vid;
+  const [metInPerson, setMetInPerson] = useState(() => {
+    const stored = metCid != null ? contactMetInPerson[metCid] : undefined;
+    if (stored !== undefined) return !!stored;
+    return parsedTags.some(t => t.toLowerCase() === metLower);
+  });
+  // "Invited to Louisville" — another local-only flag (never in HubSpot).
+  const [invitedToLouisville, setInvitedToLouisville] = useState(() =>
+    metCid != null ? !!contactInvitedToLouisville[metCid] : false
   );
   // Any extra tags not in TAG_OPTIONS are kept verbatim (excluding the
   // met-in-person flag, which is reattached from its checkbox on save).
@@ -815,10 +824,10 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // resolves. Reset whenever the user edits city/state manually.
   const [cityLookupStatus, setCityLookupStatus] = useState('');
 
-  function buildTagsStringFrom(set, met = metInPerson) {
-    const parts = [...set, ...extraTags];
-    if (met) parts.push(MET_IN_PERSON_TAG);
-    return parts.join(';');
+  // "Met In Person" is intentionally NOT included here — it's a local-only
+  // checkbox and HubSpot rejects it as a dans_tags value.
+  function buildTagsStringFrom(set) {
+    return [...set, ...extraTags].join(';');
   }
 
   function buildTagsString() {
@@ -866,7 +875,18 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   function toggleMetInPerson() {
     setMetInPerson(prev => {
       const next = !prev;
-      persistDansTags(buildTagsStringFrom(checkedTags, next));
+      // Local-only — persisted to Firestore settings, never pushed to HubSpot.
+      const cid = contact.id || contact.vid;
+      if (cid != null && onSaveMetInPerson) onSaveMetInPerson(cid, next);
+      return next;
+    });
+  }
+
+  function toggleInvitedToLouisville() {
+    setInvitedToLouisville(prev => {
+      const next = !prev;
+      const cid = contact.id || contact.vid;
+      if (cid != null && onSaveInvitedToLouisville) onSaveInvitedToLouisville(cid, next);
       return next;
     });
   }
@@ -956,6 +976,12 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       if (savedCid && onSaveFamily) {
         onSaveFamily(savedCid, familyValue);
       }
+      if (savedCid && onSaveMetInPerson) {
+        onSaveMetInPerson(savedCid, metInPerson);
+      }
+      if (savedCid && onSaveInvitedToLouisville) {
+        onSaveInvitedToLouisville(savedCid, invitedToLouisville);
+      }
       // Persist CC / To Also maps keyed by the contact's primary
       // email — Draft Emails reads these on every campaign preview to
       // auto-add the linked recipients.
@@ -991,6 +1017,26 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#1E293B' }}>{(!contact.id && !contact.vid) ? 'New HubSpot Contact' : 'Edit HubSpot Contact'}</h3>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}>×</button>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.55rem', cursor: 'pointer', padding: '0.45rem 0.7rem', border: `1px solid ${metInPerson ? '#7DD3FC' : '#E2E8F0'}`, borderRadius: '8px', background: metInPerson ? '#F0F9FF' : '#fff' }}>
+            <input
+              type="checkbox"
+              checked={metInPerson}
+              onChange={toggleMetInPerson}
+              style={{ accentColor: '#0078D4', width: '16px', height: '16px', cursor: 'pointer' }}
+            />
+            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: metInPerson ? '#0369A1' : '#374151' }}>Met In Person</span>
+          </label>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.55rem', cursor: 'pointer', padding: '0.45rem 0.7rem', border: `1px solid ${invitedToLouisville ? '#7DD3FC' : '#E2E8F0'}`, borderRadius: '8px', background: invitedToLouisville ? '#F0F9FF' : '#fff' }}>
+            <input
+              type="checkbox"
+              checked={invitedToLouisville}
+              onChange={toggleInvitedToLouisville}
+              style={{ accentColor: '#0078D4', width: '16px', height: '16px', cursor: 'pointer' }}
+            />
+            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: invitedToLouisville ? '#0369A1' : '#374151' }}>Invited to Louisville</span>
+          </label>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem' }}>
           <div><label style={labelStyle}>First Name</label><input style={inputStyle} value={f.firstname} onChange={e => set('firstname', e.target.value)} /></div>
@@ -2732,6 +2778,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     else delete next[contactId];
     updateSettings({ contactTeamNames: next });
   }, [settings.contactTeamNames, updateSettings]);
+
+  // "Met In Person" is stored locally (never in HubSpot). Persist the
+  // explicit true/false so unchecking a contact that still carries the
+  // legacy HubSpot tag sticks instead of falling back to "checked".
+  const handleSaveContactMetInPerson = useCallback((contactId, met) => {
+    const current = settings.contactMetInPerson || {};
+    const next = { ...current, [contactId]: !!met };
+    updateSettings({ contactMetInPerson: next });
+  }, [settings.contactMetInPerson, updateSettings]);
+
+  const handleSaveContactInvitedToLouisville = useCallback((contactId, invited) => {
+    const current = settings.contactInvitedToLouisville || {};
+    const next = { ...current, [contactId]: !!invited };
+    updateSettings({ contactInvitedToLouisville: next });
+  }, [settings.contactInvitedToLouisville, updateSettings]);
 
   const handleSaveContactReportsTo = useCallback((contactId, managerIds) => {
     const current = settings.contactReportsTo || {};
@@ -6927,6 +6988,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             else next[contactId] = { partner, kids };
             updateSettings({ contactFamilies: next });
           }}
+          contactMetInPerson={settings.contactMetInPerson || {}}
+          onSaveMetInPerson={handleSaveContactMetInPerson}
+          contactInvitedToLouisville={settings.contactInvitedToLouisville || {}}
+          onSaveInvitedToLouisville={handleSaveContactInvitedToLouisville}
           events={settings.events || []}
           onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settings.events || [], eventId, c) })}
           companyContacts={companyContacts}
