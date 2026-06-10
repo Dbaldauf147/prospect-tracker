@@ -4689,6 +4689,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // be scoped to a time window without touching the other tabs.
   const [sourceFrom, setSourceFrom] = useState('');
   const [sourceTo, setSourceTo] = useState('');
+  // "By Source" tab activity filter: 'active' (open stages, the default
+  // for this tab), 'closed' (Sold / Not Sold), or 'all'. Mirrors the
+  // main tab's Show control.
+  const [sourceActivityFilter, setSourceActivityFilter] = useState('active');
   const [statusFilter, setStatusFilter] = useState('all');
   const [activityFilter, setActivityFilter] = useState('all');
   const [showHiddenByFilter, setShowHiddenByFilter] = useState(false);
@@ -6918,10 +6922,14 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         if (fromTs != null && ts < fromTs) continue;
         if (toTs != null && ts > toTs) continue;
       }
+      const stage = (r['Stage'] || '').trim();
+      // Activity filter: 'active' drops closed (Sold / Not Sold) opps,
+      // 'closed' keeps only those, 'all' keeps everything.
+      if (sourceActivityFilter === 'active' && CLOSED_STAGES.has(stage)) continue;
+      if (sourceActivityFilter === 'closed' && !CLOSED_STAGES.has(stage)) continue;
       const raw = (r['Source'] || '').trim();
       const cleaned = raw && raw !== '-' && raw !== '#N/A' ? raw : '';
       const source = cleaned || '(Unspecified)';
-      const stage = (r['Stage'] || '').trim();
       if (!stats[source]) stats[source] = { total: 0, wins: 0, losses: 0 };
       stats[source].total += 1;
       if (stage === 'Sold') stats[source].wins += 1;
@@ -6941,7 +6949,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       })
       .sort((a, b) => b.count - a.count);
     return { rows, total };
-  }, [activeTab, records, sourceFrom, sourceTo]);
+  }, [activeTab, records, sourceFrom, sourceTo, sourceActivityFilter, CLOSED_STAGES]);
 
   const sourceColumns = useMemo(() => [
     { key: 'source', label: 'Source', defaultWidth: 240 },
@@ -7654,14 +7662,26 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 onChange={e => setSourceTo(e.target.value)}
               />
             </label>
-            {(sourceFrom || sourceTo) && (
+            <label className={styles.filterLabel}>
+              Show
+              <select
+                className={styles.filterInput}
+                value={sourceActivityFilter}
+                onChange={e => setSourceActivityFilter(e.target.value)}
+              >
+                <option value="active">Active only</option>
+                <option value="closed">Closed only</option>
+                <option value="all">All</option>
+              </select>
+            </label>
+            {(sourceFrom || sourceTo || sourceActivityFilter !== 'active') && (
               <button
                 className={styles.clearFiltersBtn}
-                onClick={() => { setSourceFrom(''); setSourceTo(''); }}
-              >Clear range</button>
+                onClick={() => { setSourceFrom(''); setSourceTo(''); setSourceActivityFilter('active'); }}
+              >Clear filters</button>
             )}
             <span className={styles.resultCount}>
-              {sourceBreakdown.rows.length} source{sourceBreakdown.rows.length === 1 ? '' : 's'} · {sourceBreakdown.total} total lead{sourceBreakdown.total === 1 ? '' : 's'}
+              {sourceBreakdown.rows.length} source{sourceBreakdown.rows.length === 1 ? '' : 's'} · {sourceBreakdown.total} {sourceActivityFilter === 'active' ? 'active ' : sourceActivityFilter === 'closed' ? 'closed ' : ''}lead{sourceBreakdown.total === 1 ? '' : 's'}
               {(sourceFrom || sourceTo) ? ' in range' : ''}
             </span>
           </div>
