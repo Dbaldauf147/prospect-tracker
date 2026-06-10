@@ -7,7 +7,7 @@ import { OpportunityForm, DEFAULT_FORM_TEMPLATE } from './OpportunityForm';
 import { ScopingNotesEditor, harvestCompetitors } from './ScopingNotesEditor';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
-import { CITY_OPTIONS, matchCities, getStateForCity } from '../../data/cities';
+import { CITY_OPTIONS, matchCities, getStateForCity, lookupStateForCity } from '../../data/cities';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { useAuth } from '../../contexts/AuthContext';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB, renameSourceFile as renamePortfolioSourceFile } from '../../utils/portfolioSourceFileStore';
@@ -555,38 +555,9 @@ const PORTFOLIO_FIELD_OPTIONS = [
 ];
 
 
-// Look up a contact's State / Country from a free-text City via the
-// public OpenStreetMap Nominatim search API. Returns full state name
-// (e.g. "California") so it lines up with the US_STATES enum, plus
-// the resolved country. Returns null on any failure — callers should
-// silently no-op in that case rather than blocking the save.
-async function lookupStateForCity(city, countryHint) {
-  const trimmed = (city || '').trim();
-  if (trimmed.length < 2) return null;
-  try {
-    const params = new URLSearchParams({
-      city: trimmed,
-      format: 'json',
-      addressdetails: '1',
-      limit: '1',
-    });
-    const ch = (countryHint || '').trim();
-    if (ch) params.set('country', ch);
-    const res = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
-      headers: { 'Accept': 'application/json' },
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (!Array.isArray(data) || data.length === 0) return null;
-    const addr = data[0].address || {};
-    return {
-      state: addr.state || addr.region || addr.province || '',
-      country: addr.country || '',
-    };
-  } catch {
-    return null;
-  }
-}
+// City → State / Country lookup (curated list + Nominatim geocoder
+// fallback) now lives in ../../data/cities so the All Contacts table
+// can share the exact same auto-fill behavior as this modal.
 
 export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, events = [], onToggleContactEvent, companyContacts = [], emailDomains = [], companyNames = [] }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
