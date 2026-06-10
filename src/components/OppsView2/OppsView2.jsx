@@ -6472,7 +6472,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       : [oppNumCol, ...withInfo, actions];
   }, [headers, columnLinks, listRegistry, updateOppField, deleteOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks, massEditOn, oppNumberById, filteredRowIds]);
 
-  const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);
 
   // Rows the current Date / Status / Show / Hide-history filters allow.
@@ -6529,15 +6528,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     }
     return searched;
   }, [prefiltered, search, showOnlySelected, selectedIds]);
-
-  const stageCounts = useMemo(() => {
-    const counts = {};
-    for (const r of prefiltered) {
-      const stage = r['Stage'] || 'Unknown';
-      counts[stage] = (counts[stage] || 0) + 1;
-    }
-    return counts;
-  }, [prefiltered]);
 
   const serviceBreakdown = useMemo(() => {
     // The breakdown only shows on the "By Service" tab. Skipping the
@@ -7340,21 +7330,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
 
       {activeTab === 'opps' && (
         <>
-          <div className={styles.summary}>
-            {stageOrder.filter(s => stageCounts[s]).map(stage => (
-              <div key={stage} className={styles.summaryChip}>
-                <span className={styles.summaryChipValue}>{stageCounts[stage]}</span>
-                <span className={styles.summaryChipLabel}>{stage}</span>
-              </div>
-            ))}
-            {Object.keys(stageCounts).filter(s => !stageOrder.includes(s) && s !== 'Unknown').map(stage => (
-              <div key={stage} className={styles.summaryChip}>
-                <span className={styles.summaryChipValue}>{stageCounts[stage]}</span>
-                <span className={styles.summaryChipLabel}>{stage}</span>
-              </div>
-            ))}
-          </div>
-
           <div className={styles.searchRow}>
             <input
               className={styles.searchInput}
