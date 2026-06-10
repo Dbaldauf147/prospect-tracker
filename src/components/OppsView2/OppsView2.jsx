@@ -239,7 +239,7 @@ const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
 // it up — and its "Find out the Story" default lands somewhere
 // visible on the next new opp.
 const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'No Further Action Today', 'Sales Partner',
-  'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date', 'BFO Company Name'];
+  'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date', 'BFO Company Name', 'PE Owner'];
 
 // Record-level merge lives in opps2Store as `mergeOpps2Datasets` so the
 // real-time listener, hydration reconcile, and the guarded flush all
@@ -3051,6 +3051,7 @@ export function OppInfoModal({
   columnLinks,
   listRegistry,
   companySuggestions,
+  peOwnerSuggestions,
   prospects,
   updateProspect,
   hubspotContacts,
@@ -3170,7 +3171,7 @@ export function OppInfoModal({
       <EditableCell
         value={value}
         onChange={onChange}
-        suggestions={h === 'Account' ? companySuggestions : undefined}
+        suggestions={h === 'Account' ? companySuggestions : h === 'PE Owner' ? peOwnerSuggestions : undefined}
       />
     );
   };
@@ -6069,6 +6070,33 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return out;
   }, [prospects, data?.records]);
 
+  // Predictive-text source for the PE Owner column. Mirrors the PE Owner
+  // picker in the company popup: every Table View company is offered, but
+  // Private Equity firms are surfaced first since a portfolio company's
+  // PE Owner is normally one of those firms. Any PE Owner already typed
+  // into an opp is folded in too so follow-ups autocomplete.
+  const peOwnerSuggestions = useMemo(() => {
+    const seen = new Set();
+    const pe = [];
+    const others = [];
+    const push = (name, isPe) => {
+      const c = String(name || '').trim();
+      if (!c) return;
+      const k = c.toLowerCase();
+      if (seen.has(k)) return;
+      seen.add(k);
+      (isPe ? pe : others).push(c);
+    };
+    for (const p of (prospects || [])) {
+      if (String(p?.type) === 'Private Equity') push(p?.company, true);
+    }
+    for (const p of (prospects || [])) push(p?.company, false);
+    for (const r of (data?.records || [])) push(r?.['PE Owner'], false);
+    pe.sort((a, b) => a.localeCompare(b));
+    others.sort((a, b) => a.localeCompare(b));
+    return [...pe, ...others];
+  }, [prospects, data?.records]);
+
   // Map of opp `_id` → 1..N display rank. Ranks by ascending `_id` so
   // the relative creation order of surviving opps is preserved, but
   // gaps from deleted rows are compacted out — the column reads as a
@@ -6301,7 +6329,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             <EditableCell
               value={row[h]}
               onChange={(v) => updateOppField(row._id, h, v)}
-              suggestions={h === 'Account' ? companySuggestions : undefined}
+              suggestions={h === 'Account' ? companySuggestions : h === 'PE Owner' ? peOwnerSuggestions : undefined}
               renderDisplay={h === 'Account' ? ({ enterEdit, isEmpty, text }) => {
                 const matched = isEmpty ? null : findProspectForAccount(row[h], prospects);
                 // No matching prospect — fall back to the normal
@@ -6580,7 +6608,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return massEditOn
       ? [selectCol, oppNumCol, ...withInfo, actions]
       : [oppNumCol, ...withInfo, actions];
-  }, [headers, columnLinks, listRegistry, updateOppField, deleteOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks, massEditOn, oppNumberById, filteredRowIds]);
+  }, [headers, columnLinks, listRegistry, updateOppField, deleteOppField, deleteOpp, companySuggestions, peOwnerSuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks, massEditOn, oppNumberById, filteredRowIds]);
 
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);
 
@@ -7320,6 +7348,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             columnLinks={columnLinks}
             listRegistry={listRegistry}
             companySuggestions={companySuggestions}
+            peOwnerSuggestions={peOwnerSuggestions}
             prospects={prospects}
             updateProspect={updateProspect}
             hubspotContacts={hubspotContacts}

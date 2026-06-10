@@ -323,7 +323,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
 
   const subtitle = (
     <>
-      Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, or <strong>Client</strong> rosters — same selectors and filters those tabs run, rolled up into a single list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table or <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters.
+      Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, or <strong>Client</strong> rosters — same selectors and filters those tabs run, rolled up into a single list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats, or <strong>Travel</strong> to pick a state/city and see everyone in that area. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters.
       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 700 }}>Totals:</span>
         {[
