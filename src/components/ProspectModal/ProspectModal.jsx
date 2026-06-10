@@ -516,7 +516,7 @@ function enrichOverviewFromPortfolio(overview, portfolioRows) {
 }
 
 // ── Inline HubSpot Contact Editor ──
-const TAG_OPTIONS = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Efficiency / Renewables', 'Dan Key Target', 'Decision Maker', 'Test', 'EU', 'Hide', 'Left'];
+const TAG_OPTIONS = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Efficiency / Renewables', 'Dan Key Target', 'Decision Maker', 'Met In Person', 'Test', 'EU', 'Hide', 'Left'];
 
 // Portfolio-company sector scoring. Each sector has a 1-10 fit score; the tier
 // bucket (High/Medium/Low) is derived from the score for color-coding only.
