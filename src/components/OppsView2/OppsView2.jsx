@@ -1733,11 +1733,13 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
 
   const matched = useMemo(() => findProspectForAccount(account, prospects), [account, prospects]);
 
-  // The opp's PE Owner (when set) is itself a company in the Table View,
-  // so resolve it to a prospect too — its contacts get folded into the
-  // same roster below so the user can tag the PE firm's people alongside
-  // the deal company's.
-  const peOwnerStr = String(peOwner || '').trim();
+  // The opp's PE Owner is itself a company in the Table View, so resolve
+  // it to a prospect too — its contacts get folded into the same roster
+  // below so the user can tag the PE firm's people alongside the deal
+  // company's. PE ownership normally lives on the Table View company
+  // record (prospect.peOwner), not on each opp row, so fall back to the
+  // matched company's peOwner when the opp's own PE Owner column is blank.
+  const peOwnerStr = String(peOwner || matched?.peOwner || '').trim();
   const peMatched = useMemo(
     () => (peOwnerStr ? findProspectForAccount(peOwnerStr, prospects) : null),
     [peOwnerStr, prospects],
