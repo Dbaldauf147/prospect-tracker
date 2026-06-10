@@ -4539,6 +4539,34 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   const [data, setData] = useState({ headers: DEFAULT_HEADERS, records: [] });
   const [loading, setLoading] = useState(true);
   const [error] = useState(null);
+
+  // One-time migration: the PE Owner column was added after this table
+  // shipped, so existing users have a saved visible-columns set (local
+  // and/or synced) that omits it — DataTable then keeps it hidden. Reveal
+  // it once so it shows up on new and existing opps. Gated on
+  // settings._lastWriteAt so we only act after synced settings have
+  // actually loaded, and marked done in settings so it never re-fights a
+  // user who later chooses to hide the column.
+  useEffect(() => {
+    if (!settings || !settings._lastWriteAt) return;
+    if (settings.opps2PeOwnerRevealed) return;
+    const updates = { opps2PeOwnerRevealed: true };
+    const remote = settings?.tablePrefs?.opps2?.visible;
+    if (Array.isArray(remote) && remote.length > 0 && !remote.includes('PE Owner')) {
+      updates.tablePrefs = {
+        ...(settings.tablePrefs || {}),
+        opps2: { ...(settings.tablePrefs.opps2 || {}), visible: [...remote, 'PE Owner'] },
+      };
+    }
+    try {
+      const LS_KEY = 'prospect-col-visible-opps2';
+      const saved = JSON.parse(localStorage.getItem(LS_KEY));
+      if (Array.isArray(saved) && saved.length > 0 && !saved.includes('PE Owner')) {
+        localStorage.setItem(LS_KEY, JSON.stringify([...saved, 'PE Owner']));
+      }
+    } catch { /* ignore */ }
+    updateSettings?.(updates);
+  }, [settings, updateSettings]);
   // Set when a Firestore cloud save fails so the failure is visible in
   // the UI instead of only the console. A silent failure here once let
   // edits live only in local IndexedDB while other devices kept showing

@@ -9,6 +9,7 @@ import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { toggleContactInEvents } from '../../utils/eventsStore';
 import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
 import { matchesCdm } from '../../utils/cdmMatch';
+import { checkCity, checkState } from '../../utils/locationStandardize';
 import { useDraftCampaignQueue, toggleQueuedContact, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 
 // Click-to-edit cell used inside the All Contacts table. Idle state
@@ -176,6 +177,8 @@ function InlineCell({
   suggestions = null,
   title,
   disabled = false,
+  flagIssue = null,
+  flagFix = null,
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -222,6 +225,39 @@ function InlineCell({
   }
   if (!editing) {
     const empty = value === null || value === undefined || value === '';
+    // Non-standard value: amber background, a ⚠ marker, and a one-click
+    // Fix button when a standardized replacement is available.
+    if (flagIssue) {
+      return (
+        <div
+          onClick={startEdit}
+          title={flagIssue}
+          style={{
+            padding: '0.45rem 0.6rem',
+            fontSize,
+            fontWeight,
+            color: empty ? emptyColor : textColor,
+            textAlign: align,
+            cursor: disabled ? 'default' : 'text',
+            background: '#FEF3C7',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+          }}
+        >
+          <span style={{ flexShrink: 0, color: '#B45309', fontWeight: 700 }}>⚠</span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{empty ? placeholder : value}</span>
+          {flagFix && flagFix !== value && (
+            <button
+              type="button"
+              onClick={e => { e.stopPropagation(); commit(flagFix); }}
+              title={`Set to "${flagFix}"`}
+              style={{ flexShrink: 0, background: '#ECFDF5', border: '1px solid #6EE7B7', color: '#065F46', fontSize: '0.6rem', fontWeight: 700, padding: '1px 5px', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit' }}
+            >Fix</button>
+          )}
+        </div>
+      );
+    }
     return (
       <div
         onClick={startEdit}
@@ -1191,6 +1227,10 @@ function KeyContactsViewInner({
   const [travelCity, setTravelCity] = useState(() => localStorage.getItem(lsKey('travel-city')) || '');
   useEffect(() => { try { localStorage.setItem(lsKey('travel-state'), travelState); } catch {} }, [travelState]);
   useEffect(() => { try { localStorage.setItem(lsKey('travel-city'), travelCity); } catch {} }, [travelCity]);
+  // "Only city/state needing cleanup" filter — narrows the contacts
+  // list to rows whose City or State fails the standard-format checks.
+  const [onlyLocationFlagged, setOnlyLocationFlagged] = useState(() => localStorage.getItem(lsKey('only-loc-flagged')) === '1');
+  useEffect(() => { try { localStorage.setItem(lsKey('only-loc-flagged'), onlyLocationFlagged ? '1' : '0'); } catch {} }, [onlyLocationFlagged]);
   const [contactSortKey, setContactSortKey] = useState(() => localStorage.getItem(lsKey('contact-sort-key')) || 'name');
   const [contactSortDir, setContactSortDir] = useState(() => localStorage.getItem(lsKey('contact-sort-dir')) || 'asc');
   useEffect(() => { try { localStorage.setItem(lsKey('contact-sort-key'), contactSortKey); } catch {} }, [contactSortKey]);
@@ -1859,6 +1899,13 @@ function KeyContactsViewInner({
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [flatContacts, travelState]);
 
+  // How many loaded contacts have a non-standard City or State — drives
+  // the "needs cleanup" filter badge.
+  const locationFlaggedCount = useMemo(
+    () => flatContacts.reduce((n, c) => (checkCity(c.city) || checkState(c.state) ? n + 1 : n), 0),
+    [flatContacts]
+  );
+
   const sortedContacts = useMemo(() => {
     const arr = [...flatContacts];
     arr.sort((a, b) => {
@@ -1925,6 +1972,7 @@ function KeyContactsViewInner({
       if (travelState && String(c.state || '').trim().toLowerCase() !== travelState.trim().toLowerCase()) return false;
       if (travelCity && String(c.city || '').trim().toLowerCase() !== travelCity.trim().toLowerCase()) return false;
     }
+    if (onlyLocationFlagged && !checkCity(c.city) && !checkState(c.state)) return false;
     if (q) {
       const blob = (c.name || '') + ' ' + (c.companyName || '') + ' '
         + (c.email || '') + ' ' + (c.jobtitle || '');
@@ -2341,6 +2389,22 @@ function KeyContactsViewInner({
             </span>
           </div>
         )}
+        {isContactList && (
+          <label
+            title="Show only contacts whose City or State isn't in standard format (e.g. NY → New York, or Atlanta, GA → Atlanta). Use the per-cell Fix button to standardize."
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.7rem', color: '#475569', cursor: 'pointer' }}
+          >
+            <input type="checkbox" checked={onlyLocationFlagged} onChange={e => setOnlyLocationFlagged(e.target.checked)} />
+            <span>Needs city/state cleanup</span>
+            <span style={{
+              display: 'inline-block', padding: '0 6px', fontSize: '0.62rem', fontWeight: 700, borderRadius: 999,
+              background: locationFlaggedCount > 0 ? '#FEF3C7' : '#F1F5F9',
+              color: locationFlaggedCount > 0 ? '#92400E' : '#94A3B8',
+              border: '1px solid ' + (locationFlaggedCount > 0 ? '#FDE68A' : '#E2E8F0'),
+              minWidth: 18, textAlign: 'center',
+            }}>{locationFlaggedCount}</span>
+          </label>
+        )}
         {/* Surface inline-edit save status here so failures are
             visible whether or not Mass Edit mode is on. */}
         {!massMode && massStatus && (
@@ -2693,24 +2757,34 @@ function KeyContactsViewInner({
                       fontSize="0.7rem"
                     />
                     )}
-                    {visibleSet.has('city') && (
-                    <InlineCell
-                      value={c.city}
-                      onCommit={v => inlineUpdateField(c.raw || c, 'city', v)}
-                      textColor="#64748B"
-                      placeholder="—"
-                      fontSize="0.7rem"
-                    />
-                    )}
-                    {visibleSet.has('state') && (
-                    <InlineCell
-                      value={c.state}
-                      onCommit={v => inlineUpdateField(c.raw || c, 'state', v)}
-                      textColor="#64748B"
-                      placeholder="—"
-                      fontSize="0.7rem"
-                    />
-                    )}
+                    {visibleSet.has('city') && (() => {
+                      const flag = checkCity(c.city);
+                      return (
+                        <InlineCell
+                          value={c.city}
+                          onCommit={v => inlineUpdateField(c.raw || c, 'city', v)}
+                          textColor="#64748B"
+                          placeholder="—"
+                          fontSize="0.7rem"
+                          flagIssue={flag?.issue || null}
+                          flagFix={flag?.fix || null}
+                        />
+                      );
+                    })()}
+                    {visibleSet.has('state') && (() => {
+                      const flag = checkState(c.state);
+                      return (
+                        <InlineCell
+                          value={c.state}
+                          onCommit={v => inlineUpdateField(c.raw || c, 'state', v)}
+                          textColor="#64748B"
+                          placeholder="—"
+                          fontSize="0.7rem"
+                          flagIssue={flag?.issue || null}
+                          flagFix={flag?.fix || null}
+                        />
+                      );
+                    })()}
                     {visibleSet.has('country') && (
                     <InlineCell
                       value={c.country}
