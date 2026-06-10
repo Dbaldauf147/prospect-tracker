@@ -1016,7 +1016,7 @@ function KeyContactsViewInner({
   }
 
   function downloadContactsCsv() {
-    const list = viewMode === 'contacts'
+    const list = isContactList
       ? filteredContacts
       : filteredRows.flatMap(row => row.contacts.map(c => ({
           ...c,
@@ -1177,6 +1177,20 @@ function KeyContactsViewInner({
   }, [settings?.contactReportsTo, updateSettings]);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem(lsKey('view-mode')) || defaultViewMode);
   useEffect(() => { try { localStorage.setItem(lsKey('view-mode'), viewMode); } catch {} }, [viewMode]);
+  // Travel mode (All Contacts only) — a third view alongside All Contacts /
+  // By Company. Pick a state and/or city and the flat contacts table
+  // narrows to people in that area, so a trip can be planned around who's
+  // nearby. The chosen location persists alongside the other view prefs.
+  const travelEnabled = storagePrefix === 'all-contacts';
+  const isTravel = travelEnabled && viewMode === 'travel';
+  // Everything that isn't the By Company rollup renders the flat contacts
+  // table (All Contacts + Travel share the same table, Travel just adds a
+  // location filter on top).
+  const isContactList = viewMode !== 'companies';
+  const [travelState, setTravelState] = useState(() => localStorage.getItem(lsKey('travel-state')) || '');
+  const [travelCity, setTravelCity] = useState(() => localStorage.getItem(lsKey('travel-city')) || '');
+  useEffect(() => { try { localStorage.setItem(lsKey('travel-state'), travelState); } catch {} }, [travelState]);
+  useEffect(() => { try { localStorage.setItem(lsKey('travel-city'), travelCity); } catch {} }, [travelCity]);
   const [contactSortKey, setContactSortKey] = useState(() => localStorage.getItem(lsKey('contact-sort-key')) || 'name');
   const [contactSortDir, setContactSortDir] = useState(() => localStorage.getItem(lsKey('contact-sort-dir')) || 'asc');
   useEffect(() => { try { localStorage.setItem(lsKey('contact-sort-key'), contactSortKey); } catch {} }, [contactSortKey]);
@@ -1826,6 +1840,25 @@ function KeyContactsViewInner({
     return out;
   }, [rows]);
 
+  // Distinct states / cities across the loaded contacts, powering the
+  // Travel mode dropdowns. Cities narrow to the selected state when one
+  // is chosen so the city list stays relevant.
+  const travelStateOptions = useMemo(() => {
+    const set = new Set();
+    for (const c of flatContacts) { const s = String(c.state || '').trim(); if (s) set.add(s); }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [flatContacts]);
+  const travelCityOptions = useMemo(() => {
+    const set = new Set();
+    const stateLc = travelState.trim().toLowerCase();
+    for (const c of flatContacts) {
+      if (stateLc && String(c.state || '').trim().toLowerCase() !== stateLc) continue;
+      const city = String(c.city || '').trim();
+      if (city) set.add(city);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [flatContacts, travelState]);
+
   const sortedContacts = useMemo(() => {
     const arr = [...flatContacts];
     arr.sort((a, b) => {
@@ -1888,6 +1921,10 @@ function KeyContactsViewInner({
       const cats = categorizeContact(c.raw || c) || [];
       if (!cats.includes(categoryFilter)) return false;
     }
+    if (isTravel) {
+      if (travelState && String(c.state || '').trim().toLowerCase() !== travelState.trim().toLowerCase()) return false;
+      if (travelCity && String(c.city || '').trim().toLowerCase() !== travelCity.trim().toLowerCase()) return false;
+    }
     if (q) {
       const blob = (c.name || '') + ' ' + (c.companyName || '') + ' '
         + (c.email || '') + ' ' + (c.jobtitle || '');
@@ -1924,6 +1961,7 @@ function KeyContactsViewInner({
             {[
               { key: 'contacts', label: 'All Contacts' },
               { key: 'companies', label: 'By Company' },
+              ...(travelEnabled ? [{ key: 'travel', label: 'Travel' }] : []),
             ].map((opt, i) => (
               <button
                 key={opt.key}
@@ -1981,7 +2019,7 @@ function KeyContactsViewInner({
               fontFamily: 'inherit',
             }}
           >Download Combined (Key + Active + Client)</button>
-          {viewMode === 'contacts' && (
+          {isContactList && (
             <div ref={colsMenuRef} style={{ position: 'relative' }}>
               <button
                 type="button"
@@ -2052,7 +2090,7 @@ function KeyContactsViewInner({
               )}
             </div>
           )}
-          {viewMode === 'contacts' && (
+          {isContactList && (
             <button
               type="button"
               onClick={() => {
@@ -2077,7 +2115,7 @@ function KeyContactsViewInner({
         </div>
       </div>
 
-      {viewMode === 'contacts' && massMode && (
+      {isContactList && massMode && (
         <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', padding: '0.5rem 0.75rem', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: 6 }}>
             <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1E293B' }}>{massSelected.size} selected</span>
@@ -2267,11 +2305,42 @@ function KeyContactsViewInner({
           type="text"
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder={viewMode === 'contacts'
+          placeholder={isContactList
             ? `Search ${flatContacts.length} contact${flatContacts.length === 1 ? '' : 's'}…`
             : `Search ${rows.length} compan${rows.length === 1 ? 'y' : 'ies'}…`}
           style={{ width: '100%', maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
+        {isTravel && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1E293B' }}>Travel to:</span>
+            <select
+              value={travelState}
+              onChange={e => { setTravelState(e.target.value); setTravelCity(''); }}
+              style={{ padding: '0.35rem 0.5rem', fontSize: '0.72rem', border: '1px solid #CBD5E1', borderRadius: 6, fontFamily: 'inherit', background: '#fff', color: '#334155' }}
+            >
+              <option value="">All states</option>
+              {travelStateOptions.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <select
+              value={travelCity}
+              onChange={e => setTravelCity(e.target.value)}
+              style={{ padding: '0.35rem 0.5rem', fontSize: '0.72rem', border: '1px solid #CBD5E1', borderRadius: 6, fontFamily: 'inherit', background: '#fff', color: '#334155' }}
+            >
+              <option value="">{travelState ? `All cities in ${travelState}` : 'All cities'}</option>
+              {travelCityOptions.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            {(travelState || travelCity) && (
+              <button
+                type="button"
+                onClick={() => { setTravelState(''); setTravelCity(''); }}
+                style={{ padding: '0.3rem 0.6rem', fontSize: '0.7rem', fontWeight: 600, border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', color: '#475569', cursor: 'pointer', fontFamily: 'inherit' }}
+              >Clear</button>
+            )}
+            <span style={{ fontSize: '0.7rem', color: '#64748B' }}>
+              {filteredContacts.length} contact{filteredContacts.length === 1 ? '' : 's'}{(travelState || travelCity) ? ' in area' : ''}
+            </span>
+          </div>
+        )}
         {/* Surface inline-edit save status here so failures are
             visible whether or not Mass Edit mode is on. */}
         {!massMode && massStatus && (
@@ -2302,7 +2371,7 @@ function KeyContactsViewInner({
             Loading HubSpot contacts… open the <strong>HubSpot Contacts</strong> tab once if this doesn't populate.
           </div>
         )}
-        {viewMode === 'contacts' ? (
+        {isContactList ? (
           flatContacts.length === 0 ? (
             <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
               <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>{emptyTitle}</div>
