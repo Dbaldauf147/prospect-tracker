@@ -4879,6 +4879,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // for this tab), 'closed' (Sold / Not Sold), or 'all'. Mirrors the
   // main tab's Show control.
   const [sourceActivityFilter, setSourceActivityFilter] = useState('active');
+  // "By Source" drilldown: the Source whose opps the user clicked through
+  // to. null when the list modal is closed.
+  const [sourceDrillDown, setSourceDrillDown] = useState(null);
   const [statusFilter, setStatusFilter] = useState('all');
   const [activityFilter, setActivityFilter] = useState('all');
   const [showHiddenByFilter, setShowHiddenByFilter] = useState(false);
@@ -7112,28 +7115,43 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // (count / wins / win rate / % of total) but keyed on the Source
   // field and computed off every record rather than `prefiltered`, so
   // the time-range filter here is the only thing narrowing the set.
-  const sourceBreakdown = useMemo(() => {
-    if (activeTab !== 'bySource') return { rows: [], total: 0 };
+  // Map a record to its normalised Source bucket. Shared by the summary
+  // table and the click-through drilldown so the two never disagree on
+  // which opp belongs to which source.
+  const sourceKeyOf = useCallback((r) => {
+    const raw = (r['Source'] || '').trim();
+    const cleaned = raw && raw !== '-' && raw !== '#N/A' ? raw : '';
+    return cleaned || '(Unspecified)';
+  }, []);
+
+  // Apply the "By Source" tab's own Start Date range + activity filter to
+  // a single record. Returns true when the opp should be counted.
+  const sourceRowMatches = useCallback((r) => {
     const fromTs = sourceFrom ? Date.parse(sourceFrom) : null;
     const toTs = sourceTo ? Date.parse(sourceTo) + 86399999 : null;
+    if (fromTs != null || toTs != null) {
+      const raw = r['Start Date'];
+      const ts = raw ? Date.parse(raw) : NaN;
+      if (isNaN(ts)) return false;
+      if (fromTs != null && ts < fromTs) return false;
+      if (toTs != null && ts > toTs) return false;
+    }
+    const stage = (r['Stage'] || '').trim();
+    // Activity filter: 'active' drops closed (Sold / Not Sold) opps,
+    // 'closed' keeps only those, 'all' keeps everything.
+    if (sourceActivityFilter === 'active' && CLOSED_STAGES.has(stage)) return false;
+    if (sourceActivityFilter === 'closed' && !CLOSED_STAGES.has(stage)) return false;
+    return true;
+  }, [sourceFrom, sourceTo, sourceActivityFilter, CLOSED_STAGES]);
+
+  const sourceBreakdown = useMemo(() => {
+    if (activeTab !== 'bySource') return { rows: [], total: 0 };
     const stats = {};
     let total = 0;
     for (const r of records) {
-      if (fromTs != null || toTs != null) {
-        const raw = r['Start Date'];
-        const ts = raw ? Date.parse(raw) : NaN;
-        if (isNaN(ts)) continue;
-        if (fromTs != null && ts < fromTs) continue;
-        if (toTs != null && ts > toTs) continue;
-      }
+      if (!sourceRowMatches(r)) continue;
       const stage = (r['Stage'] || '').trim();
-      // Activity filter: 'active' drops closed (Sold / Not Sold) opps,
-      // 'closed' keeps only those, 'all' keeps everything.
-      if (sourceActivityFilter === 'active' && CLOSED_STAGES.has(stage)) continue;
-      if (sourceActivityFilter === 'closed' && !CLOSED_STAGES.has(stage)) continue;
-      const raw = (r['Source'] || '').trim();
-      const cleaned = raw && raw !== '-' && raw !== '#N/A' ? raw : '';
-      const source = cleaned || '(Unspecified)';
+      const source = sourceKeyOf(r);
       if (!stats[source]) stats[source] = { total: 0, wins: 0, losses: 0 };
       stats[source].total += 1;
       if (stage === 'Sold') stats[source].wins += 1;
@@ -7153,10 +7171,35 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       })
       .sort((a, b) => b.count - a.count);
     return { rows, total };
-  }, [activeTab, records, sourceFrom, sourceTo, sourceActivityFilter, CLOSED_STAGES]);
+  }, [activeTab, records, sourceRowMatches, sourceKeyOf]);
+
+  // The opps behind the source the user clicked in the summary table.
+  // Scoped to the same filters so the count matches the row they clicked.
+  const sourceDrillRows = useMemo(() => {
+    if (!sourceDrillDown) return [];
+    return records
+      .filter(r => sourceRowMatches(r) && sourceKeyOf(r) === sourceDrillDown)
+      .sort((a, b) => {
+        const ta = a['Start Date'] ? Date.parse(a['Start Date']) : NaN;
+        const tb = b['Start Date'] ? Date.parse(b['Start Date']) : NaN;
+        if (isNaN(ta) && isNaN(tb)) return 0;
+        if (isNaN(ta)) return 1;
+        if (isNaN(tb)) return -1;
+        return tb - ta;
+      });
+  }, [sourceDrillDown, records, sourceRowMatches, sourceKeyOf]);
 
   const sourceColumns = useMemo(() => [
-    { key: 'source', label: 'Source', defaultWidth: 240 },
+    {
+      key: 'source',
+      label: 'Source',
+      defaultWidth: 240,
+      render: (row) => (
+        <span style={{ color: 'var(--color-link, #2563EB)', textDecoration: 'underline', textDecorationStyle: 'dotted' }}>
+          {row.source}
+        </span>
+      ),
+    },
     {
       key: 'count',
       label: 'Leads',
@@ -7554,6 +7597,62 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         );
       })()}
 
+      {sourceDrillDown != null && createPortal(
+        <div
+          onClick={() => setSourceDrillDown(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ background: 'var(--color-surface, #fff)', color: 'var(--color-text)', borderRadius: 8, padding: '1.25rem', width: 'min(820px, 94vw)', maxHeight: '82vh', overflow: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.3)' }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1.05rem' }}>
+                Source: {sourceDrillDown}
+                <span style={{ marginLeft: 8, fontWeight: 400, fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                  {sourceDrillRows.length} opp{sourceDrillRows.length === 1 ? '' : 's'}
+                </span>
+              </h3>
+              <button type="button" onClick={() => setSourceDrillDown(null)} style={{ background: 'transparent', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: 'inherit' }}>×</button>
+            </div>
+            <p style={{ marginTop: 0, fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
+              Opps in this source, matching the current date range and Show filter. Click a row to open its details.
+            </p>
+            {sourceDrillRows.length === 0 ? (
+              <div style={{ padding: '1rem', color: 'var(--color-text-muted)' }}>No opps to display.</div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                <thead>
+                  <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--color-border)' }}>
+                    <th style={{ padding: '0.4rem 0.5rem' }}>Account</th>
+                    <th style={{ padding: '0.4rem 0.5rem' }}>Contact</th>
+                    <th style={{ padding: '0.4rem 0.5rem' }}>Stage</th>
+                    <th style={{ padding: '0.4rem 0.5rem' }}>Scope</th>
+                    <th style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap' }}>Start Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sourceDrillRows.map(r => (
+                    <tr
+                      key={r._id}
+                      onClick={() => { setInfoOppId(r._id); setSourceDrillDown(null); }}
+                      style={{ borderBottom: '1px solid var(--color-border)', cursor: 'pointer' }}
+                    >
+                      <td style={{ padding: '0.4rem 0.5rem', fontWeight: 600 }}>{r['Account'] || '—'}</td>
+                      <td style={{ padding: '0.4rem 0.5rem' }}>{r['Contact'] || '—'}</td>
+                      <td style={{ padding: '0.4rem 0.5rem' }}>{r['Stage'] || '—'}</td>
+                      <td style={{ padding: '0.4rem 0.5rem' }}>{r['Scope'] || '—'}</td>
+                      <td style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap' }}>{r['Start Date'] || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>,
+        document.body
+      )}
+
       {infoOppId != null && (() => {
         const opp = records.find(r => r._id === infoOppId);
         if (!opp) return null;
@@ -7905,7 +8004,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             )}
             <span className={styles.resultCount}>
               {sourceBreakdown.rows.length} source{sourceBreakdown.rows.length === 1 ? '' : 's'} · {sourceBreakdown.total} {sourceActivityFilter === 'active' ? 'active ' : sourceActivityFilter === 'closed' ? 'closed ' : ''}lead{sourceBreakdown.total === 1 ? '' : 's'}
-              {(sourceFrom || sourceTo) ? ' in range' : ''}
+              {(sourceFrom || sourceTo) ? ' in range' : ''} · click a source to see its opps
             </span>
           </div>
           <DataTable
@@ -7914,6 +8013,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             rows={sourceBreakdown.rows.map(r => ({ ...r, id: r.source }))}
             alwaysVisible={['source']}
             emptyMessage="No leads to display for this time range."
+            onRowClick={(row) => setSourceDrillDown(row.source)}
             settings={settings}
             updateSettings={updateSettings}
           />
