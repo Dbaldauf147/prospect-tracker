@@ -452,6 +452,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       // directly on the PE firm's account name (not just its PCs).
       let active = 0;
       let total = 0;
+      // The individual opp records behind the active/total counts, so the
+      // PC Opps 2/4 column can show *which* opps are included on hover.
+      const oppsTip = [];
       const oppsNames = [firmName, ...portfolio.map(p => (p.company || '').toLowerCase().trim()).filter(Boolean)];
       for (const r of oppsRecords) {
         const stage = (r['Stage'] || '').trim();
@@ -460,7 +463,14 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         if (!acct) continue;
         if (!oppsNames.some(n => companiesMatch(n, acct))) continue;
         total++;
-        if (!CLOSED_STAGES.has(stage)) active++;
+        const isActive = !CLOSED_STAGES.has(stage);
+        if (isActive) active++;
+        oppsTip.push({
+          title: r['Opportunity Name'] || r['Opportunity'] || r['Name'] || r['Description'] || '(Unnamed opportunity)',
+          account: r['Account'] || '',
+          stage,
+          active: isActive,
+        });
       }
 
       // PCs that have converted to Clients.
@@ -505,6 +515,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         pcOppsCount,
         activeOpps: active,
         totalOpps: total,
+        oppsTip,
         pcClientCount,
         keyContactCount: keyNames.length,
         keyContactNames: keyNames,
@@ -985,11 +996,28 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                       </div>
                       )}
 
-                      {visibleCols.has('ratio') && (
-                      <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.activeOpps || 0) > 0 ? '#7C3AED' : (stats.totalOpps || 0) > 0 ? '#64748B' : '#CBD5E1' }} title="active / total opportunities across this firm and its portfolio companies">
-                        {(stats.activeOpps || 0)}/{(stats.totalOpps || 0)}
-                      </div>
-                      )}
+                      {visibleCols.has('ratio') && (() => {
+                        const oppsTip = stats.oppsTip || [];
+                        const fmt = o => `• ${o.title}${o.stage ? ` — ${o.stage}` : ''}${o.account ? ` [${o.account}]` : ''}`;
+                        let tipText;
+                        if (oppsTip.length === 0) {
+                          tipText = 'No opportunities on this firm or its portfolio companies';
+                        } else {
+                          const activeList = oppsTip.filter(o => o.active);
+                          const closedList = oppsTip.filter(o => !o.active);
+                          const lines = ['active / total opportunities across this firm and its portfolio companies', ''];
+                          lines.push(`Active (${activeList.length}):`);
+                          lines.push(...(activeList.length ? activeList.map(fmt) : ['  (none)']));
+                          lines.push(`Closed (${closedList.length}):`);
+                          lines.push(...(closedList.length ? closedList.map(fmt) : ['  (none)']));
+                          tipText = lines.join('\n');
+                        }
+                        return (
+                          <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.activeOpps || 0) > 0 ? '#7C3AED' : (stats.totalOpps || 0) > 0 ? '#64748B' : '#CBD5E1' }} title={tipText}>
+                            {(stats.activeOpps || 0)}/{(stats.totalOpps || 0)}
+                          </div>
+                        );
+                      })()}
 
                       {visibleCols.has('clients') && (
                       <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.pcClientCount || 0) > 0 ? '#10B981' : '#CBD5E1' }}>
