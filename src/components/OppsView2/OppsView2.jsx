@@ -2263,8 +2263,31 @@ function resolveColumnLink(columnName, userLinks) {
 // pick one and commit, or cancel (no opp gets created). Account is
 // passed through so the prompt can display "for <company>" when the
 // flow came from the Add Company combobox.
-function NewOppSourceModal({ account, companyType, options, onCreate, onCancel }) {
+function NewOppSourceModal({ account, companySuggestions = [], lookupCompanyType, options, onCreate, onCancel }) {
   const [source, setSource] = useState('');
+  // Editable company / Account for the new opp, with the same
+  // prefix-then-substring predictive text the Account cell uses.
+  // Pre-filled when the flow came from the Add Company combobox.
+  const [accountName, setAccountName] = useState(account || '');
+  const [companyOpen, setCompanyOpen] = useState(false);
+  const [companyHover, setCompanyHover] = useState(0);
+  const companyWrapRef = useRef(null);
+  const companyMatches = useMemo(() => {
+    if (!companySuggestions?.length) return [];
+    const q = String(accountName || '').trim().toLowerCase();
+    if (!q) return companySuggestions.slice(0, 8);
+    const prefix = [];
+    const sub = [];
+    for (const s of companySuggestions) {
+      const lower = String(s).toLowerCase();
+      if (lower === q) continue;
+      if (lower.startsWith(q)) prefix.push(s);
+      else if (lower.includes(q)) sub.push(s);
+      if (prefix.length + sub.length >= 25) break;
+    }
+    return [...prefix, ...sub].slice(0, 8);
+  }, [accountName, companySuggestions]);
+  const companyType = lookupCompanyType ? lookupCompanyType(accountName) : '';
   return createPortal(
     <div
       onClick={onCancel}
@@ -2285,14 +2308,12 @@ function NewOppSourceModal({ account, companyType, options, onCreate, onCancel }
           padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)',
         }}>
           <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
-            What's the Source for this opp?
+            New opp
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
-            {account
-              ? <>Adding <strong>{account}</strong>. Pick a Source so the new row is tagged correctly.</>
-              : 'Pick a Source so the new row is tagged correctly. You can skip and fill it in later.'}
+            Choose the company and a Source for the new row. You can skip the Source and fill it in later.
           </div>
-          {account && (
+          {accountName.trim() && (
             <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
               Company type:{' '}
               <strong style={{ color: 'var(--color-text)' }}>
@@ -2302,13 +2323,63 @@ function NewOppSourceModal({ account, companyType, options, onCreate, onCancel }
           )}
         </div>
 
-        <div style={{ padding: '0.85rem 1rem' }}>
+        <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
+          <div ref={companyWrapRef} style={{ position: 'relative' }}>
+            <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 3 }}>Company</label>
+            <input
+              type="text"
+              autoFocus
+              value={accountName}
+              placeholder="Type a company name…"
+              onChange={(e) => { setAccountName(e.target.value); setCompanyOpen(true); setCompanyHover(0); }}
+              onFocus={() => setCompanyOpen(true)}
+              onBlur={() => { requestAnimationFrame(() => { if (!companyWrapRef.current?.contains(document.activeElement)) setCompanyOpen(false); }); }}
+              onKeyDown={(e) => {
+                if (companyOpen && companyMatches.length > 0) {
+                  if (e.key === 'ArrowDown') { e.preventDefault(); setCompanyHover(i => (i + 1) % companyMatches.length); return; }
+                  if (e.key === 'ArrowUp')   { e.preventDefault(); setCompanyHover(i => (i - 1 + companyMatches.length) % companyMatches.length); return; }
+                  if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); setAccountName(companyMatches[companyHover] || companyMatches[0]); setCompanyOpen(false); return; }
+                  if (e.key === 'Escape') { e.preventDefault(); setCompanyOpen(false); return; }
+                }
+              }}
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                padding: '0.45rem 0.55rem',
+                border: '1px solid var(--color-border)', borderRadius: 4,
+                fontSize: '0.85rem', fontFamily: 'inherit',
+                background: '#fff', color: 'var(--color-text)',
+              }}
+            />
+            {companyOpen && companyMatches.length > 0 && (
+              <div style={{
+                position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 2,
+                background: '#fff', border: '1px solid var(--color-border)', borderRadius: 4,
+                boxShadow: '0 4px 12px rgba(15,23,42,0.15)', zIndex: 10, maxHeight: 220, overflowY: 'auto',
+              }}>
+                {companyMatches.map((m, i) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onMouseDown={(e) => { e.preventDefault(); setAccountName(m); setCompanyOpen(false); }}
+                    onMouseEnter={() => setCompanyHover(i)}
+                    style={{
+                      display: 'block', width: '100%', textAlign: 'left',
+                      padding: '0.4rem 0.55rem', border: 'none', cursor: 'pointer',
+                      fontFamily: 'inherit', fontSize: '0.8rem',
+                      background: i === companyHover ? 'var(--color-bg)' : 'transparent',
+                      color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}
+                  >{m}</button>
+                ))}
+              </div>
+            )}
+          </div>
+          <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: -4 }}>Source</label>
           <select
-            autoFocus
             value={source}
             onChange={(e) => setSource(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && source) { e.preventDefault(); onCreate(source); }
+              if (e.key === 'Enter' && source) { e.preventDefault(); onCreate(source, accountName); }
               if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
             }}
             style={{
@@ -2344,17 +2415,17 @@ function NewOppSourceModal({ account, companyType, options, onCreate, onCancel }
           <div style={{ display: 'flex', gap: '0.4rem' }}>
             <button
               type="button"
-              onClick={() => onCreate('')}
+              onClick={() => onCreate('', accountName)}
               style={{
                 padding: '0.35rem 0.7rem', background: 'transparent',
                 border: '1px solid var(--color-border)', borderRadius: 4,
                 fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
                 color: 'var(--color-text-muted)', cursor: 'pointer',
               }}
-            >Skip</button>
+            >Skip Source</button>
             <button
               type="button"
-              onClick={() => onCreate(source)}
+              onClick={() => onCreate(source, accountName)}
               disabled={!source}
               style={{
                 padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
@@ -7219,10 +7290,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       {pendingNewOpp && (
         <NewOppSourceModal
           account={pendingNewOpp.account}
-          companyType={pendingNewOpp.account ? (findProspectForAccount(pendingNewOpp.account, prospects)?.type || '') : ''}
+          companySuggestions={companySuggestions}
+          lookupCompanyType={(name) => (name && name.trim() ? (findProspectForAccount(name, prospects)?.type || '') : '')}
           options={listRegistry.get('source')?.options || []}
-          onCreate={(source) => {
-            addNewOpp(pendingNewOpp.account, source);
+          onCreate={(source, name) => {
+            addNewOpp(name ?? pendingNewOpp.account, source);
             setPendingNewOpp(null);
           }}
           onCancel={() => setPendingNewOpp(null)}
