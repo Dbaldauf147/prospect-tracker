@@ -2263,8 +2263,16 @@ function resolveColumnLink(columnName, userLinks) {
 // pick one and commit, or cancel (no opp gets created). Account is
 // passed through so the prompt can display "for <company>" when the
 // flow came from the Add Company combobox.
-function NewOppSourceModal({ account, companySuggestions = [], lookupCompanyType, options, onCreate, onCancel }) {
+function NewOppSourceModal({ account, companySuggestions = [], peOwnerSuggestions = [], lookupCompanyType, options, onAddCompany, onCreate, onCancel }) {
   const [source, setSource] = useState('');
+  // PE Owner for the new opp, captured up front so it lands on the row at
+  // creation. Predictive text is offered via a native datalist fed from the
+  // PE owners already in use.
+  const [peOwner, setPeOwner] = useState('');
+  // Tracks whether the typed company has been pushed to the Table View this
+  // session so the button can confirm and not double-add (the prospects prop
+  // only refreshes once the Firestore listener round-trips).
+  const [addedCompany, setAddedCompany] = useState('');
   // Editable company / Account for the new opp, with the same
   // prefix-then-substring predictive text the Account cell uses.
   // Pre-filled when the flow came from the Add Company combobox.
@@ -2321,6 +2329,24 @@ function NewOppSourceModal({ account, companySuggestions = [], lookupCompanyType
               </strong>
             </div>
           )}
+          {accountName.trim() && onAddCompany && !String(companyType || '').trim() && (
+            addedCompany.trim().toLowerCase() === accountName.trim().toLowerCase() ? (
+              <div style={{ fontSize: '0.72rem', color: '#16A34A', fontWeight: 600, marginTop: 4 }}>
+                ✓ Added “{accountName.trim()}” to Table View
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => { onAddCompany(accountName.trim()); setAddedCompany(accountName.trim()); }}
+                style={{
+                  marginTop: 5, padding: '0.25rem 0.6rem', border: '1px solid #BFDBFE',
+                  borderRadius: 4, background: '#EFF6FF', color: '#1E40AF',
+                  fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                }}
+                title="Create this company as a new prospect in the Table View"
+              >+ Add to Table View</button>
+            )
+          )}
         </div>
 
         <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
@@ -2374,12 +2400,32 @@ function NewOppSourceModal({ account, companySuggestions = [], lookupCompanyType
               </div>
             )}
           </div>
+          <div>
+            <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 3 }}>PE Owner</label>
+            <input
+              type="text"
+              value={peOwner}
+              list="new-opp-pe-owner-options"
+              placeholder="Optional — e.g. the owning PE firm"
+              onChange={(e) => setPeOwner(e.target.value)}
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                padding: '0.45rem 0.55rem',
+                border: '1px solid var(--color-border)', borderRadius: 4,
+                fontSize: '0.85rem', fontFamily: 'inherit',
+                background: '#fff', color: 'var(--color-text)',
+              }}
+            />
+            <datalist id="new-opp-pe-owner-options">
+              {(peOwnerSuggestions || []).map(o => <option key={o} value={o} />)}
+            </datalist>
+          </div>
           <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: -4 }}>Source</label>
           <select
             value={source}
             onChange={(e) => setSource(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && source) { e.preventDefault(); onCreate(source, accountName); }
+              if (e.key === 'Enter' && source) { e.preventDefault(); onCreate(source, accountName, peOwner); }
               if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
             }}
             style={{
@@ -2415,7 +2461,7 @@ function NewOppSourceModal({ account, companySuggestions = [], lookupCompanyType
           <div style={{ display: 'flex', gap: '0.4rem' }}>
             <button
               type="button"
-              onClick={() => onCreate('', accountName)}
+              onClick={() => onCreate('', accountName, peOwner)}
               style={{
                 padding: '0.35rem 0.7rem', background: 'transparent',
                 border: '1px solid var(--color-border)', borderRadius: 4,
@@ -2425,7 +2471,7 @@ function NewOppSourceModal({ account, companySuggestions = [], lookupCompanyType
             >Skip Source</button>
             <button
               type="button"
-              onClick={() => onCreate(source, accountName)}
+              onClick={() => onCreate(source, accountName, peOwner)}
               disabled={!source}
               style={{
                 padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
@@ -4644,7 +4690,7 @@ function NfatScheduleModal({ schedules, onSave, onClearNow, onClose }) {
   );
 }
 
-export function OppsView2({ settings, updateSettings, prospects = [], updateProspect, onSelectProspect } = {}) {
+export function OppsView2({ settings, updateSettings, prospects = [], updateProspect, onAddProspect, onSelectProspect } = {}) {
   const { user } = useAuth();
   // Seeded with DEFAULT_HEADERS so the table renders columns immediately;
   // the hydration effect below replaces this with the user's saved
@@ -5664,12 +5710,16 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return () => window.removeEventListener('beforeunload', flush);
   }, [data, user?.uid]);
 
-  const addNewOpp = useCallback((accountName, source) => {
+  const addNewOpp = useCallback((accountName, source, peOwner) => {
     setData(prev => {
       const records = prev?.records || [];
       const headers = prev?.headers?.length ? prev.headers : DEFAULT_HEADERS;
       const nextId = records.reduce((m, r) => Math.max(m, r._id || 0), 0) + 1;
-      return { ...prev, headers, records: [makeBlankOpp(nextId, headers, accountName, source), ...records] };
+      const opp = makeBlankOpp(nextId, headers, accountName, source);
+      // Set straight on the row (PE Owner is an ensured column, so it lands
+      // in the table) when the New opp dialog captured a PE Owner up front.
+      if (typeof peOwner === 'string' && peOwner.trim()) opp['PE Owner'] = peOwner.trim();
+      return { ...prev, headers, records: [opp, ...records] };
     });
   }, []);
 
@@ -7333,10 +7383,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         <NewOppSourceModal
           account={pendingNewOpp.account}
           companySuggestions={companySuggestions}
+          peOwnerSuggestions={peOwnerSuggestions}
           lookupCompanyType={(name) => (name && name.trim() ? (findProspectForAccount(name, prospects)?.type || '') : '')}
           options={listRegistry.get('source')?.options || []}
-          onCreate={(source, name) => {
-            addNewOpp(name ?? pendingNewOpp.account, source);
+          onAddCompany={onAddProspect ? (name) => onAddProspect({ company: name }) : undefined}
+          onCreate={(source, name, peOwner) => {
+            addNewOpp(name ?? pendingNewOpp.account, source, peOwner);
             setPendingNewOpp(null);
           }}
           onCancel={() => setPendingNewOpp(null)}
