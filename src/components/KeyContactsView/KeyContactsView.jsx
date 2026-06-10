@@ -3308,6 +3308,11 @@ function KeyContactsViewInner({
               const current = settings?.contactMetInPerson || {};
               updateSettings({ contactMetInPerson: { ...current, [contactId]: !!met } });
             }}
+            contactInvitedToLouisville={settings?.contactInvitedToLouisville || {}}
+            onSaveInvitedToLouisville={(contactId, invited) => {
+              const current = settings?.contactInvitedToLouisville || {};
+              updateSettings({ contactInvitedToLouisville: { ...current, [contactId]: !!invited } });
+            }}
             events={settings?.events || []}
             onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settings?.events || [], eventId, c) })}
             companyContacts={sameCompanyContacts}

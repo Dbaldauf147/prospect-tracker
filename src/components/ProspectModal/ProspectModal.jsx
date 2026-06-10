@@ -594,7 +594,7 @@ async function lookupStateForCity(city, countryHint) {
   }
 }
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, events = [], onToggleContactEvent, companyContacts = [], emailDomains = [], companyNames = [] }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, events = [], onToggleContactEvent, companyContacts = [], emailDomains = [], companyNames = [] }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -662,6 +662,10 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     if (stored !== undefined) return !!stored;
     return parsedTags.some(t => t.toLowerCase() === metLower);
   });
+  // "Invited to Louisville" — another local-only flag (never in HubSpot).
+  const [invitedToLouisville, setInvitedToLouisville] = useState(() =>
+    metCid != null ? !!contactInvitedToLouisville[metCid] : false
+  );
   // Any extra tags not in TAG_OPTIONS are kept verbatim (excluding the
   // met-in-person flag, which is reattached from its checkbox on save).
   const extraTags = parsedTags.filter(t => !knownTagsLower.has(t.toLowerCase()) && t.toLowerCase() !== metLower);
@@ -907,6 +911,15 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     });
   }
 
+  function toggleInvitedToLouisville() {
+    setInvitedToLouisville(prev => {
+      const next = !prev;
+      const cid = contact.id || contact.vid;
+      if (cid != null && onSaveInvitedToLouisville) onSaveInvitedToLouisville(cid, next);
+      return next;
+    });
+  }
+
   function set(key, val) { setF(prev => ({ ...prev, [key]: val })); }
 
   async function handleSave() {
@@ -995,6 +1008,9 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       if (savedCid && onSaveMetInPerson) {
         onSaveMetInPerson(savedCid, metInPerson);
       }
+      if (savedCid && onSaveInvitedToLouisville) {
+        onSaveInvitedToLouisville(savedCid, invitedToLouisville);
+      }
       // Persist CC / To Also maps keyed by the contact's primary
       // email — Draft Emails reads these on every campaign preview to
       // auto-add the linked recipients.
@@ -1031,15 +1047,26 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#1E293B' }}>{(!contact.id && !contact.vid) ? 'New HubSpot Contact' : 'Edit HubSpot Contact'}</h3>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}>×</button>
         </div>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.55rem', cursor: 'pointer', padding: '0.45rem 0.7rem', marginBottom: '1rem', border: `1px solid ${metInPerson ? '#7DD3FC' : '#E2E8F0'}`, borderRadius: '8px', background: metInPerson ? '#F0F9FF' : '#fff' }}>
-          <input
-            type="checkbox"
-            checked={metInPerson}
-            onChange={toggleMetInPerson}
-            style={{ accentColor: '#0078D4', width: '16px', height: '16px', cursor: 'pointer' }}
-          />
-          <span style={{ fontSize: '0.82rem', fontWeight: 600, color: metInPerson ? '#0369A1' : '#374151' }}>Met In Person</span>
-        </label>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.55rem', cursor: 'pointer', padding: '0.45rem 0.7rem', border: `1px solid ${metInPerson ? '#7DD3FC' : '#E2E8F0'}`, borderRadius: '8px', background: metInPerson ? '#F0F9FF' : '#fff' }}>
+            <input
+              type="checkbox"
+              checked={metInPerson}
+              onChange={toggleMetInPerson}
+              style={{ accentColor: '#0078D4', width: '16px', height: '16px', cursor: 'pointer' }}
+            />
+            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: metInPerson ? '#0369A1' : '#374151' }}>Met In Person</span>
+          </label>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.55rem', cursor: 'pointer', padding: '0.45rem 0.7rem', border: `1px solid ${invitedToLouisville ? '#7DD3FC' : '#E2E8F0'}`, borderRadius: '8px', background: invitedToLouisville ? '#F0F9FF' : '#fff' }}>
+            <input
+              type="checkbox"
+              checked={invitedToLouisville}
+              onChange={toggleInvitedToLouisville}
+              style={{ accentColor: '#0078D4', width: '16px', height: '16px', cursor: 'pointer' }}
+            />
+            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: invitedToLouisville ? '#0369A1' : '#374151' }}>Invited to Louisville</span>
+          </label>
+        </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem' }}>
           <div><label style={labelStyle}>First Name</label><input style={inputStyle} value={f.firstname} onChange={e => set('firstname', e.target.value)} /></div>
           <div><label style={labelStyle}>Last Name</label><input style={inputStyle} value={f.lastname} onChange={e => set('lastname', e.target.value)} /></div>
@@ -2774,6 +2801,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const next = { ...current, [contactId]: !!met };
     updateSettings({ contactMetInPerson: next });
   }, [settings.contactMetInPerson, updateSettings]);
+
+  const handleSaveContactInvitedToLouisville = useCallback((contactId, invited) => {
+    const current = settings.contactInvitedToLouisville || {};
+    const next = { ...current, [contactId]: !!invited };
+    updateSettings({ contactInvitedToLouisville: next });
+  }, [settings.contactInvitedToLouisville, updateSettings]);
 
   const handleSaveContactReportsTo = useCallback((contactId, managerIds) => {
     const current = settings.contactReportsTo || {};
@@ -6971,6 +7004,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           }}
           contactMetInPerson={settings.contactMetInPerson || {}}
           onSaveMetInPerson={handleSaveContactMetInPerson}
+          contactInvitedToLouisville={settings.contactInvitedToLouisville || {}}
+          onSaveInvitedToLouisville={handleSaveContactInvitedToLouisville}
           events={settings.events || []}
           onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settings.events || [], eventId, c) })}
           companyContacts={companyContacts}
