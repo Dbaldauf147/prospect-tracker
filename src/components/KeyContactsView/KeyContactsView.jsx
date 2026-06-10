@@ -10,8 +10,15 @@ import { toggleContactInEvents } from '../../utils/eventsStore';
 import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { checkCity, checkState } from '../../utils/locationStandardize';
-import { getStateForCity, lookupStateForCity } from '../../data/cities';
+import { getStateForCity, lookupStateForCity, CITY_OPTIONS, matchCities } from '../../data/cities';
 import { useDraftCampaignQueue, toggleQueuedContact, setQueuedContactIds } from '../../utils/draftCampaignQueue';
+
+// Curated city names for the inline City autocomplete. Matches the
+// predictive-text dropdown the Edit HubSpot Contact popup uses, so the
+// flat All Contacts table offers the same suggestions (alias-aware via
+// matchCities) and the same State / Country auto-fill on commit.
+const CITY_NAME_OPTIONS = CITY_OPTIONS.map(o => o.name);
+const matchCityNames = (query) => matchCities(query, CITY_OPTIONS).slice(0, 12);
 
 // Click-to-edit cell used inside the All Contacts table. Idle state
 // renders the value as plain text; on click it switches to an <input>
@@ -176,6 +183,8 @@ function InlineCell({
   align = 'left',
   type = 'text',
   suggestions = null,
+  matchFn = null,
+  suggestionsNoun = 'Table View companies',
   title,
   disabled = false,
   flagIssue = null,
@@ -278,9 +287,13 @@ function InlineCell({
     );
   }
   const q = (draft || '').trim().toLowerCase();
-  const matches = suggestions && suggestions.length > 0
-    ? (q ? suggestions.filter(n => String(n).toLowerCase().includes(q)).slice(0, 50) : suggestions.slice(0, 50))
-    : [];
+  // `matchFn` (e.g. the city autocomplete using alias-aware matchCities)
+  // overrides the default substring filter when provided.
+  const matches = matchFn
+    ? matchFn(draft)
+    : (suggestions && suggestions.length > 0
+      ? (q ? suggestions.filter(n => String(n).toLowerCase().includes(q)).slice(0, 50) : suggestions.slice(0, 50))
+      : []);
   const showSuggestionList = !!suggestions && suggestionsOpen && matches.length > 0;
   return (
     <div ref={wrapperRef} style={{ position: 'relative', padding: '0.2rem 0.3rem' }}>
@@ -335,10 +348,10 @@ function InlineCell({
         }}>
           <div style={{ position: 'sticky', top: 0, background: '#F8FAFC', borderBottom: '1px solid #E2E8F0', padding: '0.25rem 0.6rem', fontSize: '0.6rem', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}>
             {(suggestions || []).length === 0
-              ? 'No Table View companies loaded'
+              ? `No ${suggestionsNoun} loaded`
               : draft.trim()
                 ? `${matches.length} of ${(suggestions || []).length} match "${draft.trim()}"`
-                : `${(suggestions || []).length} Table View companies`}
+                : `${(suggestions || []).length} ${suggestionsNoun}`}
           </div>
           {matches.length > 0 ? matches.map((n, i) => (
             <div
@@ -364,8 +377,8 @@ function InlineCell({
             // that pressing Enter will still save it as-is.
             <div style={{ padding: '0.5rem 0.6rem', fontSize: '0.7rem', color: '#64748B', fontStyle: 'italic' }}>
               {draft.trim()
-                ? <>No Table View company matches <strong style={{ color: '#1E293B', fontStyle: 'normal' }}>"{draft.trim()}"</strong>. Press <strong style={{ color: '#1E293B', fontStyle: 'normal' }}>Enter</strong> to save your typed value as-is.</>
-                : <>Start typing to filter the {(suggestions || []).length} Table View companies.</>}
+                ? <>No {suggestionsNoun} match <strong style={{ color: '#1E293B', fontStyle: 'normal' }}>"{draft.trim()}"</strong>. Press <strong style={{ color: '#1E293B', fontStyle: 'normal' }}>Enter</strong> to save your typed value as-is.</>
+                : <>Start typing to filter the {(suggestions || []).length} {suggestionsNoun}.</>}
             </div>
           )}
         </div>
@@ -2800,6 +2813,10 @@ function KeyContactsViewInner({
                             await inlineUpdateField(c.raw || c, 'city', v);
                             await autoFillLocationFromCity(c.raw || c, v, { state: c.state, country: c.country });
                           }}
+                          suggestions={CITY_NAME_OPTIONS}
+                          matchFn={matchCityNames}
+                          suggestionsNoun="cities"
+                          title="Click to edit. Pick a city for auto-filled State / Country, or type your own."
                           textColor="#64748B"
                           placeholder="—"
                           fontSize="0.7rem"
