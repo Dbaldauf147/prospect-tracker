@@ -301,7 +301,7 @@ function formatQuotedAmountLive(raw) {
   return `$${withCommas}${hasDot ? `.${decPart}` : ''}`;
 }
 
-function makeBlankOpp(id, headers, accountOverride, sourceOverride) {
+function makeBlankOpp(id, headers, accountOverride, sourceOverride, peOwnerOverride) {
   const row = { _id: id, id, _rowUpdatedAt: Date.now() }; // id mirrored so DataTable's row key stays stable across edits
   const cols = (Array.isArray(headers) && headers.length) ? headers : DEFAULT_HEADERS;
   for (const h of cols) row[h] = '';
@@ -330,6 +330,11 @@ function makeBlankOpp(id, headers, accountOverride, sourceOverride) {
   // click.
   if (typeof sourceOverride === 'string' && sourceOverride.trim()) {
     row['Source'] = sourceOverride.trim();
+  }
+  // PE Owner comes from the New Opp prompt — set only when provided so a
+  // blank still surfaces the column's autocomplete on click.
+  if (typeof peOwnerOverride === 'string' && peOwnerOverride.trim() && cols.includes('PE Owner')) {
+    row['PE Owner'] = peOwnerOverride.trim();
   }
   // Default the three date columns the user tracks day-to-day to
   // today's date. Stored as ISO (YYYY-MM-DD) so the HTML5 date input
@@ -2257,37 +2262,56 @@ function resolveColumnLink(columnName, userLinks) {
 }
 
 
-// Tiny modal that fires right before a new opp is committed. Asks
-// the user to pick a Source from the same picklist the Source cell
-// uses. The user can skip (creates the opp with Source left blank),
-// pick one and commit, or cancel (no opp gets created). Account is
-// passed through so the prompt can display "for <company>" when the
-// flow came from the Add Company combobox.
-function NewOppSourceModal({ account, companySuggestions = [], lookupCompanyType, options, onCreate, onCancel }) {
+// Modal that fires right before a new opp is committed. Collects the
+// three fields the user wants set up front — Company (Account), Source,
+// and PE Owner — instead of leaving them blank for inline editing. The
+// Company and PE Owner inputs autocomplete from the same suggestion
+// lists their table cells use (Table View companies + names already on
+// this tab). When the typed Company doesn't already exist in Table
+// View, the modal offers to add it there as a new company so the two
+// views stay in sync. Account may be pre-filled when the flow came from
+// the Add Company combobox.
+function NewOppModal({ account: initialAccount, sourceOptions = [], companySuggestions = [], peOwnerSuggestions = [], prospects = [], onCreate, onCancel }) {
+  const [company, setCompany] = useState(initialAccount || '');
   const [source, setSource] = useState('');
-  // Editable company / Account for the new opp, with the same
-  // prefix-then-substring predictive text the Account cell uses.
-  // Pre-filled when the flow came from the Add Company combobox.
-  const [accountName, setAccountName] = useState(account || '');
-  const [companyOpen, setCompanyOpen] = useState(false);
-  const [companyHover, setCompanyHover] = useState(0);
-  const companyWrapRef = useRef(null);
-  const companyMatches = useMemo(() => {
-    if (!companySuggestions?.length) return [];
-    const q = String(accountName || '').trim().toLowerCase();
-    if (!q) return companySuggestions.slice(0, 8);
-    const prefix = [];
-    const sub = [];
-    for (const s of companySuggestions) {
-      const lower = String(s).toLowerCase();
-      if (lower === q) continue;
-      if (lower.startsWith(q)) prefix.push(s);
-      else if (lower.includes(q)) sub.push(s);
-      if (prefix.length + sub.length >= 25) break;
-    }
-    return [...prefix, ...sub].slice(0, 8);
-  }, [accountName, companySuggestions]);
-  const companyType = lookupCompanyType ? lookupCompanyType(accountName) : '';
+  // Buffer for a hand-typed PE Owner. Until the user types, PE Owner is
+  // derived from the matched Table View company (see `peOwner` below), so
+  // changing the Company re-prefills it without a sync effect.
+  const [peOwnerInput, setPeOwnerInput] = useState('');
+  const [peOwnerTouched, setPeOwnerTouched] = useState(false);
+  const [addToTableView, setAddToTableView] = useState(true);
+
+  const trimmedCompany = company.trim();
+  const matchedProspect = useMemo(
+    () => (trimmedCompany ? findProspectForAccount(trimmedCompany, prospects) : null),
+    [trimmedCompany, prospects],
+  );
+  const companyExists = !!matchedProspect;
+  const companyType = String(matchedProspect?.type || '').trim();
+  // Only meaningful when the Company is new (not yet in Table View).
+  const canAddCompany = !!trimmedCompany && !companyExists;
+  // Prefill PE Owner from the matched Table View company until the user
+  // types their own value.
+  const peOwner = peOwnerTouched ? peOwnerInput : (matchedProspect?.peOwner || '');
+
+  function submit() {
+    onCreate({
+      company: trimmedCompany,
+      source,
+      peOwner: peOwner.trim(),
+      addToTableView: canAddCompany && addToTableView,
+    });
+  }
+
+  const labelStyle = { fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text)', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 4, display: 'block' };
+  const fieldStyle = {
+    width: '100%', boxSizing: 'border-box',
+    padding: '0.45rem 0.55rem',
+    border: '1px solid var(--color-border)', borderRadius: 4,
+    fontSize: '0.85rem', fontFamily: 'inherit',
+    background: '#fff', color: 'var(--color-text)',
+  };
+
   return createPortal(
     <div
       onClick={onCancel}
@@ -2298,8 +2322,12 @@ function NewOppSourceModal({ account, companySuggestions = [], lookupCompanyType
     >
       <div
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); }
+          if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+        }}
         style={{
-          width: 420, maxWidth: '92vw',
+          width: 440, maxWidth: '92vw',
           background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}
@@ -2308,97 +2336,78 @@ function NewOppSourceModal({ account, companySuggestions = [], lookupCompanyType
           padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)',
         }}>
           <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
-            New opp
+            New Opp
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
-            Choose the company and a Source for the new row. You can skip the Source and fill it in later.
+            Set the Company, Source, and PE Owner for the new row. All are optional and editable later.
           </div>
-          {accountName.trim() && (
-            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
-              Company type:{' '}
-              <strong style={{ color: 'var(--color-text)' }}>
-                {String(companyType || '').trim() || 'Unknown (no Table View company)'}
-              </strong>
-            </div>
-          )}
         </div>
 
         <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
-          <div ref={companyWrapRef} style={{ position: 'relative' }}>
-            <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 3 }}>Company</label>
+          <div>
+            <label style={labelStyle}>Company</label>
             <input
-              type="text"
               autoFocus
-              value={accountName}
-              placeholder="Type a company name…"
-              onChange={(e) => { setAccountName(e.target.value); setCompanyOpen(true); setCompanyHover(0); }}
-              onFocus={() => setCompanyOpen(true)}
-              onBlur={() => { requestAnimationFrame(() => { if (!companyWrapRef.current?.contains(document.activeElement)) setCompanyOpen(false); }); }}
-              onKeyDown={(e) => {
-                if (companyOpen && companyMatches.length > 0) {
-                  if (e.key === 'ArrowDown') { e.preventDefault(); setCompanyHover(i => (i + 1) % companyMatches.length); return; }
-                  if (e.key === 'ArrowUp')   { e.preventDefault(); setCompanyHover(i => (i - 1 + companyMatches.length) % companyMatches.length); return; }
-                  if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); setAccountName(companyMatches[companyHover] || companyMatches[0]); setCompanyOpen(false); return; }
-                  if (e.key === 'Escape') { e.preventDefault(); setCompanyOpen(false); return; }
-                }
-              }}
-              style={{
-                width: '100%', boxSizing: 'border-box',
-                padding: '0.45rem 0.55rem',
-                border: '1px solid var(--color-border)', borderRadius: 4,
-                fontSize: '0.85rem', fontFamily: 'inherit',
-                background: '#fff', color: 'var(--color-text)',
-              }}
+              type="text"
+              list="newopp-company-list"
+              value={company}
+              placeholder="Company name…"
+              onChange={(e) => setCompany(e.target.value)}
+              style={fieldStyle}
             />
-            {companyOpen && companyMatches.length > 0 && (
-              <div style={{
-                position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 2,
-                background: '#fff', border: '1px solid var(--color-border)', borderRadius: 4,
-                boxShadow: '0 4px 12px rgba(15,23,42,0.15)', zIndex: 10, maxHeight: 220, overflowY: 'auto',
-              }}>
-                {companyMatches.map((m, i) => (
-                  <button
-                    key={m}
-                    type="button"
-                    onMouseDown={(e) => { e.preventDefault(); setAccountName(m); setCompanyOpen(false); }}
-                    onMouseEnter={() => setCompanyHover(i)}
-                    style={{
-                      display: 'block', width: '100%', textAlign: 'left',
-                      padding: '0.4rem 0.55rem', border: 'none', cursor: 'pointer',
-                      fontFamily: 'inherit', fontSize: '0.8rem',
-                      background: i === companyHover ? 'var(--color-bg)' : 'transparent',
-                      color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                    }}
-                  >{m}</button>
-                ))}
+            <datalist id="newopp-company-list">
+              {companySuggestions.map(c => <option key={c} value={c} />)}
+            </datalist>
+            {trimmedCompany && companyExists && (
+              <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+                ✓ In Table View · type:{' '}
+                <strong style={{ color: 'var(--color-text)' }}>{companyType || 'Unknown'}</strong>
               </div>
             )}
+            {canAddCompany && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', color: 'var(--color-text)', marginTop: 6, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={addToTableView}
+                  onChange={(e) => setAddToTableView(e.target.checked)}
+                />
+                Add <strong>{trimmedCompany}</strong> to Table View (not found there yet)
+              </label>
+            )}
           </div>
-          <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: -4 }}>Source</label>
-          <select
-            value={source}
-            onChange={(e) => setSource(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && source) { e.preventDefault(); onCreate(source, accountName); }
-              if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
-            }}
-            style={{
-              width: '100%', boxSizing: 'border-box',
-              padding: '0.45rem 0.55rem',
-              border: '1px solid var(--color-border)', borderRadius: 4,
-              fontSize: '0.85rem', fontFamily: 'inherit',
-              background: '#fff', color: 'var(--color-text)',
-            }}
-          >
-            <option value="">— Select a Source —</option>
-            {options.map(o => (
-              <option key={o} value={o}>{o}</option>
-            ))}
-          </select>
+
+          <div>
+            <label style={labelStyle}>Source</label>
+            <select
+              value={source}
+              onChange={(e) => setSource(e.target.value)}
+              style={fieldStyle}
+            >
+              <option value="">— Select a Source —</option>
+              {sourceOptions.map(o => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label style={labelStyle}>PE Owner</label>
+            <input
+              type="text"
+              list="newopp-peowner-list"
+              value={peOwner}
+              placeholder="PE Owner (if portfolio co)…"
+              onChange={(e) => { setPeOwnerTouched(true); setPeOwnerInput(e.target.value); }}
+              style={fieldStyle}
+            />
+            <datalist id="newopp-peowner-list">
+              {peOwnerSuggestions.map(p => <option key={p} value={p} />)}
+            </datalist>
+          </div>
         </div>
 
         <div style={{
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '0.4rem',
           padding: '0.6rem 1rem',
           borderTop: '1px solid var(--color-border-light)', background: 'var(--color-bg)',
         }}>
@@ -2412,31 +2421,16 @@ function NewOppSourceModal({ account, companySuggestions = [], lookupCompanyType
               color: 'var(--color-text-muted)', cursor: 'pointer',
             }}
           >Cancel</button>
-          <div style={{ display: 'flex', gap: '0.4rem' }}>
-            <button
-              type="button"
-              onClick={() => onCreate('', accountName)}
-              style={{
-                padding: '0.35rem 0.7rem', background: 'transparent',
-                border: '1px solid var(--color-border)', borderRadius: 4,
-                fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
-                color: 'var(--color-text-muted)', cursor: 'pointer',
-              }}
-            >Skip Source</button>
-            <button
-              type="button"
-              onClick={() => onCreate(source, accountName)}
-              disabled={!source}
-              style={{
-                padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
-                border: '1px solid var(--color-accent)', borderRadius: 4,
-                fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
-                color: '#fff',
-                cursor: source ? 'pointer' : 'not-allowed',
-                opacity: source ? 1 : 0.5,
-              }}
-            >Create opp</button>
-          </div>
+          <button
+            type="button"
+            onClick={submit}
+            style={{
+              padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
+              border: '1px solid var(--color-accent)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: '#fff', cursor: 'pointer',
+            }}
+          >Create opp</button>
         </div>
       </div>
     </div>,
@@ -4644,7 +4638,7 @@ function NfatScheduleModal({ schedules, onSave, onClearNow, onClose }) {
   );
 }
 
-export function OppsView2({ settings, updateSettings, prospects = [], updateProspect, onSelectProspect } = {}) {
+export function OppsView2({ settings, updateSettings, prospects = [], updateProspect, addProspect, onSelectProspect } = {}) {
   const { user } = useAuth();
   // Seeded with DEFAULT_HEADERS so the table renders columns immediately;
   // the hydration effect below replaces this with the user's saved
@@ -5664,12 +5658,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return () => window.removeEventListener('beforeunload', flush);
   }, [data, user?.uid]);
 
-  const addNewOpp = useCallback((accountName, source) => {
+  const addNewOpp = useCallback((accountName, source, peOwner) => {
     setData(prev => {
       const records = prev?.records || [];
       const headers = prev?.headers?.length ? prev.headers : DEFAULT_HEADERS;
       const nextId = records.reduce((m, r) => Math.max(m, r._id || 0), 0) + 1;
-      return { ...prev, headers, records: [makeBlankOpp(nextId, headers, accountName, source), ...records] };
+      return { ...prev, headers, records: [makeBlankOpp(nextId, headers, accountName, source, peOwner), ...records] };
     });
   }, []);
 
@@ -7330,13 +7324,27 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       )}
 
       {pendingNewOpp && (
-        <NewOppSourceModal
+        <NewOppModal
           account={pendingNewOpp.account}
+          sourceOptions={listRegistry.get('source')?.options || []}
           companySuggestions={companySuggestions}
-          lookupCompanyType={(name) => (name && name.trim() ? (findProspectForAccount(name, prospects)?.type || '') : '')}
-          options={listRegistry.get('source')?.options || []}
-          onCreate={(source, name) => {
-            addNewOpp(name ?? pendingNewOpp.account, source);
+          peOwnerSuggestions={peOwnerSuggestions}
+          prospects={prospects}
+          onCreate={({ company, source, peOwner, addToTableView }) => {
+            // Create the company on Table View first (when requested and
+            // it isn't there yet) so the new opp's Account immediately
+            // resolves to a real prospect record. addProspect is
+            // idempotent by company name, so a race that re-adds an
+            // existing company is harmless.
+            if (addToTableView && company && addProspect) {
+              try {
+                Promise.resolve(addProspect({ company, peOwner: peOwner || '' }))
+                  .catch(err => console.error('opps2: add company to Table View failed', err));
+              } catch (err) {
+                console.error('opps2: add company to Table View failed', err);
+              }
+            }
+            addNewOpp(company, source, peOwner);
             setPendingNewOpp(null);
           }}
           onCancel={() => setPendingNewOpp(null)}
