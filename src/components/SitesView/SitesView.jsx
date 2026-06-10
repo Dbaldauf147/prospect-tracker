@@ -5218,9 +5218,20 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         });
         cHdrCells.height = 22;
 
+        // Flag high-consumption markets: any European country whose annual
+        // electric load exceeds 100 GWh gets a ⚑ marker on its name and a
+        // red highlight on the Load (kWh) cell so the biggest power users
+        // jump out of the table. 100 GWh = 100,000,000 kWh.
+        const HIGH_LOAD_KWH = 100_000_000; // 100 GWh
+        const FLAG_FILL = 'FFFDEAEA';      // light red
+        const FLAG_TEXT = 'FFB91C1C';      // strong red
+        let flaggedCount = 0;
+
         euCountryRows.forEach((cr, i) => {
           const rr = ws.getRow(cTblHdrRow + 1 + i);
-          rr.getCell(1).value = cr.country;
+          const highLoad = cr.kwh > HIGH_LOAD_KWH;
+          if (highLoad) flaggedCount++;
+          rr.getCell(1).value = highLoad ? `⚑ ${cr.country}` : cr.country;
           rr.getCell(2).value = cr.gasStatus;
           rr.getCell(3).value = cr.elecStatus;
           rr.getCell(4).value = cr.sites;
@@ -5249,8 +5260,26 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           };
           tintStatusCell(rr.getCell(2), cr.gasTierKey);
           tintStatusCell(rr.getCell(3), cr.elecTierKey);
+          // Highlight the country + Load (kWh) cells for flagged markets.
+          if (highLoad) {
+            rr.getCell(1).font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: FLAG_TEXT } };
+            rr.getCell(5).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: FLAG_FILL } };
+            rr.getCell(5).font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: FLAG_TEXT } };
+          }
           rr.height = 20;
         });
+
+        // Footnote explaining the ⚑ flag, shown only when something tripped
+        // the 100 GWh threshold.
+        if (flaggedCount > 0) {
+          const noteRow = cTblHdrRow + 1 + euCountryRows.length;
+          ws.mergeCells(noteRow, 1, noteRow, COLS);
+          const note = ws.getCell(noteRow, 1);
+          note.value = `⚑ Flags ${flaggedCount} ${flaggedCount === 1 ? 'country' : 'countries'} with more than 100 GWh of annual electric power consumption.`;
+          note.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: FLAG_TEXT } };
+          note.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          ws.getRow(noteRow).height = 18;
+        }
       }
     }
 
