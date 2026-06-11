@@ -33,8 +33,12 @@ export const NEW_OPPS_COLUMNS = [
 
 export const NEW_OPPS_COLUMN_KEYS = NEW_OPPS_COLUMNS.map((c) => c.key);
 
-// Number of days back the "new opps" window covers (inclusive of today).
-export const NEW_OPPS_WINDOW_DAYS = 7;
+// New-opps qualification rules (mirror NEW_OPPS_* in OppsView2): an opp shows
+// when it has a BFO Opportunity Name, its current Stage is one of these, and
+// its combined time across these stages is at most this many days.
+export const NEW_OPPS_ACTIVE_STAGES = ['Lead', 'Qualifying', 'Quoting'];
+const NEW_OPPS_ACTIVE_STAGES_SET = new Set(NEW_OPPS_ACTIVE_STAGES);
+export const NEW_OPPS_MAX_STAGE_AGE_DAYS = 7;
 
 // ---- Date helpers (mirror PEPortfolioView / Opps 2) ---------------------
 function parseOppsDate(raw) {
@@ -44,23 +48,49 @@ function parseOppsDate(raw) {
   return Number.isNaN(t) ? null : new Date(t);
 }
 
-// Midnight `days` days before today (local server time), used as the
-// inclusive lower bound of the "created in the past N days" window.
-export function newOppsCutoff(days = NEW_OPPS_WINDOW_DAYS, now = new Date()) {
-  const d = new Date(now);
+// Whole calendar days from an ISO/parseable date up to today (>= 0). Mirrors
+// OppsView2's daysFromToday negated + floored at zero.
+function daysSince(raw) {
+  const d = parseOppsDate(raw);
+  if (!d) return null;
   d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() - (days - 1)); // window includes today + (days-1) prior
-  return d;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.max(0, Math.round((today - d) / 86400000));
 }
 
-// True when a record's Start Date falls on/after the cutoff (and isn't in
-// the future) — i.e. the opp was created within the window.
-export function isNewOpp(r, cutoff = newOppsCutoff(), now = new Date()) {
-  const start = parseOppsDate(r && r['Start Date']);
-  if (!start) return false;
-  const todayEnd = new Date(now);
-  todayEnd.setHours(23, 59, 59, 999);
-  return start >= cutoff && start <= todayEnd;
+// Combined days an opp has spent across the Lead + Qualifying + Quoting
+// stages: historical durations from `_stageHistory` plus the live days-so-far
+// when the current Stage is one of those three. Mirrors combinedActiveStageAge
+// in OppsView2 so the server filter matches the on-screen list.
+function combinedActiveStageAge(r) {
+  let total = 0;
+  for (const h of (Array.isArray(r && r._stageHistory) ? r._stageHistory : [])) {
+    const s = String(h && h.stage || '').trim();
+    if (!NEW_OPPS_ACTIVE_STAGES_SET.has(s)) continue;
+    const d = Number(h && h.days);
+    if (Number.isFinite(d) && d >= 0) total += d;
+  }
+  const stage = String(r && r['Stage'] || '').trim();
+  if (NEW_OPPS_ACTIVE_STAGES_SET.has(stage)) {
+    const since = daysSince((r && r._stageEnteredAt) || (r && r['Start Date']));
+    total += since == null ? 0 : since;
+  }
+  return total;
+}
+
+const bfoMissing = (v) => {
+  const s = String(v == null ? '' : v).trim().toLowerCase();
+  return s === '' || s === '-' || s === '#n/a' || s === 'n/a';
+};
+
+// True when an opp qualifies for the New Opps report.
+function qualifiesNewOpp(r) {
+  if (!r || typeof r !== 'object') return false;
+  const stage = String(r['Stage'] || '').trim();
+  if (!NEW_OPPS_ACTIVE_STAGES_SET.has(stage)) return false; // also excludes Not Started
+  if (bfoMissing(r['BFO Link'])) return false;
+  return combinedActiveStageAge(r) <= NEW_OPPS_MAX_STAGE_AGE_DAYS;
 }
 
 // Short date (M/D/YYYY) for display. Falls back to the raw value when it
@@ -75,8 +105,8 @@ const cellValue = (r, c) => (c.value ? c.value(r) : (r[c.key] ?? ''));
 
 // ---- Load + filter the user's new opps from Firestore -------------------
 // Reads `opps2Data/{uid}` (reassembling the chunked JSON when present) and
-// keeps only opps whose Start Date is within the past NEW_OPPS_WINDOW_DAYS.
-export async function loadNewOpps(db, uid, days = NEW_OPPS_WINDOW_DAYS) {
+// keeps only the opps that qualify for the New Opps report.
+export async function loadNewOpps(db, uid) {
   const ref = db.collection('opps2Data').doc(uid);
   const snap = await ref.get();
   if (!snap.exists) return [];
@@ -102,24 +132,18 @@ export async function loadNewOpps(db, uid, days = NEW_OPPS_WINDOW_DAYS) {
   try { parsed = JSON.parse(json); } catch { return []; }
   const records = Array.isArray(parsed?.records) ? parsed.records : [];
 
-  const cutoff = newOppsCutoff(days);
-  return filterNewOpps(records, days, cutoff);
+  return filterNewOpps(records);
 }
 
-// Filter + sort an in-memory record list to the new-opps window. Newest
-// Start Date first so the most recent additions lead the report.
-export function filterNewOpps(records, days = NEW_OPPS_WINDOW_DAYS, cutoff = newOppsCutoff(days)) {
-  const now = new Date();
+// Filter + sort an in-memory record list to the qualifying new opps. Freshest
+// (lowest combined active-stage age) first so the newest leads the report.
+export function filterNewOpps(records) {
   return (Array.isArray(records) ? records : [])
-    .filter((r) => isNewOpp(r, cutoff, now))
-    .sort((a, b) => {
-      const da = parseOppsDate(a['Start Date']);
-      const dbb = parseOppsDate(b['Start Date']);
-      const ta = da ? da.getTime() : 0;
-      const tb = dbb ? dbb.getTime() : 0;
-      if (tb !== ta) return tb - ta;
-      return String(a['Account'] || '').localeCompare(String(b['Account'] || ''));
-    });
+    .filter(qualifiesNewOpp)
+    .map((r) => ({ r, age: combinedActiveStageAge(r) }))
+    .sort((a, b) =>
+      a.age - b.age || String(a.r['Account'] || '').localeCompare(String(b.r['Account'] || '')))
+    .map(({ r }) => r);
 }
 
 // ---- Build an inline HTML table (mirror the New Opps report columns) -----
@@ -133,7 +157,7 @@ export function buildNewOppsTableHtml(records, columnKeys) {
   const columns = NEW_OPPS_COLUMNS.filter((c) => selected.has(c.key));
 
   if (!Array.isArray(records) || records.length === 0) {
-    return '<p style="color:#000000;font-size:13px;margin:0">No new opportunities in this period.</p>';
+    return '<p style="color:#000000;font-size:13px;margin:0">No new opportunities to report.</p>';
   }
 
   // Plain black-and-white bordered table — no fills, no accent colour.

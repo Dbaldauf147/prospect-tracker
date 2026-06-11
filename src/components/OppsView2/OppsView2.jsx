@@ -155,15 +155,18 @@ const DATE_COLUMNS = new Set([
 // until the opp actually reaches the Quoted stage.
 const SEED_TODAY_DATE_COLUMNS = new Set(['Start Date', 'Last Client Heard From Us', 'Follow Up']);
 
-// "New Opps" report — opps created in the past NEW_OPPS_WINDOW_DAYS days,
-// surfaced in the New Opps subtab and the auto-emailed digest. Opps 2 has no
-// explicit creation timestamp; a brand-new opp seeds Start Date to today (see
-// makeBlankOpp), so Start Date is the creation proxy. These column keys mirror
-// NEW_OPPS_COLUMNS in api/_lib/newOpps.js so the on-screen list and the
-// emailed table match. "BFO Link" stores the BFO Opportunity Name; "BFO
-// Address" is the live Salesforce URL — the email table hyperlinks the name
-// to that address.
-const NEW_OPPS_WINDOW_DAYS = 7;
+// "New Opps" report — the actively-working, freshly-progressing opps
+// surfaced in the New Opps subtab and the auto-emailed digest. An opp
+// qualifies when it has a BFO Opportunity Name, its current Stage is Lead,
+// Qualifying, or Quoting (which also excludes "Not Started"), and its
+// *combined* time across the Lead + Qualifying + Quoting stages is at most
+// NEW_OPPS_MAX_STAGE_AGE_DAYS days. These column keys mirror NEW_OPPS_COLUMNS
+// in api/_lib/newOpps.js so the on-screen list and the emailed table match.
+// "BFO Link" stores the BFO Opportunity Name; "BFO Address" is the live
+// Salesforce URL — the email table hyperlinks the name to that address.
+const NEW_OPPS_MAX_STAGE_AGE_DAYS = 7;
+const NEW_OPPS_ACTIVE_STAGES = ['Lead', 'Qualifying', 'Quoting'];
+const NEW_OPPS_ACTIVE_STAGES_SET = new Set(NEW_OPPS_ACTIVE_STAGES);
 const NEW_OPPS_REPORT_COLUMNS = [
   'Account', 'Open Year', 'Contact', 'Stage', 'Scope', 'Source', 'Type',
   'Sales Partner', 'Start Date', 'Status', 'Quoted Amount', 'Sites', 'Next Steps',
@@ -707,6 +710,29 @@ const BLANK_SENTINELS = new Set(['', '-', '#N/A', '#n/a', 'N/A', 'n/a']);
 function bfoFieldMissing(v) {
   const s = String(v ?? '').trim().toLowerCase();
   return s === '' || s === '-' || s === '#n/a' || s === 'n/a';
+}
+
+// Combined days an opp has spent across the Lead + Qualifying + Quoting
+// stages: historical durations captured in `_stageHistory` plus the live
+// days-so-far when the current Stage is one of those three. Mirrors the
+// per-stage math the Stage History tab uses (and combinedActiveStageAge in
+// api/_lib/newOpps.js) so the New Opps filter matches on screen and in the
+// emailed digest.
+function combinedActiveStageAge(r) {
+  let total = 0;
+  for (const h of (Array.isArray(r?._stageHistory) ? r._stageHistory : [])) {
+    const s = String(h?.stage || '').trim();
+    if (!NEW_OPPS_ACTIVE_STAGES_SET.has(s)) continue;
+    const d = Number(h?.days);
+    if (Number.isFinite(d) && d >= 0) total += d;
+  }
+  const stage = String(r?.['Stage'] || '').trim();
+  if (NEW_OPPS_ACTIVE_STAGES_SET.has(stage)) {
+    const enteredISO = toISODate(r?._stageEnteredAt) || toISODate(r?.['Start Date']);
+    const currentDays = enteredISO ? Math.max(0, -daysFromToday(enteredISO)) : 0;
+    total += currentDays;
+  }
+  return total;
 }
 
 // "Missing Data" flag for the Opps 2 table: the opp has a BFO
@@ -7099,28 +7125,24 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     setEmailTableHtml(buildNewOppsEmailHtml(ordered));
   }, [filtered, selectedIds]);
 
-  // "New Opps" subtab: opps created in the past NEW_OPPS_WINDOW_DAYS days,
-  // keyed off Start Date (the creation proxy — see makeBlankOpp). Newest
-  // first so the most recent additions lead. Mirrors filterNewOpps in
+  // "New Opps" subtab: actively-working opps that are progressing quickly —
+  // a BFO Opportunity Name is set, the current Stage is Lead/Qualifying/
+  // Quoting (so never "Not Started"), and the combined time across those
+  // three stages is at most NEW_OPPS_MAX_STAGE_AGE_DAYS days. Freshest
+  // (lowest combined age) first. Mirrors filterNewOpps in
   // api/_lib/newOpps.js so the on-screen list matches the emailed file.
   const newOpps = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const cutoff = new Date(today);
-    cutoff.setDate(cutoff.getDate() - (NEW_OPPS_WINDOW_DAYS - 1));
-    const cutoffISO = cutoff.toISOString().slice(0, 10);
-    const todayISOStr = today.toISOString().slice(0, 10);
     return records
-      .filter(r => {
-        const iso = toISODate(r['Start Date']);
-        return iso && iso >= cutoffISO && iso <= todayISOStr;
+      .map(r => ({ r, age: combinedActiveStageAge(r) }))
+      .filter(({ r, age }) => {
+        const stage = String(r['Stage'] || '').trim();
+        if (!NEW_OPPS_ACTIVE_STAGES_SET.has(stage)) return false;
+        if (bfoFieldMissing(r['BFO Link'])) return false;
+        return age <= NEW_OPPS_MAX_STAGE_AGE_DAYS;
       })
-      .sort((a, b) => {
-        const ia = toISODate(a['Start Date']) || '';
-        const ib = toISODate(b['Start Date']) || '';
-        if (ib !== ia) return ib < ia ? -1 : 1;
-        return String(a['Account'] || '').localeCompare(String(b['Account'] || ''));
-      });
+      .sort((a, b) =>
+        a.age - b.age || String(a.r['Account'] || '').localeCompare(String(b.r['Account'] || '')))
+      .map(({ r }) => r);
   }, [records]);
 
   // The New Opps subtab + emailed digest share one focused column set, in
@@ -7161,7 +7183,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
 
     ws.mergeCells(1, 1, 1, cols.length);
     const title = ws.getCell(1, 1);
-    title.value = `New Opportunities · last ${NEW_OPPS_WINDOW_DAYS} days · ${newOpps.length} opp${newOpps.length === 1 ? '' : 's'}`;
+    title.value = `New Opportunities · ${newOpps.length} opp${newOpps.length === 1 ? '' : 's'}`;
     title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
     title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
     title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -8268,7 +8290,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         <>
           <div className={styles.searchRow}>
             <span className={styles.resultCount}>
-              {newOpps.length} opp{newOpps.length === 1 ? '' : 's'} created in the past {NEW_OPPS_WINDOW_DAYS} days
+              {newOpps.length} active opp{newOpps.length === 1 ? '' : 's'} (≤ {NEW_OPPS_MAX_STAGE_AGE_DAYS} days in Lead/Qualifying/Quoting)
             </span>
             <button
               type="button"
@@ -8286,7 +8308,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             <button
               type="button"
               onClick={() => setNewOppsScheduleOpen(true)}
-              title="Schedule a recurring email that sends these new opps (past 7 days) as a table in the email body"
+              title="Schedule a recurring email that sends these new opps as a table in the email body"
               style={{
                 marginLeft: '0.5rem', padding: '0.3rem 0.7rem', fontSize: '0.78rem', fontWeight: 600,
                 fontFamily: 'inherit', color: '#009530', background: '#fff',
@@ -8295,7 +8317,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             >Schedule email</button>
           </div>
           <div style={{ padding: '0 0 0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
-            Counts an opp as “new” when its Start Date falls in the past {NEW_OPPS_WINDOW_DAYS} days (Start Date is set to today when an opp is created).
+            Shows opps with a BFO Opportunity Name whose current stage is Lead, Qualifying, or Quoting and whose combined time across those stages is ≤ {NEW_OPPS_MAX_STAGE_AGE_DAYS} days.
           </div>
           {loading && !data ? (
             <div className={styles.loading}>Loading...</div>
@@ -8307,7 +8329,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               alwaysVisible={['Account']}
               enableColumnFilters
               variableRowHeight
-              emptyMessage={`No opps created in the past ${NEW_OPPS_WINDOW_DAYS} days.`}
+              emptyMessage={`No active opps within ${NEW_OPPS_MAX_STAGE_AGE_DAYS} days in Lead/Qualifying/Quoting.`}
               settings={settings}
               updateSettings={updateSettings}
             />

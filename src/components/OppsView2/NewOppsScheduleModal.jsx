@@ -9,13 +9,13 @@ const HOURS = Array.from({ length: 24 }, (_, h) => h);
 const DOM = Array.from({ length: 28 }, (_, i) => i + 1);
 
 // New schedules default to a weekly Monday 9am digest, pre-addressed to the
-// signed-in user, since the report covers "opps created in the past 7 days".
+// signed-in user, since the report covers the actively-progressing new opps.
 function emptyForm(defaultColumns, defaultRecipient) {
   return {
     id: null,
     name: '',
     recipients: defaultRecipient ? String(defaultRecipient) : '',
-    subject: 'New Opportunities (last 7 days)',
+    subject: 'New Opportunities',
     message: '',
     frequency: 'weekly',
     hourLocal: 9,
@@ -33,7 +33,7 @@ const tzLabel = (() => {
 })();
 
 // Modal that lets the user create / edit / delete recurring emails which
-// send the New Opps table (opps created in the past 7 days) to a list
+// send the New Opps table (actively-progressing new opps) to a list
 // of recipients. Mirrors PEOppsScheduleModal. `allColumns` is the New Opps
 // column set ([{key,label}]); `defaultColumns` seeds new schedules with the
 // report's default columns.
@@ -79,7 +79,7 @@ export function NewOppsScheduleModal({ open, onClose, uid, email, oppsRows, allC
       id: s.id,
       name: s.name || '',
       recipients: (s.recipients || []).join('\n'),
-      subject: s.subject || 'New Opportunities (last 7 days)',
+      subject: s.subject || 'New Opportunities',
       message: s.message || '',
       frequency: s.frequency || 'weekly',
       hourLocal: s.hourLocal ?? 9,
