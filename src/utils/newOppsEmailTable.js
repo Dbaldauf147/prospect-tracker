@@ -110,3 +110,38 @@ export function buildNewOppsTableHtml(records, columnKeys) {
     </table>
   `.trim();
 }
+
+// Build an Outlook draft (.eml with the X-Unsent flag, so double-clicking
+// opens it as an editable draft) containing the bordered opps table.
+// Mirrors the DraftEmailView .eml path: an HTML body wrapped for Outlook,
+// the greeting first, the table, then the user's signature one line below.
+// Subject + greeting default to the "Small Deal Size Help" / "Keith,"
+// values this export is built for.
+export function buildOppsTableDraftEml(records, columnKeys, {
+  subject = 'Small Deal Size Help',
+  greeting = 'Keith,',
+  signature = '',
+} = {}) {
+  const table = buildNewOppsTableHtml(records, columnKeys);
+  const sigBlock = signature ? `<br>\n<div>\n${signature}\n</div>` : '';
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
+<head>
+<!--[if gte mso 9]><xml><w:WordDocument><w:DontHyphenate/><w:DoNotHyphenateCaps/></w:WordDocument></xml><![endif]-->
+</head>
+<body style="margin:0;padding:0;">
+<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;">${escapeHtml(greeting)}<br><br>${table}</div>${sigBlock}
+</body>
+</html>`;
+  // X-Unsent: 1 is what tells Outlook to open the message as a draft
+  // rather than a received item. No To header — the user fills in the
+  // recipient in Outlook.
+  return [
+    'MIME-Version: 1.0',
+    `Subject: ${subject}`,
+    'X-Unsent: 1',
+    'Content-Type: text/html; charset=UTF-8',
+    'Content-Transfer-Encoding: 8bit',
+    '',
+    html,
+  ].join('\r\n');
+}
