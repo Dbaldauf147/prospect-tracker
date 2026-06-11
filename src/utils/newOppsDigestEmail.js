@@ -102,8 +102,11 @@ export function buildNewOppsDigestTableHtml(records) {
 // (the same `settings.emailSignature` HTML the Draft Email tab appends to
 // its drafts — see DraftEmailView's buildStyledBodyHtml).
 export function buildNewOppsDigestEmailHtml(records, { message = '', greeting = '', signature = '' } = {}) {
+  // Explicit <br> blank lines (rather than CSS margins, which Outlook can
+  // collapse) so a clear empty line separates the greeting from the table
+  // and the table from the signature.
   const hello = greeting
-    ? `<p style="color:#000000;font-size:14px;margin:0 0 12px">${escapeHtml(greeting)}</p>`
+    ? `<p style="color:#000000;font-size:14px;margin:0">${escapeHtml(greeting)}</p><br>`
     : '';
   const intro = message
     ? `<p style="color:#334155;font-size:14px;white-space:pre-wrap;margin:0 0 16px">${escapeHtml(message)}</p>`
@@ -112,7 +115,7 @@ export function buildNewOppsDigestEmailHtml(records, { message = '', greeting = 
   // The signature is stored as trusted HTML (pasted by the user in the
   // Draft Email tab's signature editor) — appended verbatim, same as the
   // Draft Email .eml export does.
-  const sigBlock = signature ? `<br><div>${signature}</div>` : '';
+  const sigBlock = signature ? `<br><br><div>${signature}</div>` : '';
   return `<div style="font-family:Arial,sans-serif;max-width:920px;margin:0 auto">${hello}${intro}${table}${sigBlock}</div>`;
 }
 
@@ -142,7 +145,7 @@ export function buildNewOppsEml({ to = '', subject = 'Dan B New Opportunities', 
 // Build + download an Outlook draft (.eml) of the New Opps digest for the
 // given records. Returns the number of opps included.
 export function downloadNewOppsOutlookDraft(records, {
-  to = '',
+  to = 'keith.mchugh@se.com',
   subject = 'Dan B New Opportunities',
   message = '',
   greeting = 'Hey Keith,',
