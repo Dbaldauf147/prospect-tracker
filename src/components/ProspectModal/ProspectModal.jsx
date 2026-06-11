@@ -1568,21 +1568,6 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               </div>
             )}
           </div>
-          <div
-            style={{ gridColumn: 'span 2' }}
-            onMouseDown={e => e.stopPropagation()}
-            onClick={e => e.stopPropagation()}
-          >
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.55rem', cursor: 'pointer', padding: '0.4rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: '6px', background: metInPerson ? '#F0F9FF' : '#fff' }}>
-              <input
-                type="checkbox"
-                checked={metInPerson}
-                onChange={toggleMetInPerson}
-                style={{ accentColor: '#0078D4', width: '15px', height: '15px', cursor: 'pointer' }}
-              />
-              <span style={{ fontSize: '0.8rem', fontWeight: metInPerson ? 600 : 500, color: metInPerson ? '#0369A1' : '#374151' }}>Met In Person</span>
-            </label>
-          </div>
         </div>
         {error && <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: '#FEF2F2', borderRadius: '6px', fontSize: '0.75rem', color: '#DC2626' }}>{error}</div>}
         {mergeOpen && (() => {
