@@ -36,7 +36,7 @@ import { normalizeCompany } from '../../utils/companyNorm';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { apiFetch } from '../../utils/apiFetch';
 import { NewOppsScheduleModal } from './NewOppsScheduleModal';
-import { buildNewOppsEmailHtml } from '../../utils/newOppsEmailTable';
+import { buildNewOppsTableHtml, NEW_OPPS_EMAIL_COLUMNS } from '../../utils/newOppsEmailTable';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — user-entered opps stored in Firestore
@@ -3710,7 +3710,7 @@ function MassEditBar({ selectedCount, headers, columnLinks, listRegistry, onAppl
       <button
         type="button"
         onClick={onEmailTable}
-        title="Build an email table of the selected opps in the New Opps email format, ready to paste into an email"
+        title="Build a plain bordered table of the selected opps (choose which columns), ready to paste into an email"
         style={{
           padding: '0.35rem 0.7rem', background: '#fff',
           border: '1px solid #009530', borderRadius: 4,
@@ -3747,13 +3747,28 @@ function MassEditBar({ selectedCount, headers, columnLinks, listRegistry, onAppl
   );
 }
 
-// Preview + copy modal for the Mass Edit "Email table" export. Renders the
-// SE-branded New Opps-format table for the selected opps and copies it to
-// the clipboard as rich HTML (text/html) so it pastes into Outlook / Gmail
-// looking like the digest, with a plain-text fallback.
-function EmailTableModal({ html, onClose }) {
+// Preview + copy modal for the Mass Edit "Email table" export. Lets the
+// user pick which columns to include, then renders a plain black-and-white
+// bordered table for the selected opps and copies it to the clipboard as
+// rich HTML (text/html) so it pastes into Outlook / Gmail as a clean grid,
+// with a plain-text fallback.
+function EmailTableModal({ records, onClose }) {
   const previewRef = useRef(null);
   const [copied, setCopied] = useState(false);
+  // Selected column keys, defaulting to all. Kept as a Set; the table is
+  // built in the canonical NEW_OPPS_EMAIL_COLUMNS order regardless of the
+  // order the user toggles them.
+  const [selectedKeys, setSelectedKeys] = useState(() => new Set(NEW_OPPS_EMAIL_COLUMNS.map(c => c.key)));
+  const toggleKey = (key) => setSelectedKeys(prev => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+  const orderedKeys = useMemo(
+    () => NEW_OPPS_EMAIL_COLUMNS.map(c => c.key).filter(k => selectedKeys.has(k)),
+    [selectedKeys]
+  );
+  const html = useMemo(() => buildNewOppsTableHtml(records, orderedKeys), [records, orderedKeys]);
 
   const copy = useCallback(async () => {
     const plain = previewRef.current?.innerText || '';
@@ -3771,7 +3786,7 @@ function EmailTableModal({ html, onClose }) {
     } catch { /* fall through to execCommand */ }
     if (!ok) {
       // Fallback: select the rendered preview and run the legacy copy so
-      // the rich formatting still lands on the clipboard.
+      // the table still lands on the clipboard with its borders.
       try {
         const range = document.createRange();
         range.selectNodeContents(previewRef.current);
@@ -3815,18 +3830,19 @@ function EmailTableModal({ html, onClose }) {
               Email table
             </div>
             <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
-              The selected opps in the New Opps email format. Copy and paste into an email.
+              {records.length} opp{records.length === 1 ? '' : 's'}. Pick columns, then copy and paste into an email.
             </div>
           </div>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             <button
               type="button"
               onClick={copy}
+              disabled={orderedKeys.length === 0}
               style={{
-                padding: '0.4rem 0.9rem', background: copied ? '#059669' : '#009530',
-                border: `1px solid ${copied ? '#059669' : '#009530'}`, borderRadius: 4,
+                padding: '0.4rem 0.9rem', background: orderedKeys.length === 0 ? '#94A3B8' : (copied ? '#059669' : '#009530'),
+                border: `1px solid ${orderedKeys.length === 0 ? '#94A3B8' : (copied ? '#059669' : '#009530')}`, borderRadius: 4,
                 fontSize: '0.8rem', fontWeight: 600, fontFamily: 'inherit',
-                color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap',
+                color: '#fff', cursor: orderedKeys.length === 0 ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
               }}
             >{copied ? 'Copied!' : 'Copy to clipboard'}</button>
             <button
@@ -3840,6 +3856,29 @@ function EmailTableModal({ html, onClose }) {
               }}
             >Close</button>
           </div>
+        </div>
+        <div style={{
+          padding: '0.6rem 1rem', borderBottom: '1px solid var(--color-border-light)',
+          display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.4rem 0.85rem',
+        }}>
+          <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text-muted)' }}>Columns</span>
+          <button
+            type="button"
+            onClick={() => setSelectedKeys(new Set(NEW_OPPS_EMAIL_COLUMNS.map(c => c.key)))}
+            style={{ fontSize: '0.72rem', fontFamily: 'inherit', color: '#1E40AF', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+          >Select all</button>
+          <button
+            type="button"
+            onClick={() => setSelectedKeys(new Set())}
+            style={{ fontSize: '0.72rem', fontFamily: 'inherit', color: '#1E40AF', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+          >Clear</button>
+          <span style={{ color: 'var(--color-border)' }}>|</span>
+          {NEW_OPPS_EMAIL_COLUMNS.map(c => (
+            <label key={c.key} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem', color: 'var(--color-text)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={selectedKeys.has(c.key)} onChange={() => toggleKey(c.key)} />
+              {c.label}
+            </label>
+          ))}
         </div>
         <div style={{ padding: '1rem', overflow: 'auto', background: '#F8FAFC' }}>
           <div
@@ -7104,10 +7143,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return searched;
   }, [prefiltered, search, showOnlySelected, selectedIds]);
 
-  // Mass Edit → "Email table": HTML for the preview/copy modal. Null when
-  // closed. Built from the selected opps in the New Opps email format so
-  // the user can paste the same SE-branded table into an email.
-  const [emailTableHtml, setEmailTableHtml] = useState(null);
+  // Mass Edit → "Email table": the selected opps to feed the preview/copy
+  // modal (which lets the user pick columns and copies a plain bordered
+  // table). Null when closed.
+  const [emailTableRecords, setEmailTableRecords] = useState(null);
   const handleEmailTable = useCallback(() => {
     const recs = dataRef.current?.records || [];
     const byId = new Map(recs.map(r => [r._id, r]));
@@ -7122,7 +7161,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       if (!seen.has(id) && byId.has(id)) ordered.push(byId.get(id));
     }
     if (ordered.length === 0) return;
-    setEmailTableHtml(buildNewOppsEmailHtml(ordered));
+    setEmailTableRecords(ordered);
   }, [filtered, selectedIds]);
 
   // "New Opps" subtab: actively-working opps that are progressing quickly —
@@ -8345,8 +8384,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         oppsRows={newOpps}
       />
 
-      {emailTableHtml && (
-        <EmailTableModal html={emailTableHtml} onClose={() => setEmailTableHtml(null)} />
+      {emailTableRecords && (
+        <EmailTableModal records={emailTableRecords} onClose={() => setEmailTableRecords(null)} />
       )}
 
       {activeTab === 'services' && (
