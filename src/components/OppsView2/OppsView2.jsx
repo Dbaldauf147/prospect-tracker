@@ -160,10 +160,10 @@ const SEED_TODAY_DATE_COLUMNS = new Set(['Start Date', 'Last Client Heard From U
 // qualifies when it has a BFO Opportunity Name, its current Stage is Lead,
 // Qualifying, or Quoting (which also excludes "Not Started"), and its
 // *combined* time across the Lead + Qualifying + Quoting stages is at most
-// NEW_OPPS_MAX_STAGE_AGE_DAYS days. These column keys mirror NEW_OPPS_COLUMNS
-// in api/_lib/newOpps.js so the on-screen list and the emailed table match.
-// "BFO Link" stores the BFO Opportunity Name; "BFO Address" is the live
-// Salesforce URL — the email table hyperlinks the name to that address.
+// NEW_OPPS_MAX_STAGE_AGE_DAYS days. These column keys drive the on-screen
+// subtab and its Excel export; the emailed table uses its own fixed set
+// (NEW_OPPS_EMAIL_COLUMNS in api/_lib/newOpps.js). "BFO Link" stores the
+// BFO Opportunity Name; "BFO Address" is the live Salesforce URL.
 const NEW_OPPS_MAX_STAGE_AGE_DAYS = 7;
 const NEW_OPPS_ACTIVE_STAGES = ['Lead', 'Qualifying', 'Quoting'];
 const NEW_OPPS_ACTIVE_STAGES_SET = new Set(NEW_OPPS_ACTIVE_STAGES);
@@ -8343,8 +8343,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         uid={user?.uid}
         email={user?.email}
         oppsRows={newOpps}
-        allColumns={newOppsColumns.map(c => ({ key: c.key, label: c.label }))}
-        defaultColumns={NEW_OPPS_REPORT_COLUMNS}
       />
 
       {emailTableHtml && (

@@ -10,7 +10,7 @@ const DOM = Array.from({ length: 28 }, (_, i) => i + 1);
 
 // New schedules default to a weekly Monday 9am digest, pre-addressed to the
 // signed-in user, since the report covers the actively-progressing new opps.
-function emptyForm(defaultColumns, defaultRecipient) {
+function emptyForm(defaultRecipient) {
   return {
     id: null,
     name: '',
@@ -21,7 +21,6 @@ function emptyForm(defaultColumns, defaultRecipient) {
     hourLocal: 9,
     dayOfWeekLocal: 1, // Monday
     dayOfMonthLocal: 1,
-    columns: Array.isArray(defaultColumns) ? [...defaultColumns] : [],
     skipWhenEmpty: false,
     enabled: true,
   };
@@ -33,13 +32,13 @@ const tzLabel = (() => {
 })();
 
 // Modal that lets the user create / edit / delete recurring emails which
-// send the New Opps table (actively-progressing new opps) to a list
-// of recipients. Mirrors PEOppsScheduleModal. `allColumns` is the New Opps
-// column set ([{key,label}]); `defaultColumns` seeds new schedules with the
-// report's default columns.
-export function NewOppsScheduleModal({ open, onClose, uid, email, oppsRows, allColumns, defaultColumns }) {
+// send the New Opps table (actively-progressing new opps) to a list of
+// recipients. Mirrors PEOppsScheduleModal, minus a column picker — the
+// emailed table's column set is fixed (see NEW_OPPS_EMAIL_COLUMNS in
+// api/_lib/newOpps.js).
+export function NewOppsScheduleModal({ open, onClose, uid, email, oppsRows }) {
   const [schedules, setSchedules] = useState([]);
-  const [form, setForm] = useState(() => emptyForm(defaultColumns, email));
+  const [form, setForm] = useState(() => emptyForm(email));
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -73,7 +72,7 @@ export function NewOppsScheduleModal({ open, onClose, uid, email, oppsRows, allC
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
-  const startNew = () => { setForm(emptyForm(defaultColumns, email)); setEditing(true); setError(''); };
+  const startNew = () => { setForm(emptyForm(email)); setEditing(true); setError(''); };
   const startEdit = (s) => {
     setForm({
       id: s.id,
@@ -85,7 +84,6 @@ export function NewOppsScheduleModal({ open, onClose, uid, email, oppsRows, allC
       hourLocal: s.hourLocal ?? 9,
       dayOfWeekLocal: s.dayOfWeekLocal ?? 1,
       dayOfMonthLocal: s.dayOfMonthLocal ?? 1,
-      columns: Array.isArray(s.columns) && s.columns.length ? [...s.columns] : (defaultColumns || []),
       skipWhenEmpty: !!s.skipWhenEmpty,
       enabled: s.enabled !== false,
     });
@@ -145,7 +143,6 @@ export function NewOppsScheduleModal({ open, onClose, uid, email, oppsRows, allC
             recipients: normalizeRecipients(form.recipients),
             subject: form.subject,
             message: form.message,
-            columns: form.columns,
             records,
           };
       if (!s) {
@@ -168,11 +165,6 @@ export function NewOppsScheduleModal({ open, onClose, uid, email, oppsRows, allC
     } finally {
       setBusyId(null);
     }
-  };
-
-  const toggleColumn = (key) => {
-    if (key === 'Account') return; // anchor column always included
-    set('columns', form.columns.includes(key) ? form.columns.filter((k) => k !== key) : [...form.columns, key]);
   };
 
   return (
@@ -280,16 +272,9 @@ export function NewOppsScheduleModal({ open, onClose, uid, email, oppsRows, allC
                 </Field>
               </div>
 
-              <Field label="Columns in the emailed table">
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem 0.8rem', border: '1px solid #E2E8F0', borderRadius: 6, padding: '0.5rem 0.6rem', maxHeight: 140, overflowY: 'auto' }}>
-                  {(allColumns || []).map((c) => (
-                    <label key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.74rem', color: c.key === 'Account' ? '#94A3B8' : '#334155', cursor: c.key === 'Account' ? 'not-allowed' : 'pointer' }}>
-                      <input type="checkbox" disabled={c.key === 'Account'} checked={c.key === 'Account' || form.columns.includes(c.key)} onChange={() => toggleColumn(c.key)} />
-                      {c.label}
-                    </label>
-                  ))}
-                </div>
-              </Field>
+              <div style={{ fontSize: '0.7rem', color: '#64748B', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 6, padding: '0.45rem 0.6rem' }}>
+                The emailed table always shows: Account, Stage, Scope, Source, Start Date, Quoted Amount, Next Steps, and a BFO Link.
+              </div>
 
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.76rem', color: '#334155' }}>
                 <input type="checkbox" checked={form.skipWhenEmpty} onChange={(e) => set('skipWhenEmpty', e.target.checked)} />

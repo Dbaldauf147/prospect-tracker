@@ -3,7 +3,7 @@
 // the *caller's* own opps (auth.uid) and sets reply-to to the caller.
 // Mirrors api/pe-opps-send-now.js.
 //
-// Body: { recipients: [email], subject?, message?, columns?: [colKey] }
+// Body: { recipients: [email], subject?, message? }
 //   or: { scheduleId } to reuse a saved schedule's config (must be owned
 //        by the caller).
 
@@ -16,7 +16,7 @@ async function handler(req, res, auth) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   if (!(await enforceRateLimit(res, auth.uid, 'new-opps-send-now', 20, 5 * 60 * 1000))) return;
 
-  let { recipients, subject, message, columns, scheduleId, records: postedRecords } = req.body || {};
+  let { recipients, subject, message, scheduleId, records: postedRecords } = req.body || {};
 
   const db = adminDb();
   if (scheduleId) {
@@ -27,7 +27,6 @@ async function handler(req, res, auth) {
     recipients = s.recipients;
     subject = s.subject;
     message = s.message;
-    columns = s.columns;
   }
 
   const to = (Array.isArray(recipients) ? recipients : String(recipients || '').split(/[,;\n]/))
@@ -49,7 +48,6 @@ async function handler(req, res, auth) {
       subject,
       message,
       records,
-      columns,
       replyTo: auth.email,
     });
     return res.json({ success: true, id: result.id, opps: records.length, recipients: to.length });
