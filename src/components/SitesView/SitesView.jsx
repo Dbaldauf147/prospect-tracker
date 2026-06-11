@@ -4500,48 +4500,33 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       }
 
       // Two-panel choropleth — Natural Gas markets on the left,
-      // Electric Power markets on the right. Each portfolio state /
-      // province is filled with its market-status color and outlined
-      // in bold so the silhouette pops; states / provinces with no
+      // Electric Power markets on the right. Both panels derive their
+      // per-state / per-province status straight from the NA_CATEGORIES
+      // table (US_MARKETS + CA_MARKETS) so the map always agrees with the
+      // State / Province deregulation status table and the per-site
+      // Electric / Gas Market columns. Each status string is bucketed
+      // into one of the legend colours below; states / provinces with no
       // sites fade to a light grey so the highlighted set reads as a
-      // single foreground layer. Status data for the US comes from a
-      // curated authority table; Canadian provinces derive both panels
-      // from CA_MARKETS.
-      const NG_STATUS_US = {
-        DC: 'dereg', FL: 'dereg', GA: 'dereg', IL: 'dereg', IN: 'dereg',
-        KY: 'dereg', MD: 'dereg', MI: 'dereg', MT: 'dereg', NJ: 'dereg',
-        NY: 'dereg', OH: 'dereg', PA: 'dereg', VA: 'dereg', WV: 'dereg',
-        WY: 'dereg',
-        CA: 'limited', KS: 'limited', MA: 'limited', TX: 'limited',
-      };
-      const EP_STATUS_US = {
-        TX: 'dereg', PA: 'dereg', OH: 'dereg', NJ: 'dereg', NY: 'dereg',
-        IL: 'dereg', CT: 'dereg', MD: 'dereg', DE: 'dereg', MA: 'dereg',
-        ME: 'dereg', NH: 'dereg', RI: 'dereg', DC: 'dereg',
-        MI: 'limited',
-        CA: 'direct_access', OR: 'direct_access',
-      };
-      const caStatusFromCategory = (cat) => {
-        let ng = 'reg', ep = 'reg';
-        if (cat === 'DEREG_NG' || cat === 'DEREG_NG_EP' ||
-            cat === 'DEREG_NG_LIMITED_EP' || cat === 'DEREG_NG_HEAVY_EP') ng = 'dereg';
-        else if (cat === 'CA_LIMITED_NG_DEREG_EP' || cat === 'CA_LIMITED_NG_REG_EP') ng = 'limited';
-        if (cat === 'DEREG_NG_EP' || cat === 'CA_LIMITED_NG_DEREG_EP') ep = 'dereg';
-        else if (cat === 'DEREG_NG_LIMITED_EP' || cat === 'LIMITED_EP' ||
-                 cat === 'DEREG_NG_HEAVY_EP' || cat === 'HEAVY_EP') ep = 'limited';
-        else if (cat === 'DIRECT_ACCESS_EP') ep = 'direct_access';
-        return { ng, ep };
+      // single foreground layer.
+      const statusBucket = (statusText) => {
+        const s = String(statusText || '').toLowerCase();
+        if (!s || s.startsWith('regulated')) return 'reg';
+        if (s.includes('limited opportunity') || s.includes('limited deregulation')) return 'limited';
+        if (s.includes('direct access')) return 'direct_access';
+        if (s.startsWith('deregulated')) return 'dereg';
+        return 'reg';
       };
       const ngStatusByKey = new Map();
       const epStatusByKey = new Map();
       for (const m of US_MARKETS) {
-        ngStatusByKey.set(`US/${m.code}`, NG_STATUS_US[m.code] || 'reg');
-        epStatusByKey.set(`US/${m.code}`, EP_STATUS_US[m.code] || 'reg');
+        const cat = NA_CATEGORIES[m.category];
+        ngStatusByKey.set(`US/${m.code}`, statusBucket(cat?.ng));
+        epStatusByKey.set(`US/${m.code}`, statusBucket(cat?.ep));
       }
       for (const m of CA_MARKETS) {
-        const { ng, ep } = caStatusFromCategory(m.category);
-        ngStatusByKey.set(`CA/${m.code}`, ng);
-        epStatusByKey.set(`CA/${m.code}`, ep);
+        const cat = NA_CATEGORIES[m.category];
+        ngStatusByKey.set(`CA/${m.code}`, statusBucket(cat?.ng));
+        epStatusByKey.set(`CA/${m.code}`, statusBucket(cat?.ep));
       }
       const hasSites = (key) => buckets.has(key);
 
@@ -4726,7 +4711,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         }
       };
       drawPanelLegend(PAD,             ['dereg', 'limited', 'reg']);
-      drawPanelLegend(PAD * 2 + MAP_W, ['dereg', 'limited', 'direct_access', 'reg']);
+      drawPanelLegend(PAD * 2 + MAP_W, ['dereg', 'limited', 'reg']);
 
       const dataUrl = canvas.toDataURL('image/png');
       const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
@@ -4896,6 +4881,20 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             catCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: cat.fill } };
             catCell.font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: cat.fg } };
           }
+          // Colour the NG (4) and EP (5) cells by their own status so the
+          // table reads like the source map: Regulated = blue,
+          // Deregulated = green, Limited Opportunity = amber.
+          const statusCellStyle = (statusText) => {
+            const s = String(statusText || '').toLowerCase();
+            if (!s || s.startsWith('regulated')) return { fill: 'FF4AA3E0', fg: 'FFFFFFFF' };
+            if (s.includes('limited opportunity') || s.includes('limited deregulation')) return { fill: 'FFF2C200', fg: 'FF422006' };
+            return { fill: 'FF4CAF50', fg: 'FF14532D' };
+          };
+          [[4, cat?.ng], [5, cat?.ep]].forEach(([ci, status]) => {
+            const st = statusCellStyle(status);
+            rr.getCell(ci).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: st.fill } };
+            rr.getCell(ci).font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: st.fg } };
+          });
           if (sites > 0) {
             rr.getCell(7).font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: SE_TEXT_DARK } };
           }
