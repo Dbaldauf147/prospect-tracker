@@ -38,7 +38,7 @@ import { apiFetch } from '../../utils/apiFetch';
 import { NewOppsScheduleModal } from './NewOppsScheduleModal';
 import { downloadNewOppsOutlookDraft } from '../../utils/newOppsDigestEmail';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
-import { buildNewOppsTableHtml, NEW_OPPS_EMAIL_COLUMNS, NEW_OPPS_EMAIL_DEFAULT_COLUMN_KEYS } from '../../utils/newOppsEmailTable';
+import { buildNewOppsTableHtml, downloadOppsTableOutlookDraft, NEW_OPPS_EMAIL_COLUMNS, NEW_OPPS_EMAIL_DEFAULT_COLUMN_KEYS } from '../../utils/newOppsEmailTable';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — user-entered opps stored in Firestore
@@ -3771,7 +3771,7 @@ function MassEditBar({ selectedCount, headers, columnLinks, listRegistry, onAppl
 // bordered table for the selected opps and copies it to the clipboard as
 // rich HTML (text/html) so it pastes into Outlook / Gmail as a clean grid,
 // with a plain-text fallback.
-function EmailTableModal({ records, onClose }) {
+function EmailTableModal({ records, onClose, signature }) {
   const previewRef = useRef(null);
   const [copied, setCopied] = useState(false);
   // Selected column keys, defaulting to NEW_OPPS_EMAIL_DEFAULT_COLUMN_KEYS
@@ -3825,6 +3825,15 @@ function EmailTableModal({ records, onClose }) {
     }
   }, [html]);
 
+  // Download an Outlook draft (.eml) of the selected opps: subject "Small
+  // Deal Size Help", greeting "Keith,", the chosen columns as the table,
+  // and the user's signature. Same flow as the New Opps "Download Outlook
+  // draft" — double-click the file to open it in Outlook.
+  const createDraft = useCallback(() => {
+    if (orderedKeys.length === 0) return;
+    downloadOppsTableOutlookDraft(records, orderedKeys, { signature });
+  }, [records, orderedKeys, signature]);
+
   return createPortal(
     <div
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
@@ -3850,21 +3859,34 @@ function EmailTableModal({ records, onClose }) {
               Email table
             </div>
             <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
-              {records.length} opp{records.length === 1 ? '' : 's'}. Pick columns, then copy and paste into an email.
+              {records.length} opp{records.length === 1 ? '' : 's'}. Pick columns, then create an Outlook draft (or copy the table).
             </div>
           </div>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             <button
               type="button"
-              onClick={copy}
+              onClick={createDraft}
               disabled={orderedKeys.length === 0}
+              title='Download an Outlook draft (.eml) — subject "Small Deal Size Help", starting "Keith," with your signature. Double-click the file to open it in Outlook.'
               style={{
-                padding: '0.4rem 0.9rem', background: orderedKeys.length === 0 ? '#94A3B8' : (copied ? '#059669' : '#009530'),
-                border: `1px solid ${orderedKeys.length === 0 ? '#94A3B8' : (copied ? '#059669' : '#009530')}`, borderRadius: 4,
+                padding: '0.4rem 0.9rem', background: orderedKeys.length === 0 ? '#94A3B8' : '#0F6CBD',
+                border: `1px solid ${orderedKeys.length === 0 ? '#94A3B8' : '#0F6CBD'}`, borderRadius: 4,
                 fontSize: '0.8rem', fontWeight: 600, fontFamily: 'inherit',
                 color: '#fff', cursor: orderedKeys.length === 0 ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
               }}
-            >{copied ? 'Copied!' : 'Copy to clipboard'}</button>
+            >Create Outlook draft</button>
+            <button
+              type="button"
+              onClick={copy}
+              disabled={orderedKeys.length === 0}
+              style={{
+                padding: '0.4rem 0.9rem', background: 'transparent',
+                border: `1px solid ${orderedKeys.length === 0 ? 'var(--color-border)' : '#009530'}`, borderRadius: 4,
+                fontSize: '0.8rem', fontWeight: 600, fontFamily: 'inherit',
+                color: orderedKeys.length === 0 ? 'var(--color-text-muted)' : (copied ? '#059669' : '#009530'),
+                cursor: orderedKeys.length === 0 ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
+              }}
+            >{copied ? 'Copied!' : 'Copy table'}</button>
             <button
               type="button"
               onClick={onClose}
@@ -8427,7 +8449,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       />
 
       {emailTableRecords && (
-        <EmailTableModal records={emailTableRecords} onClose={() => setEmailTableRecords(null)} />
+        <EmailTableModal
+          records={emailTableRecords}
+          signature={settings?.emailSignature || (isAdmin ? DEFAULT_EMAIL_SIGNATURE : '')}
+          onClose={() => setEmailTableRecords(null)}
+        />
       )}
 
       {activeTab === 'services' && (

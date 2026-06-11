@@ -4,6 +4,8 @@
 // so it pastes into an email as a clean grid. Which columns appear (and
 // their order) is chosen by the caller in the export modal.
 
+import { buildNewOppsEml } from './newOppsDigestEmail';
+
 // Columns available to the export, in their default order. Mirrors the New
 // Opps report column set; `align: 'right'` for the numeric columns.
 export const NEW_OPPS_EMAIL_COLUMNS = [
@@ -109,4 +111,45 @@ export function buildNewOppsTableHtml(records, columnKeys) {
       <tbody>${rows}</tbody>
     </table>
   `.trim();
+}
+
+// Full email body for the Mass Edit Outlook draft: greeting ("Keith,"), the
+// selected-columns table, then the user's saved signature. Mirrors the
+// New Opps digest draft body (newOppsDigestEmail.js), but uses the columns
+// the user picked in the Email table modal rather than the fixed digest set.
+export function buildOppsTableEmailHtml(records, columnKeys, { greeting = 'Keith,', signature = '' } = {}) {
+  // Explicit <br> blank lines (rather than CSS margins, which Outlook can
+  // collapse) separate greeting → table → signature.
+  const hello = greeting
+    ? `<p style="color:#000000;font-size:14px;margin:0">${escapeHtml(greeting)}</p><br>`
+    : '';
+  const table = buildNewOppsTableHtml(records, columnKeys);
+  // Signature is trusted HTML (the same settings.emailSignature the Draft
+  // Email tab appends) — included verbatim.
+  const sigBlock = signature ? `<br><br><div>${signature}</div>` : '';
+  return `<div style="font-family:Arial,sans-serif;max-width:920px;margin:0 auto">${hello}${table}${sigBlock}</div>`;
+}
+
+// Build + download an Outlook draft (.eml) of the selected opps as a table,
+// reusing the shared X-Unsent envelope from newOppsDigestEmail.js. Defaults
+// match the request: subject "Small Deal Size Help", greeting "Keith,",
+// addressed to Keith McHugh. Returns the number of opps included.
+export function downloadOppsTableOutlookDraft(records, columnKeys, {
+  to = 'keith.mchugh@se.com',
+  subject = 'Small Deal Size Help',
+  greeting = 'Keith,',
+  signature = '',
+} = {}) {
+  const html = buildOppsTableEmailHtml(records, columnKeys, { greeting, signature });
+  const eml = buildNewOppsEml({ to, subject, html });
+  const blob = new Blob([eml], { type: 'message/rfc822' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${subject}.eml`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  return Array.isArray(records) ? records.length : 0;
 }
