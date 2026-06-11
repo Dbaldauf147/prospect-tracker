@@ -19,7 +19,7 @@ export const NEW_OPPS_EMAIL_COLUMNS = [
   { key: 'Scope', label: 'Scope' },
   { key: 'Source', label: 'Source' },
   { key: 'Start Date', label: 'Start Date', value: (r) => formatShortDate(r['Start Date']) },
-  { key: 'Quoted Amount', label: 'Quoted Amount', align: 'right' },
+  { key: 'Quoted Amount', label: 'Deal Size', align: 'right' },
   { key: 'Next Steps', label: 'Next Steps' },
   { key: 'BFO Address', label: 'BFO Link' },
 ];
