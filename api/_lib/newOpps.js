@@ -3,35 +3,26 @@
 // (api/new-opps-send-now.js) and the CRUD route (api/new-opps-schedules.js).
 //
 // Mirrors api/_lib/peOpps.js, but instead of the PE filter it selects the
-// opps a user *created in the past 7 days*. Opps 2 records carry no explicit
-// creation timestamp; a brand-new opp seeds its "Start Date" to today (see
-// makeBlankOpp in src/components/OppsView2/OppsView2.jsx), so Start Date is
-// used as the creation proxy. The on-screen "New Opps" subtab of Opps 2
-// applies the same window so the emailed file matches what the user sees.
+// actively-progressing new opps (BFO name set, Stage in Lead/Qualifying/
+// Quoting, combined active-stage age <= 7 days). The on-screen "New Opps"
+// subtab of Opps 2 applies the same filter so the emailed table matches
+// what the user sees.
 
-// ---- Column definitions (mirror NEW_OPPS_REPORT_COLUMNS in OppsView2) ---
-// "BFO Link" stores the BFO Opportunity Name (the data key predates the
-// rename); "BFO Address" is the live Salesforce URL. The emailed table
-// hyperlinks the name to that address.
-export const NEW_OPPS_COLUMNS = [
+// ---- Email column set (fixed) -------------------------------------------
+// The digest email always shows exactly these columns, in this order. The
+// "BFO Link" column renders a literal "BFO Link" hyperlink pointing at the
+// row's BFO Address (the live Salesforce URL); rows with no valid address
+// leave the cell blank.
+export const NEW_OPPS_EMAIL_COLUMNS = [
   { key: 'Account', label: 'Account' },
-  { key: 'Open Year', label: 'Open Year' },
-  { key: 'Contact', label: 'Contact' },
   { key: 'Stage', label: 'Stage' },
   { key: 'Scope', label: 'Scope' },
   { key: 'Source', label: 'Source' },
-  { key: 'Type', label: 'Type' },
-  { key: 'Sales Partner', label: 'Sales Partner' },
   { key: 'Start Date', label: 'Start Date', value: (r) => formatShortDate(r['Start Date']) },
-  { key: 'Status', label: 'Status' },
   { key: 'Quoted Amount', label: 'Quoted Amount', align: 'right' },
-  { key: 'Sites', label: 'Sites', align: 'right' },
   { key: 'Next Steps', label: 'Next Steps' },
-  { key: 'BFO Link', label: 'BFO Opportunity Name' },
-  { key: 'BFO Address', label: 'BFO Address' },
+  { key: 'BFO Address', label: 'BFO Link' },
 ];
-
-export const NEW_OPPS_COLUMN_KEYS = NEW_OPPS_COLUMNS.map((c) => c.key);
 
 // New-opps qualification rules (mirror NEW_OPPS_* in OppsView2): an opp shows
 // when it has a BFO Opportunity Name, its current Stage is one of these, and
@@ -146,15 +137,13 @@ export function filterNewOpps(records) {
     .map(({ r }) => r);
 }
 
-// ---- Build an inline HTML table (mirror the New Opps report columns) -----
+// ---- Build the inline HTML table (fixed email column set) ----------------
 // Renders the records as a plain black-and-white bordered HTML table so the
-// digest reads directly in the email body — no attachment to open.
-// `columnKeys` selects and orders columns; Account is always kept.
-export function buildNewOppsTableHtml(records, columnKeys) {
-  const keys = Array.isArray(columnKeys) && columnKeys.length ? columnKeys : NEW_OPPS_COLUMN_KEYS;
-  const byKey = new Map(NEW_OPPS_COLUMNS.map((c) => [c.key, c]));
-  const selected = new Set([...keys, 'Account']);
-  const columns = NEW_OPPS_COLUMNS.filter((c) => selected.has(c.key));
+// digest reads directly in the email body — no attachment to open. Always
+// uses NEW_OPPS_EMAIL_COLUMNS, regardless of what older saved schedules
+// stored, so every send shows the same agreed set.
+export function buildNewOppsTableHtml(records) {
+  const columns = NEW_OPPS_EMAIL_COLUMNS;
 
   if (!Array.isArray(records) || records.length === 0) {
     return '<p style="color:#000000;font-size:13px;margin:0">No new opportunities to report.</p>';
@@ -173,23 +162,25 @@ export function buildNewOppsTableHtml(records, columnKeys) {
     const u = String(r['BFO Address'] || '').trim();
     return /^https?:\/\//i.test(u) ? u : '';
   };
-  const isBlankish = (v) => {
-    const s = String(v ?? '').trim();
-    return !s || s === '-' || s.toLowerCase() === '#n/a' || s.toLowerCase() === 'n/a';
-  };
   const link = (href, text) =>
     `<a href="${escapeHtml(href)}" style="color:#000000;text-decoration:underline">${escapeHtml(text)}</a>`;
 
+  // Steps inside a single Next Steps box are stored with U+2028 line
+  // separators (and "\n"); render both as <br> so a multi-line note reads
+  // as stacked lines instead of one run-on string.
+  const multiline = (v) => escapeHtml(v).replace(/\u2028|\r?\n/g, '<br>');
+
   const rows = records.map((r) => {
     const cells = columns.map((c) => {
-      const v = cellValue(r, byKey.get(c.key) || c);
-      const url = (c.key === 'BFO Link' || c.key === 'BFO Address') ? bfoUrl(r) : '';
+      const v = cellValue(r, c);
       let inner;
-      if (c.key === 'BFO Link' && url && !isBlankish(v)) {
-        // BFO Opportunity Name, hyperlinked to the opp's BFO Address.
-        inner = link(url, v);
-      } else if (c.key === 'BFO Address' && url) {
-        inner = link(url, url);
+      if (c.key === 'BFO Address') {
+        // Literal "BFO Link" text hyperlinked to the opp's BFO Address;
+        // blank when there's no valid web address.
+        const url = bfoUrl(r);
+        inner = url ? link(url, 'BFO Link') : '';
+      } else if (c.key === 'Next Steps') {
+        inner = multiline(v);
       } else {
         inner = escapeHtml(v);
       }
@@ -208,11 +199,10 @@ export function buildNewOppsTableHtml(records, columnKeys) {
 
 // ---- Send via Gmail (SMTP + App Password) with the table inline ----------
 // The new opportunities are rendered as an HTML table in the email body (no
-// attachment). `records` are pre-filtered to the window by the caller;
-// `columns` selects which fields to show. The body is
+// attachment). `records` are pre-filtered by the caller. The body is
 // intentionally minimal — just the optional intro message and the table, with
 // no heading, summary line, or footer.
-export async function sendNewOppsEmail({ to, subject, message, records, columns, replyTo }) {
+export async function sendNewOppsEmail({ to, subject, message, records, replyTo }) {
   const user = process.env.GMAIL_USER;
   const pass = process.env.GMAIL_APP_PASSWORD;
   if (!user || !pass) {
@@ -227,7 +217,7 @@ export async function sendNewOppsEmail({ to, subject, message, records, columns,
   const intro = message
     ? `<p style="color:#334155;font-size:14px;white-space:pre-wrap;margin:0 0 16px">${escapeHtml(message)}</p>`
     : '';
-  const table = buildNewOppsTableHtml(records, columns);
+  const table = buildNewOppsTableHtml(records);
   const html = `
     <div style="font-family:Arial,sans-serif;max-width:920px;margin:0 auto">
       ${intro}

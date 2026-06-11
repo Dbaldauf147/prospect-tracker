@@ -64,7 +64,6 @@ export default async function handler(req, res) {
         subject: s.subject,
         message: s.message,
         records,
-        columns: s.columns,
         replyTo: s.ownerEmail,
       });
       await docSnap.ref.update({
