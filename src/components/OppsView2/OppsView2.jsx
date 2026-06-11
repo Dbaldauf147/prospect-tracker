@@ -37,6 +37,7 @@ import { userLsGet, userLsSet } from '../../utils/userLs';
 import { apiFetch } from '../../utils/apiFetch';
 import { NewOppsScheduleModal } from './NewOppsScheduleModal';
 import { downloadNewOppsOutlookDraft } from '../../utils/newOppsDigestEmail';
+import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { buildNewOppsTableHtml, NEW_OPPS_EMAIL_COLUMNS, NEW_OPPS_EMAIL_DEFAULT_COLUMN_KEYS } from '../../utils/newOppsEmailTable';
 import styles from './OppsView2.module.css';
 
@@ -4917,7 +4918,7 @@ function NfatScheduleModal({ schedules, onSave, onClearNow, onClose }) {
 }
 
 export function OppsView2({ settings, updateSettings, prospects = [], updateProspect, addProspect, onSelectProspect } = {}) {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   // Seeded with DEFAULT_HEADERS so the table renders columns immediately;
   // the hydration effect below replaces this with the user's saved
   // headers + records once Firestore / IndexedDB returns.
@@ -8348,7 +8349,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             >Export to Excel</button>
             <button
               type="button"
-              onClick={() => downloadNewOppsOutlookDraft(newOpps, { to: user?.email || '' })}
+              onClick={() => downloadNewOppsOutlookDraft(newOpps, {
+                to: user?.email || '',
+                // Same signature the Draft Email tab appends: the saved
+                // settings.emailSignature, falling back to the bundled
+                // default for the admin account.
+                signature: settings?.emailSignature || (isAdmin ? DEFAULT_EMAIL_SIGNATURE : ''),
+              })}
               disabled={newOpps.length === 0}
               title={newOpps.length
                 ? 'Download an Outlook draft (.eml) of this email — open it in Outlook to review and send it yourself'
