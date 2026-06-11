@@ -173,9 +173,19 @@ function ServiceRow({ name, meta, url, onSaveUrl, onSaveField }) {
 // Single editable option row. Holds a local draft so typing is
 // instant; the parent only learns about the change on commit (blur
 // or Enter), which keeps Firestore writes per-edit not per-keystroke.
-function OptionRow({ value, onCommit, onRemove }) {
+//
+// When `linkEnabled` is set (the Solutions / Service Catalog card),
+// the row grows a second column where the user can attach a
+// presentation hyperlink for that option. The link commits on blur /
+// Enter; clearing it removes the link.
+function OptionRow({ value, onCommit, onRemove, linkEnabled, link, onSaveLink }) {
   const [draft, setDraft] = useState(value);
   useEffect(() => { setDraft(value); }, [value]);
+
+  const [linkEditing, setLinkEditing] = useState(false);
+  const [linkDraft, setLinkDraft] = useState('');
+  const linkInputRef = useRef(null);
+  useEffect(() => { if (linkEditing) linkInputRef.current?.focus(); }, [linkEditing]);
 
   function commit() {
     const trimmed = draft.trim();
@@ -186,6 +196,15 @@ function OptionRow({ value, onCommit, onRemove }) {
   function cancel() {
     setDraft(value);
   }
+
+  function startLinkEdit() { setLinkDraft(link || ''); setLinkEditing(true); }
+  function commitLink() {
+    const next = linkDraft.trim();
+    setLinkEditing(false);
+    if ((next || '') === (link || '')) return;
+    onSaveLink(value, next);
+  }
+  function cancelLink() { setLinkEditing(false); }
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 0' }}>
@@ -208,6 +227,63 @@ function OptionRow({ value, onCommit, onRemove }) {
         onFocus={(e) => { e.currentTarget.style.background = '#fff'; e.currentTarget.style.borderColor = 'var(--color-border)'; }}
         onBlurCapture={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'transparent'; }}
       />
+      {linkEnabled && (
+        <div className={styles.optionLinkCell}>
+          {linkEditing ? (
+            <input
+              ref={linkInputRef}
+              type="url"
+              value={linkDraft}
+              placeholder="https://…/presentation"
+              onChange={(e) => setLinkDraft(e.target.value)}
+              onBlur={commitLink}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); commitLink(); }
+                else if (e.key === 'Escape') { e.preventDefault(); cancelLink(); }
+              }}
+              style={{
+                flex: 1, minWidth: 0,
+                padding: '3px 6px',
+                border: '1px solid var(--color-accent)', borderRadius: 4,
+                fontSize: '0.72rem', fontFamily: 'inherit',
+                color: 'var(--color-text)', background: '#fff',
+              }}
+            />
+          ) : link ? (
+            <>
+              <a
+                href={link}
+                target="_blank"
+                rel="noreferrer"
+                className={styles.serviceLink}
+                title={link}
+              >🔗 Presentation</a>
+              <button
+                type="button"
+                className={styles.serviceLinkEditBtn}
+                onClick={startLinkEdit}
+                title="Edit presentation link"
+                aria-label="Edit presentation link"
+              >✎</button>
+              <button
+                type="button"
+                className={styles.serviceLinkEditBtn}
+                onClick={() => onSaveLink(value, '')}
+                title="Remove presentation link"
+                aria-label="Remove presentation link"
+              >×</button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className={styles.serviceLinkEditBtn}
+              onClick={startLinkEdit}
+              title="Add presentation link"
+              aria-label="Add presentation link"
+            >+ link</button>
+          )}
+        </div>
+      )}
       <button
         type="button"
         onClick={onRemove}
@@ -263,7 +339,8 @@ function EditableTitle({ value, onCommit }) {
 // Single editable list card. Filters its option list to whatever
 // matches the global search term but always edits against the full
 // underlying array.
-function ListCard({ list, filter, wide, onChange, onRenameLabel, onRemoveList }) {
+function ListCard({ list, filter, wide, links, onSaveLink, onChange, onRenameLabel, onRemoveList }) {
+  const linkEnabled = typeof onSaveLink === 'function';
   const [adding, setAdding] = useState(false);
   const [addDraft, setAddDraft] = useState('');
   const addInputRef = useRef(null);
@@ -331,6 +408,13 @@ function ListCard({ list, filter, wide, onChange, onRenameLabel, onRemoveList })
         >🗑</button>
       </div>
       <div className={`${styles.cardBody} ${wide ? styles.cardBodyTall : ''}`}>
+        {linkEnabled && (
+          <div className={styles.listColHeader}>
+            <span className={styles.listColHeaderName}>Solution</span>
+            <span className={styles.listColHeaderLink}>Presentation</span>
+            <span className={styles.listColHeaderSpacer} />
+          </div>
+        )}
         {visible.length === 0 ? (
           <div className={styles.optionEmpty}>
             {list.options.length === 0 ? '— no options —' : '— no matches —'}
@@ -342,6 +426,9 @@ function ListCard({ list, filter, wide, onChange, onRenameLabel, onRemoveList })
               value={opt}
               onCommit={(next) => commitOption(idx, next)}
               onRemove={() => removeOption(idx)}
+              linkEnabled={linkEnabled}
+              link={linkEnabled ? (links?.[opt] || '') : ''}
+              onSaveLink={onSaveLink}
             />
           ))
         )}
@@ -409,6 +496,22 @@ export function DropdownsView({ settings, updateSettings }) {
     if (trimmed) next[name] = trimmed;
     else delete next[name];
     updateSettings?.({ serviceLinks: next });
+  }
+
+  // Per-service presentation hyperlinks shown as a second column on
+  // the Solutions / Service Catalog card (Lists tab). Stored separately
+  // from `serviceLinks` (the Services subtab's name-as-link feature) so
+  // the two don't interfere. Keyed by service name; syncs across
+  // devices alongside the other dropdown settings.
+  const presentationLinks = (settings?.servicePresentationLinks && typeof settings.servicePresentationLinks === 'object')
+    ? settings.servicePresentationLinks
+    : {};
+  function savePresentationLink(name, url) {
+    const next = { ...presentationLinks };
+    const trimmed = (url || '').trim();
+    if (trimmed) next[name] = trimmed;
+    else delete next[name];
+    updateSettings?.({ servicePresentationLinks: next });
   }
 
   // User overrides for the Services subtab cells. Persisted under
@@ -598,6 +701,8 @@ export function DropdownsView({ settings, updateSettings }) {
                   list={solutions}
                   filter={search}
                   wide
+                  links={presentationLinks}
+                  onSaveLink={savePresentationLink}
                   onChange={saveList}
                   onRenameLabel={renameList}
                   onRemoveList={removeList}
