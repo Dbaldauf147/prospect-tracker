@@ -97,13 +97,23 @@ export function buildNewOppsDigestTableHtml(records) {
   `;
 }
 
-// Full email body (optional intro + table), matching sendNewOppsEmail.
-export function buildNewOppsDigestEmailHtml(records, { message = '' } = {}) {
+// Full email body for the Outlook draft: greeting ("Hey Keith,"), optional
+// intro message, the digest table, then the user's saved email signature
+// (the same `settings.emailSignature` HTML the Draft Email tab appends to
+// its drafts — see DraftEmailView's buildStyledBodyHtml).
+export function buildNewOppsDigestEmailHtml(records, { message = '', greeting = '', signature = '' } = {}) {
+  const hello = greeting
+    ? `<p style="color:#000000;font-size:14px;margin:0 0 12px">${escapeHtml(greeting)}</p>`
+    : '';
   const intro = message
     ? `<p style="color:#334155;font-size:14px;white-space:pre-wrap;margin:0 0 16px">${escapeHtml(message)}</p>`
     : '';
   const table = buildNewOppsDigestTableHtml(records);
-  return `<div style="font-family:Arial,sans-serif;max-width:920px;margin:0 auto">${intro}${table}</div>`;
+  // The signature is stored as trusted HTML (pasted by the user in the
+  // Draft Email tab's signature editor) — appended verbatim, same as the
+  // Draft Email .eml export does.
+  const sigBlock = signature ? `<br><div>${signature}</div>` : '';
+  return `<div style="font-family:Arial,sans-serif;max-width:920px;margin:0 auto">${hello}${intro}${table}${sigBlock}</div>`;
 }
 
 // Base64 of a UTF-8 string, wrapped at 76 chars per MIME conventions.
@@ -117,7 +127,7 @@ function base64Utf8(str) {
 
 // Assemble a minimal RFC 822 message whose body is the HTML email. The
 // `X-Unsent: 1` header tells Outlook to open it as an editable draft.
-export function buildNewOppsEml({ to = '', subject = 'New Opportunities', html = '' } = {}) {
+export function buildNewOppsEml({ to = '', subject = 'Dan B New Opportunities', html = '' } = {}) {
   const headers = [
     'X-Unsent: 1',
     to ? `To: ${to}` : null,
@@ -131,8 +141,14 @@ export function buildNewOppsEml({ to = '', subject = 'New Opportunities', html =
 
 // Build + download an Outlook draft (.eml) of the New Opps digest for the
 // given records. Returns the number of opps included.
-export function downloadNewOppsOutlookDraft(records, { to = '', subject = 'New Opportunities', message = '' } = {}) {
-  const html = buildNewOppsDigestEmailHtml(records, { message });
+export function downloadNewOppsOutlookDraft(records, {
+  to = '',
+  subject = 'Dan B New Opportunities',
+  message = '',
+  greeting = 'Hey Keith,',
+  signature = '',
+} = {}) {
+  const html = buildNewOppsDigestEmailHtml(records, { message, greeting, signature });
   const eml = buildNewOppsEml({ to, subject, html });
   const blob = new Blob([eml], { type: 'message/rfc822' });
   const url = URL.createObjectURL(blob);
