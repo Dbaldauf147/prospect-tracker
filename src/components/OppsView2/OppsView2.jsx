@@ -36,6 +36,7 @@ import { normalizeCompany } from '../../utils/companyNorm';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { apiFetch } from '../../utils/apiFetch';
 import { NewOppsScheduleModal } from './NewOppsScheduleModal';
+import { downloadNewOppsOutlookDraft } from '../../utils/newOppsDigestEmail';
 import { buildNewOppsTableHtml, NEW_OPPS_EMAIL_COLUMNS } from '../../utils/newOppsEmailTable';
 import styles from './OppsView2.module.css';
 
@@ -8344,6 +8345,21 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 borderRadius: 6, cursor: newOpps.length ? 'pointer' : 'not-allowed',
               }}
             >Export to Excel</button>
+            <button
+              type="button"
+              onClick={() => downloadNewOppsOutlookDraft(newOpps, { to: user?.email || '' })}
+              disabled={newOpps.length === 0}
+              title={newOpps.length
+                ? 'Download an Outlook draft (.eml) of this email — open it in Outlook to review and send it yourself'
+                : 'No new opps to draft'}
+              style={{
+                marginLeft: '0.5rem', padding: '0.3rem 0.7rem', fontSize: '0.78rem', fontWeight: 600,
+                fontFamily: 'inherit', color: newOpps.length ? '#0F6CBD' : '#94A3B8',
+                background: '#fff',
+                border: `1px solid ${newOpps.length ? '#0F6CBD' : '#CBD5E1'}`,
+                borderRadius: 6, cursor: newOpps.length ? 'pointer' : 'not-allowed',
+              }}
+            >Download Outlook draft</button>
             <button
               type="button"
               onClick={() => setNewOppsScheduleOpen(true)}
