@@ -21,7 +21,7 @@ export const NEW_OPPS_EMAIL_COLUMNS = [
   { key: 'Status', label: 'Status' },
   { key: 'Quoted Amount', label: 'Deal Size', align: 'right' },
   { key: 'Sites', label: 'Sites', align: 'right' },
-  { key: 'Next Steps', label: 'Next Steps' },
+  { key: 'Next Steps', label: 'Notes' },
   { key: 'BFO Link', label: 'BFO Opportunity Name' },
   { key: 'BFO Address', label: 'BFO Address' },
 ];
@@ -48,6 +48,17 @@ function escapeHtml(s) {
 // note reads as stacked lines in the table rather than one run-on string.
 function escapeHtmlMultiline(s) {
   return escapeHtml(s).replace(/\u2028|\r?\n/g, "<br>");
+}
+
+// Short date (M/D/YYYY) for the Start Date column, falling back to the raw
+// value when it can't be parsed. Mirrors the digest email's date format.
+function formatShortDate(raw) {
+  if (!raw) return '';
+  const s = String(raw).trim();
+  const t = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T00:00:00` : s);
+  if (Number.isNaN(t)) return s;
+  const d = new Date(t);
+  return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
 }
 
 // Build a plain bordered table for the given records. `columnKeys` selects
@@ -97,6 +108,8 @@ export function buildNewOppsTableHtml(records, columnKeys) {
         inner = link(url, 'BFO Link');
       } else if (c.key === 'Next Steps') {
         inner = escapeHtmlMultiline(v);
+      } else if (c.key === 'Start Date') {
+        inner = escapeHtml(formatShortDate(v));
       } else {
         inner = escapeHtml(v);
       }
@@ -113,21 +126,25 @@ export function buildNewOppsTableHtml(records, columnKeys) {
   `.trim();
 }
 
-// Full email body for the Mass Edit Outlook draft: greeting ("Keith,"), the
-// selected-columns table, then the user's saved signature. Mirrors the
-// New Opps digest draft body (newOppsDigestEmail.js), but uses the columns
-// the user picked in the Email table modal rather than the fixed digest set.
-export function buildOppsTableEmailHtml(records, columnKeys, { greeting = 'Keith,', signature = '' } = {}) {
+// Full email body for the Mass Edit Outlook draft: greeting ("Keith,"), an
+// intro message, the selected-columns table, then the user's saved
+// signature. Mirrors the New Opps digest draft body (newOppsDigestEmail.js),
+// but uses the columns the user picked in the Email table modal rather than
+// the fixed digest set.
+export function buildOppsTableEmailHtml(records, columnKeys, { greeting = 'Keith,', message = '', signature = '' } = {}) {
   // Explicit <br> blank lines (rather than CSS margins, which Outlook can
-  // collapse) separate greeting → table → signature.
+  // collapse) separate greeting → message → table → signature.
   const hello = greeting
     ? `<p style="color:#000000;font-size:14px;margin:0">${escapeHtml(greeting)}</p><br>`
+    : '';
+  const intro = message
+    ? `<p style="color:#000000;font-size:14px;margin:0">${escapeHtml(message)}</p><br>`
     : '';
   const table = buildNewOppsTableHtml(records, columnKeys);
   // Signature is trusted HTML (the same settings.emailSignature the Draft
   // Email tab appends) — included verbatim.
   const sigBlock = signature ? `<br><br><div>${signature}</div>` : '';
-  return `<div style="font-family:Arial,sans-serif;max-width:920px;margin:0 auto">${hello}${table}${sigBlock}</div>`;
+  return `<div style="font-family:Arial,sans-serif;max-width:920px;margin:0 auto">${hello}${intro}${table}${sigBlock}</div>`;
 }
 
 // Build + download an Outlook draft (.eml) of the selected opps as a table,
@@ -138,9 +155,16 @@ export function downloadOppsTableOutlookDraft(records, columnKeys, {
   to = 'keith.mchugh@se.com',
   subject = 'Small Deal Size Help',
   greeting = 'Keith,',
+  message,
   signature = '',
 } = {}) {
-  const html = buildOppsTableEmailHtml(records, columnKeys, { greeting, signature });
+  const count = Array.isArray(records) ? records.length : 0;
+  // Intro line above the table. Count is dynamic so it stays correct
+  // whatever the user selected (singular/plural handled).
+  const defaultMessage = count === 1
+    ? 'Here is 1 deal that is going to be too small for me to chase. How do you want it handled?'
+    : `Here are ${count} deals that are going to be too small for me to chase. How do you want them handled?`;
+  const html = buildOppsTableEmailHtml(records, columnKeys, { greeting, message: message ?? defaultMessage, signature });
   const eml = buildNewOppsEml({ to, subject, html });
   const blob = new Blob([eml], { type: 'message/rfc822' });
   const url = URL.createObjectURL(blob);
