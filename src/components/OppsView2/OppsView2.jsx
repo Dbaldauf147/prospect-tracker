@@ -37,7 +37,7 @@ import { userLsGet, userLsSet } from '../../utils/userLs';
 import { apiFetch } from '../../utils/apiFetch';
 import { NewOppsScheduleModal } from './NewOppsScheduleModal';
 import { downloadNewOppsOutlookDraft } from '../../utils/newOppsDigestEmail';
-import { buildNewOppsTableHtml, NEW_OPPS_EMAIL_COLUMNS } from '../../utils/newOppsEmailTable';
+import { buildNewOppsTableHtml, NEW_OPPS_EMAIL_COLUMNS, NEW_OPPS_EMAIL_DEFAULT_COLUMN_KEYS } from '../../utils/newOppsEmailTable';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — user-entered opps stored in Firestore
@@ -3756,10 +3756,11 @@ function MassEditBar({ selectedCount, headers, columnLinks, listRegistry, onAppl
 function EmailTableModal({ records, onClose }) {
   const previewRef = useRef(null);
   const [copied, setCopied] = useState(false);
-  // Selected column keys, defaulting to all. Kept as a Set; the table is
+  // Selected column keys, defaulting to NEW_OPPS_EMAIL_DEFAULT_COLUMN_KEYS
+  // (the rest stay available to toggle on). Kept as a Set; the table is
   // built in the canonical NEW_OPPS_EMAIL_COLUMNS order regardless of the
   // order the user toggles them.
-  const [selectedKeys, setSelectedKeys] = useState(() => new Set(NEW_OPPS_EMAIL_COLUMNS.map(c => c.key)));
+  const [selectedKeys, setSelectedKeys] = useState(() => new Set(NEW_OPPS_EMAIL_DEFAULT_COLUMN_KEYS));
   const toggleKey = (key) => setSelectedKeys(prev => {
     const next = new Set(prev);
     if (next.has(key)) next.delete(key); else next.add(key);
