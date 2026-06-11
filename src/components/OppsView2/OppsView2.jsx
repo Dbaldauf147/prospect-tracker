@@ -819,6 +819,16 @@ function oppMissingQuotedAmount(row) {
   return bfoFieldMissing(row?.['Quoted Amount']);
 }
 
+// "Missing Margin Approval" flag: an opp at Quoted / Contracting /
+// Agreement Sent that still has no Margin Email Date - Sales Leader Review
+// Date (blank or a sentinel like "-" / "#N/A", which the cell shows as "—").
+const MARGIN_APPROVAL_STAGES_SET = new Set(['Quoted', 'Contracting', 'Agreement Sent']);
+function oppMissingMarginApproval(row) {
+  const stage = String(row?.['Stage'] || '').trim();
+  if (!MARGIN_APPROVAL_STAGES_SET.has(stage)) return false;
+  return bfoFieldMissing(row?.['Margin Email Date - Sales Leader Review Date']);
+}
+
 // One-shot Call-In ascending sort used during initial hydration. Rows
 // without a resolvable Call In sink to the bottom. A stable tiebreaker
 // (original index) keeps the order deterministic when many rows share
@@ -7014,6 +7024,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       const parts = [];
       if (oppMissingBfoAddress(row)) parts.push('Missing BFO Address');
       if (oppMissingQuotedAmount(row)) parts.push('Deal Size Missing');
+      if (oppMissingMarginApproval(row)) parts.push('Missing Margin Approval');
       const stall = oppStageStall(row);
       if (stall && !row?._ignoreStallFlag) parts.push(`Stalled: ${stall.suggestion}`);
       return parts.join('; ');
@@ -7027,6 +7038,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         let n = 0;
         if (oppMissingBfoAddress(row)) n += 1;
         if (oppMissingQuotedAmount(row)) n += 1;
+        if (oppMissingMarginApproval(row)) n += 1;
         if (oppStageStall(row) && !row?._ignoreStallFlag) n += 1;
         return n;
       },
@@ -7034,9 +7046,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       render: (row) => {
         const missingAddr = oppMissingBfoAddress(row);
         const missingQuote = oppMissingQuotedAmount(row);
+        const missingMargin = oppMissingMarginApproval(row);
         const stall = oppStageStall(row);
         const ignored = !!row?._ignoreStallFlag;
-        if (!missingAddr && !missingQuote && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+        if (!missingAddr && !missingQuote && !missingMargin && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
         return (
           <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
             {missingAddr && (
@@ -7050,6 +7063,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 title={`Active opp in "${String(row['Stage'] || '').trim()}" with no Deal Size — add the Deal Size.`}
                 style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
               >⚠ Deal Size Missing</span>
+            )}
+            {missingMargin && (
+              <span
+                title={`Opp in "${String(row['Stage'] || '').trim()}" with no Margin Email Date - Sales Leader Review Date — get margin approval.`}
+                style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
+              >⚠ Missing Margin Approval</span>
             )}
             {stall && !ignored && (
               <>
