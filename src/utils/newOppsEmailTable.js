@@ -26,6 +26,13 @@ export const NEW_OPPS_EMAIL_COLUMNS = [
 
 export const NEW_OPPS_EMAIL_COLUMN_KEYS = NEW_OPPS_EMAIL_COLUMNS.map((c) => c.key);
 
+// Columns checked by default when the export modal opens. The rest stay
+// available to toggle on. BFO Address is included; its cells render the
+// text "BFO Link" hyperlinked to the BFO Address URL (see buildNewOppsTableHtml).
+export const NEW_OPPS_EMAIL_DEFAULT_COLUMN_KEYS = [
+  'Account', 'Stage', 'Scope', 'Source', 'Start Date', 'Quoted Amount', 'Next Steps', 'BFO Address',
+];
+
 function escapeHtml(s) {
   return String(s ?? '')
     .replace(/&/g, '&amp;')
@@ -83,7 +90,9 @@ export function buildNewOppsTableHtml(records, columnKeys) {
       if (c.key === 'BFO Link' && url && !isBlankish(v)) {
         inner = link(url, v);
       } else if (c.key === 'BFO Address' && url) {
-        inner = link(url, url);
+        // Show the words "BFO Link" as the anchor text, hyperlinked to the
+        // BFO Address URL, rather than printing the raw URL.
+        inner = link(url, 'BFO Link');
       } else if (c.key === 'Next Steps') {
         inner = escapeHtmlMultiline(v);
       } else {
