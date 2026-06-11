@@ -17,7 +17,7 @@ export const NEW_OPPS_EMAIL_COLUMNS = [
   { key: 'Sales Partner', label: 'Sales Partner' },
   { key: 'Start Date', label: 'Start Date' },
   { key: 'Status', label: 'Status' },
-  { key: 'Quoted Amount', label: 'Quoted Amount', align: 'right' },
+  { key: 'Quoted Amount', label: 'Deal Size', align: 'right' },
   { key: 'Sites', label: 'Sites', align: 'right' },
   { key: 'Next Steps', label: 'Next Steps' },
   { key: 'BFO Link', label: 'BFO Opportunity Name' },

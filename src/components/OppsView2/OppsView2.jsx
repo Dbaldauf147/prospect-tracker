@@ -143,6 +143,19 @@ const KEY_COLS = [
 // downstream consumers still work without special handling.
 const TRISTATE_COLUMNS = new Set(['No Further Action Today']);
 
+// On-screen display label for an opp column key. The underlying data keys
+// stay stable (so stored records, dedup, currency formatting and the stage
+// prompts keep working); only the header text the user sees changes. The
+// "BFO Link" key reads as "BFO Opportunity Name" and "Quoted Amount" reads
+// as "Deal Size".
+const HEADER_LABEL_OVERRIDES = {
+  'BFO Link': 'BFO Opportunity Name',
+  'Quoted Amount': 'Deal Size',
+};
+function headerLabel(h) {
+  return HEADER_LABEL_OVERRIDES[h] || h;
+}
+
 // Columns the user wants treated as dates — rendered with a calendar
 // popup cell (HTML5 date input) and pre-populated with today on new
 // opps so a fresh entry shows useful defaults instead of blanks.
@@ -1133,7 +1146,7 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
     <>
       <span
         onClick={openPopup}
-        title="Click to edit the Quoted Amount and hyperlink"
+        title="Click to edit the Deal Size and hyperlink"
         style={{
           display: 'block', cursor: 'pointer', minHeight: '1em', padding: '1px 2px',
           color: hasLink ? '#2563eb' : (value ? 'inherit' : 'var(--color-text-muted)'),
@@ -1158,7 +1171,7 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
               display: 'flex', flexDirection: 'column', gap: '0.75rem',
             }}
           >
-            <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#1E293B' }}>Quoted Amount</div>
+            <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#1E293B' }}>Deal Size</div>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.78rem', color: '#475569' }}>
               Amount
               <input
@@ -2878,17 +2891,17 @@ function LeadQuotedAmountModal({ opp, onSave, onClose }) {
       >
         <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)' }}>
           <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
-            Enter the Quoted Amount
+            Enter the Deal Size
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
             <strong>{opp?.['Account'] || 'This opp'}</strong>
             {opp?.['Scope'] ? <> &middot; {opp['Scope']}</> : null}
-            {' '}just moved to <strong>Lead</strong>. Add the Quoted Amount below.
+            {' '}just moved to <strong>Lead</strong>. Add the Deal Size below.
           </div>
         </div>
 
         <div style={{ padding: '0.85rem 1rem' }}>
-          <label style={labelStyle}>Quoted Amount</label>
+          <label style={labelStyle}>Deal Size</label>
           <input
             type="text"
             autoFocus
@@ -3494,7 +3507,7 @@ export function OppInfoModal({
               {orderedFields.map(h => {
                 const isHidden = hiddenFields.has(h);
                 if (isHidden && !showHiddenRows) return null;
-                const label = h === 'BFO Link' ? 'BFO Opportunity Name' : h;
+                const label = headerLabel(h);
                 return (
                   <tr key={h} style={{
                     borderTop: '1px solid var(--color-border-light)',
@@ -3632,7 +3645,7 @@ function MassEditBar({ selectedCount, headers, columnLinks, listRegistry, onAppl
           }}
         >
           {editableFields.map(h => (
-            <option key={h} value={h}>{h === 'BFO Link' ? 'BFO Opportunity Name' : h}</option>
+            <option key={h} value={h}>{headerLabel(h)}</option>
           ))}
         </select>
       </label>
@@ -6593,7 +6606,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       })
       .map(h => ({
         key: h,
-        label: h === 'BFO Link' ? 'BFO Opportunity Name' : h,
+        label: headerLabel(h),
         defaultWidth: h === 'Notes' ? 250 : h === 'Next Steps' ? 240 : h === 'Account' ? 200 : h === 'BFO Link' ? 220 : h === 'Scope' ? 220 : TRISTATE_COLUMNS.has(h) ? 90 : h.length > 20 ? 160 : 120,
         sticky: h === 'Account',
         // Every cell is click-to-edit so a freshly created opp can be
@@ -6974,7 +6987,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     const flagSummary = (row) => {
       const parts = [];
       if (oppMissingBfoAddress(row)) parts.push('Missing BFO Address');
-      if (oppMissingQuotedAmount(row)) parts.push('Quoted Amount Missing');
+      if (oppMissingQuotedAmount(row)) parts.push('Deal Size Missing');
       const stall = oppStageStall(row);
       if (stall && !row?._ignoreStallFlag) parts.push(`Stalled: ${stall.suggestion}`);
       return parts.join('; ');
@@ -7008,9 +7021,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             )}
             {missingQuote && (
               <span
-                title={`Active opp in "${String(row['Stage'] || '').trim()}" with no Quoted Amount — add the Quoted Amount.`}
+                title={`Active opp in "${String(row['Stage'] || '').trim()}" with no Deal Size — add the Deal Size.`}
                 style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
-              >⚠ Quoted Amount Missing</span>
+              >⚠ Deal Size Missing</span>
             )}
             {stall && !ignored && (
               <>
@@ -7196,7 +7209,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     () => NEW_OPPS_REPORT_COLUMNS.map(key =>
       columns.find(c => c.key === key) || {
         key,
-        label: key === 'BFO Link' ? 'BFO Opportunity Name' : key,
+        label: headerLabel(key),
         defaultWidth: key === 'BFO Address' ? 260 : 160,
       }
     ),
