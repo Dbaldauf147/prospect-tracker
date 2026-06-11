@@ -159,11 +159,14 @@ const SEED_TODAY_DATE_COLUMNS = new Set(['Start Date', 'Last Client Heard From U
 // explicit creation timestamp; a brand-new opp seeds Start Date to today (see
 // makeBlankOpp), so Start Date is the creation proxy. These column keys mirror
 // NEW_OPPS_COLUMNS in api/_lib/newOpps.js so the on-screen list and the
-// server-built Excel match.
+// emailed table match. "BFO Link" stores the BFO Opportunity Name; "BFO
+// Address" is the live Salesforce URL — the email table hyperlinks the name
+// to that address.
 const NEW_OPPS_WINDOW_DAYS = 7;
 const NEW_OPPS_REPORT_COLUMNS = [
   'Account', 'Open Year', 'Contact', 'Stage', 'Scope', 'Source', 'Type',
   'Sales Partner', 'Start Date', 'Status', 'Quoted Amount', 'Sites', 'Next Steps',
+  'BFO Link', 'BFO Address',
 ];
 
 const MONTH_FULL_NAMES = [
@@ -6917,9 +6920,19 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       });
   }, [records]);
 
-  // The New Opps subtab + emailed digest share one focused column set.
+  // The New Opps subtab + emailed digest share one focused column set, in
+  // canonical report order. Keys missing from this dataset's headers (e.g.
+  // "BFO Address" on a default-headers install) still get a minimal column
+  // def so the BFO fields always show on the subtab and stay pickable for
+  // the emailed table.
   const newOppsColumns = useMemo(
-    () => columns.filter(c => NEW_OPPS_REPORT_COLUMNS.includes(c.key)),
+    () => NEW_OPPS_REPORT_COLUMNS.map(key =>
+      columns.find(c => c.key === key) || {
+        key,
+        label: key === 'BFO Link' ? 'BFO Opportunity Name' : key,
+        defaultWidth: key === 'BFO Address' ? 260 : 160,
+      }
+    ),
     [columns]
   );
 

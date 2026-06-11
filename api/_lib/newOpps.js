@@ -9,7 +9,10 @@
 // used as the creation proxy. The on-screen "New Opps" subtab of Opps 2
 // applies the same window so the emailed file matches what the user sees.
 
-// ---- Column definitions (mirror NewOppsTab default report columns) ------
+// ---- Column definitions (mirror NEW_OPPS_REPORT_COLUMNS in OppsView2) ---
+// "BFO Link" stores the BFO Opportunity Name (the data key predates the
+// rename); "BFO Address" is the live Salesforce URL. The emailed table
+// hyperlinks the name to that address.
 export const NEW_OPPS_COLUMNS = [
   { key: 'Account', label: 'Account' },
   { key: 'Open Year', label: 'Open Year' },
@@ -24,6 +27,8 @@ export const NEW_OPPS_COLUMNS = [
   { key: 'Quoted Amount', label: 'Quoted Amount', align: 'right' },
   { key: 'Sites', label: 'Sites', align: 'right' },
   { key: 'Next Steps', label: 'Next Steps' },
+  { key: 'BFO Link', label: 'BFO Opportunity Name' },
+  { key: 'BFO Address', label: 'BFO Address' },
 ];
 
 export const NEW_OPPS_COLUMN_KEYS = NEW_OPPS_COLUMNS.map((c) => c.key);
@@ -128,11 +133,34 @@ export function buildNewOppsTableHtml(records, columnKeys) {
     `<th style="text-align:${thAlign(c)};padding:8px 10px;font:600 12px Arial,sans-serif;color:#009530;border-bottom:2px solid #009530;white-space:nowrap">${escapeHtml(c.label)}</th>`
   ).join('');
 
+  // The row's BFO Address, but only when it actually looks like a web URL —
+  // blanks and sentinel values ('-', '#N/A') never become hrefs.
+  const bfoUrl = (r) => {
+    const u = String(r['BFO Address'] || '').trim();
+    return /^https?:\/\//i.test(u) ? u : '';
+  };
+  const isBlankish = (v) => {
+    const s = String(v ?? '').trim();
+    return !s || s === '-' || s.toLowerCase() === '#n/a' || s.toLowerCase() === 'n/a';
+  };
+  const link = (href, text) =>
+    `<a href="${escapeHtml(href)}" style="color:#009530;text-decoration:underline">${escapeHtml(text)}</a>`;
+
   const rows = records.map((r, idx) => {
     const bg = idx % 2 === 1 ? '#F6FCF8' : '#FFFFFF';
     const cells = columns.map((c) => {
       const v = cellValue(r, byKey.get(c.key) || c);
-      return `<td style="text-align:${thAlign(c)};padding:7px 10px;font:13px Arial,sans-serif;color:#334155;border-bottom:1px solid #E6F2EA;vertical-align:top">${escapeHtml(v)}</td>`;
+      const url = (c.key === 'BFO Link' || c.key === 'BFO Address') ? bfoUrl(r) : '';
+      let inner;
+      if (c.key === 'BFO Link' && url && !isBlankish(v)) {
+        // BFO Opportunity Name, hyperlinked to the opp's BFO Address.
+        inner = link(url, v);
+      } else if (c.key === 'BFO Address' && url) {
+        inner = link(url, url);
+      } else {
+        inner = escapeHtml(v);
+      }
+      return `<td style="text-align:${thAlign(c)};padding:7px 10px;font:13px Arial,sans-serif;color:#334155;border-bottom:1px solid #E6F2EA;vertical-align:top">${inner}</td>`;
     }).join('');
     return `<tr style="background:${bg}">${cells}</tr>`;
   }).join('');
