@@ -4516,31 +4516,52 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         if (s.startsWith('deregulated')) return 'dereg';
         return 'reg';
       };
+      // Electric Power gets a finer breakdown than the NG panel so the
+      // legend can call out each state's specific retail-choice program
+      // (market-cap lottery, annual election, 5 MW minimum, etc.).
+      const epCategoryKey = (statusText) => {
+        const s = String(statusText || '').toLowerCase();
+        if (!s || s.startsWith('regulated')) return 'reg';
+        if (s.includes('annual lottery')) return 'lottery';   // CA
+        if (s.includes('market cap')) return 'cap';            // MI
+        if (s.includes('annual election')) return 'election';  // OR
+        if (s.includes('5 mw') || s.includes('limited opportunity')) return 'va5mw'; // VA
+        return 'dereg';
+      };
       const ngStatusByKey = new Map();
       const epStatusByKey = new Map();
       for (const m of US_MARKETS) {
         const cat = NA_CATEGORIES[m.category];
         ngStatusByKey.set(`US/${m.code}`, statusBucket(cat?.ng));
-        epStatusByKey.set(`US/${m.code}`, statusBucket(cat?.ep));
+        epStatusByKey.set(`US/${m.code}`, epCategoryKey(cat?.ep));
       }
       for (const m of CA_MARKETS) {
         const cat = NA_CATEGORIES[m.category];
         ngStatusByKey.set(`CA/${m.code}`, statusBucket(cat?.ng));
-        epStatusByKey.set(`CA/${m.code}`, statusBucket(cat?.ep));
+        epStatusByKey.set(`CA/${m.code}`, epCategoryKey(cat?.ep));
       }
       const hasSites = (key) => buckets.has(key);
 
       const STATUS_FILL = {
-        reg:           '#94A3B8', // slate
-        dereg:         '#10B981', // emerald
-        limited:       '#F59E0B', // amber
+        reg:           '#1FA0E0', // blue
+        dereg:         '#57B947', // green
+        limited:       '#F59E0B', // amber (NG limited opportunity)
         direct_access: '#3B82F6', // sky blue
+        // Electric-power program-specific buckets (EP legend).
+        va5mw:         '#F5C400', // gold  — VA 5 MW minimum
+        election:      '#A9DEEC', // light cyan — OR annual election period
+        cap:           '#4C535A', // dark grey — MI market cap
+        lottery:       '#E07D18', // orange — CA market cap + annual lottery
       };
       const STATUS_LABEL = {
         reg:           'Regulated',
         dereg:         'Deregulated',
         limited:       'Limited Deregulation',
         direct_access: 'Direct Access only',
+        va5mw:         'Deregulated – Limited Opportunity – utility account must be 5 MW',
+        election:      'Deregulated with annual election period',
+        cap:           'Deregulated with market cap',
+        lottery:       'Deregulated, eligibility for new third-party supply subject to market cap and annual lottery',
       };
       const NO_SITES_FILL   = '#E5E7EB';
       const NO_SITES_STROKE = '#9CA3AF';
@@ -4572,7 +4593,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const MAP_H = 500;
       const PAD = 16;
       const TITLE_H = 36;
-      const LEGEND_H = 70;
+      // Tall enough for the Electric Power panel's vertical legend, which
+      // lists each program-specific deregulation category on its own row.
+      const LEGEND_H = 240;
       const W = MAP_W * 2 + PAD * 3;
       const H = TITLE_H + MAP_H + LEGEND_H + PAD * 2;
       const canvas = document.createElement('canvas');
@@ -4689,6 +4712,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       ctx.textBaseline = 'middle';
       ctx.textAlign = 'left';
       const itemW = (label) => SWATCH + GAP_SWATCH_LABEL + ctx.measureText(label).width;
+      // Horizontal legend — used for the Natural Gas panel (few, short
+      // categories that fit on one row under the map).
       const drawPanelLegend = (originX, tiers) => {
         const labels = [
           ...tiers.map(t => ({ color: STATUS_FILL[t], label: STATUS_LABEL[t] })),
@@ -4710,8 +4735,43 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           cursorX += itemW(it.label) + GAP_ITEMS;
         }
       };
-      drawPanelLegend(PAD,             ['dereg', 'limited', 'reg']);
-      drawPanelLegend(PAD * 2 + MAP_W, ['dereg', 'limited', 'reg']);
+      // Vertical legend — used for the Electric Power panel, whose
+      // program-specific categories carry long labels that need their own
+      // row each (wrapping if a label runs wider than the panel).
+      const drawVerticalLegend = (originX, tiers) => {
+        const items = [
+          ...tiers.map(t => ({ color: STATUS_FILL[t], label: STATUS_LABEL[t] })),
+          { color: NO_SITES_FILL, label: 'No portfolio sites' },
+        ];
+        const LINE_H = 17;
+        const ROW_GAP = 7;
+        const textX = originX + PAD + SWATCH + GAP_SWATCH_LABEL;
+        const maxLabelW = MAP_W - PAD - SWATCH - GAP_SWATCH_LABEL - PAD;
+        let y = TITLE_H + MAP_H + PAD;
+        for (const it of items) {
+          // Greedy word-wrap so an over-long label spills onto extra lines.
+          const words = String(it.label).split(' ');
+          const lines = [];
+          let cur = '';
+          for (const w of words) {
+            const test = cur ? `${cur} ${w}` : w;
+            if (cur && ctx.measureText(test).width > maxLabelW) { lines.push(cur); cur = w; }
+            else cur = test;
+          }
+          if (cur) lines.push(cur);
+          ctx.fillStyle = it.color;
+          ctx.fillRect(originX + PAD, y, SWATCH, SWATCH);
+          ctx.strokeStyle = NO_SITES_STROKE;
+          ctx.lineWidth = 0.8;
+          ctx.strokeRect(originX + PAD, y, SWATCH, SWATCH);
+          ctx.fillStyle = '#0F172A';
+          let ty = y + SWATCH / 2 - ((lines.length - 1) * LINE_H) / 2;
+          for (const ln of lines) { ctx.fillText(ln, textX, ty); ty += LINE_H; }
+          y += Math.max(SWATCH, lines.length * LINE_H) + ROW_GAP;
+        }
+      };
+      drawPanelLegend(PAD, ['dereg', 'limited', 'reg']); // Natural Gas
+      drawVerticalLegend(PAD * 2 + MAP_W, ['reg', 'dereg', 'va5mw', 'election', 'cap', 'lottery']); // Electric Power
 
       const dataUrl = canvas.toDataURL('image/png');
       const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
