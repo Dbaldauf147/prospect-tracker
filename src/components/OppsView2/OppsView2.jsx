@@ -3049,7 +3049,7 @@ function QuotedFollowUpModal({ opp, chanceOptions, onSave, onClose }) {
 // Prompt shown whenever an opp's Follow Up date changes, asking the user
 // to pick the new Status (Who is waiting) for that opp so it stays
 // current with each follow-up. Cleared on Save or Skip.
-function FollowUpStatusModal({ opp, statusOptions, onSave, onClose }) {
+function FollowUpStatusModal({ opp, statusOptions, onSave, onClose, onCancel }) {
   const curStatus = opp?.['Status'] ?? '';
   const [status, setStatus] = useState(String(curStatus ?? ''));
   const [salesPartner, setSalesPartner] = useState(String(opp?.['Sales Partner'] ?? ''));
@@ -3173,16 +3173,29 @@ function FollowUpStatusModal({ opp, statusOptions, onSave, onClose }) {
           padding: '0.6rem 1rem',
           borderTop: '1px solid var(--color-border-light)', background: 'var(--color-bg)',
         }}>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              padding: '0.35rem 0.7rem', background: 'transparent',
-              border: '1px solid var(--color-border)', borderRadius: 4,
-              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
-              color: 'var(--color-text-muted)', cursor: 'pointer',
-            }}
-          >Skip for now</button>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button
+              type="button"
+              onClick={onCancel}
+              title="Put the Follow Up date back to what it was before this edit."
+              style={{
+                padding: '0.35rem 0.7rem', background: 'transparent',
+                border: '1px solid var(--color-border)', borderRadius: 4,
+                fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+                color: 'var(--color-text-muted)', cursor: 'pointer',
+              }}
+            >Cancel</button>
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                padding: '0.35rem 0.7rem', background: 'transparent',
+                border: '1px solid var(--color-border)', borderRadius: 4,
+                fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+                color: 'var(--color-text-muted)', cursor: 'pointer',
+              }}
+            >Skip for now</button>
+          </div>
           <button
             type="button"
             onClick={handleSave}
@@ -4952,6 +4965,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // the FollowUpStatusModal asks the user to pick the new Status
   // (Who is waiting) for that opp. Cleared on Save or Skip.
   const [followUpStatusPromptId, setFollowUpStatusPromptId] = useState(null);
+  // Snapshot of the Follow Up (and its sibling Call In) value from before
+  // the edit that opened the FollowUpStatusModal. Lets the modal's Cancel
+  // button put the Follow Up date back to what it was originally.
+  const [followUpStatusPrev, setFollowUpStatusPrev] = useState(null);
   // Imperative sort trigger handed to the DataTable. Bumping it re-ranks
   // the table by Call In ascending — fired once the Follow Up status
   // popup is dismissed so the re-scheduled opp lands in its new
@@ -6089,8 +6106,42 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     // the "Who is waiting" value stays current with each follow-up.
     if (followUpChanged) {
       setFollowUpStatusPromptId(id);
+      // Remember the pre-edit Follow Up (and the sibling Call In that
+      // gets dropped as a side effect) so the modal's Cancel button can
+      // restore the original date.
+      setFollowUpStatusPrev({
+        hadFollowUp: 'Follow Up' in row,
+        followUp: row['Follow Up'],
+        hadCallIn: 'Call In' in row,
+        callIn: row['Call In'],
+      });
     }
   }, [pushUndoEntry]);
+
+  // Restore the Follow Up date (and its sibling Call In) to the snapshot
+  // taken before the edit that opened the FollowUpStatusModal. Writes the
+  // values back directly via setData rather than updateOppField so the
+  // restore doesn't itself count as a change and re-open the prompt.
+  const revertFollowUpDate = useCallback((id, prev) => {
+    if (!prev) return;
+    setData(cur => {
+      const records = cur?.records || [];
+      return {
+        ...cur,
+        records: records.map(r => {
+          if (r._id !== id) return r;
+          const now = Date.now();
+          const next = { ...r, _rowUpdatedAt: now };
+          if (prev.hadFollowUp) next['Follow Up'] = prev.followUp;
+          else delete next['Follow Up'];
+          if (prev.hadCallIn) next['Call In'] = prev.callIn;
+          else delete next['Call In'];
+          next._fieldUpdatedAt = stampChangedFields(r, next, now);
+          return next;
+        }),
+      };
+    });
+  }, []);
 
   // Drop a field entirely from a row. Used to clear a user-set Call In
   // override so the live compute from Follow Up takes over again — the
@@ -7713,9 +7764,16 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 updateOppField(opp._id, '_nextStepsWaiting', nextStepsWaiting);
               }
               setFollowUpStatusPromptId(null);
+              setFollowUpStatusPrev(null);
               requestCallInSort();
             }}
-            onClose={() => { setFollowUpStatusPromptId(null); requestCallInSort(); }}
+            onClose={() => { setFollowUpStatusPromptId(null); setFollowUpStatusPrev(null); requestCallInSort(); }}
+            onCancel={() => {
+              revertFollowUpDate(opp._id, followUpStatusPrev);
+              setFollowUpStatusPromptId(null);
+              setFollowUpStatusPrev(null);
+              requestCallInSort();
+            }}
           />
         );
       })()}
