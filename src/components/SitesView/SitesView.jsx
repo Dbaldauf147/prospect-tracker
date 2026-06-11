@@ -8403,6 +8403,32 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       });
     }
 
+    // Normalize every em dash (—) to a plain hyphen (-) across all
+    // populated cells so the exported workbook never shows "—" — titles,
+    // banners, table headers, summary lines, and placeholder values all
+    // resolve to "-". Runs once over the finished workbook so new strings
+    // added anywhere upstream are covered automatically.
+    const dashFix = (s) => (typeof s === 'string' ? s.replace(/—/g, '-') : s);
+    wb.eachSheet((ws) => {
+      ws.eachRow({ includeEmpty: false }, (row) => {
+        row.eachCell({ includeEmpty: false }, (cell) => {
+          const v = cell.value;
+          if (typeof v === 'string') {
+            cell.value = dashFix(v);
+          } else if (v && typeof v === 'object') {
+            if (Array.isArray(v.richText)) {
+              v.richText.forEach((run) => { run.text = dashFix(run.text); });
+              cell.value = v;
+            } else if (typeof v.text === 'string') {
+              cell.value = { ...v, text: dashFix(v.text) };
+            } else if (typeof v.result === 'string') {
+              cell.value = { ...v, result: dashFix(v.result) };
+            }
+          }
+        });
+      });
+    });
+
     const rawBuf = await wb.xlsx.writeBuffer();
     // Inject a native Excel chart into the Floating vs Hedging Example
     // sheet. Combo chart: a stacked area chart underneath supplies the
@@ -8524,7 +8550,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             anchor: { col: 12, colOff: 0, row: 10, rowOff: 0, cx: 6858000, cy: 3429000 },
           },
           {
-            title: 'Cumulative Allocation % — Market Timing vs 30-Day Buy',
+            title: 'Cumulative Allocation % - Market Timing vs 30-Day Buy',
             catRef: `'${GSHEET}'!$B$${firstRow}:$B$${lastRow}`,
             lineSeries: [
               { name: '30-Day Arbitrary Buy', color: '1E40AF', dash: 'dash',                    valRef: `'${GSHEET}'!$C$${firstRow}:$C$${lastRow}` },
