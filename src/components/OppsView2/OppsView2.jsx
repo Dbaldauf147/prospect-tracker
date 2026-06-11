@@ -572,9 +572,21 @@ function DateCell({ value, onChange }) {
 function textToBulletItems(text) {
   return String(text ?? '')
     .split(/\r?\n+/)
-    .map(line => line.replace(/^\s*(?:[-*•·▪►]|\d+[.)])\s*/, '').trim())
+    .map(line => line.replace(/^\s*(?:[-*•·▪►]|\d+[.)])\s*/, '').replace(NOTE_LINEBREAK_RE, '\n').trim())
     .filter(Boolean);
 }
+
+// Hard line breaks the user types *inside* a single Next Step box are
+// stored as U+2028 (LINE SEPARATOR) rather than a plain "\n" so they
+// survive the round-trip. textToBulletItems splits steps on "\n", so a
+// "\n" inside one box would otherwise explode it into several boxes (and
+// desync the parallel _nextStepsWaiting array). U+2028 still renders as a
+// line break in the pre-formatted table cell, so the box looks the same.
+const NOTE_LINEBREAK = String.fromCharCode(0x2028);
+const NOTE_LINEBREAK_RE = new RegExp(NOTE_LINEBREAK, "g");
+// Collapse a single box's internal newlines to U+2028 before steps are
+// joined with "\n", so the box stays one step on reload.
+const encodeNoteLine = (note) => String(note ?? '').trim().replace(/\r?\n/g, NOTE_LINEBREAK);
 
 // Calendar days from today to the given ISO date. Positive = future,
 // negative = past. Returns null for blank / unparseable dates.
@@ -1329,7 +1341,7 @@ function CellHoverPopover({ anchorRef, value, enabled }) {
     >
       {items.length > 0 ? (
         <ul style={{ margin: 0, paddingLeft: '1.1rem' }}>
-          {items.map((it, i) => <li key={i} style={{ margin: '2px 0' }}>{it}</li>)}
+          {items.map((it, i) => <li key={i} style={{ margin: '2px 0', whiteSpace: 'pre-wrap' }}>{it}</li>)}
         </ul>
       ) : (
         <span style={{ whiteSpace: 'pre-wrap' }}>{String(value ?? '')}</span>
@@ -3073,7 +3085,7 @@ function FollowUpStatusModal({ opp, statusOptions, onSave, onClose, onCancel }) 
 
   function handleSave() {
     const kept = rows.filter(r => (r.note || '').trim() || (r.waitingOn || '').trim());
-    const nextSteps = kept.map(r => (r.note || '').trim()).join('\n');
+    const nextSteps = kept.map(r => encodeNoteLine(r.note)).join('\n');
     const nextStepsWaiting = kept.map(r => (r.waitingOn || '').trim());
     onSave({ status, nextSteps, nextStepsWaiting, salesPartner: salesPartner.trim() });
   }
@@ -4360,7 +4372,7 @@ function NextStepsEditor({ opp, onClose, updateOppField }) {
 
   function commit(nextRows) {
     const kept = nextRows.filter(r => (r.note || '').trim() || (r.waitingOn || '').trim());
-    const notesText = kept.map(r => (r.note || '').trim()).join('\n');
+    const notesText = kept.map(r => encodeNoteLine(r.note)).join('\n');
     const waiting = kept.map(r => (r.waitingOn || '').trim());
     updateOppField(opp._id, 'Next Steps', notesText);
     updateOppField(opp._id, '_nextStepsWaiting', waiting);
