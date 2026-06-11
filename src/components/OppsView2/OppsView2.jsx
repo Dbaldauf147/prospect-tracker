@@ -8062,7 +8062,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             <button
               type="button"
               onClick={() => setNewOppsScheduleOpen(true)}
-              title="Schedule a recurring email that sends these new opps (past 7 days) as an Excel file"
+              title="Schedule a recurring email that sends these new opps (past 7 days) as a table in the email body"
               style={{
                 marginLeft: '0.5rem', padding: '0.3rem 0.7rem', fontSize: '0.78rem', fontWeight: 600,
                 fontFamily: 'inherit', color: '#009530', background: '#fff',

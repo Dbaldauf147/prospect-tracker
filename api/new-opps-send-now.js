@@ -10,7 +10,7 @@
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
 import { adminDb } from './_lib/firebaseAdmin.js';
-import { loadNewOpps, filterNewOpps, buildNewOppsWorkbook, sendNewOppsEmail, newOppsFilename } from './_lib/newOpps.js';
+import { loadNewOpps, filterNewOpps, sendNewOppsEmail } from './_lib/newOpps.js';
 
 async function handler(req, res, auth) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -44,13 +44,12 @@ async function handler(req, res, auth) {
     const records = Array.isArray(postedRecords)
       ? filterNewOpps(postedRecords.filter((r) => r && typeof r === 'object').slice(0, 5000))
       : await loadNewOpps(db, auth.uid);
-    const buffer = await buildNewOppsWorkbook(records, columns);
     const result = await sendNewOppsEmail({
       to,
       subject,
       message,
-      buffer,
-      filename: newOppsFilename(),
+      records,
+      columns,
       replyTo: auth.email,
     });
     return res.json({ success: true, id: result.id, opps: records.length, recipients: to.length });

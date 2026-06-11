@@ -33,7 +33,7 @@ const tzLabel = (() => {
 })();
 
 // Modal that lets the user create / edit / delete recurring emails which
-// send the New Opps Excel file (opps created in the past 7 days) to a list
+// send the New Opps table (opps created in the past 7 days) to a list
 // of recipients. Mirrors PEOppsScheduleModal. `allColumns` is the New Opps
 // column set ([{key,label}]); `defaultColumns` seeds new schedules with the
 // report's default columns.
@@ -280,7 +280,7 @@ export function NewOppsScheduleModal({ open, onClose, uid, email, oppsRows, allC
                 </Field>
               </div>
 
-              <Field label="Columns in the Excel file">
+              <Field label="Columns in the emailed table">
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem 0.8rem', border: '1px solid #E2E8F0', borderRadius: 6, padding: '0.5rem 0.6rem', maxHeight: 140, overflowY: 'auto' }}>
                   {(allColumns || []).map((c) => (
                     <label key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.74rem', color: c.key === 'Account' ? '#94A3B8' : '#334155', cursor: c.key === 'Account' ? 'not-allowed' : 'pointer' }}>

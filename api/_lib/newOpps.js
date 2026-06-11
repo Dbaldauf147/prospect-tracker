@@ -109,71 +109,47 @@ export function filterNewOpps(records, days = NEW_OPPS_WINDOW_DAYS, cutoff = new
     });
 }
 
-// ---- Build the SE-branded workbook (mirror PE Opps export) --------------
-// Returns a Node Buffer of the .xlsx file. `columnKeys` selects/orders the
-// New Opps columns; unknown keys are ignored and an empty list falls back
-// to all. Account is always kept as the row anchor.
-export async function buildNewOppsWorkbook(records, columnKeys, days = NEW_OPPS_WINDOW_DAYS) {
-  const exceljs = await import('exceljs');
-  const Workbook = exceljs.Workbook || exceljs.default?.Workbook;
-  if (typeof Workbook !== 'function') throw new Error('exceljs Workbook unavailable');
+// ---- Build an inline HTML table (mirror the New Opps report columns) -----
+// Renders the records as an SE-branded HTML table so the digest reads
+// directly in the email body — no attachment to open. `columnKeys` selects
+// and orders columns the same way the workbook does; Account is always kept.
+export function buildNewOppsTableHtml(records, columnKeys) {
   const keys = Array.isArray(columnKeys) && columnKeys.length ? columnKeys : NEW_OPPS_COLUMN_KEYS;
   const byKey = new Map(NEW_OPPS_COLUMNS.map((c) => [c.key, c]));
   const selected = new Set([...keys, 'Account']);
   const columns = NEW_OPPS_COLUMNS.filter((c) => selected.has(c.key));
 
-  const SE_GREEN_DARK = 'FF009530';
-  const SE_GREEN_LIGHT = 'FFE6F7EC';
-  const SE_GREEN = 'FF3DCD58';
-  const wb = new Workbook();
-  wb.creator = 'Schneider Electric · Prospect Tracker';
-  wb.created = new Date();
-  const ws = wb.addWorksheet('New Opps', {
-    properties: { tabColor: { argb: SE_GREEN } },
-    views: [{ showGridLines: false, state: 'frozen', ySplit: 3 }],
-  });
-  ws.columns = columns.map((c) => ({ width: Math.min(Math.max(c.label.length + 4, 16), 40) }));
+  if (!Array.isArray(records) || records.length === 0) {
+    return '<p style="color:#5A6B7E;font-size:13px;margin:0">No new opportunities in this period.</p>';
+  }
 
-  ws.mergeCells(1, 1, 1, columns.length);
-  const title = ws.getCell(1, 1);
-  title.value = `New Opportunities · last ${days} days · ${records.length} opp${records.length === 1 ? '' : 's'}`;
-  title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
-  title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-  title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-  ws.getRow(1).height = 28;
-  ws.getRow(2).height = 6;
+  const thAlign = (c) => (c.align === 'right' ? 'right' : 'left');
+  const head = columns.map((c) =>
+    `<th style="text-align:${thAlign(c)};padding:8px 10px;font:600 12px Arial,sans-serif;color:#009530;border-bottom:2px solid #009530;white-space:nowrap">${escapeHtml(c.label)}</th>`
+  ).join('');
 
-  const headerRow = ws.getRow(3);
-  columns.forEach((col, i) => {
-    const cell = headerRow.getCell(i + 1);
-    cell.value = col.label;
-    cell.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_GREEN_DARK } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-    cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-    cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
-  });
-  headerRow.height = 22;
+  const rows = records.map((r, idx) => {
+    const bg = idx % 2 === 1 ? '#F6FCF8' : '#FFFFFF';
+    const cells = columns.map((c) => {
+      const v = cellValue(r, byKey.get(c.key) || c);
+      return `<td style="text-align:${thAlign(c)};padding:7px 10px;font:13px Arial,sans-serif;color:#334155;border-bottom:1px solid #E6F2EA;vertical-align:top">${escapeHtml(v)}</td>`;
+    }).join('');
+    return `<tr style="background:${bg}">${cells}</tr>`;
+  }).join('');
 
-  records.forEach((r, idx) => {
-    const row = ws.getRow(4 + idx);
-    columns.forEach((col, i) => {
-      const cell = row.getCell(i + 1);
-      cell.value = cellValue(r, byKey.get(col.key) || col);
-      cell.font = { name: 'Nunito Sans', size: 10 };
-      cell.alignment = { vertical: 'middle', horizontal: col.align === 'right' ? 'right' : 'left', indent: 1, wrapText: false };
-      if (idx % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF6FCF8' } };
-    });
-    row.height = 18;
-  });
-
-  ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: columns.length } };
-
-  const arrayBuffer = await wb.xlsx.writeBuffer();
-  return Buffer.from(arrayBuffer);
+  return `
+    <table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;margin:4px 0 8px">
+      <thead><tr>${head}</tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
 }
 
-// ---- Send via Gmail (SMTP + App Password) with the workbook attached ----
-export async function sendNewOppsEmail({ to, subject, message, buffer, filename, replyTo, days = NEW_OPPS_WINDOW_DAYS }) {
+// ---- Send via Gmail (SMTP + App Password) with the table inline ----------
+// The opportunities created in the past `days` days are rendered as an HTML
+// table in the email body (no attachment). `records` are pre-filtered to the
+// window by the caller; `columns` selects which fields to show.
+export async function sendNewOppsEmail({ to, subject, message, records, columns, replyTo, days = NEW_OPPS_WINDOW_DAYS }) {
   const user = process.env.GMAIL_USER;
   const pass = process.env.GMAIL_APP_PASSWORD;
   if (!user || !pass) {
@@ -185,14 +161,17 @@ export async function sendNewOppsEmail({ to, subject, message, buffer, filename,
     .filter(Boolean);
   if (recipients.length === 0) throw new Error('No recipients');
 
+  const count = Array.isArray(records) ? records.length : 0;
   const intro = message
     ? `<p style="color:#334155;font-size:14px;white-space:pre-wrap;margin:0 0 16px">${escapeHtml(message)}</p>`
     : '';
+  const table = buildNewOppsTableHtml(records, columns);
   const html = `
-    <div style="font-family:Arial,sans-serif;max-width:680px;margin:0 auto">
+    <div style="font-family:Arial,sans-serif;max-width:920px;margin:0 auto">
       <h2 style="color:#009530;margin:0 0 8px">New Opportunities</h2>
       ${intro}
-      <p style="color:#5A6B7E;font-size:13px;margin:0">The opportunities created in the past ${days} days are attached as an Excel file.</p>
+      <p style="color:#5A6B7E;font-size:13px;margin:0 0 12px">${count} opportunit${count === 1 ? 'y' : 'ies'} created in the past ${days} days.</p>
+      ${table}
       <p style="color:#8896A6;font-size:11px;margin-top:24px">Sent automatically from Prospect Tracker.</p>
     </div>
   `;
@@ -213,11 +192,6 @@ export async function sendNewOppsEmail({ to, subject, message, buffer, filename,
     replyTo: replyTo || user,
     subject: subject || 'New Opportunities',
     html,
-    attachments: [{
-      filename: filename || 'new-opps.xlsx',
-      content: buffer,
-      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    }],
   });
   return { id: result.messageId };
 }
@@ -228,10 +202,4 @@ function escapeHtml(s) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
-}
-
-// Filename stamped with today's date, matching the client export.
-export function newOppsFilename() {
-  const date = new Date().toISOString().slice(0, 10);
-  return `new-opps-${date}.xlsx`;
 }
