@@ -22,7 +22,7 @@ export const NEW_OPPS_COLUMNS = [
   { key: 'Source', label: 'Source' },
   { key: 'Type', label: 'Type' },
   { key: 'Sales Partner', label: 'Sales Partner' },
-  { key: 'Start Date', label: 'Start Date' },
+  { key: 'Start Date', label: 'Start Date', value: (r) => formatShortDate(r['Start Date']) },
   { key: 'Status', label: 'Status' },
   { key: 'Quoted Amount', label: 'Quoted Amount', align: 'right' },
   { key: 'Sites', label: 'Sites', align: 'right' },
@@ -61,6 +61,14 @@ export function isNewOpp(r, cutoff = newOppsCutoff(), now = new Date()) {
   const todayEnd = new Date(now);
   todayEnd.setHours(23, 59, 59, 999);
   return start >= cutoff && start <= todayEnd;
+}
+
+// Short date (M/D/YYYY) for display. Falls back to the raw value when it
+// isn't a parseable date so nothing gets blanked unexpectedly.
+function formatShortDate(raw) {
+  const d = parseOppsDate(raw);
+  if (!d) return raw == null ? '' : String(raw);
+  return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
 }
 
 const cellValue = (r, c) => (c.value ? c.value(r) : (r[c.key] ?? ''));
@@ -115,9 +123,9 @@ export function filterNewOpps(records, days = NEW_OPPS_WINDOW_DAYS, cutoff = new
 }
 
 // ---- Build an inline HTML table (mirror the New Opps report columns) -----
-// Renders the records as an SE-branded HTML table so the digest reads
-// directly in the email body — no attachment to open. `columnKeys` selects
-// and orders columns the same way the workbook does; Account is always kept.
+// Renders the records as a plain black-and-white bordered HTML table so the
+// digest reads directly in the email body — no attachment to open.
+// `columnKeys` selects and orders columns; Account is always kept.
 export function buildNewOppsTableHtml(records, columnKeys) {
   const keys = Array.isArray(columnKeys) && columnKeys.length ? columnKeys : NEW_OPPS_COLUMN_KEYS;
   const byKey = new Map(NEW_OPPS_COLUMNS.map((c) => [c.key, c]));
@@ -125,12 +133,14 @@ export function buildNewOppsTableHtml(records, columnKeys) {
   const columns = NEW_OPPS_COLUMNS.filter((c) => selected.has(c.key));
 
   if (!Array.isArray(records) || records.length === 0) {
-    return '<p style="color:#5A6B7E;font-size:13px;margin:0">No new opportunities in this period.</p>';
+    return '<p style="color:#000000;font-size:13px;margin:0">No new opportunities in this period.</p>';
   }
 
+  // Plain black-and-white bordered table — no fills, no accent colour.
+  const BORDER = '1px solid #000000';
   const thAlign = (c) => (c.align === 'right' ? 'right' : 'left');
   const head = columns.map((c) =>
-    `<th style="text-align:${thAlign(c)};padding:8px 10px;font:600 12px Arial,sans-serif;color:#009530;border-bottom:2px solid #009530;white-space:nowrap">${escapeHtml(c.label)}</th>`
+    `<th style="text-align:${thAlign(c)};padding:6px 10px;font:700 13px Arial,sans-serif;color:#000000;border:${BORDER};white-space:nowrap">${escapeHtml(c.label)}</th>`
   ).join('');
 
   // The row's BFO Address, but only when it actually looks like a web URL —
@@ -144,10 +154,9 @@ export function buildNewOppsTableHtml(records, columnKeys) {
     return !s || s === '-' || s.toLowerCase() === '#n/a' || s.toLowerCase() === 'n/a';
   };
   const link = (href, text) =>
-    `<a href="${escapeHtml(href)}" style="color:#009530;text-decoration:underline">${escapeHtml(text)}</a>`;
+    `<a href="${escapeHtml(href)}" style="color:#000000;text-decoration:underline">${escapeHtml(text)}</a>`;
 
-  const rows = records.map((r, idx) => {
-    const bg = idx % 2 === 1 ? '#F6FCF8' : '#FFFFFF';
+  const rows = records.map((r) => {
     const cells = columns.map((c) => {
       const v = cellValue(r, byKey.get(c.key) || c);
       const url = (c.key === 'BFO Link' || c.key === 'BFO Address') ? bfoUrl(r) : '';
@@ -160,13 +169,13 @@ export function buildNewOppsTableHtml(records, columnKeys) {
       } else {
         inner = escapeHtml(v);
       }
-      return `<td style="text-align:${thAlign(c)};padding:7px 10px;font:13px Arial,sans-serif;color:#334155;border-bottom:1px solid #E6F2EA;vertical-align:top">${inner}</td>`;
+      return `<td style="text-align:${thAlign(c)};padding:6px 10px;font:13px Arial,sans-serif;color:#000000;border:${BORDER};vertical-align:top">${inner}</td>`;
     }).join('');
-    return `<tr style="background:${bg}">${cells}</tr>`;
+    return `<tr>${cells}</tr>`;
   }).join('');
 
   return `
-    <table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;margin:4px 0 8px">
+    <table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;margin:4px 0 8px;border:${BORDER}">
       <thead><tr>${head}</tr></thead>
       <tbody>${rows}</tbody>
     </table>
@@ -174,10 +183,12 @@ export function buildNewOppsTableHtml(records, columnKeys) {
 }
 
 // ---- Send via Gmail (SMTP + App Password) with the table inline ----------
-// The opportunities created in the past `days` days are rendered as an HTML
-// table in the email body (no attachment). `records` are pre-filtered to the
-// window by the caller; `columns` selects which fields to show.
-export async function sendNewOppsEmail({ to, subject, message, records, columns, replyTo, days = NEW_OPPS_WINDOW_DAYS }) {
+// The new opportunities are rendered as an HTML table in the email body (no
+// attachment). `records` are pre-filtered to the window by the caller;
+// `columns` selects which fields to show. The body is
+// intentionally minimal — just the optional intro message and the table, with
+// no heading, summary line, or footer.
+export async function sendNewOppsEmail({ to, subject, message, records, columns, replyTo }) {
   const user = process.env.GMAIL_USER;
   const pass = process.env.GMAIL_APP_PASSWORD;
   if (!user || !pass) {
@@ -189,18 +200,14 @@ export async function sendNewOppsEmail({ to, subject, message, records, columns,
     .filter(Boolean);
   if (recipients.length === 0) throw new Error('No recipients');
 
-  const count = Array.isArray(records) ? records.length : 0;
   const intro = message
     ? `<p style="color:#334155;font-size:14px;white-space:pre-wrap;margin:0 0 16px">${escapeHtml(message)}</p>`
     : '';
   const table = buildNewOppsTableHtml(records, columns);
   const html = `
     <div style="font-family:Arial,sans-serif;max-width:920px;margin:0 auto">
-      <h2 style="color:#009530;margin:0 0 8px">New Opportunities</h2>
       ${intro}
-      <p style="color:#5A6B7E;font-size:13px;margin:0 0 12px">${count} opportunit${count === 1 ? 'y' : 'ies'} created in the past ${days} days.</p>
       ${table}
-      <p style="color:#8896A6;font-size:11px;margin-top:24px">Sent automatically from Prospect Tracker.</p>
     </div>
   `;
 
