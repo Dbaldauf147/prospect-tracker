@@ -151,6 +151,10 @@ const TRISTATE_COLUMNS = new Set(['No Further Action Today']);
 const HEADER_LABEL_OVERRIDES = {
   'BFO Link': 'BFO Opportunity Name',
   'Quoted Amount': 'Deal Size',
+  // The rich per-step column ('Next Steps') reads as "Notes"; the older
+  // plain 'Notes' field reads as "Memo" so the two headers don't clash.
+  'Next Steps': 'Notes',
+  'Notes': 'Memo',
 };
 function headerLabel(h) {
   return HEADER_LABEL_OVERRIDES[h] || h;
@@ -1407,7 +1411,7 @@ function NextStepsCell({ value, onOpen }) {
       <span
         ref={ref}
         onClick={(e) => { e.stopPropagation(); onOpen(); }}
-        title="Click to edit in Next Steps"
+        title="Click to edit in Notes"
         style={{
           display: 'block', cursor: 'pointer', minHeight: '1em',
           padding: '1px 2px', whiteSpace: 'pre', overflow: 'hidden',
@@ -3179,7 +3183,7 @@ function FollowUpStatusModal({ opp, statusOptions, onSave, onClose, onCancel }) 
           <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
             <strong>{opp?.['Account'] || 'This opp'}</strong>
             {opp?.['Scope'] ? <> &middot; {opp['Scope']}</> : null}
-            {' '}has a new <strong>Follow Up</strong> date. Pick the current Status and review the Next Steps below.
+            {' '}has a new <strong>Follow Up</strong> date. Pick the current Status and review the Notes below.
           </div>
         </div>
 
@@ -3210,7 +3214,7 @@ function FollowUpStatusModal({ opp, statusOptions, onSave, onClose, onCancel }) 
             />
           </div>
           <div>
-            <label style={labelStyle}>Next Steps</label>
+            <label style={labelStyle}>Notes</label>
             <NextStepsRowsEditor
               rows={rows}
               onUpdateRow={updateRow}
@@ -4493,7 +4497,7 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onCommi
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
         <thead>
           <tr style={{ background: '#F1F5F9', textAlign: 'left', color: '#475569' }}>
-            <th style={{ padding: '0.4rem 0.5rem', fontWeight: 600, width: '55%', borderBottom: '1px solid #E2E8F0' }}>Next Step</th>
+            <th style={{ padding: '0.4rem 0.5rem', fontWeight: 600, width: '55%', borderBottom: '1px solid #E2E8F0' }}>Note</th>
             <th style={{ padding: '0.4rem 0.5rem', fontWeight: 600, width: '40%', borderBottom: '1px solid #E2E8F0' }}>Waiting On</th>
             <th style={{ width: 32, borderBottom: '1px solid #E2E8F0' }} aria-label="" />
           </tr>
@@ -4627,7 +4631,7 @@ function NextStepsEditor({ opp, onClose, updateOppField }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.6rem', gap: '1rem' }}>
           <div style={{ overflow: 'hidden' }}>
             <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              Next Steps — {account}
+              Notes — {account}
             </div>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: '0.72rem', color: '#64748B' }}>
               Sales Partner
@@ -6788,7 +6792,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               return (
                 <span
                   onDoubleClick={(e) => { e.stopPropagation(); e.preventDefault(); setNextStepsPopupId(row._id); }}
-                  title="Double-click to edit in Next Steps"
+                  title="Double-click to edit in Notes"
                   style={{
                     display: 'block', cursor: 'pointer', minHeight: '1em',
                     padding: '1px 2px', whiteSpace: 'pre', overflow: 'hidden',
