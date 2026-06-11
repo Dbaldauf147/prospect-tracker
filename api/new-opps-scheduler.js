@@ -9,7 +9,7 @@
 // `?secret=` query param is also accepted for manual triggering.
 
 import { adminDb } from './_lib/firebaseAdmin.js';
-import { loadNewOpps, buildNewOppsWorkbook, sendNewOppsEmail, newOppsFilename } from './_lib/newOpps.js';
+import { loadNewOpps, sendNewOppsEmail } from './_lib/newOpps.js';
 import { computeNextRun } from './_lib/peOppsSchedule.js';
 
 export default async function handler(req, res) {
@@ -59,13 +59,12 @@ export default async function handler(req, res) {
         results.push({ id: s.id, status: 'skipped-empty' });
         continue;
       }
-      const buffer = await buildNewOppsWorkbook(records, s.columns);
       await sendNewOppsEmail({
         to: s.recipients,
         subject: s.subject,
         message: s.message,
-        buffer,
-        filename: newOppsFilename(),
+        records,
+        columns: s.columns,
         replyTo: s.ownerEmail,
       });
       await docSnap.ref.update({
