@@ -1,12 +1,11 @@
-// Client-side mirror of the New Opps digest email markup in
-// api/_lib/newOpps.js (buildNewOppsTableHtml + the sendNewOppsEmail body
-// wrapper). The Opps 2 "Email table" export — driven off the Mass Edit
-// selection — produces the exact same SE-branded HTML table the scheduled
-// New Opps email uses, so a pasted selection reads identically to the
-// digest. Keep the columns + inline styles in sync with api/_lib/newOpps.js.
+// Client-side builder for the Opps 2 "Email table" export (Mass Edit →
+// Email table). Renders the selected opps as a plain black-and-white HTML
+// table — borders only, no fill colors, zebra striping, or brand styling —
+// so it pastes into an email as a clean grid. Which columns appear (and
+// their order) is chosen by the caller in the export modal.
 
-// Same column set + order the New Opps report/email uses. Account is always
-// kept. `align: 'right'` mirrors the numeric columns.
+// Columns available to the export, in their default order. Mirrors the New
+// Opps report column set; `align: 'right'` for the numeric columns.
 export const NEW_OPPS_EMAIL_COLUMNS = [
   { key: 'Account', label: 'Account' },
   { key: 'Open Year', label: 'Open Year' },
@@ -37,28 +36,32 @@ function escapeHtml(s) {
 
 // Steps inside a single Next Steps box are stored with U+2028 line
 // separators (and steps with "\n"); render both as <br> so a multi-line
-// note reads as stacked lines in the email rather than one run-on string.
+// note reads as stacked lines in the table rather than one run-on string.
 function escapeHtmlMultiline(s) {
   return escapeHtml(s).replace(/\u2028|\r?\n/g, "<br>");
 }
 
-// Build the SE-branded HTML table for the given records. `columnKeys`
-// selects + orders columns the same way the workbook/email does; Account
-// is always kept. Mirrors buildNewOppsTableHtml in api/_lib/newOpps.js.
+// Build a plain bordered table for the given records. `columnKeys` selects
+// and orders the columns (any subset of NEW_OPPS_EMAIL_COLUMNS); when
+// omitted, all columns in default order are used. Black text on white with
+// 1px solid black cell borders — no other styling.
 export function buildNewOppsTableHtml(records, columnKeys) {
-  const keys = Array.isArray(columnKeys) && columnKeys.length ? columnKeys : NEW_OPPS_EMAIL_COLUMN_KEYS;
-  const selected = new Set([...keys, 'Account']);
-  const columns = NEW_OPPS_EMAIL_COLUMNS.filter((c) => selected.has(c.key));
+  const byKey = new Map(NEW_OPPS_EMAIL_COLUMNS.map((c) => [c.key, c]));
+  const keys = Array.isArray(columnKeys) ? columnKeys : NEW_OPPS_EMAIL_COLUMN_KEYS;
+  const columns = keys.map((k) => byKey.get(k)).filter(Boolean);
 
-  if (!Array.isArray(records) || records.length === 0) {
-    return '<p style="color:#5A6B7E;font-size:13px;margin:0">No opportunities selected.</p>';
+  if (!Array.isArray(records) || records.length === 0 || columns.length === 0) {
+    return '<p style="font:13px Arial,sans-serif;color:#000;margin:0">Nothing to export — select at least one opp and one column.</p>';
   }
 
-  const thAlign = (c) => (c.align === 'right' ? 'right' : 'left');
+  const cellBorder = 'border:1px solid #000';
+  const align = (c) => (c.align === 'right' ? 'right' : 'left');
   const head = columns.map((c) =>
-    `<th style="text-align:${thAlign(c)};padding:8px 10px;font:600 12px Arial,sans-serif;color:#009530;border-bottom:2px solid #009530;white-space:nowrap">${escapeHtml(c.label)}</th>`
+    `<th style="text-align:${align(c)};padding:6px 9px;font:bold 13px Arial,sans-serif;color:#000;${cellBorder}">${escapeHtml(c.label)}</th>`
   ).join('');
 
+  // The row's BFO Address, but only when it actually looks like a web URL —
+  // blanks and sentinel values ('-', '#N/A') never become hrefs.
   const bfoUrl = (r) => {
     const u = String(r['BFO Address'] || '').trim();
     return /^https?:\/\//i.test(u) ? u : '';
@@ -67,11 +70,12 @@ export function buildNewOppsTableHtml(records, columnKeys) {
     const s = String(v ?? '').trim();
     return !s || s === '-' || s.toLowerCase() === '#n/a' || s.toLowerCase() === 'n/a';
   };
+  // Links stay black (no color) so the table is strictly black-and-white;
+  // they remain clickable when pasted into an email.
   const link = (href, text) =>
-    `<a href="${escapeHtml(href)}" style="color:#009530;text-decoration:underline">${escapeHtml(text)}</a>`;
+    `<a href="${escapeHtml(href)}" style="color:#000">${escapeHtml(text)}</a>`;
 
-  const rows = records.map((r, idx) => {
-    const bg = idx % 2 === 1 ? '#F6FCF8' : '#FFFFFF';
+  const rows = records.map((r) => {
     const cells = columns.map((c) => {
       const v = r[c.key] ?? '';
       const url = (c.key === 'BFO Link' || c.key === 'BFO Address') ? bfoUrl(r) : '';
@@ -85,33 +89,15 @@ export function buildNewOppsTableHtml(records, columnKeys) {
       } else {
         inner = escapeHtml(v);
       }
-      return `<td style="text-align:${thAlign(c)};padding:7px 10px;font:13px Arial,sans-serif;color:#334155;border-bottom:1px solid #E6F2EA;vertical-align:top">${inner}</td>`;
+      return `<td style="text-align:${align(c)};padding:6px 9px;font:13px Arial,sans-serif;color:#000;${cellBorder};vertical-align:top">${inner}</td>`;
     }).join('');
-    return `<tr style="background:${bg}">${cells}</tr>`;
+    return `<tr>${cells}</tr>`;
   }).join('');
 
   return `
-    <table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;margin:4px 0 8px">
+    <table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse;border:1px solid #000;font-family:Arial,sans-serif">
       <thead><tr>${head}</tr></thead>
       <tbody>${rows}</tbody>
     </table>
-  `;
-}
-
-// Full email-body markup (heading + count line + table), mirroring the
-// wrapper sendNewOppsEmail uses so the pasted block matches the digest.
-export function buildNewOppsEmailHtml(records, { heading = 'Opportunities', intro = '', columnKeys } = {}) {
-  const count = Array.isArray(records) ? records.length : 0;
-  const introHtml = intro
-    ? `<p style="color:#334155;font-size:14px;white-space:pre-wrap;margin:0 0 16px">${escapeHtml(intro)}</p>`
-    : '';
-  const table = buildNewOppsTableHtml(records, columnKeys);
-  return `
-    <div style="font-family:Arial,sans-serif;max-width:920px;margin:0 auto">
-      <h2 style="color:#009530;margin:0 0 8px">${escapeHtml(heading)}</h2>
-      ${introHtml}
-      <p style="color:#5A6B7E;font-size:13px;margin:0 0 12px">${count} opportunit${count === 1 ? 'y' : 'ies'}.</p>
-      ${table}
-    </div>
   `.trim();
 }
