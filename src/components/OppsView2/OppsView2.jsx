@@ -35,6 +35,7 @@ import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { apiFetch } from '../../utils/apiFetch';
+import { NewOppsScheduleModal } from './NewOppsScheduleModal';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — user-entered opps stored in Firestore
@@ -152,6 +153,18 @@ const DATE_COLUMNS = new Set([
 // opp. The quote-stage dates are deliberately excluded — they stay blank
 // until the opp actually reaches the Quoted stage.
 const SEED_TODAY_DATE_COLUMNS = new Set(['Start Date', 'Last Client Heard From Us', 'Follow Up']);
+
+// "New Opps" report — opps created in the past NEW_OPPS_WINDOW_DAYS days,
+// surfaced in the New Opps subtab and the auto-emailed digest. Opps 2 has no
+// explicit creation timestamp; a brand-new opp seeds Start Date to today (see
+// makeBlankOpp), so Start Date is the creation proxy. These column keys mirror
+// NEW_OPPS_COLUMNS in api/_lib/newOpps.js so the on-screen list and the
+// server-built Excel match.
+const NEW_OPPS_WINDOW_DAYS = 7;
+const NEW_OPPS_REPORT_COLUMNS = [
+  'Account', 'Open Year', 'Contact', 'Stage', 'Scope', 'Source', 'Type',
+  'Sales Partner', 'Start Date', 'Status', 'Quoted Amount', 'Sites', 'Next Steps',
+];
 
 const MONTH_FULL_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -4868,6 +4881,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   const lastFsSavedAtRef = useRef(null);
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState('opps');
+  // New Opps subtab: controls the recurring-email schedule manager modal.
+  const [newOppsScheduleOpen, setNewOppsScheduleOpen] = useState(false);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   // Dedicated Start Date range for the "By Source" tab. Kept separate
@@ -6878,6 +6893,101 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return searched;
   }, [prefiltered, search, showOnlySelected, selectedIds]);
 
+  // "New Opps" subtab: opps created in the past NEW_OPPS_WINDOW_DAYS days,
+  // keyed off Start Date (the creation proxy — see makeBlankOpp). Newest
+  // first so the most recent additions lead. Mirrors filterNewOpps in
+  // api/_lib/newOpps.js so the on-screen list matches the emailed file.
+  const newOpps = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const cutoff = new Date(today);
+    cutoff.setDate(cutoff.getDate() - (NEW_OPPS_WINDOW_DAYS - 1));
+    const cutoffISO = cutoff.toISOString().slice(0, 10);
+    const todayISOStr = today.toISOString().slice(0, 10);
+    return records
+      .filter(r => {
+        const iso = toISODate(r['Start Date']);
+        return iso && iso >= cutoffISO && iso <= todayISOStr;
+      })
+      .sort((a, b) => {
+        const ia = toISODate(a['Start Date']) || '';
+        const ib = toISODate(b['Start Date']) || '';
+        if (ib !== ia) return ib < ia ? -1 : 1;
+        return String(a['Account'] || '').localeCompare(String(b['Account'] || ''));
+      });
+  }, [records]);
+
+  // The New Opps subtab + emailed digest share one focused column set.
+  const newOppsColumns = useMemo(
+    () => columns.filter(c => NEW_OPPS_REPORT_COLUMNS.includes(c.key)),
+    [columns]
+  );
+
+  // SE-branded (Schneider green) Excel of the new opps shown, mirroring the
+  // server-built file the scheduled email attaches.
+  const handleExportNewOpps = useCallback(async () => {
+    if (newOpps.length === 0) return;
+    const { Workbook } = await import('exceljs');
+    const SE_GREEN_DARK = 'FF009530';
+    const SE_GREEN_LIGHT = 'FFE6F7EC';
+    const SE_GREEN = 'FF3DCD58';
+    const cols = NEW_OPPS_REPORT_COLUMNS
+      .map(key => newOppsColumns.find(c => c.key === key))
+      .filter(Boolean);
+    const wb = new Workbook();
+    wb.creator = 'Schneider Electric · Prospect Tracker';
+    wb.created = new Date();
+    const ws = wb.addWorksheet('New Opps', {
+      properties: { tabColor: { argb: SE_GREEN } },
+      views: [{ showGridLines: false, state: 'frozen', ySplit: 3 }],
+    });
+    ws.columns = cols.map(c => ({ width: Math.min(Math.max(String(c.label).length + 4, 16), 40) }));
+
+    ws.mergeCells(1, 1, 1, cols.length);
+    const title = ws.getCell(1, 1);
+    title.value = `New Opportunities · last ${NEW_OPPS_WINDOW_DAYS} days · ${newOpps.length} opp${newOpps.length === 1 ? '' : 's'}`;
+    title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+    title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+    title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(1).height = 28;
+    ws.getRow(2).height = 6;
+
+    const headerRow = ws.getRow(3);
+    cols.forEach((col, i) => {
+      const cell = headerRow.getCell(i + 1);
+      cell.value = col.label;
+      cell.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_GREEN_DARK } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+    });
+    headerRow.height = 22;
+
+    newOpps.forEach((r, idx) => {
+      const row = ws.getRow(4 + idx);
+      cols.forEach((col, i) => {
+        const cell = row.getCell(i + 1);
+        cell.value = r[col.key] ?? '';
+        cell.font = { name: 'Nunito Sans', size: 10 };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: false };
+        if (idx % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF6FCF8' } };
+      });
+      row.height = 18;
+    });
+    ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: cols.length } };
+
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `new-opps-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [newOpps, newOppsColumns]);
+
   const serviceBreakdown = useMemo(() => {
     // The breakdown only shows on the "By Service" tab. Skipping the
     // O(N×services) work while the Opportunities tab is active shaves
@@ -7742,6 +7852,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           onClick={() => setActiveTab('opps')}
         >Opportunities</button>
         <button
+          className={activeTab === 'newOpps' ? styles.tabActive : styles.tab}
+          onClick={() => setActiveTab('newOpps')}
+        >New Opps{newOpps.length ? ` (${newOpps.length})` : ''}</button>
+        <button
           className={activeTab === 'services' ? styles.tabActive : styles.tab}
           onClick={() => setActiveTab('services')}
         >By Service</button>
@@ -7925,6 +8039,67 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           )}
         </>
       )}
+
+      {activeTab === 'newOpps' && (
+        <>
+          <div className={styles.searchRow}>
+            <span className={styles.resultCount}>
+              {newOpps.length} opp{newOpps.length === 1 ? '' : 's'} created in the past {NEW_OPPS_WINDOW_DAYS} days
+            </span>
+            <button
+              type="button"
+              onClick={handleExportNewOpps}
+              disabled={newOpps.length === 0}
+              title={newOpps.length ? 'Download these new opps as an SE-formatted Excel file' : 'No new opps to export'}
+              style={{
+                marginLeft: '0.5rem', padding: '0.3rem 0.7rem', fontSize: '0.78rem', fontWeight: 600,
+                fontFamily: 'inherit', color: newOpps.length ? '#fff' : '#94A3B8',
+                background: newOpps.length ? '#009530' : '#E2E8F0',
+                border: `1px solid ${newOpps.length ? '#009530' : '#CBD5E1'}`,
+                borderRadius: 6, cursor: newOpps.length ? 'pointer' : 'not-allowed',
+              }}
+            >Export to Excel</button>
+            <button
+              type="button"
+              onClick={() => setNewOppsScheduleOpen(true)}
+              title="Schedule a recurring email that sends these new opps (past 7 days) as an Excel file"
+              style={{
+                marginLeft: '0.5rem', padding: '0.3rem 0.7rem', fontSize: '0.78rem', fontWeight: 600,
+                fontFamily: 'inherit', color: '#009530', background: '#fff',
+                border: '1px solid #009530', borderRadius: 6, cursor: 'pointer',
+              }}
+            >Schedule email</button>
+          </div>
+          <div style={{ padding: '0 0 0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
+            Counts an opp as “new” when its Start Date falls in the past {NEW_OPPS_WINDOW_DAYS} days (Start Date is set to today when an opp is created).
+          </div>
+          {loading && !data ? (
+            <div className={styles.loading}>Loading...</div>
+          ) : (
+            <DataTable
+              tableId="opps2-new"
+              columns={newOppsColumns}
+              rows={newOpps}
+              alwaysVisible={['Account']}
+              enableColumnFilters
+              variableRowHeight
+              emptyMessage={`No opps created in the past ${NEW_OPPS_WINDOW_DAYS} days.`}
+              settings={settings}
+              updateSettings={updateSettings}
+            />
+          )}
+        </>
+      )}
+
+      <NewOppsScheduleModal
+        open={newOppsScheduleOpen}
+        onClose={() => setNewOppsScheduleOpen(false)}
+        uid={user?.uid}
+        email={user?.email}
+        oppsRows={newOpps}
+        allColumns={newOppsColumns.map(c => ({ key: c.key, label: c.label }))}
+        defaultColumns={NEW_OPPS_REPORT_COLUMNS}
+      />
 
       {activeTab === 'services' && (
         <>
