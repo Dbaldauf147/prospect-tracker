@@ -1616,7 +1616,14 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
       const callInRaw = String(r['Call In'] ?? '').trim();
       const account = String(r.Account || '').trim();
       const leadSource = String(r['Lead Source'] || r['Source'] || '').trim();
-      const scope = String(r.Scope || '').trim();
+      // A Scope can list several comma-joined services (e.g. "Remote
+      // assessments, Audits"). The New BFO Opp flow only creates an opp
+      // for the first one, so use just the first listed scope item for
+      // the Scope column, the metadata lookup, and the Project Name.
+      const rawScope = String(r.Scope || '').trim();
+      const scope = rawScope.includes(',')
+        ? rawScope.split(',')[0].trim()
+        : rawScope;
       const followUp = String(r['Follow Up'] ?? '').trim();
       const bfoCompanyName = bfoCompanyByNorm.get(normalizeCompany(account)) || '';
       // Look up the per-service metadata from the Dropdowns › Services
@@ -1624,20 +1631,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
       // supplies Product Line, Type, Region, Class (= BFO Tag), and
       // Local Project Name. User overrides on the Services tab win
       // over the seed values.
-      let svcMeta = getEffectiveServiceMetadata(scope, overrides);
-      // A Scope can list several comma-joined services (e.g. "Remote
-      // assessments, Audits"). The catalog is keyed by single service
-      // names, so the combined string misses and every field comes back
-      // blank. Fall back to the first listed service that resolves so
-      // Product Line / Type / Region / Class still populate.
-      if (!svcMeta?.productLine && scope.includes(',')) {
-        for (const part of scope.split(',')) {
-          const partScope = part.trim();
-          if (!partScope) continue;
-          const partMeta = getEffectiveServiceMetadata(partScope, overrides);
-          if (partMeta?.productLine) { svcMeta = partMeta; break; }
-        }
-      }
+      const svcMeta = getEffectiveServiceMetadata(scope, overrides);
       const productLine = svcMeta?.productLine || '';
       const type = svcMeta?.serviceType || '';
       const region = svcMeta?.region || '';
