@@ -8363,10 +8363,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             <button
               type="button"
               onClick={() => downloadNewOppsOutlookDraft(newOpps, {
-                to: user?.email || '',
-                // Same signature the Draft Email tab appends: the saved
-                // settings.emailSignature, falling back to the bundled
-                // default for the admin account.
+                // To / subject / greeting use the util's defaults
+                // (keith.mchugh@se.com, "Dan B New Opportunities",
+                // "Hey Keith,"). Signature is the same one the Draft
+                // Email tab appends: the saved settings.emailSignature,
+                // falling back to the bundled default for the admin.
                 signature: settings?.emailSignature || (isAdmin ? DEFAULT_EMAIL_SIGNATURE : ''),
               })}
               disabled={newOpps.length === 0}
