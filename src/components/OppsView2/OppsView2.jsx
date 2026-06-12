@@ -4905,6 +4905,36 @@ function NextStepsEditor({ opp, onClose, updateOppField }) {
 
   const account = String(opp?.['Account'] || '').trim() || '(no account)';
 
+  // One-click activity marks. Stamps today's date on `_calledOn` /
+  // `_metOn` (clicking again the same day clears it). The Agents page
+  // reads these stamps so a marked call or meeting shows up in its
+  // Activity table and the BFO Activity AI prompt without needing a
+  // phone-touch phrase in the notes text.
+  const markBtn = (field, icon, label) => {
+    const today = todayISO();
+    const stamped = toISODate(opp?.[field]);
+    const isToday = stamped === today;
+    return (
+      <button
+        type="button"
+        onClick={() => updateOppField(opp._id, field, isToday ? '' : today)}
+        title={isToday
+          ? `Marked "${label}" today — click to unmark`
+          : stamped
+            ? `Last marked "${label}" on ${stamped} — click to mark again for today (shows on the Agents page's BFO Activity list)`
+            : `Mark "${label}" today — shows on the Agents page's BFO Activity list`}
+        style={{
+          display: 'inline-block', padding: '3px 10px', borderRadius: 999,
+          fontSize: '0.72rem', fontWeight: 700, whiteSpace: 'nowrap',
+          cursor: 'pointer', fontFamily: 'inherit',
+          background: isToday ? '#DCFCE7' : '#fff',
+          color: isToday ? '#166534' : '#64748B',
+          border: isToday ? '1px solid #86EFAC' : '1px dashed #CBD5E1',
+        }}
+      >{icon} {label}{isToday ? ' ✓' : ''}</button>
+    );
+  };
+
   // Only treat a backdrop click as "close" when the press *started* on the
   // backdrop. Without this, drag-selecting text in a field and releasing the
   // mouse over the dimmed backdrop fires a click whose target is the overlay,
@@ -4952,15 +4982,19 @@ function NextStepsEditor({ opp, onClose, updateOppField }) {
               />
             </label>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            style={{
-              background: 'transparent', border: 'none', cursor: 'pointer',
-              fontSize: '1.1rem', color: '#64748B', padding: '0 4px', lineHeight: 1,
-            }}
-          >×</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            {markBtn('_calledOn', '📞', 'Called')}
+            {markBtn('_metOn', '🤝', 'Meeting')}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              style={{
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                fontSize: '1.1rem', color: '#64748B', padding: '0 4px', lineHeight: 1,
+              }}
+            >×</button>
+          </div>
         </div>
         <NextStepsRowsEditor
           rows={rows}
@@ -7135,66 +7169,16 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         );
       },
     };
-    // "Called / Met" — one-click activity marks. Stamps today's date on
-    // `_calledOn` / `_metOn` (clicking again the same day clears it).
-    // The Agents page reads these stamps so a marked call or meeting
-    // shows up in its Activity table and the BFO Activity AI prompt
-    // without needing a phone-touch phrase in Next Steps.
-    const logCol = {
-      key: '_logActivity',
-      label: 'Called / Met',
-      defaultWidth: 120,
-      getFilterValue: (row) => [
-        toISODate(row?._calledOn) ? `Called ${toISODate(row._calledOn)}` : '',
-        toISODate(row?._metOn) ? `Meeting ${toISODate(row._metOn)}` : '',
-      ].filter(Boolean).join('; '),
-      getSortValue: (row) => [toISODate(row?._calledOn), toISODate(row?._metOn)].sort().reverse()[0] || '',
-      exportValue: (row) => [
-        toISODate(row?._calledOn) ? `Called ${toISODate(row._calledOn)}` : '',
-        toISODate(row?._metOn) ? `Meeting ${toISODate(row._metOn)}` : '',
-      ].filter(Boolean).join('; '),
-      render: (row) => {
-        const today = todayISO();
-        const markBtn = (field, icon, label) => {
-          const stamped = toISODate(row?.[field]);
-          const isToday = stamped === today;
-          return (
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); updateOppField(row._id, field, isToday ? '' : today); }}
-              onMouseDown={(e) => e.stopPropagation()}
-              title={isToday
-                ? `Marked "${label}" today — click to unmark`
-                : stamped
-                  ? `Last marked "${label}" on ${stamped} — click to mark again for today (shows on the Agents page's BFO Activity list)`
-                  : `Mark "${label}" today — shows on the Agents page's BFO Activity list`}
-              style={{
-                ...chipBase, cursor: 'pointer', fontFamily: 'inherit',
-                background: isToday ? '#DCFCE7' : '#fff',
-                color: isToday ? '#166534' : 'var(--color-text-muted)',
-                border: isToday ? '1px solid #86EFAC' : '1px dashed var(--color-border)',
-              }}
-            >{icon} {label}</button>
-          );
-        };
-        return (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            {markBtn('_calledOn', '📞', 'Called')}
-            {markBtn('_metOn', '🤝', 'Meeting')}
-          </span>
-        );
-      },
-    };
     const bfoLinkIdx = mapped.findIndex(c => c.key === 'BFO Link');
     if (bfoLinkIdx >= 0) mapped.splice(bfoLinkIdx + 1, 0, missingDataCol);
     else mapped.push(missingDataCol);
-    // Splice the info + Called/Met columns in just before Next Steps
-    // when it's present in the visible header set. Falls back to
-    // appending so a user who hid Next Steps still gets the buttons.
+    // Splice the info column in just before Next Steps when it's
+    // present in the visible header set. Falls back to appending so
+    // a user who hid Next Steps still gets the button.
     const nextStepsIdx = mapped.findIndex(c => c.key === 'Next Steps');
     const withInfo = nextStepsIdx >= 0
-      ? [...mapped.slice(0, nextStepsIdx), infoCol, logCol, ...mapped.slice(nextStepsIdx)]
-      : [...mapped, infoCol, logCol];
+      ? [...mapped.slice(0, nextStepsIdx), infoCol, ...mapped.slice(nextStepsIdx)]
+      : [...mapped, infoCol];
     // Sequential 1..N display rank — ranks surviving opps by their
     // underlying `_id` (which is still assigned monotonically), so the
     // column always runs from 1 up over the current dataset rather than
