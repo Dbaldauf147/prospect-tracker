@@ -743,6 +743,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           companies={blueOwlCompanies}
           prospects={prospects}
           oppsRecords={oppsRecords}
+          portfolioByPe={portfolioByPe}
           onSelectProspect={onSelectProspect}
           onUpdateProspect={onUpdateProspect}
           onAddProspect={onAddProspect}
@@ -1337,7 +1338,7 @@ const BLUE_OWL_PASTE_DEFAULTS = { peOwner: 'Blue Owl Capital' };
 // company's own popup, and the Paste from Excel button writes straight
 // back to Table View (fill blanks / optionally overwrite on existing
 // companies, add the rest as new Blue Owl-owned prospects).
-function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], onSelectProspect, onUpdateProspect, onAddProspect }) {
+function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], portfolioByPe = new Map(), onSelectProspect, onUpdateProspect, onAddProspect }) {
   const [search, setSearch] = useState('');
   const [pasteOpen, setPasteOpen] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -1371,12 +1372,47 @@ function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], onSelectPro
     return map;
   }, [companies, oppsRecords]);
 
+  // Same counting for each firm's portfolio companies — every prospect
+  // whose PE Owner names this firm (the portfolioByPe linkage the
+  // Portfolio tab uses). Opps are scanned outer-loop so an opp whose
+  // account matches two sister PCs still counts once.
+  const pcOppCountsByCompanyId = useMemo(() => {
+    const map = new Map();
+    if (oppsRecords.length === 0) return map;
+    for (const p of companies) {
+      const portfolio = portfolioByPe.get((p.company || '').trim().toLowerCase()) || [];
+      if (portfolio.length === 0) continue;
+      const pcNames = portfolio
+        .map(pc => ({ name: (pc.company || '').trim().toLowerCase(), display: pc.company }))
+        .filter(pc => pc.name);
+      let active = 0;
+      let total = 0;
+      const tip = [];
+      for (const r of oppsRecords) {
+        const stage = (r['Stage'] || '').trim();
+        if (INVALID_STAGES.has(stage)) continue;
+        const acct = (r['Account'] || '').toLowerCase();
+        if (!acct) continue;
+        const pcMatch = pcNames.find(pc => accountMatchesCompany(pc.name, acct));
+        if (!pcMatch) continue;
+        total++;
+        if (!CLOSED_STAGES.has(stage)) active++;
+        tip.push(`• ${r['Opportunity Name'] || r['Opportunity'] || r['Name'] || r['Description'] || '(Unnamed opportunity)'}${stage ? ` — ${stage}` : ''} [${pcMatch.display}]`);
+      }
+      if (total > 0) map.set(p.id, { active, total, tip });
+    }
+    return map;
+  }, [companies, portfolioByPe, oppsRecords]);
+
   const rows = useMemo(() => companies.map(p => {
     const counts = oppCountsByCompanyId.get(p.id);
+    const pcCounts = pcOppCountsByCompanyId.get(p.id);
     return {
       id: p.id,
       _prospect: p,
       _oppsTip: counts?.tip || [],
+      _pcOppsTip: pcCounts?.tip || [],
+      _pcCount: (portfolioByPe.get((p.company || '').trim().toLowerCase()) || []).length,
       company: p.company || '',
       status: p.status || '',
       cdm: p.cdm || '',
@@ -1388,10 +1424,12 @@ function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], onSelectPro
       peAum: p.peAum ?? '',
       oppsActive: counts?.active || 0,
       oppsTotal: counts?.total || 0,
+      pcOppsActive: pcCounts?.active || 0,
+      pcOppsTotal: pcCounts?.total || 0,
       peOwner: p.peOwner || '',
       notes: p.notes || '',
     };
-  }), [companies, oppCountsByCompanyId]);
+  }), [companies, oppCountsByCompanyId, pcOppCountsByCompanyId, portfolioByPe]);
 
   const columns = useMemo(() => [
     { key: 'company', label: 'Company', defaultWidth: 240, sticky: true, render: (r) => (
@@ -1429,6 +1467,16 @@ function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], onSelectPro
         title={r._oppsTip.length ? `active / total opps from the Opps tab\n${r._oppsTip.join('\n')}` : 'No opportunities on this company in the Opps tab'}
         style={{ fontWeight: 700, color: r.oppsActive > 0 ? '#7C3AED' : r.oppsTotal > 0 ? '#64748B' : '#CBD5E1' }}
       >{r.oppsActive}/{r.oppsTotal}</span>
+    ) },
+    { key: 'pcOpps', label: 'PC Opps', defaultWidth: 90, getSortValue: (r) => r.pcOppsActive * 1e6 + r.pcOppsTotal, exportValue: (r) => `${r.pcOppsActive}/${r.pcOppsTotal}`, render: (r) => (
+      <span
+        title={r._pcOppsTip.length
+          ? `active / total opps across this firm's ${r._pcCount} portfolio compan${r._pcCount === 1 ? 'y' : 'ies'}\n${r._pcOppsTip.join('\n')}`
+          : r._pcCount > 0
+          ? `No opps on this firm's ${r._pcCount} portfolio compan${r._pcCount === 1 ? 'y' : 'ies'} in the Opps tab`
+          : 'No portfolio companies point to this firm — set a company\'s PE Owner to link it'}
+        style={{ fontWeight: 700, color: r.pcOppsActive > 0 ? '#7C3AED' : r.pcOppsTotal > 0 ? '#64748B' : '#CBD5E1' }}
+      >{r.pcOppsActive}/{r.pcOppsTotal}</span>
     ) },
     { key: 'peOwner', label: 'PE Owner', defaultWidth: 170 },
     { key: 'notes', label: 'Notes', defaultWidth: 320 },
@@ -1519,10 +1567,11 @@ function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], onSelectPro
           </div>
         ) : (
           <DataTable
-            // -3: fresh prefs key so columns added after the original
-            // layout (HQ Region / Website / PE AUM at -2, Opps at -3)
-            // aren't hidden by a saved visible-set from an older one.
-            tableId="pe-blue-owl-companies-3"
+            // -4: fresh prefs key so columns added after the original
+            // layout (HQ Region / Website / PE AUM at -2, Opps at -3,
+            // PC Opps at -4) aren't hidden by a saved visible-set from
+            // an older one.
+            tableId="pe-blue-owl-companies-4"
             columns={columns}
             rows={filtered}
             alwaysVisible={['company']}
