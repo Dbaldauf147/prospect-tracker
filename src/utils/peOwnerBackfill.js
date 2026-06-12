@@ -1,11 +1,11 @@
-// One-time backfill: stamp PE Owner = "Blue Owl Capital" on a fixed
-// list of PE firms in Table View. Runs once per user/browser from
-// App.jsx (guarded by a userLs flag) after prospects finish loading,
-// then reports what changed and which names found no match — with
-// close-name candidates so a renamed record can be fixed by hand.
+// One-time prospect backfills, run once per user/browser from App.jsx
+// (each pass guarded by its own userLs flag) after prospects finish
+// loading. Each pass stamps a set of field values onto a fixed list of
+// Table View companies, then reports what changed and which names found
+// no match — with close-name candidates so a renamed record can be
+// fixed by hand.
 import { normalizeCompanyName } from './firestoreSync';
 
-export const PE_OWNER_BACKFILL_FLAG = 'pe-owner-blue-owl-2026-06';
 export const BLUE_OWL_PE_OWNER = 'Blue Owl Capital';
 
 export const BLUE_OWL_COMPANIES = [
@@ -65,6 +65,52 @@ export const BLUE_OWL_COMPANIES = [
   'New Enterprise Associates',
 ];
 
+// The Blue Owl GP-stakes firms Dan hand-added to Table View after the
+// first pass reported them missing — these also get typed as PE Firm.
+export const PE_FIRM_COMPANIES = [
+  'Capital Fund Management',
+  'Carnelian Energy Capital',
+  'Chenavari',
+  'CrossHarbor',
+  'Dragoneer',
+  'Golub Capital',
+  'Graham Capital Management',
+  'GrowthCurve Capital',
+  'H.I.G. Growth Partners',
+  'LBA Logistics',
+  'LibreMax Capital',
+  'Marble Capital',
+  'MKP Capital Management',
+  'NEA',
+  'Pinnacle Asset Management',
+  'Quantum',
+  'Scopia',
+  'Sixth Street Partners',
+  'SoundPoint Capital Management',
+  'TSG Consumer',
+  'Vector Capital',
+  'Waterfall Asset Management',
+  'Whitebox Advisors',
+];
+
+// Every pass runs at most once per user/browser; a new pass = a new
+// entry with a fresh flag. `fields` are written verbatim onto each
+// matching prospect (only when at least one differs).
+export const BACKFILL_PASSES = [
+  {
+    flag: 'pe-owner-blue-owl-2026-06',
+    companies: BLUE_OWL_COMPANIES,
+    fields: { peOwner: BLUE_OWL_PE_OWNER },
+    description: `PE Owner = "${BLUE_OWL_PE_OWNER}"`,
+  },
+  {
+    flag: 'pe-firm-blue-owl-2026-06-12',
+    companies: PE_FIRM_COMPANIES,
+    fields: { peOwner: BLUE_OWL_PE_OWNER, type: 'PE Firm' },
+    description: `PE Owner = "${BLUE_OWL_PE_OWNER}" and Type = "PE Firm"`,
+  },
+];
+
 // Whole-word containment between two normalized names, so candidate
 // suggestions catch "Stonepeak Infrastructure Partners" for "Stonepeak"
 // without "NEA" matching the letters inside "Lineage".
@@ -83,11 +129,15 @@ function isCandidate(targetNorm, recordNorm) {
   return recordNorm.includes(' ') || recordNorm.length >= 9;
 }
 
+function fieldEquals(current, wanted) {
+  return String(current || '').trim().toLowerCase() === String(wanted || '').trim().toLowerCase();
+}
+
 // Updates every prospect whose normalized company name exactly matches
 // a list entry. Deliberately no fuzzy matching on the write path — a
 // near-miss name only ever becomes a suggestion in the report, never
 // an edit.
-export async function runPeOwnerBackfill(prospects, updateProspect) {
+export async function runProspectBackfill(prospects, updateProspect, { companies, fields }) {
   const byNorm = new Map();
   for (const p of prospects) {
     const n = normalizeCompanyName(p?.company);
@@ -101,7 +151,7 @@ export async function runPeOwnerBackfill(prospects, updateProspect) {
   const failed = [];
   const notFound = [];
 
-  for (const name of BLUE_OWL_COMPANIES) {
+  for (const name of companies) {
     const norm = normalizeCompanyName(name);
     const matches = byNorm.get(norm) || [];
     if (matches.length === 0) {
@@ -116,12 +166,12 @@ export async function runPeOwnerBackfill(prospects, updateProspect) {
       continue;
     }
     for (const p of matches) {
-      if ((p.peOwner || '').trim().toLowerCase() === BLUE_OWL_PE_OWNER.toLowerCase()) {
+      if (Object.entries(fields).every(([k, v]) => fieldEquals(p[k], v))) {
         alreadySet.push(p.company);
         continue;
       }
       try {
-        await updateProspect(p.id, { peOwner: BLUE_OWL_PE_OWNER });
+        await updateProspect(p.id, fields);
         updated.push(p.company);
       } catch (err) {
         failed.push(`${p.company} — ${err?.message || err}`);
@@ -132,9 +182,9 @@ export async function runPeOwnerBackfill(prospects, updateProspect) {
   return { updated, alreadySet, failed, notFound };
 }
 
-export function formatPeOwnerBackfillReport({ updated, alreadySet, failed, notFound }) {
+export function formatBackfillReport(pass, { updated, alreadySet, failed, notFound }) {
   const lines = [
-    `PE Owner update — set "${BLUE_OWL_PE_OWNER}" on ${updated.length} ` +
+    `Company update — set ${pass.description} on ${updated.length} ` +
     `compan${updated.length === 1 ? 'y' : 'ies'} in Table View.`,
   ];
   if (alreadySet.length) lines.push(`\nAlready set on ${alreadySet.length}: ${alreadySet.join(', ')}`);
