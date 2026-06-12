@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx';
 import { Badge } from '../common/Badge';
 import { statusColor, tierColor, formatAum, formatNumber } from '../../utils/formatters';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS } from '../../data/enums';
+import { buildTypeOptions, buildCdmOptions, persistCustomOption } from '../../utils/prospectOptions';
 import { PasteAddModal } from './PasteAddModal';
 import styles from './TableView.module.css';
 
@@ -114,7 +115,10 @@ const ADD_NEW_OPTION = '__ADD_NEW__';
 // is set on the column definition.
 const EDIT_OPTIONS = '__EDIT_OPTIONS__';
 
-function InlineCell({ value, prospect, colDef, onUpdate, onAddOption, onEditOptions }) {
+// Shared inline cell editor: double-click to edit; enum columns show a
+// dropdown of options. Exported so other prospect tables (PE › Blue
+// Owl) edit cells exactly the way Table View does.
+export function InlineCell({ value, prospect, colDef, onUpdate, onAddOption, onEditOptions }) {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
   const [showSaved, setShowSaved] = useState(false);
@@ -439,70 +443,18 @@ function EditOptionsModal({ colKey, options, allProspects, onUpdate, settings, u
 }
 
 export function TableView({ prospects, allProspects, sortConfig, toggleSort, onUpdate, onDelete, onSelect, onAdd, onReplaceAll, settings, updateSettings }) {
-  // Type options union: built-in TYPES + values currently in use across
-  // every prospect + custom types the user has added via the dropdown.
-  // De-duped case-insensitively while keeping the first spelling, then
-  // sorted so the dropdown reads naturally.
-  const dynamicTypeOptions = useMemo(() => {
-    const seen = new Set();
-    const out = [];
-    const push = (t) => {
-      const v = String(t || '').trim();
-      if (!v) return;
-      const k = v.toLowerCase();
-      if (seen.has(k)) return;
-      seen.add(k);
-      out.push(v);
-    };
-    for (const t of TYPES) push(t);
-    for (const p of (allProspects || prospects || [])) push(p?.type);
-    for (const t of (settings?.customTypes || [])) push(t);
-    return out.sort((a, b) => a.localeCompare(b));
-  }, [allProspects, prospects, settings]);
+  const dynamicTypeOptions = useMemo(
+    () => buildTypeOptions(allProspects || prospects, settings),
+    [allProspects, prospects, settings]
+  );
 
-  // CDM options union: every CDM currently set on a prospect + custom
-  // CDMs the user has added via "+ Add new CDM…". CDMs are pure
-  // user-defined names (no built-in list), so the dropdown is fully
-  // driven by data + settings.customCdms. De-duped case-insensitively.
-  const dynamicCdmOptions = useMemo(() => {
-    const seen = new Set();
-    const out = [];
-    const push = (t) => {
-      const v = String(t || '').trim();
-      if (!v) return;
-      const k = v.toLowerCase();
-      if (seen.has(k)) return;
-      seen.add(k);
-      out.push(v);
-    };
-    for (const p of (allProspects || prospects || [])) push(p?.cdm);
-    for (const t of (settings?.customCdms || [])) push(t);
-    return out.sort((a, b) => a.localeCompare(b));
-  }, [allProspects, prospects, settings]);
+  const dynamicCdmOptions = useMemo(
+    () => buildCdmOptions(allProspects || prospects, settings),
+    [allProspects, prospects, settings]
+  );
 
-  // Persist a newly-added Type / CDM to its custom-list setting so it
-  // sticks across reloads. Called by the InlineCell when the user picks
-  // "+ Add new …" on the dropdown.
   const handleAddOption = useCallback((colKey, name) => {
-    if (!name) return;
-    const trimmed = name.trim();
-    if (colKey === 'type') {
-      const list = Array.isArray(settings?.customTypes) ? settings.customTypes : [];
-      const exists = list.some(t => String(t).trim().toLowerCase() === trimmed.toLowerCase());
-      const builtIn = TYPES.some(t => t.toLowerCase() === trimmed.toLowerCase());
-      if (exists || builtIn) return;
-      if (updateSettings) updateSettings({ customTypes: [...list, trimmed] });
-      return;
-    }
-    if (colKey === 'cdm') {
-      const list = Array.isArray(settings?.customCdms) ? settings.customCdms : [];
-      const exists = list.some(t => String(t).trim().toLowerCase() === trimmed.toLowerCase());
-      // CDM has no built-in list, but skip if already present in the
-      // dynamic options (i.e. some prospect already uses it).
-      const inUse = dynamicCdmOptions.some(t => t.toLowerCase() === trimmed.toLowerCase());
-      if (exists || inUse) return;
-      if (updateSettings) updateSettings({ customCdms: [...list, trimmed] });
-    }
+    persistCustomOption(colKey, name, settings, updateSettings, dynamicCdmOptions);
   }, [settings, updateSettings, dynamicCdmOptions]);
 
   // "Edit CDMs…" opens this modal — column key is stored so the editor

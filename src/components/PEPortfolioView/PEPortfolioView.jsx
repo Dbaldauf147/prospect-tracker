@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadOpps2Newest, setOppField } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
 import { formatDateDisplay } from '../../utils/oppsCallIn';
-import { PE_STAGES } from '../../data/enums';
+import { PE_STAGES, STATUSES, TIERS, GEOGRAPHIES } from '../../data/enums';
+import { InlineCell } from '../TableView/TableView';
+import { buildTypeOptions, buildCdmOptions, persistCustomOption } from '../../utils/prospectOptions';
 import { computePortfolioFitScore, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
 import { DataTable } from '../common/DataTable';
@@ -146,7 +148,7 @@ function useOppsRecords(userId) {
   return [records, setRecords];
 }
 
-export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonMap = {}, onUpdateProspect, onAddProspect }) {
+export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonMap = {}, onUpdateProspect, onAddProspect, settings, updateSettings }) {
   const { user } = useAuth();
   const [subtab, setSubtab] = useState('portfolio');
   const [showClosed, setShowClosed] = useState(false);
@@ -659,7 +661,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               : subtab === 'companies'
               ? <>Every mapped <strong>portfolio company</strong> across all PE firms (from each firm's Portfolio Companies tab), merged into one searchable, filterable table. <strong>Opportunity Score</strong> is ranked within each PC's own firm — matching that firm's export.</>
               : subtab === 'blueOwl'
-              ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>Blue Owl</code>.</>
+              ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>Blue Owl</code>. Double-click any cell to edit it — same dropdowns as Table View.</>
               : <>Every opportunity from the <strong>Opps</strong> tab with Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>}
           </div>
         </div>
@@ -747,6 +749,8 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           onSelectProspect={onSelectProspect}
           onUpdateProspect={onUpdateProspect}
           onAddProspect={onAddProspect}
+          settings={settings}
+          updateSettings={updateSettings}
         />
       ) : (
       <>
@@ -1335,10 +1339,13 @@ const BLUE_OWL_PASTE_DEFAULTS = { peOwner: 'Blue Owl Capital' };
 // Owl, as one searchable, filterable table via the shared DataTable.
 // Unlike All PCs (which reads each firm's Portfolio Companies tab),
 // these are full prospect records — so each row links straight to the
-// company's own popup, and the Paste from Excel button writes straight
+// company's own popup, the Paste from Excel button writes straight
 // back to Table View (fill blanks / optionally overwrite on existing
-// companies, add the rest as new Blue Owl-owned prospects).
-function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], portfolioByPe = new Map(), onSelectProspect, onUpdateProspect, onAddProspect }) {
+// companies, add the rest as new Blue Owl-owned prospects), and every
+// prospect-backed cell edits in place through Table View's InlineCell
+// (double-click; enum columns get the same dropdown options Table View
+// shows, including "+ Add new" for Type / CDM).
+function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], portfolioByPe = new Map(), onSelectProspect, onUpdateProspect, onAddProspect, settings, updateSettings }) {
   const [search, setSearch] = useState('');
   const [pasteOpen, setPasteOpen] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -1431,56 +1438,74 @@ function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], portfolioBy
     };
   }), [companies, oppCountsByCompanyId, pcOppCountsByCompanyId, portfolioByPe]);
 
-  const columns = useMemo(() => [
-    { key: 'company', label: 'Company', defaultWidth: 240, sticky: true, render: (r) => (
-      <button
-        type="button"
-        onClick={() => onSelectProspect?.(r._prospect)}
-        title={`Open "${r.company}" in the Table View`}
-        style={{ background: 'none', border: 'none', padding: 0, color: '#7C3AED', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', textAlign: 'left' }}
-      >
-        {r.company || '—'}
-      </button>
-    ) },
-    { key: 'status', label: 'Status', defaultWidth: 140 },
-    { key: 'cdm', label: 'CDM', defaultWidth: 160 },
-    { key: 'type', label: 'Type', defaultWidth: 150 },
-    { key: 'tier', label: 'Tier', defaultWidth: 100 },
-    { key: 'geography', label: 'Geography', defaultWidth: 130 },
-    { key: 'hqRegion', label: 'HQ Region', defaultWidth: 130 },
-    { key: 'website', label: 'Website', defaultWidth: 200, render: (r) => (
-      r.website ? (
-        <a
-          href={/^https?:\/\//i.test(r.website) ? r.website : `https://${r.website}`}
-          target="_blank"
-          rel="noreferrer"
-          onClick={(e) => e.stopPropagation()}
-          style={{ color: '#2563EB' }}
-        >{r.website}</a>
-      ) : '—'
-    ) },
-    { key: 'peAum', label: 'PE AUM ($B)', defaultWidth: 110, getSortValue: (r) => Number(r.peAum) || 0, render: (r) => formatAum(typeof r.peAum === 'number' ? r.peAum : null) },
-    // Sort by active first, total as the tiebreak (active is what the
-    // user scans for; 1e6 keeps totals from ever outranking an active).
-    { key: 'opps', label: 'Opps', defaultWidth: 90, getSortValue: (r) => r.oppsActive * 1e6 + r.oppsTotal, exportValue: (r) => `${r.oppsActive}/${r.oppsTotal}`, render: (r) => (
-      <span
-        title={r._oppsTip.length ? `active / total opps from the Opps tab\n${r._oppsTip.join('\n')}` : 'No opportunities on this company in the Opps tab'}
-        style={{ fontWeight: 700, color: r.oppsActive > 0 ? '#7C3AED' : r.oppsTotal > 0 ? '#64748B' : '#CBD5E1' }}
-      >{r.oppsActive}/{r.oppsTotal}</span>
-    ) },
-    { key: 'pcOpps', label: 'PC Opps', defaultWidth: 90, getSortValue: (r) => r.pcOppsActive * 1e6 + r.pcOppsTotal, exportValue: (r) => `${r.pcOppsActive}/${r.pcOppsTotal}`, render: (r) => (
-      <span
-        title={r._pcOppsTip.length
-          ? `active / total opps across this firm's ${r._pcCount} portfolio compan${r._pcCount === 1 ? 'y' : 'ies'}\n${r._pcOppsTip.join('\n')}`
-          : r._pcCount > 0
-          ? `No opps on this firm's ${r._pcCount} portfolio compan${r._pcCount === 1 ? 'y' : 'ies'} in the Opps tab`
-          : 'No portfolio companies point to this firm — set a company\'s PE Owner to link it'}
-        style={{ fontWeight: 700, color: r.pcOppsActive > 0 ? '#7C3AED' : r.pcOppsTotal > 0 ? '#64748B' : '#CBD5E1' }}
-      >{r.pcOppsActive}/{r.pcOppsTotal}</span>
-    ) },
-    { key: 'peOwner', label: 'PE Owner', defaultWidth: 170 },
-    { key: 'notes', label: 'Notes', defaultWidth: 320 },
-  ], [onSelectProspect]);
+  // Same dropdown vocabularies as Table View's inline editors, built
+  // from the full prospect list so the options match exactly.
+  const typeOptions = useMemo(() => buildTypeOptions(prospects, settings), [prospects, settings]);
+  const cdmOptions = useMemo(() => buildCdmOptions(prospects, settings), [prospects, settings]);
+  const handleAddOption = useCallback((colKey, name) => {
+    persistCustomOption(colKey, name, settings, updateSettings, cdmOptions);
+  }, [settings, updateSettings, cdmOptions]);
+
+  const columns = useMemo(() => {
+    // Each prospect-backed cell edits through Table View's InlineCell
+    // (double-click to edit; enum columns drop down the same options
+    // Table View shows). colDefs mirror Table View's COLUMNS for the
+    // overlapping fields. The Opps / PC Opps columns stay read-only —
+    // they're derived from the Opps tab, not stored on the prospect.
+    const editable = (colDef, getValue) => function EditableCell(r) {
+      return (
+        <InlineCell
+          value={getValue ? getValue(r) : r[colDef.key]}
+          prospect={r._prospect}
+          colDef={colDef}
+          onUpdate={onUpdateProspect}
+          onAddOption={handleAddOption}
+        />
+      );
+    };
+    return [
+      { key: 'company', label: 'Company', defaultWidth: 240, sticky: true, render: (r) => (
+        <button
+          type="button"
+          onClick={() => onSelectProspect?.(r._prospect)}
+          title={`Open "${r.company}" in the Table View`}
+          style={{ background: 'none', border: 'none', padding: 0, color: '#7C3AED', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', textAlign: 'left' }}
+        >
+          {r.company || '—'}
+        </button>
+      ) },
+      { key: 'status', label: 'Status', defaultWidth: 140, render: editable({ key: 'status', label: 'Status', type: 'enum', options: STATUSES }) },
+      { key: 'cdm', label: 'CDM', defaultWidth: 160, render: editable({ key: 'cdm', label: 'CDM', type: 'enum', options: cdmOptions, allowAddNew: true }) },
+      { key: 'type', label: 'Type', defaultWidth: 150, render: editable({ key: 'type', label: 'Type', type: 'enum', options: typeOptions, allowAddNew: true }) },
+      { key: 'tier', label: 'Tier', defaultWidth: 100, render: editable({ key: 'tier', label: 'Tier', type: 'enum', options: TIERS }) },
+      { key: 'geography', label: 'Geography', defaultWidth: 130, render: editable({ key: 'geography', label: 'Geography', type: 'enum', options: GEOGRAPHIES }) },
+      { key: 'hqRegion', label: 'HQ Region', defaultWidth: 130, render: editable({ key: 'hqRegion', label: 'HQ Region' }) },
+      { key: 'website', label: 'Website', defaultWidth: 200, render: editable({ key: 'website', label: 'Website', type: 'link' }) },
+      // The row keeps '' for missing AUM (so global search doesn't hit
+      // "null"); normalize to null for the cell so it renders '—'.
+      { key: 'peAum', label: 'PE AUM ($B)', defaultWidth: 110, getSortValue: (r) => Number(r.peAum) || 0, render: editable({ key: 'peAum', label: 'PE AUM', type: 'number', format: 'aum' }, (r) => (typeof r.peAum === 'number' ? r.peAum : null)) },
+      // Sort by active first, total as the tiebreak (active is what the
+      // user scans for; 1e6 keeps totals from ever outranking an active).
+      { key: 'opps', label: 'Opps', defaultWidth: 90, getSortValue: (r) => r.oppsActive * 1e6 + r.oppsTotal, exportValue: (r) => `${r.oppsActive}/${r.oppsTotal}`, render: (r) => (
+        <span
+          title={r._oppsTip.length ? `active / total opps from the Opps tab\n${r._oppsTip.join('\n')}` : 'No opportunities on this company in the Opps tab'}
+          style={{ fontWeight: 700, color: r.oppsActive > 0 ? '#7C3AED' : r.oppsTotal > 0 ? '#64748B' : '#CBD5E1' }}
+        >{r.oppsActive}/{r.oppsTotal}</span>
+      ) },
+      { key: 'pcOpps', label: 'PC Opps', defaultWidth: 90, getSortValue: (r) => r.pcOppsActive * 1e6 + r.pcOppsTotal, exportValue: (r) => `${r.pcOppsActive}/${r.pcOppsTotal}`, render: (r) => (
+        <span
+          title={r._pcOppsTip.length
+            ? `active / total opps across this firm's ${r._pcCount} portfolio compan${r._pcCount === 1 ? 'y' : 'ies'}\n${r._pcOppsTip.join('\n')}`
+            : r._pcCount > 0
+            ? `No opps on this firm's ${r._pcCount} portfolio compan${r._pcCount === 1 ? 'y' : 'ies'} in the Opps tab`
+            : 'No portfolio companies point to this firm — set a company\'s PE Owner to link it'}
+          style={{ fontWeight: 700, color: r.pcOppsActive > 0 ? '#7C3AED' : r.pcOppsTotal > 0 ? '#64748B' : '#CBD5E1' }}
+        >{r.pcOppsActive}/{r.pcOppsTotal}</span>
+      ) },
+      { key: 'peOwner', label: 'PE Owner', defaultWidth: 170, render: editable({ key: 'peOwner', label: 'PE Owner' }) },
+      { key: 'notes', label: 'Notes', defaultWidth: 320, render: editable({ key: 'notes', label: 'Notes', type: 'notes' }) },
+    ];
+  }, [onSelectProspect, onUpdateProspect, handleAddOption, typeOptions, cdmOptions]);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
