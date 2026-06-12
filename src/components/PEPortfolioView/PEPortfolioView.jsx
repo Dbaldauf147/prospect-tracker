@@ -8,6 +8,7 @@ import { PE_STAGES } from '../../data/enums';
 import { computePortfolioFitScore, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
 import { DataTable } from '../common/DataTable';
+import { PasteAddModal } from '../TableView/PasteAddModal';
 
 // Closed/invalid stages from the Opps tab — these shouldn't count toward "active pipeline".
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
@@ -145,7 +146,7 @@ function useOppsRecords(userId) {
   return [records, setRecords];
 }
 
-export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonMap = {} }) {
+export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonMap = {}, onUpdateProspect, onAddProspect }) {
   const { user } = useAuth();
   const [subtab, setSubtab] = useState('portfolio');
   const [showClosed, setShowClosed] = useState(false);
@@ -740,7 +741,10 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       ) : subtab === 'blueOwl' ? (
         <PEBlueOwlTab
           companies={blueOwlCompanies}
+          prospects={prospects}
           onSelectProspect={onSelectProspect}
+          onUpdateProspect={onUpdateProspect}
+          onAddProspect={onAddProspect}
         />
       ) : (
       <>
@@ -1318,13 +1322,24 @@ function PEAllCompaniesTab({ firms, onSelectProspect }) {
   );
 }
 
+// Implicit field for rows pasted onto the Blue Owl tab that don't carry
+// their own PE Owner column — new companies land in Table View already
+// owned by Blue Owl (so they show up on this tab), and matched companies
+// with a blank PE Owner get it filled. Matches the value the Table View
+// backfill used.
+const BLUE_OWL_PASTE_DEFAULTS = { peOwner: 'Blue Owl Capital' };
+
 // "Blue Owl" sub-tab: every Table View prospect whose PE Owner is Blue
 // Owl, as one searchable, filterable table via the shared DataTable.
 // Unlike All PCs (which reads each firm's Portfolio Companies tab),
 // these are full prospect records — so each row links straight to the
-// company's own popup.
-function PEBlueOwlTab({ companies, onSelectProspect }) {
+// company's own popup, and the Paste from Excel button writes straight
+// back to Table View (fill blanks / optionally overwrite on existing
+// companies, add the rest as new Blue Owl-owned prospects).
+function PEBlueOwlTab({ companies, prospects = [], onSelectProspect, onUpdateProspect, onAddProspect }) {
   const [search, setSearch] = useState('');
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   const rows = useMemo(() => companies.map(p => ({
     id: p.id,
@@ -1335,6 +1350,9 @@ function PEBlueOwlTab({ companies, onSelectProspect }) {
     type: p.type || '',
     tier: p.tier || '',
     geography: p.geography || '',
+    hqRegion: p.hqRegion || '',
+    website: p.website || '',
+    peAum: p.peAum ?? '',
     peOwner: p.peOwner || '',
     notes: p.notes || '',
   })), [companies]);
@@ -1355,6 +1373,19 @@ function PEBlueOwlTab({ companies, onSelectProspect }) {
     { key: 'type', label: 'Type', defaultWidth: 150 },
     { key: 'tier', label: 'Tier', defaultWidth: 100 },
     { key: 'geography', label: 'Geography', defaultWidth: 130 },
+    { key: 'hqRegion', label: 'HQ Region', defaultWidth: 130 },
+    { key: 'website', label: 'Website', defaultWidth: 200, render: (r) => (
+      r.website ? (
+        <a
+          href={/^https?:\/\//i.test(r.website) ? r.website : `https://${r.website}`}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          style={{ color: '#2563EB' }}
+        >{r.website}</a>
+      ) : '—'
+    ) },
+    { key: 'peAum', label: 'PE AUM ($B)', defaultWidth: 110, getSortValue: (r) => Number(r.peAum) || 0, render: (r) => formatAum(typeof r.peAum === 'number' ? r.peAum : null) },
     { key: 'peOwner', label: 'PE Owner', defaultWidth: 170 },
     { key: 'notes', label: 'Notes', defaultWidth: 320 },
   ], [onSelectProspect]);
@@ -1364,6 +1395,45 @@ function PEBlueOwlTab({ companies, onSelectProspect }) {
     if (!term) return rows;
     return rows.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(term)));
   }, [search, rows]);
+
+  // Apply a confirmed paste plan (from PasteAddModal in upsert mode):
+  // adds go through onAddProspect (idempotent by company key), updates
+  // through onUpdateProspect with only the changed fields. The table —
+  // and Table View — refresh live off the prospects subscription.
+  async function handlePasteImport(plan) {
+    setPasteOpen(false);
+    setImporting(true);
+    let added = 0;
+    let updated = 0;
+    const failed = [];
+    try {
+      for (const record of (plan.toAdd || [])) {
+        try {
+          await onAddProspect?.(record);
+          added++;
+        } catch (err) {
+          console.error('Blue Owl paste: add failed for', record.company, err);
+          failed.push(record.company);
+        }
+      }
+      for (const u of (plan.toUpdate || [])) {
+        try {
+          await onUpdateProspect?.(u.id, u.changes);
+          updated++;
+        } catch (err) {
+          console.error('Blue Owl paste: update failed for', u.company, err);
+          failed.push(u.company);
+        }
+      }
+      const parts = [`${added} added`, `${updated} updated`];
+      if (plan.unchanged?.length) parts.push(`${plan.unchanged.length} unchanged`);
+      if (plan.noCompany) parts.push(`${plan.noCompany} without a company skipped`);
+      if (failed.length) parts.push(`${failed.length} FAILED`);
+      window.alert(`Blue Owl paste: ${parts.join(' · ')}.${failed.length ? `\n\nFailed rows — try them again:\n  ${failed.join('\n  ')}` : ''}`);
+    } finally {
+      setImporting(false);
+    }
+  }
 
   return (
     <>
@@ -1376,7 +1446,25 @@ function PEBlueOwlTab({ companies, onSelectProspect }) {
           style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
         {search.trim() && <span style={{ fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap' }}>{filtered.length} of {rows.length}</span>}
+        {(onAddProspect || onUpdateProspect) && (
+          <button
+            type="button"
+            onClick={() => setPasteOpen(true)}
+            disabled={importing}
+            title="Copy rows from Excel (with the header row) and paste them in — fills blank fields on companies already in Table View and adds the rest as Blue Owl companies"
+            style={{ padding: '0.4rem 0.75rem', border: '1px solid #E2E8F0', borderRadius: 6, background: importing ? '#F1F5F9' : '#fff', fontSize: '0.72rem', fontWeight: 600, color: importing ? '#94A3B8' : '#334155', cursor: importing ? 'wait' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+          >{importing ? 'Importing…' : 'Paste from Excel'}</button>
+        )}
       </div>
+      {pasteOpen && (
+        <PasteAddModal
+          existingProspects={prospects}
+          mode="upsert"
+          defaults={BLUE_OWL_PASTE_DEFAULTS}
+          onImport={handlePasteImport}
+          onClose={() => setPasteOpen(false)}
+        />
+      )}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
         {rows.length === 0 ? (
           <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
@@ -1387,7 +1475,10 @@ function PEBlueOwlTab({ companies, onSelectProspect }) {
           </div>
         ) : (
           <DataTable
-            tableId="pe-blue-owl-companies"
+            // -2: fresh prefs key so the HQ Region / Website / PE AUM
+            // columns added later aren't hidden by a saved visible-set
+            // from the original layout.
+            tableId="pe-blue-owl-companies-2"
             columns={columns}
             rows={filtered}
             alwaysVisible={['company']}
