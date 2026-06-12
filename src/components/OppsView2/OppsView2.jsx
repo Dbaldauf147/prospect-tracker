@@ -35,7 +35,7 @@ import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { computeListFlags } from '../../utils/listFlags';
-import { TYPES } from '../../data/enums';
+import { TYPES, FRAMEWORKS } from '../../data/enums';
 import { NewOppsScheduleModal } from './NewOppsScheduleModal';
 import { downloadNewOppsOutlookDraft } from '../../utils/newOppsDigestEmail';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
@@ -2500,26 +2500,47 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
   // with the prospect's manual frameworks, keyed by lowercased company name.
   const cdm = String(matchedProspect?.cdm || '').trim();
   const tier = String(matchedProspect?.tier || '').trim();
-  const [frameworks, setFrameworks] = useState([]);
+  const [flaggedFrameworks, setFlaggedFrameworks] = useState([]);
+  // User edits to the framework flags, scoped to the company they were
+  // made for so changing the Company resets to that company's computed
+  // flags (and a background prospects refresh can't clobber the edit).
+  const [frameworkEdit, setFrameworkEdit] = useState(null);
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (!trimmedCompany) { if (!cancelled) setFrameworks([]); return; }
+      if (!trimmedCompany) { if (!cancelled) setFlaggedFrameworks([]); return; }
       try {
         const flags = await computeListFlags([trimmedCompany], { prospects });
         if (cancelled) return;
         const set = flags.get(trimmedCompany.toLowerCase().trim()) || new Set();
-        setFrameworks([...set].sort((a, b) => a.localeCompare(b)));
+        setFlaggedFrameworks([...set].sort((a, b) => a.localeCompare(b)));
       } catch {
-        if (!cancelled) setFrameworks([]);
+        if (!cancelled) setFlaggedFrameworks([]);
       }
     })();
     return () => { cancelled = true; };
   }, [trimmedCompany, prospects]);
+  const frameworks = (frameworkEdit && frameworkEdit.company === trimmedCompany)
+    ? frameworkEdit.list
+    : flaggedFrameworks;
+  const frameworksEdited = !!(frameworkEdit && frameworkEdit.company === trimmedCompany)
+    && (frameworks.length !== flaggedFrameworks.length || frameworks.some(f => !flaggedFrameworks.includes(f)));
+  function toggleFramework(label) {
+    const next = frameworks.includes(label)
+      ? frameworks.filter(f => f !== label)
+      : [...frameworks, label].sort((a, b) => a.localeCompare(b));
+    setFrameworkEdit({ company: trimmedCompany, list: next });
+  }
+  // Keep a saved non-standard framework label selectable so editing
+  // doesn't silently drop it.
+  const frameworkOptions = useMemo(
+    () => [...FRAMEWORKS, ...frameworks.filter(f => !FRAMEWORKS.includes(f))],
+    [frameworks],
+  );
 
-  // Show the context panel once the company matches a Table View record or
-  // has any Lists-page framework flags.
-  const showCompanyInfo = !!trimmedCompany && (companyExists || frameworks.length > 0);
+  // Show the context panel once a company name is typed, so the
+  // framework flags are selectable even for brand-new companies.
+  const showCompanyInfo = !!trimmedCompany;
 
   function submit() {
     onCreate({
@@ -2527,6 +2548,8 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
       source,
       peOwner: peOwner.trim(),
       type: type.trim(),
+      frameworks,
+      frameworksEdited,
       addToTableView: canAddCompany && addToTableView,
     });
   }
@@ -2613,16 +2636,31 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
                 <div><span style={{ color: 'var(--color-text-muted)' }}>Tier:</span>{' '}<strong>{tier || '—'}</strong></div>
                 <div>
                   <span style={{ color: 'var(--color-text-muted)' }}>Frameworks:</span>{' '}
-                  {frameworks.length ? (
-                    <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4, verticalAlign: 'top' }}>
-                      {frameworks.map(f => (
-                        <span key={f} style={{
-                          padding: '0px 6px', borderRadius: 999, fontSize: '0.68rem', fontWeight: 700,
-                          background: '#EFF6FF', color: '#1E3A8A', border: '1px solid #BFDBFE',
-                        }}>{f}</span>
-                      ))}
-                    </span>
-                  ) : <strong>—</strong>}
+                  <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4, verticalAlign: 'top' }}>
+                    {frameworkOptions.map(f => {
+                      const on = frameworks.includes(f);
+                      return (
+                        <button
+                          key={f}
+                          type="button"
+                          onClick={() => toggleFramework(f)}
+                          title={on ? `Remove the ${f} flag` : `Flag ${f}`}
+                          style={{
+                            padding: '0px 6px', borderRadius: 999, fontSize: '0.68rem', fontWeight: 700,
+                            fontFamily: 'inherit', cursor: 'pointer',
+                            background: on ? '#EFF6FF' : 'transparent',
+                            color: on ? '#1E3A8A' : 'var(--color-text-muted)',
+                            border: on ? '1px solid #BFDBFE' : '1px dashed var(--color-border)',
+                          }}
+                        >{f}</button>
+                      );
+                    })}
+                  </span>
+                  {frameworksEdited && companyExists && (
+                    <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: 3 }}>
+                      Will update <strong>{matchedProspect.company}</strong>&apos;s Frameworks in Table View.
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -7722,7 +7760,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           companySuggestions={companySuggestions}
           peOwnerSuggestions={peOwnerSuggestions}
           prospects={prospects}
-          onCreate={({ company, source, peOwner, type, addToTableView }) => {
+          onCreate={({ company, source, peOwner, type, frameworks, frameworksEdited, addToTableView }) => {
             // Create the company on Table View first (when requested and
             // it isn't there yet) so the new opp's Account immediately
             // resolves to a real prospect record. addProspect is
@@ -7730,19 +7768,24 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             // existing company is harmless.
             if (addToTableView && company && addProspect) {
               try {
-                Promise.resolve(addProspect({ company, peOwner: peOwner || '', type: type || '' }))
+                Promise.resolve(addProspect({ company, peOwner: peOwner || '', type: type || '', frameworks: frameworksEdited ? frameworks : [] }))
                   .catch(err => console.error('opps2: add company to Table View failed', err));
               } catch (err) {
                 console.error('opps2: add company to Table View failed', err);
               }
             } else if (company && updateProspect) {
-              // Existing Table View company: the modal prefilled Type from
-              // its record, so a different value here is a reviewed
-              // correction — persist it back to the prospect.
+              // Existing Table View company: the modal prefilled Type and
+              // Frameworks from its record, so a different value here is a
+              // reviewed correction — persist it back to the prospect.
               const matched = findProspectForAccount(company, prospects);
-              if (matched && type !== String(matched.type || '').trim()) {
-                Promise.resolve(updateProspect(matched.id, { type }))
-                  .catch(err => console.error('opps2: update company Type failed', err));
+              if (matched) {
+                const updates = {};
+                if (type !== String(matched.type || '').trim()) updates.type = type;
+                if (frameworksEdited) updates.frameworks = frameworks;
+                if (Object.keys(updates).length) {
+                  Promise.resolve(updateProspect(matched.id, updates))
+                    .catch(err => console.error('opps2: update company failed', err));
+                }
               }
             }
             addNewOpp(company, source, peOwner);
