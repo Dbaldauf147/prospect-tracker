@@ -3889,6 +3889,23 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 style={{ padding: '0.25rem 0.6rem', border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', fontSize: '0.72rem', fontWeight: 600, color: '#334155', cursor: 'pointer', fontFamily: 'inherit' }}
               >Merge duplicate…</button>
             )}
+            {!isNew && onDeleteProspect && (
+              <button
+                type="button"
+                onClick={async () => {
+                  const name = fields.company || 'this company';
+                  if (!window.confirm(`Delete "${name}" from Table View?\n\nThis permanently removes the company record — its fields, notes, and Portfolio Companies tab. This can't be undone.`)) return;
+                  try {
+                    await onDeleteProspect(prospect.id);
+                    onClose();
+                  } catch (err) {
+                    alert(`Delete failed: ${err?.message || err}`);
+                  }
+                }}
+                title="Permanently delete this company from Table View"
+                style={{ padding: '0.25rem 0.6rem', border: '1px solid #FCA5A5', borderRadius: 6, background: '#fff', fontSize: '0.72rem', fontWeight: 600, color: '#B91C1C', cursor: 'pointer', fontFamily: 'inherit' }}
+              >Delete…</button>
+            )}
             <button className={styles.closeBtn} onClick={onClose}>&times;</button>
           </div>
         </div>
