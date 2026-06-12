@@ -11,6 +11,7 @@ import { computePortfolioFitScore, downloadPortfolioCompaniesWorkbook } from '..
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
 import { DataTable } from '../common/DataTable';
 import { PasteAddModal } from '../TableView/PasteAddModal';
+import { splitPeOwners } from '../../utils/peOwners';
 
 // Closed/invalid stages from the Opps tab — these shouldn't count toward "active pipeline".
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
@@ -351,14 +352,17 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       .sort((a, b) => (a.company || '').localeCompare(b.company || ''))
   ), [prospects]);
 
-  // Portfolio company → PE firm (lowercased name) lookup, from each prospect's peOwner field.
+  // Portfolio company → PE firm (lowercased name) lookup, from each
+  // prospect's peOwner field. A company can list several owners
+  // (comma-separated) and is linked under each of them.
   const portfolioByPe = useMemo(() => {
     const map = new Map();
     for (const p of prospects) {
-      const owner = (p.peOwner || '').trim().toLowerCase();
-      if (!owner) continue;
-      if (!map.has(owner)) map.set(owner, []);
-      map.get(owner).push(p);
+      for (const owner of splitPeOwners(p.peOwner)) {
+        const key = owner.toLowerCase();
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(p);
+      }
     }
     return map;
   }, [prospects]);
@@ -1238,18 +1242,19 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect }) {
     for (const pe of firms) {
       if (Array.isArray(pe.portfolioCompanies) && pe.portfolioCompanies.length > 0) push(pe.company);
     }
-    for (const p of prospects) push(p.peOwner);
+    for (const p of prospects) for (const o of splitPeOwners(p.peOwner)) push(o);
     return out.sort((a, b) => a.localeCompare(b));
   }, [firms, prospects]);
 
-  // Company name (lowercased) → its Table View PE Owner, for the "or
-  // the Company" half of the owner filter.
+  // Company name (lowercased) → its Table View PE Owners (a company can
+  // list several, comma-separated), for the "or the Company" half of
+  // the owner filter.
   const ownerByCompany = useMemo(() => {
     const m = new Map();
     for (const p of prospects) {
-      const owner = (p.peOwner || '').trim();
+      const owners = splitPeOwners(p.peOwner);
       const name = (p.company || '').trim().toLowerCase();
-      if (owner && name) m.set(name, owner);
+      if (owners.length && name) m.set(name, owners);
     }
     return m;
   }, [prospects]);
@@ -1331,14 +1336,14 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect }) {
     if (ownerFilter) {
       out = out.filter(r => {
         if (companiesMatch(r.peFirm, ownerFilter)) return true;
-        const owner = ownerByCompany.get(r.companyName.trim().toLowerCase());
-        if (owner && companiesMatch(owner, ownerFilter)) return true;
+        const owners = ownerByCompany.get(r.companyName.trim().toLowerCase()) || [];
+        if (owners.some(o => companiesMatch(o, ownerFilter))) return true;
         // One level up the ownership chain: the firm that mapped this
         // PC is itself owned by the pick (its Table View PE Owner
         // matches), so its portfolio companies belong to the pick's
         // GP-stakes family too.
-        const firmOwner = ownerByCompany.get(r.peFirm.trim().toLowerCase());
-        return firmOwner ? companiesMatch(firmOwner, ownerFilter) : false;
+        const firmOwners = ownerByCompany.get(r.peFirm.trim().toLowerCase()) || [];
+        return firmOwners.some(o => companiesMatch(o, ownerFilter));
       });
     }
     const term = search.trim().toLowerCase();

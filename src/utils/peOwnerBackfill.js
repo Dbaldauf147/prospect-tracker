@@ -5,6 +5,7 @@
 // no match — with close-name candidates so a renamed record can be
 // fixed by hand.
 import { normalizeCompanyName } from './firestoreSync';
+import { splitPeOwners, joinPeOwners } from './peOwners';
 
 export const BLUE_OWL_PE_OWNER = 'Blue Owl Capital';
 
@@ -129,7 +130,14 @@ function isCandidate(targetNorm, recordNorm) {
   return recordNorm.includes(' ') || recordNorm.length >= 9;
 }
 
-function fieldEquals(current, wanted) {
+function fieldEquals(current, wanted, key) {
+  // peOwner can hold several comma-separated owners; the pass is
+  // satisfied as soon as the wanted firm is one of them, so a record a
+  // user extended with a second owner isn't treated as needing a write.
+  if (key === 'peOwner') {
+    const want = String(wanted || '').trim().toLowerCase();
+    return splitPeOwners(current).some(o => o.toLowerCase() === want);
+  }
   return String(current || '').trim().toLowerCase() === String(wanted || '').trim().toLowerCase();
 }
 
@@ -166,12 +174,20 @@ export async function runProspectBackfill(prospects, updateProspect, { companies
       continue;
     }
     for (const p of matches) {
-      if (Object.entries(fields).every(([k, v]) => fieldEquals(p[k], v))) {
+      // Only write the fields that actually differ; for peOwner, append
+      // the firm to whatever owners are already listed rather than
+      // overwriting them.
+      const writes = {};
+      for (const [k, v] of Object.entries(fields)) {
+        if (fieldEquals(p[k], v, k)) continue;
+        writes[k] = k === 'peOwner' ? joinPeOwners([...splitPeOwners(p[k]), v]) : v;
+      }
+      if (Object.keys(writes).length === 0) {
         alreadySet.push(p.company);
         continue;
       }
       try {
-        await updateProspect(p.id, fields);
+        await updateProspect(p.id, writes);
         updated.push(p.company);
       } catch (err) {
         failed.push(`${p.company} — ${err?.message || err}`);

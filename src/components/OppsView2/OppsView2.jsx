@@ -35,6 +35,7 @@ import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { computeListFlags } from '../../utils/listFlags';
+import { splitPeOwners, joinPeOwners } from '../../utils/peOwners';
 import { TYPES, FRAMEWORKS } from '../../data/enums';
 import { NewOppsScheduleModal } from './NewOppsScheduleModal';
 import { downloadNewOppsOutlookDraft } from '../../utils/newOppsDigestEmail';
@@ -1823,18 +1824,26 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
 
   const matched = useMemo(() => findProspectForAccount(account, prospects), [account, prospects]);
 
-  // The opp's PE Owner is itself a company in the Table View, so resolve
-  // it to a prospect too — its contacts get folded into the same roster
-  // below so the user can tag the PE firm's people alongside the deal
-  // company's. PE ownership normally lives on the Table View company
-  // record (prospect.peOwner), not on each opp row, so fall back to the
-  // matched company's peOwner when the opp's own PE Owner column is blank.
+  // The opp's PE Owners are themselves companies in the Table View, so
+  // resolve each one to a prospect too — their contacts get folded into
+  // the same roster below so the user can tag the PE firms' people
+  // alongside the deal company's. PE ownership normally lives on the
+  // Table View company record (prospect.peOwner), not on each opp row,
+  // so fall back to the matched company's peOwner when the opp's own PE
+  // Owner column is blank. A company can list several owners
+  // (comma-separated); each gets its own roster entry.
   const peOwnerStr = String(peOwner || matched?.peOwner || '').trim();
-  const peMatched = useMemo(
-    () => (peOwnerStr ? findProspectForAccount(peOwnerStr, prospects) : null),
+  const peResolved = useMemo(
+    () => splitPeOwners(peOwnerStr).map(owner => ({
+      owner,
+      prospect: findProspectForAccount(owner, prospects),
+    })),
     [peOwnerStr, prospects],
   );
-  const peLabel = (peMatched?.company || peOwnerStr || '').trim();
+  const peLabel = peResolved
+    .map(({ owner, prospect }) => (prospect?.company || owner).trim())
+    .filter(Boolean)
+    .join(' & ');
 
   // Build the contact roster for this opp. Pull from two sources and
   // dedupe by name (case-insensitive):
@@ -1846,7 +1855,7 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
   // (most of the user's contacts live there); prospect.contacts is a
   // fallback for accounts that were curated manually.
   const contactOptions = useMemo(() => {
-    if (!account && !matched && !peMatched) return [];
+    if (!account && !matched && peResolved.length === 0) return [];
     // A reusable predicate: does this HubSpot contact belong to the
     // company described by `keys` / `names` / `domains`? Mirrors the
     // three-way match the cell has always used (key intersection, fuzzy
@@ -1874,13 +1883,20 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
       [account, matched?.company],
       prospectEmailDomains(matched),
     );
-    const peKeys = new Set([
-      ...companyMatchKeys(peOwnerStr),
-      ...(peMatched ? companyMatchKeys(peMatched.company) : []),
-    ]);
-    const matchesPe = peLabel
-      ? makeMatcher(peKeys, [peOwnerStr, peMatched?.company], prospectEmailDomains(peMatched))
-      : () => false;
+    // One matcher per PE owner so each firm's contacts get tagged with
+    // that firm's name in the mixed roster.
+    const peMatchers = peResolved.map(({ owner, prospect }) => ({
+      label: (prospect?.company || owner).trim(),
+      prospect,
+      matches: makeMatcher(
+        new Set([
+          ...companyMatchKeys(owner),
+          ...(prospect ? companyMatchKeys(prospect.company) : []),
+        ]),
+        [owner, prospect?.company],
+        prospectEmailDomains(prospect),
+      ),
+    }));
 
     const seen = new Set();
     const out = [];
@@ -1903,14 +1919,20 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
     // Deal company wins on a tie (checked first), so a contact shared by
     // both rosters is labeled with the deal company, not the PE firm.
     for (const c of (hubspotContacts || [])) {
-      if (matchesCompany(c)) pushContact(c, 'company', matched?.company || account);
-      else if (matchesPe(c)) pushContact(c, 'pe', peLabel);
+      if (matchesCompany(c)) {
+        pushContact(c, 'company', matched?.company || account);
+      } else {
+        const pm = peMatchers.find(m => m.matches(c));
+        if (pm) pushContact(c, 'pe', pm.label);
+      }
     }
     for (const c of (matched?.contacts || [])) pushContact(c, 'company', matched?.company || account);
-    for (const c of (peMatched?.contacts || [])) pushContact(c, 'pe', peLabel);
+    for (const pm of peMatchers) {
+      for (const c of (pm.prospect?.contacts || [])) pushContact(c, 'pe', pm.label);
+    }
     out.sort((a, b) => a.name.localeCompare(b.name));
     return out;
-  }, [account, hubspotContacts, matched, peOwnerStr, peMatched, peLabel]);
+  }, [account, hubspotContacts, matched, peResolved]);
 
   const selected = useMemo(() => parseMulti(value), [value]);
   const selectedSet = useMemo(() => new Set(selected.map(s => s.toLowerCase())), [selected]);
@@ -2468,10 +2490,12 @@ function resolveColumnLink(columnName, userLinks) {
 function NewOppModal({ account: initialAccount, sourceOptions = [], companySuggestions = [], peOwnerSuggestions = [], prospects = [], onCreate, onCancel }) {
   const [company, setCompany] = useState(initialAccount || '');
   const [source, setSource] = useState('');
-  // Buffer for a hand-typed PE Owner. Until the user types, PE Owner is
-  // derived from the matched Table View company (see `peOwner` below), so
-  // changing the Company re-prefills it without a sync effect.
-  const [peOwnerInput, setPeOwnerInput] = useState('');
+  // PE Owners as a chip list (a company can have several). Until the
+  // user edits, the chips derive from the matched Table View company
+  // (see `peOwners` below), so changing the Company re-prefills them
+  // without a sync effect. The draft buffers the owner being typed.
+  const [peOwnersInput, setPeOwnersInput] = useState([]);
+  const [peOwnerDraft, setPeOwnerDraft] = useState('');
   const [peOwnerTouched, setPeOwnerTouched] = useState(false);
   // Same touched-buffer pattern for the company Type.
   const [typeInput, setTypeInput] = useState('');
@@ -2487,9 +2511,26 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
   const companyType = String(matchedProspect?.type || '').trim();
   // Only meaningful when the Company is new (not yet in Table View).
   const canAddCompany = !!trimmedCompany && !companyExists;
-  // Prefill PE Owner from the matched Table View company until the user
-  // types their own value.
-  const peOwner = peOwnerTouched ? peOwnerInput : (matchedProspect?.peOwner || '');
+  // Prefill the PE Owners from the matched Table View company until the
+  // user edits the chips.
+  const peOwners = peOwnerTouched ? peOwnersInput : splitPeOwners(matchedProspect?.peOwner || '');
+  function addPeOwner(text) {
+    const next = [...peOwners];
+    for (const part of splitPeOwners(text)) {
+      if (!next.some(o => o.toLowerCase() === part.toLowerCase())) next.push(part);
+    }
+    setPeOwnerTouched(true);
+    setPeOwnersInput(next);
+    setPeOwnerDraft('');
+  }
+  function removePeOwner(name) {
+    setPeOwnerTouched(true);
+    setPeOwnersInput(peOwners.filter(o => o !== name));
+  }
+  const peOwnerSuggestionSet = useMemo(
+    () => new Set(peOwnerSuggestions.map(s => String(s).toLowerCase())),
+    [peOwnerSuggestions],
+  );
   // Prefill Type from the matched Table View company until the user
   // picks their own value.
   const type = typeTouched ? typeInput : companyType;
@@ -2543,10 +2584,16 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
   const showCompanyInfo = !!trimmedCompany;
 
   function submit() {
+    // Fold in a typed-but-uncommitted draft so an owner the user didn't
+    // chip (no Enter / suggestion pick) still lands on the opp.
+    const owners = [...peOwners];
+    for (const part of splitPeOwners(peOwnerDraft)) {
+      if (!owners.some(o => o.toLowerCase() === part.toLowerCase())) owners.push(part);
+    }
     onCreate({
       company: trimmedCompany,
       source,
-      peOwner: peOwner.trim(),
+      peOwner: joinPeOwners(owners),
       type: type.trim(),
       frameworks,
       frameworksEdited,
@@ -2705,13 +2752,50 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
           </div>
 
           <div>
-            <label style={labelStyle}>PE Owner</label>
+            <label style={labelStyle}>PE Owner{peOwners.length > 1 ? 's' : ''}</label>
+            {peOwners.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 5 }}>
+                {peOwners.map(o => (
+                  <span key={o} style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    padding: '1px 4px 1px 8px', borderRadius: 999, fontSize: '0.72rem', fontWeight: 600,
+                    background: '#F3E8FF', color: '#6D28D9', border: '1px solid #DDD6FE',
+                  }}>
+                    {o}
+                    <button
+                      type="button"
+                      onClick={() => removePeOwner(o)}
+                      title={`Remove ${o}`}
+                      style={{
+                        border: 'none', background: 'transparent', cursor: 'pointer',
+                        padding: 0, lineHeight: 1, fontSize: '0.78rem', color: '#7C3AED', fontFamily: 'inherit',
+                      }}
+                    >×</button>
+                  </span>
+                ))}
+              </div>
+            )}
             <input
               type="text"
               list="newopp-peowner-list"
-              value={peOwner}
-              placeholder="PE Owner (if portfolio co)…"
-              onChange={(e) => { setPeOwnerTouched(true); setPeOwnerInput(e.target.value); }}
+              value={peOwnerDraft}
+              placeholder={peOwners.length ? 'Add another PE Owner…' : 'PE Owner (if portfolio co)…'}
+              onChange={(e) => {
+                const v = e.target.value;
+                // Picking a datalist suggestion fires a change with the
+                // full name — commit it as a chip right away so another
+                // owner can be added after it.
+                if (peOwnerSuggestionSet.has(v.trim().toLowerCase())) { addPeOwner(v); return; }
+                setPeOwnerDraft(v);
+              }}
+              onKeyDown={(e) => {
+                // Enter or comma commits the typed owner as a chip
+                // (Cmd/Ctrl+Enter still submits via the modal handler).
+                if ((e.key === 'Enter' && !e.metaKey && !e.ctrlKey) || e.key === ',') {
+                  if (peOwnerDraft.trim()) { e.preventDefault(); addPeOwner(peOwnerDraft); }
+                  else if (e.key === ',') e.preventDefault();
+                }
+              }}
               style={fieldStyle}
             />
             <datalist id="newopp-peowner-list">
@@ -6546,7 +6630,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       if (String(p?.type) === 'Private Equity') push(p?.company, true);
     }
     for (const p of (prospects || [])) push(p?.company, false);
-    for (const r of (data?.records || [])) push(r?.['PE Owner'], false);
+    for (const r of (data?.records || [])) {
+      for (const o of splitPeOwners(r?.['PE Owner'])) push(o, false);
+    }
     pe.sort((a, b) => a.localeCompare(b));
     others.sort((a, b) => a.localeCompare(b));
     return [...pe, ...others];
