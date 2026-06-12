@@ -338,6 +338,15 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     peFirms.reduce((s, pe) => s + (Array.isArray(pe.portfolioCompanies) ? pe.portfolioCompanies.length : 0), 0)
   ), [peFirms]);
 
+  // "Blue Owl" sub-tab: every Table View prospect whose PE Owner names
+  // Blue Owl. Contains-match (case-insensitive) so data-entry variants
+  // like "Blue Owl Capital" still land here.
+  const blueOwlCompanies = useMemo(() => (
+    prospects
+      .filter(p => (p.peOwner || '').toLowerCase().includes('blue owl'))
+      .sort((a, b) => (a.company || '').localeCompare(b.company || ''))
+  ), [prospects]);
+
   // Portfolio company → PE firm (lowercased name) lookup, from each prospect's peOwner field.
   const portfolioByPe = useMemo(() => {
     const map = new Map();
@@ -647,6 +656,8 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               ? <>PE firms grouped by their <strong>PE Stage</strong> (set in each firm's company popup): <code>Discovery</code>, <code>Piloting</code>, <code>Existing Partnership</code>, and <code>Not Sold</code>.</>
               : subtab === 'companies'
               ? <>Every mapped <strong>portfolio company</strong> across all PE firms (from each firm's Portfolio Companies tab), merged into one searchable, filterable table. <strong>Opportunity Score</strong> is ranked within each PC's own firm — matching that firm's export.</>
+              : subtab === 'blueOwl'
+              ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>Blue Owl</code>.</>
               : <>Every opportunity from the <strong>Opps</strong> tab with Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>}
           </div>
         </div>
@@ -664,6 +675,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           { key: 'portfolio', label: 'Portfolio', count: peFirms.length },
           { key: 'stages', label: 'PE Stages', count: peFirms.length },
           { key: 'companies', label: 'All PCs', count: allPortfolioCompanyCount },
+          { key: 'blueOwl', label: 'Blue Owl', count: blueOwlCompanies.length },
           { key: 'opps', label: 'PE Opps', count: peOpps.length },
         ].map(t => {
           const isActive = subtab === t.key;
@@ -722,6 +734,11 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       ) : subtab === 'companies' ? (
         <PEAllCompaniesTab
           firms={peFirms}
+          onSelectProspect={onSelectProspect}
+        />
+      ) : subtab === 'blueOwl' ? (
+        <PEBlueOwlTab
+          companies={blueOwlCompanies}
           onSelectProspect={onSelectProspect}
         />
       ) : (
@@ -1293,6 +1310,91 @@ function PEAllCompaniesTab({ firms, onSelectProspect }) {
             emptyMessage="No portfolio companies match your filters"
             exportFileName="pe_portfolio_companies"
             exportPrimarySheetName="Portfolio Companies"
+          />
+        )}
+      </div>
+    </>
+  );
+}
+
+// "Blue Owl" sub-tab: every Table View prospect whose PE Owner is Blue
+// Owl, as one searchable, filterable table via the shared DataTable.
+// Unlike All PCs (which reads each firm's Portfolio Companies tab),
+// these are full prospect records — so each row links straight to the
+// company's own popup.
+function PEBlueOwlTab({ companies, onSelectProspect }) {
+  const [search, setSearch] = useState('');
+
+  const rows = useMemo(() => companies.map(p => ({
+    id: p.id,
+    _prospect: p,
+    company: p.company || '',
+    status: p.status || '',
+    cdm: p.cdm || '',
+    type: p.type || '',
+    tier: p.tier || '',
+    geography: p.geography || '',
+    peOwner: p.peOwner || '',
+    notes: p.notes || '',
+  })), [companies]);
+
+  const columns = useMemo(() => [
+    { key: 'company', label: 'Company', defaultWidth: 240, sticky: true, render: (r) => (
+      <button
+        type="button"
+        onClick={() => onSelectProspect?.(r._prospect)}
+        title={`Open "${r.company}" in the Table View`}
+        style={{ background: 'none', border: 'none', padding: 0, color: '#7C3AED', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', textAlign: 'left' }}
+      >
+        {r.company || '—'}
+      </button>
+    ) },
+    { key: 'status', label: 'Status', defaultWidth: 140 },
+    { key: 'cdm', label: 'CDM', defaultWidth: 160 },
+    { key: 'type', label: 'Type', defaultWidth: 150 },
+    { key: 'tier', label: 'Tier', defaultWidth: 100 },
+    { key: 'geography', label: 'Geography', defaultWidth: 130 },
+    { key: 'peOwner', label: 'PE Owner', defaultWidth: 170 },
+    { key: 'notes', label: 'Notes', defaultWidth: 320 },
+  ], [onSelectProspect]);
+
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return rows;
+    return rows.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(term)));
+  }, [search, rows]);
+
+  return (
+    <>
+      <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder={`Search ${rows.length} Blue Owl compan${rows.length === 1 ? 'y' : 'ies'}…`}
+          style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
+        />
+        {search.trim() && <span style={{ fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap' }}>{filtered.length} of {rows.length}</span>}
+      </div>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
+        {rows.length === 0 ? (
+          <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
+            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No Blue Owl companies found</div>
+            <div style={{ fontSize: '0.78rem' }}>
+              Open a company's popup and set its <strong>PE Owner</strong> to <code>Blue Owl</code> — it'll show up here.
+            </div>
+          </div>
+        ) : (
+          <DataTable
+            tableId="pe-blue-owl-companies"
+            columns={columns}
+            rows={filtered}
+            alwaysVisible={['company']}
+            defaultSort={{ key: 'company', direction: 'asc' }}
+            enableColumnFilters
+            emptyMessage="No Blue Owl companies match your filters"
+            exportFileName="blue_owl_companies"
+            exportPrimarySheetName="Blue Owl Companies"
           />
         )}
       </div>
