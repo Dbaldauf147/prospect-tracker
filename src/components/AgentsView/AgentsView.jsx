@@ -108,7 +108,7 @@ const OPPS_STAGE_TO_BFO_STAGE = {
 
 const DEFAULT_AI_PROMPT_CLOSE_NOT_SOLDS = `1.  Reference the BFO links below.
 2.  If the link's associated status is Lost, then click on the Competitors button and then select New
-3.  In the Competitor Name enter Unknown Competition and mark the box below Winner as checked.
+3.  In the Competitor Name enter the value from the Competition column below and mark the box below Winner as checked.
 4.  Click the save button and then navigate back to the BFO link for this opportunity.
 5.  When you are back on that page, update the opportunity to the stage Closed and then click the Select Closed Stage blue button.
 6.  The Edit Dependencies menu, choose the 0 - Closed option.
@@ -2033,6 +2033,12 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
       const bfoUrl = detectBfoUrl(r);
       const reasonNotSold = String(r['Reason Not Sold'] || '').trim();
       const map = REASON_NOT_SOLD_TO_BFO[reasonNotSold.toLowerCase()] || null;
+      // Competition (set via the Sold / Not Sold close-out popups or
+      // inline on Opps 2) feeds the Competitor Name the AI enters on
+      // Lost opps. Blank / placeholder cells fall back to the old
+      // hardcoded "Unknown Competition".
+      const competitionRaw = String(r['Competition'] || '').trim();
+      const competition = (competitionRaw === '-' || competitionRaw === '#N/A') ? '' : competitionRaw;
       seen.add(key);
       rows.push({
         id: `${key}|${bfoUrl || bfoOpp}`,
@@ -2041,6 +2047,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
         reasonNotSold,
         status: map?.status || '',
         reason: map?.reason || '',
+        competition: competition || 'Unknown Competition',
         unmapped: !map,
         bfoUrl,
       });
@@ -2148,10 +2155,10 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
     for (const o of stageChangeOpps) stageLines.push(`${o.bfoUrl}\t${o.expectedBfoStage}`);
     const stageBlock = stageLines.join('\n');
 
-    const closeNotSoldLines = ['BFO Link\tStatus\tReason'];
+    const closeNotSoldLines = ['BFO Link\tStatus\tReason\tCompetition'];
     for (const o of closeNotSoldOpps) {
       if (o.unmapped) continue;
-      closeNotSoldLines.push(`${o.bfoUrl}\t${o.status}\t${o.reason}`);
+      closeNotSoldLines.push(`${o.bfoUrl}\t${o.status}\t${o.reason}\t${o.competition}`);
     }
     const closeNotSoldBlock = closeNotSoldLines.join('\n');
 
@@ -3003,15 +3010,15 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
       {(() => {
         // Close Not Solds prompt — every Not-Sold Opps 2 opp that's
         // still open on the BFO Activity tab. Output is a tab-delimited
-        // "BFO Link\tStatus\tReason" block so the AI assistant can walk
-        // each row and close it out. Rows without a known Reason Not
-        // Sold mapping leave Status / Reason blank — surfaced in the
-        // table so the user can act on them.
-        const headerLine = 'BFO Link\tStatus\tReason';
+        // "BFO Link\tStatus\tReason\tCompetition" block so the AI
+        // assistant can walk each row and close it out. Rows without a
+        // known Reason Not Sold mapping leave Status / Reason blank —
+        // surfaced in the table so the user can act on them.
+        const headerLine = 'BFO Link\tStatus\tReason\tCompetition';
         const lines = [headerLine];
         for (const o of closeNotSoldOpps) {
           if (o.unmapped) continue;
-          lines.push(`${o.bfoUrl}\t${o.status}\t${o.reason}`);
+          lines.push(`${o.bfoUrl}\t${o.status}\t${o.reason}\t${o.competition}`);
         }
         const block = lines.join('\n');
         const fullPrompt = `${closeNotSoldsPrompt}\n\n${block}`;
@@ -3068,13 +3075,14 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
                     <th>Reason Not Sold</th>
                     <th>Status</th>
                     <th>Reason</th>
+                    <th>Competition</th>
                     <th style={{ width: 70 }}>BFO Link</th>
                   </tr>
                 </thead>
                 <tbody>
                   {closeNotSoldOpps.length === 0 ? (
                     <tr className={styles.emptyRow}>
-                      <td colSpan={6}>No Not-Sold opps with a matching BFO Activity row. Paste fresh BFO Activity data if you expected matches.</td>
+                      <td colSpan={7}>No Not-Sold opps with a matching BFO Activity row. Paste fresh BFO Activity data if you expected matches.</td>
                     </tr>
                   ) : closeNotSoldOpps.map(o => (
                     <tr key={o.id} style={o.unmapped ? { background: '#FEF3C7' } : undefined}>
@@ -3083,6 +3091,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
                       <td className={o.reasonNotSold ? '' : styles.missing}>{o.reasonNotSold || 'Missing'}</td>
                       <td className={o.status ? '' : styles.missing}>{o.status || (o.unmapped ? 'Missing (unmapped reason)' : 'Missing')}</td>
                       <td className={o.reason ? '' : styles.missing}>{o.reason || (o.unmapped ? 'Missing (unmapped reason)' : 'Missing')}</td>
+                      <td>{o.competition}</td>
                       <td className={o.bfoUrl ? '' : styles.missing}>
                         {o.bfoUrl ? (
                           <a href={o.bfoUrl} target="_blank" rel="noreferrer" className={styles.bfoLink}>Open</a>

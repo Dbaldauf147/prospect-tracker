@@ -2837,8 +2837,8 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
 }
 
 // Popup that fires after Stage flips to "Not Sold". Prompts the user to
-// fill in the three close-out columns (Close Date, Reason Not Sold,
-// Final Margin) so the downstream reporting tabs (AgentsView's
+// fill in the close-out columns (Close Date, Reason Not Sold, Final
+// Margin, Competition) so the downstream reporting tabs (AgentsView's
 // Not-Sold BFO Status block + PipelineView's Final Margin table) have
 // what they need without the user having to remember to hunt for the
 // columns after the stage change.
@@ -2846,19 +2846,21 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
 // The modal pre-populates with whatever the row already has — the
 // Close Date was just auto-stamped to today by updateOppField (when it
 // was empty), so it shows up here ready to adjust. Save applies the
-// three values via updateOppField (skipping fields the user left
+// values via updateOppField (skipping fields the user left
 // untouched). Skip leaves the row as-is — Stage is still set to Not
 // Sold and the stamped Close Date stays.
-function NotSoldFollowUpModal({ opp, reasonOptions, onSave, onClose }) {
+function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, onClose }) {
   const [closeDate, setCloseDate] = useState(toISODate(opp?.['Close Date']) || '');
   const [reason, setReason] = useState(String(opp?.['Reason Not Sold'] ?? ''));
   const [finalMargin, setFinalMargin] = useState(String(opp?.['Final Margin'] ?? ''));
+  const [competition, setCompetition] = useState(String(opp?.['Competition'] ?? ''));
 
   function handleSave() {
     onSave({
       closeDate,
       reason,
       finalMargin: finalMargin.trim(),
+      competition: competition.trim(),
     });
   }
 
@@ -2943,6 +2945,19 @@ function NotSoldFollowUpModal({ opp, reasonOptions, onSave, onClose }) {
               placeholder="e.g. 22% or $4,500"
               style={inputStyle}
             />
+          </div>
+          <div>
+            <label style={labelStyle}>Competition</label>
+            <select
+              value={competition}
+              onChange={(e) => setCompetition(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">— Select —</option>
+              {competitionOptions.map(o => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
           </div>
         </div>
 
@@ -7929,7 +7944,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           <NotSoldFollowUpModal
             opp={opp}
             reasonOptions={listRegistry.get('reasonNotSold')?.options || []}
-            onSave={({ closeDate, reason, finalMargin }) => {
+            competitionOptions={listRegistry.get('competition')?.options || []}
+            onSave={({ closeDate, reason, finalMargin, competition }) => {
               // Only push fields whose value actually changed so the
               // undo stack stays uncluttered with no-op snapshots.
               if (closeDate !== (toISODate(opp['Close Date']) || '')) {
@@ -7940,6 +7956,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               }
               if (finalMargin !== String(opp['Final Margin'] ?? '').trim()) {
                 updateOppField(opp._id, 'Final Margin', finalMargin);
+              }
+              if (competition !== String(opp['Competition'] ?? '').trim()) {
+                updateOppField(opp._id, 'Competition', competition);
               }
               setNotSoldPromptId(null);
             }}
