@@ -3242,7 +3242,10 @@ function QuotedFollowUpModal({ opp, chanceOptions, onSave, onClose }) {
   const curMarginReview = opp?.['Margin Email Date - Sales Leader Review Date']
     ?? opp?.['Margin Email Date'] ?? opp?.['Sales Leader Review Date'] ?? '';
 
-  const [quotedOn, setQuotedOn] = useState(toISODate(curQuotedOn) || '');
+  // Quoted On assumes today when the row doesn't carry a date yet —
+  // the popup fires right as the stage flips to Quoted, so "today" is
+  // almost always right, and the input stays editable for overrides.
+  const [quotedOn, setQuotedOn] = useState(toISODate(curQuotedOn) || todayISO());
   const [chance, setChance] = useState(String(curChance ?? ''));
   const [marginReviewDate, setMarginReviewDate] = useState(toISODate(curMarginReview) || '');
 
