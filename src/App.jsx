@@ -3,7 +3,7 @@ import { getHubspotContacts } from './utils/hubspotContactsCache';
 import { useAuth } from './contexts/AuthContext';
 import { useProspects } from './hooks/useProspects';
 import { userLsGet, userLsSet } from './utils/userLs';
-import { runPeOwnerBackfill, formatPeOwnerBackfillReport, PE_OWNER_BACKFILL_FLAG } from './utils/peOwnerBackfill';
+import { runProspectBackfill, formatBackfillReport, BACKFILL_PASSES } from './utils/peOwnerBackfill';
 import { useSheetSync } from './hooks/useSheetSync';
 import { useFilters } from './hooks/useFilters';
 import { useUserSettings } from './hooks/useUserSettings';
@@ -145,17 +145,25 @@ function App() {
     });
   }, [user]);
 
-  // One-time PE Owner backfill: stamps "Blue Owl Capital" on a fixed
-  // list of PE firms (see utils/peOwnerBackfill.js) the first time
-  // prospects load for this user/browser, then reports the result —
-  // including any list names that matched no Table View record.
+  // One-time prospect backfills (see utils/peOwnerBackfill.js): each
+  // pass stamps fixed field values onto a list of Table View companies
+  // the first time prospects load for this user/browser, then reports
+  // the result — including any names that matched no record.
   useEffect(() => {
     if (!user || dataLoading || prospects.length === 0) return;
-    if (userLsGet(PE_OWNER_BACKFILL_FLAG)) return;
-    userLsSet(PE_OWNER_BACKFILL_FLAG, new Date().toISOString());
-    runPeOwnerBackfill(prospects, updateProspect)
-      .then(result => window.alert(formatPeOwnerBackfillReport(result)))
-      .catch(err => window.alert(`PE Owner update failed: ${err?.message || err}`));
+    const pending = BACKFILL_PASSES.filter(pass => !userLsGet(pass.flag));
+    if (pending.length === 0) return;
+    for (const pass of pending) userLsSet(pass.flag, new Date().toISOString());
+    (async () => {
+      for (const pass of pending) {
+        try {
+          const result = await runProspectBackfill(prospects, updateProspect, pass);
+          window.alert(formatBackfillReport(pass, result));
+        } catch (err) {
+          window.alert(`Company update failed: ${err?.message || err}`);
+        }
+      }
+    })();
   }, [user, dataLoading, prospects, updateProspect]);
 
   const handleModalSave = useCallback(async (data, { close = true } = {}) => {
