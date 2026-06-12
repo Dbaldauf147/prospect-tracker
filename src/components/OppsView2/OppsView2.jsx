@@ -35,6 +35,7 @@ import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { computeListFlags } from '../../utils/listFlags';
+import { TYPES } from '../../data/enums';
 import { NewOppsScheduleModal } from './NewOppsScheduleModal';
 import { downloadNewOppsOutlookDraft } from '../../utils/newOppsDigestEmail';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
@@ -2454,14 +2455,16 @@ function resolveColumnLink(columnName, userLinks) {
 
 
 // Modal that fires right before a new opp is committed. Collects the
-// three fields the user wants set up front — Company (Account), Source,
-// and PE Owner — instead of leaving them blank for inline editing. The
-// Company and PE Owner inputs autocomplete from the same suggestion
-// lists their table cells use (Table View companies + names already on
-// this tab). When the typed Company doesn't already exist in Table
-// View, the modal offers to add it there as a new company so the two
-// views stay in sync. Account may be pre-filled when the flow came from
-// the Add Company combobox.
+// fields the user wants set up front — Company (Account), Source,
+// company Type, and PE Owner — instead of leaving them blank for inline
+// editing. The Company and PE Owner inputs autocomplete from the same
+// suggestion lists their table cells use (Table View companies + names
+// already on this tab); Type prefills from the matched Table View
+// record so it can be reviewed (and corrected) as part of the flow.
+// When the typed Company doesn't already exist in Table View, the modal
+// offers to add it there as a new company so the two views stay in
+// sync. Account may be pre-filled when the flow came from the Add
+// Company combobox.
 function NewOppModal({ account: initialAccount, sourceOptions = [], companySuggestions = [], peOwnerSuggestions = [], prospects = [], onCreate, onCancel }) {
   const [company, setCompany] = useState(initialAccount || '');
   const [source, setSource] = useState('');
@@ -2470,6 +2473,9 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
   // changing the Company re-prefills it without a sync effect.
   const [peOwnerInput, setPeOwnerInput] = useState('');
   const [peOwnerTouched, setPeOwnerTouched] = useState(false);
+  // Same touched-buffer pattern for the company Type.
+  const [typeInput, setTypeInput] = useState('');
+  const [typeTouched, setTypeTouched] = useState(false);
   const [addToTableView, setAddToTableView] = useState(true);
 
   const trimmedCompany = company.trim();
@@ -2484,6 +2490,9 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
   // Prefill PE Owner from the matched Table View company until the user
   // types their own value.
   const peOwner = peOwnerTouched ? peOwnerInput : (matchedProspect?.peOwner || '');
+  // Prefill Type from the matched Table View company until the user
+  // picks their own value.
+  const type = typeTouched ? typeInput : companyType;
 
   // Company context shown once a company is entered: its CDM and account
   // Tier (from the Table View record) plus the frameworks it's associated
@@ -2517,6 +2526,7 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
       company: trimmedCompany,
       source,
       peOwner: peOwner.trim(),
+      type: type.trim(),
       addToTableView: canAddCompany && addToTableView,
     });
   }
@@ -2557,7 +2567,7 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
             New Opp
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
-            Set the Company, Source, and PE Owner for the new row. All are optional and editable later.
+            Set the Company, Source, Type, and PE Owner for the new row. All are optional and editable later.
           </div>
         </div>
 
@@ -2630,6 +2640,30 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
                 <option key={o} value={o}>{o}</option>
               ))}
             </select>
+          </div>
+
+          <div>
+            <label style={labelStyle}>Type</label>
+            <select
+              value={type}
+              onChange={(e) => { setTypeTouched(true); setTypeInput(e.target.value); }}
+              style={fieldStyle}
+            >
+              <option value="">— Select a Type —</option>
+              {/* Keep a saved non-standard type selectable so reviewing it
+                  doesn't silently blank the dropdown. */}
+              {type && !TYPES.includes(type) && <option value={type}>{type}</option>}
+              {TYPES.map(t => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+            {companyExists && type !== companyType && (
+              <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+                {type
+                  ? <>Will set <strong>{matchedProspect.company}</strong>&apos;s Type in Table View to <strong>{type}</strong> (currently <strong>{companyType || 'no type'}</strong>).</>
+                  : <>Will clear <strong>{matchedProspect.company}</strong>&apos;s Type in Table View (currently <strong>{companyType}</strong>).</>}
+              </div>
+            )}
           </div>
 
           <div>
@@ -7688,7 +7722,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           companySuggestions={companySuggestions}
           peOwnerSuggestions={peOwnerSuggestions}
           prospects={prospects}
-          onCreate={({ company, source, peOwner, addToTableView }) => {
+          onCreate={({ company, source, peOwner, type, addToTableView }) => {
             // Create the company on Table View first (when requested and
             // it isn't there yet) so the new opp's Account immediately
             // resolves to a real prospect record. addProspect is
@@ -7696,10 +7730,19 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             // existing company is harmless.
             if (addToTableView && company && addProspect) {
               try {
-                Promise.resolve(addProspect({ company, peOwner: peOwner || '' }))
+                Promise.resolve(addProspect({ company, peOwner: peOwner || '', type: type || '' }))
                   .catch(err => console.error('opps2: add company to Table View failed', err));
               } catch (err) {
                 console.error('opps2: add company to Table View failed', err);
+              }
+            } else if (company && updateProspect) {
+              // Existing Table View company: the modal prefilled Type from
+              // its record, so a different value here is a reviewed
+              // correction — persist it back to the prospect.
+              const matched = findProspectForAccount(company, prospects);
+              if (matched && type !== String(matched.type || '').trim()) {
+                Promise.resolve(updateProspect(matched.id, { type }))
+                  .catch(err => console.error('opps2: update company Type failed', err));
               }
             }
             addNewOpp(company, source, peOwner);
