@@ -2759,10 +2759,12 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
 // what they need without the user having to remember to hunt for the
 // columns after the stage change.
 //
-// The modal pre-populates with whatever the row already has. Save
-// applies the three values via updateOppField (skipping fields the
-// user left untouched). Skip leaves the row as-is — Stage is still
-// set to Not Sold.
+// The modal pre-populates with whatever the row already has — the
+// Close Date was just auto-stamped to today by updateOppField (when it
+// was empty), so it shows up here ready to adjust. Save applies the
+// three values via updateOppField (skipping fields the user left
+// untouched). Skip leaves the row as-is — Stage is still set to Not
+// Sold and the stamped Close Date stays.
 function NotSoldFollowUpModal({ opp, reasonOptions, onSave, onClose }) {
   const [closeDate, setCloseDate] = useState(toISODate(opp?.['Close Date']) || '');
   const [reason, setReason] = useState(String(opp?.['Reason Not Sold'] ?? ''));
@@ -5235,9 +5237,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // <company>" when the company is already known.
   const [pendingNewOpp, setPendingNewOpp] = useState(null);
   // _id of the opp that just had its Stage flipped to "Not Sold". When
-  // set, the NotSoldFollowUpModal asks the user to fill in Close Date,
-  // Reason Not Sold, and Final Margin so the close-out reporting views
-  // have what they need. Cleared on Save or Skip.
+  // set, the NotSoldFollowUpModal asks the user to fill in Close Date
+  // (auto-stamped to the status-change date in updateOppField, shown
+  // pre-filled for adjustment), Reason Not Sold, and Final Margin so
+  // the close-out reporting views have what they need. Cleared on Save
+  // or Skip.
   const [notSoldPromptId, setNotSoldPromptId] = useState(null);
   // _id of the opp that just moved into the "Quoted" stage. When set,
   // the QuotedFollowUpModal asks the user to enter / review Quoted On,
@@ -6134,23 +6138,26 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         }
       }
     }
-    // When the Stage flips TO "Sold", stamp the Close Date with the date
-    // of the status change (today) and mirror it into the derived
-    // Close Year / Close Month columns, just like a manual Close Date
-    // edit would. Computed here so it can be snapshotted for undo and
-    // applied inside the setData mapper below.
+    // When the Stage flips TO "Sold" or "Not Sold", stamp the Close Date
+    // with the date of the status change (today) and mirror it into the
+    // derived Close Year / Close Month columns, just like a manual Close
+    // Date edit would. Computed here so it can be snapshotted for undo
+    // and applied inside the setData mapper below. For Not Sold the
+    // follow-up popup opens right after, pre-filled with the stamped
+    // date, so the user can adjust it on the spot.
     //
     // Only fill an EMPTY Close Date — never overwrite one already on the
     // row. Re-marking a deal Sold (or a bulk Stage update) used to clobber
     // a real close date with today's date, which silently moved last
     // year's sales into the current year on the YOY Annual Sales chart.
     const hasCloseDate = !!row && String(row['Close Date'] ?? '').trim() !== '';
-    let soldClose = null;
-    if (stageChanged && !hasCloseDate && String(value ?? '').trim().toLowerCase() === 'sold') {
+    const newStageNorm = String(value ?? '').trim().toLowerCase();
+    let closeStamp = null;
+    if (stageChanged && !hasCloseDate && (newStageNorm === 'sold' || newStageNorm === 'not sold')) {
       const today = todayISO();
       const { yearCols, monthCols } = findCloseDerivedColumns(dataRef.current?.headers);
       const d = parseCloseDate(today);
-      soldClose = {
+      closeStamp = {
         date: today,
         yearCols,
         monthCols,
@@ -6164,10 +6171,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       if (field === 'Follow Up' && 'Call In' in row) fields.push(snap('Call In'));
       if (field === 'Last Client Heard From Us' && 'Last Spoke' in row) fields.push(snap('Last Spoke'));
       // Snapshot the auto-stamped Close Date (+ derived columns) so one
-      // undo of the Sold stage change also restores them.
-      if (soldClose) {
+      // undo of the Sold / Not Sold stage change also restores them.
+      if (closeStamp) {
         fields.push(snap('Close Date'));
-        for (const c of [...soldClose.yearCols, ...soldClose.monthCols]) fields.push(snap(c));
+        for (const c of [...closeStamp.yearCols, ...closeStamp.monthCols]) fields.push(snap(c));
       }
       // Days-in-Stage reads `_stageEnteredAt`; snapshot it alongside the
       // Stage edit so an undo restores both in one step. The Stage
@@ -6210,11 +6217,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             for (const c of closeDerived.monthCols) next[c] = closeDerived.monthVal;
           }
           // Auto-stamp the Close Date (+ derived columns) when the stage
-          // flips to Sold, using the status-change date.
-          if (soldClose) {
-            next['Close Date'] = soldClose.date;
-            for (const c of soldClose.yearCols) next[c] = soldClose.yearVal;
-            for (const c of soldClose.monthCols) next[c] = soldClose.monthVal;
+          // flips to Sold or Not Sold, using the status-change date.
+          if (closeStamp) {
+            next['Close Date'] = closeStamp.date;
+            for (const c of closeStamp.yearCols) next[c] = closeStamp.yearVal;
+            for (const c of closeStamp.monthCols) next[c] = closeStamp.monthVal;
           }
           // Stamp the stage-entry date whenever Stage flips to a new
           // value so Days-in-Stage measures "time since the last move"
