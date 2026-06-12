@@ -8,11 +8,14 @@ import { normalizeCompanyName } from './firestoreSync';
 export const PE_OWNER_BACKFILL_FLAG = 'pe-owner-blue-owl-2026-06';
 export const BLUE_OWL_PE_OWNER = 'Blue Owl Capital';
 
+// Entries are either a plain name or an array of equivalent names —
+// the first is the canonical label used in the report, the rest are
+// confirmed aliases for how the record is actually named in Table View.
 export const BLUE_OWL_COMPANIES = [
   'Clearlake Capital Group',
   'ICONIQ Capital',
   'Sixth Street Partners',
-  'Stonepeak',
+  ['Stonepeak', 'Stonepeak Infrastructure Partners'],
   'Golub Capital',
   'H.I.G. Capital',
   'Platinum Equity',
@@ -20,9 +23,9 @@ export const BLUE_OWL_COMPANIES = [
   'Veritas Capital',
   'I Squared Capital',
   'EnCap Investments',
-  'Bridgepoint Advisers',
+  ['Bridgepoint Advisers', 'Bridgepoint'],
   'Providence Equity Partners',
-  'DivCore',
+  ['DivCore', 'DivCore Capital'],
   'ECP',
   'MBK Partners',
   'PAI Partners',
@@ -35,7 +38,7 @@ export const BLUE_OWL_COMPANIES = [
   'Graham Capital Management',
   'RXR Realty',
   'Capital Fund Management',
-  'TSG Consumer',
+  ['TSG Consumer', 'TSG Consumer Partners'],
   'Landmark Properties',
   'Round Hill Capital',
   'Waterfall Asset Management',
@@ -43,7 +46,7 @@ export const BLUE_OWL_COMPANIES = [
   'LibreMax Capital',
   'LBA Logistics',
   'LBA Realty',
-  'CrossHarbor',
+  ['CrossHarbor', 'CrossHarbor Capital Partners'],
   'HGGC',
   'Linden',
   'Pinnacle Asset Management',
@@ -52,7 +55,7 @@ export const BLUE_OWL_COMPANIES = [
   'Lead Edge Capital',
   'Chenavari',
   'Vector Capital',
-  'Carnelian Energy Capital',
+  ['Carnelian Energy Capital', 'Carnelian Energy'],
   'Bardin Hill',
   'MKP Capital Management',
   'GrowthCurve Capital',
@@ -101,13 +104,15 @@ export async function runPeOwnerBackfill(prospects, updateProspect) {
   const failed = [];
   const notFound = [];
 
-  for (const name of BLUE_OWL_COMPANIES) {
-    const norm = normalizeCompanyName(name);
-    const matches = byNorm.get(norm) || [];
+  for (const entry of BLUE_OWL_COMPANIES) {
+    const variants = Array.isArray(entry) ? entry : [entry];
+    const name = variants[0];
+    const norms = [...new Set(variants.map(normalizeCompanyName).filter(Boolean))];
+    const matches = norms.flatMap(n => byNorm.get(n) || []);
     if (matches.length === 0) {
       const candidates = [];
       for (const [key, list] of byNorm) {
-        if (key !== norm && isCandidate(norm, key)) {
+        if (!norms.includes(key) && norms.some(n => isCandidate(n, key))) {
           for (const p of list) candidates.push(p.company);
         }
         if (candidates.length >= 3) break;
