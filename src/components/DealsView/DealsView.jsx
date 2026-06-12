@@ -1607,7 +1607,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
             ⚠ {visibleSoldMissing.length} Sold {visibleSoldMissing.length === 1 ? 'opp has' : 'opps have'} no matching deal here
           </div>
           <div style={{ fontSize: '0.74rem', marginBottom: 6 }}>
-            These opportunities are marked <strong>Sold</strong> in Opps 2 but their BFO opp name isn&apos;t on the Deals page. Add the deal (or set the opp&apos;s BFO Opportunity Name) so it shows up here.
+            These opportunities are marked <strong>Sold</strong> in Opps but their BFO opp name isn&apos;t on the Deals page. Add the deal (or set the opp&apos;s BFO Opportunity Name) so it shows up here.
           </div>
           <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: 3 }}>
             {visibleSoldMissing.map((o) => (

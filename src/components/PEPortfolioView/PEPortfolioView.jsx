@@ -647,7 +647,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               ? <>PE firms grouped by their <strong>PE Stage</strong> (set in each firm's company popup): <code>Discovery</code>, <code>Piloting</code>, <code>Existing Partnership</code>, and <code>Not Sold</code>.</>
               : subtab === 'companies'
               ? <>Every mapped <strong>portfolio company</strong> across all PE firms (from each firm's Portfolio Companies tab), merged into one searchable, filterable table. <strong>Opportunity Score</strong> is ranked within each PC's own firm — matching that firm's export.</>
-              : <>Every opportunity from the <strong>Opps 2</strong> tab with Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>}
+              : <>Every opportunity from the <strong>Opps</strong> tab with Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>}
           </div>
         </div>
         {subtab === 'portfolio' && (
@@ -782,7 +782,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
         {oppsRecords.length === 0 && (
           <div style={{ padding: '0.6rem 0.8rem', marginBottom: '0.5rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6, fontSize: '0.72rem', color: '#92400E' }}>
-            No Opps data loaded. Open the <strong>Opps</strong> tab once to sync it from Google Sheets; counts will populate here afterwards.
+            No Opps data loaded. Open the <strong>Opps</strong> tab once to sync it; counts will populate here afterwards.
           </div>
         )}
         {filteredFirms.length === 0 ? (
@@ -1765,7 +1765,7 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, on
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
         {!oppsLoaded && (
           <div style={{ padding: '0.6rem 0.8rem', marginBottom: '0.5rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6, fontSize: '0.72rem', color: '#92400E' }}>
-            No Opps data loaded. Open the <strong>Opps 2</strong> tab once to sync it; PE opps will populate here afterwards.
+            No Opps data loaded. Open the <strong>Opps</strong> tab once to sync it; PE opps will populate here afterwards.
           </div>
         )}
         {opps.length === 0 ? (
@@ -1775,7 +1775,7 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, on
             </div>
             <div style={{ fontSize: '0.78rem' }}>
               {totalOpps === 0
-                ? <>No Opps 2 rows have Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>
+                ? <>No Opps rows have Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>
                 : `${totalOpps} total PE opps loaded — adjust your search.`}
             </div>
           </div>

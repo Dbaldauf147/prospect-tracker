@@ -49,9 +49,9 @@ async function updateOpp2Record(uid, oppId, mutator) {
   if (!source) {
     const haveCount = Array.isArray(data?.records) ? data.records.length : 0;
     throw new Error(
-      `Opp #${oppId} not found in Opps 2 (checked Firestore + IndexedDB, ` +
+      `Opp #${oppId} not found in Opps (checked Firestore + IndexedDB, ` +
       `${haveCount} record${haveCount === 1 ? '' : 's'} loaded). ` +
-      'Open the Opps 2 tab to refresh the local cache, then try again.'
+      'Open the Opps tab to refresh the local cache, then try again.'
     );
   }
   const records = data.records;

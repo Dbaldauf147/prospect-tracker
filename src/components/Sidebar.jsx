@@ -73,13 +73,13 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
           <span className={styles.navIcon}>&#9776;</span>
           Lists
         </button>
-        {/* Opps nav hidden — uncomment to restore. Route is still wired up in App.jsx so the view is reachable manually if needed.
+        {/* Opps - Old nav hidden — uncomment to restore. Route is still wired up in App.jsx so the view is reachable manually if needed.
         <button
           className={view === 'opps' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('opps')}
         >
           <span className={styles.navIcon}>&#36;</span>
-          Opps
+          Opps - Old
         </button>
         */}
         <button
@@ -87,7 +87,7 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
           onClick={() => setView('opps2')}
         >
           <span className={styles.navIcon}>&#36;</span>
-          Opps 2
+          Opps
         </button>
         <button
           className={view === 'dropdowns' ? styles.navItemActive : styles.navItem}

@@ -357,7 +357,7 @@ export function BFOActivityView({ prospects = [] } = {}) {
       await setOppBfoLink(user?.uid, oppId, bfoName);
       const refreshed = await loadOppsFromCache();
       setOpps(refreshed || null);
-      setFlash(`Tagged an Opps 2 opp with "${bfoName}".`);
+      setFlash(`Tagged an Opps opp with "${bfoName}".`);
     } catch (err) {
       setFlash(`Could not tag opp: ${err?.message || err}`);
     } finally {
@@ -466,10 +466,10 @@ export function BFOActivityView({ prospects = [] } = {}) {
         <div style={{ padding: '0 1.25rem 0.5rem' }}>
           <div className={styles.warning}>
             <strong>
-              ⚠ {unmatchedOppNames.length} BFO Opportunity Name{unmatchedOppNames.length === 1 ? '' : 's'} not tagged to an opp on Opps 2
+              ⚠ {unmatchedOppNames.length} BFO Opportunity Name{unmatchedOppNames.length === 1 ? '' : 's'} not tagged to an opp on Opps
             </strong>
             <div className={styles.warningHint}>
-              Click an Opps 2 opp below to tag it with the BFO Opportunity Name. Only opps that don&apos;t already have a BFO Opportunity Name are listed.
+              Click an Opps opp below to tag it with the BFO Opportunity Name. Only opps that don&apos;t already have a BFO Opportunity Name are listed.
             </div>
             <ul className={styles.warnList}>
               {unmatchedOppNames.map(({ name, account }) => {
@@ -482,7 +482,7 @@ export function BFOActivityView({ prospects = [] } = {}) {
                     </div>
                     {candidates.length === 0 ? (
                       <div className={styles.warnNone}>
-                        No untagged Opps 2 opps{account ? ` for “${account}”` : ''} to assign.
+                        No untagged Opps opps{account ? ` for “${account}”` : ''} to assign.
                       </div>
                     ) : (
                       <div className={styles.warnChips}>

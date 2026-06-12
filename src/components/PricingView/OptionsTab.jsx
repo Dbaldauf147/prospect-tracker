@@ -262,7 +262,7 @@ function OptionPanel({ opt, onChange, savedToLabel, onClickSave, onClearSave }) 
         {savedToLabel ? (
           <span
             className={styles.savedChip}
-            title={`Linked to Opps 2 row: ${savedToLabel}`}
+            title={`Linked to Opps row: ${savedToLabel}`}
           >
             Saved to: {savedToLabel}
             <button
@@ -728,7 +728,7 @@ export function OppPickerModal({ opps, optionName, onPick, onClose }) {
         <input
           autoFocus
           type="text"
-          placeholder="Search Opps 2 by Account, Scope, Stage…"
+          placeholder="Search Opps by Account, Scope, Stage…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           style={{
@@ -740,7 +740,7 @@ export function OppPickerModal({ opps, optionName, onPick, onClose }) {
           {filtered.length === 0 ? (
             <div style={{ padding: '0.75rem', color: '#64748b', fontSize: '0.85rem' }}>
               {opps.length === 0
-                ? 'No Opps 2 rows found in this browser. Open the Opps 2 tab first to load them.'
+                ? 'No Opps rows found in this browser. Open the Opps tab first to load them.'
                 : 'No matches.'}
             </div>
           ) : filtered.map(r => (

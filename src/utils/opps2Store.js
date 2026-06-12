@@ -370,7 +370,7 @@ export async function loadOpps2Newest(userId) {
 export async function setOppField(userId, oppId, field, value) {
   const data = await loadOpps2Newest(userId);
   if (!data || !Array.isArray(data.records)) {
-    throw new Error('Opps 2 data has not loaded yet.');
+    throw new Error('Opps data has not loaded yet.');
   }
   let found = false;
   const records = data.records.map((r) => {
@@ -387,7 +387,7 @@ export async function setOppField(userId, oppId, field, value) {
     }
     return r;
   });
-  if (!found) throw new Error(`Opp #${oppId} not found on Opps 2.`);
+  if (!found) throw new Error(`Opp #${oppId} not found on Opps.`);
   const next = { ...data, records };
   await saveOpps2Cache(next);
   await trySaveOpps2ToFirestore(userId, next);

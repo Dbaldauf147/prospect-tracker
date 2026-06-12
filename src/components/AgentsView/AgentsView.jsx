@@ -792,7 +792,7 @@ function OppPicker({ oppsCache, onSelect, triggerLabel = '+ Pick opportunity', c
         className={styles.pickerTrigger}
         onClick={() => setOpen(true)}
         disabled={!oppsCache?.records?.length}
-        title={oppsCache?.records?.length ? 'Search Opps 2 for a matching opportunity' : 'Open the Opps 2 tab to load the cache'}
+        title={oppsCache?.records?.length ? 'Search Opps for a matching opportunity' : 'Open the Opps tab to load the cache'}
       >
         {triggerLabel}
       </button>
@@ -2181,7 +2181,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
           className={styles.refreshActivityBtn}
           onClick={refreshActivityCache}
           disabled={activityRefreshing}
-          title="Re-pull every HubSpot email, call, and meeting AND re-fetch the Opps Google Sheet. Updates the shared activity cache (same as the Activity tab's Refresh) and the Opps cache (same as the Opps tab's Refresh)."
+          title="Re-pull every HubSpot email, call, and meeting AND re-fetch the Opps Google Sheet. Updates the shared activity cache (same as the Activity tab's Refresh) and the Opps cache (same as the Opps - Old tab's Refresh)."
         >
           {activityRefreshing
             ? (activityRefreshProgress
@@ -2406,7 +2406,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
           <span className={styles.sectionCount}>{bfoPrepOpps.length}</span>
         </h2>
         <p className={styles.subnote}>
-          Live Opps 2 opps (Stage not Sold / Not Sold) with a Call In number that have a BFO Opportunity Name but no BFO Address yet. Copy the prompt to have your AI assistant look up each opp&rsquo;s BFO website address, then paste it into the BFO Address column below — it saves straight to Opps 2 and the row drops off once set.
+          Live Opps opps (Stage not Sold / Not Sold) with a Call In number that have a BFO Opportunity Name but no BFO Address yet. Copy the prompt to have your AI assistant look up each opp&rsquo;s BFO website address, then paste it into the BFO Address column below — it saves straight to Opps and the row drops off once set.
         </p>
         {revealedPrompts.bfoPrep && (
           <textarea
@@ -2864,7 +2864,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
               <span className={styles.sectionCount}>{stageChangeOpps.length}</span>
             </h2>
             <p className={styles.subnote}>
-              Opps whose BFO Sales Stage doesn&rsquo;t match what their Opps 2 Stage implies. Join key is BFO Opportunity Name. BFO stages come from the BFO Activity tab — paste fresh rows there if the list looks stale.
+              Opps whose BFO Sales Stage doesn&rsquo;t match what their Opps Stage implies. Join key is BFO Opportunity Name. BFO stages come from the BFO Activity tab — paste fresh rows there if the list looks stale.
             </p>
             {revealedPrompts.stageChange && (
               <textarea
@@ -2891,7 +2891,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
                   <tr>
                     <th>Opportunity Name</th>
                     <th>Account</th>
-                    <th>Opps 2 Stage</th>
+                    <th>Opps Stage</th>
                     <th>BFO Stage (current)</th>
                     <th>New BFO Stage</th>
                     <th style={{ width: 70 }}>BFO Link</th>
@@ -2900,7 +2900,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
                 <tbody>
                   {stageChangeOpps.length === 0 ? (
                     <tr className={styles.emptyRow}>
-                      <td colSpan={6}>No stage mismatches — every BFO opp matched against the Opps tab is on the BFO stage its Opps 2 Stage maps to.</td>
+                      <td colSpan={6}>No stage mismatches — every BFO opp matched against the Opps tab is on the BFO stage its Opps Stage maps to.</td>
                     </tr>
                   ) : stageChangeOpps.map(o => (
                     <tr key={o.id}>
@@ -2955,7 +2955,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
               <span className={styles.sectionCount}>{closeNotSoldOpps.length}</span>
             </h2>
             <p className={styles.subnote}>
-              Not-Sold Opps 2 rows that still have a matching BFO Activity row. Status + Reason come from the Reason Not Sold → BFO mapping. Rows whose Reason Not Sold isn&rsquo;t in the mapping table are listed (highlighted) so you can update them on Opps 2 or extend the mapping.
+              Not-Sold Opps rows that still have a matching BFO Activity row. Status + Reason come from the Reason Not Sold → BFO mapping. Rows whose Reason Not Sold isn&rsquo;t in the mapping table are listed (highlighted) so you can update them on Opps or extend the mapping.
             </p>
             {revealedPrompts.closeNotSolds && (
               <textarea
