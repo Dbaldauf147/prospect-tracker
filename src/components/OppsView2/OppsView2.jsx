@@ -34,6 +34,7 @@ import { fmtMoneyWhole, toNum, unitCountOrOne, rowYearRevenue } from '../../util
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { userLsGet, userLsSet } from '../../utils/userLs';
+import { computeListFlags } from '../../utils/listFlags';
 import { apiFetch } from '../../utils/apiFetch';
 import { NewOppsScheduleModal } from './NewOppsScheduleModal';
 import { downloadNewOppsOutlookDraft } from '../../utils/newOppsDigestEmail';
@@ -2428,6 +2429,33 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
   // types their own value.
   const peOwner = peOwnerTouched ? peOwnerInput : (matchedProspect?.peOwner || '');
 
+  // Company context shown once a company is entered: its CDM and account
+  // Tier (from the Table View record) plus the frameworks it's associated
+  // with on the Lists page. computeListFlags merges the Lists-page mappings
+  // with the prospect's manual frameworks, keyed by lowercased company name.
+  const cdm = String(matchedProspect?.cdm || '').trim();
+  const tier = String(matchedProspect?.tier || '').trim();
+  const [frameworks, setFrameworks] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!trimmedCompany) { if (!cancelled) setFrameworks([]); return; }
+      try {
+        const flags = await computeListFlags([trimmedCompany], { prospects });
+        if (cancelled) return;
+        const set = flags.get(trimmedCompany.toLowerCase().trim()) || new Set();
+        setFrameworks([...set].sort((a, b) => a.localeCompare(b)));
+      } catch {
+        if (!cancelled) setFrameworks([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [trimmedCompany, prospects]);
+
+  // Show the context panel once the company matches a Table View record or
+  // has any Lists-page framework flags.
+  const showCompanyInfo = !!trimmedCompany && (companyExists || frameworks.length > 0);
+
   function submit() {
     onCreate({
       company: trimmedCompany,
@@ -2507,6 +2535,30 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
                 />
                 Add <strong>{trimmedCompany}</strong> to Table View (not found there yet)
               </label>
+            )}
+            {showCompanyInfo && (
+              <div style={{
+                marginTop: 8, padding: '0.5rem 0.6rem',
+                background: 'var(--color-bg)', border: '1px solid var(--color-border-light)',
+                borderRadius: 4, display: 'flex', flexDirection: 'column', gap: 4,
+                fontSize: '0.74rem', color: 'var(--color-text)',
+              }}>
+                <div><span style={{ color: 'var(--color-text-muted)' }}>CDM:</span>{' '}<strong>{cdm || '—'}</strong></div>
+                <div><span style={{ color: 'var(--color-text-muted)' }}>Tier:</span>{' '}<strong>{tier || '—'}</strong></div>
+                <div>
+                  <span style={{ color: 'var(--color-text-muted)' }}>Frameworks:</span>{' '}
+                  {frameworks.length ? (
+                    <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4, verticalAlign: 'top' }}>
+                      {frameworks.map(f => (
+                        <span key={f} style={{
+                          padding: '0px 6px', borderRadius: 999, fontSize: '0.68rem', fontWeight: 700,
+                          background: '#EFF6FF', color: '#1E3A8A', border: '1px solid #BFDBFE',
+                        }}>{f}</span>
+                      ))}
+                    </span>
+                  ) : <strong>—</strong>}
+                </div>
+              </div>
             )}
           </div>
 
