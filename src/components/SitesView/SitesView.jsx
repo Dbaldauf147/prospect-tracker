@@ -6109,7 +6109,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // Findings & Recommendations band and the by-state tables.
     const summaryBandHeaderRow = r;
     const summaryBandValueRow = r + 1;
-    r += 3; // band header + value line + a breather row
+    const summaryBandCumulativeRow = r + 2;
+    r += 4; // band header + annual line + cumulative line + a breather row
 
     if (summaryFindings.length > 0) {
       // Section band, same look as the Electric Power / Natural Gas
@@ -6279,6 +6280,36 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       sNote.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
       sNote.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
       ws.getRow(summaryBandValueRow).height = 24;
+
+      // Cumulative line — annual total × the # of Years dropdown, so
+      // the headline re-derives whenever the user changes the term.
+      const defaultTermYears = Number(ws.getCell(YEARS_LOCAL_CELL).value) || 1;
+      ws.mergeCells(summaryBandCumulativeRow, 1, summaryBandCumulativeRow, 9);
+      const cLabel = ws.getCell(summaryBandCumulativeRow, 1);
+      cLabel.value = 'Total Indicative Cumulative Savings over the Term (Electric + Natural Gas)';
+      cLabel.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_TEXT_DARK } };
+      cLabel.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+
+      const cValue = ws.getCell(summaryBandCumulativeRow, 10);
+      if (refs.length) {
+        cValue.value = {
+          formula: `(${refs.join('+')})*--${YEARS_REF}`,
+          result: baseResult * defaultTermYears,
+        };
+        cValue.ignoredErrors = { formula: true };
+      } else {
+        cValue.value = baseResult * defaultTermYears;
+      }
+      cValue.numFmt = '"$"#,##0';
+      cValue.font = { name: 'Nunito Sans', bold: true, size: 14, color: { argb: SE_GREEN_DARK } };
+      cValue.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+
+      ws.mergeCells(summaryBandCumulativeRow, 11, summaryBandCumulativeRow, SPAN);
+      const cNote = ws.getCell(summaryBandCumulativeRow, 11);
+      cNote.value = 'Annual savings × the # of Years selected above — adjusts automatically when the term changes.';
+      cNote.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+      cNote.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+      ws.getRow(summaryBandCumulativeRow).height = 24;
     }
 
     // ---- Second sheet: Site Detail ---------------------------------
