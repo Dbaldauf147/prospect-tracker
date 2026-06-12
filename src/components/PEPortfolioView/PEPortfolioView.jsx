@@ -4,7 +4,7 @@ import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadOpps2Newest, setOppField } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
 import { formatDateDisplay } from '../../utils/oppsCallIn';
-import { PE_STAGES, STATUSES, TIERS, GEOGRAPHIES } from '../../data/enums';
+import { PE_STAGES, STATUSES, TYPES, TIERS, GEOGRAPHIES } from '../../data/enums';
 import { InlineCell } from '../TableView/TableView';
 import { buildTypeOptions, buildCdmOptions, persistCustomOption } from '../../utils/prospectOptions';
 import { computePortfolioFitScore, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
@@ -1335,6 +1335,78 @@ function PEAllCompaniesTab({ firms, onSelectProspect }) {
 // backfill used.
 const BLUE_OWL_PASTE_DEFAULTS = { peOwner: 'Blue Owl Capital' };
 
+// Prospect fields the Blue Owl bulk-edit bar can set. Enum-backed
+// fields render a picker fed from the shared vocabularies; HQ Region's
+// two options mirror the company popup's dropdown. peAum is parsed to
+// a number (blank clears it).
+const BLUE_OWL_BULK_FIELDS = [
+  { key: 'status', label: 'Status', options: STATUSES },
+  { key: 'cdm', label: 'CDM' },
+  { key: 'type', label: 'Type', options: TYPES },
+  { key: 'tier', label: 'Tier', options: TIERS },
+  { key: 'geography', label: 'Geography', options: GEOGRAPHIES },
+  { key: 'hqRegion', label: 'HQ Region', options: ['North America', 'Outside of North America'] },
+  { key: 'website', label: 'Website' },
+  { key: 'peAum', label: 'PE AUM ($B)', type: 'number' },
+  { key: 'peOwner', label: 'PE Owner' },
+  { key: 'notes', label: 'Notes' },
+];
+
+// Bulk-edit bar for the Blue Owl tab — appears once any rows are
+// checked. Pick a field, give it a value, Apply writes it to every
+// selected company's Table View record. Same shape as Opps 2's
+// MassEditBar, but against prospect fields. A blank value clears the
+// field (the Apply button is explicit about which it'll do).
+function BlueOwlBulkEditBar({ selectedCount, applying, onApply, onClear }) {
+  const [fieldKey, setFieldKey] = useState('status');
+  const [value, setValue] = useState('');
+  // Reset the value buffer when the field changes so a stale value from
+  // the previous field doesn't get applied by accident.
+  useEffect(() => { setValue(''); }, [fieldKey]);
+  const field = BLUE_OWL_BULK_FIELDS.find(f => f.key === fieldKey) || BLUE_OWL_BULK_FIELDS[0];
+  const inputStyle = { padding: '0.3rem 0.45rem', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.78rem', fontFamily: 'inherit', background: '#fff', color: '#1E293B' };
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', margin: '0 1.25rem 0.5rem', padding: '0.5rem 0.75rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 6, fontSize: '0.78rem' }}>
+      <span style={{ fontWeight: 700, color: '#1E3A8A' }}>{selectedCount} selected</span>
+      <span style={{ color: '#64748B' }}>·</span>
+      <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+        <span style={{ color: '#64748B' }}>Set</span>
+        <select value={fieldKey} onChange={e => setFieldKey(e.target.value)} style={inputStyle}>
+          {BLUE_OWL_BULK_FIELDS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+        </select>
+      </label>
+      <span style={{ color: '#64748B' }}>to</span>
+      {field.options ? (
+        <select value={value} onChange={e => setValue(e.target.value)} style={{ ...inputStyle, minWidth: 170 }}>
+          <option value="">— blank (clear) —</option>
+          {field.options.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+      ) : (
+        <input
+          type={field.type === 'number' ? 'number' : 'text'}
+          step={field.type === 'number' ? 'any' : undefined}
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          placeholder="New value (blank to clear)"
+          style={{ ...inputStyle, minWidth: 200 }}
+        />
+      )}
+      <button
+        type="button"
+        disabled={applying}
+        onClick={() => onApply(field, value)}
+        style={{ padding: '0.35rem 0.85rem', background: applying ? '#94A3B8' : '#3B82F6', border: 'none', borderRadius: 4, fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit', color: '#fff', cursor: applying ? 'wait' : 'pointer' }}
+      >{applying ? 'Applying…' : `${value.trim() ? 'Apply to' : 'Clear on'} ${selectedCount}`}</button>
+      <button
+        type="button"
+        onClick={onClear}
+        disabled={applying}
+        style={{ padding: '0.35rem 0.7rem', background: '#fff', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit', color: '#475569', cursor: 'pointer' }}
+      >Clear selection</button>
+    </div>
+  );
+}
+
 // "Blue Owl" sub-tab: every Table View prospect whose PE Owner is Blue
 // Owl, as one searchable, filterable table via the shared DataTable.
 // Unlike All PCs (which reads each firm's Portfolio Companies tab),
@@ -1349,6 +1421,64 @@ function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], portfolioBy
   const [search, setSearch] = useState('');
   const [pasteOpen, setPasteOpen] = useState(false);
   const [importing, setImporting] = useState(false);
+  // Bulk-edit selection. filteredRowIds mirrors the rows currently
+  // passing the DataTable's column filters (and this tab's search) so
+  // the header checkbox selects exactly what's on screen.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [filteredRowIds, setFilteredRowIds] = useState(() => new Set());
+  const [bulkApplying, setBulkApplying] = useState(false);
+
+  // Set-equality guard (same as Opps 2's handler): returning prev when
+  // the ids haven't changed stops the notify → setState → re-render →
+  // notify cycle the DataTable callback would otherwise feed.
+  const handleFilteredRowsChange = useCallback((tableRows) => {
+    setFilteredRowIds(prev => {
+      const next = new Set();
+      for (const r of (tableRows || [])) if (r?.id != null) next.add(r.id);
+      if (prev.size === next.size && [...prev].every(id => next.has(id))) return prev;
+      return next;
+    });
+  }, []);
+
+  // A bulk edit can move a company off this tab (e.g. PE Owner no
+  // longer names Blue Owl, or Type set to Portfolio Company) — drop
+  // departed ids from the selection so the count stays honest.
+  useEffect(() => {
+    setSelectedIds(prev => {
+      const valid = new Set(companies.map(p => p.id));
+      if ([...prev].every(id => valid.has(id))) return prev;
+      return new Set([...prev].filter(id => valid.has(id)));
+    });
+  }, [companies]);
+
+  // Write one field to every selected company's Table View record.
+  // Sequential so a flaky write surfaces per company instead of a
+  // half-applied Promise.all; failures are collected and reported.
+  async function applyBulkEdit(field, rawValue) {
+    if (!onUpdateProspect || selectedIds.size === 0) return;
+    let value = rawValue.trim();
+    if (field.type === 'number') {
+      const n = parseFloat(value.replace(/[,$]/g, ''));
+      value = Number.isFinite(n) ? n : null;
+    }
+    setBulkApplying(true);
+    const failed = [];
+    try {
+      for (const id of selectedIds) {
+        try {
+          await onUpdateProspect(id, { [field.key]: value });
+        } catch (err) {
+          console.error('Blue Owl bulk edit: update failed', { id, field: field.key, err });
+          failed.push(companies.find(c => c.id === id)?.company || id);
+        }
+      }
+      if (failed.length) {
+        window.alert(`Bulk edit failed for ${failed.length} compan${failed.length === 1 ? 'y' : 'ies'} — try again:\n  ${failed.join('\n  ')}`);
+      }
+    } finally {
+      setBulkApplying(false);
+    }
+  }
 
   // Per-company opp counts from the Opps tab, shown as active/total.
   // Same matcher and stage buckets the Portfolio tab's PE Opps column
@@ -1474,6 +1604,53 @@ function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], portfolioBy
           {r.company || '—'}
         </button>
       ) },
+      // Bulk-edit checkbox. Sits after the Company column (not before)
+      // because Company is the sticky column pinned at left: 0 — a
+      // column to its left would slide underneath it on horizontal
+      // scroll. The header checkbox selects/clears every row passing
+      // the current filters.
+      { key: '_select', label: '', defaultWidth: 36, getFilterValue: () => '', renderHeader: () => {
+        const filteredArr = [...filteredRowIds];
+        const selectedInFilter = filteredArr.filter(id => selectedIds.has(id)).length;
+        const allSelected = filteredArr.length > 0 && selectedInFilter === filteredArr.length;
+        return (
+          <input
+            type="checkbox"
+            ref={(el) => { if (el) el.indeterminate = selectedInFilter > 0 && !allSelected; }}
+            checked={allSelected}
+            disabled={filteredArr.length === 0}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => {
+              const checked = e.target.checked;
+              setSelectedIds(prev => {
+                const next = new Set(prev);
+                for (const id of filteredArr) { if (checked) next.add(id); else next.delete(id); }
+                return next;
+              });
+            }}
+            style={{ margin: 0, cursor: filteredArr.length === 0 ? 'not-allowed' : 'pointer' }}
+            title={allSelected
+              ? `Clear selection for all ${filteredArr.length} filtered row${filteredArr.length === 1 ? '' : 's'}`
+              : `Select all ${filteredArr.length} filtered row${filteredArr.length === 1 ? '' : 's'} for bulk edit`}
+          />
+        );
+      }, render: (r) => (
+        <input
+          type="checkbox"
+          checked={selectedIds.has(r.id)}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            const checked = e.target.checked;
+            setSelectedIds(prev => {
+              const next = new Set(prev);
+              if (checked) next.add(r.id); else next.delete(r.id);
+              return next;
+            });
+          }}
+          style={{ margin: 0, cursor: 'pointer' }}
+          title="Select for bulk edit"
+        />
+      ) },
       { key: 'status', label: 'Status', defaultWidth: 140, render: editable({ key: 'status', label: 'Status', type: 'enum', options: STATUSES }) },
       { key: 'cdm', label: 'CDM', defaultWidth: 160, render: editable({ key: 'cdm', label: 'CDM', type: 'enum', options: cdmOptions, allowAddNew: true }) },
       { key: 'type', label: 'Type', defaultWidth: 150, render: editable({ key: 'type', label: 'Type', type: 'enum', options: typeOptions, allowAddNew: true }) },
@@ -1505,7 +1682,7 @@ function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], portfolioBy
       { key: 'peOwner', label: 'PE Owner', defaultWidth: 170, render: editable({ key: 'peOwner', label: 'PE Owner' }) },
       { key: 'notes', label: 'Notes', defaultWidth: 320, render: editable({ key: 'notes', label: 'Notes', type: 'notes' }) },
     ];
-  }, [onSelectProspect, onUpdateProspect, handleAddOption, typeOptions, cdmOptions]);
+  }, [onSelectProspect, onUpdateProspect, handleAddOption, typeOptions, cdmOptions, selectedIds, filteredRowIds]);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -1573,6 +1750,14 @@ function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], portfolioBy
           >{importing ? 'Importing…' : 'Paste from Excel'}</button>
         )}
       </div>
+      {onUpdateProspect && selectedIds.size > 0 && (
+        <BlueOwlBulkEditBar
+          selectedCount={selectedIds.size}
+          applying={bulkApplying}
+          onApply={applyBulkEdit}
+          onClear={() => setSelectedIds(new Set())}
+        />
+      )}
       {pasteOpen && (
         <PasteAddModal
           existingProspects={prospects}
@@ -1592,14 +1777,15 @@ function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], portfolioBy
           </div>
         ) : (
           <DataTable
-            // -4: fresh prefs key so columns added after the original
+            // -5: fresh prefs key so columns added after the original
             // layout (HQ Region / Website / PE AUM at -2, Opps at -3,
-            // PC Opps at -4) aren't hidden by a saved visible-set from
-            // an older one.
-            tableId="pe-blue-owl-companies-4"
+            // PC Opps at -4, the bulk-edit checkbox at -5) aren't
+            // hidden by a saved visible-set from an older one.
+            tableId="pe-blue-owl-companies-5"
             columns={columns}
             rows={filtered}
-            alwaysVisible={['company']}
+            alwaysVisible={['company', '_select']}
+            onFilteredRowsChange={handleFilteredRowsChange}
             defaultSort={{ key: 'company', direction: 'asc' }}
             enableColumnFilters
             emptyMessage="No Blue Owl companies match your filters"
