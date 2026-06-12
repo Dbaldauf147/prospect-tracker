@@ -659,7 +659,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               : subtab === 'stages'
               ? <>PE firms grouped by their <strong>PE Stage</strong> (set in each firm's company popup): <code>Discovery</code>, <code>Piloting</code>, <code>Existing Partnership</code>, and <code>Not Sold</code>.</>
               : subtab === 'companies'
-              ? <>Every mapped <strong>portfolio company</strong> across all PE firms (from each firm's Portfolio Companies tab), merged into one searchable, filterable table. <strong>Opportunity Score</strong> is ranked within each PC's own firm — matching that firm's export. The <strong>PE Owner</strong> dropdown filters to one owner, matching the source PE firm or the company's own PE Owner from Table View.</>
+              ? <>Every mapped <strong>portfolio company</strong> across all PE firms (from each firm's Portfolio Companies tab), merged into one searchable, filterable table. <strong>Opportunity Score</strong> is ranked within each PC's own firm — matching that firm's export. The <strong>PE Owner</strong> dropdown filters to one owner, matching the source PE firm, the company's own PE Owner from Table View, or firms that owner owns — so picking <code>Blue Owl</code> also shows the portfolio companies of every Blue Owl-owned firm.</>
               : subtab === 'blueOwl'
               ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>Blue Owl</code>. Double-click any cell to edit it — same dropdowns as Table View.</>
               : <>Every opportunity from the <strong>Opps</strong> tab with Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>}
@@ -1211,10 +1211,12 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
 // via the shared DataTable. A leading PE Firm column records which firm
 // each company came from and links back to that firm's company popup.
 // The PE Owner dropdown filters rows to one owner: a row passes when the
-// source PE firm matches the pick, or the portfolio company itself is a
-// Table View prospect whose PE Owner field matches it. Matching uses the
-// shared fuzzy companiesMatch so name variants ("Blue Owl" ↔ "Blue Owl
-// Capital") line up.
+// source PE firm matches the pick, the portfolio company itself is a
+// Table View prospect whose PE Owner field matches it, or the source
+// firm is in turn owned by the pick (GP stakes — picking "Blue Owl"
+// also shows the portfolio companies of every firm whose PE Owner is
+// Blue Owl). Matching uses the shared fuzzy companiesMatch so name
+// variants ("Blue Owl" ↔ "Blue Owl Capital") line up.
 function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect }) {
   const [search, setSearch] = useState('');
   const [ownerFilter, setOwnerFilter] = useState('');
@@ -1330,7 +1332,13 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect }) {
       out = out.filter(r => {
         if (companiesMatch(r.peFirm, ownerFilter)) return true;
         const owner = ownerByCompany.get(r.companyName.trim().toLowerCase());
-        return owner ? companiesMatch(owner, ownerFilter) : false;
+        if (owner && companiesMatch(owner, ownerFilter)) return true;
+        // One level up the ownership chain: the firm that mapped this
+        // PC is itself owned by the pick (its Table View PE Owner
+        // matches), so its portfolio companies belong to the pick's
+        // GP-stakes family too.
+        const firmOwner = ownerByCompany.get(r.peFirm.trim().toLowerCase());
+        return firmOwner ? companiesMatch(firmOwner, ownerFilter) : false;
       });
     }
     const term = search.trim().toLowerCase();
@@ -1351,7 +1359,7 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect }) {
         <select
           value={ownerFilter}
           onChange={e => setOwnerFilter(e.target.value)}
-          title="Show only companies under one PE owner — matches the source PE firm or the company's own PE Owner from Table View"
+          title="Show only companies under one PE owner — matches the source PE firm, the company's own PE Owner from Table View, or firms that owner owns (their PCs count too)"
           style={{
             maxWidth: 220, padding: '0.4rem 0.6rem',
             border: `1px solid ${ownerFilter ? '#7C3AED' : '#E2E8F0'}`, borderRadius: 6,
