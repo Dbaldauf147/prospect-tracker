@@ -40,6 +40,7 @@ import { TYPES, FRAMEWORKS } from '../../data/enums';
 import { NewOppsScheduleModal } from './NewOppsScheduleModal';
 import { downloadNewOppsOutlookDraft } from '../../utils/newOppsDigestEmail';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
+import { reasonOptionsForCompetition } from '../../data/closeNotSoldRules';
 import { buildNewOppsTableHtml, downloadOppsTableOutlookDraft, NEW_OPPS_EMAIL_COLUMNS, NEW_OPPS_EMAIL_DEFAULT_COLUMN_KEYS } from '../../utils/newOppsEmailTable';
 import styles from './OppsView2.module.css';
 
@@ -2855,6 +2856,25 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, 
   const [finalMargin, setFinalMargin] = useState(String(opp?.['Final Margin'] ?? ''));
   const [competition, setCompetition] = useState(String(opp?.['Competition'] ?? ''));
 
+  // Dependent options: only the Reason Not Sold values that have a
+  // close-out rule for the chosen Competition (closeNotSoldRules).
+  // Competitions without rules (blank, N/A) keep the full list. A
+  // pre-existing reason the filter would drop stays selectable so a
+  // prefilled row never silently loses its value.
+  const filteredReasonOptions = useMemo(() => {
+    const opts = reasonOptionsForCompetition(competition, reasonOptions);
+    return (reason && !opts.includes(reason)) ? [reason, ...opts] : opts;
+  }, [competition, reasonOptions, reason]);
+
+  function handleCompetitionChange(next) {
+    setCompetition(next);
+    // Clear a reason that isn't valid under the newly-chosen
+    // Competition so an unmapped combination can't be saved from here.
+    if (reason && !reasonOptionsForCompetition(next, reasonOptions).includes(reason)) {
+      setReason('');
+    }
+  }
+
   function handleSave() {
     onSave({
       closeDate,
@@ -2921,6 +2941,19 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, 
             />
           </div>
           <div>
+            <label style={labelStyle}>Competition</label>
+            <select
+              value={competition}
+              onChange={(e) => handleCompetitionChange(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">— Select —</option>
+              {competitionOptions.map(o => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+          </div>
+          <div>
             <label style={labelStyle}>Reason Not Sold</label>
             <select
               value={reason}
@@ -2928,7 +2961,7 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, 
               style={inputStyle}
             >
               <option value="">— Select a reason —</option>
-              {reasonOptions.map(o => (
+              {filteredReasonOptions.map(o => (
                 <option key={o} value={o}>{o}</option>
               ))}
             </select>
@@ -2945,19 +2978,6 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, 
               placeholder="e.g. 22% or $4,500"
               style={inputStyle}
             />
-          </div>
-          <div>
-            <label style={labelStyle}>Competition</label>
-            <select
-              value={competition}
-              onChange={(e) => setCompetition(e.target.value)}
-              style={inputStyle}
-            >
-              <option value="">— Select —</option>
-              {competitionOptions.map(o => (
-                <option key={o} value={o}>{o}</option>
-              ))}
-            </select>
           </div>
         </div>
 
