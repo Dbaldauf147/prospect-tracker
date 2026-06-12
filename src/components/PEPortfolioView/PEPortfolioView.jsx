@@ -742,6 +742,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         <PEBlueOwlTab
           companies={blueOwlCompanies}
           prospects={prospects}
+          oppsRecords={oppsRecords}
           onSelectProspect={onSelectProspect}
           onUpdateProspect={onUpdateProspect}
           onAddProspect={onAddProspect}
@@ -1336,26 +1337,61 @@ const BLUE_OWL_PASTE_DEFAULTS = { peOwner: 'Blue Owl Capital' };
 // company's own popup, and the Paste from Excel button writes straight
 // back to Table View (fill blanks / optionally overwrite on existing
 // companies, add the rest as new Blue Owl-owned prospects).
-function PEBlueOwlTab({ companies, prospects = [], onSelectProspect, onUpdateProspect, onAddProspect }) {
+function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], onSelectProspect, onUpdateProspect, onAddProspect }) {
   const [search, setSearch] = useState('');
   const [pasteOpen, setPasteOpen] = useState(false);
   const [importing, setImporting] = useState(false);
 
-  const rows = useMemo(() => companies.map(p => ({
-    id: p.id,
-    _prospect: p,
-    company: p.company || '',
-    status: p.status || '',
-    cdm: p.cdm || '',
-    type: p.type || '',
-    tier: p.tier || '',
-    geography: p.geography || '',
-    hqRegion: p.hqRegion || '',
-    website: p.website || '',
-    peAum: p.peAum ?? '',
-    peOwner: p.peOwner || '',
-    notes: p.notes || '',
-  })), [companies]);
+  // Per-company opp counts from the Opps tab, shown as active/total.
+  // Same matcher and stage buckets the Portfolio tab's PE Opps column
+  // uses: accounts tie to companies via the strict accountMatchesCompany,
+  // invalid stages are dropped entirely, total counts every opp ever and
+  // active excludes the closed stages (Sold / Not Sold / Closed / Lost).
+  const oppCountsByCompanyId = useMemo(() => {
+    const map = new Map();
+    if (oppsRecords.length === 0) return map;
+    for (const p of companies) {
+      const name = (p.company || '').trim().toLowerCase();
+      if (!name) continue;
+      let active = 0;
+      let total = 0;
+      const tip = [];
+      for (const r of oppsRecords) {
+        const stage = (r['Stage'] || '').trim();
+        if (INVALID_STAGES.has(stage)) continue;
+        const acct = (r['Account'] || '').toLowerCase();
+        if (!acct || !accountMatchesCompany(name, acct)) continue;
+        total++;
+        const isActive = !CLOSED_STAGES.has(stage);
+        if (isActive) active++;
+        tip.push(`• ${r['Opportunity Name'] || r['Opportunity'] || r['Name'] || r['Description'] || '(Unnamed opportunity)'}${stage ? ` — ${stage}` : ''}`);
+      }
+      if (total > 0) map.set(p.id, { active, total, tip });
+    }
+    return map;
+  }, [companies, oppsRecords]);
+
+  const rows = useMemo(() => companies.map(p => {
+    const counts = oppCountsByCompanyId.get(p.id);
+    return {
+      id: p.id,
+      _prospect: p,
+      _oppsTip: counts?.tip || [],
+      company: p.company || '',
+      status: p.status || '',
+      cdm: p.cdm || '',
+      type: p.type || '',
+      tier: p.tier || '',
+      geography: p.geography || '',
+      hqRegion: p.hqRegion || '',
+      website: p.website || '',
+      peAum: p.peAum ?? '',
+      oppsActive: counts?.active || 0,
+      oppsTotal: counts?.total || 0,
+      peOwner: p.peOwner || '',
+      notes: p.notes || '',
+    };
+  }), [companies, oppCountsByCompanyId]);
 
   const columns = useMemo(() => [
     { key: 'company', label: 'Company', defaultWidth: 240, sticky: true, render: (r) => (
@@ -1386,6 +1422,14 @@ function PEBlueOwlTab({ companies, prospects = [], onSelectProspect, onUpdatePro
       ) : '—'
     ) },
     { key: 'peAum', label: 'PE AUM ($B)', defaultWidth: 110, getSortValue: (r) => Number(r.peAum) || 0, render: (r) => formatAum(typeof r.peAum === 'number' ? r.peAum : null) },
+    // Sort by active first, total as the tiebreak (active is what the
+    // user scans for; 1e6 keeps totals from ever outranking an active).
+    { key: 'opps', label: 'Opps', defaultWidth: 90, getSortValue: (r) => r.oppsActive * 1e6 + r.oppsTotal, exportValue: (r) => `${r.oppsActive}/${r.oppsTotal}`, render: (r) => (
+      <span
+        title={r._oppsTip.length ? `active / total opps from the Opps tab\n${r._oppsTip.join('\n')}` : 'No opportunities on this company in the Opps tab'}
+        style={{ fontWeight: 700, color: r.oppsActive > 0 ? '#7C3AED' : r.oppsTotal > 0 ? '#64748B' : '#CBD5E1' }}
+      >{r.oppsActive}/{r.oppsTotal}</span>
+    ) },
     { key: 'peOwner', label: 'PE Owner', defaultWidth: 170 },
     { key: 'notes', label: 'Notes', defaultWidth: 320 },
   ], [onSelectProspect]);
@@ -1475,10 +1519,10 @@ function PEBlueOwlTab({ companies, prospects = [], onSelectProspect, onUpdatePro
           </div>
         ) : (
           <DataTable
-            // -2: fresh prefs key so the HQ Region / Website / PE AUM
-            // columns added later aren't hidden by a saved visible-set
-            // from the original layout.
-            tableId="pe-blue-owl-companies-2"
+            // -3: fresh prefs key so columns added after the original
+            // layout (HQ Region / Website / PE AUM at -2, Opps at -3)
+            // aren't hidden by a saved visible-set from an older one.
+            tableId="pe-blue-owl-companies-3"
             columns={columns}
             rows={filtered}
             alwaysVisible={['company']}
