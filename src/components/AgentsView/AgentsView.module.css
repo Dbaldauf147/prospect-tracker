@@ -222,6 +222,17 @@
   font-size: 0.78rem;
 }
 
+/* Red error banner — data the AI prompts need is missing (e.g. New BFO
+   Opp rows with no Product Line / Region / BFO Company Name). */
+.errorBanner {
+  padding: 0.55rem 0.8rem;
+  background: #FEE2E2;
+  border: 1px solid #FCA5A5;
+  color: #991B1B;
+  border-radius: 6px;
+  font-size: 0.78rem;
+}
+
 .pill {
   display: inline-block;
   font-size: 0.7rem;
