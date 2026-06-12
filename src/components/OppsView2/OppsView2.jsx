@@ -1803,7 +1803,12 @@ function BfoCompanyNameCell({ account, prospects, updateProspect }) {
   );
 }
 
-function ContactCell({ value, onChange, account, peOwner, prospects, updateProspect, hubspotContacts, onOpenContact, onOpenCompany }) {
+// `contactEmails` / `onChangeEmails` persist the tagged contacts' emails on
+// the opp row itself (hidden `_contactEmails` map, lowercased name → email),
+// captured at tag time. The HubSpot contacts cache is an IndexedDB cache
+// that can be cleared or go stale — without the stored map, a tag's email
+// (resolved live from that cache) would silently vanish until a refresh.
+function ContactCell({ value, onChange, account, peOwner, prospects, updateProspect, hubspotContacts, onOpenContact, onOpenCompany, contactEmails, onChangeEmails }) {
   // Single boolean for popover state — the popover handles both
   // viewing currently tagged contacts and adding new ones (from the
   // company roster or as a custom one-off tag), so the picker/view
@@ -1966,26 +1971,73 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
     return () => document.removeEventListener('mousedown', onDown);
   }, [open]);
 
-  function tagName(name) {
+  // Back-fill: tags created before emails were persisted on the opp only
+  // have their email in the live HubSpot cache. When the popover opens
+  // (a deliberate, single-row interaction — no render-time or page-load
+  // write storms) and the roster can resolve a tag that isn't stored yet,
+  // save it so this opp's tags survive the next cache loss.
+  useEffect(() => {
+    if (!open || !onChangeEmails) return;
+    const missing = {};
+    for (const name of selected) {
+      const key = name.toLowerCase();
+      if (storedEmails[key]) continue;
+      const live = contactByName.get(key)?.email;
+      if (live) missing[key] = live;
+    }
+    if (Object.keys(missing).length > 0) {
+      onChangeEmails({ ...storedEmails, ...missing });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // The opp-stored name → email map (see the component comment). Always
+  // normalized to lowercased-name keys; tolerate junk from older rows.
+  const storedEmails = useMemo(() => {
+    const out = {};
+    if (contactEmails && typeof contactEmails === 'object') {
+      for (const [k, v] of Object.entries(contactEmails)) {
+        const key = String(k || '').trim().toLowerCase();
+        const email = String(v || '').trim();
+        if (key && email) out[key] = email;
+      }
+    }
+    return out;
+  }, [contactEmails]);
+
+  function tagName(name, email) {
     const trimmed = String(name || '').trim();
     if (!trimmed) return;
     if (selectedSet.has(trimmed.toLowerCase())) return;
     onChange([...selected, trimmed].join(', '));
+    // Persist the email on the opp so the tag survives a lost/stale
+    // HubSpot cache. Tags without a known email store nothing.
+    const e = String(email || '').trim();
+    if (e && onChangeEmails) {
+      onChangeEmails({ ...storedEmails, [trimmed.toLowerCase()]: e });
+    }
   }
 
   function untag(name) {
     const key = String(name || '').toLowerCase();
     onChange(selected.filter(s => s.toLowerCase() !== key).join(', '));
+    if (onChangeEmails && key in storedEmails) {
+      const next = { ...storedEmails };
+      delete next[key];
+      onChangeEmails(next);
+    }
   }
 
   // Custom tag — used by the "not from this company" path. Just adds
   // the typed name to this opp's tag list without touching the
   // prospect roster, so a one-off contact (consultant, broker,
-  // someone at a different account) can ride along on this opp.
+  // someone at a different account) can ride along on this opp. When
+  // the typed text is itself an email address, store it as the tag's
+  // email too so it keeps rendering as an email.
   function tagCustom() {
     const name = customDraft.trim();
     if (!name) return;
-    tagName(name);
+    tagName(name, name.includes('@') ? name : '');
     setCustomDraft('');
   }
 
@@ -2001,10 +2053,15 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
     return map;
   }, [contactOptions]);
 
+  // Resolve each tag's email: the live roster wins (freshest data), the
+  // opp-stored map is the fallback that survives a lost HubSpot cache, and
+  // a tag that is itself an email address renders as one.
   const taggedDetails = useMemo(() => selected.map(name => {
-    const found = contactByName.get(name.toLowerCase());
-    return { name, email: found?.email || '' };
-  }), [selected, contactByName]);
+    const key = name.toLowerCase();
+    const found = contactByName.get(key);
+    const email = found?.email || storedEmails[key] || (name.includes('@') ? name : '');
+    return { name, email };
+  }), [selected, contactByName, storedEmails]);
 
   const displayString = useMemo(() => taggedDetails
     .map(t => t.email || t.name)
@@ -2118,7 +2175,7 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
             {!isEmpty && (
               <button
                 type="button"
-                onClick={() => onChange('')}
+                onClick={() => { onChange(''); if (onChangeEmails) onChangeEmails({}); }}
                 style={{
                   padding: '0.25rem 0.55rem', fontSize: '0.7rem', fontWeight: 600,
                   fontFamily: 'inherit', color: 'var(--color-text-muted)',
@@ -2282,7 +2339,7 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
               return (
                 <div
                   key={opt.name}
-                  onClick={() => isTagged ? untag(opt.name) : tagName(opt.name)}
+                  onClick={() => isTagged ? untag(opt.name) : tagName(opt.name, opt.email)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: '0.55rem',
                     padding: '0.4rem 0.7rem', cursor: 'pointer',
@@ -3459,6 +3516,8 @@ export function OppInfoModal({
           hubspotContacts={hubspotContacts}
           onOpenContact={onOpenContact}
           onOpenCompany={onOpenCompany}
+          contactEmails={opp._contactEmails}
+          onChangeEmails={(m) => onFieldChange('_contactEmails', m)}
         />
       );
     }
@@ -6855,6 +6914,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 hubspotContacts={hubspotContacts}
                 onOpenContact={openContactDetails}
                 onOpenCompany={openCompanyDetails}
+                contactEmails={row._contactEmails}
+                onChangeEmails={(m) => updateOppField(row._id, '_contactEmails', m)}
               />
             );
           }
