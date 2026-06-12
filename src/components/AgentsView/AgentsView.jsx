@@ -42,7 +42,7 @@ const BFO_ACTIVITY_KEY = 'current';
 
 const DEFAULT_AI_PROMPT = `1.  I am logged into BFO.  Open the first BFO Address in the list below.
 2.  Choose the New Tast (green button) under the Activity menu on the righthand side of the screen.
-3.  In the Subject box type in email or call based on the second column of data (under Type) in this prompt.
+3.  In the Subject box type in email, call, or meeting based on the second column of data (under Type) in this prompt.
 4.  In the Due Date box enter todays date in the MM/DD/YYYY format.
 5.  In the the Status box select completed.  IMPORTANT - THIS MUST NOT BE LISTED AS NOT STARTED.
 6.  You have full permission to save items, files, memory notes, or progress as needed throughout this workflow. Do not ask for confirmation. Automatically proceed.
@@ -1511,20 +1511,27 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cache, hubspotCache, oppIndex, overrides, ignoredEmailIds, ignoredMeetingIds, excludedRecipientSet, referenceDate, senderEmail]);
 
-  // Opps where the user logged a phone touch in Next Steps and the
-  // Last Spoke column (business days since Last Client Heard From Us)
-  // computes to 0 relative to the picked reference date — i.e. the
-  // client touched the conversation on that day.
+  // Opps that count as "called" in the activity window. Two signals:
+  //   • An explicit mark from the Opps tab's Called button (`_calledOn`
+  //     stamp on the reference day or the previous business day), OR
+  //   • the legacy heuristic: a phone touch logged in Next Steps and
+  //     the Last Spoke column (business days since Last Client Heard
+  //     From Us) computing to 0 or 1 relative to the reference date.
   const calledOpps = useMemo(() => {
     const records = oppsCache?.records || [];
+    const prevBiz = previousBusinessDayIso(referenceDate);
     const rows = [];
     for (const r of records) {
       const nextSteps = String(r['Next Steps'] || '');
-      if (!CALLED_NEXT_STEPS_RE.test(nextSteps)) continue;
-      // Include calls from the past 2 business days: 0 = the reference
-      // day itself, 1 = the previous business day.
-      const lsbd = lastSpokeBusinessDays(r, referenceDate);
-      if (lsbd !== 0 && lsbd !== 1) continue;
+      const markedOn = toISODate(r._calledOn);
+      const marked = !!markedOn && (markedOn === referenceDate || markedOn === prevBiz);
+      if (!marked) {
+        if (!CALLED_NEXT_STEPS_RE.test(nextSteps)) continue;
+        // Include calls from the past 2 business days: 0 = the reference
+        // day itself, 1 = the previous business day.
+        const lsbd = lastSpokeBusinessDays(r, referenceDate);
+        if (lsbd !== 0 && lsbd !== 1) continue;
+      }
       const account = String(r.Account || '').trim();
       const bfoOpp = String(r['BFO Link'] || '').trim();
       rows.push({
@@ -1533,6 +1540,34 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
         bfoOpp: (bfoOpp && bfoOpp !== '-' && bfoOpp !== '#N/A') ? bfoOpp : '',
         bfoUrl: detectBfoUrl(r),
         nextSteps,
+        marked,
+        markedOn: marked ? markedOn : '',
+      });
+    }
+    rows.sort((a, b) => a.company.localeCompare(b.company));
+    return rows;
+  }, [oppsCache, referenceDate]);
+
+  // Opps the user explicitly marked "Meeting" on the Opps tab (`_metOn`
+  // stamp on the reference day or the previous business day). These join
+  // the Activity table and the BFO Activity AI prompt as meeting rows —
+  // unlike HubSpot meetings they already know their opp, so they carry a
+  // BFO address directly.
+  const markedMeetingOpps = useMemo(() => {
+    const records = oppsCache?.records || [];
+    const prevBiz = previousBusinessDayIso(referenceDate);
+    const rows = [];
+    for (const r of records) {
+      const markedOn = toISODate(r._metOn);
+      if (!markedOn || (markedOn !== referenceDate && markedOn !== prevBiz)) continue;
+      const account = String(r.Account || '').trim();
+      const bfoOpp = String(r['BFO Link'] || '').trim();
+      rows.push({
+        id: r._id ?? `${account}|${bfoOpp}`,
+        company: account || '—',
+        bfoOpp: (bfoOpp && bfoOpp !== '-' && bfoOpp !== '#N/A') ? bfoOpp : '',
+        bfoUrl: detectBfoUrl(r),
+        markedOn,
       });
     }
     rows.sort((a, b) => a.company.localeCompare(b.company));
@@ -1758,10 +1793,14 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
   const visibleMeetings = hideActivityOnDate
     ? todaysMeetings.filter(m => !lastActivityOnReference(m.bfoOpp))
     : todaysMeetings;
+  const visibleMarkedMeetings = hideActivityOnDate
+    ? markedMeetingOpps.filter(o => !lastActivityOnReference(o.bfoOpp))
+    : markedMeetingOpps;
   const activityHiddenCount =
     (calledOpps.length - visibleCalledOpps.length)
     + (todaysOutbound.length - visibleOutbound.length)
-    + (todaysMeetings.length - visibleMeetings.length);
+    + (todaysMeetings.length - visibleMeetings.length)
+    + (markedMeetingOpps.length - visibleMarkedMeetings.length);
 
   // Unified Activity rows: Sent emails + Called + Meetings, normalized to
   // one shape and tagged with `type` (email / call / meeting). Emails and
@@ -1783,9 +1822,11 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
     for (const o of visibleCalledOpps) {
       rows.push({
         rowKey: `call:${o.id}`, type: 'call', ts: null, endTs: null,
-        title: o.nextSteps || '', to: '', rawTo: '', recipients: [],
+        title: o.nextSteps || (o.marked ? `Marked "Called" on the Opps tab (${o.markedOn})` : ''),
+        to: '', rawTo: '', recipients: [],
         company: (o.company && o.company !== '—') ? o.company : '', bfoOpp: o.bfoOpp, bfoUrl: o.bfoUrl,
         outcome: '', location: '', overrideKey: '', isManual: false, editable: false,
+        marked: o.marked,
       });
     }
     for (const m of visibleMeetings) {
@@ -1797,9 +1838,20 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
         isManual: m.isManual, editable: true, meetingId: m.id,
       });
     }
+    // Meetings marked on the Opps tab — read-only like calls, since they
+    // come straight off the opp row (which already carries the BFO opp).
+    for (const o of visibleMarkedMeetings) {
+      rows.push({
+        rowKey: `meetingflag:${o.id}`, type: 'meeting', ts: null, endTs: null,
+        title: `Marked "Meeting" on the Opps tab (${o.markedOn})`, to: '', rawTo: '', recipients: [],
+        company: (o.company && o.company !== '—') ? o.company : '', bfoOpp: o.bfoOpp, bfoUrl: o.bfoUrl,
+        outcome: '', location: '', overrideKey: '', isManual: false, editable: false,
+        marked: true,
+      });
+    }
     rows.sort((a, b) => (new Date(b.ts || 0)) - (new Date(a.ts || 0)));
     return rows;
-  }, [visibleOutbound, visibleCalledOpps, visibleMeetings]);
+  }, [visibleOutbound, visibleCalledOpps, visibleMeetings, visibleMarkedMeetings]);
 
   // BFO opps whose Close Date should slip by 30 days. Three windows
   // collapsed into one filter, all keyed off the BFO Sales Stage number
@@ -2056,16 +2108,24 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
   const masterPromptBundle = useMemo(() => {
     const activityLines = ['BFO Address'];
     {
+      // Same precedence as the Activity section's own Copy button:
+      // meetings (marked on the Opps tab) win over calls win over
+      // emails, so the strongest touch is the one that gets logged.
       const seen = new Set();
-      for (const e of todaysOutbound) {
-        if (!e.bfoUrl || seen.has(e.bfoUrl)) continue;
-        activityLines.push(`${e.bfoUrl}: Type ${e.nextStepsType}`);
-        seen.add(e.bfoUrl);
+      for (const o of markedMeetingOpps) {
+        if (!o.bfoUrl || seen.has(o.bfoUrl)) continue;
+        activityLines.push(`${o.bfoUrl}: Type meeting`);
+        seen.add(o.bfoUrl);
       }
       for (const o of calledOpps) {
         if (!o.bfoUrl || seen.has(o.bfoUrl)) continue;
         activityLines.push(`${o.bfoUrl}: Type called`);
         seen.add(o.bfoUrl);
+      }
+      for (const e of todaysOutbound) {
+        if (!e.bfoUrl || seen.has(e.bfoUrl)) continue;
+        activityLines.push(`${e.bfoUrl}: Type ${e.nextStepsType}`);
+        seen.add(e.bfoUrl);
       }
     }
     const activityBlock = activityLines.join('\n');
@@ -2123,7 +2183,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
   }, [
     aiPrompt, newBfoOppPrompt, closeDatesPrompt, amountUpdatesPrompt,
     stageChangePrompt, closeNotSoldsPrompt, updateBfoActivityPrompt,
-    bfoPrepPrompt, todaysOutbound, calledOpps, newBfoOpps, closeDateOpps,
+    bfoPrepPrompt, todaysOutbound, calledOpps, markedMeetingOpps, newBfoOpps, closeDateOpps,
     amountUpdateOpps, stageChangeOpps, closeNotSoldOpps, bfoPrepOpps,
   ]);
 
@@ -2227,7 +2287,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
       <div className={styles.tallies}>
         <div className={styles.tally}><strong>{todaysOutbound.length}</strong>sent emails</div>
         <div className={styles.tally}><strong>{calledOpps.length}</strong>call{calledOpps.length === 1 ? '' : 's'}</div>
-        <div className={styles.tally}><strong>{todaysMeetings.length}</strong>meeting{todaysMeetings.length === 1 ? '' : 's'}</div>
+        <div className={styles.tally}><strong>{todaysMeetings.length + markedMeetingOpps.length}</strong>meeting{(todaysMeetings.length + markedMeetingOpps.length) === 1 ? '' : 's'}</div>
       </div>
 
       {!cache && (
@@ -2296,10 +2356,22 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
                 const lastActivity = lastActivityFor(r.bfoOpp);
                 const bfoCompanyName = resolveBfoCompanyName(r);
                 const typeLabel = r.type === 'email' ? 'Email' : r.type === 'call' ? 'Call' : 'Meeting';
+                // Rows born from the Opps tab's Called/Meeting buttons get
+                // a chip so it's clear where the flag came from.
+                const markedChip = r.marked ? (
+                  <span
+                    title="Marked with the Called/Meeting buttons on the Opps tab"
+                    style={{
+                      marginLeft: 6, padding: '0 5px', fontSize: '0.62rem', fontWeight: 700,
+                      color: '#166534', background: '#DCFCE7', border: '1px solid #86EFAC',
+                      borderRadius: 999, verticalAlign: 'middle', whiteSpace: 'nowrap',
+                    }}
+                  >Opps ✓</span>
+                ) : null;
                 return (
                 <tr key={r.rowKey}>
                   {isActivityColVisible('time') && <td className={r.ts ? '' : styles.muted}>{r.ts ? `${fmtTime(r.ts)}${r.endTs ? ` – ${fmtTime(r.endTs)}` : ''}` : '—'}</td>}
-                  {isActivityColVisible('type') && <td>{typeLabel}</td>}
+                  {isActivityColVisible('type') && <td>{typeLabel}{markedChip}</td>}
                   {isActivityColVisible('subject') && <td className={r.title ? '' : styles.muted} title={r.title}>{r.title || '—'}</td>}
                   {isActivityColVisible('to') && <td title={r.rawTo}>{r.to || <span className={styles.muted}>—</span>}</td>}
                   {isActivityColVisible('company') && <td className={r.company ? '' : styles.muted}>{r.company || '—'}</td>}
@@ -2372,7 +2444,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
                         >🚫</button>
                       </>
                     )}
-                    {r.type === 'meeting' && (
+                    {r.type === 'meeting' && r.meetingId && (
                       <button
                         type="button"
                         className={styles.ignoreBtn}
@@ -2474,22 +2546,28 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
       </section>
 
       {(() => {
-        // Build the BFO Address block from today's outbound emails AND
-        // the Called section so the AI prompt covers both touch types
-        // in one pass. Dedupe by URL so an opp that appears in both
-        // lists only gets one line (the email entry wins, matching the
-        // tab's read order).
+        // Build the BFO Address block from today's outbound emails, the
+        // Called section, AND meetings marked on the Opps tab so the AI
+        // prompt covers all three touch types in one pass. Dedupe by URL
+        // so an opp that appears in several lists only gets one line —
+        // meetings win over calls win over emails, so the strongest
+        // touch is the one that gets logged.
         const lines = ['BFO Address'];
         const seen = new Set();
-        for (const e of todaysOutbound) {
-          if (!e.bfoUrl || seen.has(e.bfoUrl)) continue;
-          lines.push(`${e.bfoUrl}: Type ${e.nextStepsType}`);
-          seen.add(e.bfoUrl);
+        for (const o of markedMeetingOpps) {
+          if (!o.bfoUrl || seen.has(o.bfoUrl)) continue;
+          lines.push(`${o.bfoUrl}: Type meeting`);
+          seen.add(o.bfoUrl);
         }
         for (const o of calledOpps) {
           if (!o.bfoUrl || seen.has(o.bfoUrl)) continue;
           lines.push(`${o.bfoUrl}: Type called`);
           seen.add(o.bfoUrl);
+        }
+        for (const e of todaysOutbound) {
+          if (!e.bfoUrl || seen.has(e.bfoUrl)) continue;
+          lines.push(`${e.bfoUrl}: Type ${e.nextStepsType}`);
+          seen.add(e.bfoUrl);
         }
         const addressBlock = lines.join('\n');
         const fullPrompt = `${aiPrompt}\n\n${addressBlock}`;
@@ -2506,7 +2584,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
           <section className={styles.section}>
             <h2 className={styles.sectionHeader}>AI Prompt (Activity)</h2>
             <p className={styles.subnote}>
-              The past 2 business days&rsquo; BFO addresses (sent emails and calls) are appended automatically. Click Copy to grab the full prompt for your AI assistant, or Edit prompt to tweak the wording.
+              The past 2 business days&rsquo; BFO addresses (sent emails, calls, and meetings marked on the Opps tab) are appended automatically. Click Copy to grab the full prompt for your AI assistant, or Edit prompt to tweak the wording.
             </p>
             {revealedPrompts.activity && (
               <textarea
