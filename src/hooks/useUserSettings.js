@@ -50,6 +50,27 @@ function autoMergeValue(ours, remote) {
   return ours;
 }
 
+// Table-layout prefs (settings.tablePrefs) get their own merge instead
+// of autoMergeValue. Each table's `visible` is a complete snapshot of
+// the columns currently shown — the generic primitive-array union above
+// would resurrect any column the user just hid, because the removed key
+// still sits in the remote array and gets appended back. Merge per
+// table with ours-wins-per-field: the device that just touched a
+// table's layout is right about that layout, and tables only the other
+// device touched flow through from remote untouched.
+function mergeTablePrefs(ours, remote) {
+  const isMap = (v) => v && typeof v === 'object' && !Array.isArray(v);
+  if (!isMap(ours)) return remote === undefined ? ours : remote;
+  if (!isMap(remote)) return ours;
+  const out = { ...remote };
+  for (const tableId of Object.keys(ours)) {
+    const o = ours[tableId];
+    const r = remote[tableId];
+    out[tableId] = (isMap(o) && isMap(r)) ? { ...r, ...o } : o;
+  }
+  return out;
+}
+
 export function useUserSettings(user) {
   const [settings, setSettings] = useState({});
   const [loaded, setLoaded] = useState(false);
@@ -111,7 +132,10 @@ export function useUserSettings(user) {
         const remote = result.remoteData || {};
         const mergedUpdates = { ...updates };
         for (const k of updateKeys) {
-          if (k in remote) mergedUpdates[k] = autoMergeValue(updates[k], remote[k]);
+          if (!(k in remote)) continue;
+          mergedUpdates[k] = k === 'tablePrefs'
+            ? mergeTablePrefs(updates[k], remote[k])
+            : autoMergeValue(updates[k], remote[k]);
         }
         const forced = await saveUserSettings(userIdRef.current, mergedUpdates, { force: true });
         const merged = { ...remote, ...mergedUpdates, _lastWriteAt: forced.writtenAt };
