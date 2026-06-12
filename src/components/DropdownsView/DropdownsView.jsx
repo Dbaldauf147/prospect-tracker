@@ -634,7 +634,7 @@ export function DropdownsView({ settings, updateSettings }) {
       <div className={styles.header}>
         <h2 className={styles.title}>Dropdowns</h2>
         <span className={styles.lastSync}>
-          Edit the picklist vocabulary the Opps 2, Deals, and Clients tabs use when a column is linked to a list. Changes save automatically and sync across devices.
+          Edit the picklist vocabulary the Opps, Deals, and Clients tabs use when a column is linked to a list. Changes save automatically and sync across devices.
         </span>
       </div>
 

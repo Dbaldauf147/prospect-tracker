@@ -4218,7 +4218,7 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Opps2 bulk import - skipped rows - ${new Date().toISOString().slice(0, 10)}.xlsx`;
+    a.download = `Opps bulk import - skipped rows - ${new Date().toISOString().slice(0, 10)}.xlsx`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -4262,7 +4262,7 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
           >×</button>
         </div>
         <p style={{ margin: 0, fontSize: '0.78rem', color: '#475569', lineHeight: 1.45 }}>
-          Copy a header row + data rows from your Google Sheet and paste below. The modal auto-detects tab or comma separation. Columns with the same name auto-map; tweak the dropdowns to point a source column at a different Opps 2 column, or set it to <em>Skip</em>. Duplicates against existing Opps 2 rows are skipped (same dedup as Import from Opps tab).
+          Copy a header row + data rows from your Google Sheet and paste below. The modal auto-detects tab or comma separation. Columns with the same name auto-map; tweak the dropdowns to point a source column at a different Opps column, or set it to <em>Skip</em>. Duplicates against existing Opps rows are skipped (same dedup as Import from Opps - Old tab).
         </p>
         <textarea
           value={text}
@@ -4304,7 +4304,7 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
                   <thead>
                     <tr style={{ background: '#F8FAFC' }}>
                       <th style={{ textAlign: 'left', padding: '0.35rem 0.55rem', borderBottom: '1px solid var(--color-border-light)' }}>Source column</th>
-                      <th style={{ textAlign: 'left', padding: '0.35rem 0.55rem', borderBottom: '1px solid var(--color-border-light)' }}>→ Opps 2 column</th>
+                      <th style={{ textAlign: 'left', padding: '0.35rem 0.55rem', borderBottom: '1px solid var(--color-border-light)' }}>→ Opps column</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -4368,7 +4368,7 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
                 />
                 <span>
                   <strong>Import the {analysis.skipped.length} skipped row{analysis.skipped.length === 1 ? '' : 's'} anyway and flag them for review.</strong>
-                  {' '}A <code>Review</code> column will be added (if it doesn't exist) and populated with the reason on each flagged row. Existing rows that look like duplicates of an imported row also get a back-reference note so you can audit them on Opps2. Clear the cell once you've checked it.
+                  {' '}A <code>Review</code> column will be added (if it doesn't exist) and populated with the reason on each flagged row. Existing rows that look like duplicates of an imported row also get a back-reference note so you can audit them on Opps. Clear the cell once you've checked it.
                 </span>
               </label>
             )}
@@ -4734,7 +4734,7 @@ function CloudRestoreModal({ onRestore, onClose }) {
           <button type="button" onClick={onClose} style={{ background: 'transparent', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: 'inherit' }}>×</button>
         </div>
         <p style={{ marginTop: 0, fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
-          Off-site daily + manual backups. Restoring pulls the Opps 2 data from the chosen file, re-stamps it to win the next sync, and replaces the current Opps 2 data everywhere.
+          Off-site daily + manual backups. Restoring pulls the Opps data from the chosen file, re-stamps it to win the next sync, and replaces the current Opps data everywhere.
         </p>
         {err ? <div style={{ padding: '1rem', color: 'var(--color-danger, #b91c1c)' }}>Couldn’t list backups: {err}</div>
           : rows == null ? <div style={{ padding: '1rem' }}>Loading…</div>
@@ -4757,12 +4757,12 @@ function CloudRestoreModal({ onRestore, onClose }) {
                     <button
                       type="button"
                       onClick={() => {
-                        if (window.confirm(`Restore Opps 2 from "${f.name}"? This replaces the current Opps 2 data on every device.`)) {
+                        if (window.confirm(`Restore Opps from "${f.name}"? This replaces the current Opps data on every device.`)) {
                           onRestore(f.name, f.name);
                         }
                       }}
                       style={{ cursor: 'pointer', fontWeight: 600 }}
-                    >Restore Opps 2</button>
+                    >Restore Opps</button>
                   </td>
                 </tr>
               ))}
@@ -4801,7 +4801,7 @@ function Opps2BackupsModal({ onRestore, onClose }) {
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div onClick={e => e.stopPropagation()} style={{ background: 'var(--color-surface, #fff)', color: 'var(--color-text)', borderRadius: 8, padding: '1.25rem', width: 'min(680px, 92vw)', maxHeight: '80vh', overflow: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.3)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-          <h3 style={{ margin: 0, fontSize: '1.05rem' }}>Opps 2 backups</h3>
+          <h3 style={{ margin: 0, fontSize: '1.05rem' }}>Opps backups</h3>
           <button type="button" onClick={onClose} style={{ background: 'transparent', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: 'inherit' }}>×</button>
         </div>
         <p style={{ marginTop: 0, fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
@@ -4830,7 +4830,7 @@ function Opps2BackupsModal({ onRestore, onClose }) {
                     <button
                       type="button"
                       onClick={() => {
-                        if (window.confirm(`Restore the ${new Date(b.timestamp).toLocaleString()} backup (${b.recordCount ?? '?'} rows)? This replaces the current Opps 2 data on every device.`)) {
+                        if (window.confirm(`Restore the ${new Date(b.timestamp).toLocaleString()} backup (${b.recordCount ?? '?'} rows)? This replaces the current Opps data on every device.`)) {
                           onRestore(b.timestamp);
                         }
                       }}
@@ -5313,7 +5313,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       const incoming = Array.isArray(opps?.records) ? opps.records : [];
       if (!incoming.length) {
         window.alert(
-          'No Opps tab data found in this browser. Open the Opps tab once so it ' +
+          'No Opps - Old tab data found in this browser. Open the Opps - Old tab once so it ' +
           'fetches the Google Sheet, then come back and click Import again.'
         );
         return;
@@ -5346,8 +5346,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       }
       if (!additions.length) {
         window.alert(
-          `Nothing new to import — every Opps tab row (${incoming.length}) is ` +
-          `already on Opps 2 (duplicates skipped: ${skippedDuplicate}).`
+          `Nothing new to import — every Opps - Old tab row (${incoming.length}) is ` +
+          `already on Opps (duplicates skipped: ${skippedDuplicate}).`
         );
         return;
       }
@@ -5368,7 +5368,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       const nextState = { ...(data || {}), headers: mergedHeaders, records: nextRecords };
       // Snapshot the pre-import dataset (forced) so a bad import is one
       // click to undo from the Backups dropdown.
-      await pushOpps2Backup(data, 'pre-import (Opps tab)', { force: true });
+      await pushOpps2Backup(data, 'pre-import (Opps - Old tab)', { force: true });
       setData(nextState);
       // Cancel any in-flight debounced Firestore save so the explicit
       // write below isn't immediately followed by a stale debounced one.
@@ -5389,7 +5389,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       }
       window.alert(
         `Imported ${additions.length} row${additions.length === 1 ? '' : 's'} ` +
-        `from the Opps tab. Skipped ${skippedDuplicate} already on Opps 2.${firestoreWarning}`
+        `from the Opps - Old tab. Skipped ${skippedDuplicate} already on Opps.${firestoreWarning}`
       );
     } catch (err) {
       console.error('Import from Opps tab failed:', err);
@@ -5508,7 +5508,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // persists through the normal cache + Firestore path.
   const applyOpps2Snapshot = useCallback(async (snapshot, label) => {
     if (!snapshot || !Array.isArray(snapshot.records)) {
-      window.alert('That backup has no Opps 2 records to restore.');
+      window.alert('That backup has no Opps records to restore.');
       return false;
     }
     const now = Date.now();
@@ -5548,7 +5548,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       const out = await resp.json().catch(() => ({}));
       if (!resp.ok) { window.alert(`Couldn't fetch that backup: ${out?.error || resp.status}`); return; }
       if (!out.value || !Array.isArray(out.value.records)) {
-        window.alert('That backup has no Opps 2 data in it.');
+        window.alert('That backup has no Opps data in it.');
         return;
       }
       const ok = await applyOpps2Snapshot(out.value, `the backup "${displayName}"`);
@@ -7716,7 +7716,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       )}
       <div className={styles.header}>
         <div>
-          <h2 className={styles.title}>Opps 2</h2>
+          <h2 className={styles.title}>Opps</h2>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           <AddCompanyCombobox
@@ -7744,8 +7744,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
               color: 'var(--color-text)', cursor: importingFromOpps ? 'progress' : 'pointer',
             }}
-            title="One-time copy of every row from the Opps tab cache that isn't already on Opps 2"
-          >{importingFromOpps ? 'Importing…' : 'Import from Opps tab'}</button>
+            title="One-time copy of every row from the Opps - Old tab cache that isn't already on Opps"
+          >{importingFromOpps ? 'Importing…' : 'Import from Opps - Old tab'}</button>
           <button
             type="button"
             onClick={() => setBulkImportOpen(true)}
@@ -7780,7 +7780,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               cursor: records.length ? 'pointer' : 'not-allowed',
               opacity: records.length ? 1 : 0.6,
             }}
-            title="Download all Opps 2 rows as a JSON backup file"
+            title="Download all Opps rows as a JSON backup file"
           >Export backup</button>
           <button
             type="button"
@@ -7791,7 +7791,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
               color: 'var(--color-text)', cursor: 'pointer',
             }}
-            title="Browse and restore local rolling backups of the Opps 2 dataset"
+            title="Browse and restore local rolling backups of the Opps dataset"
           >Backups</button>
           <button
             type="button"
@@ -7814,7 +7814,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
               color: 'var(--color-text)', cursor: 'pointer',
             }}
-            title="Restore Opps 2 from one of your off-site backups"
+            title="Restore Opps from one of your off-site backups"
           >Restore from backup</button>
           <button
             type="button"

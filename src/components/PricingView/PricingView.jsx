@@ -721,7 +721,7 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
       <h3 className={styles.linkedSubheading}>Line Item → Services ({mappedCount})</h3>
       <p className={styles.linkedHint}>
         Tie each pricing Line Item to one or more services from the Dropdowns tab's
-        Solutions / Service Catalog. Opps 2's Scope column can then bulk-add the
+        Solutions / Service Catalog. Opps' Scope column can then bulk-add the
         union of services across every line item in a Pricing Option from an
         "Add from Pricing Option" picker.
       </p>
@@ -3367,7 +3367,7 @@ export function PricingView({ settings } = {}) {
                     {linkedLabel ? (
                       <span
                         className={styles.savedChip}
-                        title={`Linked to Opps 2 row: ${linkedLabel}`}
+                        title={`Linked to Opps row: ${linkedLabel}`}
                       >
                         Saved to: {linkedLabel}
                         <button
@@ -3390,7 +3390,7 @@ export function PricingView({ settings } = {}) {
                           }
                           setPricingPickerOpen(true);
                         }}
-                        title={`Save "${opt.sheetName}" to an Opps 2 row.`}
+                        title={`Save "${opt.sheetName}" to an Opps row.`}
                       >Save to Opp…</button>
                     )}
                     <ColumnsMenu

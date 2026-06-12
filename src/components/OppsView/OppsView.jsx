@@ -379,7 +379,7 @@ export function OppsView({ settings, updateSettings } = {}) {
     <div className={styles.wrapper}>
       <div className={styles.header}>
         <div>
-          <h2 className={styles.title}>Opps</h2>
+          <h2 className={styles.title}>Opps - Old</h2>
           {data?.fetchedAt && <span className={styles.lastSync}>Last fetched: {new Date(data.fetchedAt).toLocaleString()}</span>}
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>

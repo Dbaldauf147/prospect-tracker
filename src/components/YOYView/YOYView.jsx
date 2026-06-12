@@ -1544,7 +1544,7 @@ function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload }) {
                     { label: 'BFO Pipe Total', value: row.bfoPipe == null ? '—' : fmtKLabel(row.bfoPipe) },
                   ],
                   note: row._live
-                    ? 'Live — computed now from Opps 2 (quoted $ by Chance / Agreements Sent) + BFO Activity (Pipe Total). Use “Edit values” to record a fixed month-end snapshot.'
+                    ? 'Live — computed now from Opps (quoted $ by Chance / Agreements Sent) + BFO Activity (Pipe Total). Use “Edit values” to record a fixed month-end snapshot.'
                     : (row._hasData ? null : 'No values recorded for this month yet.'),
                 })}
               />
