@@ -659,7 +659,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               : subtab === 'stages'
               ? <>PE firms grouped by their <strong>PE Stage</strong> (set in each firm's company popup): <code>Discovery</code>, <code>Piloting</code>, <code>Existing Partnership</code>, and <code>Not Sold</code>.</>
               : subtab === 'companies'
-              ? <>Every mapped <strong>portfolio company</strong> across all PE firms (from each firm's Portfolio Companies tab), merged into one searchable, filterable table. <strong>Opportunity Score</strong> is ranked within each PC's own firm — matching that firm's export.</>
+              ? <>Every mapped <strong>portfolio company</strong> across all PE firms (from each firm's Portfolio Companies tab), merged into one searchable, filterable table. <strong>Opportunity Score</strong> is ranked within each PC's own firm — matching that firm's export. The <strong>PE Owner</strong> dropdown filters to one owner, matching the source PE firm or the company's own PE Owner from Table View.</>
               : subtab === 'blueOwl'
               ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>Blue Owl</code>. Double-click any cell to edit it — same dropdowns as Table View.</>
               : <>Every opportunity from the <strong>Opps</strong> tab with Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>}
@@ -738,6 +738,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       ) : subtab === 'companies' ? (
         <PEAllCompaniesTab
           firms={peFirms}
+          prospects={prospects}
           onSelectProspect={onSelectProspect}
         />
       ) : subtab === 'blueOwl' ? (
@@ -1209,8 +1210,47 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
 // single table, with a global search plus per-column filters and sorting
 // via the shared DataTable. A leading PE Firm column records which firm
 // each company came from and links back to that firm's company popup.
-function PEAllCompaniesTab({ firms, onSelectProspect }) {
+// The PE Owner dropdown filters rows to one owner: a row passes when the
+// source PE firm matches the pick, or the portfolio company itself is a
+// Table View prospect whose PE Owner field matches it. Matching uses the
+// shared fuzzy companiesMatch so name variants ("Blue Owl" ↔ "Blue Owl
+// Capital") line up.
+function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect }) {
   const [search, setSearch] = useState('');
+  const [ownerFilter, setOwnerFilter] = useState('');
+
+  // Dropdown vocabulary: every PE firm that contributed rows + every
+  // distinct PE Owner set on a Table View prospect, deduped
+  // case-insensitively and sorted.
+  const ownerOptions = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    const push = (v) => {
+      const t = String(v || '').trim();
+      if (!t) return;
+      const k = t.toLowerCase();
+      if (seen.has(k)) return;
+      seen.add(k);
+      out.push(t);
+    };
+    for (const pe of firms) {
+      if (Array.isArray(pe.portfolioCompanies) && pe.portfolioCompanies.length > 0) push(pe.company);
+    }
+    for (const p of prospects) push(p.peOwner);
+    return out.sort((a, b) => a.localeCompare(b));
+  }, [firms, prospects]);
+
+  // Company name (lowercased) → its Table View PE Owner, for the "or
+  // the Company" half of the owner filter.
+  const ownerByCompany = useMemo(() => {
+    const m = new Map();
+    for (const p of prospects) {
+      const owner = (p.peOwner || '').trim();
+      const name = (p.company || '').trim().toLowerCase();
+      if (owner && name) m.set(name, owner);
+    }
+    return m;
+  }, [prospects]);
 
   const rows = useMemo(() => {
     const out = [];
@@ -1285,10 +1325,18 @@ function PEAllCompaniesTab({ firms, onSelectProspect }) {
   ], [firms, onSelectProspect]);
 
   const filtered = useMemo(() => {
+    let out = rows;
+    if (ownerFilter) {
+      out = out.filter(r => {
+        if (companiesMatch(r.peFirm, ownerFilter)) return true;
+        const owner = ownerByCompany.get(r.companyName.trim().toLowerCase());
+        return owner ? companiesMatch(owner, ownerFilter) : false;
+      });
+    }
     const term = search.trim().toLowerCase();
-    if (!term) return rows;
-    return rows.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(term)));
-  }, [search, rows]);
+    if (!term) return out;
+    return out.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(term)));
+  }, [search, rows, ownerFilter, ownerByCompany]);
 
   return (
     <>
@@ -1300,7 +1348,22 @@ function PEAllCompaniesTab({ firms, onSelectProspect }) {
           placeholder={`Search ${rows.length} portfolio compan${rows.length === 1 ? 'y' : 'ies'}…`}
           style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
-        {search.trim() && <span style={{ fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap' }}>{filtered.length} of {rows.length}</span>}
+        <select
+          value={ownerFilter}
+          onChange={e => setOwnerFilter(e.target.value)}
+          title="Show only companies under one PE owner — matches the source PE firm or the company's own PE Owner from Table View"
+          style={{
+            maxWidth: 220, padding: '0.4rem 0.6rem',
+            border: `1px solid ${ownerFilter ? '#7C3AED' : '#E2E8F0'}`, borderRadius: 6,
+            fontSize: '0.78rem', fontFamily: 'inherit',
+            color: ownerFilter ? '#7C3AED' : 'inherit', fontWeight: ownerFilter ? 700 : 400,
+            background: '#fff', cursor: 'pointer',
+          }}
+        >
+          <option value="">All PE Owners</option>
+          {ownerOptions.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+        {(search.trim() || ownerFilter) && <span style={{ fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap' }}>{filtered.length} of {rows.length}</span>}
       </div>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
         {rows.length === 0 ? (
