@@ -340,10 +340,11 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
 
   // "Blue Owl" sub-tab: every Table View prospect whose PE Owner names
   // Blue Owl. Contains-match (case-insensitive) so data-entry variants
-  // like "Blue Owl Capital" still land here.
+  // like "Blue Owl Capital" still land here. Prospects typed as
+  // Portfolio Company are excluded.
   const blueOwlCompanies = useMemo(() => (
     prospects
-      .filter(p => (p.peOwner || '').toLowerCase().includes('blue owl'))
+      .filter(p => (p.peOwner || '').toLowerCase().includes('blue owl') && p.type !== 'Portfolio Company')
       .sort((a, b) => (a.company || '').localeCompare(b.company || ''))
   ), [prospects]);
 
