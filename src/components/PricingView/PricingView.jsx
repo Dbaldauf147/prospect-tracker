@@ -1359,6 +1359,122 @@ function LinkedToInput({ initial, isDefault, onCommit, suggestions = [] }) {
   );
 }
 
+// Manager popup for the Linked To dropdown vocabulary, opened from the
+// ± button on the pricing table's Linked To column header. Lists every
+// option the dropdown currently offers (auto-derived tags + the user's
+// custom adds) with a remove button, shows removed ones with a restore
+// button, and takes new options via the input at the top. Add/remove
+// handlers live on the parent (addLinkedToOption / removeLinkedToOption)
+// so the curation persists with the rest of the pricing cache.
+function LinkedToOptionsModal({ autoTags = [], optionsList, onAdd, onRemove, onClose }) {
+  const [draft, setDraft] = useState('');
+  const custom = optionsList?.custom || [];
+  const hidden = optionsList?.hidden || [];
+  const hiddenSet = new Set(hidden.map(s => String(s).trim().toLowerCase()));
+  const customSet = new Set(custom.map(s => String(s).trim().toLowerCase()));
+  const seen = new Map();
+  for (const name of [...autoTags, ...custom]) {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) continue;
+    const k = trimmed.toLowerCase();
+    if (!seen.has(k) && !hiddenSet.has(k)) seen.set(k, trimmed);
+  }
+  const visible = [...seen.values()].sort((a, b) => a.localeCompare(b));
+  const removed = [...hidden].sort((a, b) => a.localeCompare(b));
+  const submit = () => {
+    const v = draft.trim();
+    if (!v) return;
+    onAdd(v);
+    setDraft('');
+  };
+  const rowStyle = { display: 'flex', alignItems: 'center', gap: 8, padding: '0.25rem 0' };
+  const xBtnStyle = { padding: '0 7px', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', fontSize: '0.78rem', fontFamily: 'inherit', color: '#b91c1c', cursor: 'pointer', lineHeight: 1.6 };
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)', zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } }}
+        style={{ width: 440, maxWidth: '92vw', maxHeight: '80vh', background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+      >
+        <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>Linked To dropdown options</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+            These options appear in every row&apos;s Linked To dropdown. Tags already used on saved defaults, alt-fee rows, or row overrides are suggested automatically; removing one keeps it out of the dropdown without touching the rows that use it.
+          </div>
+        </div>
+        <div style={{ padding: '0.85rem 1rem', overflowY: 'auto' }}>
+          <div style={{ display: 'flex', gap: 6, marginBottom: '0.7rem' }}>
+            <input
+              autoFocus
+              type="text"
+              value={draft}
+              placeholder="Add an option…"
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
+              style={{ flex: 1, boxSizing: 'border-box', padding: '0.4rem 0.55rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.82rem', fontFamily: 'inherit' }}
+            />
+            <button
+              type="button"
+              onClick={submit}
+              disabled={!draft.trim()}
+              style={{ padding: '0.35rem 0.8rem', border: '1px solid var(--color-accent)', borderRadius: 4, background: draft.trim() ? 'var(--color-accent)' : 'var(--color-border-light)', color: draft.trim() ? '#fff' : 'var(--color-text-muted)', fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit', cursor: draft.trim() ? 'pointer' : 'not-allowed' }}
+            >Add</button>
+          </div>
+          {visible.length === 0 ? (
+            <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', fontStyle: 'italic', padding: '0.3rem 0' }}>
+              No dropdown options yet — add one above, or tag a row and they&apos;ll be suggested automatically.
+            </div>
+          ) : visible.map(name => {
+            const isCustom = customSet.has(name.toLowerCase());
+            return (
+              <div key={name} style={rowStyle}>
+                <span style={{ flex: 1, fontSize: '0.82rem', color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={name}>
+                  {name}
+                  {isCustom && <span style={{ marginLeft: 6, fontSize: '0.65rem', fontWeight: 700, color: 'var(--color-text-muted)' }}>(added)</span>}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onRemove(name)}
+                  title={isCustom ? 'Remove this option from the dropdown' : 'Remove this auto-suggested tag from the dropdown (rows using it are unaffected)'}
+                  style={xBtnStyle}
+                >×</button>
+              </div>
+            );
+          })}
+          {removed.length > 0 && (
+            <>
+              <div style={{ margin: '0.7rem 0 0.3rem', fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)' }}>
+                Removed
+              </div>
+              {removed.map(name => (
+                <div key={name} style={rowStyle}>
+                  <span style={{ flex: 1, fontSize: '0.82rem', color: 'var(--color-text-muted)', textDecoration: 'line-through', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={name}>{name}</span>
+                  <button
+                    type="button"
+                    onClick={() => onAdd(name)}
+                    title="Restore this option to the dropdown"
+                    style={{ ...xBtnStyle, color: 'var(--color-text)' }}
+                  >↩</button>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0.6rem 1rem', borderTop: '1px solid var(--color-border-light)', background: 'var(--color-bg)' }}>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ padding: '0.35rem 0.85rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit', color: 'var(--color-text)', cursor: 'pointer' }}
+          >Done</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const COLS = [
   { key: 'lineItem',    label: 'Line Item',         defaultWidth: 280 },
   { key: 'type',        label: 'Type',              defaultWidth: 140 },
@@ -1403,6 +1519,13 @@ const LINKED_TO_START_MONTH_DEFAULTS_KEY = 'linkedToStartMonthDefaults';
 // pair are billed at cost (no markup) unless a per-row override on the
 // pricing table says otherwise. Persisted on its own DB key.
 const LINKED_TO_PASS_THROUGH_DEFAULTS_KEY = 'linkedToPassThroughDefaults';
+// User-curated vocabulary for the per-row Linked To dropdown on the
+// pricing page. `custom` holds options the user added by hand; `hidden`
+// suppresses auto-derived suggestions (tags pulled from saved defaults,
+// alt-fee rows, and per-row overrides) the user removed. Persisted on
+// its own key so the curation survives parser bumps and Clear-button
+// workbook wipes, like the Linked-To defaults above.
+const LINKED_TO_OPTIONS_KEY = 'linkedToOptionsList';
 // Line Item → Services catalog mapping. Keyed by lowercase line item
 // name; value is an array of service strings from the Dropdowns-tab
 // Solutions / Service Catalog. Persisted on its own key so it survives
@@ -1475,6 +1598,8 @@ export function PricingView({ settings } = {}) {
   const [linkedToUnitDefaults, setLinkedToUnitDefaults] = useState({}); // { [`${lineItem}::${type}`]: 'Per Site' | 'Per Account' | 'Fixed' | 'Per Meter' }
   const [linkedToStartMonthDefaults, setLinkedToStartMonthDefaults] = useState({}); // { [`${lineItem}::${type}`]: number } — overrides the CTS row's startMonth for the auto-derive that feeds alt-fee rows
   const [linkedToPassThroughDefaults, setLinkedToPassThroughDefaults] = useState({}); // { [`${lineItem}::${type}`]: true } — sets pass-through for every CTS row matching the pair, unless the per-row override says otherwise
+  const [linkedToOptionsList, setLinkedToOptionsList] = useState({ custom: [], hidden: [] }); // user-curated Linked To dropdown vocabulary (see LINKED_TO_OPTIONS_KEY)
+  const [linkedToOptionsModal, setLinkedToOptionsModal] = useState(null); // { autoTags: string[] } — open state for the Linked To options manager
   const [lineItemServices, setLineItemServices] = useState({}); // { [lineItemKey]: string[] }
   const [lineItemIgnored, setLineItemIgnored] = useState({}); // { [lineItemKey]: true } — line items the user opted to ignore (greyed out, excluded from the unmapped warning)
   const [termMonths, setTermMonths] = useState(36);
@@ -1534,6 +1659,13 @@ export function PricingView({ settings } = {}) {
         if (!cancelled && savedPassThroughDefaults && typeof savedPassThroughDefaults === 'object') {
           setLinkedToPassThroughDefaults(savedPassThroughDefaults);
         }
+        const savedOptionsList = await dbGet(STORE, LINKED_TO_OPTIONS_KEY);
+        if (!cancelled && savedOptionsList && typeof savedOptionsList === 'object') {
+          setLinkedToOptionsList({
+            custom: Array.isArray(savedOptionsList.custom) ? savedOptionsList.custom : [],
+            hidden: Array.isArray(savedOptionsList.hidden) ? savedOptionsList.hidden : [],
+          });
+        }
         const savedLineItemServices = await dbGet(STORE, LINE_ITEM_SERVICES_KEY);
         if (!cancelled && savedLineItemServices && typeof savedLineItemServices === 'object') {
           setLineItemServices(savedLineItemServices);
@@ -1553,6 +1685,12 @@ export function PricingView({ settings } = {}) {
           if (!savedUnitDefaults && saved.linkedToUnitDefaults) setLinkedToUnitDefaults(saved.linkedToUnitDefaults);
           if (!savedStartMonthDefaults && saved.linkedToStartMonthDefaults) setLinkedToStartMonthDefaults(saved.linkedToStartMonthDefaults);
           if (!savedPassThroughDefaults && saved.linkedToPassThroughDefaults) setLinkedToPassThroughDefaults(saved.linkedToPassThroughDefaults);
+          if (!savedOptionsList && saved.linkedToOptionsList && typeof saved.linkedToOptionsList === 'object') {
+            setLinkedToOptionsList({
+              custom: Array.isArray(saved.linkedToOptionsList.custom) ? saved.linkedToOptionsList.custom : [],
+              hidden: Array.isArray(saved.linkedToOptionsList.hidden) ? saved.linkedToOptionsList.hidden : [],
+            });
+          }
           hydratedRef.current = true;
           return;
         }
@@ -1566,6 +1704,12 @@ export function PricingView({ settings } = {}) {
         if (!savedUnitDefaults && saved.linkedToUnitDefaults) setLinkedToUnitDefaults(saved.linkedToUnitDefaults);
         if (!savedStartMonthDefaults && saved.linkedToStartMonthDefaults) setLinkedToStartMonthDefaults(saved.linkedToStartMonthDefaults);
         if (!savedPassThroughDefaults && saved.linkedToPassThroughDefaults) setLinkedToPassThroughDefaults(saved.linkedToPassThroughDefaults);
+        if (!savedOptionsList && saved.linkedToOptionsList && typeof saved.linkedToOptionsList === 'object') {
+          setLinkedToOptionsList({
+            custom: Array.isArray(saved.linkedToOptionsList.custom) ? saved.linkedToOptionsList.custom : [],
+            hidden: Array.isArray(saved.linkedToOptionsList.hidden) ? saved.linkedToOptionsList.hidden : [],
+          });
+        }
         if (!savedLineItemServices && saved.lineItemServices && typeof saved.lineItemServices === 'object') setLineItemServices(saved.lineItemServices);
         if (!savedLineItemIgnored && saved.lineItemIgnored && typeof saved.lineItemIgnored === 'object') setLineItemIgnored(saved.lineItemIgnored);
         if (typeof saved.termMonths === 'number') setTermMonths(saved.termMonths);
@@ -1595,9 +1739,9 @@ export function PricingView({ settings } = {}) {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
 
   // Mirror Linked-To defaults under their dedicated key so they
   // outlive the main cache (parser-version bumps, Clear button,
@@ -1612,6 +1756,11 @@ export function PricingView({ settings } = {}) {
     if (!hydratedRef.current) return;
     dbPut(STORE, linkedToUnitDefaults, LINKED_TO_UNIT_DEFAULTS_KEY).catch(err => console.warn('Failed to save linked-to unit defaults:', err));
   }, [linkedToUnitDefaults]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    dbPut(STORE, linkedToOptionsList, LINKED_TO_OPTIONS_KEY).catch(err => console.warn('Failed to save linked-to options list:', err));
+  }, [linkedToOptionsList]);
 
   useEffect(() => {
     if (!hydratedRef.current) return;
@@ -2060,6 +2209,25 @@ export function PricingView({ settings } = {}) {
     if (s.linkedToUnitDefaults && typeof s.linkedToUnitDefaults === 'object') {
       setLinkedToUnitDefaults(prev => ({ ...prev, ...s.linkedToUnitDefaults }));
     }
+    if (s.linkedToOptionsList && typeof s.linkedToOptionsList === 'object') {
+      // Same union semantics as the defaults above — fold the snapshot's
+      // curated dropdown options into this device's list.
+      setLinkedToOptionsList(prev => {
+        const union = (a, b) => {
+          const seen = new Set((a || []).map(v => String(v).trim().toLowerCase()));
+          const out = [...(a || [])];
+          for (const v of (b || [])) {
+            const k = String(v).trim().toLowerCase();
+            if (k && !seen.has(k)) { seen.add(k); out.push(String(v).trim()); }
+          }
+          return out;
+        };
+        return {
+          custom: union(prev.custom, s.linkedToOptionsList.custom),
+          hidden: union(prev.hidden, s.linkedToOptionsList.hidden),
+        };
+      });
+    }
     if (typeof s.termMonths === 'number') setTermMonths(s.termMonths);
     if (typeof s.annualEscalator === 'number') setAnnualEscalator(s.annualEscalator);
     if (typeof s.costEscalator === 'number') setCostEscalator(s.costEscalator);
@@ -2414,6 +2582,37 @@ export function PricingView({ settings } = {}) {
         next[itemId] = { ...next[itemId], linkedTo: trimmed };
       }
       return next;
+    });
+  }
+
+  // Add / remove entries in the Linked To dropdown vocabulary (the
+  // datalist on each pricing-table row), managed from the ± button on
+  // the column header. Adding clears a matching hidden entry, so
+  // re-adding (or restoring) a removed option brings it back; removing
+  // remembers the name in `hidden` so auto-derived tags that are still
+  // in use on defaults / alt fees / overrides stay suppressed.
+  function addLinkedToOption(name) {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) return;
+    const lower = trimmed.toLowerCase();
+    setLinkedToOptionsList(prev => {
+      const hidden = (prev.hidden || []).filter(h => String(h).trim().toLowerCase() !== lower);
+      const custom = (prev.custom || []).some(c => String(c).trim().toLowerCase() === lower)
+        ? (prev.custom || [])
+        : [...(prev.custom || []), trimmed];
+      return { custom, hidden };
+    });
+  }
+  function removeLinkedToOption(name) {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) return;
+    const lower = trimmed.toLowerCase();
+    setLinkedToOptionsList(prev => {
+      const custom = (prev.custom || []).filter(c => String(c).trim().toLowerCase() !== lower);
+      const hidden = (prev.hidden || []).some(h => String(h).trim().toLowerCase() === lower)
+        ? (prev.hidden || [])
+        : [...(prev.hidden || []), trimmed];
+      return { custom, hidden };
     });
   }
 
@@ -3462,8 +3661,12 @@ export function PricingView({ settings } = {}) {
                   // saved (Line Item, Type) defaults, alt-fee rows on
                   // this option, and per-row overrides — deduped
                   // case-insensitively while preserving the original
-                  // casing for display.
-                  const linkedToSuggestions = (() => {
+                  // casing for display. The raw auto-derived union is
+                  // kept separate so the ± options manager can tell
+                  // auto tags from hand-added ones; the dropdown itself
+                  // then folds in the user's custom options and drops
+                  // the removed (hidden) ones.
+                  const linkedToAutoTags = (() => {
                     const seen = new Map();
                     const add = (name) => {
                       const trimmed = String(name || '').trim();
@@ -3474,6 +3677,17 @@ export function PricingView({ settings } = {}) {
                     for (const v of Object.values(linkedToDefaults)) add(v);
                     for (const r of (altFees[opt.optionNumber] || [])) add(r.altItem);
                     for (const o of Object.values(overrides)) if (o?.linkedTo) add(o.linkedTo);
+                    return [...seen.values()];
+                  })();
+                  const linkedToSuggestions = (() => {
+                    const hiddenTags = new Set((linkedToOptionsList.hidden || []).map(s => String(s).trim().toLowerCase()));
+                    const seen = new Map();
+                    for (const name of [...linkedToAutoTags, ...(linkedToOptionsList.custom || [])]) {
+                      const trimmed = String(name || '').trim();
+                      if (!trimmed) continue;
+                      const k = trimmed.toLowerCase();
+                      if (!seen.has(k) && !hiddenTags.has(k)) seen.set(k, trimmed);
+                    }
                     return [...seen.values()].sort((a, b) => a.localeCompare(b));
                   })();
                   const totalCost = flatItems.reduce((s, i) => s + (typeof i.cts === 'number' ? i.cts : 0), 0);
@@ -3547,6 +3761,14 @@ export function PricingView({ settings } = {}) {
                               >
                                 <span className={styles.thInner}>
                                   <span className={styles.thLabel}>{col.label}</span>
+                                  {col.key === 'linkedTo' && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setLinkedToOptionsModal({ autoTags: linkedToAutoTags })}
+                                      title="Add or remove options in the Linked To dropdown"
+                                      style={{ marginLeft: 4, padding: '0 5px', border: '1px solid var(--color-border)', borderRadius: 3, background: '#fff', fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text-muted)', cursor: 'pointer', lineHeight: 1.4, fontFamily: 'inherit' }}
+                                    >±</button>
+                                  )}
                                   <span
                                     className={styles.colResizer}
                                     onMouseDown={(e) => startColResize('main', col.key, e)}
@@ -4252,6 +4474,16 @@ export function PricingView({ settings } = {}) {
           />
         );
       })()}
+
+      {linkedToOptionsModal && (
+        <LinkedToOptionsModal
+          autoTags={linkedToOptionsModal.autoTags}
+          optionsList={linkedToOptionsList}
+          onAdd={addLinkedToOption}
+          onRemove={removeLinkedToOption}
+          onClose={() => setLinkedToOptionsModal(null)}
+        />
+      )}
     </div>
   );
 }
