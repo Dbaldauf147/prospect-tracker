@@ -1687,6 +1687,31 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
     return rows;
   }, [oppsCache, bfoCompanyByNorm, settings?.serviceOverrides]);
 
+  // Missing data the New BFO Opp AI prompt needs. The prompt emits
+  // "BFO Company Name | Project Name | Product Line | Local Project Name"
+  // per opp, with Project Name composed from the Product Line code, Type,
+  // Region and Scope — so any blank among those fields leaves a hole in
+  // the prompt. One entry per affected opp, listing its blank fields;
+  // drives the red banner at the top of the page.
+  const newBfoMissingData = useMemo(() => {
+    const blank = (v) => {
+      const s = String(v ?? '').trim();
+      return !s || s === '—' || s === '-';
+    };
+    const out = [];
+    for (const o of newBfoOpps) {
+      const missing = [];
+      if (blank(o.bfoCompanyName)) missing.push('BFO Company Name');
+      if (blank(o.productLine)) missing.push('Product Line');
+      if (blank(o.type)) missing.push('Type');
+      if (blank(o.region)) missing.push('Region');
+      if (blank(o.scope)) missing.push('Scope');
+      if (blank(o.localProjectName)) missing.push('Local Project Name');
+      if (missing.length) out.push({ company: o.company, missing });
+    }
+    return out;
+  }, [newBfoOpps]);
+
   // BFO Opportunity Name → Last Activity date from the BFO Activity tab.
   // Lets the Called and Sent emails tables show how long it's been since
   // anything happened on the matched BFO opp. Keyed by normalized
@@ -2172,6 +2197,18 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
         >Copy all prompts</button>
         {copyAllFlash && <span className={styles.copyFlash}>{copyAllFlash}</span>}
       </div>
+      {newBfoMissingData.length > 0 && (
+        <div className={styles.errorBanner}>
+          <strong>New BFO Opp prompt is missing data for {newBfoMissingData.length} opp{newBfoMissingData.length === 1 ? '' : 's'}:</strong>{' '}
+          {newBfoMissingData.map((m, i) => (
+            <span key={m.company + i}>
+              {i > 0 && '; '}
+              <strong>{m.company}</strong> — {m.missing.join(', ')}
+            </span>
+          ))}
+          {' '}(BFO Company Name comes from the company&rsquo;s Table View record; Product Line / Type / Region / Local Project Name come from Dropdowns › Services for the opp&rsquo;s Scope.)
+        </div>
+      )}
       {activityRefreshError && (
         <div className={styles.staleBanner}>
           Refresh failed: {activityRefreshError}
