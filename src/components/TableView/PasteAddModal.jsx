@@ -111,15 +111,22 @@ function rowToProspect(cells, headers, mapping) {
 // Paste-from-Excel mass add for Table View. Stage 1 takes the raw
 // clipboard text; stage 2 shows the column-mapping table (auto-mapped
 // where headers match, with a dropdown per pasted column) plus a live
-// new-vs-duplicate count against the existing prospects. Import is
-// additive only — existing companies are skipped, never overwritten.
-export function PasteAddModal({ existingProspects, onImport, onClose }) {
+// new-vs-duplicate count against the existing prospects. The default
+// 'add' mode is additive only — existing companies are skipped, never
+// overwritten. mode="upsert" (used by the PE Portfolio Blue Owl tab)
+// instead matches pasted rows to existing companies and fills their
+// blank fields, with an Overwrite checkbox to also replace values that
+// differ; `defaults` supplies fields applied to every row the paste
+// doesn't itself provide (e.g. a PE Owner for the tab doing the paste).
+export function PasteAddModal({ existingProspects, onImport, onClose, mode = 'add', defaults }) {
   const [paste, setPaste] = useState('');
   const [stage, setStage] = useState('paste');
   const [headers, setHeaders] = useState([]);
   const [rawRows, setRawRows] = useState([]);
   const [mapping, setMapping] = useState({});
   const [parseError, setParseError] = useState('');
+  const [overwrite, setOverwrite] = useState(false);
+  const upsert = mode === 'upsert';
 
   function handleNext() {
     setParseError('');
@@ -150,28 +157,83 @@ export function PasteAddModal({ existingProspects, onImport, onClose }) {
   }, [headers, mapping]);
 
   // Live add/skip preview against the current prospects, so the import
-  // button says exactly what will happen before it's clicked.
+  // button says exactly what will happen before it's clicked. In upsert
+  // mode, matched companies are diffed instead of skipped: pasted values
+  // landing on blank fields are gap-fills (always applied), values that
+  // differ from a non-blank field apply only when Overwrite is ticked.
   const plan = useMemo(() => {
     if (!companyMapped) return null;
-    const existing = new Set(
-      (existingProspects || []).map(p => companyDedupeKey(p?.company)).filter(Boolean)
-    );
     const records = rawRows.map(cells => rowToProspect(cells, headers, mapping));
+    if (!upsert) {
+      const existing = new Set(
+        (existingProspects || []).map(p => companyDedupeKey(p?.company)).filter(Boolean)
+      );
+      const toAdd = [];
+      const dupes = [];
+      let noCompany = 0;
+      for (const r of records) {
+        if (!r.company) { noCompany++; continue; }
+        const key = companyDedupeKey(r.company);
+        if (!key || existing.has(key)) { dupes.push(r.company); continue; }
+        existing.add(key);
+        toAdd.push(r);
+      }
+      return { toAdd, dupes, noCompany };
+    }
+    const byKey = new Map();
+    for (const p of (existingProspects || [])) {
+      const k = companyDedupeKey(p?.company);
+      if (k && !byKey.has(k)) byKey.set(k, p);
+    }
+    const isEmpty = (v) => v == null || (Array.isArray(v) ? v.length === 0 : String(v).trim() === '');
+    const sameValue = (a, b) => {
+      if (Array.isArray(a) || Array.isArray(b)) {
+        return JSON.stringify(Array.isArray(a) ? a : [a]) === JSON.stringify(Array.isArray(b) ? b : [b]);
+      }
+      if (typeof a === 'number' || typeof b === 'number') return Number(a) === Number(b);
+      return String(a).trim() === String(b).trim();
+    };
     const toAdd = [];
-    const dupes = [];
+    const toUpdate = [];
+    const unchanged = [];
     let noCompany = 0;
+    const seenNew = new Set();
     for (const r of records) {
       if (!r.company) { noCompany++; continue; }
+      const effective = { ...(defaults || {}), ...r };
       const key = companyDedupeKey(r.company);
-      if (!key || existing.has(key)) { dupes.push(r.company); continue; }
-      existing.add(key);
-      toAdd.push(r);
+      const match = key ? byKey.get(key) : null;
+      if (!match) {
+        // Dedupe repeats within the paste itself; addProspect's
+        // company-key backstop would catch them anyway, but the second
+        // copy would silently drop its extra fields.
+        if (!key || seenNew.has(key)) { unchanged.push(r.company); continue; }
+        seenNew.add(key);
+        toAdd.push(effective);
+        continue;
+      }
+      const fills = {};
+      const diffs = {};
+      for (const [field, val] of Object.entries(effective)) {
+        if (field === 'company') continue;
+        const cur = match[field];
+        if (isEmpty(cur)) { fills[field] = val; continue; }
+        if (!sameValue(cur, val)) diffs[field] = val;
+      }
+      const changes = { ...fills, ...(overwrite ? diffs : {}) };
+      if (Object.keys(changes).length > 0) {
+        toUpdate.push({ id: match.id, company: match.company, changes, fillCount: Object.keys(fills).length, diffCount: Object.keys(diffs).length });
+      } else {
+        unchanged.push(match.company);
+      }
     }
-    return { toAdd, dupes, noCompany };
-  }, [companyMapped, existingProspects, rawRows, headers, mapping]);
+    return { toAdd, toUpdate, unchanged, noCompany, dupes: [] };
+  }, [companyMapped, existingProspects, rawRows, headers, mapping, upsert, defaults, overwrite]);
+
+  const planActionable = !!plan && (plan.toAdd.length > 0 || (plan.toUpdate?.length || 0) > 0);
 
   function handleImport() {
-    if (!plan || plan.toAdd.length === 0) return;
+    if (!planActionable) return;
     onImport(plan);
   }
 
@@ -188,7 +250,9 @@ export function PasteAddModal({ existingProspects, onImport, onClose }) {
         {stage === 'paste' && (
           <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', overflowY: 'auto' }}>
             <div style={{ fontSize: '0.75rem', color: '#475569', lineHeight: 1.4 }}>
-              In Excel (or Google Sheets), select the rows you want <strong>including the header row</strong> and copy with <strong>Cmd+C</strong> / <strong>Ctrl+C</strong>, then paste below. The next step shows which pasted column maps to each Table View field. Companies already in Table View are skipped — this adds, it never overwrites.
+              In Excel (or Google Sheets), select the rows you want <strong>including the header row</strong> and copy with <strong>Cmd+C</strong> / <strong>Ctrl+C</strong>, then paste below. The next step shows which pasted column maps to each Table View field. {upsert
+                ? <>Companies already in Table View get their <strong>blank fields filled</strong> from the paste (tick Overwrite on the next step to also replace values that differ); new companies are added.</>
+                : <>Companies already in Table View are skipped — this adds, it never overwrites.</>}
             </div>
             <textarea
               value={paste}
@@ -214,10 +278,18 @@ export function PasteAddModal({ existingProspects, onImport, onClose }) {
               {duplicateDestinations.length > 0 && <> · <span style={{ color: '#991B1B' }}>Multiple sources point at: {duplicateDestinations.join(', ')}</span></>}
               {plan && (
                 <> · <span style={{ color: '#166534', fontWeight: 700 }}>{plan.toAdd.length} new</span>
+                {upsert && <> · <span style={{ color: '#1D4ED8', fontWeight: 700 }}>{plan.toUpdate.length} to update</span></>}
+                {upsert && plan.unchanged.length > 0 && <> · <span style={{ color: '#64748B' }}>{plan.unchanged.length} unchanged</span></>}
                 {plan.dupes.length > 0 && <> · <span style={{ color: '#92400E' }}>{plan.dupes.length} already in Table View (skipped)</span></>}
                 {plan.noCompany > 0 && <> · <span style={{ color: '#92400E' }}>{plan.noCompany} without a company (skipped)</span></>}</>
               )}
             </div>
+            {upsert && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', color: '#475569', cursor: 'pointer' }}>
+                <input type="checkbox" checked={overwrite} onChange={e => setOverwrite(e.target.checked)} />
+                Overwrite values that differ (otherwise only blank fields are filled)
+              </label>
+            )}
             <div style={{ overflow: 'auto', border: '1px solid #E2E8F0', borderRadius: 6, flex: 1, minHeight: 0 }}>
               <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.72rem' }}>
                 <thead style={{ background: '#F1F5F9', position: 'sticky', top: 0, zIndex: 1 }}>
@@ -264,10 +336,14 @@ export function PasteAddModal({ existingProspects, onImport, onClose }) {
                 <button onClick={onClose} style={{ padding: '0.4rem 0.8rem', border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
                 <button
                   onClick={handleImport}
-                  disabled={!plan || plan.toAdd.length === 0}
-                  style={{ padding: '0.4rem 0.9rem', border: 'none', borderRadius: 6, background: (!plan || plan.toAdd.length === 0) ? '#94A3B8' : '#16A34A', color: '#fff', fontSize: '0.78rem', cursor: (!plan || plan.toAdd.length === 0) ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
+                  disabled={!planActionable}
+                  style={{ padding: '0.4rem 0.9rem', border: 'none', borderRadius: 6, background: !planActionable ? '#94A3B8' : '#16A34A', color: '#fff', fontSize: '0.78rem', cursor: !planActionable ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
                 >
-                  {plan ? `Add ${plan.toAdd.length} compan${plan.toAdd.length === 1 ? 'y' : 'ies'} →` : 'Add companies →'}
+                  {!plan
+                    ? (upsert ? 'Apply →' : 'Add companies →')
+                    : upsert
+                    ? `Apply: add ${plan.toAdd.length} · update ${plan.toUpdate.length} →`
+                    : `Add ${plan.toAdd.length} compan${plan.toAdd.length === 1 ? 'y' : 'ies'} →`}
                 </button>
               </div>
             </div>
