@@ -2,10 +2,9 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
-import { setOppField } from '../../utils/opps2Store';
-import { dbGet, dbPut } from '../../utils/db';
+import { setOppField, loadOpps2Cache, loadOpps2FromFirestore, mergeOpps2Datasets } from '../../utils/opps2Store';
+import { dbGet } from '../../utils/db';
 import { userLsGet, userLsSet } from '../../utils/userLs';
-import { getOppsSheetCsvUrl } from '../../utils/oppsSheetUrl';
 import { apiFetch } from '../../utils/apiFetch';
 import { useAuth } from '../../contexts/AuthContext';
 import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
@@ -406,39 +405,6 @@ const CURRENT_CUSTOMER_LEAD_SOURCE_RE = /client|existing|renewal|cross[\s-]?sell
 // We piggy-back on that cache instead of doing our own fetch so the two
 // views never disagree about what happened today.
 const ACTIVITY_CACHE_KEY = 'hubspot-activity-cache';
-
-// Resolved at fetch time via getOppsSheetCsvUrl below — admin falls
-// back to the legacy bundled sheet so existing behavior is unchanged;
-// other users opt in by setting settings.oppsSheetUrl.
-const OPPS_DB_STORE = 'opps-cache';
-
-// Same CSV parser OppsView uses — handles quoted fields, escaped quotes,
-// and CRLF / LF line endings.
-function parseOppsCsv(text) {
-  const rows = [];
-  let current = [];
-  let field = '';
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') { field += '"'; i++; }
-        else inQuotes = false;
-      } else field += ch;
-    } else {
-      if (ch === '"') inQuotes = true;
-      else if (ch === ',') { current.push(field); field = ''; }
-      else if (ch === '\n' || (ch === '\r' && text[i + 1] === '\n')) {
-        current.push(field); field = '';
-        if (ch === '\r') i++;
-        rows.push(current); current = [];
-      } else field += ch;
-    }
-  }
-  if (field || current.length > 0) { current.push(field); rows.push(current); }
-  return rows;
-}
 
 // "Did I send this?" is keyed off the per-user work email on HubSpot,
 // not the Google auth address — the user signs in (e.g.) with a Gmail
@@ -894,7 +860,7 @@ function NewBfoCompanyNameCell({ prospect, value, onCommit }) {
 }
 
 export function AgentsView({ prospects = [], settings, updateProspect }) {
-  const { isAdmin, user } = useAuth();
+  const { user } = useAuth();
   // Configured per-user via Settings → CDM Name. The Sent emails section
   // matches HubSpot's hs_email_from_email against this address; blank
   // means "no outbound to show yet — set your work email in Settings".
@@ -1112,10 +1078,12 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
   }, []);
 
   // Pull the latest HubSpot activity (emails, calls, meetings) AND
-  // re-fetch the Opps Google Sheet so the BFO tagging and the Called
+  // re-sync the Opps 2 store so the BFO tagging and the Called
   // section both reflect the latest data. The HubSpot pull writes to
   // the shared localStorage cache that ActivityView reads from; the
-  // Opps pull writes to the same IndexedDB key OppsView uses. Each
+  // Opps half reconciles the local Opps 2 cache against Firestore
+  // (Opps 2 is the canonical opps store — the legacy Google Sheet is
+  // a read-only backup that no longer feeds anything here). Each
   // half runs independently so a failure on one doesn't block the
   // other.
   async function refreshActivityCache() {
@@ -1140,39 +1108,28 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
       return all;
     }
     async function fetchOpps() {
-      const url = getOppsSheetCsvUrl({ isAdmin, settings });
-      if (!url) {
-        // No sheet configured for this user — leave the existing
-        // oppsCache (if any) untouched and skip the Opps refresh half.
+      // Opps 2 is the canonical opps store. Reconcile the local cache
+      // against the Firestore copy with the same merge the Opps 2 tab
+      // uses, so the values here always match the current Opps data —
+      // including edits made on another device since the last visit.
+      const [fromIdb, fromFs] = await Promise.all([
+        loadOpps2Cache(),
+        user?.uid ? loadOpps2FromFirestore(user.uid) : Promise.resolve(null),
+      ]);
+      const next = (fromIdb && fromFs)
+        ? mergeOpps2Datasets(fromIdb, fromFs)
+        : (fromIdb || fromFs);
+      if (!next) {
+        // Nothing cached locally or in the cloud yet — leave the
+        // existing oppsCache (if any) untouched.
         return;
       }
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`Opps HTTP ${res.status}`);
-      const csvText = await res.text();
-      const rows = parseOppsCsv(csvText);
-      if (rows.length < 2) throw new Error('Opps sheet returned no data');
-      const headers = rows[0].map(h => h.trim());
-      const records = [];
-      for (let i = 1; i < rows.length; i++) {
-        const row = rows[i];
-        const record = { _id: i };
-        let hasData = false;
-        for (let j = 0; j < headers.length; j++) {
-          const h = headers[j];
-          if (!h) continue;
-          const val = (row[j] || '').trim();
-          if (record[h] !== undefined && record[h] !== '' && record[h] !== '-' && record[h] !== '#N/A') continue;
-          record[h] = val;
-          if (val && val !== '-' && val !== '#N/A') hasData = true;
-        }
-        // Mirror the Opps tab's filter — keep every row with at least
-        // one populated cell. Earlier we required an Account too, which
-        // silently dropped sheet rows whose Account was blank.
-        if (hasData) records.push(record);
-      }
-      const result = { headers, records, fetchedAt: new Date().toISOString() };
-      setActivityRefreshProgress(prev => ({ ...prev, opps: records.length }));
-      await dbPut(OPPS_DB_STORE, result, 'data');
+      const result = {
+        headers: Array.isArray(next.headers) ? next.headers : [],
+        records: Array.isArray(next.records) ? next.records : [],
+        fetchedAt: next.fetchedAt || null,
+      };
+      setActivityRefreshProgress(prev => ({ ...prev, opps: result.records.length }));
       setOppsCache(result);
       return result;
     }
@@ -2241,7 +2198,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
           className={styles.refreshActivityBtn}
           onClick={refreshActivityCache}
           disabled={activityRefreshing}
-          title="Re-pull every HubSpot email, call, and meeting AND re-fetch the Opps Google Sheet. Updates the shared activity cache (same as the Activity tab's Refresh) and the Opps cache (same as the Opps - Old tab's Refresh)."
+          title="Re-pull every HubSpot email, call, and meeting AND re-sync Opps from the Opps tab's store (local cache reconciled against the cloud copy). Updates the shared activity cache (same as the Activity tab's Refresh)."
         >
           {activityRefreshing
             ? (activityRefreshProgress
