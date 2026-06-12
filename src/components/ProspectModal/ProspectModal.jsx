@@ -12,6 +12,7 @@ import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { useAuth } from '../../contexts/AuthContext';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB, renameSourceFile as renamePortfolioSourceFile } from '../../utils/portfolioSourceFileStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
+import { splitPeOwners } from '../../utils/peOwners';
 import { computePortfolioFitScore, industrySector, sectorScoreFor, tierForScoreValue, industryTier, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { isContactInEvent, toggleContactInEvents } from '../../utils/eventsStore';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
@@ -4096,7 +4097,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 // Pull candidates from the full Table View / prospects list, not just Type=PE.
                 const allCompanies = (prospects || [])
                   .filter(p => p.company && p.company !== fields.company);
-                const q = (fields.peOwner || '').toLowerCase().trim();
+                // The field holds one or more comma-separated owners.
+                // Filter on the segment after the last separator so a
+                // second owner can be picked without losing the first —
+                // "Blue Owl Capital, KK" searches "kk"; picking replaces
+                // just that trailing segment.
+                const rawPeOwner = fields.peOwner || '';
+                const segCut = Math.max(rawPeOwner.lastIndexOf(','), rawPeOwner.lastIndexOf(';'));
+                const committedOwners = segCut >= 0 ? rawPeOwner.slice(0, segCut + 1).trim() : '';
+                const q = (segCut >= 0 ? rawPeOwner.slice(segCut + 1) : rawPeOwner).toLowerCase().trim();
+                const pickOwner = (name) => set('peOwner', committedOwners ? `${committedOwners} ${name}` : name);
+                const ownerSet = new Set(splitPeOwners(rawPeOwner).map(o => o.toLowerCase()));
                 // When user is typing, show matches anywhere. Prefer Private Equity type matches first.
                 function score(p) {
                   const name = (p.company || '').toLowerCase();
@@ -4120,22 +4131,23 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       value={fields.peOwner || ''}
                       onChange={e => { set('peOwner', e.target.value); setPeOpen(true); }}
                       onFocus={() => setPeOpen(true)}
-                      placeholder="Type a company name (searches all of Table View)…"
+                      placeholder="Type a company name — comma-separate multiple owners…"
                     />
                     {peOpen && allCompanies.length > 0 && (
                       <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 2, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', maxHeight: 260, overflowY: 'auto', zIndex: 100 }}>
                         {filtered.length === 0 ? (
-                          <div style={{ padding: '0.5rem 0.75rem', fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic' }}>No companies match &quot;{fields.peOwner}&quot;</div>
+                          <div style={{ padding: '0.5rem 0.75rem', fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic' }}>No companies match &quot;{q}&quot;</div>
                         ) : filtered.map(p => {
                           const isPE = p.type === 'Private Equity';
+                          const isPicked = ownerSet.has((p.company || '').toLowerCase());
                           return (
                             <button
                               key={p.id}
                               type="button"
-                              onMouseDown={e => { e.preventDefault(); set('peOwner', p.company); setPeOpen(false); }}
-                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', width: '100%', padding: '0.4rem 0.75rem', border: 'none', background: fields.peOwner === p.company ? '#EFF6FF' : '#fff', textAlign: 'left', cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit', color: '#1E293B' }}
-                              onMouseEnter={e => { if (fields.peOwner !== p.company) e.currentTarget.style.background = '#F8FAFC'; }}
-                              onMouseLeave={e => { e.currentTarget.style.background = fields.peOwner === p.company ? '#EFF6FF' : '#fff'; }}
+                              onMouseDown={e => { e.preventDefault(); pickOwner(p.company); setPeOpen(false); }}
+                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', width: '100%', padding: '0.4rem 0.75rem', border: 'none', background: isPicked ? '#EFF6FF' : '#fff', textAlign: 'left', cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit', color: '#1E293B' }}
+                              onMouseEnter={e => { if (!isPicked) e.currentTarget.style.background = '#F8FAFC'; }}
+                              onMouseLeave={e => { e.currentTarget.style.background = isPicked ? '#EFF6FF' : '#fff'; }}
                             >
                               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.company}</span>
                               {isPE && <span style={{ flexShrink: 0, fontSize: '0.6rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: '#F3E8FF', color: '#7C3AED' }}>PE</span>}
