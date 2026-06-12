@@ -71,25 +71,49 @@ function mergeTablePrefs(ours, remote) {
   return out;
 }
 
+// Set (or delete, when value is null/undefined) one dotted path on a
+// plain nested object, creating intermediate objects as needed.
+function setDottedPath(obj, path, value) {
+  const parts = path.split('.');
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (typeof cur[parts[i]] !== 'object' || cur[parts[i]] == null) cur[parts[i]] = {};
+    cur = cur[parts[i]];
+  }
+  const last = parts[parts.length - 1];
+  if (value == null) delete cur[last]; else cur[last] = value;
+}
+
 export function useUserSettings(user) {
   const [settings, setSettings] = useState({});
   const [loaded, setLoaded] = useState(false);
   const userIdRef = useRef(null);
-  const writingRef = useRef(false);
+  // Count of in-flight saves (multiple updateSettings calls can overlap).
+  const writingRef = useRef(0);
   // Remember the latest settings we saw, so stale-write checks and
   // pre-save backups have access without stale closures.
   const settingsRef = useRef({});
+  // Latest remote snapshot that arrived while a write was in flight.
+  // We can't apply it immediately (it would stomp the optimistic
+  // state), but dropping it outright leaves this device holding stale
+  // data with a fresh _lastWriteAt — its next save of the same key
+  // would then pass the stale check and silently erase the other
+  // device's change (e.g. a dropdown option added on another laptop).
+  // The save that caused the skip folds it back in when it settles.
+  const pendingRemoteRef = useRef(null);
 
   useEffect(() => {
     if (!user) { setSettings({}); setLoaded(false); return; }
     userIdRef.current = user.uid;
+    pendingRemoteRef.current = null;
 
     // Migrate localStorage → Firestore on first login, then subscribe
     initUserSettings(user.uid).catch(err => console.error('initUserSettings error:', err));
 
     const unsub = subscribeToUserSettings(user.uid, (data) => {
-      // Skip snapshot updates while a write is in-flight to avoid overwriting optimistic state
-      if (writingRef.current) return;
+      // A write is in flight: stash the snapshot for the writer to fold
+      // in afterwards instead of applying (or losing) it now.
+      if (writingRef.current > 0) { pendingRemoteRef.current = data || {}; return; }
       settingsRef.current = data || {};
       setSettings(data || {});
       setLoaded(true);
@@ -113,9 +137,13 @@ export function useUserSettings(user) {
     const optimistic = { ...prev, ...updates };
     settingsRef.current = optimistic;
     setSettings(optimistic);
-    writingRef.current = true;
+    writingRef.current += 1;
 
     const updateKeys = Object.keys(updates);
+    // What we ended up writing (the stale path swaps in merged values)
+    // and when — used to fold in any snapshot stashed mid-write.
+    let written = updates;
+    let writtenAt = null;
 
     try {
       const result = await saveUserSettings(userIdRef.current, updates, { expectedAt });
@@ -138,10 +166,13 @@ export function useUserSettings(user) {
             : autoMergeValue(updates[k], remote[k]);
         }
         const forced = await saveUserSettings(userIdRef.current, mergedUpdates, { force: true });
+        written = mergedUpdates;
+        writtenAt = forced.writtenAt;
         const merged = { ...remote, ...mergedUpdates, _lastWriteAt: forced.writtenAt };
         settingsRef.current = merged;
         setSettings(merged);
       } else {
+        writtenAt = result.writtenAt;
         const next = { ...optimistic, _lastWriteAt: result.writtenAt };
         settingsRef.current = next;
         setSettings(next);
@@ -151,7 +182,19 @@ export function useUserSettings(user) {
       console.error('Failed to save user settings:', err);
       alert('Failed to save settings: ' + err.message + '\n\nA backup of your pre-save state was saved locally.');
     } finally {
-      writingRef.current = false;
+      writingRef.current -= 1;
+      const pending = pendingRemoteRef.current;
+      if (pending) {
+        pendingRemoteRef.current = null;
+        // A remote snapshot landed mid-write. Take it as the new base
+        // (the other device's changes) and overlay the keys we just
+        // wrote, so neither side's change is dropped.
+        const next = { ...pending, ...written };
+        const at = Math.max(Number(pending._lastWriteAt) || 0, Number(writtenAt) || 0);
+        if (at) next._lastWriteAt = at;
+        settingsRef.current = next;
+        setSettings(next);
+      }
     }
   }, []);
 
@@ -173,18 +216,16 @@ export function useUserSettings(user) {
     // Build optimistic local state by walking each path.
     const optimistic = structuredClone(prev);
     for (const [path, value] of Object.entries(pathUpdates)) {
-      const parts = path.split('.');
-      let cur = optimistic;
-      for (let i = 0; i < parts.length - 1; i++) {
-        if (typeof cur[parts[i]] !== 'object' || cur[parts[i]] == null) cur[parts[i]] = {};
-        cur = cur[parts[i]];
-      }
-      const last = parts[parts.length - 1];
-      if (value == null) delete cur[last]; else cur[last] = value;
+      setDottedPath(optimistic, path, value);
     }
     settingsRef.current = optimistic;
     setSettings(optimistic);
-    writingRef.current = true;
+    writingRef.current += 1;
+
+    // What we ended up writing (the stale path swaps in merged values)
+    // and when — used to fold in any snapshot stashed mid-write.
+    let written = pathUpdates;
+    let writtenAt = null;
 
     try {
       const result = await savePathUpdates(userIdRef.current, pathUpdates, { expectedAt });
@@ -214,23 +255,19 @@ export function useUserSettings(user) {
           mergedPathUpdates[path] = cur === undefined ? value : autoMergeValue(value, cur);
         }
         const forced = await savePathUpdates(userIdRef.current, mergedPathUpdates, { force: true });
+        written = mergedPathUpdates;
+        writtenAt = forced.writtenAt;
         // Rebuild local state: take the freshest remote, then apply
         // our merged path writes on top.
         const next = structuredClone(remote);
         for (const [path, value] of Object.entries(mergedPathUpdates)) {
-          const parts = path.split('.');
-          let cur = next;
-          for (let i = 0; i < parts.length - 1; i++) {
-            if (typeof cur[parts[i]] !== 'object' || cur[parts[i]] == null) cur[parts[i]] = {};
-            cur = cur[parts[i]];
-          }
-          const last = parts[parts.length - 1];
-          if (value == null) delete cur[last]; else cur[last] = value;
+          setDottedPath(next, path, value);
         }
         next._lastWriteAt = forced.writtenAt;
         settingsRef.current = next;
         setSettings(next);
       } else {
+        writtenAt = result.writtenAt;
         const next = { ...optimistic, _lastWriteAt: result.writtenAt };
         settingsRef.current = next;
         setSettings(next);
@@ -239,7 +276,22 @@ export function useUserSettings(user) {
       console.error('Failed path-based save:', err);
       alert('Failed to save: ' + err.message);
     } finally {
-      writingRef.current = false;
+      writingRef.current -= 1;
+      const pending = pendingRemoteRef.current;
+      if (pending) {
+        pendingRemoteRef.current = null;
+        // A remote snapshot landed mid-write. Take it as the new base
+        // (the other device's changes) and overlay the paths we just
+        // wrote, so neither side's change is dropped.
+        const next = structuredClone(pending);
+        for (const [path, value] of Object.entries(written)) {
+          setDottedPath(next, path, value);
+        }
+        const at = Math.max(Number(pending._lastWriteAt) || 0, Number(writtenAt) || 0);
+        if (at) next._lastWriteAt = at;
+        settingsRef.current = next;
+        setSettings(next);
+      }
     }
   }, []);
 
