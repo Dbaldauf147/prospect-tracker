@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx';
 import { Badge } from '../common/Badge';
 import { statusColor, tierColor, formatAum, formatNumber } from '../../utils/formatters';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS } from '../../data/enums';
+import { PasteAddModal } from './PasteAddModal';
 import styles from './TableView.module.css';
 
 const ASSET_TYPES_ALL = ASSET_TYPES;
@@ -533,6 +534,43 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
   const [uploading, setUploading] = useState(false);
   const [uploadPreview, setUploadPreview] = useState(null); // { mapping, rawHeaders, rows, fileName }
   const uploadRef = useRef(null);
+  const [pasteOpen, setPasteOpen] = useState(false);
+
+  // Additive import from the Paste from Excel modal. The modal already
+  // filtered out duplicates and rows without a company; this just adds
+  // the new prospects one by one (onAdd dedupes again by company key as
+  // a backstop) and surfaces progress + a final summary.
+  async function handlePasteImport({ toAdd, dupes, noCompany }) {
+    setPasteOpen(false);
+    setUploading(true);
+    let added = 0;
+    const failed = [];
+    try {
+      for (const record of toAdd) {
+        setUploadStatus({ type: 'loading', message: `Adding ${added + 1}/${toAdd.length}…` });
+        try {
+          await onAdd(record);
+          added++;
+        } catch (err) {
+          console.error('Paste import: add failed for', record.company, err);
+          failed.push(record.company);
+        }
+      }
+      const skips = [];
+      if (dupes.length) skips.push(`${dupes.length} already in Table View`);
+      if (noCompany) skips.push(`${noCompany} without a company`);
+      if (failed.length) skips.push(`${failed.length} FAILED`);
+      setUploadStatus({
+        type: failed.length ? 'error' : 'success',
+        message: `Added ${added} compan${added === 1 ? 'y' : 'ies'}.${skips.length ? ` Skipped: ${skips.join(', ')}.` : ''}`,
+      });
+      if (failed.length) {
+        window.alert(`These rows failed to save — try them again:\n  ${failed.join('\n  ')}`);
+      }
+    } finally {
+      setUploading(false);
+    }
+  }
 
   function handleFileSelect(file) {
     if (!file) return;
@@ -738,6 +776,12 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
           XLSX.utils.book_append_sheet(wb, ws, 'Template');
           XLSX.writeFile(wb, 'prospect-upload-template.xlsx');
         }}>Download Template</button>
+        <button
+          style={{ padding: '0.3rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', fontSize: 'var(--font-size-xs)', fontWeight: 500, color: 'var(--color-text-secondary)', background: 'var(--color-surface)', cursor: 'pointer', fontFamily: 'inherit' }}
+          onClick={() => setPasteOpen(true)}
+          disabled={uploading}
+          title="Copy rows from Excel (with the header row) and paste them in to mass-add companies — existing companies are skipped"
+        >Paste from Excel</button>
         <label style={{ padding: '0.3rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', fontSize: 'var(--font-size-xs)', fontWeight: 500, color: 'var(--color-text-secondary)', cursor: 'pointer', transition: 'border-color 0.15s' }}>
           {uploading ? 'Uploading...' : 'Upload Excel'}
           <input ref={uploadRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} onChange={e => { handleFileSelect(e.target.files?.[0]); e.target.value = ''; }} disabled={uploading} />
@@ -748,6 +792,13 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
           </span>
         )}
       </div>
+      {pasteOpen && (
+        <PasteAddModal
+          existingProspects={allProspects || prospects}
+          onImport={handlePasteImport}
+          onClose={() => setPasteOpen(false)}
+        />
+      )}
       {editOptionsCol && (
         <EditOptionsModal
           colKey={editOptionsCol}
