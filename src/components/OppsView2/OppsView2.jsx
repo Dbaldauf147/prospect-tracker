@@ -27,7 +27,7 @@ import {
   flushOpps2ToFirestore,
   mergeOpps2Datasets,
 } from '../../utils/opps2Store';
-import { pushOpps2Backup, listOpps2Backups, getOpps2Backup } from '../../utils/opps2Backup';
+import { pushOpps2Backup } from '../../utils/opps2Backup';
 import { loadOptionLinks, setOppOptionLink, OPTION_LINKS_EVENT } from '../../utils/pricingOptionLinks';
 import { OPPS_PRICING_SNAPSHOT_EVENT } from '../../utils/oppsPricingSnapshot';
 import { fmtMoneyWhole, toNum, unitCountOrOne, rowYearRevenue } from '../../utils/pricingOptionCalc';
@@ -35,7 +35,6 @@ import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { computeListFlags } from '../../utils/listFlags';
-import { apiFetch } from '../../utils/apiFetch';
 import { NewOppsScheduleModal } from './NewOppsScheduleModal';
 import { downloadNewOppsOutlookDraft } from '../../utils/newOppsDigestEmail';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
@@ -4822,143 +4821,6 @@ function NextStepsEditor({ opp, onClose, updateOppField }) {
   );
 }
 
-// Off-site restore: lists the user's cloud-storage backups (daily +
-// manual) and restores the Opps 2 slice of a chosen one. The full data
-// lives in the bucket; this fetches just opps2Data for the selected file.
-function CloudRestoreModal({ onRestore, onClose }) {
-  const [rows, setRows] = useState(null);
-  const [err, setErr] = useState('');
-  useEffect(() => {
-    let alive = true;
-    apiFetch('/api/backups-list')
-      .then(async r => { const o = await r.json().catch(() => ({})); if (!r.ok) throw new Error(o?.error || `HTTP ${r.status}`); return o; })
-      .then(o => { if (alive) setRows(o.files || []); })
-      .catch(e => { if (alive) setErr(String(e.message || e)); });
-    return () => { alive = false; };
-  }, []);
-
-  return createPortal(
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: 'var(--color-surface, #fff)', color: 'var(--color-text)', borderRadius: 8, padding: '1.25rem', width: 'min(680px, 92vw)', maxHeight: '80vh', overflow: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.3)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-          <h3 style={{ margin: 0, fontSize: '1.05rem' }}>Restore from backup</h3>
-          <button type="button" onClick={onClose} style={{ background: 'transparent', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: 'inherit' }}>×</button>
-        </div>
-        <p style={{ marginTop: 0, fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
-          Off-site daily + manual backups. Restoring pulls the Opps data from the chosen file, re-stamps it to win the next sync, and replaces the current Opps data everywhere.
-        </p>
-        {err ? <div style={{ padding: '1rem', color: 'var(--color-danger, #b91c1c)' }}>Couldn’t list backups: {err}</div>
-          : rows == null ? <div style={{ padding: '1rem' }}>Loading…</div>
-          : rows.length === 0 ? <div style={{ padding: '1rem', color: 'var(--color-text-muted)' }}>No backups found yet.</div>
-          : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
-            <thead>
-              <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--color-border)' }}>
-                <th style={{ padding: '0.4rem 0.5rem' }}>When</th>
-                <th style={{ padding: '0.4rem 0.5rem' }}>File</th>
-                <th style={{ padding: '0.4rem 0.5rem' }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(f => (
-                <tr key={f.name} style={{ borderBottom: '1px solid var(--color-border)' }}>
-                  <td style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap' }}>{f.createdTime ? new Date(f.createdTime).toLocaleString() : '—'}{/manual/.test(f.name) ? ' (manual)' : ''}</td>
-                  <td style={{ padding: '0.4rem 0.5rem', color: 'var(--color-text-muted)', wordBreak: 'break-all' }}>{f.name}</td>
-                  <td style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap', textAlign: 'right' }}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (window.confirm(`Restore Opps from "${f.name}"? This replaces the current Opps data on every device.`)) {
-                          onRestore(f.name, f.name);
-                        }
-                      }}
-                      style={{ cursor: 'pointer', fontWeight: 600 }}
-                    >Restore Opps</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>,
-    document.body
-  );
-}
-
-// ring (session-load / autosave / pre-import) so recovering a clobbered
-// dataset is a click instead of a forensic dig through Chrome blobs.
-function Opps2BackupsModal({ onRestore, onClose }) {
-  const [rows, setRows] = useState(null);
-  useEffect(() => {
-    let alive = true;
-    listOpps2Backups().then(r => { if (alive) setRows(r); });
-    return () => { alive = false; };
-  }, []);
-
-  const downloadOne = useCallback(async (ts) => {
-    const entry = await getOpps2Backup(ts);
-    if (!entry?.data) { window.alert('That backup could not be loaded.'); return; }
-    const payload = JSON.stringify(entry.data, null, 2);
-    const url = URL.createObjectURL(new Blob([payload], { type: 'application/json' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `opps2-backup-${new Date(ts).toISOString().replace(/[:.]/g, '-')}.json`;
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
-  }, []);
-
-  return createPortal(
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: 'var(--color-surface, #fff)', color: 'var(--color-text)', borderRadius: 8, padding: '1.25rem', width: 'min(680px, 92vw)', maxHeight: '80vh', overflow: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.3)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-          <h3 style={{ margin: 0, fontSize: '1.05rem' }}>Opps backups</h3>
-          <button type="button" onClick={onClose} style={{ background: 'transparent', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: 'inherit' }}>×</button>
-        </div>
-        <p style={{ marginTop: 0, fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
-          Local snapshots kept on this device (newest first). Restoring re-stamps every row so the snapshot wins the next sync and replaces the current data everywhere.
-        </p>
-        {rows == null ? <div style={{ padding: '1rem' }}>Loading…</div>
-          : rows.length === 0 ? <div style={{ padding: '1rem', color: 'var(--color-text-muted)' }}>No backups captured yet.</div>
-          : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
-            <thead>
-              <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--color-border)' }}>
-                <th style={{ padding: '0.4rem 0.5rem' }}>When</th>
-                <th style={{ padding: '0.4rem 0.5rem' }}>Reason</th>
-                <th style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>Rows</th>
-                <th style={{ padding: '0.4rem 0.5rem' }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(b => (
-                <tr key={b.timestamp} style={{ borderBottom: '1px solid var(--color-border)' }}>
-                  <td style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap' }}>{new Date(b.timestamp).toLocaleString()}</td>
-                  <td style={{ padding: '0.4rem 0.5rem', color: 'var(--color-text-muted)' }}>{b.reason || '—'}</td>
-                  <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>{b.recordCount ?? '?'}</td>
-                  <td style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap', textAlign: 'right' }}>
-                    <button type="button" onClick={() => downloadOne(b.timestamp)} style={{ marginRight: 8, cursor: 'pointer' }}>Download</button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (window.confirm(`Restore the ${new Date(b.timestamp).toLocaleString()} backup (${b.recordCount ?? '?'} rows)? This replaces the current Opps data on every device.`)) {
-                          onRestore(b.timestamp);
-                        }
-                      }}
-                      style={{ cursor: 'pointer', fontWeight: 600 }}
-                    >Restore</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>,
-    document.body
-  );
-}
-
 // Modal for configuring the "No Further Action Today" clear schedules.
 // Each mark type (✓ checks, ✗ X marks, any value) gets an independent
 // schedule: an on/off toggle, the Eastern weekdays it runs on, and a
@@ -5387,9 +5249,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // label.
   const [importingFromOpps, setImportingFromOpps] = useState(false);
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
-  const [backupsOpen, setBackupsOpen] = useState(false);
-  const [cloudRestoreOpen, setCloudRestoreOpen] = useState(false);
-  const [backingUp, setBackingUp] = useState(false);
 
   // Dedup key for the Opps → Opps 2 one-time import. BFO Link is the
   // natural unique id; for rows that lack one we fall back to a
@@ -5606,68 +5465,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       : '';
     window.alert(`Imported ${additions.length} row${additions.length === 1 ? '' : 's'} from the pasted sheet.${flagSuffix}${firestoreWarning}`);
   }, [data, user?.uid]);
-
-  // Restore a rolling backup. Re-stamps every row to "now" so the
-  // recovered snapshot decisively wins the per-row merge against any
-  // clobbered copy in the cloud or on another device — this is a
-  // deliberate, confirmed recovery, so it should override. Persists
-  // through the normal cache + Firestore path.
-  // Shared restore applier for both local and cloud backups: re-stamps
-  // every row to "now" so the recovered snapshot decisively wins the
-  // per-row merge against any clobbered copy, snapshots the data it's
-  // about to replace (so the restore is itself reversible), then
-  // persists through the normal cache + Firestore path.
-  const applyOpps2Snapshot = useCallback(async (snapshot, label) => {
-    if (!snapshot || !Array.isArray(snapshot.records)) {
-      window.alert('That backup has no Opps records to restore.');
-      return false;
-    }
-    const now = Date.now();
-    const restored = {
-      ...snapshot,
-      records: snapshot.records.map(r => ({ ...r, _rowUpdatedAt: now })),
-      _updatedAt: now,
-    };
-    await pushOpps2Backup(data, 'pre-restore', { force: true });
-    setData(restored);
-    if (firestoreSaveTimerRef.current) {
-      clearTimeout(firestoreSaveTimerRef.current);
-      firestoreSaveTimerRef.current = null;
-    }
-    await saveOpps2Cache(restored);
-    if (user?.uid) {
-      const ts = await trySaveOpps2ToFirestore(user.uid, restored);
-      if (ts != null) lastFsSavedAtRef.current = ts;
-    }
-    window.alert(`Restored ${restored.records.length} rows from ${label}.`);
-    return true;
-  }, [data, user?.uid]);
-
-  const restoreOpps2Backup = useCallback(async (timestamp) => {
-    const entry = await getOpps2Backup(timestamp);
-    if (!entry?.data) { window.alert('That backup could not be loaded.'); return; }
-    const ok = await applyOpps2Snapshot(entry.data, `the ${new Date(timestamp).toLocaleString()} local backup`);
-    if (ok) setBackupsOpen(false);
-  }, [applyOpps2Snapshot]);
-
-  // Restore Opps 2 from one of the off-site cloud-storage backups.
-  // Fetches just the opps2Data slice of the chosen backup file, then
-  // applies it.
-  const restoreOpps2FromCloud = useCallback(async (objectName, displayName) => {
-    try {
-      const resp = await apiFetch(`/api/backup-fetch?name=${encodeURIComponent(objectName)}&part=opps2Data`);
-      const out = await resp.json().catch(() => ({}));
-      if (!resp.ok) { window.alert(`Couldn't fetch that backup: ${out?.error || resp.status}`); return; }
-      if (!out.value || !Array.isArray(out.value.records)) {
-        window.alert('That backup has no Opps data in it.');
-        return;
-      }
-      const ok = await applyOpps2Snapshot(out.value, `the backup "${displayName}"`);
-      if (ok) setCloudRestoreOpen(false);
-    } catch (err) {
-      window.alert(`Restore failed: ${err?.message || err}`);
-    }
-  }, [applyOpps2Snapshot]);
 
   // Look the tagged contact's full HubSpot record up by email (most
   // reliable) and fall back to a case-insensitive name match. When
@@ -6167,28 +5964,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     });
   }, []);
 
-  // Download the full Opps 2 dataset (headers + every record) as a JSON
-  // file so the user always has a manual, off-device safety copy without
-  // needing a console script. Mirrors the shape stored in the cache /
-  // Firestore so the file can be inspected or re-imported later.
-  const exportBackup = useCallback(() => {
-    try {
-      const payload = JSON.stringify(data ?? {}, null, 2);
-      const blob = new Blob([payload], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-      a.download = `opps2-backup-${stamp}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error('opps2: backup export failed', err);
-    }
-  }, [data]);
-
   // Configurable per-type clear schedules (✓ / ✗ / any), persisted in
   // per-user localStorage. The toolbar button opens a modal to edit these.
   const [nfatSchedules, setNfatSchedules] = useState(loadNfatSchedules);
@@ -6229,34 +6004,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     }
     return count;
   }, []);
-
-  // Fire an immediate off-site backup to cloud storage (server-side, all
-  // collections — not just Opps 2). Handy to click right before a risky
-  // edit so there's a fresh cloud copy independent of this browser.
-  const backupNow = useCallback(async () => {
-    if (backingUp) return;
-    setBackingUp(true);
-    try {
-      const resp = await apiFetch('/api/backup-now', { method: 'POST' });
-      const out = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
-        window.alert(`Backup failed: ${out?.error || resp.status}`);
-        return;
-      }
-      if (out.status === 'empty') {
-        window.alert('Nothing to back up yet.');
-        return;
-      }
-      const counts = out.counts || {};
-      const lines = Object.keys(counts).map(k => `  • ${k}: ${counts[k]}`).join('\n');
-      const warn = out.errors?.length ? `\n\nSome sections failed: ${out.errors.join('; ')}` : '';
-      window.alert(`Backed up to cloud storage:\n${out.file}\n\n${lines}${warn}`);
-    } catch (err) {
-      window.alert(`Backup failed: ${err?.message || err}`);
-    } finally {
-      setBackingUp(false);
-    }
-  }, [backingUp]);
 
   // Global Cmd/Ctrl+Z. Skipped when the user has an input/textarea
   // focused so the browser's native text-undo still works mid-edit;
@@ -7883,54 +7630,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           >Clear No Further Action</button>
           <button
             type="button"
-            onClick={exportBackup}
-            disabled={!records.length}
-            style={{
-              padding: '0.45rem 0.85rem', background: 'transparent',
-              border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
-              fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
-              color: records.length ? 'var(--color-text)' : 'var(--color-text-muted)',
-              cursor: records.length ? 'pointer' : 'not-allowed',
-              opacity: records.length ? 1 : 0.6,
-            }}
-            title="Download all Opps rows as a JSON backup file"
-          >Export backup</button>
-          <button
-            type="button"
-            onClick={() => setBackupsOpen(true)}
-            style={{
-              padding: '0.45rem 0.85rem', background: 'transparent',
-              border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
-              fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
-              color: 'var(--color-text)', cursor: 'pointer',
-            }}
-            title="Browse and restore local rolling backups of the Opps dataset"
-          >Backups</button>
-          <button
-            type="button"
-            onClick={backupNow}
-            disabled={backingUp}
-            style={{
-              padding: '0.45rem 0.85rem', background: 'transparent',
-              border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
-              fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
-              color: 'var(--color-text)', cursor: backingUp ? 'progress' : 'pointer',
-            }}
-            title="Save an immediate off-site backup of all your data to cloud storage"
-          >{backingUp ? 'Backing up…' : 'Back up now'}</button>
-          <button
-            type="button"
-            onClick={() => setCloudRestoreOpen(true)}
-            style={{
-              padding: '0.45rem 0.85rem', background: 'transparent',
-              border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
-              fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
-              color: 'var(--color-text)', cursor: 'pointer',
-            }}
-            title="Restore Opps from one of your off-site backups"
-          >Restore from backup</button>
-          <button
-            type="button"
             onClick={undoLastChange}
             disabled={!undoStack.length}
             style={{
@@ -7973,26 +7672,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         />
       )}
 
-      {backupsOpen && (
-        <Opps2BackupsModal
-          onRestore={restoreOpps2Backup}
-          onClose={() => setBackupsOpen(false)}
-        />
-      )}
-
       {nfatScheduleOpen && (
         <NfatScheduleModal
           schedules={nfatSchedules}
           onSave={saveNfatSchedules}
           onClearNow={clearNfat}
           onClose={() => setNfatScheduleOpen(false)}
-        />
-      )}
-
-      {cloudRestoreOpen && (
-        <CloudRestoreModal
-          onRestore={restoreOpps2FromCloud}
-          onClose={() => setCloudRestoreOpen(false)}
         />
       )}
 
