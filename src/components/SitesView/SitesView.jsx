@@ -6110,7 +6110,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     const summaryBandHeaderRow = r;
     const summaryBandValueRow = r + 1;
     const summaryBandCumulativeRow = r + 2;
-    r += 4; // band header + annual line + cumulative line + a breather row
+    // Two data-quality lines (estimated usage / estimated cost shares).
+    // Written even later than the rest of the band — the per-site
+    // estimate flags only exist once the Site Detail rows are built.
+    const summaryBandUsageQualityRow = r + 3;
+    const summaryBandCostQualityRow = r + 4;
+    r += 6; // band header + annual + cumulative + 2 data-quality lines + a breather row
 
     if (summaryFindings.length > 0) {
       // Section band, same look as the Electric Power / Natural Gas
@@ -6498,6 +6503,63 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       })
       .filter(s => s.siteName)
       .sort((a, b) => (a.state || '').localeCompare(b.state || '') || a.siteName.localeCompare(b.siteName));
+
+    // ---- Savings Summary: estimated-data share lines ----------------
+    // Written into the rows reserved in the Savings Summary band, but
+    // computed here — the per-site estimate flags only exist on the
+    // Site Detail rows built above. A "data point" is one site's value
+    // for one commodity (electric usage, gas usage, electric cost, gas
+    // cost); sites with no value for a commodity don't count against it.
+    {
+      const tally = () => ({ est: 0, tot: 0, elecEst: 0, elecTot: 0, gasEst: 0, gasTot: 0 });
+      const usage = tally();
+      const cost = tally();
+      const bump = (c, side, isEst) => {
+        c.tot += 1;
+        c[`${side}Tot`] += 1;
+        if (isEst) { c.est += 1; c[`${side}Est`] += 1; }
+      };
+      for (const s of sitesForDetail) {
+        if (s.kwh != null) bump(usage, 'elec', s.kwhEstimated);
+        if (s.dth != null) bump(usage, 'gas', s.thermsEstimated);
+        if (s.electricCost != null) bump(cost, 'elec', s.electricCostEstimated);
+        if (s.gasCost != null) bump(cost, 'gas', s.gasCostEstimated);
+      }
+      const writeQualityLine = (rowNum, label, c, noteTail) => {
+        ws.mergeCells(rowNum, 1, rowNum, 9);
+        const qLabel = ws.getCell(rowNum, 1);
+        qLabel.value = label;
+        qLabel.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_TEXT_DARK } };
+        qLabel.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+
+        const qValue = ws.getCell(rowNum, 10);
+        qValue.value = c.tot > 0 ? c.est / c.tot : 0;
+        qValue.numFmt = '0%';
+        qValue.font = { name: 'Nunito Sans', bold: true, size: 14, color: { argb: SE_EST } };
+        qValue.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+
+        ws.mergeCells(rowNum, 11, rowNum, SPAN);
+        const qNote = ws.getCell(rowNum, 11);
+        qNote.value = c.tot > 0
+          ? `Electric: ${c.elecEst} of ${c.elecTot} sites · Gas: ${c.gasEst} of ${c.gasTot} sites — ${noteTail}`
+          : 'No data points available.';
+        qNote.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+        qNote.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+        ws.getRow(rowNum).height = 24;
+      };
+      writeQualityLine(
+        summaryBandUsageQualityRow,
+        'Estimated Usage Data (% of usage data points)',
+        usage,
+        'usage modeled from property type when none was uploaded.'
+      );
+      writeQualityLine(
+        summaryBandCostQualityRow,
+        'Estimated Cost Data (% of cost data points)',
+        cost,
+        'cost derived from indicative rates when no actual spend was uploaded.'
+      );
+    }
 
     sitesForDetail.forEach((s, idx) => {
       const dataRow = detailSheet.getRow(2 + idx);
