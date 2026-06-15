@@ -286,6 +286,28 @@ const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
 const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'No Further Action Today', 'Sales Partner',
   'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date', 'BFO Company Name', 'PE Owner'];
 
+// Once a deal moves past the Lead stage it should carry a dollar value.
+// The pipeline runs Lead → Qualifying → Quoting → Quoted → Contracting →
+// Agreement Sent → Sold / Not Sold (with Repricing as a re-quote loop),
+// so "past Lead" is everything from Qualifying onward — closed Sold /
+// Not Sold and Repricing included. Not Started / Lead / Duplicate Opp
+// sit at or before Lead and never flag.
+const STAGES_PAST_LEAD = new Set([
+  'Qualifying', 'Quoting', 'Quoted', 'Contracting', 'Agreement Sent', 'Repricing', 'Sold', 'Not Sold',
+]);
+
+// True when a row has progressed past Lead but the (often hidden) `USD?`
+// column has no real value — either empty or an explicit "-" placeholder.
+// Surfaced as a 🚩 in the Flags column so the gap is visible at a glance
+// without unhiding USD?.
+function needsUsdFlag(row) {
+  if (!row) return false;
+  const stage = String(row['Stage'] || '').trim();
+  if (!STAGES_PAST_LEAD.has(stage)) return false;
+  const usd = String(row['USD?'] ?? '').trim();
+  return usd === '' || usd === '-';
+}
+
 // Record-level merge lives in opps2Store as `mergeOpps2Datasets` so the
 // real-time listener, hydration reconcile, and the guarded flush all
 // resolve conflicts identically (field-level by `_fieldUpdatedAt`).
@@ -6725,6 +6747,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               .join('\n');
             return stacked || String(row[h] ?? '');
           }
+          if (h === 'Flags') {
+            // Expose the auto "needs USD" flag to the column filter /
+            // search so the user can isolate flagged rows by typing
+            // "needs USD" (or 🚩), on top of any manual flag text.
+            const manual = String(row[h] ?? '').trim();
+            return needsUsdFlag(row) ? `🚩 needs USD ${manual}`.trim() : manual;
+          }
           return row[h] ?? '';
         },
         // Sort by the same displayed value — without this, DataTable
@@ -6741,6 +6770,28 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         // re-clicks the header when they want a fresh ranking.
         freezeSortOrder: h === 'Call In' ? true : undefined,
         render: (row) => {
+          if (h === 'Flags') {
+            // Auto 🚩 when the deal is past Lead but the `USD?` field has
+            // no real value (blank or "-"). Stays editable so manual flag
+            // notes can sit alongside the auto indicator.
+            const auto = needsUsdFlag(row);
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                {auto && (
+                  <span
+                    title="Stage is Qualifying or later but the USD? field is blank or “-”"
+                    style={{ fontSize: '0.95rem', flexShrink: 0, lineHeight: 1 }}
+                  >🚩</span>
+                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <EditableCell
+                    value={row[h]}
+                    onChange={(v) => updateOppField(row._id, h, v)}
+                  />
+                </div>
+              </div>
+            );
+          }
           if (h === 'Call In') {
             // Click-to-clear / click-to-restore. The cell still
             // computes live from Follow Up by default; the user can
