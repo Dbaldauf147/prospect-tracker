@@ -286,28 +286,42 @@ const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
 const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'No Further Action Today', 'Sales Partner',
   'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date', 'BFO Company Name', 'PE Owner'];
 
-// Once a deal moves past the Lead stage it should carry a dollar value.
-// The pipeline runs Lead → Qualifying → Quoting → Quoted → Contracting →
-// Agreement Sent → Sold / Not Sold (with Repricing as a re-quote loop),
-// so "past Lead" is everything from Qualifying onward — closed Sold /
-// Not Sold and Repricing included. Not Started / Lead / Duplicate Opp
-// sit at or before Lead and never flag.
-const STAGES_PAST_LEAD = new Set([
-  'Qualifying', 'Quoting', 'Quoted', 'Contracting', 'Agreement Sent', 'Repricing', 'Sold', 'Not Sold',
-]);
+// Strips zero-width / BOM characters. Built with fromCharCode so the
+// source stays pure ASCII — embedding the literal invisible characters
+// (or relying on \u escapes that tooling can mangle) is fragile.
+const ZERO_WIDTH_RE = new RegExp([0x200B, 0x200C, 0x200D, 0xFEFF].map(c => String.fromCharCode(c)).join('|'), 'g');
+
+// Normalize a cell value for matching: drop zero-width chars, trim, and
+// casefold. Imported or pasted opps sometimes carry invisible characters
+// or odd casing (e.g. a trailing zero-width space) that would otherwise
+// dodge an exact string match even though the cell *looks* right in the UI.
+function normCell(s) {
+  return String(s ?? '').replace(ZERO_WIDTH_RE, '').trim().toLowerCase();
+}
+
+// Stages at or before Lead — these never warrant a USD value, so they
+// never flag. Everything else (Qualifying, Quoting, Quoted, Contracting,
+// Agreement Sent, Repricing, Sold, Not Sold, plus any future / legacy
+// stage label) counts as "past Lead". Using an exclusion list rather than
+// an allow list means an unexpected stage name still flags, matching the
+// rule "anything past a Lead stage".
+const STAGES_AT_OR_BEFORE_LEAD = new Set(['lead', 'not started', 'duplicate opp']);
 
 // True when a row has progressed past Lead but the (often hidden) `USD?`
 // column has no real value — blank, or just a dash / currency placeholder
-// like "-", "—", "$-", or " - ". Stripping currency symbols, commas,
-// whitespace and every dash variant leaves an empty string only when
-// there's no actual number behind it; a real figure such as "-500" or
-// "$1,500" survives and won't flag. Surfaced as a 🚩 in the Flags column
-// so the gap is visible at a glance without unhiding USD?.
+// like "-", "—", "$-", or " - ". Stripping zero-width chars, currency
+// symbols, commas, whitespace and every dash variant leaves an empty
+// string only when there's no actual number behind it; a real figure such
+// as "-500" or "$1,500" survives and won't flag. Surfaced as a 🚩 in the
+// Flags column so the gap is visible at a glance without unhiding USD?.
 function needsUsdFlag(row) {
   if (!row) return false;
-  const stage = String(row['Stage'] || '').trim();
-  if (!STAGES_PAST_LEAD.has(stage)) return false;
-  const usd = String(row['USD?'] ?? '').replace(/[\s$,]/g, '').replace(/[-–—−]/g, '');
+  const stage = normCell(row['Stage']);
+  if (!stage || STAGES_AT_OR_BEFORE_LEAD.has(stage)) return false;
+  const usd = String(row['USD?'] ?? '')
+    .replace(ZERO_WIDTH_RE, '')
+    .replace(/[\s$,]/g, '')
+    .replace(/[-–—−]/g, '');
   return usd === '';
 }
 
