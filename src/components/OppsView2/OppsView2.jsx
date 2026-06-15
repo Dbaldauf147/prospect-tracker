@@ -3761,6 +3761,26 @@ export function OppInfoModal({
         </div>
 
         <div style={{ overflowY: 'auto', padding: '0.5rem 1rem 0.75rem' }}>
+          {needsUsdFlag(opp) && (
+            // Same rule as the Flags-column 🚩: deal is Qualifying or
+            // later but USD? has no real value. Surfaced here too so it's
+            // visible even when the Flags column is hidden in the table.
+            <div style={{
+              margin: '0.25rem 0 0.75rem',
+              padding: '0.6rem 0.8rem',
+              border: '1px solid #FCA5A5', borderRadius: 6,
+              background: '#FEF2F2', fontSize: '0.8rem',
+              color: '#991B1B', lineHeight: 1.4,
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <span style={{ fontSize: '1rem', flexShrink: 0 }}>🚩</span>
+              <span>
+                <strong>Missing USD value.</strong> This opp is at the{' '}
+                <strong>{String(opp['Stage'] || '').trim() || 'current'}</strong> stage but the{' '}
+                <strong>USD?</strong> field is blank or “-”. Fill it in to clear the flag.
+              </span>
+            </div>
+          )}
           {opp._pricingOption ? (
             <div style={{ margin: '0.25rem 0 0.75rem' }}>
               <div style={{
