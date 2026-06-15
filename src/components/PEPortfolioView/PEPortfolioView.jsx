@@ -464,6 +464,38 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     }
   };
 
+  // Decision-Maker contact names per Blue Owl company, matched the same
+  // way the Portfolio tab's DM column does: a HubSpot "Decision Maker"
+  // contact ties to a row when its company name fuzzily matches the
+  // company (or any of its portfolio companies) or its registered email
+  // domain is on them. Deduped by display name. Feeds the Blue Owl tab's
+  // "Decision Makers" column.
+  const blueOwlDmByCompanyId = useMemo(() => {
+    const map = new Map();
+    if (decisionMakers.length === 0) return map;
+    for (const p of blueOwlCompanies) {
+      const firmName = (p.company || '').trim().toLowerCase();
+      if (!firmName) continue;
+      const portfolio = portfolioByPe.get(firmName) || [];
+      const candidates = [firmName, ...portfolio.map(pc => (pc.company || '').toLowerCase().trim()).filter(Boolean)];
+      const domains = new Set();
+      collectProspectDomains(p, domains);
+      for (const pc of portfolio) collectProspectDomains(pc, domains);
+      const seen = new Set();
+      const names = [];
+      for (const dm of decisionMakers) {
+        const matches =
+          (dm.company && candidates.some(n => companiesMatch(n, dm.company))) ||
+          (dm.domain && domains.has(dm.domain));
+        if (!matches || seen.has(dm.name)) continue;
+        seen.add(dm.name);
+        names.push(dm.name);
+      }
+      if (names.length) map.set(p.id, names);
+    }
+    return map;
+  }, [blueOwlCompanies, decisionMakers, portfolioByPe]);
+
   // Per-firm stage stats — the row-level data behind the stages table.
   //   decisionMakerNames  : DM contacts on this PE firm (or its PCs)
   //   pcMappingCount      : portfolio companies linked via peOwner
@@ -751,6 +783,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           prospects={prospects}
           oppsRecords={oppsRecords}
           portfolioByPe={portfolioByPe}
+          dmNamesByCompanyId={blueOwlDmByCompanyId}
           onSelectProspect={onSelectProspect}
           onUpdateProspect={onUpdateProspect}
           onAddProspect={onAddProspect}
@@ -1493,7 +1526,26 @@ function BlueOwlBulkEditBar({ selectedCount, applying, onApply, onClear }) {
 // prospect-backed cell edits in place through Table View's InlineCell
 // (double-click; enum columns get the same dropdown options Table View
 // shows, including "+ Add new" for Type / CDM).
-function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], portfolioByPe = new Map(), onSelectProspect, onUpdateProspect, onAddProspect, settings, updateSettings }) {
+// Compact read-only cell for a list of names (PC opp companies /
+// contacts / decision makers): shows them comma-joined on one line,
+// truncated with the full list on hover, or a muted placeholder when
+// the list is empty.
+function NameListCell({ items, empty }) {
+  const list = Array.isArray(items) ? items.filter(Boolean) : [];
+  if (list.length === 0) {
+    return <span style={{ color: '#CBD5E1' }} title={empty || ''}>—</span>;
+  }
+  return (
+    <span
+      title={list.join('\n')}
+      style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '0.78rem', color: '#334155' }}
+    >
+      {list.join(', ')}
+    </span>
+  );
+}
+
+function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], portfolioByPe = new Map(), dmNamesByCompanyId = new Map(), onSelectProspect, onUpdateProspect, onAddProspect, settings, updateSettings }) {
   const [search, setSearch] = useState('');
   const [pasteOpen, setPasteOpen] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -1601,6 +1653,13 @@ function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], portfolioBy
       let active = 0;
       let total = 0;
       const tip = [];
+      // Distinct portfolio-company names that carry a PC opp, and the
+      // distinct contact names tied to those opps — surfaced as their own
+      // columns next to PC Opps.
+      const companySeen = new Set();
+      const companyNames = [];
+      const contactSeen = new Set();
+      const contactNames = [];
       for (const r of oppsRecords) {
         const stage = (r['Stage'] || '').trim();
         if (INVALID_STAGES.has(stage)) continue;
@@ -1611,8 +1670,18 @@ function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], portfolioBy
         total++;
         if (!CLOSED_STAGES.has(stage)) active++;
         tip.push(`• ${r['Opportunity Name'] || r['Opportunity'] || r['Name'] || r['Description'] || '(Unnamed opportunity)'}${stage ? ` — ${stage}` : ''} [${pcMatch.display}]`);
+        const display = (pcMatch.display || '').trim();
+        if (display && !companySeen.has(display.toLowerCase())) {
+          companySeen.add(display.toLowerCase());
+          companyNames.push(display);
+        }
+        for (const c of String(r['Contact'] || '').split(/[,;\n]+/).map(s => s.trim()).filter(Boolean)) {
+          if (contactSeen.has(c.toLowerCase())) continue;
+          contactSeen.add(c.toLowerCase());
+          contactNames.push(c);
+        }
       }
-      if (total > 0) map.set(p.id, { active, total, tip });
+      if (total > 0) map.set(p.id, { active, total, tip, companyNames, contactNames });
     }
     return map;
   }, [companies, portfolioByPe, oppsRecords]);
@@ -1639,10 +1708,13 @@ function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], portfolioBy
       oppsTotal: counts?.total || 0,
       pcOppsActive: pcCounts?.active || 0,
       pcOppsTotal: pcCounts?.total || 0,
+      pcOppCompanies: pcCounts?.companyNames || [],
+      pcOppContacts: pcCounts?.contactNames || [],
+      decisionMakerNames: dmNamesByCompanyId.get(p.id) || [],
       peOwner: p.peOwner || '',
       notes: p.notes || '',
     };
-  }), [companies, oppCountsByCompanyId, pcOppCountsByCompanyId, portfolioByPe]);
+  }), [companies, oppCountsByCompanyId, pcOppCountsByCompanyId, portfolioByPe, dmNamesByCompanyId]);
 
   // Same dropdown vocabularies as Table View's inline editors, built
   // from the full prospect list so the options match exactly.
@@ -1755,6 +1827,14 @@ function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], portfolioBy
           style={{ fontWeight: 700, color: r.pcOppsActive > 0 ? '#7C3AED' : r.pcOppsTotal > 0 ? '#64748B' : '#CBD5E1' }}
         >{r.pcOppsActive}/{r.pcOppsTotal}</span>
       ) },
+      // Read-only companions to PC Opps: the portfolio companies that
+      // carry those opps, and the contacts tied to them (both pulled from
+      // the same Opps-tab scan).
+      { key: 'pcOppCompanies', label: 'PC Opp Companies', defaultWidth: 220, getSortValue: (r) => r.pcOppCompanies.length, getFilterValue: (r) => r.pcOppCompanies.join(', '), exportValue: (r) => r.pcOppCompanies.join(', '), render: (r) => <NameListCell items={r.pcOppCompanies} empty="No PC opps" /> },
+      { key: 'pcOppContacts', label: 'PC Opp Contacts', defaultWidth: 220, getSortValue: (r) => r.pcOppContacts.length, getFilterValue: (r) => r.pcOppContacts.join(', '), exportValue: (r) => r.pcOppContacts.join(', '), render: (r) => <NameListCell items={r.pcOppContacts} empty="No contacts on PC opps" /> },
+      // Decision-Maker contacts for this PE firm (HubSpot "Decision
+      // Maker"-tagged, matched by company or email domain).
+      { key: 'decisionMakers', label: 'Decision Makers', defaultWidth: 220, getSortValue: (r) => r.decisionMakerNames.length, getFilterValue: (r) => r.decisionMakerNames.join(', '), exportValue: (r) => r.decisionMakerNames.join(', '), render: (r) => <NameListCell items={r.decisionMakerNames} empty="No decision makers found" /> },
       { key: 'peOwner', label: 'PE Owner', defaultWidth: 170, render: editable({ key: 'peOwner', label: 'PE Owner' }) },
       { key: 'notes', label: 'Notes', defaultWidth: 320, render: editable({ key: 'notes', label: 'Notes', type: 'notes' }) },
     ];
@@ -1853,11 +1933,12 @@ function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], portfolioBy
           </div>
         ) : (
           <DataTable
-            // -5: fresh prefs key so columns added after the original
+            // -6: fresh prefs key so columns added after the original
             // layout (HQ Region / Website / PE AUM at -2, Opps at -3,
-            // PC Opps at -4, the bulk-edit checkbox at -5) aren't
+            // PC Opps at -4, the bulk-edit checkbox at -5, the PC Opp
+            // Companies / Contacts + Decision Makers columns at -6) aren't
             // hidden by a saved visible-set from an older one.
-            tableId="pe-blue-owl-companies-5"
+            tableId="pe-blue-owl-companies-6"
             columns={columns}
             rows={filtered}
             alwaysVisible={['company', '_select']}
