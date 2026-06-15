@@ -7417,6 +7417,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     };
     const flagSummary = (row) => {
       const parts = [];
+      if (needsUsdFlag(row)) parts.push('Missing USD value');
       if (oppMissingBfoAddress(row)) parts.push('Missing BFO Address');
       if (oppMissingQuotedAmount(row)) parts.push('Deal Size Missing');
       if (oppMissingMarginApproval(row)) parts.push('Missing Margin Approval');
@@ -7431,6 +7432,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       getFilterValue: (row) => flagSummary(row),
       getSortValue: (row) => {
         let n = 0;
+        if (needsUsdFlag(row)) n += 1;
         if (oppMissingBfoAddress(row)) n += 1;
         if (oppMissingQuotedAmount(row)) n += 1;
         if (oppMissingMarginApproval(row)) n += 1;
@@ -7439,14 +7441,21 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       },
       exportValue: (row) => flagSummary(row),
       render: (row) => {
+        const missingUsd = needsUsdFlag(row);
         const missingAddr = oppMissingBfoAddress(row);
         const missingQuote = oppMissingQuotedAmount(row);
         const missingMargin = oppMissingMarginApproval(row);
         const stall = oppStageStall(row);
         const ignored = !!row?._ignoreStallFlag;
-        if (!missingAddr && !missingQuote && !missingMargin && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+        if (!missingUsd && !missingAddr && !missingQuote && !missingMargin && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
         return (
           <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
+            {missingUsd && (
+              <span
+                title="Stage is Qualifying or later but the USD? field is blank or “-” — fill in USD? to clear it."
+                style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
+              >⚠ Missing USD value</span>
+            )}
             {missingAddr && (
               <span
                 title="Has a BFO Opportunity Name but no BFO Address — add the BFO Address."
