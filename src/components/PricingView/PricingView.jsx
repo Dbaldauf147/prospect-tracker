@@ -2278,8 +2278,6 @@ export function PricingView({ settings } = {}) {
         if (/^one\s*time/i.test(t)) return 'One Time';
         return t;
       };
-      const altMatchKey = (item, type) =>
-        `${String(item || '').trim().toLowerCase()}|${normAltType(type).toLowerCase()}`;
 
       const seeded = {};
       for (const opt of parsed.options) {
@@ -2294,57 +2292,51 @@ export function PricingView({ settings } = {}) {
           firstItemByTag.set(tag, item);
         }
         const tags = Array.from(firstItemByTag.keys()).sort((a, b) => a.localeCompare(b));
-        const rows = tags.map(tag => {
-          const item = firstItemByTag.get(tag);
-          const unitKey = linkedToDefaultKey(item.description, item.type || '');
-          const unit = linkedToUnitDefaults[unitKey] || '';
-          let unitCount = 1;
-          if (unit === 'Per Site' && typeof opt.siteCount === 'number' && opt.siteCount > 0) {
-            unitCount = opt.siteCount;
-          } else if (unit === 'Per Account' && typeof opt.accountCount === 'number' && opt.accountCount > 0) {
-            unitCount = opt.accountCount;
-          }
-          // Map the cost item's type into one of the alt-fee dropdown
-          // values so the seeded row renders as selected. Rolled
-          // variants normalize to their base (Setup Rolled → Setup,
-          // One Time Rolled → One Time) since the alt-fee table doesn't
-          // expose Rolled types — the user can refine if needed.
-          const rawType = String(item.type || '').trim();
-          let type = '';
-          if (/recurring/i.test(rawType)) type = 'Recurring (monthly)';
-          else if (/^setup/i.test(rawType)) type = 'Setup';
-          else if (/^one\s*time/i.test(rawType)) type = 'One Time';
-          // Leave startMonth null so autoStartMonthFor derives it from
-          // the linked CTS rows; the user can type a value to override.
-          return { altItem: tag, type, fee: null, unit, unitCount, startMonth: null };
-        });
-        // If the uploaded SIA already has fees filled into its own
-        // Alternative Fee Structure/Schedule table, pull them in: fill the
-        // fee (and unit/start-month details) onto a matching seeded row,
-        // and append the rest as new rows. The parser only yields real
-        // rows; we limit to ones carrying an actual fee so blank template
-        // rows don't add noise.
+        // If the uploaded SIA already has its own Alternative Fee
+        // Structure/Schedule filled in, treat the file as the source of
+        // truth: use its fee rows verbatim and skip the auto-seeded
+        // Linked-To rows entirely, so the file's fees REPLACE the fees
+        // this tool would otherwise build (instead of stacking on top of
+        // them). The parser only yields real rows; we keep the ones
+        // carrying an actual fee so blank template rows don't add noise.
         const wbAltRows = (opt.altFees || []).filter(a => a && a.fee != null);
-        const consumed = new Set();
-        for (const wb of wbAltRows) {
-          const key = altMatchKey(wb.altItem, wb.type);
-          const hit = rows.find(rw => rw.altItem && altMatchKey(rw.altItem, rw.type) === key);
-          if (!hit) continue;
-          if (hit.fee == null) hit.fee = wb.fee;
-          if (!hit.unit && wb.unit) hit.unit = wb.unit;
-          if ((hit.unitCount == null || hit.unitCount === 1) && wb.unitCount != null) hit.unitCount = wb.unitCount;
-          if (hit.startMonth == null && wb.startMonth != null) hit.startMonth = wb.startMonth;
-          consumed.add(wb);
-        }
-        for (const wb of wbAltRows) {
-          if (consumed.has(wb)) continue;
-          rows.push({
+        let rows;
+        if (wbAltRows.length > 0) {
+          rows = wbAltRows.map(wb => ({
             altItem: wb.altItem,
             type: normAltType(wb.type),
             fee: wb.fee,
             unit: wb.unit || '',
             unitCount: wb.unitCount == null ? 1 : wb.unitCount,
             startMonth: wb.startMonth == null ? null : wb.startMonth,
+          }));
+        } else {
+          // No alt-fee table in the file → seed the schedule from the
+          // cost rows' Linked To tags so the user has a starting grid to
+          // fill in.
+          rows = tags.map(tag => {
+            const item = firstItemByTag.get(tag);
+            const unitKey = linkedToDefaultKey(item.description, item.type || '');
+            const unit = linkedToUnitDefaults[unitKey] || '';
+            let unitCount = 1;
+            if (unit === 'Per Site' && typeof opt.siteCount === 'number' && opt.siteCount > 0) {
+              unitCount = opt.siteCount;
+            } else if (unit === 'Per Account' && typeof opt.accountCount === 'number' && opt.accountCount > 0) {
+              unitCount = opt.accountCount;
+            }
+            // Map the cost item's type into one of the alt-fee dropdown
+            // values so the seeded row renders as selected. Rolled
+            // variants normalize to their base (Setup Rolled → Setup,
+            // One Time Rolled → One Time) since the alt-fee table doesn't
+            // expose Rolled types — the user can refine if needed.
+            const rawType = String(item.type || '').trim();
+            let type = '';
+            if (/recurring/i.test(rawType)) type = 'Recurring (monthly)';
+            else if (/^setup/i.test(rawType)) type = 'Setup';
+            else if (/^one\s*time/i.test(rawType)) type = 'One Time';
+            // Leave startMonth null so autoStartMonthFor derives it from
+            // the linked CTS rows; the user can type a value to override.
+            return { altItem: tag, type, fee: null, unit, unitCount, startMonth: null };
           });
         }
         while (rows.length < 9) rows.push({ altItem: '', type: '', fee: null, unit: '', unitCount: 1, startMonth: null });
