@@ -3437,8 +3437,37 @@ function QuotedFollowUpModal({ opp, chanceOptions, onSave, onClose }) {
 // The linked Pricing Option is shown read-only (it's owned by the
 // Pricing tab). Cleared on Save or Skip.
 function AgreementSentFollowUpModal({
-  opp, chanceOptions, verbalOptions, pricingOptionName, onSave, onClose,
+  opp, columnLinks, listRegistry, pricingOptionName, onSave, onClose,
 }) {
+  // Resolve the dropdown options for a field the exact same way the Opp
+  // details popup does — via the user's column-link config against the
+  // shared list registry — so a field that edits as a dropdown there
+  // (USD?, Entity Outside the US Approval, COA Approval, …) shows the
+  // same menu here. When a field has no explicit link we also fall back
+  // to a Dropdowns-page list whose name matches the field (normalized, so
+  // a "USD" list backs the "USD?" column), which lets a column the user
+  // wired up by creating a same-named custom list resolve even without an
+  // explicit link. Failing all that, a couple of fields have an obvious
+  // canonical list / Yes-No answer; everything else is a plain text input.
+  const FALLBACK_LIST_KEYS = { 'Chance?': 'chance', 'Verbal': 'verbal' };
+  const FALLBACK_STATIC = { 'Multiple Invoices?': ['Yes', 'No'] };
+  const normName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const optionsFor = (field) => {
+    const link = columnLinks ? resolveColumnLink(field, columnLinks) : null;
+    if (link && listRegistry) return listRegistry.get(link.listKey)?.options || [];
+    if (listRegistry) {
+      const target = normName(field);
+      for (const list of listRegistry.values()) {
+        if (normName(list.label) === target && Array.isArray(list.options) && list.options.length) {
+          return list.options;
+        }
+      }
+    }
+    const fk = FALLBACK_LIST_KEYS[field];
+    if (fk && listRegistry) return listRegistry.get(fk)?.options || [];
+    return FALLBACK_STATIC[field] || null;
+  };
+
   // Read current values with fallbacks to the alternate key names other
   // views / imported sheets use, so existing data shows up here instead
   // of looking blank. The combined margin/review field also absorbs the
@@ -3463,6 +3492,39 @@ function AgreementSentFollowUpModal({
   function handleSave() {
     onSave({ usd, marginReviewDate, chance, multiInvoices, verbal, entity, coa });
   }
+
+  // Render a field as a dropdown when it has resolvable options (matching
+  // the Opp details popup), otherwise a free-text input. A stored value
+  // that isn't one of the configured options is kept selectable so legacy
+  // data doesn't silently drop off the menu — same as SelectCell.
+  const fieldInput = (field, val, setVal, { autoFocus = false, onEnter } = {}) => {
+    const opts = optionsFor(field);
+    if (opts) {
+      const cur = String(val ?? '');
+      const display = (!cur || opts.includes(cur)) ? opts : [cur, ...opts];
+      return (
+        <select
+          autoFocus={autoFocus}
+          value={cur}
+          onChange={(e) => setVal(e.target.value)}
+          style={inputStyle}
+        >
+          <option value="">— Select —</option>
+          {display.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+      );
+    }
+    return (
+      <input
+        type="text"
+        autoFocus={autoFocus}
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        onKeyDown={onEnter ? (e) => { if (e.key === 'Enter') { e.preventDefault(); onEnter(); } } : undefined}
+        style={inputStyle}
+      />
+    );
+  };
 
   // Shows the value already stored on the opp so the user reviews what's
   // there rather than entering blind. Hidden when there's nothing yet.
@@ -3524,13 +3586,7 @@ function AgreementSentFollowUpModal({
         <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem', overflowY: 'auto' }}>
           <div>
             <label style={labelStyle}>USD?</label>
-            <input
-              type="text"
-              autoFocus
-              value={usd}
-              onChange={(e) => setUsd(e.target.value)}
-              style={inputStyle}
-            />
+            {fieldInput('USD?', usd, setUsd, { autoFocus: true })}
             {textHint(curUsd)}
           </div>
           <div>
@@ -3545,66 +3601,27 @@ function AgreementSentFollowUpModal({
           </div>
           <div>
             <label style={labelStyle}>Chance?</label>
-            <select
-              value={chance}
-              onChange={(e) => setChance(e.target.value)}
-              style={inputStyle}
-            >
-              <option value="">— Select —</option>
-              {chanceOptions.map(o => (
-                <option key={o} value={o}>{o}</option>
-              ))}
-            </select>
+            {fieldInput('Chance?', chance, setChance)}
             {textHint(curChance)}
           </div>
           <div>
             <label style={labelStyle}>Multiple Invoices?</label>
-            <select
-              value={multiInvoices}
-              onChange={(e) => setMultiInvoices(e.target.value)}
-              style={inputStyle}
-            >
-              <option value="">— Select —</option>
-              <option value="Yes">Yes</option>
-              <option value="No">No</option>
-            </select>
+            {fieldInput('Multiple Invoices?', multiInvoices, setMultiInvoices)}
             {textHint(curMultiInvoices)}
           </div>
           <div>
             <label style={labelStyle}>Verbal</label>
-            <select
-              value={verbal}
-              onChange={(e) => setVerbal(e.target.value)}
-              style={inputStyle}
-            >
-              <option value="">— Select —</option>
-              {verbalOptions.map(o => (
-                <option key={o} value={o}>{o}</option>
-              ))}
-            </select>
+            {fieldInput('Verbal', verbal, setVerbal)}
             {textHint(curVerbal)}
           </div>
           <div>
             <label style={labelStyle}>Entity Outside the US Approval</label>
-            <input
-              type="text"
-              value={entity}
-              onChange={(e) => setEntity(e.target.value)}
-              style={inputStyle}
-            />
+            {fieldInput('Entity Outside the US Approval', entity, setEntity)}
             {textHint(curEntity)}
           </div>
           <div>
             <label style={labelStyle}>COA Approval</label>
-            <input
-              type="text"
-              value={coa}
-              onChange={(e) => setCoa(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') { e.preventDefault(); handleSave(); }
-              }}
-              style={inputStyle}
-            />
+            {fieldInput('COA Approval', coa, setCoa, { onEnter: handleSave })}
             {textHint(curCoa)}
           </div>
           <div>
@@ -8384,8 +8401,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         return (
           <AgreementSentFollowUpModal
             opp={opp}
-            chanceOptions={listRegistry.get('chance')?.options || []}
-            verbalOptions={listRegistry.get('verbal')?.options || []}
+            columnLinks={columnLinks}
+            listRegistry={listRegistry}
             pricingOptionName={optionLinks[String(opp._id)] || ''}
             onSave={({ usd, marginReviewDate, chance, multiInvoices, verbal, entity, coa }) => {
               // Only push fields whose value actually changed so the
