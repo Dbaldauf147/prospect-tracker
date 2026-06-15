@@ -15,6 +15,7 @@ import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { splitPeOwners } from '../../utils/peOwners';
 import { computePortfolioFitScore, industrySector, sectorScoreFor, tierForScoreValue, industryTier, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { isContactInEvent, toggleContactInEvents } from '../../utils/eventsStore';
+import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCache } from '../../utils/hubspotContactsCache';
 import { userLsGet } from '../../utils/userLs';
@@ -32,6 +33,24 @@ async function loadOppsFromIndexedDB() {
 async function loadClientsFromIndexedDB() {
   try { return (await dbGet('clients-cache', 'data')) || null; }
   catch { return null; }
+}
+
+// Client Manager assigned on the Clients page lives in the shared
+// clients-manager-map (keyed by the company name lowercased + trimmed,
+// the same normalization ClientsView uses). Resolve it for a company so
+// the modal can auto-populate the read-only Client Manager field. Falls
+// back to a fuzzy companiesMatch scan so slight name drift (e.g.
+// "Blue Owl" vs "Blue Owl Capital") still resolves. Returns null when
+// the company has no manager assigned on the Clients page.
+function resolveClientManagerFromMap(company) {
+  if (!company) return null;
+  const map = loadClientManagerMap();
+  const key = String(company).trim().toLowerCase();
+  if (map[key]) return map[key];
+  for (const [k, v] of Object.entries(map)) {
+    if (v && companiesMatch(k, company)) return v;
+  }
+  return null;
 }
 
 // Inline editable input rendered in place of a form tab's title span
@@ -2677,14 +2696,36 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       if (idbData?.records) {
         setOppsCache(idbData.records);
       }
-      // Load clients and find CM
-      const clientsData = await loadClientsFromIndexedDB();
-      if (clientsData?.records && fields.company) {
-        const match = clientsData.records.find(r => companiesMatch(r.Client || r.client, fields.company));
-        if (match) setClientManager(match.CM || match.cm || null);
+      // Client Manager: prefer the value assigned on the Clients page
+      // (the shared clients-manager-map) so it auto-populates here when
+      // the company is a tracked client. Fall back to the CM column on
+      // the legacy clients-cache import only when nothing's assigned.
+      if (fields.company) {
+        const fromClientsPage = resolveClientManagerFromMap(fields.company);
+        if (fromClientsPage) {
+          setClientManager(fromClientsPage);
+        } else {
+          const clientsData = await loadClientsFromIndexedDB();
+          if (clientsData?.records) {
+            const match = clientsData.records.find(r => companiesMatch(r.Client || r.client, fields.company));
+            if (match) setClientManager(match.CM || match.cm || null);
+          }
+        }
       }
     })();
   }, [isNew]);
+
+  // Keep the Client Manager in sync if it's edited on the Clients page
+  // while this modal is open.
+  useEffect(() => {
+    if (isNew || !fields.company) return undefined;
+    function refresh() {
+      const fromClientsPage = resolveClientManagerFromMap(fields.company);
+      if (fromClientsPage) setClientManager(fromClientsPage);
+    }
+    window.addEventListener(CLIENT_MANAGER_EVENT, refresh);
+    return () => window.removeEventListener(CLIENT_MANAGER_EVENT, refresh);
+  }, [isNew, fields.company]);
 
   // Load opps scope+stage pairs matching this company
   const oppsRecords = useMemo(() => {
