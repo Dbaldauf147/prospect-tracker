@@ -286,24 +286,26 @@ const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
 const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'No Further Action Today', 'Sales Partner',
   'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date', 'BFO Company Name', 'PE Owner'];
 
-// Once a deal moves past Qualifying it should carry a dollar value. The
-// pipeline runs Lead → Qualifying → Quoting → Quoted → Contracting →
+// Once a deal moves past the Lead stage it should carry a dollar value.
+// The pipeline runs Lead → Qualifying → Quoting → Quoted → Contracting →
 // Agreement Sent → Sold / Not Sold (with Repricing as a re-quote loop),
-// so "after Qualifying" is everything from Quoting onward — closed
-// Sold / Not Sold and Repricing included. Not Started / Lead / Duplicate
-// Opp sit at or before Qualifying and never flag.
-const STAGES_AFTER_QUALIFYING = new Set([
-  'Quoting', 'Quoted', 'Contracting', 'Agreement Sent', 'Repricing', 'Sold', 'Not Sold',
+// so "past Lead" is everything from Qualifying onward — closed Sold /
+// Not Sold and Repricing included. Not Started / Lead / Duplicate Opp
+// sit at or before Lead and never flag.
+const STAGES_PAST_LEAD = new Set([
+  'Qualifying', 'Quoting', 'Quoted', 'Contracting', 'Agreement Sent', 'Repricing', 'Sold', 'Not Sold',
 ]);
 
-// True when a row has progressed past Qualifying but the (often hidden)
-// `USD?` column is still empty — surfaced as a 🚩 in the Flags column so
-// the gap is visible at a glance without unhiding USD?.
+// True when a row has progressed past Lead but the (often hidden) `USD?`
+// column has no real value — either empty or an explicit "-" placeholder.
+// Surfaced as a 🚩 in the Flags column so the gap is visible at a glance
+// without unhiding USD?.
 function needsUsdFlag(row) {
   if (!row) return false;
   const stage = String(row['Stage'] || '').trim();
-  if (!STAGES_AFTER_QUALIFYING.has(stage)) return false;
-  return String(row['USD?'] ?? '').trim() === '';
+  if (!STAGES_PAST_LEAD.has(stage)) return false;
+  const usd = String(row['USD?'] ?? '').trim();
+  return usd === '' || usd === '-';
 }
 
 // Record-level merge lives in opps2Store as `mergeOpps2Datasets` so the
@@ -6769,15 +6771,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         freezeSortOrder: h === 'Call In' ? true : undefined,
         render: (row) => {
           if (h === 'Flags') {
-            // Auto 🚩 when the deal is past Qualifying but the `USD?`
-            // field is still empty. Stays editable so manual flag notes
-            // can sit alongside the auto indicator.
+            // Auto 🚩 when the deal is past Lead but the `USD?` field has
+            // no real value (blank or "-"). Stays editable so manual flag
+            // notes can sit alongside the auto indicator.
             const auto = needsUsdFlag(row);
             return (
               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                 {auto && (
                   <span
-                    title="Stage is past Qualifying but the USD? field is empty"
+                    title="Stage is Qualifying or later but the USD? field is blank or “-”"
                     style={{ fontSize: '0.95rem', flexShrink: 0, lineHeight: 1 }}
                   >🚩</span>
                 )}
