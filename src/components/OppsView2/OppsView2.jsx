@@ -297,15 +297,18 @@ const STAGES_PAST_LEAD = new Set([
 ]);
 
 // True when a row has progressed past Lead but the (often hidden) `USD?`
-// column has no real value — either empty or an explicit "-" placeholder.
-// Surfaced as a 🚩 in the Flags column so the gap is visible at a glance
-// without unhiding USD?.
+// column has no real value — blank, or just a dash / currency placeholder
+// like "-", "—", "$-", or " - ". Stripping currency symbols, commas,
+// whitespace and every dash variant leaves an empty string only when
+// there's no actual number behind it; a real figure such as "-500" or
+// "$1,500" survives and won't flag. Surfaced as a 🚩 in the Flags column
+// so the gap is visible at a glance without unhiding USD?.
 function needsUsdFlag(row) {
   if (!row) return false;
   const stage = String(row['Stage'] || '').trim();
   if (!STAGES_PAST_LEAD.has(stage)) return false;
-  const usd = String(row['USD?'] ?? '').trim();
-  return usd === '' || usd === '-';
+  const usd = String(row['USD?'] ?? '').replace(/[\s$,]/g, '').replace(/[-–—−]/g, '');
+  return usd === '';
 }
 
 // Record-level merge lives in opps2Store as `mergeOpps2Datasets` so the
