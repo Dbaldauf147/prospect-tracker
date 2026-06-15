@@ -3419,14 +3419,26 @@ function AgreementSentFollowUpModal({
   // details popup does — via the user's column-link config against the
   // shared list registry — so a field that edits as a dropdown there
   // (USD?, Entity Outside the US Approval, COA Approval, …) shows the
-  // same menu here. Fields with no link fall back to a plain text input,
-  // except for a couple that have an obvious canonical list / Yes-No
-  // answer even when the user hasn't wired a link.
+  // same menu here. When a field has no explicit link we also fall back
+  // to a Dropdowns-page list whose name matches the field (normalized, so
+  // a "USD" list backs the "USD?" column), which lets a column the user
+  // wired up by creating a same-named custom list resolve even without an
+  // explicit link. Failing all that, a couple of fields have an obvious
+  // canonical list / Yes-No answer; everything else is a plain text input.
   const FALLBACK_LIST_KEYS = { 'Chance?': 'chance', 'Verbal': 'verbal' };
   const FALLBACK_STATIC = { 'Multiple Invoices?': ['Yes', 'No'] };
+  const normName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
   const optionsFor = (field) => {
     const link = columnLinks ? resolveColumnLink(field, columnLinks) : null;
     if (link && listRegistry) return listRegistry.get(link.listKey)?.options || [];
+    if (listRegistry) {
+      const target = normName(field);
+      for (const list of listRegistry.values()) {
+        if (normName(list.label) === target && Array.isArray(list.options) && list.options.length) {
+          return list.options;
+        }
+      }
+    }
     const fk = FALLBACK_LIST_KEYS[field];
     if (fk && listRegistry) return listRegistry.get(fk)?.options || [];
     return FALLBACK_STATIC[field] || null;
