@@ -299,6 +299,16 @@ function normCell(s) {
   return String(s ?? '').replace(ZERO_WIDTH_RE, '').trim().toLowerCase();
 }
 
+// The Flags column carries the auto USD 🚩. Match the header tolerantly
+// (casing / whitespace / invisible chars, "Flag" or "Flags") so the
+// indicator still renders if the saved column name isn't an exact
+// "Flags" — otherwise the cell falls back to a plain text editor and the
+// flag never shows.
+function isFlagsColumn(h) {
+  const n = normCell(h);
+  return n === 'flags' || n === 'flag';
+}
+
 // Stages at or before Lead — these never warrant a USD value, so they
 // never flag. Everything else (Qualifying, Quoting, Quoted, Contracting,
 // Agreement Sent, Repricing, Sold, Not Sold, plus any future / legacy
@@ -6784,7 +6794,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               .join('\n');
             return stacked || String(row[h] ?? '');
           }
-          if (h === 'Flags') {
+          if (isFlagsColumn(h)) {
             // Expose the auto "needs USD" flag to the column filter /
             // search so the user can isolate flagged rows by typing
             // "needs USD" (or 🚩), on top of any manual flag text.
@@ -6807,7 +6817,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         // re-clicks the header when they want a fresh ranking.
         freezeSortOrder: h === 'Call In' ? true : undefined,
         render: (row) => {
-          if (h === 'Flags') {
+          if (isFlagsColumn(h)) {
             // Auto 🚩 when the deal is past Lead but the `USD?` field has
             // no real value (blank or "-"). Stays editable so manual flag
             // notes can sit alongside the auto indicator.
