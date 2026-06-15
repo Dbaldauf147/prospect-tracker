@@ -3405,6 +3405,229 @@ function QuotedFollowUpModal({ opp, chanceOptions, onSave, onClose }) {
   );
 }
 
+// Prompt shown whenever an opp moves into the "Agreement Sent" stage,
+// mirroring the QuotedFollowUpModal. Captures the approval / close-out
+// data points the team reviews at agreement time: the USD deal size,
+// the margin-email / sales-leader-review date, Chance?, whether multiple
+// invoices apply, the verbal-email status, and the two approval fields.
+// The linked Pricing Option is shown read-only (it's owned by the
+// Pricing tab). Cleared on Save or Skip.
+function AgreementSentFollowUpModal({
+  opp, chanceOptions, verbalOptions, pricingOptionName, onSave, onClose,
+}) {
+  // Read current values with fallbacks to the alternate key names other
+  // views / imported sheets use, so existing data shows up here instead
+  // of looking blank. The combined margin/review field also absorbs the
+  // two legacy split columns if a row was saved before they merged.
+  const curUsd = opp?.['USD?'] ?? '';
+  const curMarginReview = opp?.['Margin Email Date - Sales Leader Review Date']
+    ?? opp?.['Margin Email Date'] ?? opp?.['Sales Leader Review Date'] ?? '';
+  const curChance = opp?.['Chance?'] ?? opp?.['Chance'] ?? '';
+  const curMultiInvoices = opp?.['Multiple Invoices?'] ?? '';
+  const curVerbal = opp?.['Verbal'] ?? '';
+  const curEntity = opp?.['Entity Outside the US Approval'] ?? '';
+  const curCoa = opp?.['COA Approval'] ?? '';
+
+  const [usd, setUsd] = useState(String(curUsd ?? ''));
+  const [marginReviewDate, setMarginReviewDate] = useState(toISODate(curMarginReview) || '');
+  const [chance, setChance] = useState(String(curChance ?? ''));
+  const [multiInvoices, setMultiInvoices] = useState(String(curMultiInvoices ?? ''));
+  const [verbal, setVerbal] = useState(String(curVerbal ?? ''));
+  const [entity, setEntity] = useState(String(curEntity ?? ''));
+  const [coa, setCoa] = useState(String(curCoa ?? ''));
+
+  function handleSave() {
+    onSave({ usd, marginReviewDate, chance, multiInvoices, verbal, entity, coa });
+  }
+
+  // Shows the value already stored on the opp so the user reviews what's
+  // there rather than entering blind. Hidden when there's nothing yet.
+  const hintStyle = { fontSize: '0.68rem', color: 'var(--color-text-muted)', marginTop: 3 };
+  const dateHint = (raw) => {
+    const v = (raw ?? '').toString().trim();
+    return v ? <div style={hintStyle}>Currently: {formatDateDisplay(v)}</div> : null;
+  };
+  const textHint = (raw) => {
+    const v = (raw ?? '').toString().trim();
+    return v ? <div style={hintStyle}>Currently: {v}</div> : null;
+  };
+
+  const labelStyle = { fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text)', display: 'block', marginBottom: 4 };
+  const inputStyle = {
+    width: '100%', boxSizing: 'border-box',
+    padding: '0.45rem 0.55rem',
+    border: '1px solid var(--color-border)', borderRadius: 4,
+    fontSize: '0.85rem', fontFamily: 'inherit',
+    background: '#fff', color: 'var(--color-text)',
+  };
+
+  // Only dismiss when the press *started* on the backdrop. Drag-selecting text
+  // in a field and releasing the mouse over the dimmed backdrop otherwise fires
+  // a click on the overlay that would close the popup mid-selection.
+  const backdropMouseDown = useRef(false);
+
+  return createPortal(
+    <div
+      onMouseDown={(e) => { backdropMouseDown.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && backdropMouseDown.current) onClose(); }}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
+        zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+        }}
+        style={{
+          width: 460, maxWidth: '92vw', maxHeight: '88vh',
+          background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}
+      >
+        <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
+            Agreement Sent details
+          </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+            <strong>{opp?.['Account'] || 'This opp'}</strong>
+            {opp?.['Scope'] ? <> &middot; {opp['Scope']}</> : null}
+            {' '}is now <strong>Agreement Sent</strong>. Enter or review the details below.
+          </div>
+        </div>
+
+        <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem', overflowY: 'auto' }}>
+          <div>
+            <label style={labelStyle}>USD?</label>
+            <input
+              type="text"
+              autoFocus
+              value={usd}
+              onChange={(e) => setUsd(e.target.value)}
+              style={inputStyle}
+            />
+            {textHint(curUsd)}
+          </div>
+          <div>
+            <label style={labelStyle}>Margin Email Date - Sales Leader Review Date</label>
+            <input
+              type="date"
+              value={marginReviewDate}
+              onChange={(e) => setMarginReviewDate(e.target.value)}
+              style={inputStyle}
+            />
+            {dateHint(curMarginReview)}
+          </div>
+          <div>
+            <label style={labelStyle}>Chance?</label>
+            <select
+              value={chance}
+              onChange={(e) => setChance(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">— Select —</option>
+              {chanceOptions.map(o => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+            {textHint(curChance)}
+          </div>
+          <div>
+            <label style={labelStyle}>Multiple Invoices?</label>
+            <select
+              value={multiInvoices}
+              onChange={(e) => setMultiInvoices(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">— Select —</option>
+              <option value="Yes">Yes</option>
+              <option value="No">No</option>
+            </select>
+            {textHint(curMultiInvoices)}
+          </div>
+          <div>
+            <label style={labelStyle}>Verbal</label>
+            <select
+              value={verbal}
+              onChange={(e) => setVerbal(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">— Select —</option>
+              {verbalOptions.map(o => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+            {textHint(curVerbal)}
+          </div>
+          <div>
+            <label style={labelStyle}>Entity Outside the US Approval</label>
+            <input
+              type="text"
+              value={entity}
+              onChange={(e) => setEntity(e.target.value)}
+              style={inputStyle}
+            />
+            {textHint(curEntity)}
+          </div>
+          <div>
+            <label style={labelStyle}>COA Approval</label>
+            <input
+              type="text"
+              value={coa}
+              onChange={(e) => setCoa(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); handleSave(); }
+              }}
+              style={inputStyle}
+            />
+            {textHint(curCoa)}
+          </div>
+          <div>
+            <label style={labelStyle}>Pricing Option</label>
+            <div style={{
+              ...inputStyle,
+              background: 'var(--color-bg)', color: 'var(--color-text-muted)',
+              cursor: 'default',
+            }}>
+              {pricingOptionName || '—'}
+            </div>
+            <div style={hintStyle}>Read-only — linked from the Pricing tab.</div>
+          </div>
+        </div>
+
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '0.6rem 1rem',
+          borderTop: '1px solid var(--color-border-light)', background: 'var(--color-bg)',
+        }}>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              padding: '0.35rem 0.7rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: 'var(--color-text-muted)', cursor: 'pointer',
+            }}
+          >Skip for now</button>
+          <button
+            type="button"
+            onClick={handleSave}
+            style={{
+              padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
+              border: '1px solid var(--color-accent)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: '#fff', cursor: 'pointer',
+            }}
+          >Save</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 // Prompt shown whenever an opp's Follow Up date changes, asking the user
 // to pick the new Status (Who is waiting) for that opp so it stays
 // current with each follow-up. Cleared on Save or Skip.
@@ -5411,6 +5634,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // Chance?, and Margin Email Date - Sales Leader Review Date. Cleared on
   // Save or Skip.
   const [quotedPromptId, setQuotedPromptId] = useState(null);
+  // _id of the opp that just moved into the "Agreement Sent" stage. When
+  // set, the AgreementSentFollowUpModal asks the user to enter / review
+  // USD?, the Margin Email / Sales Leader Review date, Chance?, Multiple
+  // Invoices?, Verbal, the Entity Outside the US Approval, and COA
+  // Approval (plus a read-only view of the linked Pricing Option).
+  // Cleared on Save or Skip.
+  const [agreementSentPromptId, setAgreementSentPromptId] = useState(null);
   // _id of the opp that just had its Stage flipped to "Sold". When set,
   // the SoldFollowUpModal asks the user to fill in Reason Not Sold,
   // Final Margin, and Competition. The Close Date is auto-stamped to the
@@ -6433,6 +6663,14 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     // flips TO "Quoted" so they can be entered or reviewed on the spot.
     if (stageChanged && String(value ?? '').trim().toLowerCase() === 'quoted') {
       setQuotedPromptId(id);
+    }
+    // Prompt for the agreement-stage approval data points (USD?, Margin
+    // Email / Sales Leader Review date, Chance?, Multiple Invoices?,
+    // Verbal, Entity Outside the US Approval, COA Approval) whenever the
+    // Stage flips TO "Agreement Sent" so they can be entered / reviewed
+    // on the spot.
+    if (stageChanged && String(value ?? '').trim().toLowerCase() === 'agreement sent') {
+      setAgreementSentPromptId(id);
     }
     // Prompt for the close-out details (Reason Not Sold / Final Margin /
     // Competition) whenever the Stage flips TO "Sold". The Close Date was
@@ -8095,6 +8333,50 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               setQuotedPromptId(null);
             }}
             onClose={() => setQuotedPromptId(null)}
+          />
+        );
+      })()}
+
+      {agreementSentPromptId != null && (() => {
+        const opp = records.find(r => r._id === agreementSentPromptId);
+        if (!opp) return null;
+        return (
+          <AgreementSentFollowUpModal
+            opp={opp}
+            chanceOptions={listRegistry.get('chance')?.options || []}
+            verbalOptions={listRegistry.get('verbal')?.options || []}
+            pricingOptionName={optionLinks[String(opp._id)] || ''}
+            onSave={({ usd, marginReviewDate, chance, multiInvoices, verbal, entity, coa }) => {
+              // Only push fields whose value actually changed so the
+              // undo stack stays uncluttered with no-op snapshots.
+              if (usd !== String(opp['USD?'] ?? '')) {
+                updateOppField(opp._id, 'USD?', usd);
+              }
+              const curMarginReview = toISODate(
+                opp['Margin Email Date - Sales Leader Review Date']
+                ?? opp['Margin Email Date'] ?? opp['Sales Leader Review Date']
+              ) || '';
+              if (marginReviewDate !== curMarginReview) {
+                updateOppField(opp._id, 'Margin Email Date - Sales Leader Review Date', marginReviewDate);
+              }
+              if (chance !== String(opp['Chance?'] ?? opp['Chance'] ?? '')) {
+                updateOppField(opp._id, 'Chance?', chance);
+              }
+              if (multiInvoices !== String(opp['Multiple Invoices?'] ?? '')) {
+                updateOppField(opp._id, 'Multiple Invoices?', multiInvoices);
+              }
+              if (verbal !== String(opp['Verbal'] ?? '')) {
+                updateOppField(opp._id, 'Verbal', verbal);
+              }
+              if (entity !== String(opp['Entity Outside the US Approval'] ?? '')) {
+                updateOppField(opp._id, 'Entity Outside the US Approval', entity);
+              }
+              if (coa !== String(opp['COA Approval'] ?? '')) {
+                updateOppField(opp._id, 'COA Approval', coa);
+              }
+              setAgreementSentPromptId(null);
+            }}
+            onClose={() => setAgreementSentPromptId(null)}
           />
         );
       })()}
