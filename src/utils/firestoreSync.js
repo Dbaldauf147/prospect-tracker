@@ -103,22 +103,45 @@ export function subscribeToProspects(onChange) {
 export async function addProspect(prospect) {
   const ref = doc(getCol());
   await setDoc(ref, {
-    ...prospect,
+    ...sanitizeFirestoreData(prospect),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
   return ref.id;
 }
 
-export async function updateProspect(id, updates) {
-  // Firestore rejects undefined values outright (the whole write fails).
-  // Strip them so a stray undefined on one field can't block the rest of the save.
-  const clean = {};
-  for (const [k, v] of Object.entries(updates || {})) {
-    if (v !== undefined) clean[k] = v;
+// Firestore rejects writes that contain a field with an empty name
+// ("Document fields must not be empty") or an `undefined` value (the
+// whole write fails). Stray "" / whitespace-only keys can ride in from
+// imported docs — and merging two prospects folds the source's fields
+// in wholesale — so scrub them recursively (nested maps and array
+// elements included) before every write rather than trusting callers.
+function isPlainObject(v) {
+  if (!v || typeof v !== 'object') return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+function sanitizeFirestoreData(value) {
+  if (Array.isArray(value)) return value.map(sanitizeFirestoreData);
+  // Only descend into plain object maps. Special Firestore types
+  // (Timestamp, GeoPoint, DocumentReference, FieldValue) and Dates must
+  // pass through untouched — recursing would strip their prototype and
+  // corrupt the stored value.
+  if (isPlainObject(value)) {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (v === undefined) continue;
+      if (typeof k !== 'string' || k.trim() === '') continue;
+      out[k] = sanitizeFirestoreData(v);
+    }
+    return out;
   }
+  return value;
+}
+
+export async function updateProspect(id, updates) {
   await updateDoc(getDoc(id), {
-    ...clean,
+    ...sanitizeFirestoreData(updates || {}),
     updatedAt: serverTimestamp(),
   });
 }
