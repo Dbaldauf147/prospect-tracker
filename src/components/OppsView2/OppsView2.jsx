@@ -7415,7 +7415,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       display: 'inline-block', padding: '1px 8px', borderRadius: 999,
       fontSize: '0.65rem', fontWeight: 700, whiteSpace: 'nowrap',
     };
+    // Not Sold is a closed/lost deal — no point nagging about missing
+    // data or stalls on it, so the Flags column stays blank for those
+    // rows regardless of which individual flags would otherwise fire.
+    const flagsSuppressedForStage = (row) =>
+      String(row?.['Stage'] || '').trim() === 'Not Sold';
     const flagSummary = (row) => {
+      if (flagsSuppressedForStage(row)) return '';
       const parts = [];
       if (needsUsdFlag(row)) parts.push('Missing USD value');
       if (oppMissingBfoAddress(row)) parts.push('Missing BFO Address');
@@ -7431,6 +7437,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       defaultWidth: 200,
       getFilterValue: (row) => flagSummary(row),
       getSortValue: (row) => {
+        if (flagsSuppressedForStage(row)) return 0;
         let n = 0;
         if (needsUsdFlag(row)) n += 1;
         if (oppMissingBfoAddress(row)) n += 1;
@@ -7441,6 +7448,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       },
       exportValue: (row) => flagSummary(row),
       render: (row) => {
+        if (flagsSuppressedForStage(row)) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
         const missingUsd = needsUsdFlag(row);
         const missingAddr = oppMissingBfoAddress(row);
         const missingQuote = oppMissingQuotedAmount(row);
