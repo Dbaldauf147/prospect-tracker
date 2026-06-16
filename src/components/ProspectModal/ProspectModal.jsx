@@ -686,6 +686,40 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   const [mergeQuery, setMergeQuery] = useState('');
   const [mergeProcessing, setMergeProcessing] = useState(false);
   const [mergeError, setMergeError] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  async function performDelete() {
+    const targetId = contact.id || contact.vid;
+    if (!targetId) return;
+    const name = `${f.firstname} ${f.lastname}`.trim() || f.email || 'this contact';
+    if (!window.confirm(`Delete ${name}? This permanently removes the contact from HubSpot. This cannot be undone.`)) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      const isLocalOnly = typeof targetId === 'string' && targetId.startsWith('local-');
+      // Local-only contacts were never pushed to HubSpot — just drop them
+      // from the cache. Everyone else goes through the HubSpot delete API.
+      if (!isLocalOnly) {
+        const res = await apiFetch('/api/hubspot?action=delete-contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contactId: targetId }),
+        });
+        const json = await res.json();
+        if (!res.ok || json.error) throw new Error(json.error || `HubSpot ${res.status}`);
+      }
+      // Remove from the local cache so the contact disappears immediately.
+      try {
+        await updateHubspotCache(draft => {
+          draft.contacts = (draft.contacts || []).filter(c => String(c.id || c.vid) !== String(targetId));
+        });
+      } catch (err) { console.warn('Delete cache update failed', err); }
+      onClose();
+    } catch (err) {
+      setError(err?.message || 'Delete failed');
+    } finally {
+      setDeleting(false);
+    }
+  }
   async function performMerge(secondaryId, secondaryLabel) {
     const primaryId = contact.id || contact.vid;
     if (!primaryId || !secondaryId || String(primaryId) === String(secondaryId)) return;
@@ -1670,12 +1704,21 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
         })()}
         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.25rem' }}>
           {(contact.id || contact.vid) ? (
-            <button
-              type="button"
-              onClick={() => setMergeOpen(o => !o)}
-              title="Merge another HubSpot contact INTO this one — keeps this contact, deletes the other after consolidating its history."
-              style={{ padding: '0.5rem 1rem', border: '1px solid #FDE68A', borderRadius: 6, background: mergeOpen ? '#FEF3C7' : '#FFFBEB', color: '#92400E', fontSize: '0.78rem', fontFamily: 'inherit', cursor: 'pointer', fontWeight: 600 }}
-            >{mergeOpen ? 'Cancel merge' : 'Merge…'}</button>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button
+                type="button"
+                onClick={() => setMergeOpen(o => !o)}
+                title="Merge another HubSpot contact INTO this one — keeps this contact, deletes the other after consolidating its history."
+                style={{ padding: '0.5rem 1rem', border: '1px solid #FDE68A', borderRadius: 6, background: mergeOpen ? '#FEF3C7' : '#FFFBEB', color: '#92400E', fontSize: '0.78rem', fontFamily: 'inherit', cursor: 'pointer', fontWeight: 600 }}
+              >{mergeOpen ? 'Cancel merge' : 'Merge…'}</button>
+              <button
+                type="button"
+                onClick={performDelete}
+                disabled={deleting || saving}
+                title="Permanently delete this contact from HubSpot."
+                style={{ padding: '0.5rem 1rem', border: '1px solid #FCA5A5', borderRadius: 6, background: '#FEF2F2', color: '#B91C1C', fontSize: '0.78rem', fontFamily: 'inherit', cursor: (deleting || saving) ? 'not-allowed' : 'pointer', fontWeight: 600, opacity: (deleting || saving) ? 0.6 : 1 }}
+              >{deleting ? 'Deleting…' : 'Delete Contact'}</button>
+            </div>
           ) : <span />}
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             <button onClick={onClose} style={{ padding: '0.5rem 1rem', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer', color: '#64748B' }}>Cancel</button>
