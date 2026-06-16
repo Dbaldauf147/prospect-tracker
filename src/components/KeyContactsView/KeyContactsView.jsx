@@ -1361,7 +1361,7 @@ function KeyContactsViewInner({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, tags: 200, lastOutreach: 160,
+    name: 180, category: 160, title: 200, company: 240, suggestedCompany: 220, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, tags: 200, lastOutreach: 160,
   };
   // Column visibility — every contact column except Name (always
   // shown; it's the primary identifier). Stored per-page so the Key,
@@ -1416,7 +1416,17 @@ function KeyContactsViewInner({
   const [contactColWidths, setContactColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('contact-col-widths'))) || {};
-      return { ...DEFAULT_CONTACT_COL_WIDTHS, ...saved };
+      const merged = { ...DEFAULT_CONTACT_COL_WIDTHS, ...saved };
+      // One-time widen of the Company column so the override LOCAL
+      // badge + reassign/clear buttons fit without crowding the name.
+      // Only bumps users still at/below the old 200px default; the
+      // sticky flag respects anyone who later narrows it on purpose.
+      const migKey = lsKey('contact-col-widths-mig-company');
+      if (!localStorage.getItem(migKey)) {
+        try { localStorage.setItem(migKey, '1'); } catch {}
+        if (!merged.company || merged.company <= 200) merged.company = 240;
+      }
+      return merged;
     } catch { return DEFAULT_CONTACT_COL_WIDTHS; }
   });
   useEffect(() => { try { localStorage.setItem(lsKey('contact-col-widths'), JSON.stringify(contactColWidths)); } catch {} }, [contactColWidths]);
