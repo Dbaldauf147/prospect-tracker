@@ -2048,6 +2048,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
             columns={columns}
             rows={filtered}
             alwaysVisible={['company', '_select']}
+            removableColumns
             onFilteredRowsChange={handleFilteredRowsChange}
             defaultSort={{ key: 'company', direction: 'asc' }}
             enableColumnFilters
