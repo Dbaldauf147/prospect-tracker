@@ -16,6 +16,8 @@ import { splitPeOwners } from '../../utils/peOwners';
 import { computePortfolioFitScore, industrySector, sectorScoreFor, tierForScoreValue, industryTier, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { isContactInEvent, toggleContactInEvents } from '../../utils/eventsStore';
 import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
+import { TagMultiSelect } from '../common/TagMultiSelect';
+import { buildStrategyOptions, persistCustomStrategy } from '../../utils/prospectOptions';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCache } from '../../utils/hubspotContactsCache';
 import { userLsGet } from '../../utils/userLs';
@@ -412,7 +414,7 @@ const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', tier: 'Tier 2',
   hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', servicesExplored: {}, serviceNotes: {}, competitors: {}, portfolioCompanies: [],
-  peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '',
+  peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', strategies: [],
 };
 
 // Company-name normalizer shared with the list tabs so fuzzy matching
@@ -3543,6 +3545,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return [...out];
   }, [fields.frameworks, companyFrameworkFlags]);
 
+  // Strategy-tag vocabulary: built-ins + every tag already in use + the
+  // user's custom additions, so the dropdown matches what the PE Firm
+  // sub-tab offers.
+  const strategyOptions = useMemo(() => buildStrategyOptions(prospects, settings), [prospects, settings]);
+
   const updateDeal = useCallback((dealId, patch) => {
     writeCompanyDeals(companyDeals.map(d => d.id === dealId ? { ...d, ...patch, updatedAt: Date.now() } : d));
   }, [companyDeals, writeCompanyDeals]);
@@ -4298,6 +4305,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div style={{ gridColumn: 'span 2' }}>
               <label className={styles.label}>Frameworks</label>
               <MultiSelectDropdown options={FRAMEWORKS} selected={effectiveFrameworks} onToggle={(val) => toggleArrayField('frameworks', val)} />
+            </div>
+
+            <div style={{ gridColumn: 'span 2' }}>
+              <label className={styles.label}>Strategies</label>
+              <TagMultiSelect
+                options={strategyOptions}
+                selected={fields.strategies || []}
+                onToggle={(val) => toggleArrayField('strategies', val)}
+                onAddNew={(val) => persistCustomStrategy(val, settings, updateSettings)}
+                placeholder="Tag this firm's investment strategies…"
+              />
             </div>
 
             <div className={styles.fieldFull}>

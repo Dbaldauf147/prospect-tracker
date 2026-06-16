@@ -6,7 +6,8 @@ import { formatAum } from '../../utils/formatters';
 import { formatDateDisplay } from '../../utils/oppsCallIn';
 import { PE_STAGES, STATUSES, TYPES, TIERS, GEOGRAPHIES } from '../../data/enums';
 import { InlineCell } from '../TableView/TableView';
-import { buildTypeOptions, buildCdmOptions, persistCustomOption } from '../../utils/prospectOptions';
+import { buildTypeOptions, buildCdmOptions, persistCustomOption, buildStrategyOptions, persistCustomStrategy } from '../../utils/prospectOptions';
+import { TagMultiSelect } from '../common/TagMultiSelect';
 import { computePortfolioFitScore, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
 import { DataTable } from '../common/DataTable';
@@ -834,6 +835,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           onSelectProspect={onSelectProspect}
           onUpdateProspect={onUpdateProspect}
           onAddProspect={onAddProspect}
+          onDownloadPortfolio={exportPortfolioCompanies}
           settings={settings}
           updateSettings={updateSettings}
         />
@@ -1593,8 +1595,18 @@ function NameListCell({ items, empty }) {
   );
 }
 
-function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelectFirm, prospects = [], oppsRecords = [], portfolioByPe = new Map(), dmNamesByCompanyId = new Map(), onSelectProspect, onUpdateProspect, onAddProspect, settings, updateSettings }) {
+function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelectFirm, prospects = [], oppsRecords = [], portfolioByPe = new Map(), dmNamesByCompanyId = new Map(), onSelectProspect, onUpdateProspect, onAddProspect, onDownloadPortfolio, settings, updateSettings }) {
   const firmLabel = selectedFirm.trim() || 'PE firm';
+  // Strategy-tag vocabulary shared with the company popup, so a tag added
+  // in either surface shows up in the other.
+  const strategyOptions = useMemo(() => buildStrategyOptions(prospects, settings), [prospects, settings]);
+  // Toggle one strategy tag on a firm, persisting the whole array.
+  const toggleStrategy = useCallback((prospect, tag) => {
+    const current = Array.isArray(prospect?.strategies) ? prospect.strategies : [];
+    const next = current.includes(tag) ? current.filter(s => s !== tag) : [...current, tag];
+    onUpdateProspect?.(prospect.id, { strategies: next });
+  }, [onUpdateProspect]);
+  const addStrategy = useCallback((tag) => persistCustomStrategy(tag, settings, updateSettings), [settings, updateSettings]);
   const [search, setSearch] = useState('');
   const [pasteOpen, setPasteOpen] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -1744,6 +1756,10 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
       _oppsTip: counts?.tip || [],
       _pcOppsTip: pcCounts?.tip || [],
       _pcCount: (portfolioByPe.get((p.company || '').trim().toLowerCase()) || []).length,
+      // Mapped portfolio companies from this firm's own Portfolio
+      // Companies tab — the array the PC Download export ships.
+      _pcMappedCount: Array.isArray(p.portfolioCompanies) ? p.portfolioCompanies.length : 0,
+      strategies: Array.isArray(p.strategies) ? p.strategies : [],
       company: p.company || '',
       status: p.status || '',
       cdm: p.cdm || '',
@@ -1876,6 +1892,22 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
           style={{ fontWeight: 700, color: r.pcOppsActive > 0 ? '#7C3AED' : r.pcOppsTotal > 0 ? '#64748B' : '#CBD5E1' }}
         >{r.pcOppsActive}/{r.pcOppsTotal}</span>
       ) },
+      // PC Download: count of this firm's mapped portfolio companies (its
+      // Portfolio Companies tab) with a click-to-download of that exact
+      // Excel workbook — same export the Portfolio tab's PC Download
+      // column and the company pop-up's "Download Current Data" ship.
+      { key: 'pcDownload', label: 'PC Download', defaultWidth: 110, getSortValue: (r) => r._pcMappedCount, exportValue: (r) => String(r._pcMappedCount), render: (r) => (
+        r._pcMappedCount > 0 ? (
+          <span
+            role="button"
+            tabIndex={0}
+            title={`Download ${r._pcMappedCount} mapped portfolio compan${r._pcMappedCount === 1 ? 'y' : 'ies'} as Excel`}
+            onClick={(e) => { e.stopPropagation(); onDownloadPortfolio?.(r._prospect); }}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); onDownloadPortfolio?.(r._prospect); } }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 700, color: '#2563EB', cursor: 'pointer', textDecoration: 'underline' }}
+          >⬇ {r._pcMappedCount}</span>
+        ) : <span style={{ color: '#CBD5E1', fontSize: '0.72rem' }}>—</span>
+      ) },
       // Read-only companions to PC Opps: the portfolio companies that
       // carry those opps, and the contacts tied to them (both pulled from
       // the same Opps-tab scan).
@@ -1885,9 +1917,22 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
       // Maker"-tagged, matched by company or email domain).
       { key: 'decisionMakers', label: 'Decision Makers', defaultWidth: 220, getSortValue: (r) => r.decisionMakerNames.length, getFilterValue: (r) => r.decisionMakerNames.join(', '), exportValue: (r) => r.decisionMakerNames.join(', '), render: (r) => <NameListCell items={r.decisionMakerNames} empty="No decision makers found" /> },
       { key: 'peOwner', label: 'PE Owner', defaultWidth: 170, render: editable({ key: 'peOwner', label: 'PE Owner' }) },
+      // Strategies: multi-tag investment-strategy field, editable inline
+      // (same control + vocabulary as the company pop-up, with add-new).
+      { key: 'strategies', label: 'Strategies', defaultWidth: 260, getSortValue: (r) => r.strategies.length, getFilterValue: (r) => r.strategies.join(', '), exportValue: (r) => r.strategies.join(', '), render: (r) => (
+        <div onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+          <TagMultiSelect
+            options={strategyOptions}
+            selected={r.strategies}
+            onToggle={(tag) => toggleStrategy(r._prospect, tag)}
+            onAddNew={addStrategy}
+            placeholder="Add strategies…"
+          />
+        </div>
+      ) },
       { key: 'notes', label: 'Notes', defaultWidth: 320, render: editable({ key: 'notes', label: 'Notes', type: 'notes' }) },
     ];
-  }, [onSelectProspect, onUpdateProspect, handleAddOption, typeOptions, cdmOptions, selectedIds, filteredRowIds]);
+  }, [onSelectProspect, onUpdateProspect, handleAddOption, typeOptions, cdmOptions, selectedIds, filteredRowIds, onDownloadPortfolio, strategyOptions, toggleStrategy, addStrategy]);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -1993,12 +2038,13 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
           </div>
         ) : (
           <DataTable
-            // -6: fresh prefs key so columns added after the original
+            // -7: fresh prefs key so columns added after the original
             // layout (HQ Region / Website / PE AUM at -2, Opps at -3,
             // PC Opps at -4, the bulk-edit checkbox at -5, the PC Opp
-            // Companies / Contacts + Decision Makers columns at -6) aren't
-            // hidden by a saved visible-set from an older one.
-            tableId="pe-blue-owl-companies-6"
+            // Companies / Contacts + Decision Makers columns at -6, the
+            // PC Download + Strategies columns at -7) aren't hidden by a
+            // saved visible-set from an older one.
+            tableId="pe-blue-owl-companies-7"
             columns={columns}
             rows={filtered}
             alwaysVisible={['company', '_select']}

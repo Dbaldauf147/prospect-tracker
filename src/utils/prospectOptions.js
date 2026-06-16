@@ -1,4 +1,4 @@
-import { TYPES } from '../data/enums';
+import { TYPES, PE_STRATEGIES } from '../data/enums';
 
 // Shared dropdown vocabularies for prospect tables' inline editors.
 // Table View and the PE › Blue Owl tab both build their Type / CDM
@@ -40,6 +40,35 @@ export function buildCdmOptions(prospects, settings) {
     ...(prospects || []).map(p => p?.cdm),
     ...(settings?.customCdms || []),
   ]);
+}
+
+// Strategy options union: built-in PE_STRATEGIES + every strategy tag
+// already used across prospects + custom strategies the user has added
+// on the fly. Strategies are stored as an array on each prospect, so the
+// in-use values are flattened out of those arrays.
+export function buildStrategyOptions(prospects, settings) {
+  const fromProspects = [];
+  for (const p of (prospects || [])) {
+    if (Array.isArray(p?.strategies)) fromProspects.push(...p.strategies);
+  }
+  return dedupeSorted([
+    ...PE_STRATEGIES,
+    ...fromProspects,
+    ...(settings?.customStrategies || []),
+  ]);
+}
+
+// Persist a newly-added strategy tag to settings.customStrategies so it
+// sticks across reloads and shows up in every strategy dropdown. No-op
+// when the tag is already built-in or saved.
+export function persistCustomStrategy(name, settings, updateSettings) {
+  const trimmed = String(name || '').trim();
+  if (!trimmed) return;
+  const list = Array.isArray(settings?.customStrategies) ? settings.customStrategies : [];
+  const exists = list.some(t => String(t).trim().toLowerCase() === trimmed.toLowerCase());
+  const builtIn = PE_STRATEGIES.some(t => t.toLowerCase() === trimmed.toLowerCase());
+  if (exists || builtIn) return;
+  if (updateSettings) updateSettings({ customStrategies: [...list, trimmed] });
 }
 
 // Persist a newly-added Type / CDM to its custom-list setting so it
