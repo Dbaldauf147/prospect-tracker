@@ -606,6 +606,69 @@ function KeyContactsViewInner({
   // contactSelector for both Key Contacts and Active Contacts skips
   // anything tagged "hide", so the row vanishes after the cache event
   // fires. Existing tags are preserved.
+  // Per-contact Company override controls, mirroring the HubSpot
+  // Contacts page. The override (settings.contactLocalFields[id]
+  // ._companyOverride) pins a typed Company value through HubSpot
+  // syncs; these let the user drop that pin to follow HubSpot's value
+  // again, or re-fire the HubSpot primary-Company association.
+  const [reassigningId, setReassigningId] = useState(null);
+
+  function clearCompanyOverride(contactId) {
+    const id = String(contactId || '');
+    const cur = settings?.contactLocalFields || {};
+    const entry = cur[id];
+    if (!entry || typeof entry._companyOverride !== 'string') return;
+    const merged = { ...entry };
+    delete merged._companyOverride;
+    const next = { ...cur };
+    if (Object.keys(merged).length === 0) delete next[id];
+    else next[id] = merged;
+    updateSettings({ contactLocalFields: next });
+  }
+
+  async function handleReassignCompany(contactId, companyName) {
+    const id = String(contactId || '');
+    const name = (companyName || '').trim();
+    if (!name) { setMassStatus({ type: 'partial', message: 'No company name to reassign — set a company first.' }); return; }
+    setReassigningId(id);
+    try {
+      const res = await apiFetch('/api/hubspot?action=update-contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactId: id, properties: { company: name } }),
+      });
+      const json = await res.json();
+      if (json.error || !res.ok) throw new Error(json.error || `HubSpot ${res.status}`);
+      const ca = json.companyAssignment;
+      const cur = settings?.contactLocalFields || {};
+      if (ca && ca.ok === false) {
+        // Reassign failed even on retry — keep the typed value as a
+        // local override so it sticks regardless of HubSpot.
+        const merged = { ...(cur[id] || {}), _companyOverride: name };
+        updateSettings({ contactLocalFields: { ...cur, [id]: merged } });
+        const detail = ca.errorText ? ` · ${ca.errorText}` : '';
+        setMassStatus({ type: 'success', message: `Saved "${name}" locally. HubSpot reassign still failed${ca.status ? ` (HTTP ${ca.status})` : ''}${detail} — Prospect Tracker will keep your value through future syncs.` });
+      } else {
+        // Reassign worked — drop any prior override so the list follows
+        // HubSpot's value again.
+        const entry = cur[id];
+        if (entry && typeof entry._companyOverride === 'string') {
+          const merged = { ...entry };
+          delete merged._companyOverride;
+          const next = { ...cur };
+          if (Object.keys(merged).length === 0) delete next[id];
+          else next[id] = merged;
+          updateSettings({ contactLocalFields: next });
+        }
+        const created = ca?.created ? ' · created new Company record' : '';
+        setMassStatus({ type: 'success', message: `Reassigned "${name}" on this contact${created}` });
+      }
+    } catch (err) {
+      setMassStatus({ type: 'error', message: `Reassign failed: ${err?.message || err}` });
+    }
+    setReassigningId(null);
+  }
+
   // Persist a single-field edit on one contact via the HubSpot
   // update endpoint and mirror the change into the local cache so
   // the row reflects it immediately. Used by InlineCell-driven edits
@@ -1647,9 +1710,14 @@ function KeyContactsViewInner({
       // HubSpot Contacts page does when its fuzzy Company match
       // resolves to a record with a different name).
       const local = localFields[String(baseC.id || baseC.vid || '')] || null;
-      const c = local && typeof local._companyOverride === 'string' && local._companyOverride
-        ? { ...baseC, company: local._companyOverride }
-        : baseC;
+      let c = baseC;
+      let companyIsOverride = false;
+      let companyHubspotValue = '';
+      if (local && typeof local._companyOverride === 'string' && local._companyOverride) {
+        c = { ...baseC, company: local._companyOverride };
+        companyIsOverride = true;
+        companyHubspotValue = baseC.company || '';
+      }
       const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
       // Note: we used to fast-skip hide-tagged contacts here, but
       // ActiveContactsView's "Show hidden" mode wants them to come
@@ -1704,6 +1772,8 @@ function KeyContactsViewInner({
         country: String(c.country || '').trim(),
         metInPerson: resolveMetInPerson(c),
         company,
+        companyIsOverride,
+        companyHubspotValue,
         domain,
         suggestedCompany: companyGuessIndex ? guessCompanyForContact(c, companyGuessIndex) : '',
         raw: c,
@@ -2765,6 +2835,7 @@ function KeyContactsViewInner({
                       style={{
                         display: 'flex',
                         alignItems: 'center',
+                        gap: 4,
                         minWidth: 0,
                         // Soft amber wash + left rule when the contact's
                         // company doesn't map to a Table View prospect,
@@ -2775,16 +2846,24 @@ function KeyContactsViewInner({
                       }}
                       title={c.companyName && !c.prospect ? `"${c.companyName}" is not mapped to any prospect in the Table View — no matching company name and no shared email domain.` : undefined}
                     >
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <InlineCell
-                          value={c.companyName}
-                          onCommit={v => inlineUpdateField(c.raw || c, 'company', v)}
-                          fontSize="0.74rem"
-                          textColor="#1E293B"
-                          fontWeight={600}
-                          suggestions={prospects.map(p => p.company).filter(Boolean)}
-                          title={c.prospect ? `Click to edit. Use the ↗ button to open ${c.companyName}.` : 'Not mapped to any Table View prospect. Click to edit (autocomplete from Table View companies).'}
-                        />
+                      <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <InlineCell
+                            value={c.companyName}
+                            onCommit={v => inlineUpdateField(c.raw || c, 'company', v)}
+                            fontSize="0.74rem"
+                            textColor="#1E293B"
+                            fontWeight={600}
+                            suggestions={prospects.map(p => p.company).filter(Boolean)}
+                            title={c.prospect ? `Click to edit. Use the ↗ button to open ${c.companyName}.` : 'Not mapped to any Table View prospect. Click to edit (autocomplete from Table View companies).'}
+                          />
+                        </div>
+                        {c.companyIsOverride && (
+                          <span
+                            title={`Local Prospect Tracker override active. HubSpot has "${c.companyHubspotValue || '(empty)'}" but Prospect Tracker is using the value you typed. Click ✕ to drop the override and follow HubSpot again.`}
+                            style={{ flexShrink: 0, padding: '0 5px', borderRadius: 999, background: '#DBEAFE', color: '#1E3A8A', border: '1px solid #93C5FD', fontSize: '0.55rem', fontWeight: 700, lineHeight: '1.5' }}
+                          >LOCAL</span>
+                        )}
                       </div>
                       {c.prospect ? (
                         <span
@@ -2793,14 +2872,32 @@ function KeyContactsViewInner({
                           onClick={e => { e.stopPropagation(); onSelectProspect?.(c.prospect); }}
                           onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); onSelectProspect?.(c.prospect); } }}
                           title={`Open ${c.companyName} prospect record`}
-                          style={{ flexShrink: 0, marginRight: 4, fontSize: '0.7rem', color: '#1D4ED8', cursor: 'pointer', fontWeight: 700 }}
+                          style={{ flexShrink: 0, fontSize: '0.7rem', color: '#1D4ED8', cursor: 'pointer', fontWeight: 700 }}
                         >↗</span>
                       ) : c.companyName ? (
                         <span
                           title={`"${c.companyName}" is not in the Table View`}
-                          style={{ flexShrink: 0, marginRight: 4, fontSize: '0.7rem', color: '#B45309', fontWeight: 700 }}
+                          style={{ flexShrink: 0, fontSize: '0.7rem', color: '#B45309', fontWeight: 700 }}
                         >⚠</span>
                       ) : null}
+                      {c.companyIsOverride ? (
+                        <button
+                          type="button"
+                          onClick={e => { e.stopPropagation(); clearCompanyOverride(c.id); }}
+                          title="Clear the local override and follow HubSpot's company value again"
+                          style={{ flexShrink: 0, width: 20, height: 20, padding: 0, border: '1px solid #FCA5A5', borderRadius: 4, background: '#fff', color: '#991B1B', cursor: 'pointer', fontSize: '0.8rem', lineHeight: 1, fontFamily: 'inherit' }}
+                        >✕</button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={e => { e.stopPropagation(); handleReassignCompany(c.id, c.companyName); }}
+                          disabled={!c.companyName || reassigningId === c.id}
+                          title={c.companyName
+                            ? `Re-fire the HubSpot primary-Company association for "${c.companyName}". Use this if a recent edit's text saved on HubSpot but the next sync reverts the company. If the reassign still fails, Prospect Tracker will keep your value as a local override.`
+                            : 'Set a company name first'}
+                          style={{ flexShrink: 0, width: 20, height: 20, padding: 0, border: '1px solid #E2E8F0', borderRadius: 4, background: reassigningId === c.id ? '#FEF3C7' : '#fff', color: c.companyName ? '#475569' : '#CBD5E1', cursor: c.companyName && reassigningId !== c.id ? 'pointer' : 'not-allowed', fontSize: '0.8rem', lineHeight: 1, fontFamily: 'inherit' }}
+                        >{reassigningId === c.id ? '⋯' : '↻'}</button>
+                      )}
                     </div>
                     )}
                     {showSuggestedCompany && (
