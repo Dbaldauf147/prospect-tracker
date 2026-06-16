@@ -24,6 +24,7 @@ import { OppsView } from './components/OppsView/OppsView';
 import { OppsView2 } from './components/OppsView2/OppsView2';
 import { DropdownsView } from './components/DropdownsView/DropdownsView';
 import { ClientsView } from './components/ClientsView/ClientsView';
+import { IssuesView } from './components/IssuesView/IssuesView';
 import { ActivityView } from './components/ActivityView/ActivityView';
 import { AgentsView } from './components/AgentsView/AgentsView';
 import { loadTargetAccountsFromDB } from './components/TargetAccountsView/TargetAccountsView';
@@ -277,6 +278,8 @@ function App() {
             <ListsView onTargetAccountsLoaded={setTargetAccountsData} prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} updateProspect={updateProspect} />
           ) : view === 'clients' ? (
             <ClientsView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} user={user} />
+          ) : view === 'issues' ? (
+            <IssuesView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />
           ) : view === 'opps' ? (
             <OppsView settings={settings} updateSettings={updateSettings} />
           ) : view === 'opps2' ? (
