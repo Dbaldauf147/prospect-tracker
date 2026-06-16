@@ -1,6 +1,8 @@
 // Reference dropdown lists for the Opps workflow. Lifted from the
 // shared spreadsheet so the same option vocabulary surfaces inside
 // the app — used by the Dropdowns reference tab.
+import { PE_STRATEGIES } from './enums';
+
 export const DROPDOWN_LISTS = [
   {
     key: 'whoIsWaiting',
@@ -365,6 +367,14 @@ export const DROPDOWN_LISTS = [
       'Repeat buyer',
       'Sustainability lead with buying authority',
     ],
+  },
+  {
+    // Investment-strategy tags for PE firms. Editing this list on the
+    // Dropdowns tab drives the options offered in the PE Firm sub-tab's
+    // Strategies column and the company pop-up's Strategies field.
+    key: 'peStrategies',
+    label: 'PE Strategies',
+    options: [...PE_STRATEGIES],
   },
 ];
 

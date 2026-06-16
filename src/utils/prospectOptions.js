@@ -1,4 +1,10 @@
-import { TYPES, PE_STRATEGIES } from '../data/enums';
+import { TYPES } from '../data/enums';
+import { getEffectiveDropdownLists } from './dropdownListsStore';
+
+// The Dropdowns-tab list that owns PE investment-strategy tags. Editing
+// it there is the single source of truth for what the PE firm Strategies
+// dropdowns offer.
+export const PE_STRATEGY_LIST_KEY = 'peStrategies';
 
 // Shared dropdown vocabularies for prospect tables' inline editors.
 // Table View and the PE › Blue Owl tab both build their Type / CDM
@@ -42,33 +48,59 @@ export function buildCdmOptions(prospects, settings) {
   ]);
 }
 
-// Strategy options union: built-in PE_STRATEGIES + every strategy tag
-// already used across prospects + custom strategies the user has added
-// on the fly. Strategies are stored as an array on each prospect, so the
-// in-use values are flattened out of those arrays.
+// Same de-dupe as dedupeSorted but preserves the source order instead
+// of sorting — used for the strategy list so the PE firm dropdowns
+// honor the order the user arranged on the Dropdowns tab.
+function dedupeOrdered(values) {
+  const seen = new Set();
+  const out = [];
+  for (const t of values) {
+    const v = String(t || '').trim();
+    if (!v) continue;
+    const k = v.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(v);
+  }
+  return out;
+}
+
+// The effective PE Strategies list off the Dropdowns tab (built-in
+// vocabulary plus the user's edits there). This is what the user
+// manages, so it's the canonical option order.
+export function getStrategyListOptions(settings) {
+  const list = getEffectiveDropdownLists(settings).find(l => l.key === PE_STRATEGY_LIST_KEY);
+  return Array.isArray(list?.options) ? list.options : [];
+}
+
+// Strategy options for the PE firm dropdowns: the Dropdowns-tab list
+// first (its order wins), then any tag already saved on a prospect that
+// isn't on the list — so editing the list controls what's offered, while
+// an option removed from the list never disappears from a firm that
+// still carries it (you can always untag it).
 export function buildStrategyOptions(prospects, settings) {
   const fromProspects = [];
   for (const p of (prospects || [])) {
     if (Array.isArray(p?.strategies)) fromProspects.push(...p.strategies);
   }
-  return dedupeSorted([
-    ...PE_STRATEGIES,
+  return dedupeOrdered([
+    ...getStrategyListOptions(settings),
     ...fromProspects,
-    ...(settings?.customStrategies || []),
   ]);
 }
 
-// Persist a newly-added strategy tag to settings.customStrategies so it
-// sticks across reloads and shows up in every strategy dropdown. No-op
-// when the tag is already built-in or saved.
+// Add a new strategy tag (from a dropdown's "+ Add") onto the Dropdowns-
+// tab PE Strategies list so it sticks and shows up everywhere — same
+// store the Dropdowns editor writes to. No-op if already present.
 export function persistCustomStrategy(name, settings, updateSettings) {
   const trimmed = String(name || '').trim();
   if (!trimmed) return;
-  const list = Array.isArray(settings?.customStrategies) ? settings.customStrategies : [];
-  const exists = list.some(t => String(t).trim().toLowerCase() === trimmed.toLowerCase());
-  const builtIn = PE_STRATEGIES.some(t => t.toLowerCase() === trimmed.toLowerCase());
-  if (exists || builtIn) return;
-  if (updateSettings) updateSettings({ customStrategies: [...list, trimmed] });
+  const current = getStrategyListOptions(settings);
+  if (current.some(o => o.toLowerCase() === trimmed.toLowerCase())) return;
+  const lists = settings?.dropdownLists || {};
+  if (updateSettings) {
+    updateSettings({ dropdownLists: { ...lists, [PE_STRATEGY_LIST_KEY]: [...current, trimmed] } });
+  }
 }
 
 // Persist a newly-added Type / CDM to its custom-list setting so it
