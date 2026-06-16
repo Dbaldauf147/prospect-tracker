@@ -2528,7 +2528,7 @@ function KeyContactsViewInner({
         )}
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
+      <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
         {!hubspotCache && (
           <div style={{ padding: '0.6rem 0.8rem', marginBottom: '0.5rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6, fontSize: '0.72rem', color: '#92400E' }}>
             Loading HubSpot contacts… open the <strong>HubSpot Contacts</strong> tab once if this doesn't populate.
@@ -2592,7 +2592,7 @@ function KeyContactsViewInner({
             const CONTACT_GLYPH = (key) => contactSortKey === key ? (contactSortDir === 'desc' ? ' ▼' : ' ▲') : '';
             const RESIZE_HANDLE = { position: 'absolute', top: 0, right: 0, bottom: 0, width: 6, cursor: 'col-resize', userSelect: 'none' };
             return (
-              <div style={{ background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8 }}>
+              <div style={{ background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8, width: 'max-content', minWidth: '100%' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: CONTACT_GRID, background: '#F1F5F9', borderBottom: '1px solid #CBD5E1', borderTopLeftRadius: 8, borderTopRightRadius: 8, position: 'sticky', top: 0, zIndex: 2 }}>
                   {massMode ? (
                     <div style={{ padding: '0.4rem 0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: '1px solid #E2E8F0' }}>
@@ -3109,7 +3109,7 @@ function KeyContactsViewInner({
           const SORT_GLYPH = (key) => sortKey === key ? (sortDir === 'desc' ? ' ▼' : ' ▲') : '';
           const RESIZE_HANDLE = { position: 'absolute', top: 0, right: 0, bottom: 0, width: 6, cursor: 'col-resize', userSelect: 'none' };
           return (
-            <div style={{ background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8 }}>
+            <div style={{ background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8, width: 'max-content', minWidth: '100%' }}>
               <div style={{ display: 'grid', gridTemplateColumns: GRID, background: '#F1F5F9', borderBottom: '1px solid #CBD5E1', borderTopLeftRadius: 8, borderTopRightRadius: 8, position: 'sticky', top: 0, zIndex: 2 }}>
                 {HEADER_COLUMNS.map(c => (
                   <div
