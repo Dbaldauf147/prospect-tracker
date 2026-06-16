@@ -5,11 +5,36 @@ import styles from './DataTable.module.css';
 const COL_WIDTHS_PREFIX = 'prospect-col-widths-';
 const COL_VISIBLE_PREFIX = 'prospect-col-visible-';
 const COL_NAMES_PREFIX = 'prospect-col-names-';
+const COL_ORDER_PREFIX = 'prospect-col-order-';
 
 function loadColNames(tableId) {
   try { return JSON.parse(localStorage.getItem(COL_NAMES_PREFIX + tableId)) || {}; } catch { return {}; }
 }
 function saveColNames(tableId, names) { localStorage.setItem(COL_NAMES_PREFIX + tableId, JSON.stringify(names)); }
+
+function loadColOrder(tableId) {
+  try { const v = JSON.parse(localStorage.getItem(COL_ORDER_PREFIX + tableId)); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+function saveColOrder(tableId, order) { localStorage.setItem(COL_ORDER_PREFIX + tableId, JSON.stringify(order)); }
+
+// Reorder the columns array by a saved key order. Keys in `order` lead
+// (in that order); any column not in the saved order — e.g. a column
+// added to the code after the user last arranged the table — keeps its
+// original relative position at the tail so it never goes missing.
+function orderColumns(columns, order) {
+  if (!Array.isArray(order) || order.length === 0) return columns;
+  const byKey = new Map(columns.map(c => [c.key, c]));
+  const out = [];
+  const used = new Set();
+  for (const k of order) {
+    const c = byKey.get(k);
+    if (c) { out.push(c); used.add(k); }
+  }
+  for (const c of columns) {
+    if (!used.has(c.key)) out.push(c);
+  }
+  return out;
+}
 
 function loadColWidths(tableId) {
   try { return JSON.parse(localStorage.getItem(COL_WIDTHS_PREFIX + tableId)) || {}; } catch { return {}; }
@@ -247,10 +272,14 @@ function ColumnFilterCell({ value, onChange, suggestions }) {
   );
 }
 
-function ColumnToggle({ columns, visibleCols, onToggle, alwaysVisible, colNames, onRename }) {
+function ColumnToggle({ columns, visibleCols, onToggle, alwaysVisible, colNames, onRename, onReorder, onResetOrder }) {
   const [open, setOpen] = useState(false);
   const [editingKey, setEditingKey] = useState(null);
   const [editName, setEditName] = useState('');
+  // Drag-to-reorder state: the key being dragged and the key it's
+  // currently hovering over (for the drop-position highlight).
+  const [dragKey, setDragKey] = useState(null);
+  const [overKey, setOverKey] = useState(null);
   const ref = useRef(null);
 
   useEffect(() => {
@@ -274,6 +303,22 @@ function ColumnToggle({ columns, visibleCols, onToggle, alwaysVisible, colNames,
     setEditingKey(null);
   }
 
+  // Drop `dragKey` at the position of `targetKey`, emit the full new
+  // key order to the parent.
+  function handleDrop(targetKey) {
+    setOverKey(null);
+    const from = dragKey;
+    setDragKey(null);
+    if (!from || from === targetKey || !onReorder) return;
+    const keys = columns.map(c => c.key);
+    const fromIdx = keys.indexOf(from);
+    const toIdx = keys.indexOf(targetKey);
+    if (fromIdx === -1 || toIdx === -1) return;
+    keys.splice(fromIdx, 1);
+    keys.splice(toIdx, 0, from);
+    onReorder(keys);
+  }
+
   return (
     <div className={styles.colToggleWrap} ref={ref}>
       <button className={styles.colToggleBtn} onClick={() => setOpen(p => !p)}>
@@ -281,8 +326,39 @@ function ColumnToggle({ columns, visibleCols, onToggle, alwaysVisible, colNames,
       </button>
       {open && (
         <div className={styles.colToggleDropdown}>
+          {onReorder && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, padding: '2px 6px 6px', borderBottom: '1px solid var(--color-border-light)', marginBottom: 4 }}>
+              <span style={{ fontSize: '0.62rem', color: 'var(--color-text-muted)' }}>Drag ⠿ to reorder · uncheck to hide</span>
+              {onResetOrder && (
+                <button
+                  type="button"
+                  onClick={() => onResetOrder()}
+                  style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.62rem', color: 'var(--color-text-muted)', cursor: 'pointer', padding: '1px 6px', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                  title="Restore the default column order"
+                >Reset order</button>
+              )}
+            </div>
+          )}
           {columns.map(col => (
-            <div key={col.key} className={styles.colToggleItem}>
+            <div
+              key={col.key}
+              className={styles.colToggleItem}
+              onDragOver={onReorder ? (e) => { e.preventDefault(); if (overKey !== col.key) setOverKey(col.key); } : undefined}
+              onDrop={onReorder ? () => handleDrop(col.key) : undefined}
+              style={{
+                ...(dragKey === col.key ? { opacity: 0.4 } : null),
+                ...(overKey === col.key && dragKey && dragKey !== col.key ? { borderTop: '2px solid var(--color-accent)' } : null),
+              }}
+            >
+              {onReorder && (
+                <span
+                  draggable
+                  onDragStart={(e) => { setDragKey(col.key); e.dataTransfer.effectAllowed = 'move'; }}
+                  onDragEnd={() => { setDragKey(null); setOverKey(null); }}
+                  title="Drag to reorder"
+                  style={{ cursor: 'grab', color: 'var(--color-text-muted)', fontSize: '0.8rem', lineHeight: 1, userSelect: 'none', padding: '0 2px' }}
+                >⠿</span>
+              )}
               <input
                 type="checkbox"
                 checked={visibleCols.has(col.key)}
@@ -347,12 +423,16 @@ function persistPrefs(tableId, settings, updateSettings, prefsUpdate) {
   if (prefsUpdate.widths !== undefined) saveColWidths(tableId, prefsUpdate.widths);
   if (prefsUpdate.visible !== undefined) saveColVisible(tableId, prefsUpdate.visible);
   if (prefsUpdate.names !== undefined) saveColNames(tableId, prefsUpdate.names);
+  if (prefsUpdate.order !== undefined) saveColOrder(tableId, prefsUpdate.order);
   if (!settings || !updateSettings || !tableId) return;
   const current = settings.tablePrefs?.[tableId] || {};
   const nextEntry = { ...current };
   if (prefsUpdate.widths !== undefined) nextEntry.widths = encodeRemoteMap(prefsUpdate.widths);
   if (prefsUpdate.visible !== undefined) nextEntry.visible = [...prefsUpdate.visible];
   if (prefsUpdate.names !== undefined) nextEntry.names = encodeRemoteMap(prefsUpdate.names);
+  // Order is a plain array of column keys — stored as-is (no map-key
+  // encoding needed, and keys like `_select` are fine as array values).
+  if (prefsUpdate.order !== undefined) nextEntry.order = [...prefsUpdate.order];
   updateSettings({
     tablePrefs: { ...(settings.tablePrefs || {}), [tableId]: nextEntry },
   });
@@ -453,8 +533,15 @@ export function DataTable({
       : loadColVisible(tableId, columns.map(c => c.key))
   ));
   const [colNames, setColNames] = useState(() => remotePrefs?.names || loadColNames(tableId));
+  const [colOrder, setColOrder] = useState(() => (
+    Array.isArray(remotePrefs?.order) ? remotePrefs.order : loadColOrder(tableId)
+  ));
   const [colFilters, setColFilters] = useState({});
   const resizingRef = useRef(null);
+
+  // The columns in the user's saved order (defaults to prop order). All
+  // rendering — header, body, visibility list, export — runs off this.
+  const orderedColumns = useMemo(() => orderColumns(columns, colOrder), [columns, colOrder]);
 
   // Sync local state when Firestore-backed prefs arrive or change on
   // another device. Stringify-compare so we don't churn state when the
@@ -477,8 +564,20 @@ export function DataTable({
     if (remotePrefs.names && JSON.stringify(remotePrefs.names) !== JSON.stringify(colNames)) {
       setColNames(remotePrefs.names);
     }
+    if (Array.isArray(remotePrefs.order) && JSON.stringify(remotePrefs.order) !== JSON.stringify(colOrder)) {
+      setColOrder(remotePrefs.order);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsLoaded, remotePrefs]);
+
+  function reorderCols(nextKeys) {
+    setColOrder(nextKeys);
+    persistPrefs(tableId, settings, updateSettings, { order: nextKeys });
+  }
+  function resetColOrder() {
+    setColOrder([]);
+    persistPrefs(tableId, settings, updateSettings, { order: [] });
+  }
 
   function renameCol(key, name) {
     setColNames(prev => {
@@ -754,8 +853,8 @@ export function DataTable({
   // looks healthy. Fall back to showing every column so the data is
   // never invisible. The user's toggle still works on the next
   // interaction; this just refuses to render an unusable empty state.
-  let visibleColumns = columns.filter(c => visibleCols.has(c.key) || alwaysVisible.includes(c.key));
-  if (visibleColumns.length === 0 && columns.length > 0) visibleColumns = columns;
+  let visibleColumns = orderedColumns.filter(c => visibleCols.has(c.key) || alwaysVisible.includes(c.key));
+  if (visibleColumns.length === 0 && orderedColumns.length > 0) visibleColumns = orderedColumns;
 
   function toggleCol(key) {
     if (alwaysVisible.includes(key)) return;
@@ -801,7 +900,7 @@ export function DataTable({
   return (
     <div className={styles.outerWrap}>
       <div className={styles.toolbar}>
-        <ColumnToggle columns={columns} visibleCols={visibleCols} onToggle={toggleCol} alwaysVisible={alwaysVisible} colNames={colNames} onRename={renameCol} />
+        <ColumnToggle columns={orderedColumns} visibleCols={visibleCols} onToggle={toggleCol} alwaysVisible={alwaysVisible} colNames={colNames} onRename={renameCol} onReorder={reorderCols} onResetOrder={resetColOrder} />
         <button className={styles.resetBtn} onClick={() => { setColWidths({}); persistPrefs(tableId, settings, updateSettings, { widths: {} }); }}>
           Reset widths
         </button>
