@@ -69,6 +69,24 @@
   text-align: center;
 }
 
+/* Alert badge on a nav item (e.g. open-issue count). Pushed to the
+   trailing edge of the row; red pill so it reads as something that
+   needs attention. */
+.navBadge {
+  margin-left: auto;
+  min-width: 1.1rem;
+  padding: 0 0.35rem;
+  height: 1.1rem;
+  border-radius: 999px;
+  background: #DC2626;
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.1rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .userSection {
   padding: 0.75rem;
   border-top: 1px solid rgba(255,255,255,0.08);

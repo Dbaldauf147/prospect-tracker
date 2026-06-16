@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import styles from './Sidebar.module.css';
 
-export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, onOpenCdmName, onOpenDailyLog, isAdmin = false }) {
+export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, onOpenCdmName, onOpenDailyLog, isAdmin = false, issueCount = 0 }) {
   const initials = user?.displayName
     ? user.displayName.split(' ').map(n => n[0]).join('').toUpperCase()
     : user?.email?.[0]?.toUpperCase() || '?';
@@ -109,6 +109,11 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
         >
           <span className={styles.navIcon}>&#9888;</span>
           Issues
+          {issueCount > 0 && (
+            <span className={styles.navBadge} title={`${issueCount} open issue${issueCount === 1 ? '' : 's'}`}>
+              {issueCount > 99 ? '99+' : issueCount}
+            </span>
+          )}
         </button>
         <button
           className={view === 'activity' ? styles.navItemActive : styles.navItem}

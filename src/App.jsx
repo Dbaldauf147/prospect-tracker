@@ -7,6 +7,7 @@ import { runProspectBackfill, formatBackfillReport, BACKFILL_PASSES } from './ut
 import { useSheetSync } from './hooks/useSheetSync';
 import { useFilters } from './hooks/useFilters';
 import { useUserSettings } from './hooks/useUserSettings';
+import { useIssueCount } from './hooks/useIssueCount';
 import { Sidebar } from './components/Sidebar';
 import { SettingsBackupsModal } from './components/SettingsBackupsModal';
 import { CdmNameModal } from './components/CdmNameModal';
@@ -61,6 +62,9 @@ function App() {
     filters, filterOptions, toggleFilter, clearFilters, loadSavedFilter, activeFilterCount,
     sortConfig, toggleSort,
   } = useFilters(prospects, settings, updateSettings);
+
+  // Open-issue count for the sidebar alert badge (Issues tab).
+  const issueCount = useIssueCount(prospects, cdmName);
 
   // Global guard: stop Backspace from triggering browser back-navigation
   // anywhere in the app. Firefox / older Edge still navigate back on
@@ -219,6 +223,7 @@ function App() {
         onOpenCdmName={() => setShowCdmName(true)}
         onOpenDailyLog={() => setShowDailyLog(true)}
         isAdmin={isAdmin}
+        issueCount={issueCount}
       />
       <div className="main">
         {(view === 'table' || view === 'kanban') && (
