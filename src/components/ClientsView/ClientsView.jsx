@@ -22,41 +22,10 @@ import {
   SelectCell, MultiSelectCell, LinkColumnsModal,
 } from '../common/columnLinks';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
+// Shared with the Issues tab so both surfaces agree on what's expired.
+import { isInactiveAgreement, normClientName, soonestExpiration } from '../../utils/clientIssues';
 
-// The Paperwork column doubles as a status field in this dataset —
-// values like "Cancelled" and "Expired" mark agreements that no
-// longer count, regardless of their End Date.
-const INACTIVE_STATUSES = new Set(['cancelled', 'canceled', 'expired']);
-function isInactiveAgreement(deal) {
-  const status = String(deal?.['Paperwork completed'] || '').trim().toLowerCase();
-  return INACTIVE_STATUSES.has(status);
-}
-
-// Earliest contract End Date across the client's active deals, plus
-// integer days from today (negative when the date is already past).
-// Cancelled / Expired agreements are skipped; everything else counts
-// regardless of whether the date is in the future — a Fully Executed
-// row with a date that already slipped past is exactly the kind of
-// thing this column needs to surface.
 const MS_PER_DAY = 86400000;
-function soonestExpiration(deals) {
-  if (!deals || deals.length === 0) return { date: null, days: null };
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const todayMs = today.getTime();
-  let bestMs = null;
-  for (const d of deals) {
-    if (isInactiveAgreement(d)) continue;
-    const parsed = asDate(d['End Date']);
-    if (!parsed) continue;
-    const dayStart = new Date(parsed);
-    dayStart.setHours(0, 0, 0, 0);
-    const ms = dayStart.getTime();
-    if (bestMs == null || ms < bestMs) bestMs = ms;
-  }
-  if (bestMs == null) return { date: null, days: null };
-  return { date: new Date(bestMs), days: Math.round((bestMs - todayMs) / MS_PER_DAY) };
-}
 
 // Column layout for the per-client contract drill-down. Each entry's
 // `key` is the canonical field name stored on the deal row; `label` is
@@ -96,10 +65,6 @@ function renderDaysToEnd(endRaw, inactive) {
     : days > 0 ? `${days}d`
     : `${Math.abs(days)}d ago`;
   return <span style={{ color, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{label}</span>;
-}
-
-function normClientName(s) {
-  return String(s || '').trim().toLowerCase();
 }
 
 // Inline editor for the Client Manager column. Local draft so typing
