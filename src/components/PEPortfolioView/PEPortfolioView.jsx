@@ -115,6 +115,25 @@ function accountMatchesCompany(companyName, oppAccount) {
   return (' ' + longW.join(' ') + ' ').includes(' ' + shortW.join(' ') + ' ');
 }
 
+// A Table View prospect "belongs" to the selected PE firm when one of its
+// PE Owner tokens matches the firm name. Deliberately a bidirectional
+// substring test (not the stricter companiesMatch, which fails on the
+// length ratio for "Blue Owl" ↔ "Blue Owl Capital") so the short
+// canonical name still catches its longer variants — preserving the
+// original Blue Owl tab's contains-match while generalizing it to any
+// firm the user picks.
+function prospectOwnedByFirm(peOwnerStr, firm) {
+  const f = String(firm || '').trim().toLowerCase();
+  if (!f) return false;
+  return splitPeOwners(peOwnerStr).some(o => {
+    const t = o.trim().toLowerCase();
+    if (!t) return false;
+    if (t.includes(f)) return true;              // owner ⊇ firm  ("Blue Owl Capital" ⊇ "Blue Owl")
+    if (t.length >= 4 && f.includes(t)) return true; // firm ⊇ owner (picked a long name, owner uses a short variant)
+    return false;
+  });
+}
+
 // Reads Opps 2 — the canonical opps store. Local IndexedDB first for
 // speed; falls back to the user's Firestore `opps2Data` doc when the
 // local cache is empty (e.g. fresh browser, never opened Opps 2 here
@@ -152,6 +171,10 @@ function useOppsRecords(userId) {
 export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonMap = {}, onUpdateProspect, onAddProspect, settings, updateSettings }) {
   const { user } = useAuth();
   const [subtab, setSubtab] = useState('portfolio');
+  // Which PE firm the "PE Firm" sub-tab (formerly hardcoded to Blue Owl)
+  // is showing. Defaults to Blue Owl so the tab opens exactly as before;
+  // the in-tab picker lets the user switch to any other firm.
+  const [peFirm, setPeFirm] = useState('Blue Owl');
   const [showClosed, setShowClosed] = useState(false);
   const [oppsQuery, setOppsQuery] = useState('');
   const [expanded, setExpanded] = useState(() => new Set());
@@ -342,15 +365,36 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     peFirms.reduce((s, pe) => s + (Array.isArray(pe.portfolioCompanies) ? pe.portfolioCompanies.length : 0), 0)
   ), [peFirms]);
 
-  // "Blue Owl" sub-tab: every Table View prospect whose PE Owner names
-  // Blue Owl. Contains-match (case-insensitive) so data-entry variants
-  // like "Blue Owl Capital" still land here. Prospects typed as
-  // Portfolio Company are excluded.
-  const blueOwlCompanies = useMemo(() => (
+  // PE Firm sub-tab: every Table View prospect whose PE Owner names the
+  // selected firm (bidirectional contains-match so variants like "Blue
+  // Owl Capital" still land here). Prospects typed as Portfolio Company
+  // are excluded.
+  const peFirmCompanies = useMemo(() => (
     prospects
-      .filter(p => (p.peOwner || '').toLowerCase().includes('blue owl') && p.type !== 'Portfolio Company')
+      .filter(p => p.type !== 'Portfolio Company' && prospectOwnedByFirm(p.peOwner, peFirm))
       .sort((a, b) => (a.company || '').localeCompare(b.company || ''))
-  ), [prospects]);
+  ), [prospects, peFirm]);
+
+  // Dropdown vocabulary for the firm picker: every distinct PE Owner set
+  // on a Table View prospect + every PE firm name, deduped
+  // case-insensitively and sorted. The current selection is always
+  // included so the <select> can show it even before any data names it.
+  const peFirmOptions = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    const push = (v) => {
+      const t = String(v || '').trim();
+      if (!t) return;
+      const k = t.toLowerCase();
+      if (seen.has(k)) return;
+      seen.add(k);
+      out.push(t);
+    };
+    push(peFirm);
+    for (const p of prospects) for (const o of splitPeOwners(p.peOwner)) push(o);
+    for (const pe of peFirms) push(pe.company);
+    return out.sort((a, b) => a.localeCompare(b));
+  }, [prospects, peFirms, peFirm]);
 
   // Portfolio company → PE firm (lowercased name) lookup, from each
   // prospect's peOwner field. A company can list several owners
@@ -473,7 +517,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
   const blueOwlDmByCompanyId = useMemo(() => {
     const map = new Map();
     if (decisionMakers.length === 0) return map;
-    for (const p of blueOwlCompanies) {
+    for (const p of peFirmCompanies) {
       const firmName = (p.company || '').trim().toLowerCase();
       if (!firmName) continue;
       const portfolio = portfolioByPe.get(firmName) || [];
@@ -494,7 +538,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       if (names.length) map.set(p.id, names);
     }
     return map;
-  }, [blueOwlCompanies, decisionMakers, portfolioByPe]);
+  }, [peFirmCompanies, decisionMakers, portfolioByPe]);
 
   // Per-firm stage stats — the row-level data behind the stages table.
   //   decisionMakerNames  : DM contacts on this PE firm (or its PCs)
@@ -697,7 +741,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               : subtab === 'companies'
               ? <>Every mapped <strong>portfolio company</strong> across all PE firms (from each firm's Portfolio Companies tab), merged into one searchable, filterable table. <strong>Opportunity Score</strong> is ranked within each PC's own firm — matching that firm's export. The <strong>PE Owner</strong> dropdown filters to one owner, matching the source PE firm, the company's own PE Owner from Table View, or firms that owner owns — so picking <code>Blue Owl</code> also shows the portfolio companies of every Blue Owl-owned firm.</>
               : subtab === 'blueOwl'
-              ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>Blue Owl</code>. Double-click any cell to edit it — same dropdowns as Table View.</>
+              ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>{peFirm || '—'}</code>. Pick a different firm from the dropdown to switch the view. Double-click any cell to edit it — same dropdowns as Table View.</>
               : <>Every opportunity from the <strong>Opps</strong> tab with Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>}
           </div>
         </div>
@@ -715,7 +759,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           { key: 'portfolio', label: 'Portfolio', count: peFirms.length },
           { key: 'stages', label: 'PE Stages', count: peFirms.length },
           { key: 'companies', label: 'All PCs', count: allPortfolioCompanyCount },
-          { key: 'blueOwl', label: 'Blue Owl', count: blueOwlCompanies.length },
+          { key: 'blueOwl', label: peFirm.trim() || 'PE Firm', count: peFirmCompanies.length },
           { key: 'opps', label: 'PE Opps', count: peOpps.length },
         ].map(t => {
           const isActive = subtab === t.key;
@@ -779,7 +823,10 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         />
       ) : subtab === 'blueOwl' ? (
         <PEBlueOwlTab
-          companies={blueOwlCompanies}
+          companies={peFirmCompanies}
+          selectedFirm={peFirm}
+          firmOptions={peFirmOptions}
+          onSelectFirm={setPeFirm}
           prospects={prospects}
           oppsRecords={oppsRecords}
           portfolioByPe={portfolioByPe}
@@ -1437,14 +1484,14 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect }) {
   );
 }
 
-// Implicit field for rows pasted onto the Blue Owl tab that don't carry
-// their own PE Owner column — new companies land in Table View already
-// owned by Blue Owl (so they show up on this tab), and matched companies
-// with a blank PE Owner get it filled. Matches the value the Table View
-// backfill used.
-const BLUE_OWL_PASTE_DEFAULTS = { peOwner: 'Blue Owl Capital' };
+// Rows pasted onto the PE Firm tab that don't carry their own PE Owner
+// column inherit the currently selected firm — new companies land in
+// Table View already owned by it (so they show up on this tab), and
+// matched companies with a blank PE Owner get it filled. The default is
+// built per-render from the selected firm, so there's no module-level
+// constant here anymore.
 
-// Prospect fields the Blue Owl bulk-edit bar can set. Enum-backed
+// Prospect fields the bulk-edit bar can set. Enum-backed
 // fields render a picker fed from the shared vocabularies; HQ Region's
 // two options mirror the company popup's dropdown. peAum is parsed to
 // a number (blank clears it).
@@ -1516,13 +1563,14 @@ function BlueOwlBulkEditBar({ selectedCount, applying, onApply, onClear }) {
   );
 }
 
-// "Blue Owl" sub-tab: every Table View prospect whose PE Owner is Blue
-// Owl, as one searchable, filterable table via the shared DataTable.
-// Unlike All PCs (which reads each firm's Portfolio Companies tab),
-// these are full prospect records — so each row links straight to the
-// company's own popup, the Paste from Excel button writes straight
-// back to Table View (fill blanks / optionally overwrite on existing
-// companies, add the rest as new Blue Owl-owned prospects), and every
+// PE Firm sub-tab: every Table View prospect whose PE Owner names the
+// firm picked in the in-tab dropdown (defaulting to Blue Owl), as one
+// searchable, filterable table via the shared DataTable. Unlike All PCs
+// (which reads each firm's Portfolio Companies tab), these are full
+// prospect records — so each row links straight to the company's own
+// popup, the Paste from Excel button writes straight back to Table View
+// (fill blanks / optionally overwrite on existing companies, add the
+// rest as new prospects owned by the selected firm), and every
 // prospect-backed cell edits in place through Table View's InlineCell
 // (double-click; enum columns get the same dropdown options Table View
 // shows, including "+ Add new" for Type / CDM).
@@ -1545,7 +1593,8 @@ function NameListCell({ items, empty }) {
   );
 }
 
-function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], portfolioByPe = new Map(), dmNamesByCompanyId = new Map(), onSelectProspect, onUpdateProspect, onAddProspect, settings, updateSettings }) {
+function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelectFirm, prospects = [], oppsRecords = [], portfolioByPe = new Map(), dmNamesByCompanyId = new Map(), onSelectProspect, onUpdateProspect, onAddProspect, settings, updateSettings }) {
+  const firmLabel = selectedFirm.trim() || 'PE firm';
   const [search, setSearch] = useState('');
   const [pasteOpen, setPasteOpen] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -1888,11 +1937,22 @@ function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], portfolioBy
   return (
     <>
       <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.72rem', fontWeight: 600, color: '#475569', whiteSpace: 'nowrap' }}>
+          PE firm
+          <select
+            value={selectedFirm}
+            onChange={e => onSelectFirm?.(e.target.value)}
+            title="Choose which PE firm's companies to show"
+            style={{ padding: '0.4rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: 6, background: '#fff', fontSize: '0.78rem', fontFamily: 'inherit', color: '#1E293B', maxWidth: 240, cursor: 'pointer' }}
+          >
+            {firmOptions.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </label>
         <input
           type="text"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder={`Search ${rows.length} Blue Owl compan${rows.length === 1 ? 'y' : 'ies'}…`}
+          placeholder={`Search ${rows.length} ${firmLabel} compan${rows.length === 1 ? 'y' : 'ies'}…`}
           style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
         {search.trim() && <span style={{ fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap' }}>{filtered.length} of {rows.length}</span>}
@@ -1901,7 +1961,7 @@ function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], portfolioBy
             type="button"
             onClick={() => setPasteOpen(true)}
             disabled={importing}
-            title="Copy rows from Excel (with the header row) and paste them in — fills blank fields on companies already in Table View and adds the rest as Blue Owl companies"
+            title={`Copy rows from Excel (with the header row) and paste them in — fills blank fields on companies already in Table View and adds the rest as ${firmLabel} companies`}
             style={{ padding: '0.4rem 0.75rem', border: '1px solid #E2E8F0', borderRadius: 6, background: importing ? '#F1F5F9' : '#fff', fontSize: '0.72rem', fontWeight: 600, color: importing ? '#94A3B8' : '#334155', cursor: importing ? 'wait' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
           >{importing ? 'Importing…' : 'Paste from Excel'}</button>
         )}
@@ -1918,7 +1978,7 @@ function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], portfolioBy
         <PasteAddModal
           existingProspects={prospects}
           mode="upsert"
-          defaults={BLUE_OWL_PASTE_DEFAULTS}
+          defaults={{ peOwner: selectedFirm }}
           onImport={handlePasteImport}
           onClose={() => setPasteOpen(false)}
         />
@@ -1926,9 +1986,9 @@ function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], portfolioBy
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
         {rows.length === 0 ? (
           <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
-            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No Blue Owl companies found</div>
+            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No {firmLabel} companies found</div>
             <div style={{ fontSize: '0.78rem' }}>
-              Open a company's popup and set its <strong>PE Owner</strong> to <code>Blue Owl</code> — it'll show up here.
+              Open a company's popup and set its <strong>PE Owner</strong> to <code>{selectedFirm.trim() || 'the firm'}</code> — it'll show up here. Or pick a different firm from the dropdown above.
             </div>
           </div>
         ) : (
@@ -1945,9 +2005,9 @@ function PEBlueOwlTab({ companies, prospects = [], oppsRecords = [], portfolioBy
             onFilteredRowsChange={handleFilteredRowsChange}
             defaultSort={{ key: 'company', direction: 'asc' }}
             enableColumnFilters
-            emptyMessage="No Blue Owl companies match your filters"
-            exportFileName="blue_owl_companies"
-            exportPrimarySheetName="Blue Owl Companies"
+            emptyMessage={`No ${firmLabel} companies match your filters`}
+            exportFileName={`${(selectedFirm.trim() || 'pe_firm').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')}_companies`}
+            exportPrimarySheetName={`${firmLabel} Companies`.slice(0, 31)}
           />
         )}
       </div>
