@@ -20,6 +20,7 @@ const FIELDS = [
   { key: 'tier', label: 'Tier', aliases: [] },
   { key: 'hqRegion', label: 'HQ Region', aliases: [] },
   { key: 'frameworks', label: 'Frameworks', type: 'frameworks', aliases: ['framework'] },
+  { key: 'strategies', label: 'Strategies', type: 'list', aliases: ['strategy', 'pe strategy', 'pe strategies', 'investment strategy', 'investment strategies'] },
   { key: 'notes', label: 'Notes', aliases: [] },
   { key: 'website', label: 'Website', aliases: ['url', 'web site'] },
   { key: 'emailDomain', label: 'Email Domain', aliases: ['domain'] },
