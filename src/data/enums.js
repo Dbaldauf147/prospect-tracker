@@ -38,11 +38,11 @@ export const PE_STAGES = [
   'Not Sold',
 ];
 
-// PE investment strategies — multi-tag vocabulary for PE firms, edited
-// on the PE Portfolio › PE Firm sub-tab and in the company popup. Users
-// can also add their own tags on the fly (stored in
-// settings.customStrategies); these are the built-in starters, in the
-// order they were first provided.
+// PE investment strategies — the built-in starter vocabulary for the
+// "PE Strategies" list on the Dropdowns tab (see DROPDOWN_LISTS). That
+// list is the single source of truth the PE Firm sub-tab and company
+// pop-up Strategies dropdowns read from; users edit it on the Dropdowns
+// tab or add tags inline. Order here is the first-provided order.
 export const PE_STRATEGIES = [
   'Venture Capital',
   'Real Estate + Credit',
