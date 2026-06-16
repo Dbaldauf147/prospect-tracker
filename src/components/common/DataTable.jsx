@@ -272,7 +272,7 @@ function ColumnFilterCell({ value, onChange, suggestions }) {
   );
 }
 
-function ColumnToggle({ columns, visibleCols, onToggle, alwaysVisible, colNames, onRename, onReorder, onResetOrder }) {
+function ColumnToggle({ columns, visibleCols, onToggle, alwaysVisible, colNames, onRename, onReorder, onResetOrder, removable, onResetColumns }) {
   const [open, setOpen] = useState(false);
   const [editingKey, setEditingKey] = useState(null);
   const [editName, setEditName] = useState('');
@@ -280,6 +280,9 @@ function ColumnToggle({ columns, visibleCols, onToggle, alwaysVisible, colNames,
   // currently hovering over (for the drop-position highlight).
   const [dragKey, setDragKey] = useState(null);
   const [overKey, setOverKey] = useState(null);
+  // Removable mode tucks hidden columns into a collapsed section so the
+  // main list only shows the columns in play; this toggles it open.
+  const [showHidden, setShowHidden] = useState(false);
   const ref = useRef(null);
 
   useEffect(() => {
@@ -319,6 +322,51 @@ function ColumnToggle({ columns, visibleCols, onToggle, alwaysVisible, colNames,
     onReorder(keys);
   }
 
+  const labelOf = (col) => colNames[col.key] || col.label;
+
+  // The editable name field, shared by both modes.
+  function renderName(col) {
+    return editingKey === col.key ? (
+      <input
+        className={styles.colRenameInput}
+        value={editName}
+        onChange={e => setEditName(e.target.value)}
+        onBlur={saveRename}
+        onKeyDown={e => { if (e.key === 'Enter') saveRename(); if (e.key === 'Escape') setEditingKey(null); }}
+        autoFocus
+        onClick={e => e.stopPropagation()}
+      />
+    ) : (
+      <span className={styles.colToggleLabel} onDoubleClick={() => startRename(col)}>
+        {labelOf(col) || <span style={{ color: 'var(--color-text-muted)', fontStyle: 'italic' }}>(unnamed)</span>}
+      </span>
+    );
+  }
+
+  const dragHandle = (col) => onReorder && (
+    <span
+      draggable
+      onDragStart={(e) => { setDragKey(col.key); e.dataTransfer.effectAllowed = 'move'; }}
+      onDragEnd={() => { setDragKey(null); setOverKey(null); }}
+      title="Drag to reorder"
+      style={{ cursor: 'grab', color: 'var(--color-text-muted)', fontSize: '0.8rem', lineHeight: 1, userSelect: 'none', padding: '0 2px' }}
+    >⠿</span>
+  );
+
+  const rowDragProps = (col) => onReorder ? {
+    onDragOver: (e) => { e.preventDefault(); if (overKey !== col.key) setOverKey(col.key); },
+    onDrop: () => handleDrop(col.key),
+    style: {
+      ...(dragKey === col.key ? { opacity: 0.4 } : null),
+      ...(overKey === col.key && dragKey && dragKey !== col.key ? { borderTop: '2px solid var(--color-accent)' } : null),
+    },
+  } : {};
+
+  // Active (shown) and hidden columns for removable mode. alwaysVisible
+  // columns can never be removed, so they always live in the active list.
+  const activeCols = removable ? columns.filter(c => visibleCols.has(c.key) || alwaysVisible?.includes(c.key)) : columns;
+  const hiddenCols = removable ? columns.filter(c => !visibleCols.has(c.key) && !alwaysVisible?.includes(c.key)) : [];
+
   return (
     <div className={styles.colToggleWrap} ref={ref}>
       <button className={styles.colToggleBtn} onClick={() => setOpen(p => !p)}>
@@ -326,62 +374,85 @@ function ColumnToggle({ columns, visibleCols, onToggle, alwaysVisible, colNames,
       </button>
       {open && (
         <div className={styles.colToggleDropdown}>
-          {onReorder && (
+          {(onReorder || removable) && (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, padding: '2px 6px 6px', borderBottom: '1px solid var(--color-border-light)', marginBottom: 4 }}>
-              <span style={{ fontSize: '0.62rem', color: 'var(--color-text-muted)' }}>Drag ⠿ to reorder · uncheck to hide</span>
-              {onResetOrder && (
+              <span style={{ fontSize: '0.62rem', color: 'var(--color-text-muted)' }}>
+                {removable ? 'Drag ⠿ to reorder · × to remove' : 'Drag ⠿ to reorder · uncheck to hide'}
+              </span>
+              {(removable ? onResetColumns : onResetOrder) && (
                 <button
                   type="button"
-                  onClick={() => onResetOrder()}
+                  onClick={() => (removable ? onResetColumns() : onResetOrder())}
                   style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.62rem', color: 'var(--color-text-muted)', cursor: 'pointer', padding: '1px 6px', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
-                  title="Restore the default column order"
-                >Reset order</button>
+                  title={removable ? 'Restore all columns and the default order' : 'Restore the default column order'}
+                >{removable ? 'Reset' : 'Reset order'}</button>
               )}
             </div>
           )}
-          {columns.map(col => (
-            <div
-              key={col.key}
-              className={styles.colToggleItem}
-              onDragOver={onReorder ? (e) => { e.preventDefault(); if (overKey !== col.key) setOverKey(col.key); } : undefined}
-              onDrop={onReorder ? () => handleDrop(col.key) : undefined}
-              style={{
-                ...(dragKey === col.key ? { opacity: 0.4 } : null),
-                ...(overKey === col.key && dragKey && dragKey !== col.key ? { borderTop: '2px solid var(--color-accent)' } : null),
-              }}
-            >
-              {onReorder && (
-                <span
-                  draggable
-                  onDragStart={(e) => { setDragKey(col.key); e.dataTransfer.effectAllowed = 'move'; }}
-                  onDragEnd={() => { setDragKey(null); setOverKey(null); }}
-                  title="Drag to reorder"
-                  style={{ cursor: 'grab', color: 'var(--color-text-muted)', fontSize: '0.8rem', lineHeight: 1, userSelect: 'none', padding: '0 2px' }}
-                >⠿</span>
+
+          {removable ? (
+            <>
+              {activeCols.map(col => {
+                const locked = alwaysVisible?.includes(col.key);
+                return (
+                  <div key={col.key} className={styles.colToggleItem} {...rowDragProps(col)}>
+                    {dragHandle(col)}
+                    {renderName(col)}
+                    {locked ? (
+                      <span title="This column can't be removed" style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem', padding: '0 2px' }}>🔒</span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => onToggle(col.key)}
+                        title="Remove this column (moves to Hidden)"
+                        aria-label={`Remove ${labelOf(col)}`}
+                        style={{ background: 'transparent', border: 'none', color: '#94A3B8', fontSize: '0.95rem', lineHeight: 1, cursor: 'pointer', padding: '0 2px' }}
+                        onMouseEnter={e => e.currentTarget.style.color = '#B91C1C'}
+                        onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
+                      >×</button>
+                    )}
+                  </div>
+                );
+              })}
+
+              {hiddenCols.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setShowHidden(s => !s)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%', textAlign: 'left', background: 'var(--color-surface-alt)', border: 'none', borderTop: '1px solid var(--color-border-light)', marginTop: 4, padding: '0.35rem 0.5rem', fontSize: '0.65rem', fontWeight: 700, color: 'var(--color-text-muted)', cursor: 'pointer', fontFamily: 'inherit' }}
+                  >
+                    <span style={{ fontSize: '0.6rem' }}>{showHidden ? '▾' : '▸'}</span>
+                    Hidden columns ({hiddenCols.length})
+                  </button>
+                  {showHidden && hiddenCols.map(col => (
+                    <div key={col.key} className={styles.colToggleItem} style={{ opacity: 0.85 }}>
+                      <span className={styles.colToggleLabel} style={{ color: 'var(--color-text-muted)' }}>{labelOf(col)}</span>
+                      <button
+                        type="button"
+                        onClick={() => onToggle(col.key)}
+                        title="Restore this column"
+                        style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.62rem', fontWeight: 600, color: 'var(--color-accent)', cursor: 'pointer', padding: '1px 6px', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                      >+ Show</button>
+                    </div>
+                  ))}
+                </>
               )}
-              <input
-                type="checkbox"
-                checked={visibleCols.has(col.key)}
-                onChange={() => onToggle(col.key)}
-                disabled={alwaysVisible?.includes(col.key)}
-              />
-              {editingKey === col.key ? (
+            </>
+          ) : (
+            columns.map(col => (
+              <div key={col.key} className={styles.colToggleItem} {...rowDragProps(col)}>
+                {dragHandle(col)}
                 <input
-                  className={styles.colRenameInput}
-                  value={editName}
-                  onChange={e => setEditName(e.target.value)}
-                  onBlur={saveRename}
-                  onKeyDown={e => { if (e.key === 'Enter') saveRename(); if (e.key === 'Escape') setEditingKey(null); }}
-                  autoFocus
-                  onClick={e => e.stopPropagation()}
+                  type="checkbox"
+                  checked={visibleCols.has(col.key)}
+                  onChange={() => onToggle(col.key)}
+                  disabled={alwaysVisible?.includes(col.key)}
                 />
-              ) : (
-                <span className={styles.colToggleLabel} onDoubleClick={() => startRename(col)}>
-                  {colNames[col.key] || col.label}
-                </span>
-              )}
-            </div>
-          ))}
+                {renderName(col)}
+              </div>
+            ))
+          )}
         </div>
       )}
     </div>
@@ -507,6 +578,11 @@ export function DataTable({
   // in addition to localStorage so they survive a clear-site-data.
   settings,
   updateSettings,
+  // When true, the Columns dropdown lets the user remove columns (× →
+  // collapsed "Hidden columns" section with restore) instead of the
+  // classic checkbox show/hide list. Visibility still drives what
+  // renders; this is purely a friendlier remove/restore affordance.
+  removableColumns = false,
 }) {
   const rawRemotePrefs = settings?.tablePrefs?.[tableId];
   const remotePrefs = useMemo(() => {
@@ -577,6 +653,14 @@ export function DataTable({
   function resetColOrder() {
     setColOrder([]);
     persistPrefs(tableId, settings, updateSettings, { order: [] });
+  }
+  // Removable mode's Reset: restore every column (all visible) and the
+  // default order in one go.
+  function resetColumns() {
+    const allKeys = new Set(columns.map(c => c.key));
+    setVisibleCols(allKeys);
+    setColOrder([]);
+    persistPrefs(tableId, settings, updateSettings, { visible: allKeys, order: [] });
   }
 
   function renameCol(key, name) {
@@ -900,7 +984,7 @@ export function DataTable({
   return (
     <div className={styles.outerWrap}>
       <div className={styles.toolbar}>
-        <ColumnToggle columns={orderedColumns} visibleCols={visibleCols} onToggle={toggleCol} alwaysVisible={alwaysVisible} colNames={colNames} onRename={renameCol} onReorder={reorderCols} onResetOrder={resetColOrder} />
+        <ColumnToggle columns={orderedColumns} visibleCols={visibleCols} onToggle={toggleCol} alwaysVisible={alwaysVisible} colNames={colNames} onRename={renameCol} onReorder={reorderCols} onResetOrder={resetColOrder} removable={removableColumns} onResetColumns={resetColumns} />
         <button className={styles.resetBtn} onClick={() => { setColWidths({}); persistPrefs(tableId, settings, updateSettings, { widths: {} }); }}>
           Reset widths
         </button>
