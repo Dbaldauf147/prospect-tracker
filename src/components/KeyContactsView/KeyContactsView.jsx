@@ -643,26 +643,30 @@ function KeyContactsViewInner({
     //   - association succeeded but matched-name differs → keep override
     //   - association succeeded with matching name → clear override
     if (field === 'company') {
+      // Pin the typed value as a local override so it survives the
+      // 15-minute HubSpot full-sync. That sync replaces the cached
+      // contacts wholesale, reverting contact.company to whatever the
+      // server returns — which is frequently the associated Company
+      // record's name, not the text just typed here. The override is
+      // what the contact lists read at display time, so it's immune to
+      // the sync; the cache write above only feeds the immediate
+      // re-render. Without this pin the edit silently vanishes on the
+      // next refresh whenever HubSpot reports the association "succeeded"
+      // but didn't actually store the typed text on the contact.
       const cur = settings?.contactLocalFields || {};
       const merged = { ...(cur[id] || {}) };
-      let didChange = false;
-      if (!companyAssignment || companyAssignment.ok === false || companyAssignment.nameDiffers) {
-        if (merged._companyOverride !== next) {
-          merged._companyOverride = next;
-          didChange = true;
-        }
-        if (companyAssignment?.nameDiffers && companyAssignment?.matchedName) {
-          setMassStatus({ type: 'success', message: `Saved "${next}" locally. HubSpot linked this contact to "${companyAssignment.matchedName}" — Prospect Tracker will keep your typed value here.` });
-        }
-      } else if (merged._companyOverride !== undefined) {
-        delete merged._companyOverride;
-        didChange = true;
-      }
-      if (didChange) {
+      const prevOverride = merged._companyOverride;
+      if (next) merged._companyOverride = next;
+      else delete merged._companyOverride; // company cleared — drop the pin
+      const changed = merged._companyOverride !== prevOverride;
+      if (changed) {
         const nextLocal = { ...cur };
         if (Object.keys(merged).length === 0) delete nextLocal[id];
         else nextLocal[id] = merged;
         updateSettings({ contactLocalFields: nextLocal });
+      }
+      if (companyAssignment?.nameDiffers && companyAssignment?.matchedName) {
+        setMassStatus({ type: 'success', message: `Saved "${next}" locally. HubSpot linked this contact to "${companyAssignment.matchedName}" — Prospect Tracker will keep your typed value here.` });
       }
     }
   }
