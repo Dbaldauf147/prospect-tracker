@@ -38,6 +38,42 @@ export const PE_STAGES = [
   'Not Sold',
 ];
 
+// PE investment strategies — multi-tag vocabulary for PE firms, edited
+// on the PE Portfolio › PE Firm sub-tab and in the company popup. Users
+// can also add their own tags on the fly (stored in
+// settings.customStrategies); these are the built-in starters, in the
+// order they were first provided.
+export const PE_STRATEGIES = [
+  'Venture Capital',
+  'Real Estate + Credit',
+  'Real Estate (Industrial)',
+  'Buyout + Credit',
+  'Real Estate (Office)',
+  'Real Estate (Logistics)',
+  'Real Estate (Residential)',
+  'Buyout (Diversified)',
+  'Real Estate (Diversified)',
+  'Buyout (Industrial)',
+  'Buyout (Lower-mid)',
+  'Real Estate',
+  'Distressed/Credit + Buyout',
+  'Buyout (Tech) + Credit',
+  'Buyout (Software)',
+  'Growth/Buyout (Consumer)',
+  'Real Estate (Data Center)',
+  'Buyout (Asia)',
+  'Infrastructure',
+  'Buyout (Tech)',
+  'Growth + Venture (Tech)',
+  'Buyout (Tech/Services)',
+  'Buyout (Tech/Gov)',
+  'Growth Equity (Tech)',
+  'Buyout (Media/Tech)',
+  'Growth Equity',
+  'Energy (Producer)',
+  'Energy/Infra (Producer)',
+];
+
 export const GEOGRAPHIES = [
   'Global',
   'NAM',
