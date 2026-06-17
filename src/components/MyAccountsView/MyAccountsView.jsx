@@ -10,7 +10,7 @@ import { statusColor, formatAum } from '../../utils/formatters';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE } from '../../data/enums';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { buildCompanyIndex, findMatchesInIndex, hasMatchInIndex } from '../../utils/companyIndex';
-import { getHubspotCache, setHubspotCache } from '../../utils/hubspotContactsCache';
+import { getHubspotCache, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { loadOppsFromCache } from '../../utils/oppsCache';
@@ -1585,7 +1585,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
             notes_last_contacted: c.notes_last_contacted,
           }));
           try {
-            await setHubspotCache({ ...json, contacts: slimContacts, syncedAt: new Date().toISOString() });
+            await setHubspotCachePreservingManual({ ...json, contacts: slimContacts, syncedAt: new Date().toISOString() });
           } catch (err) {
             console.warn('HubSpot cache write failed:', err.message);
           }

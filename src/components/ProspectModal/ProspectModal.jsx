@@ -19,7 +19,7 @@ import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientMa
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import { buildStrategyOptions, persistCustomStrategy } from '../../utils/prospectOptions';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
-import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCache } from '../../utils/hubspotContactsCache';
+import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
 import { userLsGet } from '../../utils/userLs';
 import { dbGet } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
@@ -2552,7 +2552,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         hs_sequences_is_enrolled: c.hs_sequences_is_enrolled,
         notes_last_contacted: c.notes_last_contacted,
       }));
-      await setHubspotCache({ ...json, contacts: slimContacts, syncedAt: new Date().toISOString() });
+      await setHubspotCachePreservingManual({ ...json, contacts: slimContacts, syncedAt: new Date().toISOString() });
     } catch (err) {
       setRefreshHubspotError(err?.message || 'Refresh failed');
     } finally {

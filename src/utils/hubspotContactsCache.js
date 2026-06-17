@@ -55,6 +55,41 @@ export async function setHubspotCache(cache) {
   notifyCacheUpdated();
 }
 
+// Overwrite the cache with a fresh full server pull, but carry forward any
+// locally-created ("manual") contacts the snapshot doesn't include yet.
+//
+// HubSpot's search index lags a few seconds behind contact creation, so a
+// refresh fired soon after "+ Add Contact" returns a snapshot WITHOUT the
+// brand-new contact. A plain overwrite would drop it from the cache, and
+// since the company popup pins manual contacts by id (companyContactLinks),
+// the pin would then point at a contact that's gone — so it vanishes from
+// every popup. Preserving manual contacts not in the snapshot keeps them
+// visible until HubSpot indexes them, at which point the snapshot carries
+// them (matched by id or email) and they become normal contacts.
+export async function setHubspotCachePreservingManual(cache) {
+  await migrateFromLocalStorage();
+  let preserved = [];
+  try {
+    const current = await getHubspotCache();
+    const incoming = cache?.contacts || [];
+    const ids = new Set(incoming.map(c => String(c.id || c.vid || '')).filter(Boolean));
+    const emails = new Set(incoming.map(c => (c.email || '').toLowerCase()).filter(Boolean));
+    preserved = (current?.contacts || []).filter(c => {
+      if (c?._source !== 'manual') return false;
+      const id = String(c.id || c.vid || '');
+      const email = (c.email || '').toLowerCase();
+      if (id && ids.has(id)) return false;
+      if (email && emails.has(email)) return false;
+      return true;
+    });
+  } catch { /* fall back to a plain overwrite */ }
+  const merged = preserved.length
+    ? { ...cache, contacts: [...(cache.contacts || []), ...preserved] }
+    : cache;
+  await dbPut(STORE, merged, KEY);
+  notifyCacheUpdated();
+}
+
 // Read-modify-write helper for callers that mutate contacts then save.
 // `mutate` receives a shallow clone and may return a new cache, or mutate
 // and return undefined (in which case the clone is saved).

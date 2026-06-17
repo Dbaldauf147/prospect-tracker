@@ -13,7 +13,7 @@ import { ZoomInfoView } from '../ZoomInfoView/ZoomInfoView';
 import { AllContactsView } from '../AllContactsView/AllContactsView';
 import { KeyProspectsView } from '../KeyProspectsView/KeyProspectsView';
 import { EventsView } from '../EventsView/EventsView';
-import { setHubspotCache } from '../../utils/hubspotContactsCache';
+import { setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
 
 const ALL_SUBTABS = [
   { key: 'hubspot',    label: 'HubSpot Contacts', adminOnly: true },
@@ -101,7 +101,7 @@ export function ContactsView({
         hs_sequences_is_enrolled: c.hs_sequences_is_enrolled,
         notes_last_contacted: c.notes_last_contacted,
       }));
-      await setHubspotCache({ ...json, contacts: slimContacts, syncedAt: new Date().toISOString() });
+      await setHubspotCachePreservingManual({ ...json, contacts: slimContacts, syncedAt: new Date().toISOString() });
     } catch (err) {
       setRefreshError(err?.message || 'Refresh failed');
     } finally {
