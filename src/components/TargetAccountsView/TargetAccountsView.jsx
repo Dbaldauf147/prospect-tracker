@@ -121,6 +121,57 @@ function persistBlockedAccountNames(set) {
   try { window.dispatchEvent(new Event(BLOCKED_EVENT)); } catch { /* noop */ }
 }
 
+// ── Company-rename hooks (called by the company-rename cascade) ─────────
+// Persist a target-accounts payload to both Firestore (canonical) and the
+// IndexedDB cache, mirroring how the view saves after an inline edit.
+export async function saveTargetAccountsToDB(userId, data) {
+  if (userId) await saveToFirestore(userId, data);
+  await saveCache(data);
+}
+
+// Rewrite the account-name column (the leftmost column of each sheet, which
+// is the name by this view's own convention: nameKey = headers[0]) so target
+// rows follow a company rename. Pure — returns { data, count }.
+export function renameTargetAccountRows(data, oldName, newName) {
+  const o = String(oldName || '').trim().toLowerCase();
+  const n = String(newName || '').trim();
+  if (!data?.sheets || !o || !n || o === n.toLowerCase()) return { data, count: 0 };
+  let count = 0;
+  const sheets = {};
+  for (const [name, sheet] of Object.entries(data.sheets)) {
+    const key = sheet?.headers?.[0];
+    if (!key || !Array.isArray(sheet.records)) { sheets[name] = sheet; continue; }
+    sheets[name] = {
+      ...sheet,
+      records: sheet.records.map(r => {
+        if (String(r?.[key] || '').trim().toLowerCase() === o) { count++; return { ...r, [key]: n }; }
+        return r;
+      }),
+    };
+  }
+  return count > 0 ? { data: { ...data, sheets }, count } : { data, count: 0 };
+}
+
+// Blocked-account-name set (suppress-from-suggestions), keyed by lowercased
+// account name — move the entry so the suppression follows a rename.
+export function countBlockedAccountRename(oldName, newName) {
+  const o = String(oldName || '').trim().toLowerCase();
+  const n = String(newName || '').trim().toLowerCase();
+  if (!o || !n || o === n) return 0;
+  return loadBlockedAccountNames().has(o) ? 1 : 0;
+}
+
+export function renameBlockedAccountName(oldName, newName) {
+  if (!countBlockedAccountRename(oldName, newName)) return 0;
+  const o = String(oldName || '').trim().toLowerCase();
+  const n = String(newName || '').trim().toLowerCase();
+  const set = loadBlockedAccountNames();
+  set.delete(o);
+  set.add(n);
+  persistBlockedAccountNames(set);
+  return 1;
+}
+
 function InlineEditCell({ value, rowIndex, colKey, onSave }) {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
