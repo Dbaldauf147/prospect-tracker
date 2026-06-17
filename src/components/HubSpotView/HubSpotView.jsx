@@ -1412,8 +1412,13 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
         // override that's no longer needed since HubSpot now holds the name.
         const ca = json.companyAssignment;
         if (typeof hubspotProps.company === 'string') {
+          // Always pin the typed value as a local override so it survives a
+          // refresh regardless of HubSpot sync/association timing. The API
+          // also renamed the linked Company record, so on success this pin
+          // matches what HubSpot will sync back; on failure it's the only
+          // thing keeping the value visible. (Empty string → clear instead.)
+          companyOverrideSetTo = hubspotProps.company || null;
           if (ca && ca.ok === false) {
-            companyOverrideSetTo = hubspotProps.company;
             const detail = ca.errorText ? ` · ${ca.errorText}` : '';
             const what = ca.mode === 'rename-failed' ? 'rename the Company record' : 'pin the Company association';
             setPushStatus({
@@ -1421,8 +1426,6 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
               message: `Saved "${hubspotProps.company}" locally. HubSpot couldn't ${what}${ca.status ? ` (HTTP ${ca.status})` : ''}${detail} — Prospect Tracker will keep your value through future syncs.`,
             });
           } else if (ca && ca.ok === true) {
-            // Success: HubSpot now holds the typed name, so drop any override.
-            companyOverrideSetTo = null;
             if (ca.mode === 'renamed') {
               setPushStatus({
                 type: 'success',
@@ -1431,11 +1434,9 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
             } else if (ca.nameDiffers && ca.matchedName) {
               // Fallback (contact had no linked company): HubSpot linked it
               // to an existing record whose name differs from what was typed.
-              // Keep the typed value locally and explain.
-              companyOverrideSetTo = hubspotProps.company;
               setPushStatus({
                 type: 'success',
-                message: `Saved "${hubspotProps.company}" locally. This contact had no linked company, so HubSpot linked it to an existing Company record named "${ca.matchedName}". Prospect Tracker will keep your typed value here.`,
+                message: `Saved "${hubspotProps.company}". This contact had no linked company, so HubSpot linked it to an existing Company record named "${ca.matchedName}".`,
               });
             }
           }
