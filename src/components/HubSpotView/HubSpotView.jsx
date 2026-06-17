@@ -1767,7 +1767,12 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
       }
       if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
       // If there are notes, create a HubSpot note (engagement) attached to the contact
-      const contactId = resolvedId || json.id;
+      // create-contact returns the new record under json.contact (id +
+      // properties), not a top-level json.id. Reading json.id left contactId
+      // undefined for new contacts, so the note never attached and the
+      // manual-source cache stamping below was skipped — the contact then
+      // vanished on the full-sync that follows.
+      const contactId = resolvedId || json?.contact?.id || json.id;
       if (notes?.trim() && contactId) {
         try {
           await apiFetch(`/api/hubspot?action=create-note`, {
@@ -1826,6 +1831,24 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
         const localOnly = (existing?.contacts || []).filter(c => c._localOnly);
         if (localOnly.length > 0 && Array.isArray(json.contacts)) {
           json.contacts = [...json.contacts, ...localOnly];
+        }
+        // Carry forward manually-created contacts the sync doesn't include
+        // yet. HubSpot's index lags a few seconds behind creation, so a sync
+        // fired right after "Add Contact" returns a snapshot without the new
+        // contact — preserving it (matched by id or email) keeps it visible
+        // until HubSpot indexes it, at which point the snapshot carries it.
+        if (Array.isArray(json.contacts)) {
+          const presentIds = new Set(json.contacts.map(c => String(c.id || c.vid || '')).filter(Boolean));
+          const presentEmails = new Set(json.contacts.map(c => (c.email || '').toLowerCase()).filter(Boolean));
+          const manualMissing = (existing?.contacts || []).filter(c => {
+            if (c._source !== 'manual' || c._localOnly) return false;
+            const id = String(c.id || c.vid || '');
+            const email = (c.email || '').toLowerCase();
+            if (id && presentIds.has(id)) return false;
+            if (email && presentEmails.has(email)) return false;
+            return true;
+          });
+          if (manualMissing.length > 0) json.contacts = [...json.contacts, ...manualMissing];
         }
       } catch {}
       setData(json);
