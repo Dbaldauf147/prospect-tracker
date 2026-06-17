@@ -1264,6 +1264,12 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
   const [pushStatus, setPushStatus] = useState(null);
   const [massMode, setMassMode] = useState(false);
   const [selected, setSelected] = useState(new Set());
+  // The rows DataTable is actually showing after its own internal
+  // column-header filters (enableColumnFilters). Those filters live
+  // inside DataTable and aren't reflected in our `filteredContacts`,
+  // so without this "Select All" would grab every passed-in row and
+  // ignore the on-screen filtering. null until DataTable first reports.
+  const [tableVisibleRows, setTableVisibleRows] = useState(null);
   const [massField, setMassField] = useState('company');
   const [massValue, setMassValue] = useState('');
   const [massProcessing, setMassProcessing] = useState(false);
@@ -2362,6 +2368,13 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
     return result;
   }, [enrichedContacts, search, cardFilter, colFilters, colFilterDrafts, prospectCompanyKeys]);
 
+  // What "Select All" actually operates on: the rows on screen. When
+  // DataTable's internal column filters are active, tableVisibleRows is
+  // the post-filter subset; when they're not, DataTable reports back the
+  // full `filteredContacts` it was handed, so this stays in sync either
+  // way. Falls back to filteredContacts before the first report.
+  const selectableContacts = tableVisibleRows ?? filteredContacts;
+
   function toggleSelect(id) {
     setSelected(prev => {
       const next = new Set(prev);
@@ -2371,10 +2384,10 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
   }
 
   function toggleSelectAll() {
-    if (selected.size === filteredContacts.length) {
+    if (selected.size === selectableContacts.length) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(filteredContacts.map(c => c.id)));
+      setSelected(new Set(selectableContacts.map(c => c.id)));
     }
   }
 
@@ -2684,11 +2697,11 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
                 type="button"
                 className={styles.massEditBtn}
                 onClick={toggleSelectAll}
-                title={selected.size === filteredContacts.length && filteredContacts.length > 0 ? 'Clear selection' : `Select every contact that passes the current search and column filters (${filteredContacts.length})`}
+                title={selected.size === selectableContacts.length && selectableContacts.length > 0 ? 'Clear selection' : `Select every contact that passes the current search and column filters (${selectableContacts.length})`}
               >
-                {selected.size === filteredContacts.length && filteredContacts.length > 0
+                {selected.size === selectableContacts.length && selectableContacts.length > 0
                   ? `Deselect All (${selected.size})`
-                  : `Select All Filtered (${filteredContacts.length})`}
+                  : `Select All Filtered (${selectableContacts.length})`}
               </button>
             )}
             <button className={styles.newContactBtn} onClick={() => setEditContact(null)}>+ New Contact</button>
@@ -2802,10 +2815,10 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
                 label: (
                   <input
                     type="checkbox"
-                    checked={filteredContacts.length > 0 && selected.size >= filteredContacts.length}
+                    checked={selectableContacts.length > 0 && selected.size >= selectableContacts.length}
                     onChange={toggleSelectAll}
                     onClick={e => e.stopPropagation()}
-                    title={selected.size === filteredContacts.length && filteredContacts.length > 0 ? 'Clear all selected' : `Select all ${filteredContacts.length} filtered contacts`}
+                    title={selected.size === selectableContacts.length && selectableContacts.length > 0 ? 'Clear all selected' : `Select all ${selectableContacts.length} filtered contacts`}
                     style={{ accentColor: 'var(--color-accent)' }}
                   />
                 ),
@@ -3003,6 +3016,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
               { key: '_edit', label: '', defaultWidth: 36, render: (c) => <button onClick={(e) => { e.stopPropagation(); setEditContact(c); }} title="Edit contact" style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: '4px', padding: '1px 6px', fontSize: '0.7rem', cursor: 'pointer', color: 'var(--color-accent)' }}>Edit</button> },
             ]}
             rows={filteredContacts}
+            onFilteredRowsChange={setTableVisibleRows}
             alwaysVisible={['_deleteRow', '_select']}
             enableColumnFilters
             emptyMessage="No contacts found"
