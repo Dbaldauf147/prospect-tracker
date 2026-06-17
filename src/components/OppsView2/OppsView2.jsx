@@ -247,10 +247,10 @@ const CLOSED_STAGES_SET = new Set(['Sold', 'Not Sold']);
 // Stage-specific "stalled too long" thresholds. An opp that has sat in
 // one of these stages for more than `days` calendar days surfaces in the
 // Days-in-Stage "Needs action" buckets with the paired suggestion. Stages
-// not listed (Quoting, Contracting, Agreement Sent) have no threshold, so
-// they never raise an action prompt.
+// not listed (Not Started, Quoting, Contracting, Agreement Sent) have no
+// threshold, so they never raise an action prompt. Not Started is
+// intentionally excluded — a brand-new opp shouldn't nag to qualify-or-kill.
 const STAGE_ACTION_THRESHOLDS = {
-  'Not Started': { days: 120, suggestion: 'Qualify or kill' },
   'Lead':        { days: 90,  suggestion: 'Qualify or kill' },
   'Qualifying':  { days: 60,  suggestion: 'Quote or kill' },
   'Quoted':      { days: 90,  suggestion: 'Contract or kill' },
