@@ -932,7 +932,7 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
               <input className={styles.modalInput} value={fields.lastname} onChange={e => set('lastname', e.target.value)} />
             </div>
             <div className={styles.modalSpan2}>
-              <label className={styles.modalLabel}>Nickname <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label>
+              <label className={styles.modalLabel}>Goes By <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label>
               <input className={styles.modalInput} value={fields.nickname} onChange={e => set('nickname', e.target.value)} placeholder="e.g. Bob" />
             </div>
             <div>
