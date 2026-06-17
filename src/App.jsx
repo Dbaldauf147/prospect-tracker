@@ -7,6 +7,7 @@ import { runProspectBackfill, formatBackfillReport, BACKFILL_PASSES } from './ut
 import { useSheetSync } from './hooks/useSheetSync';
 import { useFilters } from './hooks/useFilters';
 import { useUserSettings } from './hooks/useUserSettings';
+import { useIssues } from './hooks/useIssues';
 import { Sidebar } from './components/Sidebar';
 import { SettingsBackupsModal } from './components/SettingsBackupsModal';
 import { CdmNameModal } from './components/CdmNameModal';
@@ -55,6 +56,9 @@ function App() {
   // to "Dan Baldauf" so existing data keeps matching even before a value
   // is written. Other accounts pick this at signup.
   const cdmName = settings.cdmName || (user?.email === 'baldaufdan@gmail.com' ? 'Dan Baldauf' : (user?.displayName || ''));
+  // Open (non-snoozed) issue count for the sidebar badge. Shares the same
+  // hook the Issues tab uses so the badge and the tab never disagree.
+  const { openCount: openIssuesCount } = useIssues({ prospects, cdmName });
   useSheetSync(user);
   const {
     filtered, searchTerm, setSearchTerm,
@@ -219,6 +223,7 @@ function App() {
         onOpenCdmName={() => setShowCdmName(true)}
         onOpenDailyLog={() => setShowDailyLog(true)}
         isAdmin={isAdmin}
+        issuesCount={openIssuesCount}
       />
       <div className="main">
         {(view === 'table' || view === 'kanban') && (
