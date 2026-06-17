@@ -13,6 +13,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB, renameSourceFile as renamePortfolioSourceFile } from '../../utils/portfolioSourceFileStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { splitPeOwners } from '../../utils/peOwners';
+import { loadOpps2Newest, bulkSetOppField } from '../../utils/opps2Store';
+import { buildCompanyRenamePlan, planHasWork, summarizeRenamePlan, applyListMappingWrites } from '../../utils/companyRenameCascade';
 import { computePortfolioFitScore, industrySector, sectorScoreFor, tierForScoreValue, industryTier, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { isContactInEvent, toggleContactInEvents } from '../../utils/eventsStore';
 import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
@@ -2086,7 +2088,7 @@ function SustainabilityResearchPanel({ state, onClear, onUseTargets, onMergeFram
 }
 
 export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, onDeleteProspect, onUpdateProspect, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, updateSettingsPath = () => {}, targetAccountsData = null, cdmName = '' }) {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const [fields, setFields] = useState(() => {
     if (prospect) return { ...EMPTY, ...prospect };
     return { ...EMPTY };
@@ -3863,6 +3865,48 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     renamePortfolioSourceFile(oldName, newName).catch(() => {});
   }
 
+  // Repoint every name-keyed cross-reference (opp Account, portfolio
+  // companies' PE Owner, dismissed suggestions, confirmed list mappings)
+  // from the old company name onto the new one, so a rename doesn't
+  // silently detach opps/portfolio/flags. Loads the opps store, builds a
+  // plan, and applies it only after the user confirms a summary of what
+  // will change. HubSpot is deliberately not touched. Fire-and-forget
+  // from the Company field commit; failures are logged, not surfaced
+  // mid-edit.
+  async function cascadeCompanyRenameLinks(oldName, newName) {
+    try {
+      const uid = user?.uid;
+      let oppsRecords = [];
+      if (uid) {
+        try {
+          const data = await loadOpps2Newest(uid);
+          if (Array.isArray(data?.records)) oppsRecords = data.records;
+        } catch { /* opps not loaded — skip the opps leg, still migrate the rest */ }
+      }
+      const plan = buildCompanyRenamePlan({
+        oldName, newName, prospects, currentProspectId: prospect?.id, settings, oppsRecords,
+      });
+      if (!planHasWork(plan)) return;
+      const summary = summarizeRenamePlan(plan).join('\n');
+      const ok = window.confirm(
+        `Renamed to "${newName}".\n\nAlso update these references to "${oldName}"?\n\n${summary}`
+      );
+      if (!ok) return;
+      if (plan.oppIds.length && uid) {
+        try { await bulkSetOppField(uid, plan.oppIds, 'Account', newName); }
+        catch (err) { console.error('Company rename: opps Account update failed', err); }
+      }
+      for (const u of plan.peOwnerUpdates) {
+        try { onUpdateProspect?.(u.id, { peOwner: u.peOwner }); }
+        catch (err) { console.error('Company rename: peOwner update failed', u.id, err); }
+      }
+      if (plan.dismissed) updateSettings({ dismissedPortfolioGuesses: plan.dismissed });
+      applyListMappingWrites(plan);
+    } catch (err) {
+      console.error('Company rename cascade failed', err);
+    }
+  }
+
   // A prospect's company name lives on each prospect record independently,
   // so renaming the company here only touches THIS record. When other
   // prospects carry the exact same company name, offer to rename them all
@@ -4141,6 +4185,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   if (oldName && newName && oldName.trim() !== newName) {
                     migrateCompanyData(oldName, newName);
                     renameCompanyAcrossProspects(oldName, newName);
+                    cascadeCompanyRenameLinks(oldName, newName);
                   }
                   set('company', v);
                 }}
