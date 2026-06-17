@@ -13,6 +13,7 @@ import { PEOppsScheduleModal } from './PEOppsScheduleModal';
 import { DataTable } from '../common/DataTable';
 import { PasteAddModal } from '../TableView/PasteAddModal';
 import { splitPeOwners } from '../../utils/peOwners';
+import { loadClientManagerMap, setClientManager, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
 
 // Closed/invalid stages from the Opps tab — these shouldn't count toward "active pipeline".
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
@@ -1592,6 +1593,46 @@ function NameListCell({ items, empty }) {
   );
 }
 
+// Inline editor for the Blue Owl tab's Client Manager column. Mirrors the
+// Clients tab's editor (local draft, commit on blur/Enter, revert on
+// Escape) and writes to the same per-company clientManagerStore, so a
+// manager typed here and on the Clients tab stays in sync. Swallows click
+// + keydown so editing doesn't open the row's popup or hit table shortcuts.
+function ClientManagerCell({ company, value, onCommit }) {
+  const [draft, setDraft] = useState(value || '');
+  const [focused, setFocused] = useState(false);
+  useEffect(() => { setDraft(value || ''); }, [value]);
+  function commit() {
+    const next = draft.trim();
+    if (next === (value || '').trim()) return;
+    onCommit(company, next);
+  }
+  return (
+    <input
+      type="text"
+      value={draft}
+      placeholder="—"
+      onChange={(e) => setDraft(e.target.value)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => { setFocused(false); commit(); }}
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+        else if (e.key === 'Escape') { e.preventDefault(); setDraft(value || ''); e.currentTarget.blur(); }
+      }}
+      style={{
+        width: '100%', boxSizing: 'border-box',
+        padding: '3px 6px',
+        border: `1px solid ${focused ? '#3B82F6' : 'transparent'}`, borderRadius: 4,
+        background: focused ? '#fff' : 'transparent', color: '#1E293B',
+        fontSize: '0.78rem', fontFamily: 'inherit',
+      }}
+    />
+  );
+}
+
 function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelectFirm, prospects = [], oppsRecords = [], portfolioByPe = new Map(), dmNamesByCompanyId = new Map(), onSelectProspect, onUpdateProspect, onAddProspect, onDownloadPortfolio, settings, updateSettings }) {
   const firmLabel = selectedFirm.trim() || 'PE firm';
   // Strategy-tag vocabulary shared with the company popup, so a tag added
@@ -1607,6 +1648,22 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
   const [search, setSearch] = useState('');
   const [pasteOpen, setPasteOpen] = useState(false);
   const [importing, setImporting] = useState(false);
+  // Client Manager values live in the shared per-company store (the same
+  // one the Clients tab edits), keyed by normalized company name. Mirror
+  // it into state and refresh on the store's change event + cross-tab
+  // storage writes so the column stays live as managers are edited here
+  // or on the Clients tab.
+  const [managerMap, setManagerMap] = useState(() => loadClientManagerMap());
+  useEffect(() => {
+    const refresh = () => setManagerMap(loadClientManagerMap());
+    const onStorage = (e) => { if (e.key === 'clients-manager-map') refresh(); };
+    window.addEventListener(CLIENT_MANAGER_EVENT, refresh);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(CLIENT_MANAGER_EVENT, refresh);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
   // Bulk-edit selection. filteredRowIds mirrors the rows currently
   // passing the DataTable's column filters (and this tab's search) so
   // the header checkbox selects exactly what's on screen.
@@ -1774,6 +1831,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
       company: p.company || '',
       status: p.status || '',
       cdm: p.cdm || '',
+      clientManager: managerMap[(p.company || '').trim().toLowerCase()] || '',
       type: p.type || '',
       tier: p.tier || '',
       geography: p.geography || '',
@@ -1793,7 +1851,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
       peOwner: p.peOwner || '',
       notes: p.notes || '',
     };
-  }), [companies, oppCountsByCompanyId, pcOppCountsByCompanyId, portfolioByPe, dmNamesByCompanyId]);
+  }), [companies, oppCountsByCompanyId, pcOppCountsByCompanyId, portfolioByPe, dmNamesByCompanyId, managerMap]);
 
   // Same dropdown vocabularies as Table View's inline editors, built
   // from the full prospect list so the options match exactly.
@@ -1898,6 +1956,15 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
       ) },
       { key: 'status', label: 'Status', defaultWidth: 140, render: editable({ key: 'status', label: 'Status', type: 'enum', options: STATUSES }) },
       { key: 'cdm', label: 'CDM', defaultWidth: 160, render: editable({ key: 'cdm', label: 'CDM', type: 'enum', options: cdmOptions, allowAddNew: true }) },
+      // Client Manager — the per-company manager stored in the shared
+      // clientManagerStore (same value the Clients tab shows/edits), keyed
+      // by company name. Editable inline here; commits sync to the Clients
+      // tab via the store's change event.
+      { key: 'clientManager', label: 'Client Manager', defaultWidth: 170,
+        getSortValue: (r) => (r.clientManager || '').toLowerCase(),
+        getFilterValue: (r) => r.clientManager,
+        exportValue: (r) => r.clientManager,
+        render: (r) => <ClientManagerCell company={r.company} value={r.clientManager} onCommit={setClientManager} /> },
       { key: 'type', label: 'Type', defaultWidth: 150, render: editable({ key: 'type', label: 'Type', type: 'enum', options: typeOptions, allowAddNew: true }) },
       { key: 'tier', label: 'Tier', defaultWidth: 100, render: editable({ key: 'tier', label: 'Tier', type: 'enum', options: TIERS }) },
       { key: 'geography', label: 'Geography', defaultWidth: 130, render: editable({ key: 'geography', label: 'Geography', type: 'enum', options: GEOGRAPHIES }) },
