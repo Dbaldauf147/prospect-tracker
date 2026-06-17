@@ -175,8 +175,12 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
   const [subtab, setSubtab] = useState('portfolio');
   // Which PE firm the "PE Firm" sub-tab (formerly hardcoded to Blue Owl)
   // is showing. Defaults to Blue Owl so the tab opens exactly as before;
-  // the in-tab picker lets the user switch to any other firm.
-  const [peFirm, setPeFirm] = useState('Blue Owl');
+  // the in-tab picker lets the user switch to any other firm. The last
+  // pick is persisted (like the other PE view prefs) so it survives a
+  // refresh or navigating away and back.
+  const [peFirm, setPeFirm] = useState(() => {
+    try { return localStorage.getItem('pe-portfolio:pe-firm') || 'Blue Owl'; } catch { return 'Blue Owl'; }
+  });
   const [showClosed, setShowClosed] = useState(false);
   const [oppsQuery, setOppsQuery] = useState('');
   const [expanded, setExpanded] = useState(() => new Set());
@@ -249,6 +253,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       return next;
     });
   }
+  useEffect(() => {
+    try { localStorage.setItem('pe-portfolio:pe-firm', peFirm); } catch {}
+  }, [peFirm]);
   useEffect(() => {
     try { localStorage.setItem('pe-portfolio:col-widths', JSON.stringify(colWidths)); } catch {}
   }, [colWidths]);
