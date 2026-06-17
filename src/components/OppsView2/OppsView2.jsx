@@ -8643,10 +8643,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           onClick={() => setActiveTab('newOpps')}
         >New Opps{newOpps.length ? ` (${newOpps.length})` : ''}</button>
         <button
-          className={activeTab === 'waitingKeith' ? styles.tabActive : styles.tab}
-          onClick={() => setActiveTab('waitingKeith')}
-        >Waiting on Keith{waitingOnKeith.length ? ` (${waitingOnKeith.length})` : ''}</button>
-        <button
           className={activeTab === 'services' ? styles.tabActive : styles.tab}
           onClick={() => setActiveTab('services')}
         >By Service</button>
@@ -8662,6 +8658,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           className={activeTab === 'stageHistory' ? styles.tabActive : styles.tab}
           onClick={() => setActiveTab('stageHistory')}
         >Stage History</button>
+        <button
+          className={activeTab === 'waitingKeith' ? styles.tabActive : styles.tab}
+          onClick={() => setActiveTab('waitingKeith')}
+        >Keith{waitingOnKeith.length ? ` (${waitingOnKeith.length})` : ''}</button>
       </div>
 
       <div className={styles.filterRow}>
