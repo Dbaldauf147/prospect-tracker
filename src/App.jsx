@@ -110,6 +110,12 @@ function App() {
   const [hubspotContacts, setHubspotContacts] = useState([]);
 
   // Load HubSpot contacts from IndexedDB and refresh on cache updates.
+  // Keyed on the user's uid because IndexedDB reads return nothing until
+  // AuthContext calls setDbUserId(uid) (db scopes every key by uid). On a
+  // fresh load this effect first runs before auth resolves — getHubspotContacts
+  // reads an unscoped store and gets []. Re-running once user.uid is known
+  // re-reads the now-scoped cache so the persisted contacts reappear instead
+  // of waiting for a manual "Refresh HubSpot Contacts".
   useEffect(() => {
     let cancelled = false;
     const refresh = () => {
@@ -118,7 +124,7 @@ function App() {
     refresh();
     window.addEventListener('hubspot-cache-updated', refresh);
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
-  }, []);
+  }, [user?.uid]);
 
   // Apply per-contact local overrides on top of the cached HubSpot
   // contacts before passing them down. Specifically, _companyOverride
