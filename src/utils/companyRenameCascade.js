@@ -16,11 +16,12 @@
 //     localStorage with the confirmed company name as the value; we
 //     rewrite values that point at the old name.
 //
-// HubSpot is intentionally left untouched (its contacts follow the linked
-// Company *record* name, which is shared CRM data). Manual framework
-// flags (prospect.frameworks) and the My Accounts activity counts already
-// follow a rename on their own — they read the prospect's current name —
-// so they need no migration here.
+// HubSpot contacts are migrated by the caller (the company popup), not in
+// this plan: it owns the contact cache, the per-contact local overrides, and
+// the HubSpot API, and matches contacts with the same fuzzy matcher the popup
+// uses. Manual framework flags (prospect.frameworks) and the My Accounts
+// activity counts already follow a rename on their own — they read the
+// prospect's current name — so they need no migration here.
 import { splitPeOwners, joinPeOwners } from './peOwners';
 import { LIST_FLAG_SOURCES } from './listFlags';
 import { userLsGet, userLsSet } from './userLs';

@@ -3916,10 +3916,23 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       const plan = buildCompanyRenamePlan({
         oldName, newName, prospects, currentProspectId: prospect?.id, settings, oppsRecords,
       });
-      if (!planHasWork(plan)) return;
-      const summary = summarizeRenamePlan(plan).join('\n');
+      // HubSpot contacts that belong to the old company name: every contact
+      // whose company text matches (same matcher the popup uses), plus any
+      // explicitly pinned to the old name. These move onto the new name so
+      // they stay mapped to the renamed company and display it everywhere.
+      const cleanNew = String(newName || '').trim();
+      const oldKey = String(oldName || '').trim().toLowerCase();
+      const newKey = cleanNew.toLowerCase();
+      const links = settings.companyContactLinks || {};
+      const pinnedIds = Array.isArray(links[oldKey]) ? links[oldKey].map(String) : [];
+      const contactTargets = (hubspotContacts || []).filter(c => companiesMatch(c.company, oldName));
+      const contactCount = contactTargets.length;
+
+      if (!planHasWork(plan) && contactCount === 0 && pinnedIds.length === 0) return;
+      const summaryLines = summarizeRenamePlan(plan);
+      if (contactCount > 0) summaryLines.push(`• ${contactCount} HubSpot contact${contactCount === 1 ? '' : 's'} (Company)`);
       const ok = window.confirm(
-        `Renamed to "${newName}".\n\nAlso update these references to "${oldName}"?\n\n${summary}`
+        `Renamed to "${newName}".\n\nAlso update these references to "${oldName}"?\n\n${summaryLines.join('\n')}`
       );
       if (!ok) return;
       if (plan.oppIds.length && uid) {
@@ -3932,6 +3945,55 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       }
       if (plan.dismissed) updateSettings({ dismissedPortfolioGuesses: plan.dismissed });
       applyListMappingWrites(plan);
+
+      // ── HubSpot contacts leg ──
+      const settingsPatch = {};
+      // Move the pin key so explicitly-linked contacts follow the rename.
+      if (pinnedIds.length && oldKey !== newKey) {
+        const mergedPins = Array.from(new Set([...((links[newKey] || []).map(String)), ...pinnedIds]));
+        const nextLinks = { ...links, [newKey]: mergedPins };
+        delete nextLinks[oldKey];
+        settingsPatch.companyContactLinks = nextLinks;
+      }
+      // Durable local override so the new name sticks across HubSpot refreshes
+      // even when the server-side Company reassignment lags or resolves to a
+      // different canonical name.
+      if (contactCount > 0) {
+        const localFields = { ...(settings.contactLocalFields || {}) };
+        for (const c of contactTargets) {
+          const id = String(c.id || c.vid || '');
+          if (!id) continue;
+          localFields[id] = { ...(localFields[id] || {}), _companyOverride: cleanNew };
+        }
+        settingsPatch.contactLocalFields = localFields;
+      }
+      if (Object.keys(settingsPatch).length) updateSettings(settingsPatch);
+
+      if (contactCount > 0) {
+        // Rewrite the cached company text immediately so every view shows the
+        // new name without waiting for a HubSpot refresh.
+        try {
+          await updateHubspotCache(draft => {
+            draft.contacts = draft.contacts.map(c =>
+              companiesMatch(c.company, oldName) ? { ...c, company: cleanNew } : c
+            );
+          });
+        } catch (err) { console.warn('Company rename: contact cache update failed', err?.message || err); }
+        // Best-effort: push the rename to HubSpot, which also reassigns each
+        // contact's primary Company association so the CRM stays in sync. On
+        // failure the local override + cache rewrite remain as the fallback.
+        for (const c of contactTargets) {
+          const id = c.id || c.vid;
+          if (!id) continue;
+          try {
+            await apiFetch('/api/hubspot?action=update-contact', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ contactId: id, properties: { company: cleanNew } }),
+            });
+          } catch { /* fallback already in place */ }
+        }
+      }
     } catch (err) {
       console.error('Company rename cascade failed', err);
     }
