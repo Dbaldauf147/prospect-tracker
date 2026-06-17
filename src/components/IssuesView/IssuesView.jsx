@@ -1,47 +1,22 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo } from 'react';
 import { DataTable } from '../common/DataTable';
 import { fmtDate } from '../../utils/dealsFormat';
-import { loadDealsList } from '../../utils/dealsStore';
-import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../../utils/dealClientMap';
-import { loadClientUntrackedMap, CLIENT_UNTRACKED_EVENT } from '../../utils/clientManagerStore';
-import { computeIssues } from '../../utils/clientIssues';
+import { setIssueSnoozed } from '../../utils/issueSnoozeStore';
+import { useIssues } from '../../hooks/useIssues';
 
 // Issues tab — a running list of outstanding items that need to be
 // addressed across the app. Each row is one problem surfaced by a
 // detector in utils/clientIssues.js. The first mapped issue is a client
 // whose soonest active contract has already expired (negative Days Until
 // on the Clients tab).
+//
+// Each row can be snoozed: a snoozed issue stays on this tab (greyed out,
+// so it can be un-snoozed) but drops out of the open-issue count on the
+// sidebar badge.
 export function IssuesView({ prospects = [], cdmName, settings, updateSettings, onSelectProspect }) {
-  // The detectors read the same uploaded deals + client mappings the
-  // Clients tab uses, plus the "Don't Track" overrides so opted-out
-  // clients never raise an issue. Re-read on the cross-tab events so an
-  // upload or toggle elsewhere refreshes this list.
-  const [dealsList, setDealsList] = useState(() => loadDealsList().data);
-  const [clientMap, setClientMap] = useState(() => loadDealClientMap());
-  const [untrackedMap, setUntrackedMap] = useState(() => loadClientUntrackedMap());
-
-  useEffect(() => {
-    function onStorage(e) {
-      if (e.key === 'deals-list-override') setDealsList(loadDealsList().data);
-      if (e.key === 'deals-client-map') setClientMap(loadDealClientMap());
-      if (e.key === 'clients-untracked-map') setUntrackedMap(loadClientUntrackedMap());
-    }
-    function onClientMap() { setClientMap(loadDealClientMap()); }
-    function onUntracked() { setUntrackedMap(loadClientUntrackedMap()); }
-    window.addEventListener('storage', onStorage);
-    window.addEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
-    window.addEventListener(CLIENT_UNTRACKED_EVENT, onUntracked);
-    return () => {
-      window.removeEventListener('storage', onStorage);
-      window.removeEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
-      window.removeEventListener(CLIENT_UNTRACKED_EVENT, onUntracked);
-    };
-  }, []);
-
-  const issues = useMemo(
-    () => computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap }),
-    [prospects, cdmName, dealsList, clientMap, untrackedMap]
-  );
+  // useIssues handles loading the source data + listening for cross-tab
+  // refreshes, and tags each row with a `snoozed` flag.
+  const { issues, openCount } = useIssues({ prospects, cdmName });
 
   const prospectById = useMemo(() => {
     const m = new Map();
@@ -113,6 +88,31 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
       getFilterValue: (row) => row.detail || '',
       render: (row) => <span style={{ color: '#475569' }}>{row.detail}</span>,
     },
+    {
+      key: 'snooze', label: 'Snooze', defaultWidth: 110,
+      getFilterValue: (row) => (row.snoozed ? 'Snoozed' : 'Active'),
+      getSortValue: (row) => (row.snoozed ? 1 : 0),
+      render: (row) => (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setIssueSnoozed(row.id, !row.snoozed);
+          }}
+          title={row.snoozed ? 'Snoozed — not counted on the menu. Click to un-snooze.' : 'Snooze this issue so it stops counting on the menu'}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            padding: '2px 10px', borderRadius: 999, cursor: 'pointer',
+            fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 700,
+            border: row.snoozed ? '1px solid #CBD5E1' : '1px solid #FCA5A5',
+            background: row.snoozed ? '#F1F5F9' : '#FEF2F2',
+            color: row.snoozed ? '#475569' : '#B91C1C',
+          }}
+        >
+          {row.snoozed ? '🔕 Snoozed' : '🔔 Snooze'}
+        </button>
+      ),
+    },
   ], [onSelectProspect, prospectById]);
 
   return (
@@ -121,7 +121,8 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
         <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>Issues</h2>
         <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
           Outstanding items that need to be addressed
-          {cdmName ? ` for ${cdmName}` : ''}. {issues.length} open issue{issues.length === 1 ? '' : 's'}.
+          {cdmName ? ` for ${cdmName}` : ''}. {openCount} open issue{openCount === 1 ? '' : 's'}
+          {issues.length - openCount > 0 ? `, ${issues.length - openCount} snoozed` : ''}.
         </div>
       </div>
 
@@ -141,6 +142,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
             defaultSort={{ key: 'daysUntil', direction: 'asc' }}
             emptyMessage="No issues to display"
             enableColumnFilters
+            rowStyle={(row) => (row.snoozed ? { opacity: 0.5 } : undefined)}
             settings={settings}
             updateSettings={updateSettings}
           />

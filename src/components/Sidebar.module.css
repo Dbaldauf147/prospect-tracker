@@ -69,6 +69,24 @@
   text-align: center;
 }
 
+/* Count badge on a nav item (e.g. open Issues). Pushed to the far edge so
+   the number lines up regardless of label length. */
+.navBadge {
+  margin-left: auto;
+  min-width: 1.25rem;
+  padding: 0 0.35rem;
+  height: 1.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #DC2626;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .userSection {
   padding: 0.75rem;
   border-top: 1px solid rgba(255,255,255,0.08);
