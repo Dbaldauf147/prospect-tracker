@@ -15,6 +15,7 @@ import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { splitPeOwners } from '../../utils/peOwners';
 import { loadOpps2Newest, bulkSetOppField } from '../../utils/opps2Store';
 import { buildCompanyRenamePlan, planHasWork, summarizeRenamePlan, applyListMappingWrites } from '../../utils/companyRenameCascade';
+import { countClientsSubtabRename, clientsSubtabRenameTotal, summarizeClientsSubtabRename, applyClientsSubtabRename } from '../../utils/clientsRename';
 import { computePortfolioFitScore, industrySector, sectorScoreFor, tierForScoreValue, industryTier, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { isContactInEvent, toggleContactInEvents } from '../../utils/eventsStore';
 import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
@@ -3993,13 +3994,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       const contactTargets = (hubspotContacts || []).filter(c => companiesMatch(c.company, oldName));
       const contactCount = contactTargets.length;
 
-      if (!planHasWork(plan) && contactCount === 0 && pinnedIds.length === 0) return;
+      // Clients-view subtabs (Deals / Commissions rows, plus the typed
+      // Clients-tab fields and deal→client mappings) key off the company
+      // name string, so they need to move onto the new name too.
+      const clientCounts = countClientsSubtabRename(oldName, newName);
+      const clientTotal = clientsSubtabRenameTotal(clientCounts);
+
+      if (!planHasWork(plan) && contactCount === 0 && pinnedIds.length === 0 && clientTotal === 0) return;
       const summaryLines = summarizeRenamePlan(plan);
       if (contactCount > 0) summaryLines.push(`• ${contactCount} HubSpot contact${contactCount === 1 ? '' : 's'} (Company)`);
+      summaryLines.push(...summarizeClientsSubtabRename(clientCounts));
       const ok = window.confirm(
         `Renamed to "${newName}".\n\nAlso update these references to "${oldName}"?\n\n${summaryLines.join('\n')}`
       );
       if (!ok) return;
+      if (clientTotal > 0) applyClientsSubtabRename(oldName, newName);
       if (plan.oppIds.length && uid) {
         try { await bulkSetOppField(uid, plan.oppIds, 'Account', newName); }
         catch (err) { console.error('Company rename: opps Account update failed', err); }

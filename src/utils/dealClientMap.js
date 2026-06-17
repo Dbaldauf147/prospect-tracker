@@ -88,6 +88,38 @@ export function bulkSetDealClientMapping(sourceNames, target) {
   persistMap(map);
 }
 
+// Build the migration for a client rename: every mapping whose TARGET is the
+// old client name is repointed onto the new one, so user-confirmed deal→client
+// links survive a rename. Returns { updated, count } or null when nothing
+// changes.
+function planDealClientRename(oldName, newName) {
+  const old = String(oldName || '').trim();
+  const next = String(newName || '').trim();
+  if (!old || !next || old.toLowerCase() === next.toLowerCase()) return null;
+  const map = loadDealClientMap();
+  const updated = { ...map };
+  let count = 0;
+  for (const [k, v] of Object.entries(updated)) {
+    if (typeof v === 'string' && v.trim().toLowerCase() === old.toLowerCase()) {
+      updated[k] = next;
+      count++;
+    }
+  }
+  return count > 0 ? { updated, count } : null;
+}
+
+export function countDealClientRename(oldName, newName) {
+  const plan = planDealClientRename(oldName, newName);
+  return plan ? plan.count : 0;
+}
+
+export function renameDealClient(oldName, newName) {
+  const plan = planDealClientRename(oldName, newName);
+  if (!plan) return 0;
+  persistMap(plan.updated);
+  return plan.count;
+}
+
 // Resolves a deal row's Client Name to its canonical client name. When
 // the user has set an explicit mapping for this source name, returns
 // the mapped target; otherwise returns the source name unchanged so

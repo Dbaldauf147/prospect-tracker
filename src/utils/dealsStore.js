@@ -38,3 +38,32 @@ export function clearDealsOverride() {
 export function hasDealsOverride() {
   try { return userLsHas(KEY); } catch { return false; }
 }
+
+const dealMatches = (row, lowerName) =>
+  String(row?.['Client Name'] || '').trim().toLowerCase() === lowerName;
+
+// How many deal rows carry `oldName` as their Client Name — for the rename
+// confirmation summary.
+export function countDealsClientRename(oldName, newName) {
+  const o = String(oldName || '').trim().toLowerCase();
+  const n = String(newName || '').trim();
+  if (!o || !n || o === n.toLowerCase()) return 0;
+  return loadDealsList().data.filter(r => dealMatches(r, o)).length;
+}
+
+// Rewrite the Client Name on every deal row that reads `oldName` onto
+// `newName` so a client rename carries through to the Deals subtab. Returns
+// the number of rows changed.
+export function renameDealsClient(oldName, newName) {
+  const o = String(oldName || '').trim().toLowerCase();
+  const n = String(newName || '').trim();
+  if (!o || !n || o === n.toLowerCase()) return 0;
+  const { data } = loadDealsList();
+  let count = 0;
+  const next = data.map(row => {
+    if (dealMatches(row, o)) { count++; return { ...row, 'Client Name': n }; }
+    return row;
+  });
+  if (count > 0) saveDealsOverride(next);
+  return count;
+}
