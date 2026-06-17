@@ -4033,6 +4033,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         try { onUpdateProspect?.(u.id, { peOwner: u.peOwner }); }
         catch (err) { console.error('Company rename: peOwner update failed', u.id, err); }
       }
+      // PE firms' own portfolio-company lists naming the renamed company.
+      for (const u of plan.portfolioUpdates) {
+        try { onUpdateProspect?.(u.id, { portfolioCompanies: u.portfolioCompanies }); }
+        catch (err) { console.error('Company rename: portfolioCompanies update failed', u.id, err); }
+      }
+      if (plan.savedPortfolioMappings) updateSettings({ savedPortfolioMappings: plan.savedPortfolioMappings });
+      if (plan.events) updateSettings({ events: plan.events });
       if (plan.dismissed) updateSettings({ dismissedPortfolioGuesses: plan.dismissed });
       applyListMappingWrites(plan);
 

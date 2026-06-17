@@ -62,10 +62,10 @@ function readListMapping(key) {
 // `oppsRecords` (the caller loads them from the opps store). The renamed
 // record itself is excluded via `currentProspectId`.
 export function buildCompanyRenamePlan({ oldName, newName, prospects = [], currentProspectId, settings = {}, oppsRecords = [] }) {
-  const plan = { oppIds: [], peOwnerUpdates: [], dismissed: null, listWrites: [], counts: {} };
+  const plan = { oppIds: [], peOwnerUpdates: [], dismissed: null, listWrites: [], portfolioUpdates: [], portfolioEntryCount: 0, savedPortfolioMappings: null, events: null, eventAttendeeCount: 0, counts: {} };
   const old = String(oldName || '').trim();
   const next = String(newName || '').trim();
-  if (!old || !next || eq(old, next)) { plan.counts = { opps: 0, peOwner: 0, dismissed: 0, listMappings: 0 }; return plan; }
+  if (!old || !next || eq(old, next)) { plan.counts = { opps: 0, peOwner: 0, dismissed: 0, listMappings: 0, portfolio: 0, savedPortfolioMappings: 0, eventAttendees: 0 }; return plan; }
 
   // Opps whose Account currently links to the old company name.
   for (const r of oppsRecords) {
@@ -109,11 +109,64 @@ export function buildCompanyRenamePlan({ oldName, newName, prospects = [], curre
     }
   }
 
+  // PE firms whose `portfolioCompanies` list names the old company. The
+  // peOwner leg above repoints the reverse link (a portfolio company naming
+  // its owner); this repoints the forward link (the owner's own list of its
+  // portfolio companies, each row keyed on `companyName`).
+  for (const p of prospects) {
+    const list = Array.isArray(p?.portfolioCompanies) ? p.portfolioCompanies : null;
+    if (!list || list.length === 0) continue;
+    let entriesChanged = 0;
+    const nextList = list.map(r => {
+      if (r && eq(r.companyName, old)) { entriesChanged++; return { ...r, companyName: next }; }
+      return r;
+    });
+    if (entriesChanged > 0) {
+      plan.portfolioUpdates.push({ id: p.id, portfolioCompanies: nextList });
+      plan.portfolioEntryCount += entriesChanged;
+    }
+  }
+
+  // settings.savedPortfolioMappings is keyed by the lowercased portfolio-
+  // company name (the ★-saved RA/Target markers) — move the entry.
+  const spm = settings.savedPortfolioMappings;
+  if (spm && typeof spm === 'object') {
+    const ok = old.toLowerCase();
+    const nk = next.toLowerCase();
+    if (ok !== nk && spm[ok] != null) {
+      const moved = { ...spm };
+      if (moved[nk] == null) moved[nk] = moved[ok];
+      delete moved[ok];
+      plan.savedPortfolioMappings = moved;
+    }
+  }
+
+  // Event attendees carry a denormalized `company` snapshot taken when the
+  // contact was added — rewrite the ones matching the old name so events
+  // display the renamed company.
+  if (Array.isArray(settings.events)) {
+    let attChanged = 0;
+    const nextEvents = settings.events.map(ev => {
+      const atts = Array.isArray(ev?.attendees) ? ev.attendees : null;
+      if (!atts) return ev;
+      let evChanged = false;
+      const nextAtts = atts.map(a => {
+        if (a && eq(a.company, old)) { attChanged++; evChanged = true; return { ...a, company: next }; }
+        return a;
+      });
+      return evChanged ? { ...ev, attendees: nextAtts } : ev;
+    });
+    if (attChanged > 0) { plan.events = nextEvents; plan.eventAttendeeCount = attChanged; }
+  }
+
   plan.counts = {
     opps: plan.oppIds.length,
     peOwner: plan.peOwnerUpdates.length,
     dismissed: plan.dismissed ? 1 : 0,
     listMappings: plan.listWrites.length,
+    portfolio: plan.portfolioEntryCount,
+    savedPortfolioMappings: plan.savedPortfolioMappings ? 1 : 0,
+    eventAttendees: plan.eventAttendeeCount,
   };
   return plan;
 }
@@ -122,7 +175,7 @@ export function buildCompanyRenamePlan({ oldName, newName, prospects = [], curre
 export function planHasWork(plan) {
   if (!plan) return false;
   const c = plan.counts || {};
-  return !!(c.opps || c.peOwner || c.dismissed || c.listMappings);
+  return !!(c.opps || c.peOwner || c.dismissed || c.listMappings || c.portfolio || c.savedPortfolioMappings || c.eventAttendees);
 }
 
 // Human-readable bullet lines for the confirmation prompt.
@@ -131,6 +184,8 @@ export function summarizeRenamePlan(plan) {
   const lines = [];
   if (c.opps) lines.push(`• ${c.opps} opportunit${c.opps === 1 ? 'y' : 'ies'} (Account)`);
   if (c.peOwner) lines.push(`• ${c.peOwner} portfolio compan${c.peOwner === 1 ? 'y' : 'ies'} (PE Owner)`);
+  if (c.portfolio) lines.push(`• ${c.portfolio} PE portfolio-list entr${c.portfolio === 1 ? 'y' : 'ies'}`);
+  if (c.eventAttendees) lines.push(`• ${c.eventAttendees} event attendee${c.eventAttendees === 1 ? '' : 's'}`);
   if (c.listMappings) lines.push(`• ${c.listMappings} list mapping${c.listMappings === 1 ? '' : 's'}`);
   if (c.dismissed) lines.push('• dismissed-suggestion entries');
   return lines;
