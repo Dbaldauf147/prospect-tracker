@@ -16,6 +16,7 @@ import { splitPeOwners } from '../../utils/peOwners';
 import { loadOpps2Newest, bulkSetOppField } from '../../utils/opps2Store';
 import { buildCompanyRenamePlan, planHasWork, summarizeRenamePlan, applyListMappingWrites } from '../../utils/companyRenameCascade';
 import { countClientsSubtabRename, clientsSubtabRenameTotal, summarizeClientsSubtabRename, applyClientsSubtabRename } from '../../utils/clientsRename';
+import { planSiteListsRename, applySiteListsRename } from '../../utils/siteListsRename';
 import { computePortfolioFitScore, industrySector, sectorScoreFor, tierForScoreValue, industryTier, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { isContactInEvent, toggleContactInEvents } from '../../utils/eventsStore';
 import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
@@ -4000,15 +4001,24 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       const clientCounts = countClientsSubtabRename(oldName, newName);
       const clientTotal = clientsSubtabRenameTotal(clientCounts);
 
-      if (!planHasWork(plan) && contactCount === 0 && pinnedIds.length === 0 && clientTotal === 0) return;
+      // Uploaded site lists (Master Site List + Utility-Lookup Sites) carry
+      // the company name on their rows; rewrite the matching ones.
+      const sitePlan = await planSiteListsRename(oldName, newName);
+
+      if (!planHasWork(plan) && contactCount === 0 && pinnedIds.length === 0 && clientTotal === 0 && sitePlan.count === 0) return;
       const summaryLines = summarizeRenamePlan(plan);
       if (contactCount > 0) summaryLines.push(`• ${contactCount} HubSpot contact${contactCount === 1 ? '' : 's'} (Company)`);
       summaryLines.push(...summarizeClientsSubtabRename(clientCounts));
+      if (sitePlan.count > 0) summaryLines.push(`• ${sitePlan.count} site-list row${sitePlan.count === 1 ? '' : 's'} (Sites / Master Site List)`);
       const ok = window.confirm(
         `Renamed to "${newName}".\n\nAlso update these references to "${oldName}"?\n\n${summaryLines.join('\n')}`
       );
       if (!ok) return;
       if (clientTotal > 0) applyClientsSubtabRename(oldName, newName);
+      if (sitePlan.count > 0) {
+        try { await applySiteListsRename(sitePlan); }
+        catch (err) { console.error('Company rename: site-list update failed', err); }
+      }
       if (plan.oppIds.length && uid) {
         try { await bulkSetOppField(uid, plan.oppIds, 'Account', newName); }
         catch (err) { console.error('Company rename: opps Account update failed', err); }
