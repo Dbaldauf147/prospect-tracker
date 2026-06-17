@@ -218,6 +218,53 @@ async function setContactPrimaryCompany(token, contactId, companyId) {
   }
 }
 
+// Point a contact's primary Company association at the Company record
+// matching a free-text company name — finding an existing record by
+// exact name, or creating one when there's no match. This is the piece
+// that makes a typed `company` value stick: getAllContacts() rewrites
+// every contact's `company` text from its associated Company's name on
+// each sync, so without a real association the value is blanked on the
+// next refresh and the contact vanishes from the company popup. Returns
+// a companyAssignment summary the client can use to keep its local
+// override when the matched Company's name differs from what was typed,
+// or null when there's no name to assign.
+async function assignContactPrimaryCompanyByName(token, contactId, rawName) {
+  const companyName = (rawName || '').trim();
+  if (!companyName) return null;
+  let match = await findCompanyByName(token, companyName);
+  let companyId = match?.id || null;
+  let matchedName = match?.name || '';
+  let created = false;
+  let createError = null;
+  if (!companyId) {
+    const createRes = await createCompanyByName(token, companyName);
+    if (createRes.ok) {
+      companyId = createRes.id;
+      matchedName = companyName;
+      created = true;
+    } else {
+      createError = createRes;
+    }
+  }
+  if (companyId) {
+    const result = await setContactPrimaryCompany(token, contactId, companyId);
+    return {
+      companyId,
+      created,
+      matchedName,
+      requestedName: companyName,
+      nameDiffers: !!matchedName && matchedName.trim().toLowerCase() !== companyName.trim().toLowerCase(),
+      ...result,
+    };
+  }
+  return {
+    ok: false,
+    status: createError?.status || 0,
+    errorText: createError?.errorText || 'Failed to find or create Company record',
+    requestedName: companyName,
+  };
+}
+
 // Normalize the semicolon-separated `dans_tags` string before we hand
 // it to HubSpot. The frontend displays and stores tags with natural
 // spacing (e.g. "Efficiency / Renewables"), but the HubSpot enumeration
@@ -516,7 +563,20 @@ async function handler(req, res) {
       }
       if (createRes.ok) {
         const created = await createRes.json();
-        return res.json({ success: true, contact: { id: created.id, ...created.properties } });
+        // Establish the primary Company association just like update-contact
+        // does. The free-text `company` property alone doesn't survive: the
+        // canonical-name sync in getAllContacts() reads the association, not
+        // the text, so an unassociated new contact has its `company` blanked
+        // on the next refresh and disappears from the company popup.
+        let companyAssignment = null;
+        if (typeof cleanProps.company === 'string') {
+          try {
+            companyAssignment = await assignContactPrimaryCompanyByName(token, created.id, cleanProps.company);
+          } catch (err) {
+            companyAssignment = { ok: false, status: 0, errorText: String(err?.message || err).slice(0, 300), requestedName: (cleanProps.company || '').trim() };
+          }
+        }
+        return res.json({ success: true, contact: { id: created.id, ...created.properties }, companyAssignment });
       }
       // HubSpot returns 409 CONFLICT when a contact with that email already
       // exists. Recover by fetching the existing contact and returning it so
@@ -554,54 +614,11 @@ async function handler(req, res) {
       }
       const cleanProps = normalizeContactPropertiesForHubSpot(properties);
       // If `company` is being set, also reassign the contact's primary
-      // Company association so the canonical-name sync (getAllContacts)
-      // doesn't revert the edit on next refresh. Find an existing
-      // Company record by exact name; create one if there's no match,
-      // since otherwise the typed value would silently disappear on the
-      // next sync.
+      // Company association (see assignContactPrimaryCompanyByName) so the
+      // canonical-name sync doesn't revert the edit on the next refresh.
       let companyAssignment = null;
       if (typeof cleanProps.company === 'string') {
-        const companyName = cleanProps.company.trim();
-        if (companyName) {
-          let match = await findCompanyByName(token, companyName);
-          let companyId = match?.id || null;
-          let matchedName = match?.name || '';
-          let created = false;
-          let createError = null;
-          if (!companyId) {
-            const createRes = await createCompanyByName(token, companyName);
-            if (createRes.ok) {
-              companyId = createRes.id;
-              matchedName = companyName;
-              created = true;
-            } else {
-              createError = createRes;
-            }
-          }
-          if (companyId) {
-            const result = await setContactPrimaryCompany(token, contactId, companyId);
-            // Surface the existing Company's actual name back to the
-            // client. When matchedName !== companyName the next sync
-            // will overwrite the contact's `company` text with the
-            // matched name, so the client needs to know to keep its
-            // local override of the user-requested value.
-            companyAssignment = {
-              companyId,
-              created,
-              matchedName,
-              requestedName: companyName,
-              nameDiffers: !!matchedName && matchedName.trim().toLowerCase() !== companyName.trim().toLowerCase(),
-              ...result,
-            };
-          } else {
-            companyAssignment = {
-              ok: false,
-              status: createError?.status || 0,
-              errorText: createError?.errorText || 'Failed to find or create Company record',
-              requestedName: companyName,
-            };
-          }
-        }
+        companyAssignment = await assignContactPrimaryCompanyByName(token, contactId, cleanProps.company);
       }
       const patchContact = () => fetch(`${BASE}/crm/v3/objects/contacts/${contactId}`, {
         method: 'PATCH',
