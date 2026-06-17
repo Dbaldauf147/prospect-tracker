@@ -2804,6 +2804,17 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
                 defaultWidth: 36,
                 render: (c) => <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelect(c.id)} onClick={e => e.stopPropagation()} style={{ accentColor: 'var(--color-accent)' }} />
               }] : []),
+              { key: '_name', label: 'Name', defaultWidth: 170, render: (c) => {
+                const full = [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || '(no name)';
+                return (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setEditContact(c); }}
+                    title="Open contact details"
+                    style={{ background: 'none', border: 'none', padding: 0, color: 'var(--color-accent)', fontWeight: 600, fontSize: 'var(--font-size-xs)', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', textDecoration: 'underline', textUnderlineOffset: 2, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                  >{full}</button>
+                );
+              } },
               { key: 'firstname', label: 'First Name', defaultWidth: 120, render: (c) => <HubSpotInlineCell contact={c} field="firstname" value={c.firstname} onSave={handleInlineUpdate} /> },
               { key: 'lastname', label: 'Last Name', defaultWidth: 120, render: (c) => <HubSpotInlineCell contact={c} field="lastname" value={c.lastname} onSave={handleInlineUpdate} /> },
               { key: 'email', label: 'Email', defaultWidth: 200, render: (c) => <HubSpotInlineCell contact={c} field="email" value={c.email} onSave={handleInlineUpdate} /> },
