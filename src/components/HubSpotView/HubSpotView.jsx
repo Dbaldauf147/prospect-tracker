@@ -1473,7 +1473,15 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
       console.error('Inline update failed:', err);
       setPushStatus({ type: 'error', message: `Update failed: ${err.message}` });
     }
-  }, [user]);
+    // contactLocalFields and dansTagOptions must be in the deps: the body
+    // reads contactLocalFields to merge the per-contact _companyOverride
+    // (and other local-only fields) before writing them back with
+    // updateSettings, and reads dansTagOptions to filter tag values. With
+    // a stale [user]-only closure, the override write started from the
+    // snapshot captured at first render (empty), so each inline edit
+    // clobbered overrides saved by earlier edits — making a typed company
+    // name silently revert on the next HubSpot sync.
+  }, [user, contactLocalFields, dansTagOptions, updateSettings]);
 
   // Re-fire the Company-association reassignment for one contact without
   // changing the text. Useful when the original inline edit's reassign
