@@ -2148,7 +2148,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       const d = email.slice(at + 1).toLowerCase().trim();
       return (d && !FREE.has(d)) ? d : '';
     };
-    return hubspotContacts
+    const matched = hubspotContacts
       .filter(c => {
         // The "Show hidden" toggle on the contacts panel below
         // flips this gate off so hide-tagged people resurface — the
@@ -2159,10 +2159,33 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         if (d && domains.has(d)) return true;
         return false;
       });
-  }, [fields.company, fields.emailDomain, fields.website, hubspotContacts, isNew, showHiddenContacts]);
+    // Explicitly linked contacts: ids the user associated with this
+    // company on the popup (stored in settings.companyContactLinks).
+    // They always appear — subject to the hidden toggle — even when the
+    // contact's HubSpot Company text / email domain doesn't match, so
+    // linking an existing contact sticks without a HubSpot refresh.
+    const links = (settings.companyContactLinks || {})[String(fields.company).trim().toLowerCase()] || [];
+    if (links.length) {
+      const present = new Set(matched.map(c => String(c.id || c.vid)));
+      const linkSet = new Set(links.map(String));
+      for (const c of hubspotContacts) {
+        const id = String(c.id || c.vid || '');
+        if (!id || present.has(id) || !linkSet.has(id)) continue;
+        if (!showHiddenContacts && contactIsHidden(c)) continue;
+        matched.push(c);
+        present.add(id);
+      }
+    }
+    return matched;
+  }, [fields.company, fields.emailDomain, fields.website, hubspotContacts, isNew, showHiddenContacts, settings.companyContactLinks]);
 
   const [localContacts, setLocalContacts] = useState(baseContacts);
   useEffect(() => { setLocalContacts(baseContacts); }, [baseContacts]);
+  // Mirror localContacts into a ref so handleContactSaved can tell a brand-
+  // new association (a contact that wasn't already on this company) from an
+  // edit to one already shown, without recreating the callback each render.
+  const localContactsRef = useRef(localContacts);
+  localContactsRef.current = localContacts;
   const companyContacts = localContacts;
 
   // Per-contact sent / received email counts sourced from the
@@ -2806,18 +2829,37 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return matched;
   }, [oppsRecords]);
 
+  // Pin a contact to this company so it always shows on the popup,
+  // regardless of whether its HubSpot Company text matches. Persisted in
+  // settings (Firestore) so the association survives reloads / syncs
+  // without a HubSpot refresh.
+  const linkContactToCompany = useCallback((contactId) => {
+    const id = String(contactId || '');
+    const key = String(fields.company || '').trim().toLowerCase();
+    if (!id || !key) return;
+    const cur = settings.companyContactLinks || {};
+    const list = Array.isArray(cur[key]) ? cur[key] : [];
+    if (list.map(String).includes(id)) return;
+    updateSettings({ companyContactLinks: { ...cur, [key]: [...list, id] } });
+  }, [fields.company, settings.companyContactLinks, updateSettings]);
+
   const handleContactSaved = useCallback((updated, options = {}) => {
+    const updatedId = String(updated.id || updated.vid || '');
+    // A contact not already on this company's roster is a fresh
+    // association — remember it so it sticks without a HubSpot refresh.
+    const wasPresent = localContactsRef.current.some(c => String(c.id || c.vid) === updatedId);
     setLocalContacts(prev => {
-      const existing = prev.find(c => String(c.id || c.vid) === String(updated.id || updated.vid));
+      const existing = prev.find(c => String(c.id || c.vid) === updatedId);
       if (existing) {
-        return prev.map(c => (String(c.id || c.vid) === String(updated.id || updated.vid) ? { ...c, ...updated } : c));
+        return prev.map(c => (String(c.id || c.vid) === updatedId ? { ...c, ...updated } : c));
       }
       return [...prev, updated];
     });
+    if (!wasPresent && updatedId) linkContactToCompany(updatedId);
     if (options.silent) return; // e.g. inline autosaves shouldn't close the modal
     setAddingContact(false);
     setEditingContact(null);
-  }, []);
+  }, [linkContactToCompany]);
 
   const handleSaveContactNote = useCallback((contactId, note) => {
     const current = settings.contactNotes || {};
