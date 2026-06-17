@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
-import { loadDealsList } from '../utils/dealsStore';
+import { loadDealsList, DEALS_LIST_EVENT } from '../utils/dealsStore';
 import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../utils/dealClientMap';
 import { loadClientUntrackedMap, CLIENT_UNTRACKED_EVENT } from '../utils/clientManagerStore';
 import { loadIssueSnoozedMap, ISSUE_SNOOZED_EVENT } from '../utils/issueSnoozeStore';
@@ -45,15 +45,18 @@ export function useIssues({ prospects = [], cdmName, user }) {
       if (e.key === 'clients-untracked-map') setUntrackedMap(loadClientUntrackedMap());
       if (e.key === 'issues-snoozed-map') setSnoozedMap(loadIssueSnoozedMap());
     }
+    function onDealsList() { setDealsList(loadDealsList().data); }
     function onClientMap() { setClientMap(loadDealClientMap()); }
     function onUntracked() { setUntrackedMap(loadClientUntrackedMap()); }
     function onSnoozed() { setSnoozedMap(loadIssueSnoozedMap()); }
     window.addEventListener('storage', onStorage);
+    window.addEventListener(DEALS_LIST_EVENT, onDealsList);
     window.addEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
     window.addEventListener(CLIENT_UNTRACKED_EVENT, onUntracked);
     window.addEventListener(ISSUE_SNOOZED_EVENT, onSnoozed);
     return () => {
       window.removeEventListener('storage', onStorage);
+      window.removeEventListener(DEALS_LIST_EVENT, onDealsList);
       window.removeEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
       window.removeEventListener(CLIENT_UNTRACKED_EVENT, onUntracked);
       window.removeEventListener(ISSUE_SNOOZED_EVENT, onSnoozed);

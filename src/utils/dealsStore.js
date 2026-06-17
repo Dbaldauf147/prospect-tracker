@@ -6,6 +6,10 @@
 import { userLsGet, userLsSet, userLsRemove, userLsHas } from './userLs';
 
 const KEY = 'deals-list-override';
+// Fired whenever the deals roster is saved or cleared, so same-window
+// listeners (e.g. the Issues badge) refresh — the native 'storage' event
+// only fires in OTHER tabs, never the one that made the change.
+export const DEALS_LIST_EVENT = 'deals-list-changed';
 
 export function loadDealsList() {
   try {
@@ -23,10 +27,12 @@ export function loadDealsList() {
 export function saveDealsOverride(arr) {
   if (!Array.isArray(arr)) throw new Error('Deals override must be an array');
   userLsSet(KEY, JSON.stringify(arr));
+  try { window.dispatchEvent(new Event(DEALS_LIST_EVENT)); } catch { /* no window */ }
 }
 
 export function clearDealsOverride() {
   userLsRemove(KEY);
+  try { window.dispatchEvent(new Event(DEALS_LIST_EVENT)); } catch { /* no window */ }
 }
 
 export function hasDealsOverride() {
