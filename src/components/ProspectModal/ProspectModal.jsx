@@ -3816,6 +3816,31 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     renamePortfolioSourceFile(oldName, newName).catch(() => {});
   }
 
+  // A prospect's company name lives on each prospect record independently,
+  // so renaming the company here only touches THIS record. When other
+  // prospects carry the exact same company name, offer to rename them all
+  // in one action. We match on the trimmed, case-insensitive old name so a
+  // rename never silently sweeps up a differently-named company; declining
+  // leaves the other records untouched. Fired alongside migrateCompanyData
+  // when the Company field commits to a new value.
+  function renameCompanyAcrossProspects(oldName, newName) {
+    if (!onUpdateProspect) return;
+    const norm = (s) => (s || '').trim().toLowerCase();
+    const oldNorm = norm(oldName);
+    if (!oldNorm) return;
+    const others = (prospects || []).filter(
+      p => p && p.id !== prospect?.id && norm(p.company) === oldNorm
+    );
+    if (others.length === 0) return;
+    const isOne = others.length === 1;
+    const ok = window.confirm(
+      `${others.length} other prospect${isOne ? '' : 's'} ${isOne ? 'is' : 'are'} also named "${oldName}". `
+      + `Rename ${isOne ? 'it' : 'them all'} to "${newName}" too?`
+    );
+    if (!ok) return;
+    others.forEach(p => { onUpdateProspect(p.id, { company: newName }); });
+  }
+
   function toggleArrayField(key, value) {
     setFields(prev => {
       const arr = prev[key] || [];
@@ -4068,6 +4093,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   const newName = (v || '').trim();
                   if (oldName && newName && oldName.trim() !== newName) {
                     migrateCompanyData(oldName, newName);
+                    renameCompanyAcrossProspects(oldName, newName);
                   }
                   set('company', v);
                 }}
