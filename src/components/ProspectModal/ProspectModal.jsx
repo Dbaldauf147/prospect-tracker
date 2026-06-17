@@ -589,7 +589,7 @@ const PORTFOLIO_FIELD_OPTIONS = [
 // fallback) now lives in ../../data/cities so the All Contacts table
 // can share the exact same auto-fill behavior as this modal.
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, events = [], onToggleContactEvent, companyContacts = [], emailDomains = [], companyNames = [] }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, events = [], onToggleContactEvent, companyContacts = [], emailDomains = [], companyNames = [] }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -776,6 +776,11 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     return () => document.removeEventListener('mousedown', onDown);
   }, [companyOpen]);
   const [error, setError] = useState(null);
+  // Surfaced after a save when the Company edit was kept as a local
+  // override because HubSpot linked the contact to a differently-named
+  // Company record (or couldn't pin the association). Mirrors the note
+  // the HubSpot Contacts page shows.
+  const [companyNote, setCompanyNote] = useState('');
   const [tagsOpen, setTagsOpen] = useState(false);
   const tagsRef = useRef(null);
 
@@ -954,6 +959,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   async function handleSave() {
     setSaving(true);
     setError(null);
+    setCompanyNote('');
     try {
       const allProps = { ...f, dans_tags: buildTagsString() };
       // HubSpot doesn't have these local-only fields — save them separately via settings.
@@ -1044,6 +1050,29 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       }
       if (savedCid && onSaveInvitedToLouisville) {
         onSaveInvitedToLouisville(savedCid, invitedToLouisville);
+      }
+      // Company edits behave the same here as on the HubSpot Contacts
+      // page: HubSpot links the contact to a Company record by name, and
+      // its sync rewrites contact.company with that record's name on the
+      // next refresh. When the matched Company's name differs from what
+      // the user typed (or HubSpot couldn't pin the association at all),
+      // keep the typed value as a local _companyOverride so it sticks —
+      // otherwise clear any stale override now that HubSpot agrees with
+      // the text.
+      if (savedCid && onSaveCompanyOverride && typeof hsProps.company === 'string') {
+        const ca = json.companyAssignment;
+        if (ca && ca.ok === false) {
+          onSaveCompanyOverride(savedCid, hsProps.company);
+          const detail = ca.errorText ? ` · ${ca.errorText}` : '';
+          setCompanyNote(`Saved "${hsProps.company}" locally. HubSpot couldn't pin the Company association${ca.status ? ` (HTTP ${ca.status})` : ''}${detail} — Prospect Tracker will keep your value through future syncs.`);
+        } else if (ca && ca.ok === true) {
+          if (ca.nameDiffers && ca.matchedName) {
+            onSaveCompanyOverride(savedCid, hsProps.company);
+            setCompanyNote(`Saved "${hsProps.company}" locally. HubSpot linked this contact to an existing Company record named "${ca.matchedName}" — its sync will display that name unless you rename the Company in HubSpot. Prospect Tracker will keep your typed value here.`);
+          } else {
+            onSaveCompanyOverride(savedCid, null);
+          }
+        }
       }
       // Persist CC / To Also maps keyed by the contact's primary
       // email — Draft Emails reads these on every campaign preview to
@@ -1633,6 +1662,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           </div>
         </div>
         {error && <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: '#FEF2F2', borderRadius: '6px', fontSize: '0.75rem', color: '#DC2626' }}>{error}</div>}
+        {companyNote && <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: '6px', fontSize: '0.75rem', color: '#166534' }}>{companyNote}</div>}
         {mergeOpen && (() => {
           const allCandidates = (companyContacts || [])
             .concat((contact && Array.isArray(contact.__allContacts)) ? contact.__allContacts : [])
@@ -7233,6 +7263,25 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           onSaveNote={handleSaveContactNote}
           contactOldEmails={settings.contactOldEmails || {}}
           onSaveOldEmails={handleSaveContactOldEmails}
+          onSaveCompanyOverride={(contactId, value) => {
+            // value === null clears the override; a string pins it. Stored
+            // in settings.contactLocalFields, the same map App.jsx reads to
+            // make _companyOverride win over the HubSpot-synced company text
+            // everywhere the contact is shown.
+            const cur = settings.contactLocalFields || {};
+            const merged = { ...(cur[contactId] || {}) };
+            if (value === null) {
+              if (merged._companyOverride === undefined) return;
+              delete merged._companyOverride;
+            } else {
+              if (merged._companyOverride === value) return;
+              merged._companyOverride = value;
+            }
+            const next = { ...cur };
+            if (Object.keys(merged).length === 0) delete next[contactId];
+            else next[contactId] = merged;
+            updateSettings({ contactLocalFields: next });
+          }}
           contactNicknames={settings.contactNicknames || {}}
           onSaveNickname={handleSaveContactNickname}
           contactTeamNames={settings.contactTeamNames || {}}
