@@ -1052,25 +1052,26 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
         onSaveInvitedToLouisville(savedCid, invitedToLouisville);
       }
       // Company edits behave the same here as on the HubSpot Contacts
-      // page: HubSpot links the contact to a Company record by name, and
-      // its sync rewrites contact.company with that record's name on the
-      // next refresh. When the matched Company's name differs from what
-      // the user typed (or HubSpot couldn't pin the association at all),
-      // keep the typed value as a local _companyOverride so it sticks —
-      // otherwise clear any stale override now that HubSpot agrees with
-      // the text.
+      // page: the API renames the Company record this contact is linked to,
+      // so the new name lands in HubSpot and cascades to every contact at
+      // that company. If the rename fails (or the contact had no company and
+      // HubSpot linked it to a differently-named record), keep the typed
+      // value as a local _companyOverride; otherwise clear any stale
+      // override now that HubSpot holds the name.
       if (savedCid && onSaveCompanyOverride && typeof hsProps.company === 'string') {
         const ca = json.companyAssignment;
         if (ca && ca.ok === false) {
           onSaveCompanyOverride(savedCid, hsProps.company);
           const detail = ca.errorText ? ` · ${ca.errorText}` : '';
-          setCompanyNote(`Saved "${hsProps.company}" locally. HubSpot couldn't pin the Company association${ca.status ? ` (HTTP ${ca.status})` : ''}${detail} — Prospect Tracker will keep your value through future syncs.`);
+          const what = ca.mode === 'rename-failed' ? 'rename the Company record' : 'pin the Company association';
+          setCompanyNote(`Saved "${hsProps.company}" locally. HubSpot couldn't ${what}${ca.status ? ` (HTTP ${ca.status})` : ''}${detail} — Prospect Tracker will keep your value through future syncs.`);
         } else if (ca && ca.ok === true) {
-          if (ca.nameDiffers && ca.matchedName) {
+          onSaveCompanyOverride(savedCid, null);
+          if (ca.mode === 'renamed') {
+            setCompanyNote(`Renamed the HubSpot Company "${ca.oldName || '—'}" → "${hsProps.company}". This updates it for every contact linked to that company.`);
+          } else if (ca.nameDiffers && ca.matchedName) {
             onSaveCompanyOverride(savedCid, hsProps.company);
-            setCompanyNote(`Saved "${hsProps.company}" locally. HubSpot linked this contact to an existing Company record named "${ca.matchedName}" — its sync will display that name unless you rename the Company in HubSpot. Prospect Tracker will keep your typed value here.`);
-          } else {
-            onSaveCompanyOverride(savedCid, null);
+            setCompanyNote(`Saved "${hsProps.company}" locally. This contact had no linked company, so HubSpot linked it to an existing record named "${ca.matchedName}". Prospect Tracker will keep your typed value here.`);
           }
         }
       }

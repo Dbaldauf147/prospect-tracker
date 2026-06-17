@@ -1404,36 +1404,39 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
         });
         const json = await res.json();
         if (json.error) throw new Error(json.error);
-        // When the user changed the `company` field, the API also tries
-        // to pin the contact's primary Company association so the next
-        // sync doesn't revert the text. If that step fails, fall back
-        // to a local Prospect Tracker override so the typed value
-        // sticks regardless of HubSpot's sync behavior. When it
-        // succeeds, clear any prior override that's no longer needed.
+        // When the user changed the `company` field, the API renames the
+        // Company record the contact is linked to so the new name lands in
+        // HubSpot (and cascades to every contact at that company). If that
+        // push fails, fall back to a local Prospect Tracker override so the
+        // typed value sticks regardless. On success, clear any prior
+        // override that's no longer needed since HubSpot now holds the name.
         const ca = json.companyAssignment;
         if (typeof hubspotProps.company === 'string') {
           if (ca && ca.ok === false) {
             companyOverrideSetTo = hubspotProps.company;
             const detail = ca.errorText ? ` · ${ca.errorText}` : '';
+            const what = ca.mode === 'rename-failed' ? 'rename the Company record' : 'pin the Company association';
             setPushStatus({
               type: 'success',
-              message: `Saved "${hubspotProps.company}" locally. HubSpot couldn't pin the Company association${ca.status ? ` (HTTP ${ca.status})` : ''}${detail} — Prospect Tracker will keep your value through future syncs.`,
+              message: `Saved "${hubspotProps.company}" locally. HubSpot couldn't ${what}${ca.status ? ` (HTTP ${ca.status})` : ''}${detail} — Prospect Tracker will keep your value through future syncs.`,
             });
           } else if (ca && ca.ok === true) {
-            // HubSpot accepted the association, but if it pinned to a
-            // Company record whose `name` differs from what the user
-            // typed, the next sync will overwrite the contact.company
-            // text with the matched Company's name. Keep our typed
-            // value via the local override and surface a warning so
-            // the user knows what's happening on the HubSpot side.
-            if (ca.nameDiffers && ca.matchedName) {
+            // Success: HubSpot now holds the typed name, so drop any override.
+            companyOverrideSetTo = null;
+            if (ca.mode === 'renamed') {
+              setPushStatus({
+                type: 'success',
+                message: `Renamed the HubSpot Company "${ca.oldName || '—'}" → "${hubspotProps.company}". This updates it for every contact linked to that company.`,
+              });
+            } else if (ca.nameDiffers && ca.matchedName) {
+              // Fallback (contact had no linked company): HubSpot linked it
+              // to an existing record whose name differs from what was typed.
+              // Keep the typed value locally and explain.
               companyOverrideSetTo = hubspotProps.company;
               setPushStatus({
                 type: 'success',
-                message: `Saved "${hubspotProps.company}" locally. HubSpot linked this contact to an existing Company record named "${ca.matchedName}" — its sync will display that name unless you rename the Company in HubSpot. Prospect Tracker will keep your typed value here.`,
+                message: `Saved "${hubspotProps.company}" locally. This contact had no linked company, so HubSpot linked it to an existing Company record named "${ca.matchedName}". Prospect Tracker will keep your typed value here.`,
               });
-            } else {
-              companyOverrideSetTo = null;
             }
           }
         }
