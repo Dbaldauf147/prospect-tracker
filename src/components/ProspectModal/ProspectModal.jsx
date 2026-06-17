@@ -2193,7 +2193,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         if (!showHiddenContacts && contactIsHidden(c)) return false;
         if (companiesMatch(c.company, fields.company)) return true;
         const d = contactDomain(c.email);
-        if (d && domains.has(d)) return true;
+        if (d && domains.has(d)) {
+          // Domain match only fills in contacts whose own Company text
+          // is blank. A shared parent domain (e.g. blackstone.com)
+          // otherwise drags every portfolio company's people onto each
+          // entity's popup — a contact whose Company already reads
+          // "Blackstone" shouldn't surface under "BRE Hotels & Resorts".
+          // Contacts that genuinely belong here but carry a mismatched
+          // Company text can still be pinned via "link" (companyContactLinks).
+          if (!(c.company || '').trim()) return true;
+        }
         return false;
       });
     // Explicitly linked contacts: ids the user associated with this
@@ -2201,7 +2210,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     // They always appear — subject to the hidden toggle — even when the
     // contact's HubSpot Company text / email domain doesn't match, so
     // linking an existing contact sticks without a HubSpot refresh.
-    const links = (settings.companyContactLinks || {})[String(fields.company).trim().toLowerCase()] || [];
+    const key = String(fields.company).trim().toLowerCase();
+    const links = (settings.companyContactLinks || {})[key] || [];
     if (links.length) {
       const present = new Set(matched.map(c => String(c.id || c.vid)));
       const linkSet = new Set(links.map(String));
@@ -2213,8 +2223,25 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         present.add(id);
       }
     }
+    // Per-company exclusions: ids the user explicitly removed from this
+    // company's roster (settings.companyContactExclusions) without
+    // deleting them from HubSpot. They're dropped here so a shared-domain
+    // or fuzzy-name false positive stays gone across syncs. The "Show
+    // hidden" toggle surfaces them again so the user can re-add them.
+    const exIds = new Set(((settings.companyContactExclusions || {})[key] || []).map(String));
+    if (exIds.size) {
+      if (showHiddenContacts) {
+        const present = new Set(matched.map(c => String(c.id || c.vid)));
+        for (const c of hubspotContacts) {
+          const id = String(c.id || c.vid || '');
+          if (id && exIds.has(id) && !present.has(id)) { matched.push(c); present.add(id); }
+        }
+      } else {
+        return matched.filter(c => !exIds.has(String(c.id || c.vid || '')));
+      }
+    }
     return matched;
-  }, [fields.company, fields.emailDomain, fields.website, hubspotContacts, isNew, showHiddenContacts, settings.companyContactLinks]);
+  }, [fields.company, fields.emailDomain, fields.website, hubspotContacts, isNew, showHiddenContacts, settings.companyContactLinks, settings.companyContactExclusions]);
 
   const [localContacts, setLocalContacts] = useState(baseContacts);
   useEffect(() => { setLocalContacts(baseContacts); }, [baseContacts]);
@@ -2879,6 +2906,41 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     if (list.map(String).includes(id)) return;
     updateSettings({ companyContactLinks: { ...cur, [key]: [...list, id] } });
   }, [fields.company, settings.companyContactLinks, updateSettings]);
+
+  // Ids the user removed from THIS company's popup without deleting them
+  // from HubSpot (settings.companyContactExclusions, keyed by company
+  // name). baseContacts drops these; the row render uses the set to show
+  // a "re-add" affordance for excluded contacts surfaced via "Show hidden".
+  const excludedContactIds = useMemo(() => {
+    const key = String(fields.company || '').trim().toLowerCase();
+    return new Set(((settings.companyContactExclusions || {})[key] || []).map(String));
+  }, [fields.company, settings.companyContactExclusions]);
+
+  // Remove a contact from this company's roster only. Non-destructive —
+  // the contact stays in HubSpot and on every other company it matches.
+  const excludeContactFromCompany = useCallback((contactId) => {
+    const id = String(contactId || '');
+    const key = String(fields.company || '').trim().toLowerCase();
+    if (!id || !key) return;
+    const cur = settings.companyContactExclusions || {};
+    const list = Array.isArray(cur[key]) ? cur[key].map(String) : [];
+    if (list.includes(id)) return;
+    updateSettings({ companyContactExclusions: { ...cur, [key]: [...list, id] } });
+  }, [fields.company, settings.companyContactExclusions, updateSettings]);
+
+  // Undo an exclusion so the contact can match this company again.
+  const unexcludeContactFromCompany = useCallback((contactId) => {
+    const id = String(contactId || '');
+    const key = String(fields.company || '').trim().toLowerCase();
+    if (!id || !key) return;
+    const cur = settings.companyContactExclusions || {};
+    const list = Array.isArray(cur[key]) ? cur[key].map(String) : [];
+    if (!list.includes(id)) return;
+    const nextList = list.filter(x => x !== id);
+    const next = { ...cur };
+    if (nextList.length) next[key] = nextList; else delete next[key];
+    updateSettings({ companyContactExclusions: next });
+  }, [fields.company, settings.companyContactExclusions, updateSettings]);
 
   const handleContactSaved = useCallback((updated, options = {}) => {
     const updatedId = String(updated.id || updated.vid || '');
@@ -6954,8 +7016,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           ? { bg: '#DBEAFE', color: '#1D4ED8', label: 'Bulk' }
                           : { bg: '#FFEDD5', color: '#9A3412', label: 'HubSpot' };
                         const counts = getContactEmailCounts(c);
+                        const isExcluded = excludedContactIds.has(String(c.id || c.vid || ''));
                         return (
-                          <tr key={c.id || i} onClick={() => setEditingContact(c)} style={{ borderBottom: '1px solid #F1F5F9', cursor: 'pointer', background: isDM ? '#FEFCE8' : '', borderLeft: isDM ? '3px solid #F59E0B' : '' }} onMouseEnter={e => e.currentTarget.style.background = isDM ? '#FEF9C3' : '#F8FAFC'} onMouseLeave={e => e.currentTarget.style.background = isDM ? '#FEFCE8' : ''}>
+                          <tr key={c.id || i} onClick={() => setEditingContact(c)} style={{ borderBottom: '1px solid #F1F5F9', cursor: 'pointer', background: isDM ? '#FEFCE8' : '', borderLeft: isDM ? '3px solid #F59E0B' : '', opacity: isExcluded ? 0.5 : 1 }} onMouseEnter={e => e.currentTarget.style.background = isDM ? '#FEF9C3' : '#F8FAFC'} onMouseLeave={e => e.currentTarget.style.background = isDM ? '#FEFCE8' : ''}>
                             <td style={{ padding: '0.35rem 0.4rem', textAlign: 'center', width: '34px' }} onClick={e => e.stopPropagation()}>
                               {(() => {
                                 const cid = String(c.id || c.vid || '');
@@ -7050,11 +7113,30 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               })()}
                             </td>
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.68rem' }}>{(settings.contactNotes || {})[c.id || c.vid] || c.notes || c.hs_content_membership_notes || c.message || '—'}</td>
-                            <td style={{ padding: '0.35rem 0.3rem', textAlign: 'center' }}>
+                            <td style={{ padding: '0.35rem 0.3rem', textAlign: 'center', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
+                              {(() => {
+                                const cid = String(c.id || c.vid || '');
+                                if (!cid) return null;
+                                return isExcluded ? (
+                                  <button
+                                    onClick={e => { e.stopPropagation(); unexcludeContactFromCompany(cid); }}
+                                    title="Re-add this contact to this company"
+                                    style={{ background: 'none', border: 'none', color: '#059669', fontSize: '0.66rem', fontWeight: 700, cursor: 'pointer', padding: '0 4px', lineHeight: 1, fontFamily: 'inherit' }}
+                                  >＋ Re-add</button>
+                                ) : (
+                                  <button
+                                    onClick={e => { e.stopPropagation(); excludeContactFromCompany(cid); }}
+                                    title="Remove from this company only (keeps the contact in HubSpot)"
+                                    style={{ background: 'none', border: 'none', color: '#CBD5E1', fontSize: '0.9rem', cursor: 'pointer', padding: '0 3px', lineHeight: 1, fontFamily: 'inherit' }}
+                                    onMouseEnter={e => e.currentTarget.style.color = '#F59E0B'}
+                                    onMouseLeave={e => e.currentTarget.style.color = '#CBD5E1'}
+                                  >⊘</button>
+                                );
+                              })()}
                               <button
                                 onClick={e => { e.stopPropagation(); handleDeleteContact(c); }}
                                 disabled={deletingContact === (c.id || c.vid)}
-                                title="Delete contact"
+                                title="Delete contact from HubSpot (permanent)"
                                 style={{ background: 'none', border: 'none', color: '#CBD5E1', fontSize: '0.85rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1, fontFamily: 'inherit' }}
                                 onMouseEnter={e => e.target.style.color = '#EF4444'}
                                 onMouseLeave={e => e.target.style.color = '#CBD5E1'}
