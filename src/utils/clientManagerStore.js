@@ -104,3 +104,51 @@ export function setClientNotes(company, value) {
   else map[key] = next;
   persistMap(NOTES_KEY, map, CLIENT_NOTES_EVENT);
 }
+
+// Every per-client typed field, paired with its change event, so a rename
+// can sweep all of them in one place.
+const ALL_CLIENT_MAPS = [
+  [MANAGER_KEY, CLIENT_MANAGER_EVENT],
+  [IN_PERSON_KEY, CLIENT_IN_PERSON_EVENT],
+  [STATUS_KEY, CLIENT_STATUS_EVENT],
+  [NOTES_KEY, CLIENT_NOTES_EVENT],
+  [UNTRACKED_KEY, CLIENT_UNTRACKED_EVENT],
+  [LOUISVILLE_KEY, CLIENT_LOUISVILLE_EVENT],
+];
+
+// How many per-client field values would move if `oldName` were renamed to
+// `newName` — for the rename-confirmation summary. A field only moves when
+// the new name doesn't already carry its own value (we never clobber data
+// the user entered under the new name).
+export function countClientFieldRenames(oldName, newName) {
+  const o = normKey(oldName);
+  const n = normKey(newName);
+  if (!o || !n || o === n) return 0;
+  let count = 0;
+  for (const [key] of ALL_CLIENT_MAPS) {
+    const map = loadMap(key);
+    if (map[o] !== undefined && map[n] === undefined) count++;
+  }
+  return count;
+}
+
+// Move the Client Manager / In Person / Status / Notes / Untracked /
+// Louisville values from `oldName` to `newName` so the typed Clients-tab
+// data follows a company rename instead of stranding under the old name.
+// Returns the number of field values moved.
+export function renameClientFields(oldName, newName) {
+  const o = normKey(oldName);
+  const n = normKey(newName);
+  if (!o || !n || o === n) return 0;
+  let count = 0;
+  for (const [key, evt] of ALL_CLIENT_MAPS) {
+    const map = loadMap(key);
+    if (map[o] !== undefined && map[n] === undefined) {
+      map[n] = map[o];
+      delete map[o];
+      persistMap(key, map, evt);
+      count++;
+    }
+  }
+  return count;
+}

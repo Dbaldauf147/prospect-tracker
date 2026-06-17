@@ -93,3 +93,35 @@ export function saveCommissionsOverride(arr) {
 export function clearCommissionsOverride() {
   userLsRemove(KEY);
 }
+
+// Commission rows link to a client through their "Account Name" lookup
+// column (the autocomplete the user fills against the prospect roster).
+const ACCOUNT_NAME_KEY = 'Account Name';
+const commissionMatches = (row, lowerName) =>
+  String(row?.[ACCOUNT_NAME_KEY] || '').trim().toLowerCase() === lowerName;
+
+// How many commission rows point their Account Name at `oldName` — for the
+// rename confirmation summary.
+export function countCommissionsClientRename(oldName, newName) {
+  const o = String(oldName || '').trim().toLowerCase();
+  const n = String(newName || '').trim();
+  if (!o || !n || o === n.toLowerCase()) return 0;
+  return loadCommissions().data.filter(r => commissionMatches(r, o)).length;
+}
+
+// Rewrite the Account Name on every commission row that reads `oldName` onto
+// `newName` so a client rename carries through to the Commissions subtab.
+// Returns the number of rows changed.
+export function renameCommissionsClient(oldName, newName) {
+  const o = String(oldName || '').trim().toLowerCase();
+  const n = String(newName || '').trim();
+  if (!o || !n || o === n.toLowerCase()) return 0;
+  const { data } = loadCommissions();
+  let count = 0;
+  const next = data.map(row => {
+    if (commissionMatches(row, o)) { count++; return { ...row, [ACCOUNT_NAME_KEY]: n }; }
+    return row;
+  });
+  if (count > 0) saveCommissionsOverride(next);
+  return count;
+}
