@@ -6523,6 +6523,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     const nicknames = settings.contactNicknames || {};
                     const teamNames = settings.contactTeamNames || {};
                     const contactNotes = settings.contactNotes || {};
+                    // Coerce a stored LinkedIn value (full URL, bare
+                    // linkedin.com path, or vanity slug) into a clickable
+                    // https URL; returns '' when there's nothing to link.
+                    const toLinkedInUrl = (raw) => {
+                      const v = String(raw || '').trim();
+                      if (!v) return '';
+                      if (/^https?:\/\//i.test(v)) return v;
+                      if (/linkedin\.com/i.test(v)) return `https://${v.replace(/^\/+/, '')}`;
+                      return `https://www.linkedin.com/in/${v.replace(/^\/+/, '')}`;
+                    };
                     const data = sorted.map(c => {
                       const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || '';
                       const nick = c.id && nicknames[c.id] ? nicknames[c.id] : '';
@@ -6575,8 +6585,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         const zebra = idx % 2 === 1;
                         vals.forEach((v, i) => {
                           const cell = row.getCell(i + 1);
-                          cell.value = v === '' || v == null ? null : v;
-                          cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+                          // Full Name (col 3) links to the contact's LinkedIn
+                          // (col 13) when available, rendered as a blue link.
+                          const liUrl = i === 3 ? toLinkedInUrl(vals[13]) : '';
+                          if (i === 3 && v && liUrl) {
+                            cell.value = { text: v, hyperlink: liUrl };
+                            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: 'FF0563C1' }, underline: true };
+                          } else {
+                            cell.value = v === '' || v == null ? null : v;
+                            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+                          }
                           cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: i === 14 /* Notes */ };
                           cell.border = {
                             bottom: { style: 'thin', color: { argb: SE_BORDER } },
