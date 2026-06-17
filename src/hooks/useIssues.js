@@ -12,13 +12,31 @@ import { computeIssues } from '../utils/clientIssues';
 // re-reads on the matching cross-tab events so an upload, a tracking
 // toggle, or a snooze anywhere refreshes both consumers.
 //
+// `user` matters for the sidebar badge: App mounts (and runs the useState
+// initializers below) before auth resolves, so the first read happens
+// while localStorage is still unscoped and returns nothing. Once the user
+// id is known the per-user store is scoped, so we re-read everything when
+// the uid changes — otherwise the badge would stay stuck at the empty
+// pre-login snapshot. (IssuesView mounts after login, so it reads correct
+// data straight away; the re-read is a harmless no-op there.)
+//
 // Each returned issue carries a `snoozed` flag. `openCount` is the number
 // of issues that are NOT snoozed — that's the number shown on the sidebar.
-export function useIssues({ prospects = [], cdmName }) {
+export function useIssues({ prospects = [], cdmName, user }) {
   const [dealsList, setDealsList] = useState(() => loadDealsList().data);
   const [clientMap, setClientMap] = useState(() => loadDealClientMap());
   const [untrackedMap, setUntrackedMap] = useState(() => loadClientUntrackedMap());
   const [snoozedMap, setSnoozedMap] = useState(() => loadIssueSnoozedMap());
+
+  // Re-read once the per-user localStorage scope is established (and on any
+  // later account switch), since the initial reads above may have run
+  // before login under the unscoped/anon prefix.
+  useEffect(() => {
+    setDealsList(loadDealsList().data);
+    setClientMap(loadDealClientMap());
+    setUntrackedMap(loadClientUntrackedMap());
+    setSnoozedMap(loadIssueSnoozedMap());
+  }, [user?.uid]);
 
   useEffect(() => {
     function onStorage(e) {
