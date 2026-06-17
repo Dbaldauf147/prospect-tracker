@@ -510,27 +510,26 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
   };
 
   // Key-contact names per Blue Owl company. A HubSpot "Decision Maker"
-  // contact ties to a row only when it belongs to that specific company —
-  // either its company name fuzzily matches or the contact's registered
-  // email domain is on that company. We deliberately do NOT spread in the
-  // company's PE owner or related portfolio companies, so each row shows
-  // only its own contacts. Deduped by display name. Feeds the Blue Owl
-  // tab's "Key Contacts" column.
+  // contact ties to a row only on a strict 1-to-1 company-name match: the
+  // contact's HubSpot Company must be the *same* company as the row (after
+  // normalizing case, punctuation and legal suffixes). We deliberately drop
+  // the loose fuzzy substring / acronym match and the email-domain fallback
+  // here — those leaked a PE owner's decision maker (e.g. Dan Egan on "Blue
+  // Owl") onto portfolio-company rows that merely shared a token or domain.
+  // We also do NOT spread in the company's PE owner or related portfolio
+  // companies, so each row shows only its own contacts. Deduped by display
+  // name. Feeds the Blue Owl tab's "Key Contacts" column.
   const blueOwlDmByCompanyId = useMemo(() => {
     const map = new Map();
     if (decisionMakers.length === 0) return map;
     for (const p of peFirmCompanies) {
-      const firmName = (p.company || '').trim().toLowerCase();
-      if (!firmName) continue;
-      const domains = new Set();
-      collectProspectDomains(p, domains);
+      const rowName = normalizeAccount(p.company);
+      if (!rowName) continue;
       const seen = new Set();
       const names = [];
       for (const dm of decisionMakers) {
-        const matches =
-          (dm.company && companiesMatch(firmName, dm.company)) ||
-          (dm.domain && domains.has(dm.domain));
-        if (!matches || seen.has(dm.name)) continue;
+        if (!dm.company || normalizeAccount(dm.company) !== rowName) continue;
+        if (seen.has(dm.name)) continue;
         seen.add(dm.name);
         names.push(dm.name);
       }
