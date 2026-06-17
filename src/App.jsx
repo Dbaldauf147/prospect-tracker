@@ -58,7 +58,7 @@ function App() {
   const cdmName = settings.cdmName || (user?.email === 'baldaufdan@gmail.com' ? 'Dan Baldauf' : (user?.displayName || ''));
   // Open (non-snoozed) issue count for the sidebar badge. Shares the same
   // hook the Issues tab uses so the badge and the tab never disagree.
-  const { openCount: openIssuesCount } = useIssues({ prospects, cdmName });
+  const { openCount: openIssuesCount } = useIssues({ prospects, cdmName, user });
   useSheetSync(user);
   const {
     filtered, searchTerm, setSearchTerm,
