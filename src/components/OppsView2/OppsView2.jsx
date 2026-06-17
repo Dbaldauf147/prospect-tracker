@@ -7633,6 +7633,23 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return searched;
   }, [prefiltered, search, showOnlySelected, selectedIds]);
 
+  // "Waiting on Keith" subtab: opps where Keith appears in the Waiting On
+  // column. The displayed Waiting On value is the stacked per-step
+  // `_nextStepsWaiting` array (falling back to the legacy "Waiting On"
+  // field), so we match against the same text the Opportunities tab shows.
+  // Sourced from `prefiltered` so it honours the Date / Status / Show /
+  // Hide-history filters but stays independent of the Opportunities search.
+  const waitingOnKeith = useMemo(() => {
+    return prefiltered.filter(row => {
+      const stacked = (Array.isArray(row._nextStepsWaiting) ? row._nextStepsWaiting : [])
+        .map(s => String(s || '').trim())
+        .filter(Boolean)
+        .join('\n');
+      const text = stacked || String(row['Waiting On'] ?? '');
+      return text.toLowerCase().includes('keith');
+    });
+  }, [prefiltered]);
+
   // Mass Edit → "Email table": the selected opps to feed the preview/copy
   // modal (which lets the user pick columns and copies a plain bordered
   // table). Null when closed.
@@ -8626,6 +8643,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           onClick={() => setActiveTab('newOpps')}
         >New Opps{newOpps.length ? ` (${newOpps.length})` : ''}</button>
         <button
+          className={activeTab === 'waitingKeith' ? styles.tabActive : styles.tab}
+          onClick={() => setActiveTab('waitingKeith')}
+        >Waiting on Keith{waitingOnKeith.length ? ` (${waitingOnKeith.length})` : ''}</button>
+        <button
           className={activeTab === 'services' ? styles.tabActive : styles.tab}
           onClick={() => setActiveTab('services')}
         >By Service</button>
@@ -8879,6 +8900,43 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               emptyMessage={`No active opps within ${NEW_OPPS_MAX_STAGE_AGE_DAYS} days in Lead/Qualifying/Quoting.`}
               settings={settings}
               updateSettings={updateSettings}
+            />
+          )}
+        </>
+      )}
+
+      {activeTab === 'waitingKeith' && (
+        <>
+          <div className={styles.searchRow}>
+            <span className={styles.resultCount}>
+              {waitingOnKeith.length} opp{waitingOnKeith.length === 1 ? '' : 's'} waiting on Keith
+            </span>
+          </div>
+          <div style={{ padding: '0 0 0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
+            Shows opps with “Keith” in the Waiting On column.
+          </div>
+          {loading && !data ? (
+            <div className={styles.loading}>Loading...</div>
+          ) : (
+            <DataTable
+              tableId="opps2-waiting-keith"
+              columns={columns}
+              rows={waitingOnKeith}
+              alwaysVisible={['Account', '_info']}
+              enableColumnFilters
+              variableRowHeight
+              emptyMessage="No opps are waiting on Keith."
+              settings={settings}
+              updateSettings={updateSettings}
+              rowStyle={(row) => {
+                const nfat = String(row?.['No Further Action Today'] || '').trim().toLowerCase();
+                if (nfat === 'yes') return { background: '#E5E7EB' };
+                if (nfat === 'no') return { background: '#FEF9C3' };
+                const stage = String(row?.Stage || '').trim();
+                if (stage === 'Sold') return { background: '#DCFCE7' };
+                if (stage === 'Not Sold') return { background: '#FEE2E2' };
+                return undefined;
+              }}
             />
           )}
         </>
