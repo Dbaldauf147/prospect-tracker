@@ -518,25 +518,40 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
   };
 
   // Key-contact names per Blue Owl company. A HubSpot "Decision Maker"
-  // contact ties to a row only on a strict 1-to-1 company-name match: the
-  // contact's HubSpot Company must be the *same* company as the row (after
-  // normalizing case, punctuation and legal suffixes). We deliberately drop
-  // the loose fuzzy substring / acronym match and the email-domain fallback
-  // here — those leaked a PE owner's decision maker (e.g. Dan Egan on "Blue
-  // Owl") onto portfolio-company rows that merely shared a token or domain.
-  // We also do NOT spread in the company's PE owner or related portfolio
-  // companies, so each row shows only its own contacts. Deduped by display
-  // name. Feeds the Blue Owl tab's "Key Contacts" column.
+  // contact ties to a row on either (a) a strict 1-to-1 company-name match
+  // — the contact's HubSpot Company is the *same* company as the row after
+  // normalizing case, punctuation and legal suffixes — or (b) the contact's
+  // email domain matching one of THIS row's own registered domains. We still
+  // deliberately drop the loose fuzzy substring / acronym match, and the
+  // domain check is scoped per-row (never the PE owner's or sibling PCs'
+  // domains): both guards keep a PE owner's decision maker (e.g. Dan Egan on
+  // "Blue Owl") from leaking onto portfolio-company rows that merely share a
+  // token or a union domain. The earlier regression came from matching
+  // against the firm-wide union of domains; a single company's own domain is
+  // safe and lets e.g. delpers@americancampus.com land on the ACC row even
+  // when its typed Company text doesn't normalize-equal the row name. We also
+  // do NOT spread in the company's PE owner or related portfolio companies,
+  // so each row shows only its own contacts. Deduped by display name. Feeds
+  // the Blue Owl tab's "Key Contacts" column.
   const blueOwlDmByCompanyId = useMemo(() => {
     const map = new Map();
     if (decisionMakers.length === 0) return map;
     for (const p of peFirmCompanies) {
       const rowName = normalizeAccount(p.company);
-      if (!rowName) continue;
+      // Per-company registered domains — this prospect's own emailDomain /
+      // website only, never the PE owner's or sibling portfolio companies'.
+      // A domain match scoped to a single row stays precise (a contact at
+      // americancampus.com lands only on the ACC row) and can't leak a PE
+      // owner's decision maker the way the old union-domain fallback did.
+      const rowDomains = new Set();
+      collectProspectDomains(p, rowDomains);
+      if (!rowName && rowDomains.size === 0) continue;
       const seen = new Set();
       const names = [];
       for (const dm of decisionMakers) {
-        if (!dm.company || normalizeAccount(dm.company) !== rowName) continue;
+        const nameMatch = dm.company && rowName && normalizeAccount(dm.company) === rowName;
+        const domainMatch = dm.domain && rowDomains.has(dm.domain);
+        if (!nameMatch && !domainMatch) continue;
         if (seen.has(dm.name)) continue;
         seen.add(dm.name);
         names.push(dm.name);
