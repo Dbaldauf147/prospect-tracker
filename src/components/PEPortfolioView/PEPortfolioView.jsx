@@ -765,7 +765,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           { key: 'portfolio', label: 'Portfolio', count: peFirms.length },
           { key: 'stages', label: 'PE Stages', count: peFirms.length },
           { key: 'companies', label: 'All PCs', count: allPortfolioCompanyCount },
-          { key: 'blueOwl', label: peFirm.trim() || 'PE Firm', count: peFirmCompanies.length },
+          { key: 'blueOwl', label: 'PE Overview', count: peFirmCompanies.length },
           { key: 'opps', label: 'PE Opps', count: peOpps.length },
         ].map(t => {
           const isActive = subtab === t.key;
