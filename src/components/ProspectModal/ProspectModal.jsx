@@ -6512,8 +6512,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     const SE_TEXT_DARK = 'FF1E293B';
                     const SE_ZEBRA = 'FFF6F9F4';
                     const SE_BORDER = 'FFD4DDE1';
-                    const headers = ['First Name', 'Last Name', 'Name', 'Full Name', 'Title', 'Team Name', 'Tags', 'Role', 'Email', 'Phone', 'City', 'State', 'Country', 'LinkedIn', 'Notes'];
-                    const colWidths = [18, 18, 22, 26, 28, 20, 24, 14, 32, 18, 18, 10, 14, 32, 40];
+                    const headers = ['First Name', 'Last Name', 'Name', 'Full Name', 'Title', 'Reports To', 'Team Name', 'Tags', 'Role', 'Email', 'Phone', 'City', 'State', 'Country', 'LinkedIn', 'Notes'];
+                    const colWidths = [18, 18, 22, 26, 28, 24, 20, 24, 14, 32, 18, 18, 10, 14, 32, 40];
                     const sorted = [...companyContacts].sort((a, b) => {
                       const aLeft = contactHasTag(a, 'left') ? 1 : 0;
                       const bLeft = contactHasTag(b, 'left') ? 1 : 0;
@@ -6533,6 +6533,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       if (/linkedin\.com/i.test(v)) return `https://${v.replace(/^\/+/, '')}`;
                       return `https://www.linkedin.com/in/${v.replace(/^\/+/, '')}`;
                     };
+                    // Resolve each contact's "Reports To" manager ids (stored
+                    // in settings.contactReportsTo) to display names, using
+                    // the full contact pool since a manager may not be in
+                    // this company's roster.
+                    const reportsToMap = settings.contactReportsTo || {};
+                    const contactById = new Map();
+                    for (const c of hubspotContacts) { const id = c.id || c.vid; if (id) contactById.set(String(id), c); }
+                    const contactName = (c) => [(c.firstname || '').trim(), (c.lastname || '').trim()].filter(Boolean).join(' ') || (c.email || '');
                     const data = sorted.map(c => {
                       const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || '';
                       const nick = c.id && nicknames[c.id] ? nicknames[c.id] : '';
@@ -6543,9 +6551,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         : contactHasTag(c, 'hide') ? 'Hide' : '';
                       const note = (c.id && contactNotes[c.id]) || c.notes || c.hs_content_membership_notes || '';
                       const linkedin = c.hs_linkedin_url || c.linkedin_url || c.hs_linkedinid || '';
+                      const mgrIds = (c.id && Array.isArray(reportsToMap[c.id])) ? reportsToMap[c.id] : [];
+                      const reportsTo = mgrIds
+                        .map(id => { const m = contactById.get(String(id)); return m ? contactName(m) : ''; })
+                        .filter(Boolean)
+                        .join(', ');
                       return [
                         c.firstname || '', c.lastname || '',
-                        name, fullName, c.jobtitle || '', (c.id && teamNames[c.id]) || '',
+                        name, fullName, c.jobtitle || '', reportsTo, (c.id && teamNames[c.id]) || '',
                         tags, role, c.email || '', c.phone || '',
                         c.city || '', c.state || '', c.country || '',
                         linkedin, note,
@@ -6586,8 +6599,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         vals.forEach((v, i) => {
                           const cell = row.getCell(i + 1);
                           // Full Name (col 3) links to the contact's LinkedIn
-                          // (col 13) when available, rendered as a blue link.
-                          const liUrl = i === 3 ? toLinkedInUrl(vals[13]) : '';
+                          // (col 14) when available, rendered as a blue link.
+                          const liUrl = i === 3 ? toLinkedInUrl(vals[14]) : '';
                           if (i === 3 && v && liUrl) {
                             cell.value = { text: v, hyperlink: liUrl };
                             cell.font = { name: 'Nunito Sans', size: 10, color: { argb: 'FF0563C1' }, underline: true };
@@ -6595,7 +6608,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             cell.value = v === '' || v == null ? null : v;
                             cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
                           }
-                          cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: i === 14 /* Notes */ };
+                          cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: i === 15 /* Notes */ };
                           cell.border = {
                             bottom: { style: 'thin', color: { argb: SE_BORDER } },
                             left: { style: 'thin', color: { argb: SE_BORDER } },
