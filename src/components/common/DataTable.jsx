@@ -6,6 +6,7 @@ const COL_WIDTHS_PREFIX = 'prospect-col-widths-';
 const COL_VISIBLE_PREFIX = 'prospect-col-visible-';
 const COL_NAMES_PREFIX = 'prospect-col-names-';
 const COL_ORDER_PREFIX = 'prospect-col-order-';
+const COL_REMOVED_PREFIX = 'prospect-col-removed-';
 
 function loadColNames(tableId) {
   try { return JSON.parse(localStorage.getItem(COL_NAMES_PREFIX + tableId)) || {}; } catch { return {}; }
@@ -52,6 +53,16 @@ function loadColVisible(tableId, allKeys) {
   } catch { return new Set(allKeys); }
 }
 function saveColVisible(tableId, set) { localStorage.setItem(COL_VISIBLE_PREFIX + tableId, JSON.stringify([...set])); }
+
+// Removed columns (removableColumns mode only): keys the user has taken
+// out of the table layout entirely. Unlike hidden columns these don't
+// appear in the Columns dropdown's "Hidden" list — they come back only
+// via Reset. Stored as a plain key array; absent / unparseable reads as
+// "nothing removed".
+function loadColRemoved(tableId) {
+  try { const v = JSON.parse(localStorage.getItem(COL_REMOVED_PREFIX + tableId)); return new Set(Array.isArray(v) ? v : []); } catch { return new Set(); }
+}
+function saveColRemoved(tableId, set) { localStorage.setItem(COL_REMOVED_PREFIX + tableId, JSON.stringify([...set])); }
 
 // Combobox-style per-column filter. Holds an array of "picked" values that
 // the row's column value must match (substring). A text input drives both
@@ -272,7 +283,7 @@ function ColumnFilterCell({ value, onChange, suggestions }) {
   );
 }
 
-function ColumnToggle({ columns, visibleCols, onToggle, alwaysVisible, colNames, onRename, onReorder, onResetOrder, removable, onResetColumns }) {
+function ColumnToggle({ columns, visibleCols, onToggle, onRemove, removedCount = 0, alwaysVisible, colNames, onRename, onReorder, onResetOrder, removable, onResetColumns }) {
   const [open, setOpen] = useState(false);
   const [editingKey, setEditingKey] = useState(null);
   const [editName, setEditName] = useState('');
@@ -377,15 +388,17 @@ function ColumnToggle({ columns, visibleCols, onToggle, alwaysVisible, colNames,
           {(onReorder || removable) && (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, padding: '2px 6px 6px', borderBottom: '1px solid var(--color-border-light)', marginBottom: 4 }}>
               <span style={{ fontSize: '0.62rem', color: 'var(--color-text-muted)' }}>
-                {removable ? 'Drag ⠿ to reorder · × to remove' : 'Drag ⠿ to reorder · uncheck to hide'}
+                {removable ? 'Drag ⠿ to reorder · Hide (restorable) or Remove (Reset only)' : 'Drag ⠿ to reorder · uncheck to hide'}
               </span>
               {(removable ? onResetColumns : onResetOrder) && (
                 <button
                   type="button"
                   onClick={() => (removable ? onResetColumns() : onResetOrder())}
                   style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.62rem', color: 'var(--color-text-muted)', cursor: 'pointer', padding: '1px 6px', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
-                  title={removable ? 'Restore all columns and the default order' : 'Restore the default column order'}
-                >{removable ? 'Reset' : 'Reset order'}</button>
+                  title={removable
+                    ? `Restore all columns (incl. ${removedCount} removed) and the default order`
+                    : 'Restore the default column order'}
+                >{removable ? `Reset${removedCount ? ` (${removedCount} removed)` : ''}` : 'Reset order'}</button>
               )}
             </div>
           )}
@@ -399,17 +412,24 @@ function ColumnToggle({ columns, visibleCols, onToggle, alwaysVisible, colNames,
                     {dragHandle(col)}
                     {renderName(col)}
                     {locked ? (
-                      <span title="This column can't be removed" style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem', padding: '0 2px' }}>🔒</span>
+                      <span title="This column can't be hidden or removed" style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem', padding: '0 2px' }}>🔒</span>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={() => onToggle(col.key)}
-                        title="Remove this column (moves to Hidden)"
-                        aria-label={`Remove ${labelOf(col)}`}
-                        style={{ background: 'transparent', border: 'none', color: '#94A3B8', fontSize: '0.95rem', lineHeight: 1, cursor: 'pointer', padding: '0 2px' }}
-                        onMouseEnter={e => e.currentTarget.style.color = '#B91C1C'}
-                        onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
-                      >×</button>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <button
+                          type="button"
+                          onClick={() => onToggle(col.key)}
+                          title="Hide this column — moves it to the Hidden list, where you can restore it with “+ Show”"
+                          aria-label={`Hide ${labelOf(col)}`}
+                          style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.62rem', fontWeight: 600, color: 'var(--color-text-muted)', cursor: 'pointer', padding: '1px 6px', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                        >Hide</button>
+                        <button
+                          type="button"
+                          onClick={() => (onRemove ? onRemove(col.key) : onToggle(col.key))}
+                          title="Remove this column from the table — it won’t show in the Hidden list. Restore it with Reset."
+                          aria-label={`Remove ${labelOf(col)}`}
+                          style={{ background: 'transparent', border: '1px solid #FECACA', borderRadius: 4, fontSize: '0.62rem', fontWeight: 600, color: '#B91C1C', cursor: 'pointer', padding: '1px 6px', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                        >Remove</button>
+                      </span>
                     )}
                   </div>
                 );
@@ -495,6 +515,7 @@ function persistPrefs(tableId, settings, updateSettings, prefsUpdate) {
   if (prefsUpdate.visible !== undefined) saveColVisible(tableId, prefsUpdate.visible);
   if (prefsUpdate.names !== undefined) saveColNames(tableId, prefsUpdate.names);
   if (prefsUpdate.order !== undefined) saveColOrder(tableId, prefsUpdate.order);
+  if (prefsUpdate.removed !== undefined) saveColRemoved(tableId, prefsUpdate.removed);
   if (!settings || !updateSettings || !tableId) return;
   const current = settings.tablePrefs?.[tableId] || {};
   const nextEntry = { ...current };
@@ -504,6 +525,7 @@ function persistPrefs(tableId, settings, updateSettings, prefsUpdate) {
   // Order is a plain array of column keys — stored as-is (no map-key
   // encoding needed, and keys like `_select` are fine as array values).
   if (prefsUpdate.order !== undefined) nextEntry.order = [...prefsUpdate.order];
+  if (prefsUpdate.removed !== undefined) nextEntry.removed = [...prefsUpdate.removed];
   updateSettings({
     tablePrefs: { ...(settings.tablePrefs || {}), [tableId]: nextEntry },
   });
@@ -612,12 +634,25 @@ export function DataTable({
   const [colOrder, setColOrder] = useState(() => (
     Array.isArray(remotePrefs?.order) ? remotePrefs.order : loadColOrder(tableId)
   ));
+  const [removedCols, setRemovedCols] = useState(() => (
+    Array.isArray(remotePrefs?.removed) ? new Set(remotePrefs.removed) : loadColRemoved(tableId)
+  ));
   const [colFilters, setColFilters] = useState({});
   const resizingRef = useRef(null);
 
+  // Columns the user hasn't removed from the layout. Removed columns
+  // (removableColumns mode) are dropped here so they don't render, don't
+  // export, and don't appear in the Columns dropdown — they return only
+  // via Reset. Tables without removable mode never populate removedCols,
+  // so this is a no-op for them.
+  const presentColumns = useMemo(
+    () => (removedCols.size === 0 ? columns : columns.filter(c => !removedCols.has(c.key))),
+    [columns, removedCols],
+  );
+
   // The columns in the user's saved order (defaults to prop order). All
   // rendering — header, body, visibility list, export — runs off this.
-  const orderedColumns = useMemo(() => orderColumns(columns, colOrder), [columns, colOrder]);
+  const orderedColumns = useMemo(() => orderColumns(presentColumns, colOrder), [presentColumns, colOrder]);
 
   // Sync local state when Firestore-backed prefs arrive or change on
   // another device. Stringify-compare so we don't churn state when the
@@ -643,6 +678,11 @@ export function DataTable({
     if (Array.isArray(remotePrefs.order) && JSON.stringify(remotePrefs.order) !== JSON.stringify(colOrder)) {
       setColOrder(remotePrefs.order);
     }
+    if (Array.isArray(remotePrefs.removed)) {
+      const incoming = new Set(remotePrefs.removed);
+      const same = incoming.size === removedCols.size && [...incoming].every(k => removedCols.has(k));
+      if (!same) setRemovedCols(incoming);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsLoaded, remotePrefs]);
 
@@ -654,13 +694,15 @@ export function DataTable({
     setColOrder([]);
     persistPrefs(tableId, settings, updateSettings, { order: [] });
   }
-  // Removable mode's Reset: restore every column (all visible) and the
-  // default order in one go.
+  // Removable mode's Reset: restore every column (all visible, none
+  // removed) and the default order in one go.
   function resetColumns() {
     const allKeys = new Set(columns.map(c => c.key));
+    const emptyRemoved = new Set();
     setVisibleCols(allKeys);
     setColOrder([]);
-    persistPrefs(tableId, settings, updateSettings, { visible: allKeys, order: [] });
+    setRemovedCols(emptyRemoved);
+    persistPrefs(tableId, settings, updateSettings, { visible: allKeys, order: [], removed: emptyRemoved });
   }
 
   function renameCol(key, name) {
@@ -950,6 +992,29 @@ export function DataTable({
     });
   }
 
+  // Remove a column from the layout entirely (removableColumns mode).
+  // Unlike Hide it doesn't land in the restorable "Hidden" list — Reset
+  // is the only way back. We also drop it from the visible set so a later
+  // Reset (which restores everything visible) shows it again rather than
+  // resurrecting it hidden.
+  function removeCol(key) {
+    if (alwaysVisible.includes(key)) return;
+    const nextVisible = new Set(visibleCols); nextVisible.delete(key);
+    setVisibleCols(nextVisible);
+    // Drop any active filter on the column so it doesn't keep silently
+    // filtering rows once its header (and filter input) are gone.
+    setColFilters(prev => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev }; delete next[key];
+      return next;
+    });
+    setRemovedCols(prev => {
+      const next = new Set(prev); next.add(key);
+      persistPrefs(tableId, settings, updateSettings, { removed: next, visible: nextVisible });
+      return next;
+    });
+  }
+
   const handleResizeStart = useCallback((e, colKey) => {
     e.preventDefault();
     e.stopPropagation();
@@ -984,7 +1049,7 @@ export function DataTable({
   return (
     <div className={styles.outerWrap}>
       <div className={styles.toolbar}>
-        <ColumnToggle columns={orderedColumns} visibleCols={visibleCols} onToggle={toggleCol} alwaysVisible={alwaysVisible} colNames={colNames} onRename={renameCol} onReorder={reorderCols} onResetOrder={resetColOrder} removable={removableColumns} onResetColumns={resetColumns} />
+        <ColumnToggle columns={orderedColumns} visibleCols={visibleCols} onToggle={toggleCol} onRemove={removeCol} removedCount={removedCols.size} alwaysVisible={alwaysVisible} colNames={colNames} onRename={renameCol} onReorder={reorderCols} onResetOrder={resetColOrder} removable={removableColumns} onResetColumns={resetColumns} />
         <button className={styles.resetBtn} onClick={() => { setColWidths({}); persistPrefs(tableId, settings, updateSettings, { widths: {} }); }}>
           Reset widths
         </button>
