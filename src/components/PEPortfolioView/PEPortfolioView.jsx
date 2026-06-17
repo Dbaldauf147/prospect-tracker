@@ -1750,6 +1750,20 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
   const rows = useMemo(() => companies.map(p => {
     const counts = oppCountsByCompanyId.get(p.id);
     const pcCounts = pcOppCountsByCompanyId.get(p.id);
+    // Bucket the explored services by outcome. "In Progress" is any
+    // service that's been explored but isn't a terminal Sold / Not Sold
+    // (or N/A / blank) — i.e. the in-flight statuses (Exploring, Quoting,
+    // Verbal, In Progress, etc.).
+    const svc = p.servicesExplored || {};
+    const servicesSold = [];
+    const servicesNotSold = [];
+    const servicesInProgress = [];
+    for (const [name, status] of Object.entries(svc)) {
+      const s = String(status || '').trim();
+      if (s === 'Sold') servicesSold.push(name);
+      else if (s === 'Not Sold') servicesNotSold.push(name);
+      else if (s && s !== '-' && s !== 'N/A') servicesInProgress.push(name);
+    }
     return {
       id: p.id,
       _prospect: p,
@@ -1776,6 +1790,9 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
       pcOppCompanies: pcCounts?.companyNames || [],
       pcOppContacts: pcCounts?.contactNames || [],
       decisionMakerNames: dmNamesByCompanyId.get(p.id) || [],
+      servicesSold,
+      servicesNotSold,
+      servicesInProgress,
       peOwner: p.peOwner || '',
       notes: p.notes || '',
     };
@@ -1817,6 +1834,24 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
           {r.company || '—'}
         </button>
       ) },
+      // Explored-services breakdown, pulled from each prospect's
+      // servicesExplored map (service name -> status). Read-only here —
+      // edit the statuses in the prospect's Services Explored panel.
+      { key: 'servicesSold', label: 'Services Sold', defaultWidth: 220,
+        getSortValue: (r) => r.servicesSold.length,
+        getFilterValue: (r) => r.servicesSold.join(', '),
+        exportValue: (r) => r.servicesSold.join(', '),
+        render: (r) => <NameListCell items={r.servicesSold} empty="No services sold" /> },
+      { key: 'servicesNotSold', label: 'Services Not Sold', defaultWidth: 220,
+        getSortValue: (r) => r.servicesNotSold.length,
+        getFilterValue: (r) => r.servicesNotSold.join(', '),
+        exportValue: (r) => r.servicesNotSold.join(', '),
+        render: (r) => <NameListCell items={r.servicesNotSold} empty="No services marked not sold" /> },
+      { key: 'servicesInProgress', label: 'Services In Progress', defaultWidth: 220,
+        getSortValue: (r) => r.servicesInProgress.length,
+        getFilterValue: (r) => r.servicesInProgress.join(', '),
+        exportValue: (r) => r.servicesInProgress.join(', '),
+        render: (r) => <NameListCell items={r.servicesInProgress} empty="No services in progress" /> },
       // Bulk-edit checkbox. Sits after the Company column (not before)
       // because Company is the sticky column pinned at left: 0 — a
       // column to its left would slide underneath it on horizontal
@@ -2044,7 +2079,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
             // Companies / Contacts + Decision Makers columns at -6, the
             // PC Download + Strategies columns at -7) aren't hidden by a
             // saved visible-set from an older one.
-            tableId="pe-blue-owl-companies-7"
+            tableId="pe-blue-owl-companies-8"
             columns={columns}
             rows={filtered}
             alwaysVisible={['company', '_select']}
