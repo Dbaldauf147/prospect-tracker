@@ -995,8 +995,13 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
         }
       }
       if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
-      // Include notes in the saved contact (stored locally)
-      const savedContact = isNew ? { id: json.id, ...allProps } : { ...contact, ...allProps };
+      // Include notes in the saved contact (stored locally). create-contact
+      // returns the new record under json.contact (id + properties), not a
+      // top-level json.id — reading json.id left new contacts with an
+      // undefined id, so they never got a companyContactLinks pin and their
+      // per-contact metadata (notes/team/etc.) saved under an empty key.
+      const newId = json?.contact?.id ?? json?.id;
+      const savedContact = isNew ? { id: newId, ...allProps } : { ...contact, ...allProps };
       // Update HubSpot cache (exclude notes/oldEmails — those live in Firestore settings)
       try {
         await updateHubspotCache(draft => {
