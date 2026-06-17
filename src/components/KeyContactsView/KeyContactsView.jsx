@@ -635,13 +635,14 @@ function KeyContactsViewInner({
         if (target) target[field] = next;
       });
     } catch (err) { console.warn('Inline cache update failed', err); }
-    // Company-field saves also need the local-override pin so the
-    // typed value sticks when HubSpot's fuzzy Company match resolves
-    // to a record whose name differs (e.g. "Prologis" → "Prologis
-    // Inc"). Mirror HubSpotView.handleInlineUpdate's behavior:
-    //   - association failed entirely → keep override = typed value
-    //   - association succeeded but matched-name differs → keep override
-    //   - association succeeded with matching name → clear override
+    // Company-field saves rename the Company record this contact is linked
+    // to (so the new name lands in HubSpot and cascades to every contact at
+    // that company). Keep a local override only when that push fails, or
+    // when the contact had no company and HubSpot linked it to a
+    // differently-named record. Mirror HubSpotView.handleInlineUpdate:
+    //   - rename/associate failed → keep override = typed value
+    //   - associate fallback matched a different name → keep override
+    //   - rename succeeded (or names already matched) → clear override
     if (field === 'company') {
       const cur = settings?.contactLocalFields || {};
       const merged = { ...(cur[id] || {}) };
@@ -651,12 +652,18 @@ function KeyContactsViewInner({
           merged._companyOverride = next;
           didChange = true;
         }
-        if (companyAssignment?.nameDiffers && companyAssignment?.matchedName) {
-          setMassStatus({ type: 'success', message: `Saved "${next}" locally. HubSpot linked this contact to "${companyAssignment.matchedName}" — Prospect Tracker will keep your typed value here.` });
+        if (companyAssignment?.ok === false) {
+          const what = companyAssignment.mode === 'rename-failed' ? 'rename the Company record' : 'pin the Company association';
+          setMassStatus({ type: 'success', message: `Saved "${next}" locally. HubSpot couldn't ${what} — Prospect Tracker will keep your typed value here.` });
+        } else if (companyAssignment?.nameDiffers && companyAssignment?.matchedName) {
+          setMassStatus({ type: 'success', message: `Saved "${next}" locally. This contact had no linked company, so HubSpot linked it to "${companyAssignment.matchedName}" — Prospect Tracker will keep your typed value here.` });
         }
       } else if (merged._companyOverride !== undefined) {
         delete merged._companyOverride;
         didChange = true;
+        if (companyAssignment?.mode === 'renamed') {
+          setMassStatus({ type: 'success', message: `Renamed the HubSpot Company "${companyAssignment.oldName || '—'}" → "${next}" (updates every contact linked to it).` });
+        }
       }
       if (didChange) {
         const nextLocal = { ...cur };

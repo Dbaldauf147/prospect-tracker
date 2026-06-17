@@ -265,6 +265,83 @@ async function assignContactPrimaryCompanyByName(token, contactId, rawName) {
   };
 }
 
+// Apply a contact's edited company name by RENAMING the Company record the
+// contact is already linked to — the behavior we want: the canonical
+// Company object in HubSpot takes the new name, so it cascades to every
+// contact associated with that company and survives the next sync (which
+// derives each contact's company from its associated Company's name).
+//
+// This deliberately avoids writing the contact↔company association, which
+// is the step that was failing with "couldn't pin the Company association".
+// We only READ the contact's primary company id (mirrored on the contact as
+// `associatedcompanyid`, the same field getAllContacts() uses) and PATCH
+// that company's name.
+//
+// Falls back to find-or-create + associate only when the contact has no
+// company linked yet (nothing to rename) — e.g. a freshly created contact.
+//
+// Returns a summary the client uses to decide whether it still needs a local
+// override: on a successful rename the override is cleared, because HubSpot
+// now holds the typed name. `mode` is one of renamed | unchanged | rename-
+// failed, or the assign summary's shape when it falls back.
+async function renameContactCompany(token, contactId, rawName) {
+  const newName = (rawName || '').trim();
+  if (!newName) return null;
+
+  // The primary associated Company id is mirrored onto the contact as the
+  // `associatedcompanyid` property.
+  let companyId = '';
+  try {
+    const res = await fetch(`${BASE}/crm/v3/objects/contacts/${contactId}?properties=associatedcompanyid`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      companyId = String(data.properties?.associatedcompanyid || '').trim();
+    }
+  } catch { /* fall through to the associate path */ }
+
+  // No company linked yet → nothing to rename. Find or create one and pin it,
+  // same path a brand-new contact takes.
+  if (!companyId) {
+    return assignContactPrimaryCompanyByName(token, contactId, newName);
+  }
+
+  // Read the current name so we can no-op when it already matches and report
+  // the before/after in the response.
+  let oldName = '';
+  try {
+    const res = await fetch(`${BASE}/crm/v3/objects/companies/${companyId}?properties=name`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      oldName = String(data.properties?.name || '').trim();
+    }
+  } catch { /* unknown current name — attempt the rename anyway */ }
+
+  if (oldName && oldName.toLowerCase() === newName.toLowerCase()) {
+    return { ok: true, mode: 'unchanged', companyId, oldName, newName, requestedName: newName, nameDiffers: false };
+  }
+
+  // Rename the Company record itself.
+  try {
+    const res = await fetch(`${BASE}/crm/v3/objects/companies/${companyId}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ properties: { name: newName } }),
+    });
+    if (res.ok) {
+      return { ok: true, mode: 'renamed', companyId, oldName, newName, requestedName: newName, nameDiffers: false };
+    }
+    let errorText = '';
+    try { errorText = (await res.text()).slice(0, 300); } catch { /* noop */ }
+    return { ok: false, mode: 'rename-failed', companyId, oldName, requestedName: newName, status: res.status, errorText };
+  } catch (err) {
+    return { ok: false, mode: 'rename-failed', companyId, oldName, requestedName: newName, status: 0, errorText: String(err?.message || err).slice(0, 300) };
+  }
+}
+
 // Normalize the semicolon-separated `dans_tags` string before we hand
 // it to HubSpot. The frontend displays and stores tags with natural
 // spacing (e.g. "Efficiency / Renewables"), but the HubSpot enumeration
@@ -613,12 +690,15 @@ async function handler(req, res) {
         return res.status(400).json({ error: 'contactId is required' });
       }
       const cleanProps = normalizeContactPropertiesForHubSpot(properties);
-      // If `company` is being set, also reassign the contact's primary
-      // Company association (see assignContactPrimaryCompanyByName) so the
-      // canonical-name sync doesn't revert the edit on the next refresh.
+      // If `company` is being set, rename the Company record the contact is
+      // linked to (see renameContactCompany). That pushes the new name onto
+      // the canonical Company object so it cascades to every linked contact
+      // and survives the next sync, instead of trying to re-pin an
+      // association (the step that was failing). When the contact has no
+      // company yet it falls back to find-or-create + associate.
       let companyAssignment = null;
       if (typeof cleanProps.company === 'string') {
-        companyAssignment = await assignContactPrimaryCompanyByName(token, contactId, cleanProps.company);
+        companyAssignment = await renameContactCompany(token, contactId, cleanProps.company);
       }
       const patchContact = () => fetch(`${BASE}/crm/v3/objects/contacts/${contactId}`, {
         method: 'PATCH',
