@@ -647,23 +647,25 @@ function KeyContactsViewInner({
       const cur = settings?.contactLocalFields || {};
       const merged = { ...(cur[id] || {}) };
       let didChange = false;
-      if (!companyAssignment || companyAssignment.ok === false || companyAssignment.nameDiffers) {
+      // Always pin the typed value locally so it survives a refresh
+      // regardless of HubSpot sync/association timing; the API also renamed
+      // the linked Company record. (Empty string → clear the override.)
+      if (next) {
         if (merged._companyOverride !== next) {
           merged._companyOverride = next;
           didChange = true;
         }
-        if (companyAssignment?.ok === false) {
-          const what = companyAssignment.mode === 'rename-failed' ? 'rename the Company record' : 'pin the Company association';
-          setMassStatus({ type: 'success', message: `Saved "${next}" locally. HubSpot couldn't ${what} — Prospect Tracker will keep your typed value here.` });
-        } else if (companyAssignment?.nameDiffers && companyAssignment?.matchedName) {
-          setMassStatus({ type: 'success', message: `Saved "${next}" locally. This contact had no linked company, so HubSpot linked it to "${companyAssignment.matchedName}" — Prospect Tracker will keep your typed value here.` });
-        }
       } else if (merged._companyOverride !== undefined) {
         delete merged._companyOverride;
         didChange = true;
-        if (companyAssignment?.mode === 'renamed') {
-          setMassStatus({ type: 'success', message: `Renamed the HubSpot Company "${companyAssignment.oldName || '—'}" → "${next}" (updates every contact linked to it).` });
-        }
+      }
+      if (companyAssignment?.ok === false) {
+        const what = companyAssignment.mode === 'rename-failed' ? 'rename the Company record' : 'pin the Company association';
+        setMassStatus({ type: 'success', message: `Saved "${next}" locally. HubSpot couldn't ${what} — Prospect Tracker will keep your typed value here.` });
+      } else if (companyAssignment?.nameDiffers && companyAssignment?.matchedName) {
+        setMassStatus({ type: 'success', message: `Saved "${next}" locally. This contact had no linked company, so HubSpot linked it to "${companyAssignment.matchedName}".` });
+      } else if (companyAssignment?.mode === 'renamed') {
+        setMassStatus({ type: 'success', message: `Renamed the HubSpot Company "${companyAssignment.oldName || '—'}" → "${next}" (updates every contact linked to it).` });
       }
       if (didChange) {
         const nextLocal = { ...cur };
