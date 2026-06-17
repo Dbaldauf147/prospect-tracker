@@ -509,28 +509,26 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     }
   };
 
-  // Decision-Maker contact names per Blue Owl company, matched the same
-  // way the Portfolio tab's DM column does: a HubSpot "Decision Maker"
-  // contact ties to a row when its company name fuzzily matches the
-  // company (or any of its portfolio companies) or its registered email
-  // domain is on them. Deduped by display name. Feeds the Blue Owl tab's
-  // "Decision Makers" column.
+  // Key-contact names per Blue Owl company. A HubSpot "Decision Maker"
+  // contact ties to a row only when it belongs to that specific company —
+  // either its company name fuzzily matches or the contact's registered
+  // email domain is on that company. We deliberately do NOT spread in the
+  // company's PE owner or related portfolio companies, so each row shows
+  // only its own contacts. Deduped by display name. Feeds the Blue Owl
+  // tab's "Key Contacts" column.
   const blueOwlDmByCompanyId = useMemo(() => {
     const map = new Map();
     if (decisionMakers.length === 0) return map;
     for (const p of peFirmCompanies) {
       const firmName = (p.company || '').trim().toLowerCase();
       if (!firmName) continue;
-      const portfolio = portfolioByPe.get(firmName) || [];
-      const candidates = [firmName, ...portfolio.map(pc => (pc.company || '').toLowerCase().trim()).filter(Boolean)];
       const domains = new Set();
       collectProspectDomains(p, domains);
-      for (const pc of portfolio) collectProspectDomains(pc, domains);
       const seen = new Set();
       const names = [];
       for (const dm of decisionMakers) {
         const matches =
-          (dm.company && candidates.some(n => companiesMatch(n, dm.company))) ||
+          (dm.company && companiesMatch(firmName, dm.company)) ||
           (dm.domain && domains.has(dm.domain));
         if (!matches || seen.has(dm.name)) continue;
         seen.add(dm.name);
@@ -539,7 +537,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       if (names.length) map.set(p.id, names);
     }
     return map;
-  }, [peFirmCompanies, decisionMakers, portfolioByPe]);
+  }, [peFirmCompanies, decisionMakers]);
 
   // Per-firm stage stats — the row-level data behind the stages table.
   //   decisionMakerNames  : DM contacts on this PE firm (or its PCs)
@@ -1950,7 +1948,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
       { key: 'pcOppContacts', label: 'PC Opp Contacts', defaultWidth: 220, getSortValue: (r) => r.pcOppContacts.length, getFilterValue: (r) => r.pcOppContacts.join(', '), exportValue: (r) => r.pcOppContacts.join(', '), render: (r) => <NameListCell items={r.pcOppContacts} empty="No contacts on PC opps" /> },
       // Decision-Maker contacts for this PE firm (HubSpot "Decision
       // Maker"-tagged, matched by company or email domain).
-      { key: 'decisionMakers', label: 'Decision Makers', defaultWidth: 220, getSortValue: (r) => r.decisionMakerNames.length, getFilterValue: (r) => r.decisionMakerNames.join(', '), exportValue: (r) => r.decisionMakerNames.join(', '), render: (r) => <NameListCell items={r.decisionMakerNames} empty="No decision makers found" /> },
+      { key: 'decisionMakers', label: 'Key Contacts', defaultWidth: 220, getSortValue: (r) => r.decisionMakerNames.length, getFilterValue: (r) => r.decisionMakerNames.join(', '), exportValue: (r) => r.decisionMakerNames.join(', '), render: (r) => <NameListCell items={r.decisionMakerNames} empty="No key contacts found" /> },
       { key: 'peOwner', label: 'PE Owner', defaultWidth: 170, render: editable({ key: 'peOwner', label: 'PE Owner' }) },
       // Strategies: multi-tag investment-strategy field, editable inline
       // (same control + vocabulary as the company pop-up, with add-new).
