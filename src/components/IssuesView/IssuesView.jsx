@@ -1,7 +1,9 @@
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { DataTable } from '../common/DataTable';
 import { fmtDate } from '../../utils/dealsFormat';
 import { setIssueSnoozed } from '../../utils/issueSnoozeStore';
+import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
+import { normClientName } from '../../utils/clientIssues';
 import { useIssues } from '../../hooks/useIssues';
 
 // Issues tab — a running list of outstanding items that need to be
@@ -17,6 +19,20 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
   // useIssues handles loading the source data + listening for cross-tab
   // refreshes, and tags each row with a `snoozed` flag.
   const { issues, openCount } = useIssues({ prospects, cdmName });
+
+  // Client Manager is owned by the Clients tab; mirror it here (read-only)
+  // and re-read when it changes there so the column stays in sync.
+  const [managerMap, setManagerMap] = useState(() => loadClientManagerMap());
+  useEffect(() => {
+    function onStorage(e) { if (e.key === 'clients-manager-map') setManagerMap(loadClientManagerMap()); }
+    function onManager() { setManagerMap(loadClientManagerMap()); }
+    window.addEventListener('storage', onStorage);
+    window.addEventListener(CLIENT_MANAGER_EVENT, onManager);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener(CLIENT_MANAGER_EVENT, onManager);
+    };
+  }, []);
 
   const prospectById = useMemo(() => {
     const m = new Map();
@@ -60,6 +76,17 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
             {row.company}
           </button>
         );
+      },
+    },
+    {
+      key: 'clientManager', label: 'Client Manager', defaultWidth: 180,
+      getFilterValue: (row) => managerMap[normClientName(row.company)] || '',
+      getSortValue: (row) => (managerMap[normClientName(row.company)] || '').toLowerCase(),
+      render: (row) => {
+        const name = managerMap[normClientName(row.company)] || '';
+        return name
+          ? <span style={{ color: '#334155' }}>{name}</span>
+          : <span style={{ color: '#94A3B8' }}>—</span>;
       },
     },
     {
@@ -113,7 +140,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
         </button>
       ),
     },
-  ], [onSelectProspect, prospectById]);
+  ], [onSelectProspect, prospectById, managerMap]);
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
