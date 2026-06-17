@@ -397,3 +397,35 @@ export async function setOppField(userId, oppId, field, value) {
 export async function setOppBfoLink(userId, oppId, bfoLink) {
   return setOppField(userId, oppId, 'BFO Link', bfoLink);
 }
+
+// Set one field to the same value across many opps in a single load/save
+// cycle (setOppField reloads and resaves the whole dataset per call, so a
+// loop over it is O(n) full rewrites). Used by the company-rename cascade
+// to repoint every linked opp's Account onto the new name at once. Returns
+// the number of records actually changed.
+export async function bulkSetOppField(userId, oppIds, field, value) {
+  const ids = new Set((oppIds || []).map(id => String(id)));
+  if (ids.size === 0) return 0;
+  const data = await loadOpps2Newest(userId);
+  if (!data || !Array.isArray(data.records)) {
+    throw new Error('Opps data has not loaded yet.');
+  }
+  let changed = 0;
+  const now = Date.now();
+  const records = data.records.map((r) => {
+    if (!ids.has(String(r?._id))) return r;
+    changed += 1;
+    const prevStamps = (r._fieldUpdatedAt && typeof r._fieldUpdatedAt === 'object') ? r._fieldUpdatedAt : null;
+    return {
+      ...r,
+      [field]: value,
+      _rowUpdatedAt: now,
+      _fieldUpdatedAt: { ...(prevStamps || {}), [field]: now },
+    };
+  });
+  if (changed === 0) return 0;
+  const next = { ...data, records };
+  await saveOpps2Cache(next);
+  await trySaveOpps2ToFirestore(userId, next);
+  return changed;
+}
