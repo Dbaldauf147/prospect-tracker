@@ -1,7 +1,7 @@
 // Reference dropdown lists for the Opps workflow. Lifted from the
 // shared spreadsheet so the same option vocabulary surfaces inside
 // the app — used by the Dropdowns reference tab.
-import { PE_STRATEGIES } from './enums';
+import { PE_STRATEGIES, ASSET_TYPES } from './enums';
 
 export const DROPDOWN_LISTS = [
   {
@@ -375,6 +375,15 @@ export const DROPDOWN_LISTS = [
     key: 'peStrategies',
     label: 'PE Strategies',
     options: [...PE_STRATEGIES],
+  },
+  {
+    // Asset Types for company / PE records. Editing this list on the
+    // Dropdowns tab drives the Asset Types multi-select in Table View,
+    // the company pop-up's Asset Types field and the PE Overview tab's
+    // Asset Types column.
+    key: 'assetTypes',
+    label: 'Asset Types',
+    options: [...ASSET_TYPES],
   },
 ];
 

@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx';
 import { Badge } from '../common/Badge';
 import { statusColor, tierColor, formatAum, formatNumber } from '../../utils/formatters';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS } from '../../data/enums';
-import { buildTypeOptions, buildCdmOptions, persistCustomOption } from '../../utils/prospectOptions';
+import { buildTypeOptions, buildCdmOptions, persistCustomOption, buildAssetTypeOptions } from '../../utils/prospectOptions';
 import { PasteAddModal } from './PasteAddModal';
 import styles from './TableView.module.css';
 
@@ -86,7 +86,9 @@ function TagsCell({ value, prospect, colDef, onUpdate }) {
       </span>
       {expanded && (
         <div className={styles.tagsDropdown}>
-          {(colDef.key === 'assetTypes' ? ASSET_TYPES_ALL : FRAMEWORKS_ALL).map(opt => (
+          {/* Prefer options injected on the colDef (Asset Types is managed
+              on the Dropdowns tab); fall back to the built-in vocab. */}
+          {(Array.isArray(colDef.options) ? colDef.options : (colDef.key === 'assetTypes' ? ASSET_TYPES_ALL : FRAMEWORKS_ALL)).map(opt => (
             <label key={opt} className={styles.tagsDropdownItem}>
               <input
                 type="checkbox"
@@ -453,6 +455,13 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
     [allProspects, prospects, settings]
   );
 
+  // Asset Types vocabulary, managed on the Dropdowns tab (plus any value
+  // already in use), injected into the tags column below.
+  const dynamicAssetTypeOptions = useMemo(
+    () => buildAssetTypeOptions(allProspects || prospects, settings),
+    [allProspects, prospects, settings]
+  );
+
   const handleAddOption = useCallback((colKey, name) => {
     persistCustomOption(colKey, name, settings, updateSettings, dynamicCdmOptions);
   }, [settings, updateSettings, dynamicCdmOptions]);
@@ -472,9 +481,10 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
     return COLUMNS.map(c => {
       if (c.key === 'type') return { ...c, options: dynamicTypeOptions, allowAddNew: true };
       if (c.key === 'cdm')  return { ...c, options: dynamicCdmOptions,  allowAddNew: true, allowEditOptions: true };
+      if (c.key === 'assetTypes') return { ...c, options: dynamicAssetTypeOptions };
       return c;
     });
-  }, [dynamicTypeOptions, dynamicCdmOptions]);
+  }, [dynamicTypeOptions, dynamicCdmOptions, dynamicAssetTypeOptions]);
   const [colWidths, setColWidths] = useState(loadColWidths);
   const [visibleCols, setVisibleCols] = useState(() => {
     const saved = loadColVisible();

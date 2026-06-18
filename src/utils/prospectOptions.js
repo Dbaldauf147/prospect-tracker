@@ -6,6 +6,11 @@ import { getEffectiveDropdownLists } from './dropdownListsStore';
 // dropdowns offer.
 export const PE_STRATEGY_LIST_KEY = 'peStrategies';
 
+// The Dropdowns-tab list that owns Asset Types. Editing it there drives
+// the Asset Types multi-select in Table View, the company pop-up and the
+// PE Overview tab.
+export const ASSET_TYPES_LIST_KEY = 'assetTypes';
+
 // Shared dropdown vocabularies for prospect tables' inline editors.
 // Table View and the PE › Blue Owl tab both build their Type / CDM
 // dropdowns through these so every table offers exactly the same
@@ -101,6 +106,29 @@ export function persistCustomStrategy(name, settings, updateSettings) {
   if (updateSettings) {
     updateSettings({ dropdownLists: { ...lists, [PE_STRATEGY_LIST_KEY]: [...current, trimmed] } });
   }
+}
+
+// The effective Asset Types list off the Dropdowns tab (built-in
+// vocabulary plus the user's edits there) — the canonical option order.
+export function getAssetTypeListOptions(settings) {
+  const list = getEffectiveDropdownLists(settings).find(l => l.key === ASSET_TYPES_LIST_KEY);
+  return Array.isArray(list?.options) ? list.options : [];
+}
+
+// Asset Types options for the multi-selects: the Dropdowns-tab list first
+// (its order wins), then any value already saved on a prospect that isn't
+// on the list — so editing the list controls what's offered, while a type
+// removed from the list never disappears from a company that still carries
+// it (you can always untag it).
+export function buildAssetTypeOptions(prospects, settings) {
+  const fromProspects = [];
+  for (const p of (prospects || [])) {
+    if (Array.isArray(p?.assetTypes)) fromProspects.push(...p.assetTypes);
+  }
+  return dedupeOrdered([
+    ...getAssetTypeListOptions(settings),
+    ...fromProspects,
+  ]);
 }
 
 // Persist a newly-added Type / CDM to its custom-list setting so it
