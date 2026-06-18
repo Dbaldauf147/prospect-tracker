@@ -1,4 +1,6 @@
 import { Component, useEffect, useMemo, useState, useRef, useCallback } from 'react';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
 import { apiFetch } from '../../utils/apiFetch';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
@@ -1303,7 +1305,7 @@ function KeyContactsViewInner({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, tags: 200, lastOutreach: 160,
+    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, tags: 200, lastOutreach: 160, emailCampaigns: 240,
   };
   // Column visibility — every contact column except Name (always
   // shown; it's the primary identifier). Stored per-page so the Key,
@@ -1311,7 +1313,7 @@ function KeyContactsViewInner({
   // State sit alongside Location so a user who wants the combined
   // "City, State" string keeps it, while the separate columns are
   // available for filtering / sorting on either field independently.
-  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(storagePrefix === 'all-contacts' ? ['custom'] : []), 'tags', 'lastOutreach'];
+  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(storagePrefix === 'all-contacts' ? ['custom'] : []), 'tags', 'lastOutreach', ...(storagePrefix === 'all-contacts' ? ['emailCampaigns'] : [])];
   const [visibleCols, setVisibleCols] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('visible-cols')));
@@ -1336,6 +1338,14 @@ function KeyContactsViewInner({
             next = tagsIdx >= 0
               ? [...next.slice(0, tagsIdx), 'custom', ...next.slice(tagsIdx)]
               : [...next, 'custom'];
+          }
+          // One-time migration for the new All Contacts "Email Campaigns"
+          // column — append it (after Last Outreach) for users whose saved
+          // visibility predates it. Sticky flag so re-hiding it sticks.
+          const campMigKey = lsKey('visible-cols-mig-emailCampaigns');
+          if (!localStorage.getItem(campMigKey) && !next.includes('emailCampaigns')) {
+            try { localStorage.setItem(campMigKey, '1'); } catch {}
+            next = [...next, 'emailCampaigns'];
           }
         }
         return next;
@@ -1421,6 +1431,24 @@ function KeyContactsViewInner({
       window.removeEventListener('storage', onStorage);
     };
   }, []);
+
+  // Saved email campaigns (created on the Email Campaigns subtab of the
+  // Draft Emails page and persisted to Firestore at emailCampaigns/{uid}).
+  // Drives the All Contacts "Email Campaigns" column, surfacing the most
+  // recent campaign a contact was a recipient of. Only the All Contacts
+  // page renders that column, so we skip the Firestore read elsewhere.
+  const [savedCampaigns, setSavedCampaigns] = useState([]);
+  useEffect(() => {
+    if (storagePrefix !== 'all-contacts' || !user?.uid) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, 'emailCampaigns', user.uid));
+        if (!cancelled) setSavedCampaigns(snap.exists() ? (snap.data().campaigns || []) : []);
+      } catch { if (!cancelled) setSavedCampaigns([]); }
+    })();
+    return () => { cancelled = true; };
+  }, [user, storagePrefix]);
 
   // Tag options for the inline Tags column. Union of (a) the canonical
   // Dan-curated list plus (b) every distinct dans_tags value already
@@ -1536,6 +1564,31 @@ function KeyContactsViewInner({
     const label = entry.type === 'call' ? 'Call' : 'Email';
     return `${date} · ${label}`;
   };
+
+  // Map each recipient email → the most recent campaign send they were
+  // part of. Saved-campaign contacts store their recipients as a single
+  // '; '-joined string (group sends), so split them back out and key by
+  // individual lowercased email, keeping the newest sentDate per email.
+  const contactCampaign = useMemo(() => {
+    const map = new Map();
+    for (const camp of (savedCampaigns || [])) {
+      const subject = String(camp.subject || '').trim();
+      for (const ct of (camp.contacts || [])) {
+        const t = ct.sentDate ? new Date(ct.sentDate).getTime() : NaN;
+        const tsMs = Number.isFinite(t) ? t : 0;
+        for (const part of String(ct.email || '').split(/[;,]/)) {
+          const em = part.trim().toLowerCase();
+          if (!em) continue;
+          const prev = map.get(em);
+          if (!prev || tsMs > prev.tsMs) {
+            map.set(em, { subject, tsMs, ts: ct.sentDate || '', replied: !!ct.replied });
+          }
+        }
+      }
+    }
+    return map;
+  }, [savedCampaigns]);
+  const campaignForContact = (c) => contactCampaign.get(String(c?.email || '').toLowerCase().trim());
 
   const DEFAULT_COL_WIDTHS = { company: 260, aum: 100, type: 120, status: 130, keyContacts: 130, dm: 150, met: 130, ratio: 110 };
   const [colWidths, setColWidths] = useState(() => {
@@ -2015,6 +2068,12 @@ function KeyContactsViewInner({
           cmp = av.localeCompare(bv);
           break;
         }
+        case 'emailCampaigns': {
+          const av = contactCampaign.get(String(a.email || '').toLowerCase().trim())?.tsMs || 0;
+          const bv = contactCampaign.get(String(b.email || '').toLowerCase().trim())?.tsMs || 0;
+          cmp = av - bv;
+          break;
+        }
         default: cmp = 0;
       }
       if (contactSortDir === 'desc') cmp = -cmp;
@@ -2022,7 +2081,7 @@ function KeyContactsViewInner({
       return cmp;
     });
     return arr;
-  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactEvents, categorizeContact]);
+  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactEvents, categorizeContact, contactCampaign]);
 
   const contactFieldGetters = {
     name:     c => c.name || '',
@@ -2041,6 +2100,7 @@ function KeyContactsViewInner({
     met:      c => c.metInPerson ? 'yes' : 'no',
     events:   c => contactEvents[String(c.id || '')] || '',
     lastOutreach: c => fmtLastOutreach(contactLastOutreach.get(String(c.id || ''))),
+    emailCampaigns: c => campaignForContact(c)?.subject || '',
   };
   const activeContactFilters = Object.entries(contactColFilters)
     .map(([k, v]) => [k, String(v || '').trim().toLowerCase()])
@@ -2231,6 +2291,7 @@ function KeyContactsViewInner({
                     { key: 'met', label: 'Met' },
                     { key: 'events', label: 'Events' },
                     { key: 'lastOutreach', label: 'Last Outreach' },
+                    ...(storagePrefix === 'all-contacts' ? [{ key: 'emailCampaigns', label: 'Email Campaigns' }] : []),
                   ].map(opt => (
                     <label key={opt.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.35rem 0.75rem', fontSize: '0.74rem', color: '#1E293B', cursor: 'pointer' }}>
                       <input
@@ -2578,6 +2639,7 @@ function KeyContactsViewInner({
               ...(storagePrefix === 'all-contacts' ? [{ key: 'custom', label: 'Custom', sortable: false }] : []),
               { key: 'tags',     label: 'Tags', sortable: false },
               { key: 'lastOutreach', label: 'Last Outreach' },
+              ...(storagePrefix === 'all-contacts' ? [{ key: 'emailCampaigns', label: 'Email Campaigns' }] : []),
             ].filter(Boolean);
             const visibleSet = new Set(visibleCols);
             const CONTACT_COLS = ALL_CONTACT_COLS.filter(c => c.alwaysOn || visibleSet.has(c.key));
@@ -3020,6 +3082,49 @@ function KeyContactsViewInner({
                             }}
                           >{isCall ? 'Call' : 'Email'}</span>
                           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{dateLabel}</span>
+                        </div>
+                      );
+                    })()}
+                    {storagePrefix === 'all-contacts' && visibleSet.has('emailCampaigns') && (() => {
+                      const entry = contactCampaign.get(String(c.email || '').toLowerCase().trim());
+                      if (!entry) {
+                        return (
+                          <div
+                            style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1' }}
+                            title={savedCampaigns.length ? "This contact isn't a recipient in any saved email campaign" : 'Save a campaign on the Email Campaigns subtab (Draft Emails) to populate this column'}
+                          >—</div>
+                        );
+                      }
+                      const d = new Date(entry.ts);
+                      const dateLabel = isNaN(d)
+                        ? ''
+                        : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                      const tip = `Most recent campaign: “${entry.subject}”${dateLabel ? ` · sent ${dateLabel}` : ''}${entry.replied ? ' · replied' : ''}`;
+                      return (
+                        <div
+                          style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#475569', display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                          title={tip}
+                        >
+                          {entry.replied && (
+                            <span
+                              style={{
+                                display: 'inline-block',
+                                padding: '1px 6px',
+                                fontSize: '0.58rem',
+                                fontWeight: 700,
+                                borderRadius: 999,
+                                background: '#DCFCE7',
+                                color: '#166534',
+                                border: '1px solid #86EFAC',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.04em',
+                                flexShrink: 0,
+                              }}
+                            >Replied</span>
+                          )}
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {entry.subject}{dateLabel ? ` · ${dateLabel}` : ''}
+                          </span>
                         </div>
                       );
                     })()}
