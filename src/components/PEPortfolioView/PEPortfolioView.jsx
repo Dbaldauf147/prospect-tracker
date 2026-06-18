@@ -1986,6 +1986,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
       cdm: p.cdm || '',
       clientManager: managerMap[(p.company || '').trim().toLowerCase()] || '',
       type: p.type || '',
+      assetTypes: Array.isArray(p.assetTypes) ? p.assetTypes : [],
       tier: p.tier || '',
       geography: p.geography || '',
       hqRegion: p.hqRegion || '',
@@ -2147,6 +2148,15 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
         exportValue: (r) => r.clientManager,
         render: (r) => <ClientManagerCell company={r.company} value={r.clientManager} onCommit={setClientManager} /> },
       { key: 'type', label: 'Type', defaultWidth: 150, render: editable({ key: 'type', label: 'Type', type: 'enum', options: typeOptions, allowAddNew: true }) },
+      // Asset Types — the same multi-tag field Table View shows (its fixed
+      // ASSET_TYPES vocabulary, edited inline through InlineCell's TagsCell).
+      // Read the array off the prospect so sort/filter/export agree with
+      // the values being edited.
+      { key: 'assetTypes', label: 'Asset Types', defaultWidth: 170,
+        getSortValue: (r) => r.assetTypes.length,
+        getFilterValue: (r) => r.assetTypes.join(', '),
+        exportValue: (r) => r.assetTypes.join(', '),
+        render: editable({ key: 'assetTypes', label: 'Asset Types', type: 'tags' }, (r) => r.assetTypes) },
       { key: 'tier', label: 'Tier', defaultWidth: 100, render: editable({ key: 'tier', label: 'Tier', type: 'enum', options: TIERS }) },
       { key: 'geography', label: 'Geography', defaultWidth: 130, render: editable({ key: 'geography', label: 'Geography', type: 'enum', options: GEOGRAPHIES }) },
       { key: 'hqRegion', label: 'HQ Region', defaultWidth: 130, render: editable({ key: 'hqRegion', label: 'HQ Region' }) },
@@ -2326,13 +2336,14 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
           </div>
         ) : (
           <DataTable
-            // -7: fresh prefs key so columns added after the original
+            // -9: fresh prefs key so columns added after the original
             // layout (HQ Region / Website / PE AUM at -2, Opps at -3,
             // PC Opps at -4, the bulk-edit checkbox at -5, the PC Opp
             // Companies / Contacts + Decision Makers columns at -6, the
-            // PC Download + Strategies columns at -7) aren't hidden by a
-            // saved visible-set from an older one.
-            tableId="pe-blue-owl-companies-8"
+            // PC Download + Strategies columns at -7, the Asset Types
+            // column at -9) aren't hidden by a saved visible-set from an
+            // older one.
+            tableId="pe-blue-owl-companies-9"
             columns={columns}
             rows={filtered}
             alwaysVisible={['company', '_select']}
