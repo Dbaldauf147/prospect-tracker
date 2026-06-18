@@ -84,6 +84,15 @@ async function getAllContacts(token) {
   for (const c of contacts) {
     const id = c.properties?.associatedcompanyid;
     const name = id ? (companyNames.get(String(id)) || '') : '';
+    // Preserve the contact's own typed company text in a separate field
+    // before replacing `company` with the canonical association name.
+    // `company` stays the association name (the Table View tie-in relies on
+    // that), but name-based matching like the PE Overview "Key Contacts"
+    // column can fall back to what the user actually typed on the contact —
+    // important when the contact has no Company association (so `company`
+    // would be blank) or the association points at a rebranded record.
+    const typed = (c.properties?.company || '').trim();
+    if (typed) c.properties.companyText = typed;
     c.properties.company = name;
   }
   return contacts;
