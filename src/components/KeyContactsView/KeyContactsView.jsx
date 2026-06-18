@@ -2009,6 +2009,12 @@ function KeyContactsViewInner({
           cmp = av - bv;
           break;
         }
+        case 'category': {
+          const av = (categorizeContact ? (categorizeContact(a.raw || a) || []) : []).join(' ');
+          const bv = (categorizeContact ? (categorizeContact(b.raw || b) || []) : []).join(' ');
+          cmp = av.localeCompare(bv);
+          break;
+        }
         default: cmp = 0;
       }
       if (contactSortDir === 'desc') cmp = -cmp;
@@ -2016,7 +2022,7 @@ function KeyContactsViewInner({
       return cmp;
     });
     return arr;
-  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactEvents]);
+  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactEvents, categorizeContact]);
 
   const contactFieldGetters = {
     name:     c => c.name || '',
@@ -2552,7 +2558,7 @@ function KeyContactsViewInner({
           ) : (() => {
             const ALL_CONTACT_COLS = [
               { key: 'name',     label: 'Name', alwaysOn: true },
-              ...(categorizeContact ? [{ key: 'category', label: 'Category', sortable: false }] : []),
+              ...(categorizeContact ? [{ key: 'category', label: 'Category' }] : []),
               { key: 'title',    label: 'Title' },
               { key: 'company',  label: 'Company' },
               ...(showSuggestedCompany ? [{ key: 'suggestedCompany', label: 'Suggested Company' }] : []),
