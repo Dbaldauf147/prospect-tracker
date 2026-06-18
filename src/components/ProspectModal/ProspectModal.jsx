@@ -1011,12 +1011,28 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       // undefined id, so they never got a companyContactLinks pin and their
       // per-contact metadata (notes/team/etc.) saved under an empty key.
       const newId = json?.contact?.id ?? json?.id;
+      // create-contact recovers from a duplicate-email collision by returning
+      // the existing HubSpot contact (HTTP 200 + alreadyExisted) instead of
+      // forging a second record. Recognize that so we attach/link the existing
+      // contact rather than minting a phantom "Manual" row that shares the real
+      // contact's id (which a later delete-by-id would then wipe alongside it).
+      const alreadyExisted = isNew && json?.alreadyExisted === true && !!newId;
       const savedContact = isNew ? { id: newId, ...allProps } : { ...contact, ...allProps };
       // Update HubSpot cache (exclude notes/oldEmails — those live in Firestore settings)
       try {
         await updateHubspotCache(draft => {
           const cacheProps = { ...hsProps };
-          if (isNew) {
+          if (isNew && alreadyExisted) {
+            // The contact already lived in HubSpot — the server handed back the
+            // existing record. Don't stamp a phantom _source:'manual' duplicate
+            // (it shares the real record's id, so deleting it later would take
+            // the real one with it), and don't overwrite the richer existing
+            // fields with this often-sparse form. Just make sure the real record
+            // is present so linking it to this company (via onSave below)
+            // surfaces it; leave its _source and fields untouched if it's there.
+            const exists = draft.contacts.some(c => String(c.id || c.vid) === String(savedContact.id));
+            if (!exists) draft.contacts.push({ id: savedContact.id, ...cacheProps });
+          } else if (isNew) {
             // If this was promoted from a local-only contact, remove the old local entry so we don't duplicate
             if (isLocalOnly && existingId) {
               draft.contacts = draft.contacts.filter(c => String(c.id || c.vid) !== String(existingId));
