@@ -4692,6 +4692,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           e.target.value = '';
                         }
                       }}
+                      onBlur={e => {
+                        // Commit a typed-but-not-Entered value on blur too, so
+                        // clicking away or closing the modal still saves it
+                        // (the form autosaves fields, but only what's committed).
+                        const val = e.target.value.trim();
+                        if (val && !aliases.includes(val)) {
+                          set('aliases', [...aliases, val].join('\n'));
+                        }
+                        e.target.value = '';
+                      }}
                       style={{ border: 'none', outline: 'none', fontSize: '0.78rem', fontFamily: 'inherit', color: 'var(--color-text)', padding: '0.15rem 0', minWidth: '140px', flex: '1 1 140px', background: 'none' }}
                     />
                   </div>
