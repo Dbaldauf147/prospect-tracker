@@ -3099,29 +3099,12 @@ function KeyContactsViewInner({
                       const dateLabel = isNaN(d)
                         ? ''
                         : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                      const tip = `Most recent campaign: “${entry.subject}”${dateLabel ? ` · sent ${dateLabel}` : ''}${entry.replied ? ' · replied' : ''}`;
+                      const tip = `Most recent campaign: “${entry.subject}”${dateLabel ? ` · sent ${dateLabel}` : ''}`;
                       return (
                         <div
                           style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#475569', display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                           title={tip}
                         >
-                          {entry.replied && (
-                            <span
-                              style={{
-                                display: 'inline-block',
-                                padding: '1px 6px',
-                                fontSize: '0.58rem',
-                                fontWeight: 700,
-                                borderRadius: 999,
-                                background: '#DCFCE7',
-                                color: '#166534',
-                                border: '1px solid #86EFAC',
-                                textTransform: 'uppercase',
-                                letterSpacing: '0.04em',
-                                flexShrink: 0,
-                              }}
-                            >Replied</span>
-                          )}
                           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {entry.subject}{dateLabel ? ` · ${dateLabel}` : ''}
                           </span>
