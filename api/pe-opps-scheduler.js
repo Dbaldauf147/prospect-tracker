@@ -9,7 +9,7 @@
 // `?secret=` query param is also accepted for manual triggering.
 
 import { adminDb } from './_lib/firebaseAdmin.js';
-import { loadPeOpps, loadPeFirms, buildPeOppsWorkbook, sendPeOppsEmail, peOppsFilename } from './_lib/peOpps.js';
+import { loadPeOpps, loadOppsForFirm, loadPeFirms, buildPeOppsWorkbook, sendPeOppsEmail, peOppsFilename } from './_lib/peOpps.js';
 import { computeNextRun } from './_lib/peOppsSchedule.js';
 
 export default async function handler(req, res) {
@@ -49,7 +49,14 @@ export default async function handler(req, res) {
     }
 
     try {
-      const records = await loadPeOpps(db, s.ownerUid);
+      // Firm-scoped schedules (PE Opps firm picker) send every opp tied to
+      // that firm or its portfolio companies; the rest send the full PE
+      // Opps list. The PE Stages second sheet only makes sense for the
+      // all-firms digest, so it's dropped when a firm is selected.
+      const firm = String(s.firm || '').trim();
+      const records = firm
+        ? await loadOppsForFirm(db, s.ownerUid, s.ownerEmail, firm)
+        : await loadPeOpps(db, s.ownerUid);
       if (records.length === 0 && s.skipWhenEmpty) {
         await docSnap.ref.update({
           lastStatus: 'skipped-empty',
@@ -59,8 +66,8 @@ export default async function handler(req, res) {
         results.push({ id: s.id, status: 'skipped-empty' });
         continue;
       }
-      const firms = await loadPeFirms(db, s.ownerUid, s.ownerEmail);
-      const buffer = await buildPeOppsWorkbook(records, s.columns, firms);
+      const firms = firm ? [] : await loadPeFirms(db, s.ownerUid, s.ownerEmail);
+      const buffer = await buildPeOppsWorkbook(records, s.columns, firms, { firmLabel: firm });
       await sendPeOppsEmail({
         to: s.recipients,
         subject: s.subject,

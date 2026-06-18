@@ -63,12 +63,76 @@ function resolveCallIn(r) {
 
 const cellValue = (r, c) => (c.value ? c.value(r) : (r[c.key] ?? ''));
 
-// ---- Load + filter the user's PE opps from Firestore --------------------
-// Reads `opps2Data/{uid}` (reassembling the chunked JSON when present) and
-// applies the same PE filter the PE Opps tab uses: Type = "Private Equity"
-// OR Source = "PE partner", dropping opps closed (Sold / Not Sold) more
-// than a month ago.
-export async function loadPeOpps(db, uid) {
+// ---- Account ↔ company matching (mirror PEPortfolioView) -----------------
+// Used to tie an opp's Account to a PE firm or one of its portfolio
+// companies. Kept in lock-step with the client so a firm-scoped scheduled
+// file matches what the PE Opps tab shows for that firm.
+const CO_SUFFIX_RE = /\b(inc|incorporated|llc|ltd|limited|corp|corporation|co|company|lp|llp|plc|holdings?)\b\.?/gi;
+function normalizeAccount(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(CO_SUFFIX_RE, ' ')
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function accountMatchesCompany(companyName, oppAccount) {
+  const a = normalizeAccount(companyName);
+  const b = normalizeAccount(oppAccount);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const aWords = a.split(' ');
+  const bWords = b.split(' ');
+  const [shortW, longW] = aWords.length <= bWords.length ? [aWords, bWords] : [bWords, aWords];
+  if (shortW.length < 2) return false;
+  return (' ' + longW.join(' ') + ' ').includes(' ' + shortW.join(' ') + ' ');
+}
+
+// Split a comma/semicolon PE Owner string into individual firm names,
+// gluing a lone corporate suffix back onto the previous name (mirror
+// src/utils/peOwners.splitPeOwners).
+const CORP_SUFFIX_FRAGMENT = /^(l\.?l\.?c|l\.?p|l\.?l\.?p|inc|incorporated|ltd|limited|plc|co|corp|corporation|s\.?a|n\.?v|gmbh|ag)\.?$/i;
+function splitPeOwners(value) {
+  const out = [];
+  for (const raw of String(value || '').split(/[,;]/)) {
+    const part = raw.trim();
+    if (!part) continue;
+    if (out.length > 0 && CORP_SUFFIX_FRAGMENT.test(part)) out[out.length - 1] += `, ${part}`;
+    else out.push(part);
+  }
+  return out;
+}
+function prospectOwnedByFirm(peOwnerStr, firm) {
+  const f = String(firm || '').trim().toLowerCase();
+  if (!f) return false;
+  return splitPeOwners(peOwnerStr).some((o) => {
+    const t = o.trim().toLowerCase();
+    if (!t) return false;
+    if (t.includes(f)) return true;
+    if (t.length >= 4 && f.includes(t)) return true;
+    return false;
+  });
+}
+
+// Drop deals closed (Sold / Not Sold) more than a month ago — the same
+// recency rule the PE Opps tab applies, used by both the all-PE and the
+// firm-scoped loaders.
+function passesRecency(r) {
+  const stage = String(r['Stage'] || '').trim().toLowerCase();
+  if (stage === 'sold' || stage === 'not sold') {
+    const cutoff = new Date();
+    cutoff.setMonth(cutoff.getMonth() - 1);
+    const closed = parseOppsDate(r['Close Date']);
+    if (!closed || closed < cutoff) return false;
+  }
+  return true;
+}
+
+// ---- Read the user's raw Opps 2 records from Firestore -------------------
+// Reads `opps2Data/{uid}`, reassembling the chunked JSON when present.
+// Returns every stored opp record (no filtering).
+async function readOpps2Records(db, uid) {
   const ref = db.collection('opps2Data').doc(uid);
   const snap = await ref.get();
   if (!snap.exists) return [];
@@ -92,23 +156,59 @@ export async function loadPeOpps(db, uid) {
 
   let parsed;
   try { parsed = JSON.parse(json); } catch { return []; }
-  const records = Array.isArray(parsed?.records) ? parsed.records : [];
+  return Array.isArray(parsed?.records) ? parsed.records : [];
+}
 
+// ---- Load + filter the user's PE opps from Firestore --------------------
+// Applies the same PE filter the PE Opps tab uses: Type = "Private Equity"
+// OR Source = "PE partner", dropping opps closed (Sold / Not Sold) more
+// than a month ago.
+export async function loadPeOpps(db, uid) {
+  const records = await readOpps2Records(db, uid);
   const norm = (s) => String(s || '').trim().toLowerCase();
-  const cutoff = new Date();
-  cutoff.setMonth(cutoff.getMonth() - 1);
   return records.filter((r) => {
     const type = norm(r['Type']);
     const source = norm(r['Source']);
     if (type !== 'private equity' && source !== 'pe partner') return false;
-    const stage = norm(r['Stage']);
-    if (stage === 'sold' || stage === 'not sold') {
-      // Drop closed opps with no close date, or closed over a month ago.
-      const closed = parseOppsDate(r['Close Date']);
-      if (!closed || closed < cutoff) return false;
-    }
-    return true;
+    return passesRecency(r);
   });
+}
+
+// ---- Load all opps tied to one PE firm or its portfolio companies --------
+// Mirrors the PE Opps tab's firm picker (the "all opps on the firm + owned
+// companies" scope): every opp — regardless of Type / Source — whose
+// Account matches the firm itself or any prospect whose PE Owner names the
+// firm. The recency rule still applies so the digest stays focused. Falls
+// back to the all-PE list when no firm is given.
+export async function loadOppsForFirm(db, uid, email, firm) {
+  const f = String(firm || '').trim();
+  if (!f) return loadPeOpps(db, uid);
+  const [records, prospects] = await Promise.all([
+    readOpps2Records(db, uid),
+    loadProspectsForUser(db, uid, email),
+  ]);
+  const names = new Set([f.toLowerCase()]);
+  for (const p of prospects) {
+    if (prospectOwnedByFirm(p.peOwner, f)) {
+      const n = String(p.company || '').trim().toLowerCase();
+      if (n) names.add(n);
+    }
+  }
+  const nameList = [...names];
+  return records.filter((r) => passesRecency(r) && nameList.some((n) => accountMatchesCompany(n, r['Account'])));
+}
+
+// ---- Load the user's prospects (raw) ------------------------------------
+// Admin (baldaufdan@gmail.com) reads the shared `prospects` collection;
+// every other user reads `users/{uid}/prospects` — matching
+// firestoreSync.getCol and loadPeFirms below.
+async function loadProspectsForUser(db, uid, email) {
+  const col = email === 'baldaufdan@gmail.com'
+    ? db.collection('prospects')
+    : db.collection('users').doc(uid).collection('prospects');
+  let snap;
+  try { snap = await col.get(); } catch { return []; }
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
 // ---- Load the user's PE firms for the PE Stages board -------------------
@@ -118,12 +218,7 @@ export async function loadPeOpps(db, uid) {
 // (baldaufdan@gmail.com) reads the shared `prospects` collection; every
 // other user reads `users/{uid}/prospects` — matching firestoreSync.getCol.
 export async function loadPeFirms(db, uid, email) {
-  const col = email === 'baldaufdan@gmail.com'
-    ? db.collection('prospects')
-    : db.collection('users').doc(uid).collection('prospects');
-  let snap;
-  try { snap = await col.get(); } catch { return []; }
-  const prospects = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const prospects = await loadProspectsForUser(db, uid, email);
 
   // Portfolio-company count per firm, keyed by lowercased firm name.
   const pcByFirm = new Map();
@@ -254,7 +349,8 @@ function addPeStagesSheet(wb, firms) {
 // PE Opps columns; unknown keys are ignored and an empty list falls back
 // to all. When `firms` is non-empty a second "PE Stages" worksheet is
 // appended, mirroring the on-screen PE Stages board.
-export async function buildPeOppsWorkbook(records, columnKeys, firms = []) {
+export async function buildPeOppsWorkbook(records, columnKeys, firms = [], opts = {}) {
+  const firmLabel = String(opts.firmLabel || '').trim();
   // exceljs is CommonJS; under Node's ESM loader its classes may sit on
   // `.default` rather than as named exports, so resolve defensively.
   const exceljs = await import('exceljs');
@@ -280,7 +376,7 @@ export async function buildPeOppsWorkbook(records, columnKeys, firms = []) {
 
   ws.mergeCells(1, 1, 1, columns.length);
   const title = ws.getCell(1, 1);
-  title.value = `PE Opportunities · ${records.length} opp${records.length === 1 ? '' : 's'}`;
+  title.value = `${firmLabel ? `${firmLabel} · ` : ''}PE Opportunities · ${records.length} opp${records.length === 1 ? '' : 's'}`;
   title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
   title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
   title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
