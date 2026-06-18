@@ -417,7 +417,7 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
 const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', tier: 'Tier 2',
-  hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', servicesExplored: {}, serviceNotes: {}, competitors: {}, portfolioCompanies: [],
+  hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, competitors: {}, portfolioCompanies: [],
   peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', strategies: [],
 };
 
@@ -4648,6 +4648,46 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           const val = e.target.value.trim();
                           if (!domains.includes(val)) {
                             set('emailDomain', [...domains, val].join('\n'));
+                          }
+                          e.target.value = '';
+                        }
+                      }}
+                      style={{ border: 'none', outline: 'none', fontSize: '0.78rem', fontFamily: 'inherit', color: 'var(--color-text)', padding: '0.15rem 0', minWidth: '140px', flex: '1 1 140px', background: 'none' }}
+                    />
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div style={{ gridColumn: 'span 2' }}>
+              <label className={styles.label}>Also Known As <span style={{ fontWeight: 400, color: 'var(--color-text-muted)' }}>(former names / rebrands)</span></label>
+              {(() => {
+                const aliases = (fields.aliases || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
+                return (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.4rem', border: '1px solid var(--color-border)', borderRadius: '6px', minHeight: '36px', alignItems: 'center' }}>
+                    {aliases.map((a, i) => (
+                      <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.15rem 0.5rem', background: '#F5F3FF', border: '1px solid #DDD6FE', borderRadius: '999px', fontSize: '0.72rem', color: '#5B21B6' }}>
+                        {a}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = aliases.filter((_, j) => j !== i);
+                            set('aliases', next.join('\n'));
+                          }}
+                          style={{ background: 'none', border: 'none', color: '#C4B5FD', fontSize: '0.8rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
+                        >&times;</button>
+                      </span>
+                    ))}
+                    <input
+                      type="text"
+                      placeholder={aliases.length === 0 ? 'e.g. Andmore' : '+ Add former name'}
+                      title="Other names this company has gone by (e.g. after a rebrand). Decision-maker contacts whose HubSpot Company matches one of these will surface as Key Contacts for this company."
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && e.target.value.trim()) {
+                          e.preventDefault();
+                          const val = e.target.value.trim();
+                          if (!aliases.includes(val)) {
+                            set('aliases', [...aliases, val].join('\n'));
                           }
                           e.target.value = '';
                         }
