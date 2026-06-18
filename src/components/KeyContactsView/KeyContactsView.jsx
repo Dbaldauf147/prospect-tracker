@@ -1626,13 +1626,18 @@ function KeyContactsViewInner({
     return map;
   }, [activityCache, outreachIndex, hubspotCache]);
 
+  // Whole days between the most recent outreach and now. Floored, so an
+  // outreach earlier today reads as 0.
+  const daysSinceOutreach = (entry) => {
+    const ms = entry?.tsMs ?? (entry?.ts ? new Date(entry.ts).getTime() : NaN);
+    if (!Number.isFinite(ms)) return null;
+    return Math.max(0, Math.floor((Date.now() - ms) / 86400000));
+  };
+
   const fmtLastOutreach = (entry) => {
-    if (!entry) return '';
-    const d = new Date(entry.ts);
-    if (isNaN(d)) return '';
-    const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    const label = entry.type === 'call' ? 'Call' : 'Email';
-    return `${date} · ${label}`;
+    const days = daysSinceOutreach(entry);
+    if (days == null) return '';
+    return days === 1 ? '1 day' : `${days} days`;
   };
 
   // Map each recipient email → the most recent campaign send they were
@@ -3214,34 +3219,17 @@ function KeyContactsViewInner({
                         );
                       }
                       const d = new Date(entry.ts);
-                      const dateLabel = isNaN(d)
-                        ? ''
-                        : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                      const days = isNaN(d) ? null : Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000));
                       const isCall = entry.type === 'call';
                       const tip = isNaN(d)
                         ? ''
                         : `Most recent ${isCall ? 'call' : 'email'} on ${d.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })} (from the Activity tab)`;
                       return (
                         <div
-                          style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#475569', display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                          style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#475569', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                           title={tip}
                         >
-                          <span
-                            style={{
-                              display: 'inline-block',
-                              padding: '1px 6px',
-                              fontSize: '0.58rem',
-                              fontWeight: 700,
-                              borderRadius: 999,
-                              background: isCall ? '#FEF3C7' : '#DBEAFE',
-                              color: isCall ? '#92400E' : '#1E3A8A',
-                              border: `1px solid ${isCall ? '#FCD34D' : '#93C5FD'}`,
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.04em',
-                              flexShrink: 0,
-                            }}
-                          >{isCall ? 'Call' : 'Email'}</span>
-                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{dateLabel}</span>
+                          {days == null ? '' : `${days} ${days === 1 ? 'day' : 'days'}`}
                         </div>
                       );
                     })()}
