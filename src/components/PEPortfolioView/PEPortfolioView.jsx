@@ -643,9 +643,22 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       const seen = new Set();
       const names = [];
       for (const dm of decisionMakers) {
-        const nameMatch = dm.company && rowName && normalizeAccount(dm.company) === rowName;
+        // Name match is fuzzy (companiesMatch) so a contact whose synced
+        // HubSpot Company is a variant of the row name — e.g. the canonical
+        // association "ShopCore" vs the row "Perform Properties fka ShopCore"
+        // — still lands here without the user having to re-save the contact
+        // to force an exact-string association. This mirrors what the company
+        // popup's own contact list already shows. To honor the original
+        // anti-leak intent, a contact that belongs to the PE owner itself (its
+        // company matches the selected firm) is barred from fuzzy-spraying
+        // across that firm's portfolio companies — it only attaches on an
+        // exact name match. The per-row domain match is unchanged and stays
+        // scoped to this company's own registered domains.
+        const exactName = dm.company && rowName && normalizeAccount(dm.company) === rowName;
+        const ownerContact = dm.company && peFirm && companiesMatch(dm.company, peFirm);
+        const fuzzyName = dm.company && !ownerContact && companiesMatch(dm.company, p.company);
         const domainMatch = dm.domain && rowDomains.has(dm.domain);
-        if (!nameMatch && !domainMatch) continue;
+        if (!exactName && !fuzzyName && !domainMatch) continue;
         if (seen.has(dm.name)) continue;
         seen.add(dm.name);
         names.push(dm.name);
@@ -653,7 +666,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       if (names.length) map.set(p.id, names);
     }
     return map;
-  }, [peFirmCompanies, decisionMakers]);
+  }, [peFirmCompanies, decisionMakers, peFirm]);
 
   // Per-firm stage stats — the row-level data behind the stages table.
   //   decisionMakerNames  : DM contacts on this PE firm (or its PCs)
