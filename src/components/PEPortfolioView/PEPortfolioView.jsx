@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadOpps2Newest, setOppField } from '../../utils/opps2Store';
@@ -1655,6 +1656,125 @@ function ClientManagerCell({ company, value, onCommit }) {
   );
 }
 
+// Read-only popup that shows the Opps-tab opportunities matched to a
+// company — opened from the PE Overview tab's Services In Progress cell.
+// Active (in-flight) opps are listed first so the "current" opportunity
+// behind the in-progress services is front and centre. Each opp shows the
+// fields users scan for on the Opps tab; the BFO Link opens the full
+// opportunity record in a new tab.
+function CompanyOppsModal({ company, opps = [], onClose, onOpenCompany }) {
+  const backdropMouseDown = useRef(false);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const oppTitle = (r) => r['Opportunity Name'] || r['Opportunity'] || r['Name'] || r['Description'] || '(Unnamed opportunity)';
+  const fields = [
+    ['Account', (r) => r['Account']],
+    ['Contact', (r) => r['Contact']],
+    ['Scope', (r) => r['Scope']],
+    ['Sales Partner', (r) => r['Sales Partner']],
+    ['Amount', (r) => { const v = r['Amount'] || r['Value'] || r['$'] || ''; return v && !String(v).startsWith('$') ? `$${v}` : v; }],
+    ['Close Date', (r) => formatDateDisplay(r['Close Date'] || r['Est. Close'] || r['Target Close'] || '')],
+    ['Next Steps', (r) => r['Next Steps']],
+  ];
+  return createPortal(
+    <div
+      onMouseDown={(e) => { backdropMouseDown.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && backdropMouseDown.current) onClose(); }}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
+        zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: 640, maxWidth: '94vw', maxHeight: '88vh',
+          background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.85rem 1rem', borderBottom: '1px solid #E2E8F0' }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              Opportunities — {company || '—'}
+            </div>
+            <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
+              {opps.length} matching opportunit{opps.length === 1 ? 'y' : 'ies'} from the Opps tab
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            title="Close"
+            style={{ flexShrink: 0, marginLeft: '0.75rem', background: 'none', border: 'none', fontSize: '1.3rem', lineHeight: 1, color: '#94A3B8', cursor: 'pointer' }}
+          >×</button>
+        </div>
+        <div style={{ padding: '0.85rem 1rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          {opps.length === 0 ? (
+            <div style={{ fontSize: '0.8rem', color: '#64748B', fontStyle: 'italic' }}>No opportunities found.</div>
+          ) : opps.map((r, idx) => {
+            const stage = (r['Stage'] || '').trim();
+            const isActive = !CLOSED_STAGES.has(stage) && !INVALID_STAGES.has(stage);
+            const bfoLink = r['BFO Link'];
+            return (
+              <div key={idx} style={{ border: '1px solid #E2E8F0', borderRadius: 6, padding: '0.6rem 0.75rem', background: isActive ? '#FAF5FF' : '#FBFBFB' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.4rem' }}>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {oppTitle(r)}
+                  </div>
+                  {stage && (
+                    <span style={{ flexShrink: 0, padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', background: isActive ? '#7C3AED' : '#CBD5E1', color: '#fff' }}>
+                      {stage}
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '0.15rem 0.6rem', fontSize: '0.75rem' }}>
+                  {fields.map(([label, get]) => {
+                    const val = get(r);
+                    if (val == null || String(val).trim() === '' || String(val).trim() === '-') return null;
+                    return (
+                      <div key={label} style={{ display: 'contents' }}>
+                        <div style={{ color: '#94A3B8', fontWeight: 600, whiteSpace: 'nowrap' }}>{label}</div>
+                        <div style={{ color: '#334155', wordBreak: 'break-word' }}>{String(val)}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {bfoLink && /^https?:\/\//i.test(String(bfoLink).trim()) && (
+                  <a
+                    href={String(bfoLink).trim()}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ display: 'inline-block', marginTop: '0.5rem', fontSize: '0.72rem', fontWeight: 600, color: '#2563EB' }}
+                  >Open in BFO ↗</a>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', padding: '0.7rem 1rem', borderTop: '1px solid #E2E8F0' }}>
+          {onOpenCompany && (
+            <button
+              type="button"
+              onClick={onOpenCompany}
+              style={{ padding: '0.4rem 0.85rem', border: '1px solid #7C3AED', borderRadius: 6, background: '#fff', color: '#7C3AED', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+            >Open company in Table View</button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ padding: '0.4rem 0.85rem', border: '1px solid #E2E8F0', borderRadius: 6, background: '#fff', color: '#334155', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+          >Close</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelectFirm, prospects = [], oppsRecords = [], portfolioByPe = new Map(), dmNamesByCompanyId = new Map(), onSelectProspect, onUpdateProspect, onAddProspect, onDownloadPortfolio, settings, updateSettings }) {
   const firmLabel = selectedFirm.trim() || 'PE firm';
   // Strategy-tag vocabulary shared with the company popup, so a tag added
@@ -1692,6 +1812,10 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [filteredRowIds, setFilteredRowIds] = useState(() => new Set());
   const [bulkApplying, setBulkApplying] = useState(false);
+  // Row whose matching Opps-tab opportunities are shown in the detail
+  // popup — set by clicking a Services In Progress cell that has a
+  // current opp on the company.
+  const [oppsModalRow, setOppsModalRow] = useState(null);
 
   // Set-equality guard (same as Opps 2's handler): returning prev when
   // the ids haven't changed stops the notify → setState → re-render →
@@ -1759,6 +1883,10 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
       let active = 0;
       let total = 0;
       const tip = [];
+      // Keep the matching opp records so the Services In Progress cell can
+      // pop their details — active stages first, then the rest, so the
+      // "current" opps surface at the top of the modal.
+      const records = [];
       for (const r of oppsRecords) {
         const stage = (r['Stage'] || '').trim();
         if (INVALID_STAGES.has(stage)) continue;
@@ -1767,9 +1895,11 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
         total++;
         const isActive = !CLOSED_STAGES.has(stage);
         if (isActive) active++;
+        records.push({ record: r, isActive });
         tip.push(`• ${r['Opportunity Name'] || r['Opportunity'] || r['Name'] || r['Description'] || '(Unnamed opportunity)'}${stage ? ` — ${stage}` : ''}`);
       }
-      if (total > 0) map.set(p.id, { active, total, tip });
+      records.sort((a, b) => (a.isActive === b.isActive ? 0 : a.isActive ? -1 : 1));
+      if (total > 0) map.set(p.id, { active, total, tip, records: records.map(x => x.record) });
     }
     return map;
   }, [companies, oppsRecords]);
@@ -1844,6 +1974,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
       id: p.id,
       _prospect: p,
       _oppsTip: counts?.tip || [],
+      _oppRecords: counts?.records || [],
       _pcOppsTip: pcCounts?.tip || [],
       _pcCount: (portfolioByPe.get((p.company || '').trim().toLowerCase()) || []).length,
       // Mapped portfolio companies from this firm's own Portfolio
@@ -1924,11 +2055,39 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
         getFilterValue: (r) => r.servicesNotSold.join(', '),
         exportValue: (r) => r.servicesNotSold.join(', '),
         render: (r) => <NameListCell items={r.servicesNotSold} empty="No services marked not sold" /> },
+      // Services In Progress: in-flight explored services. When the
+      // company has a matching opp in the Opps tab, the cell becomes a
+      // link that pops those opps' details (active first) — so a user can
+      // jump from "what's in progress" to the live opportunity behind it.
       { key: 'servicesInProgress', label: 'Services In Progress', defaultWidth: 220,
         getSortValue: (r) => r.servicesInProgress.length,
         getFilterValue: (r) => r.servicesInProgress.join(', '),
         exportValue: (r) => r.servicesInProgress.join(', '),
-        render: (r) => <NameListCell items={r.servicesInProgress} empty="No services in progress" /> },
+        render: (r) => {
+          if (r.servicesInProgress.length === 0) {
+            return <NameListCell items={r.servicesInProgress} empty="No services in progress" />;
+          }
+          if (r._oppRecords.length === 0) {
+            return <NameListCell items={r.servicesInProgress} empty="No services in progress" />;
+          }
+          const oppCount = r._oppRecords.length;
+          return (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setOppsModalRow(r); }}
+              title={`View ${oppCount} matching opportunit${oppCount === 1 ? 'y' : 'ies'} from the Opps tab\n${r._oppsTip.join('\n')}`}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left', background: 'none',
+                border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: '0.78rem', color: '#7C3AED', fontWeight: 600,
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                textDecoration: 'underline', textDecorationStyle: 'dotted',
+              }}
+            >
+              {r.servicesInProgress.join(', ')}
+            </button>
+          );
+        } },
       // Bulk-edit checkbox. Sits after the Company column (not before)
       // because Company is the sticky column pinned at left: 0 — a
       // column to its left would slide underneath it on horizontal
@@ -2147,6 +2306,14 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
           defaults={{ peOwner: selectedFirm }}
           onImport={handlePasteImport}
           onClose={() => setPasteOpen(false)}
+        />
+      )}
+      {oppsModalRow && (
+        <CompanyOppsModal
+          company={oppsModalRow.company}
+          opps={oppsModalRow._oppRecords}
+          onClose={() => setOppsModalRow(null)}
+          onOpenCompany={() => { const p = oppsModalRow._prospect; setOppsModalRow(null); onSelectProspect?.(p); }}
         />
       )}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
