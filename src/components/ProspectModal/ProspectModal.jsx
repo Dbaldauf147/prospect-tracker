@@ -5474,6 +5474,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             if (manualStatus === '-' && oppStage) {
                               effectiveStatus = oppStage;
                             }
+                            // A real value in servicesExplored is a manual
+                            // override of the automatic (opp-derived) status.
+                            // When set, surface a one-click "revert to auto"
+                            // affordance so the user can drop back to the
+                            // normal logic at the service level.
+                            const isManualOverride = manualStatus !== '-';
                             const statusColors = {
                               'Sold': { bg: '#DCFCE7', color: '#166534' },
                               'Renewal': { bg: '#F1F5F9', color: '#94A3B8' },
@@ -5557,14 +5563,31 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                       if (e.target.value === '-') delete next[item];
                                       set('servicesExplored', next);
                                     }}
+                                    title={isManualOverride
+                                      ? `Manual override: ${manualStatus}.${oppStage ? ` Automatic status from a matching opp would be: ${oppStage}.` : ' No matching opp, so the automatic status is blank.'} Pick "— (auto)" or click ↺ to revert to the automatic status.`
+                                      : oppStage ? `Automatic status from a matching opp: ${oppStage}. Pick a status to set a manual override.` : 'No manual override and no matching opp.'}
                                     style={{
-                                      fontSize: '0.62rem', padding: '1px 2px', border: '1px solid var(--color-border)',
+                                      fontSize: '0.62rem', padding: '1px 2px', border: `1px solid ${isManualOverride ? 'var(--color-accent)' : 'var(--color-border)'}`,
                                       borderRadius: '3px', background: colors.bg || 'var(--color-surface)', color: colors.color || 'var(--color-text)',
                                       cursor: 'pointer', minWidth: '65px', fontFamily: 'inherit', fontWeight: 600,
                                     }}
                                   >
-                                    {SERVICE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                                    {SERVICE_STATUSES.map(s => <option key={s} value={s}>{s === '-' ? '— (auto)' : s}</option>)}
                                   </select>
+                                  {isManualOverride && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const next = { ...(fields.servicesExplored || {}) };
+                                        delete next[item];
+                                        set('servicesExplored', next);
+                                      }}
+                                      title="Clear manual override — revert this service to the automatic (opp-based) status"
+                                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '0.72rem', padding: '0 1px', lineHeight: 1, flexShrink: 0 }}
+                                      onMouseEnter={e => { e.currentTarget.style.color = 'var(--color-accent)'; }}
+                                      onMouseLeave={e => { e.currentTarget.style.color = '#94A3B8'; }}
+                                    >↺</button>
+                                  )}
                                 </div>
                                 {isNoteOpen && (
                                   <div style={{ padding: '0.15rem 0.35rem 0.25rem 1.2rem' }}>
