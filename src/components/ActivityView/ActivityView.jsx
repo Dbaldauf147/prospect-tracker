@@ -11,6 +11,50 @@ import { useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import styles from './ActivityView.module.css';
 
 const CACHE_KEY = 'hubspot-activity-cache';
+// Compact email/phone → {tsMs, ts, type} index derived from the full feed.
+// The raw activity feed (up to 5k emails + 5k calls) routinely blows the
+// ~5MB localStorage quota, in which case saveCache below silently drops it
+// and the All Contacts "Last Outreach" column has nothing to read. This
+// index is a few KB — keyed by the handful of distinct addresses/numbers
+// rather than every record — so it always persists and reliably drives
+// that column.
+const OUTREACH_INDEX_KEY = 'hubspot-outreach-index';
+
+function normalizeOutreachPhone(p) {
+  const digits = String(p || '').replace(/\D/g, '');
+  return digits.length >= 10 ? digits.slice(-10) : '';
+}
+
+function buildOutreachIndex(data) {
+  const emails = {};
+  const phones = {};
+  const consider = (bucket, key, ts, type) => {
+    if (!key || !ts) return;
+    const tsMs = new Date(ts).getTime();
+    if (!Number.isFinite(tsMs)) return;
+    const prev = bucket[key];
+    if (!prev || tsMs > prev.tsMs) bucket[key] = { tsMs, ts, type };
+  };
+  for (const e of (data?.emails || [])) {
+    const subj = String(e.hs_email_subject || '').toLowerCase();
+    if (subj.includes('(sample email)')) continue;
+    for (const field of ['hs_email_to_email', 'hs_email_from_email']) {
+      const raw = e[field];
+      if (!raw) continue;
+      for (const part of String(raw).split(/[;,]/)) {
+        const em = part.trim().toLowerCase();
+        if (em) consider(emails, em, e.hs_timestamp, 'email');
+      }
+    }
+  }
+  for (const c of (data?.calls || [])) {
+    for (const field of ['hs_call_to_number', 'hs_call_from_number']) {
+      const ph = normalizeOutreachPhone(c[field]);
+      if (ph) consider(phones, ph, c.hs_timestamp, 'call');
+    }
+  }
+  return { emails, phones, fetchedAt: data?.fetchedAt };
+}
 
 // Stages that mean an opportunity has been closed out (won OR lost) and
 // shouldn't count as "active". Same set the contact-gap pages use.
@@ -38,10 +82,16 @@ function loadCache() {
 function saveCache(data) {
   try {
     userLsSet(CACHE_KEY, JSON.stringify(data));
-    // Notify in-tab consumers (e.g. the Last Outreach column on
-    // KeyContactsView) since the `storage` event only fires across tabs.
-    window.dispatchEvent(new CustomEvent('hubspot-activity-cache-updated'));
   } catch (err) { console.warn('ActivityView cache write skipped (quota):', err?.message || err); }
+  // Always persist the compact outreach index, even when the full feed
+  // above couldn't fit — it's what the All Contacts "Last Outreach" column
+  // actually reads.
+  try {
+    userLsSet(OUTREACH_INDEX_KEY, JSON.stringify(buildOutreachIndex(data)));
+  } catch (err) { console.warn('ActivityView outreach-index write skipped:', err?.message || err); }
+  // Notify in-tab consumers (e.g. the Last Outreach column on
+  // KeyContactsView) since the `storage` event only fires across tabs.
+  window.dispatchEvent(new CustomEvent('hubspot-activity-cache-updated'));
 }
 
 function fmtDate(dateStr) {

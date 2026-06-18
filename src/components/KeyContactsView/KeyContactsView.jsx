@@ -1456,11 +1456,21 @@ function KeyContactsViewInner({
   const [activityCache, setActivityCache] = useState(() => {
     try { return JSON.parse(userLsGet('hubspot-activity-cache')); } catch { return null; }
   });
+  // Compact email/phone → {tsMs, ts, type} index written by the Activity
+  // tab. Preferred source for the column: the full activityCache above is
+  // often missing because the raw feed exceeds the localStorage quota and
+  // its write is silently dropped, whereas this index always fits.
+  const [outreachIndex, setOutreachIndex] = useState(() => {
+    try { return JSON.parse(userLsGet('hubspot-outreach-index')); } catch { return null; }
+  });
   useEffect(() => {
     const reload = () => {
       try { setActivityCache(JSON.parse(userLsGet('hubspot-activity-cache'))); } catch { setActivityCache(null); }
+      try { setOutreachIndex(JSON.parse(userLsGet('hubspot-outreach-index'))); } catch { setOutreachIndex(null); }
     };
-    const onStorage = (e) => { if (e.key && e.key.endsWith(':hubspot-activity-cache')) reload(); };
+    const onStorage = (e) => {
+      if (e.key && (e.key.endsWith(':hubspot-activity-cache') || e.key.endsWith(':hubspot-outreach-index'))) reload();
+    };
     window.addEventListener('hubspot-activity-cache-updated', reload);
     window.addEventListener('storage', onStorage);
     return () => {
@@ -1523,7 +1533,6 @@ function KeyContactsViewInner({
   // asked specifically for calls + emails.
   const contactLastOutreach = useMemo(() => {
     const map = new Map();
-    if (!activityCache) return map;
     const contacts = hubspotCache?.contacts || [];
     if (contacts.length === 0) return map;
 
@@ -1532,66 +1541,90 @@ function KeyContactsViewInner({
       return digits.length >= 10 ? digits.slice(-10) : digits;
     };
 
-    const emailToIds = new Map();
-    const phoneToIds = new Map();
-    for (const c of contacts) {
-      const id = String(c.id || '');
-      if (!id) continue;
-      if (c.email) {
-        const k = String(c.email).toLowerCase().trim();
-        if (k) {
-          if (!emailToIds.has(k)) emailToIds.set(k, []);
-          emailToIds.get(k).push(id);
-        }
-      }
-      if (c.phone) {
-        const k = normalizePhone(c.phone);
-        if (k.length >= 10) {
-          if (!phoneToIds.has(k)) phoneToIds.set(k, []);
-          phoneToIds.get(k).push(id);
-        }
-      }
-    }
-
-    const consider = (ids, ts, type) => {
-      if (!ts || !ids || ids.length === 0) return;
+    const consider = (id, ts, type) => {
+      if (!id || !ts) return;
       const tsMs = new Date(ts).getTime();
       if (!Number.isFinite(tsMs)) return;
-      for (const id of ids) {
-        const prev = map.get(id);
-        if (!prev || tsMs > prev.tsMs) map.set(id, { tsMs, ts, type });
-      }
+      const prev = map.get(id);
+      if (!prev || tsMs > prev.tsMs) map.set(id, { tsMs, ts, type });
     };
 
-    for (const e of (activityCache.emails || [])) {
-      const subj = String(e.hs_email_subject || '').toLowerCase();
-      if (subj.includes('(sample email)')) continue;
-      const idSet = new Set();
-      for (const field of ['hs_email_to_email', 'hs_email_from_email']) {
-        const raw = e[field];
-        if (!raw) continue;
-        for (const part of String(raw).split(/[;,]/)) {
-          const em = part.trim().toLowerCase();
-          if (!em) continue;
-          const ids = emailToIds.get(em);
-          if (ids) for (const id of ids) idSet.add(id);
+    // Preferred path: the compact email/phone index. Look up each
+    // contact's address/number directly — it's keyed the same way the
+    // contacts are matched, just pre-computed and small enough to persist.
+    if (outreachIndex) {
+      for (const c of contacts) {
+        const id = String(c.id || '');
+        if (!id) continue;
+        if (c.email) {
+          const hit = outreachIndex.emails?.[String(c.email).toLowerCase().trim()];
+          if (hit) consider(id, hit.ts, hit.type);
+        }
+        if (c.phone) {
+          const ph = normalizePhone(c.phone);
+          if (ph.length >= 10) {
+            const hit = outreachIndex.phones?.[ph];
+            if (hit) consider(id, hit.ts, hit.type);
+          }
         }
       }
-      consider(Array.from(idSet), e.hs_timestamp, 'email');
     }
-    for (const c of (activityCache.calls || [])) {
-      const idSet = new Set();
-      for (const field of ['hs_call_to_number', 'hs_call_from_number']) {
-        const ph = normalizePhone(c[field]);
-        if (ph.length < 10) continue;
-        const ids = phoneToIds.get(ph);
-        if (ids) for (const id of ids) idSet.add(id);
+
+    // Fallback / merge: when the full feed is still cached (older sessions,
+    // or quota allowed it), fold it in too so nothing is lost — newest
+    // wins via `consider`.
+    if (activityCache) {
+      const emailToIds = new Map();
+      const phoneToIds = new Map();
+      for (const c of contacts) {
+        const id = String(c.id || '');
+        if (!id) continue;
+        if (c.email) {
+          const k = String(c.email).toLowerCase().trim();
+          if (k) {
+            if (!emailToIds.has(k)) emailToIds.set(k, []);
+            emailToIds.get(k).push(id);
+          }
+        }
+        if (c.phone) {
+          const k = normalizePhone(c.phone);
+          if (k.length >= 10) {
+            if (!phoneToIds.has(k)) phoneToIds.set(k, []);
+            phoneToIds.get(k).push(id);
+          }
+        }
       }
-      consider(Array.from(idSet), c.hs_timestamp, 'call');
+
+      for (const e of (activityCache.emails || [])) {
+        const subj = String(e.hs_email_subject || '').toLowerCase();
+        if (subj.includes('(sample email)')) continue;
+        const idSet = new Set();
+        for (const field of ['hs_email_to_email', 'hs_email_from_email']) {
+          const raw = e[field];
+          if (!raw) continue;
+          for (const part of String(raw).split(/[;,]/)) {
+            const em = part.trim().toLowerCase();
+            if (!em) continue;
+            const ids = emailToIds.get(em);
+            if (ids) for (const id of ids) idSet.add(id);
+          }
+        }
+        for (const id of idSet) consider(id, e.hs_timestamp, 'email');
+      }
+      for (const c of (activityCache.calls || [])) {
+        const idSet = new Set();
+        for (const field of ['hs_call_to_number', 'hs_call_from_number']) {
+          const ph = normalizePhone(c[field]);
+          if (ph.length < 10) continue;
+          const ids = phoneToIds.get(ph);
+          if (ids) for (const id of ids) idSet.add(id);
+        }
+        for (const id of idSet) consider(id, c.hs_timestamp, 'call');
+      }
     }
 
     return map;
-  }, [activityCache, hubspotCache]);
+  }, [activityCache, outreachIndex, hubspotCache]);
 
   const fmtLastOutreach = (entry) => {
     if (!entry) return '';
@@ -3176,7 +3209,7 @@ function KeyContactsViewInner({
                         return (
                           <div
                             style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1' }}
-                            title={activityCache ? 'No call or email logged in the Activity feed for this contact' : 'Open the Activity tab once to load HubSpot activity'}
+                            title={(activityCache || outreachIndex) ? 'No call or email logged in the Activity feed for this contact' : 'Open the Activity tab once to load HubSpot activity'}
                           >—</div>
                         );
                       }
