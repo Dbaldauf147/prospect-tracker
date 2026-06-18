@@ -83,6 +83,23 @@ function companiesMatch(a, b) {
   return false;
 }
 
+// Resolve a company's Client Manager from the shared clients-manager-map
+// the SAME way the company popup does (resolveClientManagerFromMap): try
+// the exact normalized key first, then fall back to a fuzzy companiesMatch
+// scan. The popup matched fuzzily while this view only did an exact-key
+// lookup, so portfolio companies whose name drifts from the Clients-tab
+// name (e.g. "Perform Properties fka ShopCore" vs "ShopCore") showed a
+// blank Client Manager here even though the popup displayed one.
+function resolveManagerFromMap(company, map) {
+  const key = String(company || '').trim().toLowerCase();
+  if (!key || !map) return '';
+  if (map[key]) return map[key];
+  for (const [k, v] of Object.entries(map)) {
+    if (v && companiesMatch(k, company)) return v;
+  }
+  return '';
+}
+
 // Stricter matcher used only for tying an Opps record's Account to a
 // company name (the PE firm or one of its portfolio companies). The
 // general `companiesMatch` above is deliberately loose so contact/DM
@@ -1984,7 +2001,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
       company: p.company || '',
       status: p.status || '',
       cdm: p.cdm || '',
-      clientManager: managerMap[(p.company || '').trim().toLowerCase()] || '',
+      clientManager: resolveManagerFromMap(p.company, managerMap),
       type: p.type || '',
       assetTypes: Array.isArray(p.assetTypes) ? p.assetTypes : [],
       tier: p.tier || '',
