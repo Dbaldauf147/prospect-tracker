@@ -639,7 +639,16 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       // owner's decision maker the way the old union-domain fallback did.
       const rowDomains = new Set();
       collectProspectDomains(p, rowDomains);
-      if (!rowName && rowDomains.size === 0) continue;
+      // Former names / rebrands the user recorded on this company (the
+      // "Also Known As" field). A contact whose synced HubSpot Company is
+      // the rebranded entity — e.g. "Andmore" against the row
+      // "International Market Centers (IMC)" — shares no words with the row
+      // name, so neither exact nor fuzzy name matching can bridge it. The
+      // alias list closes that gap without per-contact re-saves or domain
+      // registration.
+      const aliasNames = String(p.aliases || '')
+        .split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
+      if (!rowName && rowDomains.size === 0 && aliasNames.length === 0) continue;
       const seen = new Set();
       const names = [];
       for (const dm of decisionMakers) {
@@ -657,8 +666,11 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         const exactName = dm.company && rowName && normalizeAccount(dm.company) === rowName;
         const ownerContact = dm.company && peFirm && companiesMatch(dm.company, peFirm);
         const fuzzyName = dm.company && !ownerContact && companiesMatch(dm.company, p.company);
+        // Match against any recorded former name / alias for this company,
+        // so a rebranded association (e.g. "Andmore") still lands on the row.
+        const aliasMatch = dm.company && !ownerContact && aliasNames.some(a => companiesMatch(dm.company, a));
         const domainMatch = dm.domain && rowDomains.has(dm.domain);
-        if (!exactName && !fuzzyName && !domainMatch) continue;
+        if (!exactName && !fuzzyName && !aliasMatch && !domainMatch) continue;
         if (seen.has(dm.name)) continue;
         seen.add(dm.name);
         names.push(dm.name);
