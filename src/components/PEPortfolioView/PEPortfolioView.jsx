@@ -2424,6 +2424,97 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
     }
   }
 
+  // Schneider-branded Excel export for the PE Overview table. DataTable
+  // hands us its currently-visible columns (in order) and the sorted +
+  // filtered rows; we render them into a styled .xlsx (green title band,
+  // dark-green header, Nunito Sans, zebra rows) matching the other
+  // Schneider exports, using each column's exportValue mapper so the file
+  // reflects what's on screen.
+  const exportSchneider = async ({ columns: exportCols, rows: exportRows, colNames }) => {
+    const { Workbook } = await import('exceljs');
+    const SE_GREEN = 'FF3DCD58';
+    const SE_GREEN_DARK = 'FF009530';
+    const SE_BORDER = 'FFD4DDE1';
+    const SE_TEXT = 'FF1E293B';
+    const ZEBRA = 'FFF1F8F4';
+    const cols = (exportCols || []).filter(c => c.key !== '_select');
+    const headers = cols.map(c => colNames?.[c.key] || c.label || c.key);
+
+    const wb = new Workbook();
+    wb.creator = 'Schneider Electric · Prospect Tracker';
+    wb.created = new Date();
+    const ws = wb.addWorksheet(`${firmLabel} Companies`.slice(0, 31), {
+      properties: { tabColor: { argb: SE_GREEN } },
+      views: [{ state: 'frozen', ySplit: 3 }],
+    });
+    ws.columns = cols.map((c, i) => ({ width: i === 0 ? 34 : Math.max((headers[i] || '').length + 4, 16) }));
+
+    ws.mergeCells(1, 1, 1, cols.length);
+    const title = ws.getCell(1, 1);
+    title.value = 'Schneider Electric';
+    title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+    title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN } };
+    title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(1).height = 30;
+
+    ws.mergeCells(2, 1, 2, cols.length);
+    const sub = ws.getCell(2, 1);
+    sub.value = `PE Overview · ${firmLabel} · ${exportRows.length} compan${exportRows.length === 1 ? 'y' : 'ies'}`;
+    sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: 'FF64748B' } };
+    sub.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(2).height = 20;
+
+    const headerRow = ws.getRow(3);
+    headers.forEach((h, i) => {
+      const cell = headerRow.getCell(i + 1);
+      cell.value = h;
+      cell.font = { name: 'Nunito Sans', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      cell.border = {
+        top: { style: 'thin', color: { argb: SE_BORDER } },
+        bottom: { style: 'thin', color: { argb: SE_BORDER } },
+        left: { style: 'thin', color: { argb: SE_BORDER } },
+        right: { style: 'thin', color: { argb: SE_BORDER } },
+      };
+    });
+    headerRow.height = 26;
+
+    exportRows.forEach((row, ri) => {
+      const r = ws.getRow(4 + ri);
+      cols.forEach((c, ci) => {
+        let val = typeof c.exportValue === 'function' ? c.exportValue(row) : row[c.key];
+        if (Array.isArray(val)) val = val.join(', ');
+        const cell = r.getCell(ci + 1);
+        cell.value = val === '' || val == null ? null : val;
+        cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT } };
+        cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+        if (ri % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
+        cell.border = {
+          bottom: { style: 'thin', color: { argb: SE_BORDER } },
+          left: { style: 'thin', color: { argb: SE_BORDER } },
+          right: { style: 'thin', color: { argb: SE_BORDER } },
+        };
+      });
+    });
+
+    if (cols.length > 0) {
+      ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: cols.length } };
+    }
+
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const safe = (selectedFirm.trim() || 'pe_firm').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${safe}_pe_overview_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <>
       <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -2509,6 +2600,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
             emptyMessage={`No ${firmLabel} companies match your filters`}
             exportFileName={`${(selectedFirm.trim() || 'pe_firm').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')}_companies`}
             exportPrimarySheetName={`${firmLabel} Companies`.slice(0, 31)}
+            onExport={exportSchneider}
           />
         )}
       </div>
