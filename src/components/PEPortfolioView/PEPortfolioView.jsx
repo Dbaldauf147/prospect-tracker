@@ -168,6 +168,30 @@ function prospectOwnedByFirm(peOwnerStr, firm) {
   });
 }
 
+// Firm name backing the dedicated "Blackstone Opps" sub-tab. Matched the
+// same bidirectional way prospectOwnedByFirm / accountMatchesCompany work,
+// so "Blackstone", "Blackstone Inc", and companies whose PE Owner names
+// Blackstone all land in the tab.
+const BLACKSTONE_FIRM = 'Blackstone';
+
+// Narrow the PE Opps list to a single firm: every opp — regardless of
+// Type / Source — whose Account matches the firm itself or one of its
+// portfolio companies (the peOwner linkage), still dropping long-closed
+// deals. An empty firm returns the unscoped PE Opps list. Shared by the
+// PE Opps firm picker and the Blackstone tab so both filter identically.
+function computeFirmScopedOpps(firm, peOpps, oppsRecords, prospects) {
+  if (!String(firm || '').trim()) return peOpps;
+  const names = new Set([firm.trim().toLowerCase()]);
+  for (const p of prospects) {
+    if (prospectOwnedByFirm(p.peOwner, firm)) {
+      const n = (p.company || '').trim().toLowerCase();
+      if (n) names.add(n);
+    }
+  }
+  const nameList = [...names];
+  return oppsRecords.filter(r => oppWithinRecency(r) && nameList.some(n => accountMatchesCompany(n, r['Account'])));
+}
+
 // Reads Opps 2 — the canonical opps store. Local IndexedDB first for
 // speed; falls back to the user's Firestore `opps2Data` doc when the
 // local cache is empty (e.g. fresh browser, never opened Opps 2 here
@@ -215,6 +239,8 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
   });
   const [showClosed, setShowClosed] = useState(false);
   const [oppsQuery, setOppsQuery] = useState('');
+  // Independent search box for the dedicated Blackstone Opps tab.
+  const [blackstoneQuery, setBlackstoneQuery] = useState('');
   // PE Opps firm scope. '' = the full PE Opps list (Type = Private Equity
   // OR Source = PE partner). A firm name narrows to every opp tied to that
   // firm or its portfolio companies — any Type/Source — for a per-firm
@@ -399,18 +425,10 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
   // firm or one of its portfolio companies — regardless of Type / Source —
   // matched the same way the PE Overview counts are (account ↔ company),
   // still dropping long-closed deals. Empty firm = the original PE Opps set.
-  const peOppsScoped = useMemo(() => {
-    if (!oppsFirm.trim()) return peOpps;
-    const names = new Set([oppsFirm.trim().toLowerCase()]);
-    for (const p of prospects) {
-      if (prospectOwnedByFirm(p.peOwner, oppsFirm)) {
-        const n = (p.company || '').trim().toLowerCase();
-        if (n) names.add(n);
-      }
-    }
-    const nameList = [...names];
-    return oppsRecords.filter(r => oppWithinRecency(r) && nameList.some(n => accountMatchesCompany(n, r['Account'])));
-  }, [oppsFirm, peOpps, oppsRecords, prospects]);
+  const peOppsScoped = useMemo(
+    () => computeFirmScopedOpps(oppsFirm, peOpps, oppsRecords, prospects),
+    [oppsFirm, peOpps, oppsRecords, prospects],
+  );
 
   const filteredPeOpps = useMemo(() => {
     const q = oppsQuery.trim().toLowerCase();
@@ -420,6 +438,23 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         .some(v => String(v || '').toLowerCase().includes(q))
     );
   }, [peOppsScoped, oppsQuery]);
+
+  // Dedicated "Blackstone Opps" sub-tab — the same PE Opps view locked to
+  // Blackstone (firm + its portfolio companies), with its own search box so
+  // it stays independent of the main PE Opps tab.
+  const blackstoneOpps = useMemo(
+    () => computeFirmScopedOpps(BLACKSTONE_FIRM, peOpps, oppsRecords, prospects),
+    [peOpps, oppsRecords, prospects],
+  );
+
+  const filteredBlackstoneOpps = useMemo(() => {
+    const q = blackstoneQuery.trim().toLowerCase();
+    if (!q) return blackstoneOpps;
+    return blackstoneOpps.filter(r =>
+      [r['Account'], r['Contact'], r['Stage'], r['Scope'], r['Source'], r['Type'], r['Sales Partner'], r['Status'], r['BFO Link'], r['Next Steps']]
+        .some(v => String(v || '').toLowerCase().includes(q))
+    );
+  }, [blackstoneOpps, blackstoneQuery]);
 
   const peFirms = useMemo(() => (
     prospects
@@ -841,6 +876,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           { key: 'companies', label: 'All PCs', count: allPortfolioCompanyCount },
           { key: 'blueOwl', label: 'PE Overview', count: peFirmCompanies.length },
           { key: 'opps', label: 'PE Opps', count: peOppsScoped.length },
+          { key: 'blackstoneOpps', label: 'Blackstone Opps', count: blackstoneOpps.length },
         ].map(t => {
           const isActive = subtab === t.key;
           return (
@@ -886,6 +922,22 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           firm={oppsFirm}
           setFirm={setOppsFirm}
           firmOptions={peFirmOptions}
+          oppsLoaded={oppsRecords.length > 0}
+          prospects={prospects}
+          onSelectProspect={onSelectProspect}
+          onEditField={updateOppField}
+          user={user}
+        />
+      ) : subtab === 'blackstoneOpps' ? (
+        // Same PE Opps tab, hard-scoped to Blackstone. Omitting setFirm
+        // hides the firm picker (the scope is fixed) while firm still
+        // drives the export label and the email-schedule scope.
+        <PEOppsTab
+          opps={filteredBlackstoneOpps}
+          totalOpps={blackstoneOpps.length}
+          query={blackstoneQuery}
+          setQuery={setBlackstoneQuery}
+          firm={BLACKSTONE_FIRM}
           oppsLoaded={oppsRecords.length > 0}
           prospects={prospects}
           onSelectProspect={onSelectProspect}
