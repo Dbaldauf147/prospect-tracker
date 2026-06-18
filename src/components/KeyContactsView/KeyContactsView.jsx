@@ -467,7 +467,7 @@ class ContactsErrorBoundary extends Component {
     try {
       const prefix = this.props.storagePrefix || 'key-contacts';
       const drop = [
-        'visible-cols', 'contact-col-widths', 'contact-col-filters',
+        'visible-cols', 'contact-col-widths', 'contact-col-filters', 'contact-col-value-filters',
         'contact-sort-key', 'contact-sort-dir', 'view-mode',
         'col-widths', 'sort-key', 'sort-dir',
       ];
@@ -1393,10 +1393,26 @@ function KeyContactsViewInner({
     } catch { return DEFAULT_CONTACT_COL_WIDTHS; }
   });
   useEffect(() => { try { localStorage.setItem(lsKey('contact-col-widths'), JSON.stringify(contactColWidths)); } catch {} }, [contactColWidths]);
-  const [contactColFilters, setContactColFilters] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(lsKey('contact-col-filters'))) || {}; } catch { return {}; }
+  // Per-column value filters (Excel-style checklist). Each entry maps a
+  // column key → array of selected display values; a row passes when its
+  // value for that column is one of them. Absent / empty = column not
+  // filtered. Replaces the old free-text per-column filter.
+  const [contactColValueFilters, setContactColValueFilters] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(lsKey('contact-col-value-filters'))) || {}; } catch { return {}; }
   });
-  useEffect(() => { try { localStorage.setItem(lsKey('contact-col-filters'), JSON.stringify(contactColFilters)); } catch {} }, [contactColFilters]);
+  useEffect(() => { try { localStorage.setItem(lsKey('contact-col-value-filters'), JSON.stringify(contactColValueFilters)); } catch {} }, [contactColValueFilters]);
+  // Which column's filter dropdown is currently open, plus the working
+  // (uncommitted) set of checked values and the in-dropdown search text.
+  const [openFilterCol, setOpenFilterCol] = useState(null);
+  const [filterDraft, setFilterDraft] = useState(null); // Set | null (null = seed from current selection)
+  const [filterSearch, setFilterSearch] = useState('');
+  const filterMenuRef = useRef(null);
+  useEffect(() => {
+    if (!openFilterCol) return;
+    const onDown = (e) => { if (!filterMenuRef.current?.contains(e.target)) { setOpenFilterCol(null); setFilterDraft(null); setFilterSearch(''); } };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [openFilterCol]);
   const contactResizingRef = useRef(null);
   function startContactResize(colKey, e) {
     e.preventDefault();
@@ -2123,10 +2139,13 @@ function KeyContactsViewInner({
     lastOutreach: c => fmtLastOutreach(contactLastOutreach.get(String(c.id || ''))),
     emailCampaigns: c => campaignForContact(c)?.subject || '',
   };
-  const activeContactFilters = Object.entries(contactColFilters)
-    .map(([k, v]) => [k, String(v || '').trim().toLowerCase()])
-    .filter(([, v]) => v.length > 0);
-  const filteredContacts = sortedContacts.filter(c => {
+  const activeValueFilters = Object.entries(contactColValueFilters)
+    .filter(([, v]) => Array.isArray(v) && v.length > 0)
+    .map(([k, v]) => [k, new Set(v)]);
+  // Page-level gates (category pills, travel, location flag, search box)
+  // that every column's filter dropdown should respect when listing the
+  // values available to pick from.
+  const passesNonColumnFilters = (c) => {
     if (categoryFilter && categorizeContact) {
       const cats = categorizeContact(c.raw || c) || [];
       if (!cats.includes(categoryFilter)) return false;
@@ -2141,13 +2160,37 @@ function KeyContactsViewInner({
         + (c.email || '') + ' ' + (c.jobtitle || '');
       if (!blob.toLowerCase().includes(q)) return false;
     }
-    for (const [key, needle] of activeContactFilters) {
+    return true;
+  };
+  // Column value filters, optionally skipping one column (so a dropdown
+  // can show the values that would be available ignoring its own filter).
+  const passesColumnFilters = (c, exceptKey) => {
+    for (const [key, vals] of activeValueFilters) {
+      if (key === exceptKey) continue;
       const getter = contactFieldGetters[key];
       if (!getter) continue;
-      if (!String(getter(c)).toLowerCase().includes(needle)) return false;
+      if (!vals.has(String(getter(c)))) return false;
     }
     return true;
-  });
+  };
+  // Distinct values available for a column, honoring all other filters —
+  // this is the checklist the dropdown shows and what "Select All" ticks.
+  const columnFilterValues = (key) => {
+    const getter = contactFieldGetters[key];
+    if (!getter) return [];
+    const set = new Set();
+    for (const c of sortedContacts) {
+      if (!passesNonColumnFilters(c)) continue;
+      if (!passesColumnFilters(c, key)) continue;
+      set.add(String(getter(c)));
+    }
+    return Array.from(set).sort((a, b) => {
+      if (a === '' && b !== '') return 1;
+      if (b === '' && a !== '') return -1;
+      return a.localeCompare(b);
+    });
+  };
+  const filteredContacts = sortedContacts.filter(c => passesNonColumnFilters(c) && passesColumnFilters(c, null));
 
   // Geography rollup for the By Location view — contacts grouped by State,
   // then City within each state. Built from filteredContacts so the search
@@ -2750,17 +2793,96 @@ function KeyContactsViewInner({
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: CONTACT_GRID, background: '#F8FAFC', borderBottom: '1px solid #E2E8F0', position: 'sticky', top: 30, zIndex: 2 }}>
                   <div style={{ borderRight: '1px solid #E2E8F0' }} />
-                  {CONTACT_COLS.map(c => (
-                    <div key={c.key} style={{ padding: '0.25rem 0.4rem', borderRight: '1px solid #E2E8F0' }}>
-                      <input
-                        type="text"
-                        value={contactColFilters[c.key] || ''}
-                        onChange={e => setContactColFilters(prev => ({ ...prev, [c.key]: e.target.value }))}
-                        placeholder="Filter…"
-                        style={{ width: '100%', padding: '0.2rem 0.35rem', fontSize: '0.7rem', border: '1px solid #E2E8F0', borderRadius: 3, fontFamily: 'inherit', background: '#fff' }}
-                      />
-                    </div>
-                  ))}
+                  {CONTACT_COLS.map(col => {
+                    const sel = contactColValueFilters[col.key];
+                    const isFiltered = Array.isArray(sel) && sel.length > 0;
+                    const isOpen = openFilterCol === col.key;
+                    return (
+                      <div key={col.key} style={{ padding: '0.25rem 0.4rem', borderRight: '1px solid #E2E8F0', position: 'relative' }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isOpen) { setOpenFilterCol(null); setFilterDraft(null); setFilterSearch(''); return; }
+                            setFilterSearch('');
+                            setFilterDraft(null);
+                            setOpenFilterCol(col.key);
+                          }}
+                          title={isFiltered ? `Filtered to ${sel.length} value${sel.length === 1 ? '' : 's'} — click to change` : 'Filter by value'}
+                          style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, padding: '0.2rem 0.35rem', fontSize: '0.7rem', border: '1px solid ' + (isFiltered ? '#2563EB' : '#E2E8F0'), borderRadius: 3, fontFamily: 'inherit', background: isFiltered ? '#EFF6FF' : '#fff', color: isFiltered ? '#1D4ED8' : '#64748B', cursor: 'pointer' }}
+                        >
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{isFiltered ? `${sel.length} selected` : 'All'}</span>
+                          <span style={{ flexShrink: 0 }}>▾</span>
+                        </button>
+                        {isOpen && (() => {
+                          const available = columnFilterValues(col.key);
+                          const draft = filterDraft || new Set(isFiltered ? sel : available);
+                          const searchLc = filterSearch.trim().toLowerCase();
+                          const shown = available.filter(v => !searchLc || (v === '' ? '(blanks)' : v.toLowerCase()).includes(searchLc));
+                          const allShownChecked = shown.length > 0 && shown.every(v => draft.has(v));
+                          const apply = () => {
+                            const chosen = available.filter(v => draft.has(v));
+                            setContactColValueFilters(prev => {
+                              const next = { ...prev };
+                              if (chosen.length === 0 || chosen.length === available.length) delete next[col.key];
+                              else next[col.key] = chosen;
+                              return next;
+                            });
+                            setOpenFilterCol(null); setFilterDraft(null); setFilterSearch('');
+                          };
+                          const clear = () => {
+                            setContactColValueFilters(prev => { const n = { ...prev }; delete n[col.key]; return n; });
+                            setOpenFilterCol(null); setFilterDraft(null); setFilterSearch('');
+                          };
+                          return (
+                            <div ref={filterMenuRef} style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 40, background: '#fff', border: '1px solid #CBD5E1', borderRadius: 6, boxShadow: '0 6px 16px rgba(15,23,42,0.18)', width: 240, padding: 6 }}>
+                              <input
+                                autoFocus
+                                type="text"
+                                value={filterSearch}
+                                onChange={e => setFilterSearch(e.target.value)}
+                                placeholder="Search…"
+                                style={{ width: '100%', padding: '0.25rem 0.4rem', fontSize: '0.72rem', border: '1px solid #E2E8F0', borderRadius: 4, fontFamily: 'inherit', marginBottom: 6, boxSizing: 'border-box' }}
+                              />
+                              <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0.2rem 0.3rem', fontSize: '0.74rem', fontWeight: 700, color: '#1E293B', cursor: 'pointer' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={allShownChecked}
+                                    onChange={() => {
+                                      const next = new Set(draft);
+                                      if (allShownChecked) { for (const v of shown) next.delete(v); }
+                                      else { for (const v of shown) next.add(v); }
+                                      setFilterDraft(next);
+                                    }}
+                                  />
+                                  (Select All{searchLc ? ' matching' : ''})
+                                </label>
+                                {shown.length === 0 && <div style={{ padding: '0.3rem', fontSize: '0.72rem', color: '#94A3B8' }}>No values</div>}
+                                {shown.map(v => (
+                                  <label key={v || '__blank__'} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0.2rem 0.3rem', fontSize: '0.74rem', color: '#334155', cursor: 'pointer' }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={draft.has(v)}
+                                      onChange={() => {
+                                        const next = new Set(draft);
+                                        if (next.has(v)) next.delete(v); else next.add(v);
+                                        setFilterDraft(next);
+                                      }}
+                                    />
+                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v === '' ? '(Blanks)' : v}</span>
+                                  </label>
+                                ))}
+                              </div>
+                              <div style={{ display: 'flex', gap: 6, marginTop: 6, paddingTop: 6, borderTop: '1px solid #F1F5F9' }}>
+                                <button type="button" onClick={apply} style={{ flex: 1, padding: '0.25rem', fontSize: '0.7rem', fontWeight: 700, border: '1px solid #2563EB', borderRadius: 4, background: '#2563EB', color: '#fff', cursor: 'pointer', fontFamily: 'inherit' }}>Apply</button>
+                                <button type="button" onClick={clear} style={{ flex: 1, padding: '0.25rem', fontSize: '0.7rem', border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: '#475569', cursor: 'pointer', fontFamily: 'inherit' }}>Clear</button>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    );
+                  })}
                   <div />
                 </div>
                 {filteredContacts.length === 0 && (
