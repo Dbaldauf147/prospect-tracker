@@ -550,6 +550,11 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       if (tags.includes('hide')) continue;
       if (!tags.includes('decision maker')) continue;
       const company = (c.company || '').toLowerCase().trim();
+      // The contact's own typed company text, preserved by the sync
+      // alongside the canonical association name. Lets a decision maker
+      // match by the company the user actually entered even when the
+      // HubSpot Company association is blank or rebranded.
+      const companyText = (c.companyText || '').toLowerCase().trim();
       const email = (c.email || '').toLowerCase().trim();
       const at = email.lastIndexOf('@');
       const rawDomain = at >= 0 ? email.slice(at + 1).trim() : '';
@@ -564,6 +569,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       out.push({
         name: [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'Unknown',
         company,
+        companyText,
         domain,
         metInPerson,
         city: String(c.city || '').trim(),
@@ -663,12 +669,20 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         // across that firm's portfolio companies — it only attaches on an
         // exact name match. The per-row domain match is unchanged and stays
         // scoped to this company's own registered domains.
-        const exactName = dm.company && rowName && normalizeAccount(dm.company) === rowName;
-        const ownerContact = dm.company && peFirm && companiesMatch(dm.company, peFirm);
-        const fuzzyName = dm.company && !ownerContact && companiesMatch(dm.company, p.company);
+        // Company name is the PRIMARY signal: compare BOTH the contact's
+        // canonical association name and the company text the user typed on
+        // the contact (so a decision maker still matches when the HubSpot
+        // association is blank or points at a rebranded record). Email
+        // domain is only a fallback below.
+        const dmNames = [dm.company, dm.companyText].filter(Boolean);
+        const exactName = rowName && dmNames.some(n => normalizeAccount(n) === rowName);
+        const ownerContact = peFirm && dmNames.some(n => companiesMatch(n, peFirm));
+        const fuzzyName = !ownerContact && dmNames.some(n => companiesMatch(n, p.company));
         // Match against any recorded former name / alias for this company,
         // so a rebranded association (e.g. "Andmore") still lands on the row.
-        const aliasMatch = dm.company && !ownerContact && aliasNames.some(a => companiesMatch(dm.company, a));
+        const aliasMatch = !ownerContact && dmNames.some(n => aliasNames.some(a => companiesMatch(n, a)));
+        // Fallback only: per-row email domain (scoped to this company's own
+        // registered domains).
         const domainMatch = dm.domain && rowDomains.has(dm.domain);
         if (!exactName && !fuzzyName && !aliasMatch && !domainMatch) continue;
         if (seen.has(dm.name)) continue;
