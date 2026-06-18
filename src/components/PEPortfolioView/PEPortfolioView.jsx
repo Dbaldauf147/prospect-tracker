@@ -7,7 +7,7 @@ import { formatAum } from '../../utils/formatters';
 import { formatDateDisplay } from '../../utils/oppsCallIn';
 import { PE_STAGES, STATUSES, TYPES, TIERS, GEOGRAPHIES } from '../../data/enums';
 import { InlineCell } from '../TableView/TableView';
-import { buildTypeOptions, buildCdmOptions, persistCustomOption, buildStrategyOptions, persistCustomStrategy } from '../../utils/prospectOptions';
+import { buildTypeOptions, buildCdmOptions, persistCustomOption, buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions } from '../../utils/prospectOptions';
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import { computePortfolioFitScore, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
@@ -1906,6 +1906,9 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
   // Strategy-tag vocabulary shared with the company popup, so a tag added
   // in either surface shows up in the other.
   const strategyOptions = useMemo(() => buildStrategyOptions(prospects, settings), [prospects, settings]);
+  // Asset Types vocabulary, managed on the Dropdowns tab — fed into the
+  // Asset Types column's inline tags editor so it matches Table View.
+  const assetTypeOptions = useMemo(() => buildAssetTypeOptions(prospects, settings), [prospects, settings]);
   // Toggle one strategy tag on a firm, persisting the whole array.
   const toggleStrategy = useCallback((prospect, tag) => {
     const current = Array.isArray(prospect?.strategies) ? prospect.strategies : [];
@@ -2274,15 +2277,15 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
         exportValue: (r) => r.clientManager,
         render: (r) => <ClientManagerCell company={r.company} value={r.clientManager} onCommit={setClientManager} /> },
       { key: 'type', label: 'Type', defaultWidth: 150, render: editable({ key: 'type', label: 'Type', type: 'enum', options: typeOptions, allowAddNew: true }) },
-      // Asset Types — the same multi-tag field Table View shows (its fixed
-      // ASSET_TYPES vocabulary, edited inline through InlineCell's TagsCell).
-      // Read the array off the prospect so sort/filter/export agree with
-      // the values being edited.
+      // Asset Types — the same multi-tag field Table View shows, edited
+      // inline through InlineCell's TagsCell. Its vocabulary is managed on
+      // the Dropdowns tab (assetTypeOptions). Read the array off the
+      // prospect so sort/filter/export agree with the values being edited.
       { key: 'assetTypes', label: 'Asset Types', defaultWidth: 170,
         getSortValue: (r) => r.assetTypes.length,
         getFilterValue: (r) => r.assetTypes.join(', '),
         exportValue: (r) => r.assetTypes.join(', '),
-        render: editable({ key: 'assetTypes', label: 'Asset Types', type: 'tags' }, (r) => r.assetTypes) },
+        render: editable({ key: 'assetTypes', label: 'Asset Types', type: 'tags', options: assetTypeOptions }, (r) => r.assetTypes) },
       { key: 'tier', label: 'Tier', defaultWidth: 100, render: editable({ key: 'tier', label: 'Tier', type: 'enum', options: TIERS }) },
       { key: 'geography', label: 'Geography', defaultWidth: 130, render: editable({ key: 'geography', label: 'Geography', type: 'enum', options: GEOGRAPHIES }) },
       { key: 'hqRegion', label: 'HQ Region', defaultWidth: 130, render: editable({ key: 'hqRegion', label: 'HQ Region' }) },
@@ -2348,7 +2351,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
       ) },
       { key: 'notes', label: 'Notes', defaultWidth: 320, render: editable({ key: 'notes', label: 'Notes', type: 'notes' }) },
     ];
-  }, [onSelectProspect, onUpdateProspect, handleAddOption, typeOptions, cdmOptions, selectedIds, filteredRowIds, onDownloadPortfolio, strategyOptions, toggleStrategy, addStrategy]);
+  }, [onSelectProspect, onUpdateProspect, handleAddOption, typeOptions, cdmOptions, assetTypeOptions, selectedIds, filteredRowIds, onDownloadPortfolio, strategyOptions, toggleStrategy, addStrategy]);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();

@@ -6,7 +6,7 @@ import 'react-quill-new/dist/quill.snow.css';
 import { OpportunityForm, DEFAULT_FORM_TEMPLATE } from './OpportunityForm';
 import { ScopingNotesEditor, harvestCompetitors } from './ScopingNotesEditor';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
-import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
+import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
 import { CITY_OPTIONS, matchCities, getStateForCity, lookupStateForCity } from '../../data/cities';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { useAuth } from '../../contexts/AuthContext';
@@ -21,7 +21,7 @@ import { computePortfolioFitScore, industrySector, sectorScoreFor, tierForScoreV
 import { isContactInEvent, toggleContactInEvents } from '../../utils/eventsStore';
 import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
 import { TagMultiSelect } from '../common/TagMultiSelect';
-import { buildStrategyOptions, persistCustomStrategy } from '../../utils/prospectOptions';
+import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions } from '../../utils/prospectOptions';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
 import { userLsGet } from '../../utils/userLs';
@@ -2439,6 +2439,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // afterwards.
   const competitorOptions = useMemo(() => harvestCompetitors(prospects), [prospects]);
 
+  // Asset Types vocabulary, managed on the Dropdowns tab (plus any value
+  // already in use), so the pop-up offers exactly what Table View does.
+  const assetTypeOptions = useMemo(() => buildAssetTypeOptions(prospects, settings), [prospects, settings]);
+
   const [contactView, setContactView] = useState('table'); // 'table' | 'orgchart'
   // (showHiddenContacts state is declared earlier — above
   // baseContacts — so its useMemo can reference it without a TDZ.)
@@ -4657,7 +4661,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
             <div style={{ gridColumn: 'span 2' }}>
               <label className={styles.label}>Asset Types</label>
-              <MultiSelectDropdown options={ASSET_TYPES} selected={fields.assetTypes || []} onToggle={(val) => toggleArrayField('assetTypes', val)} />
+              <MultiSelectDropdown options={assetTypeOptions} selected={fields.assetTypes || []} onToggle={(val) => toggleArrayField('assetTypes', val)} />
             </div>
 
             {/* Competitors — same width as Asset Types (span 2), one
