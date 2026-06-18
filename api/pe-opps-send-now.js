@@ -9,13 +9,13 @@
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
 import { adminDb } from './_lib/firebaseAdmin.js';
-import { loadPeOpps, loadPeFirms, buildPeOppsWorkbook, sendPeOppsEmail, peOppsFilename } from './_lib/peOpps.js';
+import { loadPeOpps, loadOppsForFirm, loadPeFirms, buildPeOppsWorkbook, sendPeOppsEmail, peOppsFilename } from './_lib/peOpps.js';
 
 async function handler(req, res, auth) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   if (!(await enforceRateLimit(res, auth.uid, 'pe-opps-send-now', 20, 5 * 60 * 1000))) return;
 
-  let { recipients, subject, message, columns, scheduleId, records: postedRecords } = req.body || {};
+  let { recipients, subject, message, columns, scheduleId, firm, records: postedRecords } = req.body || {};
 
   const db = adminDb();
   if (scheduleId) {
@@ -27,7 +27,9 @@ async function handler(req, res, auth) {
     subject = s.subject;
     message = s.message;
     columns = s.columns;
+    firm = s.firm;
   }
+  firm = String(firm || '').trim();
 
   const to = (Array.isArray(recipients) ? recipients : String(recipients || '').split(/[,;\n]/))
     .map((e) => String(e || '').trim())
@@ -43,9 +45,13 @@ async function handler(req, res, auth) {
     // from the shared prospects store (same source the page uses).
     const records = Array.isArray(postedRecords)
       ? postedRecords.filter((r) => r && typeof r === 'object').slice(0, 5000)
-      : await loadPeOpps(db, auth.uid);
-    const firms = await loadPeFirms(db, auth.uid, auth.email);
-    const buffer = await buildPeOppsWorkbook(records, columns, firms);
+      : firm
+        ? await loadOppsForFirm(db, auth.uid, auth.email, firm)
+        : await loadPeOpps(db, auth.uid);
+    // The PE Stages second sheet is only meaningful for the all-firms
+    // digest — drop it when the send is scoped to one firm.
+    const firms = firm ? [] : await loadPeFirms(db, auth.uid, auth.email);
+    const buffer = await buildPeOppsWorkbook(records, columns, firms, { firmLabel: firm });
     const result = await sendPeOppsEmail({
       to,
       subject,

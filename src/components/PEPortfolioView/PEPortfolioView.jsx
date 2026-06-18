@@ -135,6 +135,20 @@ function accountMatchesCompany(companyName, oppAccount) {
   return (' ' + longW.join(' ') + ' ').includes(' ' + shortW.join(' ') + ' ');
 }
 
+// Drop deals closed (Sold / Not Sold) more than a month ago — the same
+// recency rule peOpps applies, factored out so the firm-scoped PE Opps
+// view (which skips the Type/Source filter) can reuse it.
+function oppWithinRecency(r) {
+  const stage = String(r['Stage'] || '').trim().toLowerCase();
+  if (stage === 'sold' || stage === 'not sold') {
+    const cutoff = new Date();
+    cutoff.setMonth(cutoff.getMonth() - 1);
+    const closed = parseOppsDate(r['Close Date']);
+    if (!closed || closed < cutoff) return false;
+  }
+  return true;
+}
+
 // A Table View prospect "belongs" to the selected PE firm when one of its
 // PE Owner tokens matches the firm name. Deliberately a bidirectional
 // substring test (not the stricter companiesMatch, which fails on the
@@ -201,6 +215,16 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
   });
   const [showClosed, setShowClosed] = useState(false);
   const [oppsQuery, setOppsQuery] = useState('');
+  // PE Opps firm scope. '' = the full PE Opps list (Type = Private Equity
+  // OR Source = PE partner). A firm name narrows to every opp tied to that
+  // firm or its portfolio companies — any Type/Source — for a per-firm
+  // digest (e.g. Blackstone). Persisted like the other PE view prefs.
+  const [oppsFirm, setOppsFirm] = useState(() => {
+    try { return localStorage.getItem('pe-portfolio:opps-firm') || ''; } catch { return ''; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('pe-portfolio:opps-firm', oppsFirm); } catch { /* ignore */ }
+  }, [oppsFirm]);
   const [expanded, setExpanded] = useState(() => new Set());
   const [query, setQuery] = useState('');
   const [hubspotCache, setHubspotCacheState] = useState(null);
@@ -371,14 +395,31 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     });
   }, [oppsRecords]);
 
+  // When a firm is picked, swap the all-PE list for every opp tied to that
+  // firm or one of its portfolio companies — regardless of Type / Source —
+  // matched the same way the PE Overview counts are (account ↔ company),
+  // still dropping long-closed deals. Empty firm = the original PE Opps set.
+  const peOppsScoped = useMemo(() => {
+    if (!oppsFirm.trim()) return peOpps;
+    const names = new Set([oppsFirm.trim().toLowerCase()]);
+    for (const p of prospects) {
+      if (prospectOwnedByFirm(p.peOwner, oppsFirm)) {
+        const n = (p.company || '').trim().toLowerCase();
+        if (n) names.add(n);
+      }
+    }
+    const nameList = [...names];
+    return oppsRecords.filter(r => oppWithinRecency(r) && nameList.some(n => accountMatchesCompany(n, r['Account'])));
+  }, [oppsFirm, peOpps, oppsRecords, prospects]);
+
   const filteredPeOpps = useMemo(() => {
     const q = oppsQuery.trim().toLowerCase();
-    if (!q) return peOpps;
-    return peOpps.filter(r =>
+    if (!q) return peOppsScoped;
+    return peOppsScoped.filter(r =>
       [r['Account'], r['Contact'], r['Stage'], r['Scope'], r['Source'], r['Type'], r['Sales Partner'], r['Status'], r['BFO Link'], r['Next Steps']]
         .some(v => String(v || '').toLowerCase().includes(q))
     );
-  }, [peOpps, oppsQuery]);
+  }, [peOppsScoped, oppsQuery]);
 
   const peFirms = useMemo(() => (
     prospects
@@ -799,7 +840,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           { key: 'stages', label: 'PE Stages', count: peFirms.length },
           { key: 'companies', label: 'All PCs', count: allPortfolioCompanyCount },
           { key: 'blueOwl', label: 'PE Overview', count: peFirmCompanies.length },
-          { key: 'opps', label: 'PE Opps', count: peOpps.length },
+          { key: 'opps', label: 'PE Opps', count: peOppsScoped.length },
         ].map(t => {
           const isActive = subtab === t.key;
           return (
@@ -839,9 +880,12 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       {subtab === 'opps' ? (
         <PEOppsTab
           opps={filteredPeOpps}
-          totalOpps={peOpps.length}
+          totalOpps={peOppsScoped.length}
           query={oppsQuery}
           setQuery={setOppsQuery}
+          firm={oppsFirm}
+          setFirm={setOppsFirm}
+          firmOptions={peFirmOptions}
           oppsLoaded={oppsRecords.length > 0}
           prospects={prospects}
           onSelectProspect={onSelectProspect}
@@ -2625,8 +2669,9 @@ function EditableCell({ value, align, onCommit }) {
 // Opps 2 store — anything with Type = "Private Equity" or Source =
 // "PE partner". Rows link back to the matching prospect when one
 // exists so the user can jump into the company popup.
-function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, onSelectProspect, onEditField, user }) {
+function PEOppsTab({ opps, totalOpps, query, setQuery, firm = '', setFirm, firmOptions = [], oppsLoaded, prospects, onSelectProspect, onEditField, user }) {
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  const firmLabel = firm.trim();
   const ALL_COLUMNS = [
     { key: 'Account', label: 'Account', width: '1.6fr' },
     { key: 'Stage', label: 'Stage', width: '1fr' },
@@ -2718,7 +2763,7 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, on
     // Title row — Schneider green band, white text.
     ws.mergeCells(1, 1, 1, COLUMNS.length);
     const title = ws.getCell(1, 1);
-    title.value = `PE Opportunities · ${opps.length} opp${opps.length === 1 ? '' : 's'}`;
+    title.value = `${firmLabel ? `${firmLabel} · ` : ''}PE Opportunities · ${opps.length} opp${opps.length === 1 ? '' : 's'}`;
     title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
     title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
     title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -2758,7 +2803,8 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, on
     const a = document.createElement('a');
     a.href = url;
     const date = new Date().toISOString().slice(0, 10);
-    a.download = `pe-opps-${date}.xlsx`;
+    const slug = firmLabel ? `${firmLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}-` : '';
+    a.download = `${slug}pe-opps-${date}.xlsx`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -2774,11 +2820,25 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, on
   return (
     <>
       <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        {setFirm && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.72rem', fontWeight: 600, color: '#475569', whiteSpace: 'nowrap' }}>
+            Firm
+            <select
+              value={firm}
+              onChange={e => setFirm(e.target.value)}
+              title="Scope the list to one PE firm — every opp on that firm or its portfolio companies. Choose “All PE Opps” for the full PE channel."
+              style={{ padding: '0.4rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: 6, background: '#fff', fontSize: '0.78rem', fontFamily: 'inherit', color: '#1E293B', maxWidth: 220, cursor: 'pointer' }}
+            >
+              <option value="">All PE Opps</option>
+              {firmOptions.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </label>
+        )}
         <input
           type="text"
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder={`Search ${totalOpps} PE opp${totalOpps === 1 ? '' : 's'}…`}
+          placeholder={firmLabel ? `Search ${totalOpps} ${firmLabel} opp${totalOpps === 1 ? '' : 's'}…` : `Search ${totalOpps} PE opp${totalOpps === 1 ? '' : 's'}…`}
           style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
         <div ref={colMenuRef} style={{ position: 'relative' }}>
@@ -2835,6 +2895,7 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, on
         onClose={() => setScheduleOpen(false)}
         uid={user?.uid}
         email={user?.email}
+        firm={firmLabel}
         oppsRows={sortedOpps}
         allColumns={ALL_COLUMNS.map(c => ({ key: c.key, label: c.label }))}
         defaultColumns={[...visibleCols]}
@@ -2849,12 +2910,14 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, on
         {opps.length === 0 ? (
           <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
             <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>
-              {totalOpps === 0 ? 'No PE opps found' : `No opps match "${query}"`}
+              {totalOpps === 0 ? (firmLabel ? `No ${firmLabel} opps found` : 'No PE opps found') : `No opps match "${query}"`}
             </div>
             <div style={{ fontSize: '0.78rem' }}>
               {totalOpps === 0
-                ? <>No Opps rows have Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>
-                : `${totalOpps} total PE opps loaded — adjust your search.`}
+                ? (firmLabel
+                    ? <>No Opps rows have an Account matching <strong>{firmLabel}</strong> or a company whose PE Owner is <strong>{firmLabel}</strong>.</>
+                    : <>No Opps rows have Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>)
+                : `${totalOpps} total ${firmLabel || 'PE'} opps loaded — adjust your search.`}
             </div>
           </div>
         ) : (

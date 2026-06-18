@@ -42,6 +42,10 @@ function buildScheduleDoc(input, auth) {
     ownerUid: auth.uid,
     ownerEmail: auth.email || '',
     name: String(s.name || '').slice(0, 200),
+    // PE Opps firm scope: '' = the full PE Opps list; a firm name = every
+    // opp tied to that firm or its portfolio companies (matches the tab's
+    // firm picker). The cron / send-now re-derive the rows from this.
+    firm: String(s.firm || '').slice(0, 200),
     recipients,
     subject: String(s.subject || 'PE Opportunities').slice(0, 300),
     message: String(s.message || '').slice(0, 5000),
