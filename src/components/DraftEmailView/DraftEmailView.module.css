@@ -105,3 +105,13 @@
 .draftMeta { font-size: 0.65rem; color: var(--color-text-muted); }
 .draftDelete { background: none; border: none; color: var(--color-text-muted); font-size: 1rem; cursor: pointer; padding: 0.25rem; line-height: 1; }
 .draftDelete:hover { color: #DC2626; }
+
+/* Line-break visibility toggle + markers in the preview pane. The markers
+   reveal which line breaks survive in the sent email (faint ↵) vs. which ones
+   the email strips (struck-through red ↵), so the "missing line break" gap
+   between the editor and the sent message is visible at a glance. */
+.breakToggle, .breakToggleOn { flex-shrink: 0; border: 1px solid var(--color-border); background: #fff; color: var(--color-text-muted); cursor: pointer; font-size: 0.68rem; font-weight: 600; padding: 0.2rem 0.5rem; border-radius: 6px; line-height: 1.2; font-family: inherit; }
+.breakToggle:hover { background: #F8FAFC; border-color: var(--color-accent); }
+.breakToggleOn { background: #EFF6FF; border-color: #93C5FD; color: #1E3A8A; }
+.lbKeep { color: #CBD5E1; font-size: 0.85em; user-select: none; }
+.lbDrop { color: #DC2626; text-decoration: line-through; font-size: 0.85em; font-weight: 700; user-select: none; }

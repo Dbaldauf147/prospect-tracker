@@ -26,8 +26,17 @@ import styles from './DraftEmailView.module.css';
 //
 // Shared by the Outlook draft (Graph API), the .eml export, and the
 // clipboard-paste paths so all three render identically.
-function buildStyledBodyHtml(pBodyHtml, { signature = '' } = {}) {
-  const htmlContent = pBodyHtml
+// Core of the body transform, shared by the sent-email builder and the
+// on-screen preview. Collapses Quill's <p> paragraphs into a single block
+// separated by <br>, keeps lists as lists, and strips the breaks Word would
+// otherwise re-inflate (leading/trailing blank lines + blanks touching a
+// list). In `preview` mode those stripped breaks are kept as \x00DROP\x00
+// sentinels instead of being deleted, so the preview can show the user
+// exactly which line breaks won't survive in the sent message.
+function collapseBodyToBreaks(pBodyHtml, { preview = false } = {}) {
+  const DROP = '\x00DROP\x00';
+  const dropMarks = (s) => DROP.repeat((s.match(/<br>/gi) || []).length);
+  const html = pBodyHtml
     // Replace non-breaking spaces with regular spaces — pasted text often has
     // &nbsp; for every space which prevents wrapping. First mark double spaces
     // (e.g. after periods) to preserve them.
@@ -47,15 +56,36 @@ function buildStyledBodyHtml(pBodyHtml, { signature = '' } = {}) {
     .replace(/<(ul|ol)([^>]*)>/gi, (_, tag, a = '') => `<${tag}${a} style="margin:0;padding-left:1.5em;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;">`)
     .replace(/<li([^>]*)>/gi, (_, a = '') => `<li${a} style="margin:0;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;">`)
     // Materialise the sentinels as real <br>s now that all <p> tags are gone.
-    .replace(/\x00BR\x00/g, '<br>\n')
-    // A list is already block-level, so a <br> butting straight up against it
-    // would add a phantom blank line — drop those.
-    .replace(/(?:<br>\s*)+(<(?:ul|ol)\b)/gi, '$1')
-    .replace(/(<\/(?:ul|ol)>)\s*(?:<br>\s*)+/gi, '$1\n')
-    // Trim leading/trailing blank lines so the message neither opens nor closes
-    // on an empty line.
-    .replace(/^(?:\s*<br>\s*)+/i, '')
-    .replace(/(?:\s*<br>\s*)+$/i, '');
+    .replace(/\x00BR\x00/g, '<br>\n');
+
+  // A list is already block-level, so a <br> butting straight up against it
+  // would add a phantom blank line; and a message shouldn't open or close on a
+  // blank line. The sent email deletes these; the preview keeps them as DROP
+  // sentinels so they can be surfaced as struck-through markers.
+  return html
+    .replace(/((?:<br>\s*)+)(<(?:ul|ol)\b)/gi, (_, brs, list) => (preview ? dropMarks(brs) : '') + list)
+    .replace(/(<\/(?:ul|ol)>)\s*((?:<br>\s*)+)/gi, (_, end, brs) => end + (preview ? dropMarks(brs) : '\n'))
+    .replace(/^((?:\s*<br>\s*)+)/i, (_, brs) => (preview ? dropMarks(brs) : ''))
+    .replace(/((?:\s*<br>\s*)+)$/i, (_, brs) => (preview ? dropMarks(brs) : ''));
+}
+
+// Build the preview body HTML. It always reflects the sent email accurately
+// (same collapse/trim as buildStyledBodyHtml). When showBreaks is on, every
+// surviving line break gets a faint ↵ marker and every break that the sent
+// email strips gets a struck-through red ↵, so the user can see which breaks
+// won't appear.
+function buildPreviewBodyHtml(pBodyHtml, { showBreaks = false } = {}) {
+  let html = collapseBodyToBreaks(pBodyHtml, { preview: showBreaks });
+  if (showBreaks) {
+    html = html
+      .replace(/\x00DROP\x00/g, `<span class="${styles.lbDrop}" title="This line break is removed in the sent email">↵</span>`)
+      .replace(/<br>/gi, `<span class="${styles.lbKeep}" title="Line break in the sent email">↵</span><br>`);
+  }
+  return html;
+}
+
+function buildStyledBodyHtml(pBodyHtml, { signature = '' } = {}) {
+  const htmlContent = collapseBodyToBreaks(pBodyHtml);
 
   // Signature sits one blank line below the body.
   const sigBlock = signature ? `<br>\n<div>\n${signature}\n</div>` : '';
@@ -586,6 +616,7 @@ function CampaignQueueSection({ allContacts, selectedContacts, setSelectedContac
 
 function PreviewTabs({ contacts, subject, body, personalizeForContact, draftCc, ccMap, toAlsoMap }) {
   const [activeIdx, setActiveIdx] = useState(0);
+  const [showBreaks, setShowBreaks] = useState(false);
   const c = contacts[activeIdx] || contacts[0];
   if (!c) return null;
 
@@ -597,6 +628,12 @@ function PreviewTabs({ contacts, subject, body, personalizeForContact, draftCc, 
     <div className={styles.previewSection}>
       <div className={styles.previewHeader}>
         <h4 className={styles.previewTitle}>Preview</h4>
+        <button
+          type="button"
+          onClick={() => setShowBreaks(v => !v)}
+          className={showBreaks ? styles.breakToggleOn : styles.breakToggle}
+          title="Show line-break markers. ↵ marks each break in the sent email; a struck-through red ↵ marks a break you typed that the email will drop (leading/trailing blank lines and blanks next to bullet lists)."
+        >¶ {showBreaks ? 'Hide breaks' : 'Show breaks'}</button>
         <div className={styles.previewTabs}>
           {contacts.map((ct, i) => (
             <button
@@ -619,7 +656,7 @@ function PreviewTabs({ contacts, subject, body, personalizeForContact, draftCc, 
           </div>
         )}
         <div className={styles.previewSubject}>{personalizeForContact(subject, c)}</div>
-        <div className={styles.previewBody} dangerouslySetInnerHTML={{ __html: personalizeForContact(body, c) }} />
+        <div className={styles.previewBody} dangerouslySetInnerHTML={{ __html: buildPreviewBodyHtml(personalizeForContact(body, c), { showBreaks }) }} />
       </div>
     </div>
   );
