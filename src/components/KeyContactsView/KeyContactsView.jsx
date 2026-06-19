@@ -554,6 +554,11 @@ function KeyContactsViewInner({
   // categorizeContact() output includes that label. Driven by the
   // clickable Totals pills on the All Contacts page. null = no filter.
   categoryFilter = null,
+  // When true, a contact's company name renders as a hyperlink that opens
+  // the company popup (via onSelectProspect) instead of an inline-edit
+  // cell — used by All Contacts. Only applies to rows mapped to a prospect;
+  // unmapped companies stay editable so they can be fixed/mapped.
+  linkCompanyToProspect = false,
   // Default view mode when no per-page localStorage entry exists yet.
   // 'contacts' (the default) lands the user on the flat name-by-name
   // table; 'companies' lands them on the By Company rollup. Used by
@@ -3015,17 +3020,29 @@ function KeyContactsViewInner({
                       title={c.companyName && !c.prospect ? `"${c.companyName}" is not mapped to any prospect in the Table View — no matching company name and no shared email domain.` : undefined}
                     >
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <InlineCell
-                          value={c.companyName}
-                          onCommit={v => inlineUpdateField(c.raw || c, 'company', v)}
-                          fontSize="0.74rem"
-                          textColor="#1E293B"
-                          fontWeight={600}
-                          suggestions={prospects.map(p => p.company).filter(Boolean)}
-                          title={c.prospect ? `Click to edit. Use the ↗ button to open ${c.companyName}.` : 'Not mapped to any Table View prospect. Click to edit (autocomplete from Table View companies).'}
-                        />
+                        {linkCompanyToProspect && c.prospect ? (
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={e => { e.stopPropagation(); onSelectProspect?.(c.prospect); }}
+                            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); onSelectProspect?.(c.prospect); } }}
+                            title={`Open ${c.companyName} prospect record`}
+                            style={{ display: 'block', padding: '0.3rem 0.5rem', fontSize: '0.74rem', fontWeight: 600, color: '#1D4ED8', cursor: 'pointer', textDecoration: 'underline', textDecorationColor: '#93C5FD', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                          >{c.companyName}</span>
+                        ) : (
+                          <InlineCell
+                            value={c.companyName}
+                            onCommit={v => inlineUpdateField(c.raw || c, 'company', v)}
+                            fontSize="0.74rem"
+                            textColor="#1E293B"
+                            fontWeight={600}
+                            suggestions={prospects.map(p => p.company).filter(Boolean)}
+                            title={c.prospect ? `Click to edit. Use the ↗ button to open ${c.companyName}.` : 'Not mapped to any Table View prospect. Click to edit (autocomplete from Table View companies).'}
+                          />
+                        )}
                       </div>
                       {c.prospect ? (
+                        linkCompanyToProspect ? null : (
                         <span
                           role="button"
                           tabIndex={0}
@@ -3034,6 +3051,7 @@ function KeyContactsViewInner({
                           title={`Open ${c.companyName} prospect record`}
                           style={{ flexShrink: 0, marginRight: 4, fontSize: '0.7rem', color: '#1D4ED8', cursor: 'pointer', fontWeight: 700 }}
                         >↗</span>
+                        )
                       ) : c.companyName ? (
                         <span
                           title={`"${c.companyName}" is not in the Table View`}
