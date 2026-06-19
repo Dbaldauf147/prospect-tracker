@@ -1275,27 +1275,27 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
               const addrIsUrl = /^https?:\/\//i.test(addr);
               return (
                 <div style={{
-                  display: 'flex', flexDirection: 'column', gap: 6,
+                  display: 'flex', flexDirection: 'column', gap: 8,
                   padding: '0.5rem 0.6rem', background: '#F8FAFC',
                   border: '1px solid var(--color-border-light)', borderRadius: 4,
                   fontSize: '0.78rem', color: '#475569',
                 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                    <span>BFO Opportunity Name</span>
-                    <strong style={{ color: '#1E293B', textAlign: 'right', wordBreak: 'break-word' }}>{nm || '—'}</strong>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ color: '#94A3B8' }}>BFO Opportunity Name</span>
+                    <strong style={{ color: '#1E293B', whiteSpace: 'normal', wordBreak: 'break-word' }}>{nm || '—'}</strong>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                    <span>BFO Address</span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ color: '#94A3B8' }}>BFO Address</span>
                     {addrIsUrl ? (
                       <a
                         href={addr}
                         target="_blank"
                         rel="noopener noreferrer"
                         onClick={(e) => e.stopPropagation()}
-                        style={{ color: '#2563eb', textDecoration: 'underline', textAlign: 'right', wordBreak: 'break-all' }}
-                      >Open in BFO ↗</a>
+                        style={{ color: '#2563eb', textDecoration: 'underline', whiteSpace: 'normal', wordBreak: 'break-all' }}
+                      >{addr}</a>
                     ) : (
-                      <strong style={{ color: '#1E293B', textAlign: 'right', wordBreak: 'break-word' }}>{addr || '—'}</strong>
+                      <strong style={{ color: '#1E293B', whiteSpace: 'normal', wordBreak: 'break-word' }}>{addr || '—'}</strong>
                     )}
                   </div>
                 </div>
