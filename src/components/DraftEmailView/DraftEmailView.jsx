@@ -305,6 +305,9 @@ const COVERAGE_EDITABLE = {
   '{city}':      { kind: 'hubspot', prop: 'city',      local: 'city' },
   '{state}':     { kind: 'hubspot', prop: 'state',     local: 'state' },
   '{email}':     { kind: 'hubspot', prop: 'email',     local: 'email' },
+  // {goesBy} is the app-side "Goes By" nickname stored in
+  // settings.contactNicknames, keyed by HubSpot contact id.
+  '{goesBy}':    { kind: 'nickname' },
   '{custom}':    { kind: 'custom' },
 };
 
@@ -853,6 +856,13 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       updateSettings({ customField: next });
       return;
     }
+    if (meta.kind === 'nickname') {
+      const cur = settings?.contactNicknames || {};
+      const next = { ...cur };
+      if (value) next[contact.id] = value; else delete next[contact.id];
+      updateSettings({ contactNicknames: next });
+      return;
+    }
     if (String(contact[meta.local] ?? '').trim() === value) return;
     const recomputeName = (c) => [c.firstName, c.lastName].filter(Boolean).join(' ') || c.email || c.name;
     setSelectedContacts(prev => prev.map(c => {
@@ -947,6 +957,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
 
   const INSERT_VARIABLES = [
     { token: '{firstName}', label: 'First Name', example: 'John' },
+    { token: '{goesBy}', label: 'Goes By', example: 'Bob' },
     { token: '{lastName}', label: 'Last Name', example: 'Smith' },
     { token: '{fullName}', label: 'Full Name', example: 'John Smith' },
     { token: '{email}', label: 'Email', example: 'john@company.com' },
@@ -1189,8 +1200,12 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     // typed manually in the "Custom" column on the Contacts page,
     // keyed by HubSpot contact id.
     const customField = (settings?.customField || {})[c.id] || '';
+    // {goesBy} uses the saved nickname when present, otherwise falls back to
+    // the first name so a greeting never renders blank.
+    const goesBy = (settings?.contactNicknames || {})[c.id] || '';
     return text
       .replace(/\{firstName\}/gi, hasToAlso ? 'Team' : (c.firstName || c.name.split(' ')[0] || ''))
+      .replace(/\{goesBy\}/gi, hasToAlso ? 'Team' : (goesBy || c.firstName || c.name.split(' ')[0] || ''))
       .replace(/\{lastName\}/gi, hasToAlso ? '' : (c.lastName || ''))
       .replace(/\{fullName\}/gi, hasToAlso ? 'Team' : (c.name || ''))
       .replace(/\{email\}/gi, c.email || '')
@@ -1749,6 +1764,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                 // so we can colour empties.
                 switch (token) {
                   case '{firstName}': return c.firstName || (c.name || '').split(' ')[0] || '';
+                  case '{goesBy}':    return (settings?.contactNicknames || {})[c.id] || c.firstName || (c.name || '').split(' ')[0] || '';
                   case '{lastName}':  return c.lastName || '';
                   case '{fullName}':  return c.name || '';
                   case '{email}':     return c.email || '';
