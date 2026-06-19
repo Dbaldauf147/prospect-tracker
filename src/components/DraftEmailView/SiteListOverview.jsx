@@ -82,12 +82,15 @@ export function SiteListOverview({ prospects, settings }) {
     return out.sort((a, b) => a.company.localeCompare(b.company));
   }, [siteLists, prospectBySlug, draftCompanyNorms]);
 
-  // Union of every included list's headers, preserving first-seen order.
+  // Union of every included list's headers, preserving first-seen order. The
+  // leading table column already shows the owning company, so a per-row
+  // "Company" header is dropped to avoid a duplicate column.
   const combinedHeaders = useMemo(() => {
     const seen = new Set();
     const headers = [];
     for (const { list } of includedLists) {
       for (const h of (list.headers || [])) {
+        if (h.toLowerCase() === 'company') continue;
         if (!seen.has(h)) { seen.add(h); headers.push(h); }
       }
     }
