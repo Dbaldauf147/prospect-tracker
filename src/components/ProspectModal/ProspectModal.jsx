@@ -2689,6 +2689,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [peOwnerPickerOpen]);
+  // Site List — a per-company spreadsheet of physical sites/locations the
+  // user uploads. Stored under settings.companySiteLists[slug] (slug keyed
+  // off the company name, same convention as companyOpportunities/Deals).
+  // The Email Drafts page reads these back to build a combined Site List
+  // Overview for every company that has a contact in the draft.
+  const [siteListOpen, setSiteListOpen] = useState(false);
+  const [siteListDragActive, setSiteListDragActive] = useState(false);
+  const siteListInputRef = useRef(null);
+
   // Portfolio Companies upload preview — shows detected column mapping before applying
   const [portfolioUpload, setPortfolioUpload] = useState(null); // { fileName, headers: string[], rows: object[], mapping: { [header]: fieldKey|'' }, file?: File }
   const [portfolioDragActive, setPortfolioDragActive] = useState(false);
@@ -2730,6 +2739,69 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
   // Shared file -> mapping-preview parser. Used by both the Upload Excel button
   // and the drag-and-drop handler on the Portfolio Companies section.
+  // Slug used to key this company's site list in settings. Mirrors the
+  // slugify in migrateCompanyData so renames carry the list along.
+  const siteListSlug = (fields.company || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
+  const currentSiteList = (settings.companySiteLists || {})[siteListSlug] || null;
+
+  // Parse an uploaded .xlsx/.xls/.csv into { headers, rows } and stash it
+  // under settings.companySiteLists[slug]. Rows are plain header→cell
+  // objects with Firestore-safe (string/number) values.
+  const openSiteListFile = useCallback(async (file) => {
+    if (!file) return;
+    if (!/\.(xlsx|xls|csv)$/i.test(file.name)) {
+      alert('Please upload an Excel or CSV file (.xlsx, .xls, or .csv).');
+      return;
+    }
+    const slug = (fields.company || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
+    if (!slug) { alert('Add a company name before uploading a site list.'); return; }
+    try {
+      const XLSX = await import('xlsx');
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf);
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const data = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      if (!data.length) { alert('Uploaded file has no rows.'); return; }
+      const safeCell = (v) => {
+        if (v == null) return '';
+        if (v instanceof Date) return v.toISOString();
+        if (typeof v === 'object') return String(v);
+        return v;
+      };
+      // Union of headers across all rows so sparse columns aren't dropped.
+      const headers = [];
+      const seen = new Set();
+      for (const r of data) {
+        for (const h of Object.keys(r)) {
+          if (!seen.has(h)) { seen.add(h); headers.push(h); }
+        }
+      }
+      const rows = data.map(r => {
+        const o = {};
+        for (const h of headers) o[h] = safeCell(r[h]);
+        return o;
+      });
+      updateSettingsPath({
+        [`companySiteLists.${slug}`]: {
+          company: fields.company || '',
+          fileName: file.name,
+          headers,
+          rows,
+          uploadedAt: new Date().toISOString(),
+        },
+      });
+      setSiteListOpen(true);
+    } catch (err) {
+      alert('Failed to parse file: ' + (err.message || 'Unknown error'));
+    }
+  }, [fields.company, updateSettingsPath]);
+
+  function removeSiteList() {
+    if (!siteListSlug) return;
+    if (!window.confirm('Remove the uploaded site list for this company?')) return;
+    updateSettingsPath({ [`companySiteLists.${siteListSlug}`]: null });
+  }
+
   const openPortfolioMappingForFile = useCallback(async (file) => {
     if (!file) return;
     try {
@@ -3963,6 +4035,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const newResearch = (settings.companyResearch || {})[newSlug];
     if (oldResearch && !newResearch) patches[`companyResearch.${newSlug}`] = oldResearch;
 
+    const oldSiteList = (settings.companySiteLists || {})[oldSlug];
+    const newSiteList = (settings.companySiteLists || {})[newSlug];
+    if (oldSiteList && !newSiteList) patches[`companySiteLists.${newSlug}`] = oldSiteList;
+
     // Drop the old slug entries when no other prospect still maps to
     // the old company name — otherwise leave them so the other record
     // keeps working.
@@ -3974,6 +4050,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       if (hasOldOpps) patches[`companyOpportunities.${oldSlug}`] = null;
       if (Array.isArray(oldDeals) && oldDeals.length > 0) patches[`companyDeals.${oldSlug}`] = null;
       if (oldResearch) patches[`companyResearch.${oldSlug}`] = null;
+      if (oldSiteList) patches[`companySiteLists.${oldSlug}`] = null;
     }
 
     if (Object.keys(patches).length > 0) updateSettingsPath(patches);
@@ -5700,6 +5777,128 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 </div>
                 );
               })()}
+            </div>
+          )}
+
+          {/* Site List — uploaded spreadsheet of this company's physical
+              sites/locations. Surfaces on the Email Drafts page as part of
+              the combined Site List Overview. */}
+          {!isNew && (
+            <div
+              style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem', position: 'relative', borderRadius: 8, transition: 'background 0.15s, outline 0.15s', outline: siteListDragActive ? '2px dashed var(--color-accent)' : '2px dashed transparent', outlineOffset: siteListDragActive ? '4px' : '0px', background: siteListDragActive ? 'rgba(59, 125, 221, 0.06)' : 'transparent' }}
+              onDragOver={e => {
+                if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'copy';
+                  if (!siteListDragActive) setSiteListDragActive(true);
+                }
+              }}
+              onDragEnter={e => {
+                if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+                  e.preventDefault();
+                  setSiteListDragActive(true);
+                }
+              }}
+              onDragLeave={e => {
+                if (e.currentTarget === e.target) setSiteListDragActive(false);
+              }}
+              onDrop={e => {
+                e.preventDefault();
+                setSiteListDragActive(false);
+                const file = e.dataTransfer?.files?.[0];
+                if (file) openSiteListFile(file);
+              }}
+            >
+              {siteListDragActive && (
+                <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'var(--color-accent)', color: '#fff', padding: '0.5rem 1rem', borderRadius: 6, fontSize: '0.85rem', fontWeight: 600, pointerEvents: 'none', zIndex: 5, boxShadow: '0 4px 12px rgba(0,0,0,0.2)' }}>
+                  Drop a spreadsheet to set the Site List
+                </div>
+              )}
+              <div
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', userSelect: 'none' }}
+                onClick={() => setSiteListOpen(o => !o)}
+              >
+                <label className={styles.label} style={{ margin: 0, cursor: 'pointer' }}>
+                  Site List
+                </label>
+                <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', transform: siteListOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>&#9660;</span>
+                {currentSiteList && (currentSiteList.rows || []).length > 0 && (
+                  <span style={{ fontSize: '0.68rem', color: '#64748B' }}>
+                    {currentSiteList.rows.length} {currentSiteList.rows.length === 1 ? 'site' : 'sites'}
+                  </span>
+                )}
+              </div>
+              {siteListOpen && (
+                <div style={{ marginTop: '0.6rem' }}>
+                  <input
+                    ref={siteListInputRef}
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    style={{ display: 'none' }}
+                    onChange={e => {
+                      const file = e.target.files?.[0];
+                      if (file) openSiteListFile(file);
+                      e.target.value = '';
+                    }}
+                  />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                    <button
+                      type="button"
+                      onClick={() => siteListInputRef.current?.click()}
+                      style={{ fontSize: '0.75rem', padding: '0.35rem 0.7rem', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface)', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      {currentSiteList ? 'Replace site list' : 'Upload site list'}
+                    </button>
+                    {currentSiteList && (
+                      <>
+                        <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
+                          {currentSiteList.fileName}
+                          {currentSiteList.uploadedAt ? ` · ${new Date(currentSiteList.uploadedAt).toLocaleDateString()}` : ''}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={removeSiteList}
+                          style={{ fontSize: '0.75rem', padding: '0.35rem 0.7rem', borderRadius: 6, border: '1px solid #FCA5A5', color: '#B91C1C', background: '#FEF2F2', cursor: 'pointer', fontWeight: 600 }}
+                        >
+                          Remove
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  {!currentSiteList && (
+                    <p style={{ fontSize: '0.72rem', color: '#94A3B8', margin: 0 }}>
+                      Drag a spreadsheet here or click “Upload site list”. The first sheet's header row becomes the columns.
+                    </p>
+                  )}
+                  {currentSiteList && (currentSiteList.rows || []).length > 0 && (
+                    <div style={{ maxHeight: 260, overflow: 'auto', border: '1px solid var(--color-border-light)', borderRadius: 6 }}>
+                      <table style={{ borderCollapse: 'collapse', fontSize: '0.72rem', width: '100%' }}>
+                        <thead>
+                          <tr>
+                            {(currentSiteList.headers || []).map(h => (
+                              <th key={h} style={{ position: 'sticky', top: 0, background: '#F8FAFC', textAlign: 'left', padding: '0.3rem 0.5rem', borderBottom: '1px solid var(--color-border-light)', whiteSpace: 'nowrap', fontWeight: 600 }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {currentSiteList.rows.slice(0, 50).map((r, i) => (
+                            <tr key={i}>
+                              {(currentSiteList.headers || []).map(h => (
+                                <td key={h} style={{ padding: '0.3rem 0.5rem', borderBottom: '1px solid var(--color-border-light)', whiteSpace: 'nowrap' }}>{String(r[h] ?? '')}</td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {currentSiteList.rows.length > 50 && (
+                        <div style={{ padding: '0.35rem 0.5rem', fontSize: '0.68rem', color: '#94A3B8' }}>
+                          Showing first 50 of {currentSiteList.rows.length} rows.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
