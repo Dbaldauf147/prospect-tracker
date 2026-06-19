@@ -2968,6 +2968,7 @@ function KeyContactsViewInner({
                             Key:    { bg: '#FEF3C7', border: '#FCD34D', color: '#92400E' },
                             Active: { bg: '#DCFCE7', border: '#86EFAC', color: '#166534' },
                             Client: { bg: '#DBEAFE', border: '#93C5FD', color: '#1E3A8A' },
+                            'Key Prospect': { bg: '#EDE9FE', border: '#C4B5FD', color: '#5B21B6' },
                           };
                           return cats.map(cat => {
                             const k = COLORS[cat] || { bg: '#F1F5F9', border: '#CBD5E1', color: '#334155' };
