@@ -18,6 +18,7 @@ import { buildCompanyRenamePlan, planHasWork, summarizeRenamePlan, applyListMapp
 import { countClientsSubtabRename, clientsSubtabRenameTotal, summarizeClientsSubtabRename, applyClientsSubtabRename } from '../../utils/clientsRename';
 import { loadTargetAccountsFromDB, saveTargetAccountsToDB, renameTargetAccountRows, countBlockedAccountRename, renameBlockedAccountName } from '../TargetAccountsView/TargetAccountsView';
 import { computePortfolioFitScore, industrySector, sectorScoreFor, tierForScoreValue, industryTier, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
+import { SiteListPasteModal } from './SiteListPasteModal';
 import { isContactInEvent, toggleContactInEvents } from '../../utils/eventsStore';
 import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
 import { TagMultiSelect } from '../common/TagMultiSelect';
@@ -2696,6 +2697,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // Overview for every company that has a contact in the draft.
   const [siteListOpen, setSiteListOpen] = useState(false);
   const [siteListDragActive, setSiteListDragActive] = useState(false);
+  const [siteListPasteOpen, setSiteListPasteOpen] = useState(false);
   const siteListInputRef = useRef(null);
 
   // Portfolio Companies upload preview — shows detected column mapping before applying
@@ -2795,6 +2797,24 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       alert('Failed to parse file: ' + (err.message || 'Unknown error'));
     }
   }, [fields.company, updateSettingsPath]);
+
+  // Persist a site list built from the paste-and-map modal. `headers` is the
+  // canonical column subset; `rows` are header→value objects.
+  function saveSiteListFromPaste({ headers, rows }) {
+    const slug = (fields.company || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
+    if (!slug) { alert('Add a company name before adding a site list.'); return; }
+    updateSettingsPath({
+      [`companySiteLists.${slug}`]: {
+        company: fields.company || '',
+        fileName: 'Pasted from Excel',
+        headers,
+        rows,
+        uploadedAt: new Date().toISOString(),
+      },
+    });
+    setSiteListPasteOpen(false);
+    setSiteListOpen(true);
+  }
 
   function removeSiteList() {
     if (!siteListSlug) return;
@@ -5844,10 +5864,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
                     <button
                       type="button"
+                      onClick={() => setSiteListPasteOpen(true)}
+                      style={{ fontSize: '0.75rem', padding: '0.35rem 0.7rem', borderRadius: 6, border: 'none', background: 'var(--color-accent)', color: '#fff', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      {currentSiteList ? 'Replace via paste' : 'Paste from Excel'}
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => siteListInputRef.current?.click()}
                       style={{ fontSize: '0.75rem', padding: '0.35rem 0.7rem', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface)', cursor: 'pointer', fontWeight: 600 }}
                     >
-                      {currentSiteList ? 'Replace site list' : 'Upload site list'}
+                      {currentSiteList ? 'Replace via file' : 'Upload file'}
                     </button>
                     {currentSiteList && (
                       <>
@@ -5867,7 +5894,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   </div>
                   {!currentSiteList && (
                     <p style={{ fontSize: '0.72rem', color: '#94A3B8', margin: 0 }}>
-                      Drag a spreadsheet here or click “Upload site list”. The first sheet's header row becomes the columns.
+                      Copy the site rows in Excel and click “Paste from Excel” to map columns, drag a spreadsheet here, or use “Upload file”.
                     </p>
                   )}
                   {currentSiteList && (currentSiteList.rows || []).length > 0 && (
@@ -5900,6 +5927,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 </div>
               )}
             </div>
+          )}
+
+          {siteListPasteOpen && (
+            <SiteListPasteModal
+              companyName={fields.company || ''}
+              onClose={() => setSiteListPasteOpen(false)}
+              onImport={saveSiteListFromPaste}
+            />
           )}
 
           {/* Portfolio Companies */}
