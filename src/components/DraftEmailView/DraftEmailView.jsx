@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
-import ReactQuill from 'react-quill-new';
+import ReactQuill, { Quill } from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { secureSet, secureGet, secureClear } from '../../utils/secureStorage';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
@@ -9,6 +9,16 @@ import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { useDraftCampaignQueue, clearQueuedContacts, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import styles from './DraftEmailView.module.css';
+
+// Register an <hr> divider blot once so the editor can hold a horizontal
+// page-break line (inserted from the Insert menu). Quill drops any tag that
+// isn't a registered format, so the embed plus the 'divider' entry in the
+// editor's `formats` whitelist are both required for the rule to survive.
+const BlockEmbed = Quill.import('blots/block/embed');
+class DividerBlot extends BlockEmbed {}
+DividerBlot.blotName = 'divider';
+DividerBlot.tagName = 'hr';
+Quill.register(DividerBlot, true);
 
 // Quill emits one <p> per line and <p><br></p> for an intentionally blank
 // line. The trap: every <p> is its own Word paragraph, and when Outlook
@@ -55,16 +65,21 @@ function collapseBodyToBreaks(pBodyHtml, { preview = false } = {}) {
     // with the surrounding lines instead of gaining auto spacing on Send.
     .replace(/<(ul|ol)([^>]*)>/gi, (_, tag, a = '') => `<${tag}${a} style="margin:0;padding-left:1.5em;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;">`)
     .replace(/<li([^>]*)>/gi, (_, a = '') => `<li${a} style="margin:0;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;">`)
+    // The divider/page-break rule: give it explicit borders + margin so it
+    // renders as a thin grey line and Outlook doesn't re-inflate the spacing.
+    .replace(/<hr\s*\/?>/gi, '<hr style="border:none;border-top:1px solid #CBD5E1;margin:12px 0;" />')
     // Materialise the sentinels as real <br>s now that all <p> tags are gone.
     .replace(/\x00BR\x00/g, '<br>\n');
 
-  // A list is already block-level, so a <br> butting straight up against it
-  // would add a phantom blank line; and a message shouldn't open or close on a
-  // blank line. The sent email deletes these; the preview keeps them as DROP
-  // sentinels so they can be surfaced as struck-through markers.
+  // A list or divider is already block-level, so a <br> butting straight up
+  // against it would add a phantom blank line; and a message shouldn't open or
+  // close on a blank line. The sent email deletes these; the preview keeps
+  // them as DROP sentinels so they can be surfaced as struck-through markers.
   return html
     .replace(/((?:<br>\s*)+)(<(?:ul|ol)\b)/gi, (_, brs, list) => (preview ? dropMarks(brs) : '') + list)
     .replace(/(<\/(?:ul|ol)>)\s*((?:<br>\s*)+)/gi, (_, end, brs) => end + (preview ? dropMarks(brs) : '\n'))
+    .replace(/((?:<br>\s*)+)(<hr\b)/gi, (_, brs, hr) => (preview ? dropMarks(brs) : '') + hr)
+    .replace(/(<hr[^>]*>)\s*((?:<br>\s*)+)/gi, (_, hr, brs) => hr + (preview ? dropMarks(brs) : ''))
     .replace(/^((?:\s*<br>\s*)+)/i, (_, brs) => (preview ? dropMarks(brs) : ''))
     .replace(/((?:\s*<br>\s*)+)$/i, (_, brs) => (preview ? dropMarks(brs) : ''));
 }
@@ -1018,6 +1033,20 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     }
   }
 
+  // Insert a horizontal divider (page break) into the body. Always targets the
+  // Quill editor — a divider makes no sense in the subject line.
+  function insertDivider() {
+    const quill = bodyRef.current?.getEditor?.();
+    if (quill) {
+      const range = quill.getSelection(true);
+      const idx = range ? range.index : quill.getLength();
+      quill.insertEmbed(idx, 'divider', true, 'user');
+      quill.setSelection(idx + 1, 0);
+      quill.focus();
+    }
+    setShowInsertMenu(false);
+  }
+
   const filteredContacts = contactSearch.trim()
     ? allContacts.filter(c =>
         !selectedContacts.some(s => s.id === c.id) &&
@@ -1162,6 +1191,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
   function htmlToPlainText(html) {
     return html
       .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<hr[^>]*>/gi, '\n----------------------\n')
       .replace(/<\/p>\s*<p[^>]*>/gi, '\n\n')
       .replace(/<\/li>\s*/gi, '\n')
       .replace(/<li[^>]*>/gi, '• ')
@@ -1516,6 +1546,16 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                           <span className={styles.insertExample}>e.g. {v.example}</span>
                         </button>
                       ))}
+                      <div className={styles.insertDivLine} />
+                      <button
+                        className={styles.insertOption}
+                        onClick={insertDivider}
+                        type="button"
+                      >
+                        <span className={styles.insertToken}>—</span>
+                        <span className={styles.insertLabel}>Page break</span>
+                        <span className={styles.insertExample}>horizontal divider line</span>
+                      </button>
                     </div>
                   )}
                 </div>
@@ -1548,7 +1588,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                   ],
                   clipboard: { matchVisual: false },
                 }}
-                formats={['bold', 'italic', 'underline', 'strike', 'list', 'link']}
+                formats={['bold', 'italic', 'underline', 'strike', 'list', 'link', 'divider']}
               />
             </div>
           </div>
