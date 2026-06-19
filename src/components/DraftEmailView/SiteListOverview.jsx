@@ -44,6 +44,11 @@ export function SiteListOverview({ prospects, settings }) {
   // the contacts currently in the composer (auto-saved to localStorage).
   const [draftKey, setDraftKey] = useState('__compose__');
 
+  // Table filters: a global free-text search plus an optional per-column
+  // contains-filter keyed by column label ("Company" + each site header).
+  const [search, setSearch] = useState('');
+  const [colFilters, setColFilters] = useState({});
+
   // Re-read the composer contacts whenever this tab renders so switching
   // back to it reflects the latest selection.
   const composeContacts = readComposeContacts();
@@ -116,6 +121,32 @@ export function SiteListOverview({ prospects, settings }) {
     return rows;
   }, [includedLists]);
 
+  // Columns the filters operate on: the leading Company tag column plus
+  // every combined site header.
+  const filterColumns = useMemo(() => ['Company', ...combinedHeaders], [combinedHeaders]);
+
+  // Value lookup for a row/column, treating "Company" as the owner tag.
+  const cellValue = (entry, col) => col === 'Company' ? entry.__company : entry.row[col];
+
+  // Rows after applying the global search and any per-column filters.
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const active = Object.entries(colFilters).filter(([, v]) => String(v || '').trim());
+    if (!q && active.length === 0) return combinedRows;
+    return combinedRows.filter(entry => {
+      if (q) {
+        const hit = filterColumns.some(col => String(cellValue(entry, col) ?? '').toLowerCase().includes(q));
+        if (!hit) return false;
+      }
+      for (const [col, v] of active) {
+        if (!String(cellValue(entry, col) ?? '').toLowerCase().includes(v.trim().toLowerCase())) return false;
+      }
+      return true;
+    });
+  }, [combinedRows, search, colFilters, filterColumns]);
+
+  const filtersActive = search.trim() !== '' || Object.values(colFilters).some(v => String(v || '').trim());
+
   // Companies in the draft that have no matching uploaded site list —
   // surfaced so the user knows what's missing. Uses the same fuzzy match.
   const missingCompanies = useMemo(() => {
@@ -131,7 +162,7 @@ export function SiteListOverview({ prospects, settings }) {
       return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     };
     const lines = [cols.map(esc).join(',')];
-    for (const { __company, row } of combinedRows) {
+    for (const { __company, row } of filteredRows) {
       lines.push([esc(__company), ...combinedHeaders.map(h => esc(row[h]))].join(','));
     }
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
@@ -168,10 +199,29 @@ export function SiteListOverview({ prospects, settings }) {
           </select>
         </label>
         {combinedRows.length > 0 && (
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search all sites…"
+            style={{ fontSize: '0.8rem', padding: '0.4rem 0.6rem', borderRadius: 6, border: '1px solid var(--color-border)', fontFamily: 'inherit', minWidth: 200 }}
+          />
+        )}
+        {filtersActive && (
+          <button
+            type="button"
+            onClick={() => { setSearch(''); setColFilters({}); }}
+            style={{ fontSize: '0.78rem', padding: '0.4rem 0.8rem', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface)', cursor: 'pointer', fontWeight: 600 }}
+          >
+            Clear filters
+          </button>
+        )}
+        {combinedRows.length > 0 && (
           <button
             type="button"
             onClick={exportCsv}
             style={{ fontSize: '0.78rem', padding: '0.4rem 0.8rem', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface)', cursor: 'pointer', fontWeight: 600 }}
+            title={filtersActive ? 'Exports the filtered rows shown below' : 'Exports all sites'}
           >
             Export CSV
           </button>
@@ -187,7 +237,9 @@ export function SiteListOverview({ prospects, settings }) {
             </span>
           ))}
           <span style={{ fontSize: '0.72rem', padding: '0.25rem 0.6rem', borderRadius: 999, background: '#F1F5F9', border: '1px solid #E2E8F0', color: '#475569', fontWeight: 600 }}>
-            {combinedRows.length} total site{combinedRows.length === 1 ? '' : 's'}
+            {filtersActive
+              ? `${filteredRows.length} of ${combinedRows.length} site${combinedRows.length === 1 ? '' : 's'}`
+              : `${combinedRows.length} total site${combinedRows.length === 1 ? '' : 's'}`}
           </span>
         </div>
       )}
@@ -209,14 +261,36 @@ export function SiteListOverview({ prospects, settings }) {
           <table style={{ borderCollapse: 'collapse', fontSize: '0.74rem', width: '100%' }}>
             <thead>
               <tr>
-                <th style={{ position: 'sticky', top: 0, left: 0, zIndex: 2, background: '#F1F5F9', textAlign: 'left', padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--color-border)', fontWeight: 700, whiteSpace: 'nowrap' }}>Company</th>
+                <th style={{ position: 'sticky', top: 0, left: 0, zIndex: 3, background: '#F1F5F9', textAlign: 'left', padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--color-border)', fontWeight: 700, whiteSpace: 'nowrap' }}>Company</th>
                 {combinedHeaders.map(h => (
-                  <th key={h} style={{ position: 'sticky', top: 0, background: '#F8FAFC', textAlign: 'left', padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--color-border)', fontWeight: 600, whiteSpace: 'nowrap' }}>{h}</th>
+                  <th key={h} style={{ position: 'sticky', top: 0, zIndex: 1, background: '#F8FAFC', textAlign: 'left', padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--color-border)', fontWeight: 600, whiteSpace: 'nowrap' }}>{h}</th>
+                ))}
+              </tr>
+              <tr>
+                {filterColumns.map((col, idx) => (
+                  <th
+                    key={col}
+                    style={{ position: 'sticky', top: 30, left: idx === 0 ? 0 : undefined, zIndex: idx === 0 ? 3 : 1, background: idx === 0 ? '#F1F5F9' : '#F8FAFC', padding: '0.25rem 0.4rem', borderBottom: '1px solid var(--color-border)' }}
+                  >
+                    <input
+                      type="text"
+                      value={colFilters[col] || ''}
+                      onChange={e => setColFilters(prev => ({ ...prev, [col]: e.target.value }))}
+                      placeholder="Filter…"
+                      style={{ width: '100%', minWidth: 80, boxSizing: 'border-box', fontSize: '0.68rem', padding: '0.2rem 0.35rem', borderRadius: 4, border: '1px solid var(--color-border)', fontFamily: 'inherit', fontWeight: 400 }}
+                    />
+                  </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {combinedRows.map(({ __company, row }, i) => (
+              {filteredRows.length === 0 ? (
+                <tr>
+                  <td colSpan={filterColumns.length} style={{ padding: '1.25rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>
+                    No sites match the current filters.
+                  </td>
+                </tr>
+              ) : filteredRows.map(({ __company, row }, i) => (
                 <tr key={i}>
                   <td style={{ position: 'sticky', left: 0, background: '#fff', padding: '0.35rem 0.6rem', borderBottom: '1px solid var(--color-border-light)', fontWeight: 600, whiteSpace: 'nowrap' }}>{__company}</td>
                   {combinedHeaders.map(h => (
