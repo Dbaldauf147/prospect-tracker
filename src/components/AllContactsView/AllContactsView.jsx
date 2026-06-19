@@ -111,6 +111,8 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   const myTierAccounts = useMemo(() => {
     return (prospects || []).filter(p => {
       if (!matchesCdm(p.cdm, cdmName)) return false;
+      // Clients aren't prospects — keep them out of the Key Prospect bucket.
+      if (p.status === 'Client') return false;
       const t = (p.tier || '').toLowerCase();
       return t === 'tier 1' || t === 'tier 2';
     });
