@@ -16,9 +16,9 @@ import { EventsView } from '../EventsView/EventsView';
 import { setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
 
 const ALL_SUBTABS = [
-  { key: 'hubspot',    label: 'HubSpot Contacts', adminOnly: true },
-  { key: 'se',         label: 'SE Contacts',      adminOnly: true },
-  { key: 'bulk',       label: 'Bulk Add Contacts' },
+  { key: 'hubspot',    label: 'HubSpot',          adminOnly: true },
+  { key: 'se',         label: 'SE',               adminOnly: true },
+  { key: 'bulk',       label: 'Bulk Add' },
   { key: 'all',        label: 'All Contacts' },
   { key: 'key',        label: 'Key Contacts' },
   { key: 'keyprospects', label: 'Key Prospects' },
