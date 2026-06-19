@@ -1128,7 +1128,7 @@ function PricingOptionSnapshotView({ snapshot }) {
 // renders as a link to it, and a Pricing-Option snapshot still falls
 // back to the existing "open the Opp details popup" affordance when
 // no manual URL is set. All edits happen inside the popup.
-function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onChangeUrl, services }) {
+function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onChangeUrl, services, bfoName, bfoAddress }) {
   const [open, setOpen] = useState(false);
   const [draftAmount, setDraftAmount] = useState(value ?? '');
   const [draftUrl, setDraftUrl] = useState(url ?? '');
@@ -1266,6 +1266,41 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
                 style={{ padding: '0.4rem 0.55rem', border: '1px solid var(--color-border)', borderRadius: 4, fontFamily: 'inherit', fontSize: '0.82rem' }}
               />
             </label>
+            {(() => {
+              // Read-only BFO context for this opp: the BFO Opportunity Name
+              // ("BFO Link") and the BFO Address (live Salesforce URL).
+              const cleanBfo = (v) => bfoFieldMissing(v) ? '' : String(v).trim();
+              const nm = cleanBfo(bfoName);
+              const addr = cleanBfo(bfoAddress);
+              const addrIsUrl = /^https?:\/\//i.test(addr);
+              return (
+                <div style={{
+                  display: 'flex', flexDirection: 'column', gap: 6,
+                  padding: '0.5rem 0.6rem', background: '#F8FAFC',
+                  border: '1px solid var(--color-border-light)', borderRadius: 4,
+                  fontSize: '0.78rem', color: '#475569',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                    <span>BFO Opportunity Name</span>
+                    <strong style={{ color: '#1E293B', textAlign: 'right', wordBreak: 'break-word' }}>{nm || '—'}</strong>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                    <span>BFO Address</span>
+                    {addrIsUrl ? (
+                      <a
+                        href={addr}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        style={{ color: '#2563eb', textDecoration: 'underline', textAlign: 'right', wordBreak: 'break-all' }}
+                      >Open in BFO ↗</a>
+                    ) : (
+                      <strong style={{ color: '#1E293B', textAlign: 'right', wordBreak: 'break-word' }}>{addr || '—'}</strong>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
             {snapshot && snapStats && (
               <div style={{
                 display: 'flex', flexDirection: 'column', gap: 4,
@@ -7150,6 +7185,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 url={row._quotedAmountUrl || ''}
                 onChangeUrl={(u) => updateOppField(row._id, '_quotedAmountUrl', u)}
                 services={cellServices}
+                bfoName={row['BFO Link']}
+                bfoAddress={row['BFO Address']}
               />
             );
           }
