@@ -990,6 +990,16 @@ function KeyContactsViewInner({
       const c = lf && typeof lf._companyOverride === 'string' && lf._companyOverride
         ? { ...baseC, company: lf._companyOverride }
         : baseC;
+      // When the page supplies its own categoriser (All Contacts), use it
+      // so the export is a 1:1 dump of every contact the page surfaces —
+      // including the Key Prospect category — rather than the internal
+      // Key/Active/Client recomputation below.
+      if (categorizeContact) {
+        const categories = categorizeContact(c) || [];
+        if (categories.length === 0) continue;
+        out.push({ contact: c, categories });
+        continue;
+      }
       const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
       if (tags.includes('hide')) continue;
       if (tags.includes('left')) continue;
@@ -1034,9 +1044,11 @@ function KeyContactsViewInner({
       out.push({ contact: c, categories });
     }
     if (out.length === 0) {
-      alert('No contacts qualify for any of the three tabs.');
+      alert(categorizeContact ? 'No contacts to export.' : 'No contacts qualify for any of the three tabs.');
       return;
     }
+    // Label used for the workbook title, sheet name, and download file.
+    const exportLabel = categorizeContact ? 'All Contacts' : 'Contacts (Combined: Key + Active + Client)';
     // Schneider-branded XLSX export. Same green palette as the
     // Indicative Savings workbook on the Sites page so the company
     // collateral looks consistent. Column widths are capped at 30 —
@@ -1049,7 +1061,7 @@ function KeyContactsViewInner({
     const wb = new Workbook();
     wb.creator = 'Schneider Electric · Prospect Tracker';
     wb.created = new Date();
-    const ws = wb.addWorksheet('Contacts (Combined)', {
+    const ws = wb.addWorksheet(categorizeContact ? 'All Contacts' : 'Contacts (Combined)', {
       properties: { tabColor: { argb: SE_GREEN } },
       views: [{ showGridLines: false, state: 'frozen', ySplit: 3 }],
     });
@@ -1073,7 +1085,7 @@ function KeyContactsViewInner({
     // Title row — Schneider green band, white text.
     ws.mergeCells(1, 1, 1, columns.length);
     const title = ws.getCell(1, 1);
-    title.value = `Contacts (Combined: Key + Active + Client) · ${out.length} contact${out.length === 1 ? '' : 's'}`;
+    title.value = `${exportLabel} · ${out.length} contact${out.length === 1 ? '' : 's'}`;
     title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
     title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
     title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -1121,7 +1133,7 @@ function KeyContactsViewInner({
     const a = document.createElement('a');
     a.href = url;
     const date = new Date().toISOString().slice(0, 10);
-    a.download = `contacts-combined-${date}.xlsx`;
+    a.download = `${categorizeContact ? 'all-contacts' : 'contacts-combined'}-${date}.xlsx`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -2335,7 +2347,9 @@ function KeyContactsViewInner({
           <button
             type="button"
             onClick={downloadCombinedContactsCsv}
-            title="Download a single CSV combining contacts from Key Contacts, Active Contacts, and Client Contacts. Each row has a Categories column listing every tab the contact qualifies for. Filters and search on this page are NOT applied — the export covers the full tag/CDM-derived sets."
+            title={categorizeContact
+              ? 'Download a formatted Excel workbook of every contact on this page. Each row has a Categories column (Key / Active / Client / Key Prospect). The export covers the full page set — on-screen filters and search are NOT applied.'
+              : 'Download a single workbook combining contacts from Key Contacts, Active Contacts, and Client Contacts. Each row has a Categories column listing every tab the contact qualifies for. Filters and search on this page are NOT applied — the export covers the full tag/CDM-derived sets.'}
             style={{
               padding: '0.35rem 0.75rem',
               fontSize: '0.72rem',
@@ -2347,7 +2361,7 @@ function KeyContactsViewInner({
               cursor: 'pointer',
               fontFamily: 'inherit',
             }}
-          >Download Combined (Key + Active + Client)</button>
+          >{categorizeContact ? 'Download All (Excel)' : 'Download Combined (Key + Active + Client)'}</button>
           {isContactList && (
             <div ref={colsMenuRef} style={{ position: 'relative' }}>
               <button
