@@ -484,6 +484,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       contactSelector={combinedSelector}
       categorizeContact={categorizeContact}
       categoryFilter={categoryFilter}
+      linkCompanyToProspect
     />
   );
 }
