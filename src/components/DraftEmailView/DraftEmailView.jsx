@@ -631,7 +631,7 @@ function CampaignQueueSection({ allContacts, selectedContacts, setSelectedContac
 
 function PreviewTabs({ contacts, subject, body, personalizeForContact, draftCc, ccMap, toAlsoMap }) {
   const [activeIdx, setActiveIdx] = useState(0);
-  const [showBreaks, setShowBreaks] = useState(false);
+  const [showBreaks, setShowBreaks] = useState(true);
   const c = contacts[activeIdx] || contacts[0];
   if (!c) return null;
 
