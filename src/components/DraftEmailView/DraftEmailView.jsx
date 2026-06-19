@@ -102,8 +102,10 @@ function buildPreviewBodyHtml(pBodyHtml, { showBreaks = false } = {}) {
 function buildStyledBodyHtml(pBodyHtml, { signature = '' } = {}) {
   const htmlContent = collapseBodyToBreaks(pBodyHtml);
 
-  // Signature sits one blank line below the body.
-  const sigBlock = signature ? `<br>\n<div>\n${signature}\n</div>` : '';
+  // Signature sits one blank line below the body, indented slightly from
+  // the left so it isn't flush against the body text (matches the look of
+  // an Outlook-inserted signature).
+  const sigBlock = signature ? `<br>\n<div style="margin-left:24px;">\n${signature}\n</div>` : '';
   return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">\n<head>\n<!--[if gte mso 9]><xml><w:WordDocument><w:DontHyphenate/><w:DoNotHyphenateCaps/></w:WordDocument></xml><![endif]-->\n<style>\np{margin:0pt;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\nul,ol{margin:0pt;padding-left:1.5em;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\nli{margin:0pt;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\ndiv{mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\n</style>\n</head>\n<body style="margin:0;padding:0;">\n<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;">\n${htmlContent}\n</div>${sigBlock}\n</body>\n</html>`;
 }
 
