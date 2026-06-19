@@ -1044,14 +1044,15 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     }
   }
 
-  // Insert a horizontal divider (page break) into the body. Always targets the
-  // Quill editor — a divider makes no sense in the subject line.
+  // Insert a blank line (extra spacing) into the body — same effect as
+  // pressing Enter, no horizontal rule. Always targets the Quill editor;
+  // a spacer makes no sense in the subject line.
   function insertDivider() {
     const quill = bodyRef.current?.getEditor?.();
     if (quill) {
       const range = quill.getSelection(true);
       const idx = range ? range.index : quill.getLength();
-      quill.insertEmbed(idx, 'divider', true, 'user');
+      quill.insertText(idx, '\n', 'user');
       quill.setSelection(idx + 1, 0);
       quill.focus();
     }
@@ -1567,9 +1568,9 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                         onClick={insertDivider}
                         type="button"
                       >
-                        <span className={styles.insertToken}>—</span>
+                        <span className={styles.insertToken}>↵</span>
                         <span className={styles.insertLabel}>Page break</span>
-                        <span className={styles.insertExample}>horizontal divider line</span>
+                        <span className={styles.insertExample}>blank line, like pressing Enter</span>
                       </button>
                     </div>
                   )}
