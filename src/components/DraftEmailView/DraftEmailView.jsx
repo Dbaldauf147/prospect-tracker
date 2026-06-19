@@ -290,6 +290,67 @@ function CritiquePanel({ critique, onClose, onUseRewrite }) {
   );
 }
 
+// Variable-coverage cells the user can edit inline. Maps each variable
+// token to its underlying field: `hubspot` writes through to HubSpot via
+// the update-contact endpoint (with the matching property name and the
+// local key on the flattened contact object); `custom` is the app-side
+// {custom} value persisted in settings.customField. Tokens not listed
+// here (fullName, company, companyType) stay read-only — they're either
+// composite or derived from other fields.
+const COVERAGE_EDITABLE = {
+  '{firstName}': { kind: 'hubspot', prop: 'firstname', local: 'firstName' },
+  '{lastName}':  { kind: 'hubspot', prop: 'lastname',  local: 'lastName' },
+  '{title}':     { kind: 'hubspot', prop: 'jobtitle',  local: 'title' },
+  '{phone}':     { kind: 'hubspot', prop: 'phone',     local: 'phone' },
+  '{city}':      { kind: 'hubspot', prop: 'city',      local: 'city' },
+  '{state}':     { kind: 'hubspot', prop: 'state',     local: 'state' },
+  '{email}':     { kind: 'hubspot', prop: 'email',     local: 'email' },
+  '{custom}':    { kind: 'custom' },
+};
+
+// One editable coverage cell — click to edit, commit on blur / Enter,
+// cancel on Escape. Read-only tokens just render the value (or the red
+// missing dash) without the click affordance.
+function CoverageEditCell({ value, editable, missingTitle, cellStyle, onCommit }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  useEffect(() => { setDraft(value); }, [value]);
+  const has = String(value || '').trim().length > 0;
+  if (editing) {
+    return (
+      <td style={{ ...cellStyle, padding: 0, maxWidth: 180 }}>
+        <input
+          autoFocus
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={() => { setEditing(false); if (draft !== value) onCommit(draft); }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+            else if (e.key === 'Escape') { setDraft(value); setEditing(false); }
+          }}
+          style={{ width: '100%', boxSizing: 'border-box', padding: '0.3rem 0.5rem', fontSize: '0.74rem', border: '1px solid #2563EB', borderRadius: 3, fontFamily: 'inherit', outline: 'none' }}
+        />
+      </td>
+    );
+  }
+  if (has) {
+    return (
+      <td
+        style={{ ...cellStyle, color: '#1E293B', cursor: editable ? 'pointer' : 'default' }}
+        title={editable ? `${value} · click to edit` : value}
+        onClick={editable ? () => setEditing(true) : undefined}
+      >{value}</td>
+    );
+  }
+  return (
+    <td
+      style={{ ...cellStyle, color: '#B91C1C', fontStyle: 'italic', fontWeight: 700, cursor: editable ? 'pointer' : 'default' }}
+      title={editable ? 'Click to add a value' : missingTitle}
+      onClick={editable ? () => setEditing(true) : undefined}
+    >—</td>
+  );
+}
+
 // Variable coverage table — one row per selected contact, one column
 // per variable token that's actually used in the current subject /
 // body. Helps spot gaps in the data BEFORE sending: missing values
@@ -298,7 +359,7 @@ function CritiquePanel({ critique, onClose, onUseRewrite }) {
 // intersection of "tokens INSERT_VARIABLES knows about" and "tokens
 // that appear in the draft", so unused variables don't pollute the
 // table.
-function VariableCoverageTable({ subject, body, contacts, insertVariables, resolve }) {
+function VariableCoverageTable({ subject, body, contacts, insertVariables, resolve, isEditable, onEditField }) {
   const usedTokens = useMemo(() => {
     const haystack = `${subject || ''}\n${body || ''}`;
     const out = [];
@@ -396,17 +457,16 @@ function VariableCoverageTable({ subject, body, contacts, insertVariables, resol
                 </td>
                 {usedTokens.map(v => {
                   const val = String(resolve(c, v.token) || '').trim();
-                  if (val) {
-                    return (
-                      <td key={v.token} style={{ ...cellStyle, color: '#1E293B' }} title={val}>
-                        {val}
-                      </td>
-                    );
-                  }
+                  const editable = !!(isEditable && isEditable(v.token));
                   return (
-                    <td key={v.token} style={{ ...cellStyle, color: '#B91C1C', fontStyle: 'italic', fontWeight: 700 }} title={`Missing — ${v.label} will render blank for this recipient`}>
-                      —
-                    </td>
+                    <CoverageEditCell
+                      key={v.token}
+                      value={val}
+                      editable={editable}
+                      missingTitle={`Missing — ${v.label} will render blank for this recipient`}
+                      cellStyle={cellStyle}
+                      onCommit={nv => onEditField && onEditField(c, v.token, nv)}
+                    />
                   );
                 })}
               </tr>
@@ -777,6 +837,46 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     window.addEventListener('hubspot-cache-updated', refresh);
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
+
+  // Inline edits from the Variable Coverage table. `{custom}` writes the
+  // app-side value (settings.customField); HubSpot-backed variables push
+  // through to HubSpot and optimistically update the selected-contact row
+  // so the cell (and the live preview) reflect the change immediately.
+  const handleCoverageEdit = async (contact, token, rawValue) => {
+    const meta = COVERAGE_EDITABLE[token];
+    if (!meta || !contact?.id) return;
+    const value = String(rawValue ?? '').trim();
+    if (meta.kind === 'custom') {
+      const cur = settings?.customField || {};
+      const next = { ...cur };
+      if (value) next[contact.id] = value; else delete next[contact.id];
+      updateSettings({ customField: next });
+      return;
+    }
+    if (String(contact[meta.local] ?? '').trim() === value) return;
+    const recomputeName = (c) => [c.firstName, c.lastName].filter(Boolean).join(' ') || c.email || c.name;
+    setSelectedContacts(prev => prev.map(c => {
+      if (c.id !== contact.id) return c;
+      const nc = { ...c, [meta.local]: value };
+      if (meta.local === 'firstName' || meta.local === 'lastName') nc.name = recomputeName(nc);
+      return nc;
+    }));
+    try {
+      const res = await apiFetch('/api/hubspot?action=update-contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactId: contact.id, properties: { [meta.prop]: value } }),
+      });
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+    } catch (err) {
+      // Revert the optimistic change and surface the failure.
+      setSelectedContacts(prev => prev.map(c => (
+        c.id === contact.id ? { ...c, [meta.local]: contact[meta.local] || '', name: contact.name } : c
+      )));
+      alert(`Couldn't save ${meta.prop} to HubSpot: ${err?.message || err}`);
+    }
+  };
 
 
   // Check if Outlook is connected (encrypted token storage)
@@ -1641,6 +1741,8 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
               body={body}
               contacts={selectedContacts}
               insertVariables={INSERT_VARIABLES}
+              isEditable={token => !!COVERAGE_EDITABLE[token]}
+              onEditField={handleCoverageEdit}
               resolve={(c, token) => {
                 // Return what personalizeForContact would substitute
                 // for `token` on this contact, but unwrapped per-token
