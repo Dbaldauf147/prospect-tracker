@@ -11,16 +11,24 @@ import { userLsGet } from '../../utils/userLs';
 
 const AUTOSAVE_KEY = 'prospect-draft-autosave';
 
-// Suffix-stripped, punctuation-folded form so slightly different company
-// spellings still line up. Mirrors the normaliser used elsewhere in
-// DraftEmailView for {companyType} resolution.
-function normCompany(s) {
-  return String(s || '')
-    .toLowerCase()
-    .replace(/[.,]/g, '')
-    .replace(/\b(inc|llc|ltd|corp|co|lp|gmbh|plc|sa|ag)\b/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+// Fuzzy company-name compare — same logic the roster pages
+// (KeyContactsView / KeyProspectsView / AllContactsView) use so a
+// contact's HubSpot Company text doesn't have to exactly match the
+// company a site list was saved under (handles suffix / extra-word drift
+// like "Tishman Speyer" vs "Tishman Speyer Properties").
+function companiesMatch(a, b) {
+  const na = String(a || '').toLowerCase().trim();
+  const nb = String(b || '').toLowerCase().trim();
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  const longer = na.length >= nb.length ? na : nb;
+  const shorter = na.length >= nb.length ? nb : na;
+  if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
+  const strip = s => s.replace(/\b(inc|llc|ltd|corp|co|lp)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').trim();
+  const sa = strip(na);
+  const sb = strip(nb);
+  if (sa && sb && (sa === sb || sa.includes(sb) || sb.includes(sa))) return true;
+  return false;
 }
 
 function readComposeContacts() {
@@ -46,14 +54,17 @@ export function SiteListOverview({ prospects, settings }) {
     return d?.contacts || [];
   }, [draftKey, composeContacts, drafts]);
 
-  // Normalised set of company names present in the chosen draft.
-  const draftCompanyNorms = useMemo(() => {
-    const set = new Set();
+  // Distinct company names present in the chosen draft (raw strings, deduped
+  // case-insensitively so the same company isn't reported twice).
+  const draftCompanies = useMemo(() => {
+    const seen = new Map();
     for (const c of activeContacts) {
-      const n = normCompany(c?.company);
-      if (n) set.add(n);
+      const raw = String(c?.company || '').trim();
+      if (!raw) continue;
+      const key = raw.toLowerCase();
+      if (!seen.has(key)) seen.set(key, raw);
     }
-    return set;
+    return [...seen.values()];
   }, [activeContacts]);
 
   // For each stored site list, recover a display company name. The stored
@@ -69,18 +80,17 @@ export function SiteListOverview({ prospects, settings }) {
     return map;
   }, [prospects]);
 
-  // Site lists whose company has a contact in the draft.
+  // Site lists whose owning company fuzzy-matches a company in the draft.
   const includedLists = useMemo(() => {
     const out = [];
     for (const [slug, list] of Object.entries(siteLists)) {
       if (!list || !Array.isArray(list.rows) || list.rows.length === 0) continue;
       const company = list.company || prospectBySlug.get(slug) || slug;
-      if (draftCompanyNorms.has(normCompany(company))) {
-        out.push({ slug, company, list });
-      }
+      const matched = draftCompanies.some(dc => companiesMatch(dc, company));
+      if (matched) out.push({ slug, company, list });
     }
     return out.sort((a, b) => a.company.localeCompare(b.company));
-  }, [siteLists, prospectBySlug, draftCompanyNorms]);
+  }, [siteLists, prospectBySlug, draftCompanies]);
 
   // Union of every included list's headers, preserving first-seen order. The
   // leading table column already shows the owning company, so a per-row
@@ -106,20 +116,13 @@ export function SiteListOverview({ prospects, settings }) {
     return rows;
   }, [includedLists]);
 
-  // Companies in the draft that have no uploaded site list — surfaced so the
-  // user knows what's missing.
+  // Companies in the draft that have no matching uploaded site list —
+  // surfaced so the user knows what's missing. Uses the same fuzzy match.
   const missingCompanies = useMemo(() => {
-    const haveNorms = new Set(includedLists.map(l => normCompany(l.company)));
-    const names = new Map();
-    for (const c of activeContacts) {
-      const raw = String(c?.company || '').trim();
-      if (!raw) continue;
-      const n = normCompany(raw);
-      if (!n || haveNorms.has(n) || names.has(n)) continue;
-      names.set(n, raw);
-    }
-    return [...names.values()].sort((a, b) => a.localeCompare(b));
-  }, [activeContacts, includedLists]);
+    return draftCompanies
+      .filter(dc => !includedLists.some(l => companiesMatch(dc, l.company)))
+      .sort((a, b) => a.localeCompare(b));
+  }, [draftCompanies, includedLists]);
 
   function exportCsv() {
     const cols = ['Company', ...combinedHeaders];
