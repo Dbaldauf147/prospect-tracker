@@ -3,7 +3,8 @@
 // stored together in a single IndexedDB record keyed `current` so
 // the layout persists across reloads.
 
-import { Component, useEffect, useMemo, useState } from 'react';
+import { Component, createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import styles from './PipelineView.module.css';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
@@ -67,6 +68,8 @@ function bfoStageMetrics(bfo) {
   const stageCol = findCol(/sales\s*stage|^stage$/i);
   const amountCol = findCol(/^amount$/i);
   const ageCol = findCol(/^age$/i);
+  const accountCol = findCol(/^account\s*name$/i) || findCol(/^account$/i);
+  const oppCol = findCol(/opportunity\s*name|^opportunity$/i);
   if (!stageCol) return out;
   const buckets = {};
   let allAmtSum = 0;
@@ -76,8 +79,17 @@ function bfoStageMetrics(bfo) {
     if (!n || n < 3 || n > 6) continue;
     const amt = amountCol ? parseMoney(r[amountCol]) : null;
     const age = ageCol ? Number(String(r[ageCol]).replace(/[^0-9.\-]/g, '')) : null;
-    if (!buckets[n]) buckets[n] = { count: 0, total: 0, ageSum: 0, ageCount: 0, amtSum: 0, amtCount: 0 };
+    if (!buckets[n]) buckets[n] = { count: 0, total: 0, ageSum: 0, ageCount: 0, amtSum: 0, amtCount: 0, rows: [] };
     buckets[n].count += 1;
+    // Keep the contributing row so hover breakdowns can list exactly
+    // which BFO opps fed each live cell.
+    buckets[n].rows.push({
+      account: accountCol ? String(r[accountCol] ?? '').trim() : '',
+      oppName: oppCol ? String(r[oppCol] ?? '').trim() : '',
+      amount: amt,
+      age: Number.isFinite(age) ? age : null,
+      excludedFromAvg: n === 6 && amt === STAGE_6_DEAL_SIZE_EXCLUDE,
+    });
     if (amt !== null) {
       buckets[n].total += amt;
       // Stage 6 averaging excludes the $80k template placeholder.
@@ -100,6 +112,9 @@ function bfoStageMetrics(bfo) {
       total: b.total,
       avg: b.amtCount ? b.amtSum / b.amtCount : null,
       avgAge: b.ageCount ? Math.round(b.ageSum / b.ageCount) : null,
+      amtCount: b.amtCount,
+      ageCount: b.ageCount,
+      rows: b.rows,
     };
   }
   out.all = { allAmtAvg: allAmtCount ? allAmtSum / allAmtCount : null };
@@ -365,6 +380,185 @@ function compareClass(actual, goal, dir = 'higher-better') {
   return actual <= goal ? styles.cellGreen : styles.cellRed;
 }
 
+// ---------------------------------------------------------------------------
+// Hover / pin "what goes into this number" breakdowns.
+//
+// Mirrors the YOY page's hover-with-pin behaviour, adapted for the table:
+// every live (auto-computed) cell is wrapped in <LiveValue>. Hovering a cell
+// pops out a panel showing the formula, inputs and the exact rows that fed
+// the number; clicking the cell pins that panel open so it survives mouse-out
+// (click it again, click the ✕, or click elsewhere on the page to dismiss).
+// ---------------------------------------------------------------------------
+const CalcContext = createContext(null);
+
+// Short date like 6/22/26 for the breakdown row lists.
+function fmtShortDate(s) {
+  const t = Date.parse(s);
+  if (Number.isNaN(t)) return s || '';
+  return new Date(t).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' });
+}
+
+// Cap a row list so a very busy stage can't render thousands of <tr>.
+function capRows(arr, max = 50) {
+  return { data: arr.slice(0, max), more: Math.max(0, arr.length - max) };
+}
+
+// Build a breakdown row list from a close-rate `included` opp array.
+function closeRateRows(included, head) {
+  const cap = capRows(included);
+  return {
+    head,
+    columns: ['Result', 'Account', 'Close', 'Amount'],
+    aligns: ['', '', '', 'num'],
+    data: cap.data.map(o => [
+      o.stage,
+      o.account || '(no account)',
+      fmtShortDate(o.closeDate),
+      o.amount > 0 ? fmtMoney(Math.round(o.amount)) : '—',
+    ]),
+    more: cap.more,
+  };
+}
+
+// Wraps a live value: handles hover-to-preview and click-to-pin. Falls back
+// to a plain span (with native title) when rendered outside a CalcContext.
+function LiveValue({ id, breakdown, className, style, title, children }) {
+  const ctx = useContext(CalcContext);
+  if (!ctx) {
+    return <span className={className} style={style} title={title}>{children}</span>;
+  }
+  const data = { id, ...breakdown };
+  const isPinned = ctx.pinnedId === id;
+  return (
+    <span
+      className={`${className || ''} ${styles.liveValue} ${isPinned ? styles.liveValuePinned : ''}`.trim()}
+      style={style}
+      onMouseEnter={(e) => ctx.enter(data, e.currentTarget.getBoundingClientRect())}
+      onMouseLeave={() => ctx.leave(id)}
+      onClick={(e) => { e.stopPropagation(); ctx.toggle(data, e.currentTarget.getBoundingClientRect()); }}
+    >
+      {children}
+    </span>
+  );
+}
+
+// The floating panel itself. Portaled to <body> and positioned next to the
+// anchored cell (below it, or above when there's no room below), clamped to
+// the viewport. Stays put once pinned.
+function CalcPopover({ data, anchor, pinned, onClose, onKeepOpen, onLeave }) {
+  const W = 360;
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 1280;
+  const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+  let left = anchor.left;
+  if (left + W > vw - 8) left = vw - 8 - W;
+  if (left < 8) left = 8;
+  const spaceBelow = vh - anchor.bottom - 12;
+  const spaceAbove = anchor.top - 12;
+  const placeAbove = spaceBelow < 220 && spaceAbove > spaceBelow;
+  const style = placeAbove
+    ? { left, bottom: vh - anchor.top + 6, maxHeight: Math.max(160, spaceAbove) }
+    : { left, top: anchor.bottom + 6, maxHeight: Math.max(160, spaceBelow) };
+  return createPortal(
+    <div
+      className={styles.calcPanel}
+      style={{ width: W, ...style }}
+      onClick={(e) => e.stopPropagation()}
+      onMouseEnter={onKeepOpen}
+      onMouseLeave={onLeave}
+    >
+      <CalcContent data={data} pinned={pinned} onClose={onClose} />
+    </div>,
+    document.body,
+  );
+}
+
+function CalcContent({ data, pinned, onClose }) {
+  const rows = data.rows;
+  const aligns = rows?.aligns || [];
+  return (
+    <>
+      <div className={styles.calcHead}>
+        <span className={styles.calcTitle}>{data.title}</span>
+        {pinned ? (
+          <button type="button" className={styles.calcPinBtn} onClick={onClose} title="Unpin this panel">📌 Pinned ✕</button>
+        ) : (
+          <span className={styles.calcBadge} title="Recomputed live — not a stored value. Click to pin.">∑ live</span>
+        )}
+      </div>
+      {data.value != null && data.value !== '' ? <div className={styles.calcValue}>{data.value}</div> : null}
+      {data.formula ? <div className={styles.calcFormula}>{data.formula}</div> : null}
+      {Array.isArray(data.inputs) && data.inputs.length > 0 ? (
+        <div className={styles.calcInputs}>
+          {data.inputs.map((it, i) => (
+            <div key={i} className={styles.calcInputRow}>
+              <span className={styles.calcInputLabel}>{it.label}</span>
+              <span className={styles.calcInputVal}>{it.value}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {rows && rows.data && rows.data.length > 0 ? (
+        <div className={styles.calcRows}>
+          {rows.head ? <div className={styles.calcRowsHead}>{rows.head}</div> : null}
+          <table className={styles.calcTable}>
+            <thead>
+              <tr>{rows.columns.map((c, i) => <th key={i} className={aligns[i] === 'num' ? styles.calcNum : undefined}>{c}</th>)}</tr>
+            </thead>
+            <tbody>
+              {rows.data.map((row, ri) => (
+                <tr key={ri}>
+                  {row.map((cell, ci) => <td key={ci} className={aligns[ci] === 'num' ? styles.calcNum : undefined}>{cell}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {rows.more > 0 ? <div className={styles.calcMore}>…and {rows.more} more</div> : null}
+        </div>
+      ) : null}
+      {data.note ? <div className={styles.calcSource}>{data.note}</div> : null}
+    </>
+  );
+}
+
+// Owns the hover/pin state and renders the single active popover. Hover has a
+// short close delay so the cursor can travel into the panel (to scroll a long
+// row list) without it vanishing.
+function useCalc() {
+  const [hover, setHover] = useState(null);   // { data, anchor }
+  const [pinned, setPinned] = useState(null); // { data, anchor }
+  const hideTimer = useRef(null);
+  const clearTimer = () => { if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null; } };
+  const ctx = useMemo(() => ({
+    pinnedId: pinned?.data.id ?? null,
+    enter: (data, anchor) => { clearTimer(); setHover({ data, anchor }); },
+    leave: (id) => {
+      clearTimer();
+      hideTimer.current = setTimeout(() => setHover(h => (h && h.data.id === id ? null : h)), 160);
+    },
+    keepOpen: () => clearTimer(),
+    closeHover: () => { clearTimer(); setHover(null); },
+    toggle: (data, anchor) => {
+      clearTimer();
+      setHover(null);
+      setPinned(p => (p && p.data.id === data.id ? null : { data, anchor }));
+    },
+    unpin: () => setPinned(null),
+  }), [pinned]);
+  const active = pinned || hover;
+  const popover = active ? (
+    <CalcPopover
+      key={(active.data.id || '') + (pinned ? '-pin' : '-hover')}
+      data={active.data}
+      anchor={active.anchor}
+      pinned={!!pinned}
+      onClose={() => { setPinned(null); setHover(null); }}
+      onKeepOpen={ctx.keepOpen}
+      onLeave={() => { if (!pinned) ctx.closeHover(); }}
+    />
+  ) : null;
+  return { ctx, popover, pinned, unpin: () => setPinned(null) };
+}
+
 export function PipelineView() {
   return (
     <PipelineRootBoundary>
@@ -378,6 +572,8 @@ function PipelineViewInner() {
   const [hydrated, setHydrated] = useState(false);
   const [bfo, setBfo] = useState(null);
   const [opps, setOpps] = useState(null);
+  // Hover/pin "what goes into this number" breakdown panels.
+  const { ctx: calcCtx, popover: calcPopover, pinned: calcPinned, unpin: calcUnpin } = useCalc();
 
   useEffect(() => {
     let cancelled = false;
@@ -439,6 +635,7 @@ function PipelineViewInner() {
     if (oppsRecords.length === 0) return null;
     const thisYear = new Date().getFullYear();
     let total = 0;
+    const deals = [];
     for (const r of oppsRecords) {
       if ((r.Stage || '').trim() !== 'Sold') continue;
       const cd = r['Close Date'];
@@ -447,9 +644,19 @@ function PipelineViewInner() {
       if (Number.isNaN(ts)) continue;
       if (new Date(ts).getFullYear() !== thisYear) continue;
       const amt = parseMoney(r['Quoted Amount']);
-      if (typeof amt === 'number' && Number.isFinite(amt)) total += amt;
+      if (typeof amt === 'number' && Number.isFinite(amt)) {
+        total += amt;
+        deals.push({
+          account: String(r.Account || '').trim() || '(no account)',
+          scope: String(r.Scope || '').trim(),
+          closeDate: cd,
+          ts,
+          amount: amt,
+        });
+      }
     }
-    return Math.round(total);
+    deals.sort((a, b) => b.ts - a.ts);
+    return { total: Math.round(total), year: thisYear, deals };
   }, [oppsRecords]);
 
   // Overall Close Rate (Actual) for the Pipeline Metrics Total row.
@@ -558,30 +765,6 @@ function PipelineViewInner() {
     return out;
   }, [oppsRecords]);
 
-  // Format helper for the close-rate hover tooltips. Lists every opp
-  // that fed the rate, newest close date first; cap the list at 60
-  // rows with a "+N more" tail so very busy years don't blow up the
-  // browser tooltip.
-  function buildCloseRateOppList(included) {
-    if (!Array.isArray(included) || included.length === 0) return '';
-    const fmtCloseDate = (s) => {
-      const t = Date.parse(s);
-      if (Number.isNaN(t)) return s;
-      const d = new Date(t);
-      return d.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' });
-    };
-    const fmtAmt = (n) => Number.isFinite(n) && n > 0 ? fmtMoney(Math.round(n)) : '—';
-    const MAX = 60;
-    const head = included.slice(0, MAX).map(o => {
-      const tag = o.stage === 'Sold' ? 'SOLD    ' : 'NOT SOLD';
-      const acct = o.account || '(no account)';
-      const scope = o.scope ? ` · ${o.scope}` : '';
-      return `${tag}  ${fmtCloseDate(o.closeDate)}  ${fmtAmt(o.amount)}  ${acct}${scope}`;
-    }).join('\n');
-    const tail = included.length > MAX ? `\n…and ${included.length - MAX} more` : '';
-    return `\n\nIncluded opps (most recent close first):\n${head}${tail}`;
-  }
-
   // Live Current Client vs Greenfield stats. Joins BFO Activity rows
   // to the Opps tab's Lead Source / Source via the BFO Opportunity
   // Name → Opps "BFO Link" map, then classifies each BFO opp using
@@ -609,6 +792,8 @@ function PipelineViewInner() {
     let greenfieldCount = 0;
     let clientAmt = 0;
     let greenfieldAmt = 0;
+    const clientRows = [];
+    const greenfieldRows = [];
     for (const r of bfo.rows) {
       // Active opps only — skip any closed-stage rows so the figures
       // mirror the rest of the Pipeline table (Stages 3-6 plus
@@ -616,14 +801,18 @@ function PipelineViewInner() {
       const stageVal = stageCol ? r[stageCol] : '';
       const stageMatch = matchStage(stageVal);
       if (stageMatch !== null && (stageMatch < 3 || stageMatch > 6)) continue;
-      const oppName = String(r[oppCol] || '').trim().toLowerCase();
+      const oppNameRaw = String(r[oppCol] || '').trim();
+      const oppName = oppNameRaw.toLowerCase();
       const src = sourceByName.get(oppName) || '';
       const amt = amountCol ? parseMoney(r[amountCol]) : null;
+      const entry = { oppName: oppNameRaw || '(unnamed opp)', source: src || '(no lead source)', amount: amt };
       if (isClient(src)) {
         clientCount += 1;
+        clientRows.push(entry);
         if (typeof amt === 'number' && Number.isFinite(amt)) clientAmt += amt;
       } else {
         greenfieldCount += 1;
+        greenfieldRows.push(entry);
         if (typeof amt === 'number' && Number.isFinite(amt)) greenfieldAmt += amt;
       }
     }
@@ -635,6 +824,9 @@ function PipelineViewInner() {
       clientAmt: Math.round(clientAmt),
       greenfieldAmt: Math.round(greenfieldAmt),
       clientActualPct,
+      total,
+      clientRows,
+      greenfieldRows,
     };
   }, [hasBfo, bfo, oppsRecords]);
 
@@ -691,10 +883,6 @@ function PipelineViewInner() {
     return { count: items.length, items };
   }, [oppsRecords, opps]);
   const newOppsPast30Count = newOppsPast30.count;
-  const newOppsPast30Tooltip = newOppsPast30.items.length === 0
-    ? 'Auto-fed from the Opps tab — opps opened in the past 30 days that have a BFO Link. Prefers Start Date; falls back to fetchedAt − Age. Re-paste the Opps tab to refresh.'
-    : `${newOppsPast30.count} opp${newOppsPast30.count === 1 ? '' : 's'} opened in the last 30 days (BFO-linked):\n` +
-      newOppsPast30.items.map(it => `• ${it.account} — ${it.opp}${it.stage ? ` (${it.stage})` : ''}${it.openDate ? ` · opened ${it.openDate}` : ''}`).join('\n');
 
   const notQuotedFromOpps = useMemo(() => {
     const NOT_QUOTED_STAGES = new Set(['Lead', 'Not Started', 'Qualifying']);
@@ -803,7 +991,7 @@ function PipelineViewInner() {
 
   // Prefer the live Opps-derived Closed YTD when the Opps cache is
   // populated; falls back to the manually entered state.closedYTD.
-  const effectiveClosedYTD = oppsClosedYTD !== null ? oppsClosedYTD : (Number(state.closedYTD) || 0);
+  const effectiveClosedYTD = oppsClosedYTD !== null ? oppsClosedYTD.total : (Number(state.closedYTD) || 0);
   const closedPctOfQuota = state.target ? effectiveClosedYTD / state.target : 0;
   // Weighted-by-count averages — SUMPRODUCT(life, count) / SUM(count).
   // Goal weights are activeGoal; Actual weights are the live count
@@ -814,10 +1002,15 @@ function PipelineViewInner() {
     ? Math.round(stageTotals.lifeActualProduct / stageTotals.lifeActualWeight) : null;
 
   return (
-    <div className={styles.wrapper}>
+    <CalcContext.Provider value={calcCtx}>
+    <div
+      className={styles.wrapper}
+      onClick={() => { if (calcPinned) calcUnpin(); }}
+    >
+      {calcPopover}
       <div className={styles.header}>
         <h1 className={styles.title}>Pipeline</h1>
-        <div className={styles.subtitle}>Pipeline metrics dashboard. Every cell is editable; values save to your browser.</div>
+        <div className={styles.subtitle}>Pipeline metrics dashboard. Every cell is editable; values save to your browser. Hover a <span className={styles.liveCell} style={{ cursor: 'default' }}>live value</span> to see what feeds it; click to pin the panel.</div>
       </div>
       <div className={styles.body}>
         {/* Quota header — sits directly above the Pipeline Metrics
@@ -831,7 +1024,32 @@ function PipelineViewInner() {
                 <td><NumCell value={state.target} kind="money" onCommit={(v) => setField('target', v)} /></td>
                 <td>
                   {oppsClosedYTD !== null
-                    ? <span title="Auto-fed from Opps tab — sum of Quoted Amount for Stage = 'Sold' opps with a Close Date in the current calendar year." className={styles.liveCell}>{fmtMoney(oppsClosedYTD)}</span>
+                    ? (() => {
+                        const cap = capRows(oppsClosedYTD.deals);
+                        return (
+                          <LiveValue
+                            id="closedYTD"
+                            className={styles.liveCell}
+                            breakdown={{
+                              title: `Closed YTD (${oppsClosedYTD.year})`,
+                              value: fmtMoney(oppsClosedYTD.total),
+                              formula: "Σ Quoted Amount where Stage = 'Sold' and Close Date is in the current calendar year.",
+                              inputs: [
+                                { label: 'Sold deals', value: oppsClosedYTD.deals.length },
+                                { label: 'Total', value: fmtMoney(oppsClosedYTD.total) },
+                              ],
+                              rows: {
+                                head: 'Contributing deals (newest close first)',
+                                columns: ['Account', 'Close', 'Amount'],
+                                aligns: ['', '', 'num'],
+                                data: cap.data.map(d => [d.account, fmtShortDate(d.closeDate), fmtMoney(d.amount)]),
+                                more: cap.more,
+                              },
+                              note: 'Auto-fed from the Opps tab. Re-paste the Opps tab to refresh.',
+                            }}
+                          >{fmtMoney(oppsClosedYTD.total)}</LiveValue>
+                        );
+                      })()
                     : <NumCell value={state.closedYTD} kind="money" onCommit={(v) => setField('closedYTD', v)} />}
                 </td>
                 <td className={styles.numCell}>{(closedPctOfQuota * 100).toFixed(2)}%</td>
@@ -896,25 +1114,84 @@ function PipelineViewInner() {
                 const lifeActual = live(m?.avgAge) ?? st.lifeActual;
                 const fromBfo = (v) => hasBfo && v !== null && v !== undefined;
                 const liveTip = 'Auto-fed from BFO Activity. Re-paste BFO data to refresh.';
+                // Build the row list (account / opportunity / amount-or-age)
+                // that feeds the hover breakdown for the BFO-driven cells.
+                const mkBfoRows = (head, includeAge) => {
+                  const cap = capRows(m?.rows || []);
+                  return {
+                    head,
+                    columns: ['Account', 'Opportunity', includeAge ? 'Age' : 'Amount'],
+                    aligns: ['', '', 'num'],
+                    data: cap.data.map(r => [
+                      r.account || '—',
+                      r.oppName || '—',
+                      includeAge
+                        ? (r.age ?? '—')
+                        : (r.amount == null ? '—' : `${fmtMoney(Math.round(r.amount))}${r.excludedFromAvg ? ' *' : ''}`),
+                    ]),
+                    more: cap.more,
+                  };
+                };
                 return (
                   <tr key={st.key}>
                     <td className={styles.label}>{st.label}</td>
                     <td><NumCell value={st.activeGoal} onCommit={(v) => setStage(i, { activeGoal: v })} /></td>
                     <td className={compareClass(activeActual, st.activeGoal, 'higher-better')}>
                       {fromBfo(m?.count)
-                        ? <span title={liveTip} className={styles.liveCell}>{activeActual}</span>
+                        ? <LiveValue
+                            id={`active-${stageNum}`}
+                            className={styles.liveCell}
+                            breakdown={{
+                              title: `${st.label} — Active Opportunities`,
+                              value: String(activeActual),
+                              formula: `COUNT of BFO Activity rows whose Sales Stage matches "${st.label}".`,
+                              inputs: [{ label: 'Matching rows', value: m.count }],
+                              rows: mkBfoRows('Matching BFO opps', false),
+                              note: liveTip,
+                            }}
+                          >{activeActual}</LiveValue>
                         : <NumCell value={st.activeActual} onCommit={(v) => setStage(i, { activeActual: v })} />}
                     </td>
                     <td><NumCell value={st.dealSizeGoal} kind="money" onCommit={(v) => setStage(i, { dealSizeGoal: v })} /></td>
                     <td className={compareClass(dealSizeActual, st.dealSizeGoal, 'higher-better')}>
                       {fromBfo(m?.avg)
-                        ? <span title={liveTip} className={styles.liveCell}>{fmtMoney(Math.round(dealSizeActual))}</span>
+                        ? <LiveValue
+                            id={`dealsize-${stageNum}`}
+                            className={styles.liveCell}
+                            breakdown={{
+                              title: `${st.label} — Deal Size (Actual)`,
+                              value: fmtMoney(Math.round(dealSizeActual)),
+                              formula: stageNum === 6
+                                ? 'AVERAGE(Amount) across matching BFO rows, excluding the $80k template placeholder (marked *).'
+                                : 'AVERAGE(Amount) across matching BFO rows.',
+                              inputs: [
+                                { label: 'Rows averaged', value: m.amtCount },
+                                { label: 'Average', value: fmtMoney(Math.round(dealSizeActual)) },
+                              ],
+                              rows: mkBfoRows('Amounts averaged', false),
+                              note: liveTip,
+                            }}
+                          >{fmtMoney(Math.round(dealSizeActual))}</LiveValue>
                         : <NumCell value={st.dealSizeActual} kind="money" onCommit={(v) => setStage(i, { dealSizeActual: v })} />}
                     </td>
                     <td><NumCell value={st.pipelineGoal} kind="money" onCommit={(v) => setStage(i, { pipelineGoal: v })} /></td>
                     <td className={compareClass(pipelineActual, st.pipelineGoal, 'higher-better')}>
                       {fromBfo(m?.total)
-                        ? <span title={liveTip} className={styles.liveCell}>{fmtMoney(Math.round(pipelineActual))}</span>
+                        ? <LiveValue
+                            id={`pipeline-${stageNum}`}
+                            className={styles.liveCell}
+                            breakdown={{
+                              title: `${st.label} — Pipeline (Actual)`,
+                              value: fmtMoney(Math.round(pipelineActual)),
+                              formula: 'SUM(Amount) across matching BFO rows.',
+                              inputs: [
+                                { label: 'Rows summed', value: m.count },
+                                { label: 'Total', value: fmtMoney(Math.round(pipelineActual)) },
+                              ],
+                              rows: mkBfoRows('Amounts summed', false),
+                              note: liveTip,
+                            }}
+                          >{fmtMoney(Math.round(pipelineActual))}</LiveValue>
                         : <NumCell value={st.pipelineActual} kind="money" onCommit={(v) => setStage(i, { pipelineActual: v })} />}
                     </td>
                     <td><NumCell value={st.closeGoal} kind="pct" onCommit={(v) => setStage(i, { closeGoal: v })} /></td>
@@ -929,13 +1206,28 @@ function PipelineViewInner() {
                           : stageNum === 6
                           ? 'a non-empty Entity Outside the US Approval value'
                           : 'the stage signal';
-                        const tip = `Auto-fed from Opps tab: ${live.sold} Sold / ${live.notSold} Not Sold in the past 365 days with ${signal} and Scope without "pull through". Re-paste the Opps tab to refresh.${buildCloseRateOppList(live.included)}`;
                         return (
                           <td className={`${cls} ${styles.numCell}`.trim()}>
-                            <span title={tip} className={styles.liveCell} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.15 }}>
+                            <LiveValue
+                              id={`closerate-${stageNum}`}
+                              className={styles.liveCell}
+                              style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.15 }}
+                              breakdown={{
+                                title: `${st.label} — Close Rate (rolling 365 days)`,
+                                value: `${(liveRate * 100).toFixed(0)}%  (${live.sold}/${live.sold + live.notSold})`,
+                                formula: `Sold ÷ (Sold + Not Sold), over Opps closed in the last 365 days that reached this stage (signal: ${signal}) with a Scope without "pull through".`,
+                                inputs: [
+                                  { label: 'Sold', value: live.sold },
+                                  { label: 'Not Sold', value: live.notSold },
+                                  { label: 'Close rate', value: `${(liveRate * 100).toFixed(0)}%` },
+                                ],
+                                rows: closeRateRows(live.included, 'Opps included (newest close first)'),
+                                note: 'Auto-fed from the Opps tab. Re-paste the Opps tab to refresh.',
+                              }}
+                            >
                               <span>{`${(liveRate * 100).toFixed(0)}%`}</span>
                               <span style={{ fontSize: '0.65rem', opacity: 0.75, fontWeight: 500 }}>{live.sold}/{live.sold + live.notSold}</span>
-                            </span>
+                            </LiveValue>
                           </td>
                         );
                       }
@@ -963,7 +1255,21 @@ function PipelineViewInner() {
                     <td><NumCell value={st.lifeGoal} onCommit={(v) => setStage(i, { lifeGoal: v })} /></td>
                     <td className={compareClass(lifeActual, st.lifeGoal, 'lower-better')}>
                       {fromBfo(m?.avgAge)
-                        ? <span title={liveTip} className={styles.liveCell}>{lifeActual}</span>
+                        ? <LiveValue
+                            id={`life-${stageNum}`}
+                            className={styles.liveCell}
+                            breakdown={{
+                              title: `${st.label} — Avg Opp Life`,
+                              value: `${lifeActual}`,
+                              formula: 'AVERAGE(Age, in days) across matching BFO rows that carry an Age.',
+                              inputs: [
+                                { label: 'Rows with Age', value: m.ageCount },
+                                { label: 'Average (days)', value: lifeActual },
+                              ],
+                              rows: mkBfoRows('Ages averaged', true),
+                              note: liveTip,
+                            }}
+                          >{lifeActual}</LiveValue>
                         : <NumCell value={st.lifeActual} onCommit={(v) => setStage(i, { lifeActual: v })} />}
                     </td>
                   </tr>
@@ -978,14 +1284,29 @@ function PipelineViewInner() {
                 <td className={styles.numCell}>{fmtMoney(stageTotals.pipelineGoal)}</td>
                 <td className={styles.numCell}>{fmtMoney(stageTotals.pipelineActual)}</td>
                 <td />
-                <td className={styles.numCell} title={oppsCloseRateActual
-                  ? `Sold ÷ (Sold + Not Sold) for Opps closed in the past 365 days with "pull through" excluded — ${oppsCloseRateActual.sold} sold / ${oppsCloseRateActual.notSold} not sold.${buildCloseRateOppList(oppsCloseRateActual.included)}`
+                <td className={styles.numCell} title={oppsCloseRateActual ? undefined
                   : 'Add Sold / Not Sold opps with a Close Date in the past 365 days (and a Scope without "pull through") on the Opps tab to populate.'}>
                   {oppsCloseRateActual ? (
-                    <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.15 }}>
+                    <LiveValue
+                      id="closerate-total"
+                      className={styles.liveCell}
+                      style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.15 }}
+                      breakdown={{
+                        title: 'Overall Close Rate (rolling 365 days)',
+                        value: `${(oppsCloseRateActual.rate * 100).toFixed(0)}%  (${oppsCloseRateActual.sold}/${oppsCloseRateActual.sold + oppsCloseRateActual.notSold})`,
+                        formula: 'Sold ÷ (Sold + Not Sold) for Opps closed in the past 365 days, with "pull through" Scopes excluded.',
+                        inputs: [
+                          { label: 'Sold', value: oppsCloseRateActual.sold },
+                          { label: 'Not Sold', value: oppsCloseRateActual.notSold },
+                          { label: 'Close rate', value: `${(oppsCloseRateActual.rate * 100).toFixed(0)}%` },
+                        ],
+                        rows: closeRateRows(oppsCloseRateActual.included, 'Opps included (newest close first)'),
+                        note: 'Auto-fed from the Opps tab. Re-paste the Opps tab to refresh.',
+                      }}
+                    >
                       <span>{`${(oppsCloseRateActual.rate * 100).toFixed(0)}%`}</span>
                       <span style={{ fontSize: '0.65rem', opacity: 0.75, fontWeight: 500 }}>{oppsCloseRateActual.sold}/{oppsCloseRateActual.sold + oppsCloseRateActual.notSold}</span>
-                    </span>
+                    </LiveValue>
                   ) : ''}
                 </td>
                 <td className={styles.numCell} title="Sum of stage Target Projection Goals (Active Goal × Deal Size Goal × Close Rate Goal).">{fmtMoney(Math.round(stageTotals.targetProjGoal))}</td>
@@ -1015,7 +1336,19 @@ function PipelineViewInner() {
                   const cg = clientGreenfieldFromBfo;
                   const live = !!cg;
                   const liveTip = 'Auto-fed from BFO Activity rows (Stages 3–6) joined to the Opps tab Lead Source. Re-paste BFO or Opps to refresh.';
-                  const liveCell = (val) => <span title={liveTip} className={styles.liveCell}>{val}</span>;
+                  const liveCell = (val, id, breakdown) => (
+                    <LiveValue id={id} className={styles.liveCell} breakdown={breakdown}>{val}</LiveValue>
+                  );
+                  const cgRows = (arr, head) => {
+                    const cap = capRows(arr || []);
+                    return {
+                      head,
+                      columns: ['Opportunity', 'Lead Source', 'Amount'],
+                      aligns: ['', '', 'num'],
+                      data: cap.data.map(r => [r.oppName, r.source, r.amount == null ? '—' : fmtMoney(Math.round(r.amount))]),
+                      more: cap.more,
+                    };
+                  };
                   const liveActualPct = cg && cg.clientActualPct !== null
                     ? `${(cg.clientActualPct * 100).toFixed(0)}%`
                     : null;
@@ -1026,27 +1359,68 @@ function PipelineViewInner() {
                       <tr>
                         <td className={styles.label}>Current client opps</td>
                         <td>{live
-                          ? liveCell(cg.clientCount)
+                          ? liveCell(cg.clientCount, 'cg-client-count', {
+                              title: 'Current client opps',
+                              value: String(cg.clientCount),
+                              formula: 'COUNT of active BFO opps (Stages 3–6) whose joined Opps Lead Source mentions client / existing / renewal / cross-sell / expansion / upsell.',
+                              inputs: [
+                                { label: 'Client opps', value: cg.clientCount },
+                                { label: 'Greenfield opps', value: cg.greenfieldCount },
+                              ],
+                              rows: cgRows(cg.clientRows, 'Client-classified opps'),
+                              note: liveTip,
+                            })
                           : <NumCell value={state.currentClientCount} onCommit={(v) => setField('currentClientCount', v)} />}
                         </td>
                         <td rowSpan={2}><NumCell value={state.clientGoalPct} kind="pct" onCommit={(v) => setField('clientGoalPct', v)} /></td>
                         <td rowSpan={2} className={compareClass(actualForCompare, goalForCompare, 'lower-better')}>
                           {live && liveActualPct !== null
-                            ? liveCell(liveActualPct)
+                            ? liveCell(liveActualPct, 'cg-client-pct', {
+                                title: '% Current client',
+                                value: liveActualPct,
+                                formula: 'Client opps ÷ (Client + Greenfield opps).',
+                                inputs: [
+                                  { label: 'Client opps', value: cg.clientCount },
+                                  { label: 'Greenfield opps', value: cg.greenfieldCount },
+                                  { label: 'Total', value: cg.total },
+                                ],
+                                rows: cgRows(cg.clientRows, 'Client-classified opps'),
+                                note: liveTip,
+                              })
                             : <NumCell value={state.clientActualPct} kind="pct" onCommit={(v) => setField('clientActualPct', v)} />}
                         </td>
                       </tr>
                       <tr>
                         <td className={styles.label}>Greenfield opps</td>
                         <td>{live
-                          ? liveCell(cg.greenfieldCount)
+                          ? liveCell(cg.greenfieldCount, 'cg-green-count', {
+                              title: 'Greenfield opps',
+                              value: String(cg.greenfieldCount),
+                              formula: 'COUNT of active BFO opps (Stages 3–6) that are not client-classified (including rows with no matched Lead Source).',
+                              inputs: [
+                                { label: 'Greenfield opps', value: cg.greenfieldCount },
+                                { label: 'Client opps', value: cg.clientCount },
+                              ],
+                              rows: cgRows(cg.greenfieldRows, 'Greenfield-classified opps'),
+                              note: liveTip,
+                            })
                           : <NumCell value={state.greenfieldCount} onCommit={(v) => setField('greenfieldCount', v)} />}
                         </td>
                       </tr>
                       <tr>
                         <td className={styles.label}>Current client $</td>
                         <td>{live
-                          ? liveCell(fmtMoney(cg.clientAmt))
+                          ? liveCell(fmtMoney(cg.clientAmt), 'cg-client-amt', {
+                              title: 'Current client $',
+                              value: fmtMoney(cg.clientAmt),
+                              formula: 'Σ Amount of client-classified BFO opps.',
+                              inputs: [
+                                { label: 'Client opps', value: cg.clientCount },
+                                { label: 'Total', value: fmtMoney(cg.clientAmt) },
+                              ],
+                              rows: cgRows(cg.clientRows, 'Client-classified opps'),
+                              note: liveTip,
+                            })
                           : <NumCell value={state.currentClientAmt} kind="money" onCommit={(v) => setField('currentClientAmt', v)} />}
                         </td>
                         <td colSpan={2} />
@@ -1054,7 +1428,17 @@ function PipelineViewInner() {
                       <tr>
                         <td className={styles.label}>Greenfield $</td>
                         <td>{live
-                          ? liveCell(fmtMoney(cg.greenfieldAmt))
+                          ? liveCell(fmtMoney(cg.greenfieldAmt), 'cg-green-amt', {
+                              title: 'Greenfield $',
+                              value: fmtMoney(cg.greenfieldAmt),
+                              formula: 'Σ Amount of greenfield-classified BFO opps.',
+                              inputs: [
+                                { label: 'Greenfield opps', value: cg.greenfieldCount },
+                                { label: 'Total', value: fmtMoney(cg.greenfieldAmt) },
+                              ],
+                              rows: cgRows(cg.greenfieldRows, 'Greenfield-classified opps'),
+                              note: liveTip,
+                            })
                           : <NumCell value={state.greenfieldAmt} kind="money" onCommit={(v) => setField('greenfieldAmt', v)} />}
                         </td>
                         <td colSpan={2} />
@@ -1085,10 +1469,21 @@ function PipelineViewInner() {
                     return (
                       <td className={compareClass(computedCoverage, state.coverageGoal, 'higher-better')}>
                         {computedCoverage !== null ? (
-                          <span
+                          <LiveValue
+                            id="coverage-actual"
                             className={styles.liveCell}
-                            title={`Actual Pipeline (${fmtMoney(stageTotals.pipelineActual)}) ÷ Target (${fmtMoney(state.target)})`}
-                          >{computedCoverage.toFixed(2)}</span>
+                            breakdown={{
+                              title: 'Coverage Ratio (Actual)',
+                              value: computedCoverage.toFixed(2),
+                              formula: 'Total Actual Pipeline ÷ Target.',
+                              inputs: [
+                                { label: 'Actual Pipeline', value: fmtMoney(stageTotals.pipelineActual) },
+                                { label: 'Target', value: fmtMoney(state.target) },
+                                { label: 'Ratio', value: computedCoverage.toFixed(2) },
+                              ],
+                              note: 'Actual Pipeline is the live BFO sum across Stages 3–6. Re-paste BFO to refresh.',
+                            }}
+                          >{computedCoverage.toFixed(2)}</LiveValue>
                         ) : (
                           <span className={styles.noBfoCell}>—</span>
                         )}
@@ -1130,10 +1525,29 @@ function PipelineViewInner() {
               <tr>
                 <td className={styles.label}>{state.newOppsGoal} New Opps Past 30 Days</td>
                 <td className={compareClass(newOppsPast30Count, state.newOppsGoal, 'higher-better')}>
-                  <span
-                    title={newOppsPast30Tooltip}
-                    className={styles.liveCell}
-                  >{newOppsPast30Count}</span>
+                  {(() => {
+                    const cap = capRows(newOppsPast30.items);
+                    return (
+                      <LiveValue
+                        id="new-opps-30"
+                        className={styles.liveCell}
+                        breakdown={{
+                          title: 'New Opps — Past 30 Days',
+                          value: String(newOppsPast30Count),
+                          formula: 'COUNT of Opps with a BFO Link opened in the last 30 days. Open date prefers Start Date, else fetchedAt − Age.',
+                          inputs: [{ label: 'New opps', value: newOppsPast30Count }],
+                          rows: {
+                            head: 'New opps (by account)',
+                            columns: ['Account', 'Opportunity', 'Opened'],
+                            aligns: ['', '', ''],
+                            data: cap.data.map(it => [it.account, it.opp, it.openDate]),
+                            more: cap.more,
+                          },
+                          note: 'Auto-fed from the Opps tab. Re-paste the Opps tab to refresh.',
+                        }}
+                      >{newOppsPast30Count}</LiveValue>
+                    );
+                  })()}
                 </td>
               </tr>
               <tr>
@@ -1252,6 +1666,7 @@ function PipelineViewInner() {
         </div>
       </div>
     </div>
+    </CalcContext.Provider>
   );
 }
 
