@@ -471,6 +471,25 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
   // Reset filters when sheet changes
   useEffect(() => { setFilters({}); }, [activeSheet]);
 
+  // Union of column headers across every sheet — feeds the "New Sales
+  // rep column" picker so the mapping works no matter which sheet is
+  // active. My Accounts reads settings.targetRepColumn to resolve the
+  // "Other Reps" column from this exact header.
+  const allHeaderOptions = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const name of data?.sheetNames || []) {
+      for (const h of (data?.sheets?.[name]?.headers || [])) {
+        const key = String(h || '').trim();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push(key);
+      }
+    }
+    return out;
+  }, [data]);
+  const repColumn = String(settings?.targetRepColumn || '');
+
   function toggleFilter(key, value) {
     setFilters(prev => {
       const arr = prev[key] || [];
@@ -721,7 +740,21 @@ function ListSection({
             </button>
             {activeFilterCount > 0 && <button className={styles.clearBtn} onClick={() => setFilters({})}>Clear all</button>}
             <span className={styles.resultCount}>{filtered.length} of {records.length}</span>
-            <label className={styles.uploadBtn} style={{ marginLeft: 'auto', fontSize: 'var(--font-size-xs)', padding: '0.3rem 0.6rem' }}>
+            <label
+              title="Pick which column holds the New Sales rep. My Accounts uses this column for its “Other Reps” instead of guessing — leave on Auto to keep the keyword guess."
+              style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}
+            >
+              New Sales rep column
+              <select
+                value={repColumn}
+                onChange={e => updateSettings({ targetRepColumn: e.target.value })}
+                style={{ padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 6, background: '#fff', fontSize: '0.72rem', fontFamily: 'inherit', color: 'var(--color-text)', maxWidth: 200 }}
+              >
+                <option value="">Auto (guess)</option>
+                {allHeaderOptions.map(h => <option key={h} value={h}>{h}</option>)}
+              </select>
+            </label>
+            <label className={styles.uploadBtn} style={{ fontSize: 'var(--font-size-xs)', padding: '0.3rem 0.6rem' }}>
               Re-upload
               <input className={styles.fileInput} type="file" accept=".xlsx,.xls,.csv,.tsv" onChange={handleFileChange} />
             </label>

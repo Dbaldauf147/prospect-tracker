@@ -1278,6 +1278,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     const data = targetAccountsData;
     if (!data?.sheets) return [];
     const results = [];
+    // An explicitly mapped rep column (chosen on the Target Accounts
+    // page) wins over the keyword guess below. Without it the scan can
+    // grab the wrong "salesperson"-ish column — e.g. a current rep that
+    // sits to the left of the New Sales column.
+    const repCol = String(settings?.targetRepColumn || '').trim();
 
     function findCol(r, keywords) {
       for (const key of Object.keys(r)) {
@@ -1295,7 +1300,15 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       for (const r of sheet.records) {
         const company = findCol(r, ['Account', 'Company', 'Account Name', 'Client', 'Name']);
         if (!company) continue;
-        let rep = findCol(r, ['CDM', 'Salesperson', 'Sales Rep', 'Account Owner', 'Owner', 'Rep', 'Assigned', 'Team Member']);
+        // Prefer the mapped column when this sheet carries it; otherwise
+        // fall back to the keyword scan so sheets without that column
+        // still resolve a rep.
+        let rep;
+        if (repCol && Object.prototype.hasOwnProperty.call(r, repCol)) {
+          rep = String(r[repCol] || '').trim();
+        } else {
+          rep = findCol(r, ['CDM', 'Salesperson', 'Sales Rep', 'Account Owner', 'Owner', 'Rep', 'Assigned', 'Team Member']);
+        }
         if (!rep) continue;
         // Skip the current user's own entries — we only want OTHER reps here
         if (matchesCdm(rep, cdmName)) continue;
@@ -1303,7 +1316,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       }
     }
     return results;
-  }, [targetAccountsData, cdmName]);
+  }, [targetAccountsData, cdmName, settings?.targetRepColumn]);
 
   // Load activity cache and count per company
   const activityByCompany = useMemo(() => {
