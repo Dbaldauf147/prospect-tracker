@@ -9,41 +9,6 @@ import { userLsGet, userLsSet } from '../../utils/userLs';
 import { CompareTab } from './CompareTab';
 import styles from './TargetAccountsView.module.css';
 
-function FilterDrop({ label, options, selected, onToggle }) {
-  const [open, setOpen] = useState(false);
-  const [filterSearch, setFilterSearch] = useState('');
-  const ref = useRef(null);
-  useEffect(() => {
-    if (!open) return;
-    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
-  }, [open]);
-  const count = selected.length;
-  const shown = filterSearch.trim() ? options.filter(o => o.toLowerCase().includes(filterSearch.toLowerCase())) : options;
-  return (
-    <div className={styles.filterGroup} ref={ref}>
-      <button className={count > 0 ? styles.filterBtnActive : styles.filterBtn} onClick={() => { setOpen(p => !p); setFilterSearch(''); }}>
-        {label}{count > 0 && <span className={styles.filterCount}>{count}</span>}
-      </button>
-      {open && (
-        <div className={styles.filterDropdown}>
-          {options.length > 8 && (
-            <input className={styles.filterSearch} type="text" placeholder="Search..." value={filterSearch} onChange={e => setFilterSearch(e.target.value)} autoFocus />
-          )}
-          {shown.length === 0 && <div className={styles.filterEmpty}>No matches</div>}
-          {shown.map(opt => (
-            <label key={opt} className={styles.filterItem}>
-              <input type="checkbox" checked={selected.includes(opt)} onChange={() => onToggle(opt)} style={{ accentColor: 'var(--color-accent)' }} />
-              {opt}
-            </label>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 const STORE_NAME = 'target-accounts';
 
 async function loadCache() {
@@ -204,9 +169,7 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
   const [search, setSearch] = useState('');
   const [activeSheet, setActiveSheet] = useState(null);
   const [dragOver, setDragOver] = useState(false);
-  const [filters, setFilters] = useState({});
   const [blockedAccountNames, setBlockedAccountNamesState] = useState(loadBlockedAccountNames);
-  const [hideBlockedRows, setHideBlockedRows] = useState(false);
   // Sub-section within Target Accounts: the canonical list or a
   // diff view that compares an ad-hoc upload against the current list
   // filtered to the configured CDM.
@@ -450,31 +413,10 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
     return [blockCol, deleteCol, ...dataCols];
   }, [headers, blockedAccountNames, nameKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Detect filterable columns (those with <=50 unique non-empty values)
-  const filterableColumns = useMemo(() => {
-    const result = [];
-    for (const h of headers) {
-      if (!h) continue;
-      const vals = new Set();
-      for (const r of records) {
-        const v = (r[h] || '').trim();
-        if (v && v !== '-' && v !== '#N/A') vals.add(v);
-        if (vals.size > 50) break;
-      }
-      if (vals.size > 1 && vals.size <= 50) {
-        result.push({ key: h, options: [...vals].sort() });
-      }
-    }
-    return result;
-  }, [headers, records]);
-
-  // Reset filters when sheet changes
-  useEffect(() => { setFilters({}); }, [activeSheet]);
-
-  // Union of column headers across every sheet — feeds the "New Sales
-  // rep column" picker so the mapping works no matter which sheet is
-  // active. My Accounts reads settings.targetRepColumn to resolve the
-  // "Other Reps" column from this exact header.
+  // Union of column headers across every sheet — feeds the "Salesperson /
+  // CDM column" picker so the mapping works no matter which sheet is
+  // active. My Accounts (and other pages) read settings.targetCdmColumn to
+  // resolve the salesperson/CDM column from this exact header.
   const allHeaderOptions = useMemo(() => {
     const seen = new Set();
     const out = [];
@@ -492,52 +434,18 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
   // My Accounts (and the prospect modal, bulk Agenda, etc.) use this to
   // decide whose account a row is, instead of guessing by header keyword.
   const cdmColumn = String(settings?.targetCdmColumn || '');
-  // The "New Sales rep" column, used specifically for the My Accounts
-  // "Other Reps" badge.
-  const repColumn = String(settings?.targetRepColumn || '');
 
-  function toggleFilter(key, value) {
-    setFilters(prev => {
-      const arr = prev[key] || [];
-      return { ...prev, [key]: arr.includes(value) ? arr.filter(v => v !== value) : [...arr, value] };
-    });
-  }
-
-  const activeFilterCount = Object.values(filters).reduce((s, a) => s + a.length, 0);
-
-  // Count of records currently flagged as blocked, used on the toolbar
-  // to show how many fuzzy-lookup suppressions are active.
-  const blockedCount = useMemo(() => {
-    if (!nameKey) return 0;
-    let n = 0;
-    for (const r of records) {
-      const k = String(r[nameKey] || '').toLowerCase().trim();
-      if (k && blockedAccountNames.has(k)) n++;
-    }
-    return n;
-  }, [records, blockedAccountNames, nameKey]);
-
-  // Filtered records
+  // Filtered records — text search only.
   const filtered = useMemo(() => {
     let result = records;
-    // Apply column filters
-    for (const [key, values] of Object.entries(filters)) {
-      if (values.length > 0) {
-        result = result.filter(r => values.includes((r[key] || '').trim()));
-      }
-    }
-    // Apply text search
     if (search.trim()) {
       const term = search.toLowerCase();
       result = result.filter(r =>
         Object.values(r).some(v => v && String(v).toLowerCase().includes(term))
       );
     }
-    if (hideBlockedRows && nameKey) {
-      result = result.filter(r => !blockedAccountNames.has(String(r[nameKey] || '').toLowerCase().trim()));
-    }
     return result;
-  }, [records, search, filters, hideBlockedRows, blockedAccountNames, nameKey]);
+  }, [records, search]);
 
   // Set active sheet on first load
   if (data && !activeSheet && data.sheetNames?.length > 0) {
@@ -591,22 +499,12 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
           setActiveSheet={setActiveSheet}
           search={search}
           setSearch={setSearch}
-          filterableColumns={filterableColumns}
-          filters={filters}
-          toggleFilter={toggleFilter}
-          hideBlockedRows={hideBlockedRows}
-          setHideBlockedRows={setHideBlockedRows}
-          blockedCount={blockedCount}
-          activeFilterCount={activeFilterCount}
-          setFilters={setFilters}
           filtered={filtered}
-          records={records}
           handleFileChange={handleFileChange}
           columns={columns}
           settings={settings}
           updateSettings={updateSettings}
           cdmColumn={cdmColumn}
-          repColumn={repColumn}
           allHeaderOptions={allHeaderOptions}
         />
       )}
@@ -616,10 +514,8 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
 
 function ListSection({
   error, status, data, loading, dragOver, setDragOver, handleDrop, fileRef,
-  activeSheet, setActiveSheet, search, setSearch, filterableColumns, filters,
-  toggleFilter, hideBlockedRows, setHideBlockedRows, blockedCount,
-  activeFilterCount, setFilters, filtered, records, handleFileChange, columns,
-  settings, updateSettings, cdmColumn, repColumn, allHeaderOptions,
+  activeSheet, setActiveSheet, search, setSearch, filtered, handleFileChange,
+  columns, settings, updateSettings, cdmColumn, allHeaderOptions,
 }) {
   return (
     <>
@@ -720,35 +616,6 @@ function ListSection({
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
-            {filterableColumns.map(fc => (
-              <FilterDrop key={fc.key} label={fc.key} options={fc.options} selected={filters[fc.key] || []} onToggle={v => toggleFilter(fc.key, v)} />
-            ))}
-            <button
-              type="button"
-              onClick={() => setHideBlockedRows(v => !v)}
-              title="Show only the accounts blocked from fuzzy-match suggestions, or hide them from this view"
-              style={{
-                padding: '0.35rem 0.7rem',
-                border: `1px solid ${hideBlockedRows ? '#DC2626' : 'var(--color-border)'}`,
-                borderRadius: 6,
-                background: hideBlockedRows ? '#FEE2E2' : '#fff',
-                color: hideBlockedRows ? '#991B1B' : 'var(--color-text-secondary)',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {hideBlockedRows ? 'Showing only un-blocked' : 'Hide blocked'}
-              {blockedCount > 0 && (
-                <span style={{ marginLeft: 6, fontSize: '0.68rem', color: hideBlockedRows ? '#991B1B' : '#94A3B8' }}>
-                  {blockedCount} blocked
-                </span>
-              )}
-            </button>
-            {activeFilterCount > 0 && <button className={styles.clearBtn} onClick={() => setFilters({})}>Clear all</button>}
-            <span className={styles.resultCount}>{filtered.length} of {records.length}</span>
             <label
               title="Pick which column holds the salesperson / CDM who owns each account. My Accounts (and the prospect modal, Agenda, and other pages) use this column to decide whose account a row is, instead of guessing by header name — leave on Auto to keep the keyword guess."
               style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}
@@ -757,20 +624,6 @@ function ListSection({
               <select
                 value={cdmColumn}
                 onChange={e => updateSettings({ targetCdmColumn: e.target.value })}
-                style={{ padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 6, background: '#fff', fontSize: '0.72rem', fontFamily: 'inherit', color: 'var(--color-text)', maxWidth: 200 }}
-              >
-                <option value="">Auto (guess)</option>
-                {allHeaderOptions.map(h => <option key={h} value={h}>{h}</option>)}
-              </select>
-            </label>
-            <label
-              title="Pick which column holds the New Sales rep. My Accounts uses this column for its “Other Reps” instead of guessing — leave on Auto to keep the keyword guess."
-              style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}
-            >
-              New Sales rep column
-              <select
-                value={repColumn}
-                onChange={e => updateSettings({ targetRepColumn: e.target.value })}
                 style={{ padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 6, background: '#fff', fontSize: '0.72rem', fontFamily: 'inherit', color: 'var(--color-text)', maxWidth: 200 }}
               >
                 <option value="">Auto (guess)</option>
