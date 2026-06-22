@@ -948,6 +948,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   const [bucketFilter, setBucketFilter] = useState(savedView?.bucketFilter ?? null); // 'tier1' | 'tier2' | 'client' | 'pipeline' | null
   const [hqLookupRunning, setHqLookupRunning] = useState(false);
   const [dedupeRunning, setDedupeRunning] = useState(false);
+  const [tierSyncRunning, setTierSyncRunning] = useState(false);
   const [inactiveMode, setInactiveMode] = useState(savedView?.inactiveMode || 'hide'); // 'hide' | 'only' | 'show'
   // companyLowerName → Set<listLabel>. Built further below once
   // allAccounts is resolved; declared here so it's available while
@@ -2068,6 +2069,43 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   const clientCount = statusCounts['Client'] || 0;
   const tier3Count = allAccounts.filter(a => a.myTier === 'Tier 3').length;
 
+  // Accounts whose stored Tier differs from the Target Accounts tier and
+  // hasn't been individually dismissed — these are the ⚠ flags shown in
+  // the Tier column. The bulk button below applies them all at once.
+  const tierFlagged = useMemo(
+    () => allAccounts.filter(a => a.tierMismatch && a.targetTier && a.id),
+    [allAccounts]
+  );
+
+  // Bulk-apply every Tier-mismatch flag: set each flagged account's
+  // stored tier to the tier its Target Accounts row specifies. Mirrors
+  // the per-row "Update to {targetTier}" action in the Tier column, run
+  // across all flagged accounts at once.
+  async function applyAllTierFlags() {
+    if (tierSyncRunning) return;
+    if (tierFlagged.length === 0) {
+      alert('No tier flags to apply — every account already matches its Target Accounts tier.');
+      return;
+    }
+    const sample = tierFlagged.slice(0, 12)
+      .map(a => `• ${a.company}: ${a.myTier || '—'} → ${a.targetTier}`)
+      .join('\n');
+    const more = tierFlagged.length > 12 ? `\n…and ${tierFlagged.length - 12} more` : '';
+    const ok = window.confirm(
+      `Update ${tierFlagged.length} account tier${tierFlagged.length === 1 ? '' : 's'} to match Target Accounts:\n\n${sample}${more}`
+    );
+    if (!ok) return;
+    setTierSyncRunning(true);
+    try {
+      await Promise.all(tierFlagged.map(a => onUpdate(a.id, { tier: a.targetTier })));
+    } catch (err) {
+      console.error('Tier sync failed:', err);
+      alert('Tier sync failed: ' + (err?.message || err));
+    } finally {
+      setTierSyncRunning(false);
+    }
+  }
+
   // Publish the resolved My-Accounts company names to localStorage so
   // the List tabs can filter against the exact same set (not just the
   // broader Baldauf-CDM prospect pool). Written whenever allAccounts
@@ -2644,6 +2682,14 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           title="Download a CSV of the accounts in the current view that have no HubSpot contacts yet, with their Zoom / website data from Table View"
           style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-accent)', whiteSpace: 'nowrap' }}
         >⇩ Accounts w/o contacts</button>
+        <button
+          onClick={applyAllTierFlags}
+          disabled={tierSyncRunning || tierFlagged.length === 0}
+          title="Set every flagged account's Tier to the tier its Target Accounts row specifies — applies all the ⚠ tier-mismatch flags in the Tier column at once."
+          style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: (tierSyncRunning || tierFlagged.length === 0) ? 'default' : 'pointer', fontFamily: 'inherit', color: tierFlagged.length === 0 ? 'var(--color-text-secondary)' : '#F59E0B', whiteSpace: 'nowrap', opacity: tierFlagged.length === 0 ? 0.6 : 1 }}
+        >
+          {tierSyncRunning ? 'Updating tiers…' : `⚠ Apply tier flags${tierFlagged.length ? ` (${tierFlagged.length})` : ''}`}
+        </button>
         {onDedupe && (
           <button
             onClick={handleDedupe}
