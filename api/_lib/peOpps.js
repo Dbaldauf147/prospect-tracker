@@ -12,6 +12,7 @@
 // ---- Column definitions (mirror PEOppsTab.ALL_COLUMNS) ------------------
 export const PE_OPPS_COLUMNS = [
   { key: 'Account', label: 'Account' },
+  { key: 'Contact', label: 'Contacts' },
   { key: 'Stage', label: 'Stage' },
   { key: 'Type', label: 'Type' },
   { key: 'Source', label: 'Source' },
