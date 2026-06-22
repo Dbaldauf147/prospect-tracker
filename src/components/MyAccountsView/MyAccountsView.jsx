@@ -1952,13 +1952,27 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     // Gated behind localStorage.debug-myaccounts so production sessions
     // don't flood the console (and crush the main thread) with these.
     let DEBUG_MA = false;
-    try { DEBUG_MA = !!(typeof localStorage !== 'undefined' && localStorage.getItem('debug-myaccounts')); } catch {}
-    const DEBUG_RX = /(urw|unibail|rodamco|westfield|\bara\b|ara\s*partners|jpmc|jp\s*morgan|jpmorgan)/i;
+    let DEBUG_MA_RAW = '';
+    try {
+      DEBUG_MA_RAW = (typeof localStorage !== 'undefined' && localStorage.getItem('debug-myaccounts')) || '';
+      DEBUG_MA = !!DEBUG_MA_RAW;
+    } catch { /* localStorage unavailable */ }
+    // Default watch-list. Set localStorage['debug-myaccounts'] to a
+    // comma-separated list of names (e.g. "edens") to watch those specific
+    // accounts instead — handy for diagnosing why one account isn't showing.
+    const DEBUG_BASE_RX = /(urw|unibail|rodamco|westfield|\bara\b|ara\s*partners|jpmc|jp\s*morgan|jpmorgan)/i;
+    const debugCustomTerms = DEBUG_MA_RAW && !/^(1|true|on|yes)$/i.test(DEBUG_MA_RAW.trim())
+      ? DEBUG_MA_RAW.split(',').map(s => s.trim()).filter(Boolean).map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      : [];
+    const DEBUG_RX = debugCustomTerms.length
+      ? new RegExp('(' + debugCustomTerms.join('|') + ')', 'i')
+      : DEBUG_BASE_RX;
     const debugProspects = DEBUG_MA ? prospects.filter(p => DEBUG_RX.test(p.company || '')) : [];
     const debugOppsKeys = DEBUG_MA ? Object.keys(totalOppsByAccount).filter(k => DEBUG_RX.test(k)) : [];
     const renderedAccountNamesLower = new Set([...t1, ...t2].map(e => (e.company || '').toLowerCase()));
     if (DEBUG_MA && (debugProspects.length > 0 || debugOppsKeys.length > 0)) {
       const payload = {
+        loggedInCdmName: cdmName,
         prospects: debugProspects.map(p => {
           const inList = renderedAccountNamesLower.has((p.company || '').toLowerCase());
           const compLower = (p.company || '').toLowerCase();
@@ -1990,6 +2004,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       // console — the full contents appear in the log line itself.
       // eslint-disable-next-line no-console
       console.log('[MyAccountsView] debug-account JSON:', JSON.stringify(payload, null, 2));
+    } else if (DEBUG_MA && debugCustomTerms.length > 0) {
+      // The custom watch term matched no prospect AND no opps account —
+      // i.e. the account isn't in either dataset (e.g. it exists only as a
+      // Target Accounts row, not as a prospect record), so the prospect
+      // pass never builds a My Accounts row for it.
+      // eslint-disable-next-line no-console
+      console.log(`[MyAccountsView] debug: no prospect or opps account matched ${JSON.stringify(DEBUG_MA_RAW)}. Logged-in CDM: ${JSON.stringify(cdmName)}. Prospects scanned: ${prospects.length}.`);
     }
 
     // Index prospects by company name so the opps-only surface below
