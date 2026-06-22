@@ -23,6 +23,7 @@ import { isContactInEvent, toggleContactInEvents } from '../../utils/eventsStore
 import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions } from '../../utils/prospectOptions';
+import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
 import { userLsGet } from '../../utils/userLs';
@@ -2382,7 +2383,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         const company = findCol(rec, ['Account Name', 'Company Name', 'Account', 'Company', 'Client Name', 'Client', 'Name']);
         if (!company) continue;
         const key = company.toLowerCase();
-        const rep = findCol(rec, ['CDM', 'Salesperson', 'Sales Rep', 'Account Owner', 'Owner', 'Rep', 'Assigned', 'Team Member']);
+        // Use the salesperson/CDM column mapped on the Target Accounts
+        // page (settings.targetCdmColumn), falling back to a keyword scan.
+        const rep = resolveTargetAccountCdm(rec, settings?.targetCdmColumn);
         if (rep && !repMap.has(key)) repMap.set(key, rep);
         let tierRaw = findCol(rec, ['Account Tier', 'Tier Level', 'Tier']);
         if (!tierRaw) {
@@ -2393,7 +2396,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       }
     }
     return [repMap, tierMap];
-  }, [targetAccountsData]);
+  }, [targetAccountsData, settings?.targetCdmColumn]);
   const repForTarget = useCallback((targetAccount) => {
     if (!targetAccount) return '';
     return targetAccountRepMap.get(targetAccount.toLowerCase()) || '';
