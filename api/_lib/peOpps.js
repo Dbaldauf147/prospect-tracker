@@ -21,7 +21,7 @@ export const PE_OPPS_COLUMNS = [
   { key: 'Status', label: 'Status' },
   { key: 'BFO Link', label: 'BFO Opportunity Name' },
   { key: 'Next Steps', label: 'Next Steps' },
-  { key: 'Last Client Heard From Us', label: 'Last Client Heard From Us' },
+  { key: 'Last Client Heard From Us', label: 'Last Client Heard From Us', value: formatLastHeardDate },
   { key: 'Call In', label: 'Call In', align: 'right', value: resolveCallIn },
   { key: 'Close Date', label: 'Close Date' },
 ];
@@ -59,6 +59,19 @@ function resolveCallIn(r) {
     if (Number.isFinite(n)) return String(n);
   }
   return '';
+}
+
+// Render the "Last Client Heard From Us" value as a short M/D/YYYY date in
+// local time, mirroring formatDateDisplay from src/utils/oppsCallIn so the
+// scheduled email matches the on-screen PE Opps tab. Falls back to the raw
+// string when it can't be parsed, and leaves blanks untouched.
+function formatLastHeardDate(r) {
+  const raw = r['Last Client Heard From Us'];
+  const s = String(raw ?? '').trim();
+  if (!s) return '';
+  const d = parseOppsDate(s);
+  if (!d) return s;
+  return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
 }
 
 const cellValue = (r, c) => (c.value ? c.value(r) : (r[c.key] ?? ''));
