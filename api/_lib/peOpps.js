@@ -452,7 +452,6 @@ export async function sendPeOppsEmail({ to, subject, message, buffer, filename, 
       <h2 style="color:#009530;margin:0 0 8px">PE Opportunities</h2>
       ${intro}
       <p style="color:#5A6B7E;font-size:13px;margin:0">The latest PE opportunities are attached as an Excel file.</p>
-      <p style="color:#8896A6;font-size:11px;margin-top:24px">Sent automatically from Prospect Tracker.</p>
     </div>
   `;
 
