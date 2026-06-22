@@ -599,6 +599,8 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
           columns={columns}
           settings={settings}
           updateSettings={updateSettings}
+          repColumn={repColumn}
+          allHeaderOptions={allHeaderOptions}
         />
       )}
     </div>
@@ -610,7 +612,7 @@ function ListSection({
   activeSheet, setActiveSheet, search, setSearch, filterableColumns, filters,
   toggleFilter, hideBlockedRows, setHideBlockedRows, blockedCount,
   activeFilterCount, setFilters, filtered, records, handleFileChange, columns,
-  settings, updateSettings,
+  settings, updateSettings, repColumn, allHeaderOptions,
 }) {
   return (
     <>
