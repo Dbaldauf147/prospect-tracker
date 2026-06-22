@@ -9,7 +9,7 @@ import { DataTable } from '../common/DataTable';
 import { statusColor, formatAum } from '../../utils/formatters';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE } from '../../data/enums';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
-import { buildCompanyIndex, findMatchesInIndex, hasMatchInIndex } from '../../utils/companyIndex';
+import { buildCompanyIndex, findMatchesInIndex, findStrictMatchesInIndex, hasMatchInIndex } from '../../utils/companyIndex';
 import { getHubspotCache, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
 import { userLsGet, userLsSet } from '../../utils/userLs';
@@ -1733,9 +1733,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         // Still include if the company has an OPEN opp. Closed-only history
         // (Sold/Not Sold) on a non-CDM account isn't enough to keep it
         // in My Accounts — that's how JPMC was sneaking in.
+        // Use a STRICT opp match here: a non-CDM account should only be
+        // pulled in by an opp that genuinely belongs to it, not by a
+        // brand-prefix coincidence (e.g. a "Blackstone" opp dragging in
+        // the separate "Blackstone GP Stakes" account).
         const compLower = (p.company || '').toLowerCase();
         let hasOpenOpp = false;
-        for (const oppsCompany of findMatchesInIndex(openOppsIndex, compLower)) {
+        for (const oppsCompany of findStrictMatchesInIndex(openOppsIndex, compLower)) {
           if ((openOppsByAccount[oppsCompany] || 0) > 0) { hasOpenOpp = true; break; }
         }
         if (!hasOpenOpp) {

@@ -158,6 +158,56 @@ export function findMatchesInIndex(index, query) {
   return matches;
 }
 
+// Strict variant of findMatchesInIndex: matches only on exact (lower /
+// flatten / suffix-stripped) equality or the substring + length-threshold
+// rule. It deliberately omits the loose single-token "acronym" rule, so a
+// one-word name (e.g. an opp filed under "Blackstone") will NOT match a
+// multi-word lookalike account ("Blackstone GP Stakes"). Use this where a
+// brand-prefix coincidence would wrongly link two different accounts.
+export function findStrictMatchesInIndex(index, query) {
+  const matches = new Set();
+  if (!index || !query) return matches;
+  const lower = String(query).toLowerCase().trim();
+  if (!lower) return matches;
+  const sq = squish(lower);
+  if (sq) {
+    const hit = index.squishTo.get(sq);
+    if (hit) for (const s of hit) matches.add(s);
+  }
+  const f = flatten(lower);
+  if (f) {
+    const hit = index.flatTo.get(f);
+    if (hit) for (const s of hit) matches.add(s);
+  }
+  const st = strip(lower);
+  if (st) {
+    const hit = index.strippedTo.get(st);
+    if (hit) for (const s of hit) matches.add(s);
+  }
+  // Substring + length-threshold rule (the same tight rule the loose
+  // matcher uses) — but without any of the single-token shortcuts above it.
+  if (lower.length >= 4) {
+    const queryNoOwner = removeOwnershipPhrase(lower);
+    const queryStripped = strip(queryNoOwner);
+    const candidates = new Set();
+    for (const t of tokensOf(lower)) {
+      if (t.length < 3) continue;
+      const hit = index.tokenAppearsIn.get(t);
+      if (hit) for (const s of hit) candidates.add(s);
+    }
+    for (const s of candidates) {
+      if (matches.has(s)) continue;
+      const m = index.meta && index.meta.get(s);
+      if (!m) continue;
+      if (substringMatch(queryNoOwner, m.lower)) { matches.add(s); continue; }
+      if (queryStripped && m.stripped && substringMatch(queryStripped, m.stripped)) {
+        matches.add(s);
+      }
+    }
+  }
+  return matches;
+}
+
 // Convenience: does the query match any entry in the index?
 export function hasMatchInIndex(index, query) {
   if (!index || !query) return false;
