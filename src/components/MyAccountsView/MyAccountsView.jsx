@@ -1927,11 +1927,14 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         && p.type !== suggestedType
         && p.dismissedSuggestedType !== suggestedType
         && !p.hideTypeSuggestion;
-      // Hide accounts with zero open opps — UNLESS they're strategic
-      // (Tier 1 or Tier 2) AND owned by Baldauf. A Tier 1 account on
-      // someone else's CDM with no open opps shouldn't show on Dan's list.
+      // Hide accounts with zero open opps — UNLESS they're one of Dan's
+      // strategic (Tier 1/Tier 2) accounts or one of his active Clients.
+      // A won Client on Dan's book belongs on the list even with no open
+      // opp and no tier tag (a blank tier resolves to "-" above, which is
+      // not strategic, so status carries it instead).
       const isStrategicTier = tier === 'Tier 1' || tier === 'Tier 2';
-      if (!(isStrategicTier && isBaldauf) && (!oppsCount || oppsCount === 0)) continue;
+      const keepForDan = isBaldauf && (isStrategicTier || p.status === 'Client');
+      if (!keepForDan && (!oppsCount || oppsCount === 0)) continue;
       const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, feedingOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, _contactDebug, suggestedStatus, statusMismatch, suggestedType, typeMismatch };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry); // Tier 2 and Tier 3 both go in t2 array
