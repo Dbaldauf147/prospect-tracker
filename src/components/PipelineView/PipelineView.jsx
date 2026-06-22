@@ -110,8 +110,8 @@ const DEFAULT_STATE = {
   // Pipeline metrics by stage. Each stage row is a dict of values.
   stages: [
     { key: 's6', label: 'Stage 6',                       activeGoal: 3,  activeActual: 4,  dealSizeGoal: 125000, dealSizeActual: 58952,  pipelineGoal: 375000,  pipelineActual: 235806,  closeGoal: 0.75, closeActual: 0.50, targetProj: 281250, lifeGoal: 200, lifeActual: 212 },
-    { key: 's5', label: 'Stage 5 (3 opp contracting)',   activeGoal: 12, activeActual: 6,  dealSizeGoal: 125000, dealSizeActual: 52146,  pipelineGoal: 1500000, pipelineActual: 578831,  closeGoal: 0.40, closeActual: 0.11, targetProj: 600000, lifeGoal: 150, lifeActual: 68 },
-    { key: 's4', label: 'Stage 4 (4 opps quoting)',      activeGoal: 15, activeActual: 13, dealSizeGoal: 150000, dealSizeActual: 154923, pipelineGoal: 2250000, pipelineActual: 1135000, closeGoal: 0.25, closeActual: 0.04, targetProj: 562500, lifeGoal: 90,  lifeActual: 174 },
+    { key: 's5', label: 'Stage 5',                       activeGoal: 12, activeActual: 6,  dealSizeGoal: 125000, dealSizeActual: 52146,  pipelineGoal: 1500000, pipelineActual: 578831,  closeGoal: 0.40, closeActual: 0.11, targetProj: 600000, lifeGoal: 150, lifeActual: 68 },
+    { key: 's4', label: 'Stage 4',                       activeGoal: 15, activeActual: 13, dealSizeGoal: 150000, dealSizeActual: 154923, pipelineGoal: 2250000, pipelineActual: 1135000, closeGoal: 0.25, closeActual: 0.04, targetProj: 562500, lifeGoal: 90,  lifeActual: 174 },
     { key: 's3', label: 'Stage 3',                       activeGoal: 3,  activeActual: 7,  dealSizeGoal: 150000, dealSizeActual: 153457, pipelineGoal: 450000,  pipelineActual: 1687244, closeGoal: 0.10, closeActual: 0.04, targetProj: 45000,  lifeGoal: 60,  lifeActual: 273 },
   ],
 
@@ -188,7 +188,9 @@ function sanitizeStages(savedStages) {
     if (!saved || typeof saved !== 'object') return def;
     const row = { ...def };
     if (typeof saved.key === 'string' && saved.key) row.key = saved.key;
-    if (typeof saved.label === 'string') row.label = saved.label;
+    // Labels are defined in code (not user-editable), so always take the
+    // default label — this lets label changes propagate even when a saved
+    // state already carries the old text.
     for (const f of STAGE_NUMERIC_FIELDS) {
       const v = saved[f];
       if (v === null) row[f] = null; // user blanked the cell
