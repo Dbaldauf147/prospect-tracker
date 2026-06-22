@@ -139,29 +139,32 @@ function findTier(companyName) {
   return null;
 }
 
+// Type → "Type 2" rollup, shared by the column renderer and its
+// header filter so filtering matches the pill the user sees.
+const TYPE2_MAP = {
+  'Owner Operator': 'Real Estate',
+  'Asset Management Firm': 'Real Estate',
+  'Facility Manager': 'Real Estate',
+  'Developer': 'Real Estate',
+  'Private Equity': 'Private Equity',
+  'Portfolio Company': 'Private Equity',
+  'Other': 'Other',
+  'Partner': 'Other',
+};
+const TYPE2_COLORS = {
+  'Real Estate': { bg: '#DBEAFE', color: '#1E40AF' },
+  'Private Equity': { bg: '#F3E8FF', color: '#7C3AED' },
+  'Other': { bg: '#F3F4F6', color: '#6B7280' },
+};
+
 const ACCOUNT_COLUMNS = [
   { key: 'company', label: 'Company', defaultWidth: 220, sticky: true, render: null /* set below */ },
   { key: 'myTier', label: 'Tier', defaultWidth: 130, render: null /* set in columns memo */ },
   { key: 'status', label: 'Status', defaultWidth: 130, render: (row) => row.status ? <Badge label={row.status} color={statusColor(row.status)} /> : '—' },
   { key: 'type', label: 'Type', defaultWidth: 160 },
-  { key: 'type2', label: 'Type 2', defaultWidth: 110, render: (row) => {
-    const TYPE2_MAP = {
-      'Owner Operator': 'Real Estate',
-      'Asset Management Firm': 'Real Estate',
-      'Facility Manager': 'Real Estate',
-      'Developer': 'Real Estate',
-      'Private Equity': 'Private Equity',
-      'Portfolio Company': 'Private Equity',
-      'Other': 'Other',
-      'Partner': 'Other',
-    };
+  { key: 'type2', label: 'Type 2', defaultWidth: 110, getFilterValue: (row) => TYPE2_MAP[row.type] || '', render: (row) => {
     const val = TYPE2_MAP[row.type] || '';
-    const colors = {
-      'Real Estate': { bg: '#DBEAFE', color: '#1E40AF' },
-      'Private Equity': { bg: '#F3E8FF', color: '#7C3AED' },
-      'Other': { bg: '#F3F4F6', color: '#6B7280' },
-    };
-    const s = colors[val] || colors['Other'];
+    const s = TYPE2_COLORS[val] || TYPE2_COLORS['Other'];
     return val ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: s.bg, color: s.color }}>{val}</span> : <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
   }},
   { key: 'geography', label: 'Geography', defaultWidth: 100 },
@@ -209,7 +212,7 @@ const ACCOUNT_COLUMNS = [
     if (total === 0) return <span style={{ color: 'var(--color-text-muted)' }}>0/0</span>;
     return <span style={{ fontWeight: 700, color: active > 0 ? '#7C3AED' : 'var(--color-text-secondary)' }}>{active}/{total}</span>;
   }},
-  { key: 'dmFound', label: 'Decision Maker', defaultWidth: 140, render: (row) => row.dmFound
+  { key: 'dmFound', label: 'Decision Maker', defaultWidth: 140, getFilterValue: (row) => row.dmFound ? (row.dmNames || 'Found') : 'Not Found', render: (row) => row.dmFound
     ? <span title={row.dmNames} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
         <span style={{ color: '#10B981', fontWeight: 700, fontSize: '0.75rem' }}>&#10003;</span>
         <span style={{ fontSize: '0.75rem', color: 'var(--color-text)' }}>{row.dmNames}</span>
@@ -218,7 +221,7 @@ const ACCOUNT_COLUMNS = [
   },
   { key: 'targetName', label: 'Target Accounts Name', defaultWidth: 200, render: null /* set in columns memo */ },
   { key: 'divisions', label: 'Divisions', defaultWidth: 200, render: null /* set in columns memo */ },
-  { key: 'otherReps', label: 'Other Reps', defaultWidth: 260, render: (row) => {
+  { key: 'otherReps', label: 'Other Reps', defaultWidth: 260, getFilterValue: (row) => (row.otherReps && row.otherReps.length ? [...new Set(row.otherReps.map(r => r.rep))].join(', ') : ''), render: (row) => {
     if (!row.otherReps || row.otherReps.length === 0) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
     // Deduplicate by rep name, collect all companies per rep
     const byRep = {};
@@ -2400,10 +2403,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return { ...col, render: (row) => <OppsHoverPopup row={row} /> };
       }
       if (col.key === 'targetName') {
-        return { ...col, render: (row) => <TargetNamePicker values={row.targetNames || []} companyId={row.id} companyName={row.company} targetOptions={allTargetNames} onToggle={toggleTargetMapping} duplicates={duplicateTargetNames} /> };
+        return { ...col, getFilterValue: (row) => (row.targetNames || []).join(', '), render: (row) => <TargetNamePicker values={row.targetNames || []} companyId={row.id} companyName={row.company} targetOptions={allTargetNames} onToggle={toggleTargetMapping} duplicates={duplicateTargetNames} /> };
       }
       if (col.key === 'listFlags') {
-        return { ...col, render: (row) => {
+        return { ...col, getFilterValue: (row) => {
+          const set = listFlagsByCompany.get((row.company || '').toLowerCase().trim());
+          return set ? [...set].join(', ') : '';
+        }, render: (row) => {
           const set = listFlagsByCompany.get((row.company || '').toLowerCase().trim());
           const flags = set ? [...set] : [];
           if (!flags.length) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
@@ -2424,7 +2430,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         }};
       }
       if (col.key === 'divisions') {
-        return { ...col, render: (row) => <DivisionPicker parentId={row.id} divisions={divisionsMap[row.id] || []} allCompanies={allCompaniesForDivisions} onAdd={addDivision} onRemove={removeDivision} rules={divisionRules[row.id] || []} onSetRule={addDivisionRule} onRemoveRule={removeDivisionRule} /> };
+        return { ...col, getFilterValue: (row) => (divisionsMap[row.id] || []).map(d => d.company).filter(Boolean).join(', '), render: (row) => <DivisionPicker parentId={row.id} divisions={divisionsMap[row.id] || []} allCompanies={allCompaniesForDivisions} onAdd={addDivision} onRemove={removeDivision} rules={divisionRules[row.id] || []} onSetRule={addDivisionRule} onRemoveRule={removeDivisionRule} /> };
       }
       if (col.key === 'status') {
         const mismatchCount = filteredAccounts.filter(a => a.statusMismatch).length;
@@ -2464,7 +2470,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return { ...col, label: missingCount > 0 ? `HQ Region ⚠ ${missingCount}` : 'HQ Region', render: (row) => <InlineCell row={row} field="hqRegion" value={row.hqRegion} onUpdate={onUpdate} options={['North America', 'Outside of North America']} /> };
       }
       if (col.key === 'naRegion') {
-        return { ...col, render: (row) => {
+        return { ...col, getFilterValue: (row) => (row.hqRegion ? '' : (hqRegionMap[row.id] || '')), render: (row) => {
           if (row.hqRegion) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.65rem' }}>—</span>;
           const val = hqRegionMap[row.id] || '';
           return (
@@ -2817,6 +2823,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           columns={columns}
           rows={filteredAccounts}
           alwaysVisible={['company']}
+          enableColumnFilters
           rowStyle={(row) => {
             const s = row.status;
             return (s === 'Lost - Not Sold' || s === 'Hold Off' || s === 'Old Client') ? { opacity: 0.45 } : undefined;
