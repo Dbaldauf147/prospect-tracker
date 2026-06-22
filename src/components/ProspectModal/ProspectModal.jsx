@@ -22,7 +22,7 @@ import { SiteListPasteModal } from './SiteListPasteModal';
 import { isContactInEvent, toggleContactInEvents } from '../../utils/eventsStore';
 import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
 import { TagMultiSelect } from '../common/TagMultiSelect';
-import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions } from '../../utils/prospectOptions';
+import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions, buildCdmOptions } from '../../utils/prospectOptions';
 import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
@@ -2423,18 +2423,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return [...tagSet].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   }, [hubspotContacts]);
 
-  // Unique CDM names across all prospects, alphabetized — feeds the
-  // searchable dropdown on the CDM field. Includes the current value
-  // even if it hasn't been used elsewhere yet.
+  // CDM options for the searchable dropdown, driven by the "CDM"
+  // Dropdowns-tab list (managed on the Dropdowns page) unioned with the
+  // names already in use — so the Dropdowns list is the source of truth.
+  // The current value is always kept so an unsaved typed CDM still shows.
   const cdmOptions = useMemo(() => {
-    const set = new Set();
-    for (const p of (prospects || [])) {
-      const v = (p?.cdm || '').trim();
-      if (v) set.add(v);
-    }
-    if (fields.cdm) set.add(String(fields.cdm).trim());
-    return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
-  }, [prospects, fields.cdm]);
+    const base = buildCdmOptions(prospects, settings);
+    const cur = String(fields.cdm || '').trim();
+    if (cur && !base.some(o => o.toLowerCase() === cur.toLowerCase())) return [...base, cur];
+    return base;
+  }, [prospects, settings, fields.cdm]);
 
   // Competitor name suggestions for the @-mention dropdown in the
   // notes editors. Harvested across every prospect's competitorsNotes

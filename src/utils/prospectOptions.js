@@ -11,6 +11,22 @@ export const PE_STRATEGY_LIST_KEY = 'peStrategies';
 // PE Overview tab.
 export const ASSET_TYPES_LIST_KEY = 'assetTypes';
 
+// The Dropdowns-tab list that owns CDM names. There's no built-in CDM
+// list, so this resolves a user-created list either by the conventional
+// key 'cdm' or by a label of "CDM" (case-insensitive) — whichever the
+// user set up on the Dropdowns page. Returns null when none exists.
+export const CDM_LIST_KEY = 'cdm';
+export function getCdmList(settings) {
+  const lists = getEffectiveDropdownLists(settings);
+  return lists.find(l => l.key === CDM_LIST_KEY)
+    || lists.find(l => String(l.label || '').trim().toLowerCase() === 'cdm')
+    || null;
+}
+export function getCdmListOptions(settings) {
+  const list = getCdmList(settings);
+  return Array.isArray(list?.options) ? list.options : [];
+}
+
 // Shared dropdown vocabularies for prospect tables' inline editors.
 // Table View and the PE › Blue Owl tab both build their Type / CDM
 // dropdowns through these so every table offers exactly the same
@@ -42,14 +58,20 @@ export function buildTypeOptions(prospects, settings) {
   ]);
 }
 
-// CDM options union: every CDM currently set on a prospect + custom
-// CDMs the user has added via "+ Add new CDM…". CDMs are pure
-// user-defined names (no built-in list), so the dropdown is fully
-// driven by data + settings.customCdms.
+// CDM options union: the Dropdowns-tab "CDM" list first (its order
+// wins), then every CDM currently set on a prospect, then custom CDMs
+// the user added via "+ Add new CDM…". Tying it to the managed list
+// makes the Dropdowns page the single source of truth, while keeping
+// in-use names so a CDM removed from the list never vanishes off a
+// record that still carries it.
 export function buildCdmOptions(prospects, settings) {
-  return dedupeSorted([
+  const inUse = dedupeSorted([
     ...(prospects || []).map(p => p?.cdm),
     ...(settings?.customCdms || []),
+  ]);
+  return dedupeOrdered([
+    ...getCdmListOptions(settings),
+    ...inUse,
   ]);
 }
 
@@ -147,6 +169,17 @@ export function persistCustomOption(colKey, name, settings, updateSettings, cdmO
     return;
   }
   if (colKey === 'cdm') {
+    // When a "CDM" Dropdowns list exists, that list is the single source
+    // of truth — add the new name there (same store the Dropdowns editor
+    // writes to). Otherwise fall back to the legacy customCdms setting.
+    const cdmList = getCdmList(settings);
+    if (cdmList) {
+      const current = Array.isArray(cdmList.options) ? cdmList.options : [];
+      if (current.some(o => String(o).trim().toLowerCase() === trimmed.toLowerCase())) return;
+      const lists = settings?.dropdownLists || {};
+      if (updateSettings) updateSettings({ dropdownLists: { ...lists, [cdmList.key]: [...current, trimmed] } });
+      return;
+    }
     const list = Array.isArray(settings?.customCdms) ? settings.customCdms : [];
     const exists = list.some(t => String(t).trim().toLowerCase() === trimmed.toLowerCase());
     const inUse = (cdmOptions || []).some(t => t.toLowerCase() === trimmed.toLowerCase());
