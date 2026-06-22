@@ -2860,6 +2860,7 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, firm = '', setFirm, firmO
   const firmLabel = firm.trim();
   const ALL_COLUMNS = [
     { key: 'Account', label: 'Account', width: '1.6fr' },
+    { key: 'Contact', label: 'Contacts', width: '1.4fr' },
     { key: 'Stage', label: 'Stage', width: '1fr' },
     { key: 'Type', label: 'Type', width: '1fr' },
     { key: 'Source', label: 'Source', width: '1fr' },
