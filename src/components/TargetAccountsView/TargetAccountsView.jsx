@@ -488,6 +488,12 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
     }
     return out;
   }, [data]);
+  // The column that holds the salesperson/CDM who owns each account.
+  // My Accounts (and the prospect modal, bulk Agenda, etc.) use this to
+  // decide whose account a row is, instead of guessing by header keyword.
+  const cdmColumn = String(settings?.targetCdmColumn || '');
+  // The "New Sales rep" column, used specifically for the My Accounts
+  // "Other Reps" badge.
   const repColumn = String(settings?.targetRepColumn || '');
 
   function toggleFilter(key, value) {
@@ -599,6 +605,7 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
           columns={columns}
           settings={settings}
           updateSettings={updateSettings}
+          cdmColumn={cdmColumn}
           repColumn={repColumn}
           allHeaderOptions={allHeaderOptions}
         />
@@ -612,7 +619,7 @@ function ListSection({
   activeSheet, setActiveSheet, search, setSearch, filterableColumns, filters,
   toggleFilter, hideBlockedRows, setHideBlockedRows, blockedCount,
   activeFilterCount, setFilters, filtered, records, handleFileChange, columns,
-  settings, updateSettings, repColumn, allHeaderOptions,
+  settings, updateSettings, cdmColumn, repColumn, allHeaderOptions,
 }) {
   return (
     <>
@@ -743,8 +750,22 @@ function ListSection({
             {activeFilterCount > 0 && <button className={styles.clearBtn} onClick={() => setFilters({})}>Clear all</button>}
             <span className={styles.resultCount}>{filtered.length} of {records.length}</span>
             <label
-              title="Pick which column holds the New Sales rep. My Accounts uses this column for its “Other Reps” instead of guessing — leave on Auto to keep the keyword guess."
+              title="Pick which column holds the salesperson / CDM who owns each account. My Accounts (and the prospect modal, Agenda, and other pages) use this column to decide whose account a row is, instead of guessing by header name — leave on Auto to keep the keyword guess."
               style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}
+            >
+              Salesperson / CDM column
+              <select
+                value={cdmColumn}
+                onChange={e => updateSettings({ targetCdmColumn: e.target.value })}
+                style={{ padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 6, background: '#fff', fontSize: '0.72rem', fontFamily: 'inherit', color: 'var(--color-text)', maxWidth: 200 }}
+              >
+                <option value="">Auto (guess)</option>
+                {allHeaderOptions.map(h => <option key={h} value={h}>{h}</option>)}
+              </select>
+            </label>
+            <label
+              title="Pick which column holds the New Sales rep. My Accounts uses this column for its “Other Reps” instead of guessing — leave on Auto to keep the keyword guess."
+              style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}
             >
               New Sales rep column
               <select

@@ -16,3 +16,31 @@ export function matchesCdm(prospectCdm, cdmName) {
   if (lastName !== firstName && lastName[0] && lower.includes(firstName + ' ' + lastName[0])) return true;
   return false;
 }
+
+// Keyword fallback used to guess which Target Accounts column holds the
+// salesperson/CDM when the user hasn't explicitly mapped one on the
+// Target Accounts page. Order matters — the first matching column wins.
+const CDM_COLUMN_KEYWORDS = ['CDM', 'Salesperson', 'Sales Rep', 'Account Owner', 'Owner', 'Rep', 'Assigned', 'Team Member'];
+
+// Resolve the salesperson/CDM value for a single Target Accounts record.
+// Prefers the column the user explicitly mapped on the Target Accounts
+// page (settings.targetCdmColumn, passed in as `cdmColumn`); falls back
+// to a keyword scan so sheets that don't carry the mapped column — or
+// users who never set one — still resolve a rep. Returns a trimmed
+// string ('' when nothing matches). This is the single source of truth
+// for "who owns this account" across My Accounts, the prospect modal,
+// the bulk Agenda page, and anywhere else that reads the workbook.
+export function resolveTargetAccountCdm(record, cdmColumn) {
+  if (!record) return '';
+  const col = String(cdmColumn || '').trim();
+  if (col && Object.prototype.hasOwnProperty.call(record, col)) {
+    return String(record[col] || '').trim();
+  }
+  for (const key of Object.keys(record)) {
+    const lower = String(key).toLowerCase();
+    for (const kw of CDM_COLUMN_KEYWORDS) {
+      if (lower.includes(kw.toLowerCase())) return String(record[key] || '').trim();
+    }
+  }
+  return '';
+}

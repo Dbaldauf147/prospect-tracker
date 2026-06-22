@@ -14,7 +14,7 @@ import { getHubspotCache, setHubspotCachePreservingManual } from '../../utils/hu
 import { dbGet } from '../../utils/db';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { loadOppsFromCache } from '../../utils/oppsCache';
-import { matchesCdm } from '../../utils/cdmMatch';
+import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import * as XLSX from 'xlsx';
 import styles from './MyAccountsView.module.css';
 
@@ -1244,7 +1244,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       const cdmLastName = (cdmName || '').toLowerCase().split(/\s+/).filter(Boolean).pop() || '';
       for (const r of sheet.records) {
         const companyForLog = findCol(r, ['Account', 'Company', 'Account Name', 'Client', 'Name']);
-        let cdm = findCol(r, ['CDM', 'Salesperson', 'Sales Rep', 'Account Owner', 'Owner', 'Rep', 'Assigned', 'Team Member', 'Sales']).toLowerCase();
+        let cdm = resolveTargetAccountCdm(r, settings?.targetCdmColumn).toLowerCase();
         if (!cdm && cdmLastName) {
           cdm = Object.values(r).find(v => String(v || '').toLowerCase().includes(cdmLastName)) || '';
           cdm = String(cdm).toLowerCase();
@@ -1271,18 +1271,19 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     console.log(`Target Accounts: found ${accounts.length} ${cdmName || 'CDM'} Tier 1/2 accounts`);
     if (skippedAccounts.length > 0) console.log('Target Accounts SKIPPED:', skippedAccounts);
     return accounts;
-  }, [targetAccountsData, cdmName]);
+  }, [targetAccountsData, cdmName, settings?.targetCdmColumn]);
 
   // All Target Accounts with their salesperson (for cross-rep detection)
   const allTargetReps = useMemo(() => {
     const data = targetAccountsData;
     if (!data?.sheets) return [];
     const results = [];
-    // An explicitly mapped rep column (chosen on the Target Accounts
-    // page) wins over the keyword guess below. Without it the scan can
-    // grab the wrong "salesperson"-ish column — e.g. a current rep that
-    // sits to the left of the New Sales column.
-    const repCol = String(settings?.targetRepColumn || '').trim();
+    // Prefer the explicitly mapped "New Sales rep" column, then the
+    // mapped salesperson/CDM column, then a keyword guess. The New Sales
+    // column wins because that's the rep this badge is meant to surface;
+    // without a mapping the scan can grab a current-rep column sitting to
+    // the left of the New Sales column.
+    const repCol = String(settings?.targetRepColumn || '').trim() || String(settings?.targetCdmColumn || '').trim();
 
     function findCol(r, keywords) {
       for (const key of Object.keys(r)) {
@@ -1303,12 +1304,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         // Prefer the mapped column when this sheet carries it; otherwise
         // fall back to the keyword scan so sheets without that column
         // still resolve a rep.
-        let rep;
-        if (repCol && Object.prototype.hasOwnProperty.call(r, repCol)) {
-          rep = String(r[repCol] || '').trim();
-        } else {
-          rep = findCol(r, ['CDM', 'Salesperson', 'Sales Rep', 'Account Owner', 'Owner', 'Rep', 'Assigned', 'Team Member']);
-        }
+        const rep = resolveTargetAccountCdm(r, repCol);
         if (!rep) continue;
         // Skip the current user's own entries — we only want OTHER reps here
         if (matchesCdm(rep, cdmName)) continue;
@@ -1316,7 +1312,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       }
     }
     return results;
-  }, [targetAccountsData, cdmName, settings?.targetRepColumn]);
+  }, [targetAccountsData, cdmName, settings?.targetRepColumn, settings?.targetCdmColumn]);
 
   // Load activity cache and count per company
   const activityByCompany = useMemo(() => {
