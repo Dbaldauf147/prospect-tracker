@@ -50,6 +50,29 @@ const CHART_VIEW_OPTIONS = [
   { key: 'stackedArea', label: 'Stacked Area' },
 ];
 
+// When a line-chart data point hits 100%, paint its dot dark green so a
+// maxed-out metric jumps out at a glance.
+const DARK_GREEN = '#15803D';
+function makeDot(color, baseR) {
+  function Dot(props) {
+    const { cx, cy, value, index } = props;
+    if (cx == null || cy == null) return null;
+    const hit = value === 100;
+    return (
+      <circle
+        key={`dot-${index}`}
+        cx={cx}
+        cy={cy}
+        r={hit ? baseR + 1 : baseR}
+        fill={hit ? DARK_GREEN : color}
+        stroke={hit ? DARK_GREEN : color}
+        strokeWidth={1}
+      />
+    );
+  }
+  return Dot;
+}
+
 function ProgressChart({ title, data, series, isPct, defaultView = 'line', secondarySeries, onHide, onRename }) {
   const [viewType, setViewType] = useState(defaultView);
   const [editingTitle, setEditingTitle] = useState(false);
@@ -145,7 +168,7 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
             <Tooltip formatter={tooltipFmt} />
             <Legend />
             {series.map(s => (
-              <Area key={s.key} yAxisId="left" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} fill="none" stackId="a" dot={{ r: 3, fill: s.color }} activeDot={{ r: 5 }} />
+              <Area key={s.key} yAxisId="left" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} fill="none" stackId="a" dot={isPct ? makeDot(s.color, 3) : { r: 3, fill: s.color }} activeDot={{ r: 5 }} />
             ))}
             {hasSecondary && secondarySeries.map(s => (
               <Line key={s.key} yAxisId="right" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: s.color }} />
@@ -160,7 +183,7 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
             <Tooltip formatter={tooltipFmt} />
             <Legend />
             {series.map(s => (
-              <Line key={s.key} yAxisId="left" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} dot={{ r: 4 }} />
+              <Line key={s.key} yAxisId="left" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} dot={isPct ? makeDot(s.color, 4) : { r: 4 }} />
             ))}
             {hasSecondary && secondarySeries.map(s => (
               <Line key={s.key} yAxisId="right" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: s.color }} />
