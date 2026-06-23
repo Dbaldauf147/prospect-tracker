@@ -1702,10 +1702,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     for (const p of prospects) {
       // Skip dismissed companies
       if (isDismissed(p.company)) continue;
-      // Use Firestore tier if explicitly set (including '-' for no tier), otherwise fall back to map/target accounts
+      // Use Firestore tier if explicitly set, otherwise fall back to map/target accounts
       let tier;
-      if (p.tier === 'Tier 1' || p.tier === 'Tier 2' || p.tier === '-' || p.tier === '') {
-        tier = p.tier || '-';
+      if (p.tier === 'Tier 1' || p.tier === 'Tier 2') {
+        tier = p.tier;
+      } else if (p.tier === '-' || p.tier === '') {
+        // Blank / no-tier accounts default to Tier 3 instead of showing a dash.
+        tier = 'Tier 3';
       } else {
         tier = findTier(p.company);
         if (!tier) {
