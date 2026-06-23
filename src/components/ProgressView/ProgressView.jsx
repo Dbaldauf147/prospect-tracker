@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useId } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -73,49 +73,33 @@ function makeDot(color, baseR) {
   return Dot;
 }
 
-// Build SVG gradient stops that paint a line dark green over any segment
-// touching a 100% point, and the series color everywhere else. Each
-// segment gets two stops at the same boundary offsets, giving hard edges
-// (no blended transition) so a maxed-out stretch reads as solid green.
-function lineGradientStops(data, key, baseColor) {
-  const n = data.length;
-  if (n === 0) return [{ offset: 0, color: baseColor }, { offset: 1, color: baseColor }];
-  const vals = data.map(d => d[key]);
-  if (n === 1) {
-    const c = vals[0] === 100 ? DARK_GREEN : baseColor;
-    return [{ offset: 0, color: c }, { offset: 1, color: c }];
-  }
-  const stops = [];
-  for (let k = 0; k < n - 1; k++) {
-    const color = (vals[k] === 100 || vals[k + 1] === 100) ? DARK_GREEN : baseColor;
-    stops.push({ offset: k / (n - 1), color });
-    stops.push({ offset: (k + 1) / (n - 1), color });
-  }
-  return stops;
+// Build a derived dataset that adds, for each percent series, a parallel
+// `${key}__green` key holding the value only where the point belongs to a
+// dark-green segment (it, or a neighbor, hits 100%) and null elsewhere.
+// A second Line drawn from this key with connectNulls=false overlays solid
+// dark green exactly on the maxed-out stretches — far more reliable than an
+// SVG stroke gradient, which renders inconsistently on near-flat lines.
+function withGreenKeys(data, series) {
+  return data.map((d, i) => {
+    const row = { ...d };
+    for (const s of series) {
+      const v = d[s.key];
+      const prev = i > 0 ? data[i - 1][s.key] : undefined;
+      const next = i < data.length - 1 ? data[i + 1][s.key] : undefined;
+      row[`${s.key}__green`] = (v === 100 || prev === 100 || next === 100) ? v : null;
+    }
+    return row;
+  });
 }
 
 function ProgressChart({ title, data, series, isPct, defaultView = 'line', secondarySeries, onHide, onRename }) {
   const [viewType, setViewType] = useState(defaultView);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
-  // Stable, collision-free prefix for this chart's gradient <defs> ids.
-  const gradId = useId().replace(/:/g, '');
-  const lineGradId = (key) => `linegrad-${gradId}-${key}`;
-  // On percent charts, drive the stroke through a per-segment gradient so
-  // stretches that hit 100% render dark green; otherwise use the flat color.
-  // A perfectly flat line (every point identical) has a zero-height bounding
-  // box, which makes an objectBoundingBox gradient degenerate — so fall back
-  // to a solid color (dark green when the whole series sits at 100%).
-  const lineStroke = (s) => {
-    if (!isPct) return s.color;
-    const vals = data.map(d => d[s.key]);
-    if (vals.length > 0 && vals.every(v => v === vals[0])) {
-      return vals[0] === 100 ? DARK_GREEN : s.color;
-    }
-    return `url(#${lineGradId(s.key)})`;
-  };
-  // The legend renders in its own SVG and can't resolve the stroke
-  // gradient url(), so feed it explicit flat colors for the swatches.
+  // For percent line charts, augment the data with the green-overlay keys.
+  const lineData = useMemo(() => (isPct ? withGreenKeys(data, series) : data), [data, series, isPct]);
+  // Legend payload with explicit flat colors (the green overlay lines opt
+  // out of the legend, and secondary series keep their own color).
   const lineLegendPayload = [
     ...series.map(s => ({ value: s.name, type: 'line', id: s.key, color: s.color })),
     ...(Array.isArray(secondarySeries) ? secondarySeries : []).map(s => ({ value: s.name, type: 'line', id: s.key, color: s.color })),
@@ -204,51 +188,33 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
           </AreaChart>
         ) : viewType === 'stackedLine' ? (
           <AreaChart data={data}>
-            {isPct && (
-              <defs>
-                {series.map(s => (
-                  <linearGradient key={s.key} id={lineGradId(s.key)} x1="0" y1="0" x2="1" y2="0">
-                    {lineGradientStops(data, s.key, s.color).map((st, i) => (
-                      <stop key={i} offset={`${st.offset * 100}%`} stopColor={st.color} />
-                    ))}
-                  </linearGradient>
-                ))}
-              </defs>
-            )}
             <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
             <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
             <YAxis yAxisId="left" fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
             {hasSecondary && <YAxis yAxisId="right" orientation="right" fontSize={11} tick={{ fill: '#64748B' }} allowDecimals={false} />}
             <Tooltip formatter={tooltipFmt} />
-            <Legend payload={isPct ? lineLegendPayload : undefined} />
+            <Legend />
             {series.map(s => (
-              <Area key={s.key} yAxisId="left" type="monotone" dataKey={s.key} name={s.name} stroke={lineStroke(s)} strokeWidth={2} fill="none" stackId="a" dot={isPct ? makeDot(s.color, 3) : { r: 3, fill: s.color }} activeDot={{ r: 5 }} />
+              <Area key={s.key} yAxisId="left" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} fill="none" stackId="a" dot={isPct ? makeDot(s.color, 3) : { r: 3, fill: s.color }} activeDot={{ r: 5 }} />
             ))}
             {hasSecondary && secondarySeries.map(s => (
               <Line key={s.key} yAxisId="right" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: s.color }} />
             ))}
           </AreaChart>
         ) : (
-          <LineChart data={data}>
-            {isPct && (
-              <defs>
-                {series.map(s => (
-                  <linearGradient key={s.key} id={lineGradId(s.key)} x1="0" y1="0" x2="1" y2="0">
-                    {lineGradientStops(data, s.key, s.color).map((st, i) => (
-                      <stop key={i} offset={`${st.offset * 100}%`} stopColor={st.color} />
-                    ))}
-                  </linearGradient>
-                ))}
-              </defs>
-            )}
+          <LineChart data={lineData}>
             <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
             <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
             <YAxis yAxisId="left" fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
             {hasSecondary && <YAxis yAxisId="right" orientation="right" fontSize={11} tick={{ fill: '#64748B' }} allowDecimals={false} />}
-            <Tooltip formatter={tooltipFmt} />
+            <Tooltip formatter={tooltipFmt} payloadUniqBy={isPct ? (o => o.name) : undefined} />
             <Legend payload={isPct ? lineLegendPayload : undefined} />
             {series.map(s => (
-              <Line key={s.key} yAxisId="left" type="monotone" dataKey={s.key} name={s.name} stroke={lineStroke(s)} strokeWidth={2} dot={isPct ? makeDot(s.color, 4) : { r: 4 }} />
+              <Line key={s.key} yAxisId="left" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} dot={isPct ? makeDot(s.color, 4) : { r: 4 }} />
+            ))}
+            {isPct && series.map(s => (
+              // Solid dark-green overlay on the maxed-out (100%) stretches.
+              <Line key={`${s.key}__green`} yAxisId="left" type="monotone" dataKey={`${s.key}__green`} name={s.name} stroke={DARK_GREEN} strokeWidth={2.5} dot={false} activeDot={false} connectNulls={false} legendType="none" isAnimationActive={false} />
             ))}
             {hasSecondary && secondarySeries.map(s => (
               <Line key={s.key} yAxisId="right" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: s.color }} />
