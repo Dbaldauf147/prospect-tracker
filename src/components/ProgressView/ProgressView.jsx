@@ -73,10 +73,37 @@ function makeDot(color, baseR) {
   return Dot;
 }
 
+// Build a derived dataset that adds, for each percent series, a parallel
+// `${key}__green` key holding the value only where the point belongs to a
+// dark-green segment (it, or a neighbor, hits 100%) and null elsewhere.
+// A second Line drawn from this key with connectNulls=false overlays solid
+// dark green exactly on the maxed-out stretches — far more reliable than an
+// SVG stroke gradient, which renders inconsistently on near-flat lines.
+function withGreenKeys(data, series) {
+  return data.map((d, i) => {
+    const row = { ...d };
+    for (const s of series) {
+      const v = d[s.key];
+      const prev = i > 0 ? data[i - 1][s.key] : undefined;
+      const next = i < data.length - 1 ? data[i + 1][s.key] : undefined;
+      row[`${s.key}__green`] = (v === 100 || prev === 100 || next === 100) ? v : null;
+    }
+    return row;
+  });
+}
+
 function ProgressChart({ title, data, series, isPct, defaultView = 'line', secondarySeries, onHide, onRename }) {
   const [viewType, setViewType] = useState(defaultView);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
+  // For percent line charts, augment the data with the green-overlay keys.
+  const lineData = useMemo(() => (isPct ? withGreenKeys(data, series) : data), [data, series, isPct]);
+  // Legend payload with explicit flat colors (the green overlay lines opt
+  // out of the legend, and secondary series keep their own color).
+  const lineLegendPayload = [
+    ...series.map(s => ({ value: s.name, type: 'line', id: s.key, color: s.color })),
+    ...(Array.isArray(secondarySeries) ? secondarySeries : []).map(s => ({ value: s.name, type: 'line', id: s.key, color: s.color })),
+  ];
   const yProps = isPct
     ? { domain: [0, 100], tickFormatter: v => `${v}%` }
     : { allowDecimals: false };
@@ -175,15 +202,19 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
             ))}
           </AreaChart>
         ) : (
-          <LineChart data={data}>
+          <LineChart data={lineData}>
             <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
             <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
             <YAxis yAxisId="left" fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
             {hasSecondary && <YAxis yAxisId="right" orientation="right" fontSize={11} tick={{ fill: '#64748B' }} allowDecimals={false} />}
-            <Tooltip formatter={tooltipFmt} />
-            <Legend />
+            <Tooltip formatter={tooltipFmt} payloadUniqBy={isPct ? (o => o.name) : undefined} />
+            <Legend payload={isPct ? lineLegendPayload : undefined} />
             {series.map(s => (
               <Line key={s.key} yAxisId="left" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} dot={isPct ? makeDot(s.color, 4) : { r: 4 }} />
+            ))}
+            {isPct && series.map(s => (
+              // Solid dark-green overlay on the maxed-out (100%) stretches.
+              <Line key={`${s.key}__green`} yAxisId="left" type="monotone" dataKey={`${s.key}__green`} name={s.name} stroke={DARK_GREEN} strokeWidth={2.5} dot={false} activeDot={false} connectNulls={false} legendType="none" isAnimationActive={false} />
             ))}
             {hasSecondary && secondarySeries.map(s => (
               <Line key={s.key} yAxisId="right" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: s.color }} />
