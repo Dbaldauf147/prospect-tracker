@@ -191,6 +191,22 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
     };
   }, []);
 
+  // When a brand-new Target Accounts list is uploaded, wipe every
+  // per-prospect tier-mismatch dismissal so the new list starts from a
+  // clean slate — any mismatch that was previously "Dismissed" on the My
+  // Accounts page will re-surface for re-review against the fresh tiers.
+  // Returns the number of prospects whose dismissal was cleared.
+  function clearTierMismatchIgnores() {
+    let cleared = 0;
+    for (const p of prospects) {
+      if (p.ignoreTierMismatch) {
+        if (updateProspect) updateProspect(p.id, { ignoreTierMismatch: false });
+        cleared++;
+      }
+    }
+    return cleared;
+  }
+
   const listDefinitions = useMemo(
     () => SUBTABS.filter(t => t.storageKey),
     []
@@ -379,7 +395,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
       </div>
       <div className={styles.content}>
         {subtab === 'raclients' && <RAClientsView settings={settings} updateSettings={updateSettings} />}
-        {subtab === 'targets' && <TargetAccountsView onDataLoaded={onTargetAccountsLoaded} settings={settings} updateSettings={updateSettings} cdmName={cdmName} />}
+        {subtab === 'targets' && <TargetAccountsView onDataLoaded={onTargetAccountsLoaded} settings={settings} updateSettings={updateSettings} cdmName={cdmName} onListUploaded={clearTierMismatchIgnores} />}
         {subtab === 'recaclients' && <RECAClientsView prospects={prospects} onSelectProspect={onSelectProspect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} />}
         {subtab === 'ecoactclients' && <EcoActClientsView prospects={prospects} onSelectProspect={onSelectProspect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} />}
         {subtab === 'strategic' && (

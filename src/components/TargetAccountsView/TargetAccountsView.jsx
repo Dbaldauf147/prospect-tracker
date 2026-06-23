@@ -160,7 +160,7 @@ function InlineEditCell({ value, rowIndex, colKey, onSave }) {
   return <span style={{ cursor: 'default', padding: '1px 3px', borderRadius: '4px' }} onDoubleClick={startEdit}>{value || '—'}</span>;
 }
 
-export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdmName }) {
+export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdmName, onListUploaded }) {
   const { user } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -256,8 +256,15 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
         saveCache(result);
         if (user?.uid) saveToFirestore(user.uid, result);
         if (onDataLoaded) onDataLoaded(result);
+        // A new list is a fresh slate — clear any previously-dismissed tier
+        // mismatches so they re-surface against the newly uploaded tiers.
+        let clearedNote = '';
+        if (onListUploaded) {
+          const cleared = onListUploaded();
+          if (cleared) clearedNote = ` — reset ${cleared} tier-mismatch dismissal${cleared > 1 ? 's' : ''}`;
+        }
         setActiveSheet(sheetNames[0]);
-        setStatus(`Uploaded "${file.name}" — ${sheetNames.length} sheet${sheetNames.length > 1 ? 's' : ''}, ${sheetNames.map(n => `${sheets[n].records.length} rows in ${n}`).join(', ')}`);
+        setStatus(`Uploaded "${file.name}" — ${sheetNames.length} sheet${sheetNames.length > 1 ? 's' : ''}, ${sheetNames.map(n => `${sheets[n].records.length} rows in ${n}`).join(', ')}${clearedNote}`);
       } catch (err) {
         setError(`Failed to parse file: ${err.message}`);
       } finally {
