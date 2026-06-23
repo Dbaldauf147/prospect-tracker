@@ -578,7 +578,7 @@ async function handler(req, res) {
       const limit = 100;
 
       const propsMap = {
-        email: 'hs_email_subject,hs_email_status,hs_email_direction,hs_timestamp,hs_email_to_email,hs_email_from_email,hs_email_to_firstname,hs_email_to_lastname,hs_email_from_firstname,hs_email_from_lastname',
+        email: 'hs_email_subject,hs_email_status,hs_email_direction,hs_timestamp,hs_email_to_email,hs_email_from_email,hs_email_to_firstname,hs_email_to_lastname,hs_email_from_firstname,hs_email_from_lastname,hs_email_cc_email,hs_email_cc_firstname,hs_email_cc_lastname',
         call: 'hs_call_title,hs_call_status,hs_call_direction,hs_call_duration,hs_timestamp,hs_call_to_number,hs_call_from_number,hs_call_disposition',
         meeting: 'hs_meeting_title,hs_meeting_start_time,hs_meeting_end_time,hs_meeting_outcome,hs_timestamp,hs_attendee_owner_ids,hs_meeting_external_url,hs_internal_meeting_notes,hs_meeting_body',
       };
