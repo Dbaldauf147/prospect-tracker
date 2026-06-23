@@ -103,7 +103,17 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
   const lineGradId = (key) => `linegrad-${gradId}-${key}`;
   // On percent charts, drive the stroke through a per-segment gradient so
   // stretches that hit 100% render dark green; otherwise use the flat color.
-  const lineStroke = (s) => (isPct ? `url(#${lineGradId(s.key)})` : s.color);
+  // A perfectly flat line (every point identical) has a zero-height bounding
+  // box, which makes an objectBoundingBox gradient degenerate — so fall back
+  // to a solid color (dark green when the whole series sits at 100%).
+  const lineStroke = (s) => {
+    if (!isPct) return s.color;
+    const vals = data.map(d => d[s.key]);
+    if (vals.length > 0 && vals.every(v => v === vals[0])) {
+      return vals[0] === 100 ? DARK_GREEN : s.color;
+    }
+    return `url(#${lineGradId(s.key)})`;
+  };
   // The legend renders in its own SVG and can't resolve the stroke
   // gradient url(), so feed it explicit flat colors for the swatches.
   const lineLegendPayload = [
