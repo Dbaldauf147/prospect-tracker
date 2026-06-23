@@ -2366,13 +2366,6 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       .replace(/\s+/g, ' ')
       .trim();
 
-    // Companies that already have at least one HubSpot contact on file.
-    const contactCompanies = new Set();
-    for (const c of (hubspotCache?.contacts || [])) {
-      const k = norm(c.company);
-      if (k) contactCompanies.add(k);
-    }
-
     // Lookup prospects by normalized company name to pull Zoom + site.
     const prospectByNorm = new Map();
     for (const p of prospects) {
@@ -2380,10 +2373,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       if (k && !prospectByNorm.has(k)) prospectByNorm.set(k, p);
     }
 
-    const empty = filteredAccounts.filter(a => {
-      const k = norm(a.company);
-      return k && !contactCompanies.has(k);
-    });
+    // Use the same contact count the Contacts column shows (matches by
+    // company-name index across divisions AND by email domain, de-duped by
+    // contact ID). The previous exact-normalized-company-text match was
+    // stricter than the column, so accounts whose contacts only matched by
+    // domain or by a differently-worded Company field (e.g. PNC) were
+    // wrongly listed as having no contacts.
+    const empty = filteredAccounts.filter(a => (a.contactCount || 0) === 0);
     if (empty.length === 0) {
       alert('Every company in the current My Accounts view already has at least one HubSpot contact.');
       return;
