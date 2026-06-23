@@ -95,11 +95,60 @@ function detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedM
   return issues;
 }
 
+// Issue #2: tier / status / missing-HQ-Region flags raised on the My
+// Accounts page. MyAccountsView already computes these against Target
+// Accounts + Opps data and publishes a flat snapshot (one record per
+// account+flag) to the my-accounts:flags store, so the Issues tab simply
+// maps each published flag to a row rather than re-deriving the matching.
+function detectMyAccountsFlags({ myAccountsFlags = [] }) {
+  const issues = [];
+  for (const f of myAccountsFlags) {
+    if (!f || !f.id || !f.kind) continue;
+    const company = f.company || '—';
+    if (f.kind === 'tier') {
+      issues.push({
+        id: `tier-mismatch:${f.id}`,
+        source: 'My Accounts',
+        type: 'Tier mismatch',
+        company,
+        prospectId: f.id,
+        daysUntil: null,
+        expirationDate: null,
+        detail: `Your tier "${f.myTier || '—'}" doesn't match Target Accounts tier "${f.targetTier || '—'}"`,
+      });
+    } else if (f.kind === 'status') {
+      issues.push({
+        id: `status-mismatch:${f.id}`,
+        source: 'My Accounts',
+        type: 'Status mismatch',
+        company,
+        prospectId: f.id,
+        daysUntil: null,
+        expirationDate: null,
+        detail: `Status "${f.status || '—'}" doesn't match Opps-suggested status "${f.suggestedStatus || '—'}"`,
+      });
+    } else if (f.kind === 'hqRegion') {
+      issues.push({
+        id: `hq-missing:${f.id}`,
+        source: 'My Accounts',
+        type: 'HQ Region missing',
+        company,
+        prospectId: f.id,
+        daysUntil: null,
+        expirationDate: null,
+        detail: 'No HQ Region set',
+      });
+    }
+  }
+  return issues;
+}
+
 // Build the full list of outstanding issues. Each detector contributes
 // rows; add more detectors here as new issue classes are mapped.
-export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {} }) {
+export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, myAccountsFlags = [] }) {
   const dealsByClient = groupDealsByClient(dealsList, clientMap);
   const issues = [];
   issues.push(...detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedMap }));
+  issues.push(...detectMyAccountsFlags({ myAccountsFlags }));
   return issues;
 }
