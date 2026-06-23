@@ -3254,14 +3254,18 @@ function KeyContactsViewInner({
                       const d = new Date(entry.ts);
                       const days = isNaN(d) ? null : Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000));
                       const isCall = entry.type === 'call';
+                      // Flag contacts gone quiet for over 100 days so stale
+                      // relationships are easy to spot at a glance.
+                      const stale = days != null && days > 100;
                       const tip = isNaN(d)
                         ? ''
-                        : `Most recent ${isCall ? 'call' : 'email'} on ${d.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })} (from the Activity tab)`;
+                        : `Most recent ${isCall ? 'call' : 'email'} on ${d.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })} (from the Activity tab)${stale ? ' — over 100 days since last outreach' : ''}`;
                       return (
                         <div
-                          style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#475569', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                          style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: stale ? '#B45309' : '#475569', fontWeight: stale ? 700 : 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                           title={tip}
                         >
+                          {stale && <span style={{ flexShrink: 0, marginRight: 4, color: '#B45309', fontWeight: 700 }}>⚠</span>}
                           {days == null ? '' : `${days} ${days === 1 ? 'day' : 'days'}`}
                         </div>
                       );
