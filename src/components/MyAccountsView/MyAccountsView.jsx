@@ -2134,6 +2134,33 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     }
   }
 
+  // Prospects whose tier-mismatch warning was previously dismissed (the
+  // per-row "Dismiss" action sets ignoreTierMismatch). Count the raw
+  // prospect list, not just the visible rows, so the reset also catches
+  // dismissals on accounts hidden by the current filters.
+  const ignoredTierMismatches = useMemo(
+    () => (prospects || []).filter(p => p.ignoreTierMismatch),
+    [prospects]
+  );
+
+  // Undo every previously-dismissed tier mismatch so the ⚠ flags
+  // re-appear for re-review. Same effect as the clean-slate reset that
+  // runs on a new Target Accounts upload, but on demand from the toolbar.
+  async function resetTierMismatchIgnores() {
+    if (ignoredTierMismatches.length === 0) return;
+    const n = ignoredTierMismatches.length;
+    const ok = window.confirm(
+      `Restore ${n} previously-dismissed tier mismatch${n === 1 ? '' : 'es'}? The ⚠ flags will re-appear so you can review them again.`
+    );
+    if (!ok) return;
+    try {
+      await Promise.all(ignoredTierMismatches.map(p => onUpdate(p.id, { ignoreTierMismatch: false })));
+    } catch (err) {
+      console.error('Reset tier-mismatch dismissals failed:', err);
+      alert('Reset failed: ' + (err?.message || err));
+    }
+  }
+
   // Publish the resolved My-Accounts company names to localStorage so
   // the List tabs can filter against the exact same set (not just the
   // broader Baldauf-CDM prospect pool). Written whenever allAccounts
@@ -2761,6 +2788,15 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         >
           {tierSyncRunning ? 'Updating tiers…' : `⚠ Apply tier flags${tierFlagged.length ? ` (${tierFlagged.length})` : ''}`}
         </button>
+        {ignoredTierMismatches.length > 0 && (
+          <button
+            onClick={resetTierMismatchIgnores}
+            title="Restore every tier-mismatch flag you previously dismissed so the ⚠ warnings re-appear for review."
+            style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-accent)', whiteSpace: 'nowrap' }}
+          >
+            ↺ Restore dismissed flags ({ignoredTierMismatches.length})
+          </button>
+        )}
         {onDedupe && (
           <button
             onClick={handleDedupe}
