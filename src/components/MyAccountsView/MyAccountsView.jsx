@@ -939,6 +939,36 @@ function parseXlsx(file) {
   });
 }
 
+// Fields offered in the My Accounts mass-edit toolbar. Dropdown fields
+// carry their `options`; number fields set type:'number'; everything else
+// is a free-text input. Keys match the prospect fields written via onUpdate.
+const BULK_FIELDS = [
+  { key: 'tier', label: 'Tier', options: TIERS },
+  { key: 'status', label: 'Status', options: STATUSES },
+  { key: 'type', label: 'Type', options: TYPES },
+  { key: 'geography', label: 'Geography', options: GEOGRAPHIES },
+  { key: 'publicPrivate', label: 'Public / Private', options: PUBLIC_PRIVATE },
+  { key: 'hqRegion', label: 'HQ Region', options: ['North America', 'Outside of North America'] },
+  { key: 'cdm', label: 'CDM' },
+  { key: 'reAum', label: 'RE AUM', type: 'number' },
+  { key: 'peAum', label: 'PE AUM', type: 'number' },
+  { key: 'numberOfSites', label: '# Sites', type: 'number' },
+  { key: 'rank', label: 'Rank' },
+  { key: 'website', label: 'Website' },
+  { key: 'emailDomain', label: 'Email Domain' },
+  { key: 'notes', label: 'Notes' },
+  { key: 'bfoCompanyId', label: 'BFO Company ID' },
+  { key: 'bfoCompanyName', label: 'BFO Company Name' },
+  { key: 'zoomCompanyId', label: 'Zoom Company ID' },
+  { key: 'zoomCompanyName', label: 'Zoom Company Name' },
+];
+
+// Opps-only rows are synthetic (no backing prospect doc), so they can't be
+// bulk-edited. Everything else keys off its real prospect id.
+function isBulkSelectable(row) {
+  return !!row?.id && !String(row.id).startsWith('opps-only:');
+}
+
 export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd, onFindDuplicates, onDedupe, targetAccountsData, settings, updateSettings, cdmName }) {
   const { user, isAdmin } = useAuth();
   const savedView = settings?.viewFilters?.myAccounts;
@@ -949,6 +979,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   const [hqLookupRunning, setHqLookupRunning] = useState(false);
   const [dedupeRunning, setDedupeRunning] = useState(false);
   const [tierSyncRunning, setTierSyncRunning] = useState(false);
+  // Mass edit: checkbox selection + a field/value applied to all selected rows.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkField, setBulkField] = useState('');
+  const [bulkValue, setBulkValue] = useState('');
+  const [bulkRunning, setBulkRunning] = useState(false);
   const [inactiveMode, setInactiveMode] = useState(savedView?.inactiveMode || 'hide'); // 'hide' | 'only' | 'show'
   // companyLowerName → Set<listLabel>. Built further below once
   // allAccounts is resolved; declared here so it's available while
@@ -2643,6 +2678,86 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     return mapped;
   }, [onSelect, onUpdate, allTargetNames, divisionsMap, allCompaniesForDivisions, duplicateTargetNames, listFlagsByCompany, similarNamesByAccount, filteredAccounts]);
 
+  // Prepend a checkbox column for the mass-edit selection. Opps-only rows
+  // render no checkbox since they have no backing prospect to update.
+  const columnsWithSelect = useMemo(() => {
+    const selectColumn = {
+      key: '__select__',
+      label: '',
+      defaultWidth: 36,
+      render: (row) => {
+        if (!isBulkSelectable(row)) return null;
+        return (
+          <input
+            type="checkbox"
+            checked={selectedIds.has(row.id)}
+            onChange={(e) => {
+              e.stopPropagation();
+              setSelectedIds(prev => {
+                const next = new Set(prev);
+                if (next.has(row.id)) next.delete(row.id); else next.add(row.id);
+                return next;
+              });
+            }}
+            onClick={(e) => e.stopPropagation()}
+            style={{ cursor: 'pointer', accentColor: 'var(--color-accent)' }}
+            aria-label="Select row for bulk edit"
+          />
+        );
+      },
+    };
+    return [selectColumn, ...columns];
+  }, [columns, selectedIds]);
+
+  // Selectable ids among the currently filtered/visible rows, and how many
+  // of them are already selected — drives the select-all-visible toggle.
+  const selectableVisibleIds = useMemo(
+    () => (filteredAccounts || []).filter(isBulkSelectable).map(r => r.id),
+    [filteredAccounts]
+  );
+  const selectedVisibleCount = selectableVisibleIds.filter(id => selectedIds.has(id)).length;
+  const allVisibleSelected = selectableVisibleIds.length > 0 && selectedVisibleCount === selectableVisibleIds.length;
+
+  function toggleSelectAllVisible() {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (allVisibleSelected) for (const id of selectableVisibleIds) next.delete(id);
+      else for (const id of selectableVisibleIds) next.add(id);
+      return next;
+    });
+  }
+  function clearSelection() { setSelectedIds(new Set()); }
+
+  const bulkFieldDef = BULK_FIELDS.find(f => f.key === bulkField) || null;
+
+  // Apply the chosen field/value to every selected (real) prospect at once.
+  async function applyBulkEdit() {
+    if (bulkRunning || !bulkFieldDef) return;
+    const ids = [...selectedIds].filter(id => id && !String(id).startsWith('opps-only:'));
+    if (ids.length === 0) return;
+    const value = bulkFieldDef.type === 'number'
+      ? (bulkValue === '' ? '' : Number(bulkValue))
+      : bulkValue;
+    if (bulkFieldDef.type === 'number' && bulkValue !== '' && Number.isNaN(value)) {
+      alert(`"${bulkValue}" is not a valid number.`);
+      return;
+    }
+    const shown = bulkValue === '' ? '(blank)' : bulkValue;
+    const ok = window.confirm(`Set ${bulkFieldDef.label} = "${shown}" on ${ids.length} selected account${ids.length === 1 ? '' : 's'}?`);
+    if (!ok) return;
+    setBulkRunning(true);
+    try {
+      await Promise.all(ids.map(id => onUpdate(id, { [bulkFieldDef.key]: value })));
+      setSelectedIds(new Set());
+      setBulkValue('');
+    } catch (err) {
+      console.error('Bulk edit failed:', err);
+      alert('Bulk edit failed: ' + (err?.message || err));
+    } finally {
+      setBulkRunning(false);
+    }
+  }
+
   return (
     <div className={styles.wrapper}>
       <div className={styles.filterBar}>
@@ -2982,12 +3097,71 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         );
       })()}
 
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', padding: '0.4rem 0.75rem', borderTop: '1px solid var(--color-border)' }}>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-text-secondary)', cursor: selectableVisibleIds.length ? 'pointer' : 'default' }}>
+          <input
+            type="checkbox"
+            checked={allVisibleSelected}
+            ref={el => { if (el) el.indeterminate = selectedVisibleCount > 0 && !allVisibleSelected; }}
+            disabled={selectableVisibleIds.length === 0}
+            onChange={toggleSelectAllVisible}
+            style={{ cursor: 'pointer', accentColor: 'var(--color-accent)' }}
+          />
+          Select all ({selectableVisibleIds.length})
+        </label>
+        <span style={{ fontSize: '0.7rem', fontWeight: 600, color: selectedIds.size ? 'var(--color-accent)' : 'var(--color-text-muted)' }}>
+          {selectedIds.size} selected
+        </span>
+        <select
+          value={bulkField}
+          onChange={e => { setBulkField(e.target.value); setBulkValue(''); }}
+          disabled={selectedIds.size === 0}
+          style={{ padding: '0.25rem 0.5rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontFamily: 'inherit', cursor: selectedIds.size === 0 ? 'not-allowed' : 'pointer' }}
+        >
+          <option value="">Field to set…</option>
+          {BULK_FIELDS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+        </select>
+        {bulkFieldDef && (bulkFieldDef.options
+          ? (
+            <select
+              value={bulkValue}
+              onChange={e => setBulkValue(e.target.value)}
+              style={{ padding: '0.25rem 0.5rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontFamily: 'inherit', cursor: 'pointer' }}
+            >
+              <option value="">(blank)</option>
+              {bulkFieldDef.options.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          ) : (
+            <input
+              type={bulkFieldDef.type === 'number' ? 'number' : 'text'}
+              value={bulkValue}
+              onChange={e => setBulkValue(e.target.value)}
+              placeholder={`New ${bulkFieldDef.label}…`}
+              style={{ padding: '0.25rem 0.5rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontFamily: 'inherit', minWidth: 140 }}
+            />
+          ))}
+        <button
+          onClick={applyBulkEdit}
+          disabled={bulkRunning || selectedIds.size === 0 || !bulkFieldDef}
+          style={{ padding: '0.25rem 0.7rem', borderRadius: '6px', border: 'none', background: (bulkRunning || selectedIds.size === 0 || !bulkFieldDef) ? 'var(--color-border)' : 'var(--color-accent)', color: '#fff', fontSize: '0.7rem', fontWeight: 600, cursor: (bulkRunning || selectedIds.size === 0 || !bulkFieldDef) ? 'default' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+        >
+          {bulkRunning ? 'Applying…' : `Apply to ${selectedIds.size}`}
+        </button>
+        {selectedIds.size > 0 && (
+          <button
+            onClick={clearSelection}
+            style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}
+          >
+            Clear selection
+          </button>
+        )}
+      </div>
       <div className={styles.tableWrap}>
         <DataTable
           tableId="my-accounts"
-          columns={columns}
+          columns={columnsWithSelect}
           rows={filteredAccounts}
-          alwaysVisible={['company']}
+          alwaysVisible={['__select__', 'company']}
           enableColumnFilters
           rowStyle={(row) => {
             const s = row.status;

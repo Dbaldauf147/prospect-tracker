@@ -23,17 +23,26 @@ function saveColOrder(tableId, order) { localStorage.setItem(COL_ORDER_PREFIX + 
 // added to the code after the user last arranged the table — keeps its
 // original relative position at the tail so it never goes missing.
 function orderColumns(columns, order) {
-  if (!Array.isArray(order) || order.length === 0) return columns;
-  const byKey = new Map(columns.map(c => [c.key, c]));
-  const out = [];
-  const used = new Set();
-  for (const k of order) {
-    const c = byKey.get(k);
-    if (c) { out.push(c); used.add(k); }
+  let out;
+  if (!Array.isArray(order) || order.length === 0) {
+    out = columns;
+  } else {
+    const byKey = new Map(columns.map(c => [c.key, c]));
+    out = [];
+    const used = new Set();
+    for (const k of order) {
+      const c = byKey.get(k);
+      if (c) { out.push(c); used.add(k); }
+    }
+    for (const c of columns) {
+      if (!used.has(c.key)) out.push(c);
+    }
   }
-  for (const c of columns) {
-    if (!used.has(c.key)) out.push(c);
-  }
+  // A selection checkbox column always belongs at the far left, even when a
+  // stale saved order (from before the column was added) would push it to
+  // the tail. Non-mutating so the caller's array is untouched.
+  const selIdx = out.findIndex(c => c.key === '__select__');
+  if (selIdx > 0) out = [out[selIdx], ...out.slice(0, selIdx), ...out.slice(selIdx + 1)];
   return out;
 }
 
