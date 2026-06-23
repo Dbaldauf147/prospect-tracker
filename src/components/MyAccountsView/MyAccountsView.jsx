@@ -2896,7 +2896,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
             </button>
             <button className={`${styles.summaryCard} ${bucketFilter === 'tier2' ? styles.summaryCardActive : ''}`} style={{ borderLeftColor: '#3B82F6' }} onClick={() => { setBucketFilter(bucketFilter === 'tier2' ? null : 'tier2'); setExpandedBucket(expandedBucket === 'tier2' ? null : 'tier2'); }}>
               <div className={styles.summaryLabel}>Tier 2</div>
-              <div className={styles.summaryValue}>{tier2.length}</div>
+              <div className={styles.summaryValue}>{tier2.filter(a => a.myTier === 'Tier 2').length}</div>
               {t2Missing > 0 && <div className={styles.summaryBreakdown} style={{ color: '#3B82F6' }}>{t2Missing} not in list</div>}
             </button>
           </>;
