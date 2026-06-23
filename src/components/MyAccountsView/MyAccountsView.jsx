@@ -8,6 +8,7 @@ import { Badge } from '../common/Badge';
 import { DataTable } from '../common/DataTable';
 import { statusColor, formatAum } from '../../utils/formatters';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE } from '../../data/enums';
+import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { buildCompanyIndex, findMatchesInIndex, findStrictMatchesInIndex, hasMatchInIndex } from '../../utils/companyIndex';
 import { getHubspotCache, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
@@ -2605,9 +2606,14 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       }
       if (col.key === 'type') {
         const typeMismatchCount = filteredAccounts.filter(a => a.typeMismatch).length;
+        // Source the dropdown options from the configurable "Type" list on
+        // the Dropdowns tab; fall back to the built-in enum if it's been
+        // hidden or emptied there.
+        const typeList = getEffectiveDropdownLists(settings).find(l => l.key === 'type');
+        const typeOptions = (typeList && typeList.options && typeList.options.length) ? typeList.options : TYPES;
         return { ...col, label: typeMismatchCount > 0 ? `Type ⚠ ${typeMismatchCount}` : 'Type', render: (row) => (
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-            <InlineCell row={row} field="type" value={row.type} onUpdate={onUpdate} options={TYPES} />
+            <InlineCell row={row} field="type" value={row.type} onUpdate={onUpdate} options={typeOptions} />
             {row.typeMismatch && <TypeMismatchWarning row={row} onUpdate={onUpdate} />}
           </span>
         )};
@@ -2698,7 +2704,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       render: (row) => <button className={styles.deleteBtn} onClick={(e) => { e.stopPropagation(); if (confirm(`Remove "${row.company}" from the database?`)) { dismissCompany(row.company); onDelete(row.id); } }} title="Remove">&#x2715;</button>,
     });
     return mapped;
-  }, [onSelect, onUpdate, allTargetNames, divisionsMap, allCompaniesForDivisions, duplicateTargetNames, listFlagsByCompany, similarNamesByAccount, filteredAccounts]);
+  }, [onSelect, onUpdate, allTargetNames, divisionsMap, allCompaniesForDivisions, duplicateTargetNames, listFlagsByCompany, similarNamesByAccount, filteredAccounts, settings?.dropdownLists, settings?.dropdownListsHidden]);
 
   // Prepend a checkbox column for the mass-edit selection. Opps-only rows
   // render no checkbox since they have no backing prospect to update.
