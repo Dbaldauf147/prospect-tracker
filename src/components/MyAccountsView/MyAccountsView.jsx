@@ -13,6 +13,7 @@ import { buildCompanyIndex, findMatchesInIndex, findStrictMatchesInIndex, hasMat
 import { getHubspotCache, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
 import { userLsGet, userLsSet } from '../../utils/userLs';
+import { saveMyAccountsFlags } from '../../utils/myAccountsFlagsStore';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import * as XLSX from 'xlsx';
@@ -968,6 +969,10 @@ const BULK_FIELDS = [
 function isBulkSelectable(row) {
   return !!row?.id && !String(row.id).startsWith('opps-only:');
 }
+
+// Statuses that take an account out of active rotation. Module-scoped so
+// both the filtered-view logic and the Issues-flag publisher share one set.
+const INACTIVE_STATUSES = new Set(['Old Client', 'Hold Off', 'Lost - Not Sold']);
 
 export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd, onFindDuplicates, onDedupe, targetAccountsData, settings, updateSettings, cdmName }) {
   const { user, isAdmin } = useAuth();
@@ -2210,6 +2215,24 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     } catch {}
   }, [allAccounts]);
 
+  // Publish the tier / status / HQ-Region flags so the Issues tab can list
+  // them. One record per (account, flag); synthetic opps-only rows are
+  // skipped since they have no backing prospect to open or edit. The
+  // HQ-Region flag mirrors the column header's rule (missing region on a
+  // non-inactive account).
+  useEffect(() => {
+    try {
+      const flags = [];
+      for (const a of allAccounts) {
+        if (!a.id || String(a.id).startsWith('opps-only:')) continue;
+        if (a.tierMismatch) flags.push({ id: a.id, company: a.company || '', kind: 'tier', myTier: a.myTier || '', targetTier: a.targetTier || '' });
+        if (a.statusMismatch) flags.push({ id: a.id, company: a.company || '', kind: 'status', status: a.status || '', suggestedStatus: a.suggestedStatus || '' });
+        if (!a.hqRegion && !INACTIVE_STATUSES.has(a.status)) flags.push({ id: a.id, company: a.company || '', kind: 'hqRegion', status: a.status || '' });
+      }
+      saveMyAccountsFlags(flags);
+    } catch {}
+  }, [allAccounts]);
+
   // Build the List Flags aggregate. Runs when allAccounts changes so
   // flags match against the exact ~132 accounts the user sees on this
   // tab — not the broader Baldauf-CDM prospect pool. Also refreshes
@@ -2268,7 +2291,6 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   }, [allAccounts]);
 
   // Apply filters, bucket filter, and search
-  const INACTIVE_STATUSES = new Set(['Old Client', 'Hold Off', 'Lost - Not Sold']);
   const filteredAccounts = useMemo(() => {
     let result = allAccounts;
     // Inactive status filter
