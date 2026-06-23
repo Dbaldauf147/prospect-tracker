@@ -194,6 +194,7 @@ const ACCOUNT_COLUMNS = [
   HubSpot cache size: ${row._contactDebug?.cacheSize ?? '—'}
   Exact-name matches: ${row._contactDebug?.exactNameMatches ?? '—'}
   Domain matches: ${row._contactDebug?.domainMatches ?? '—'}
+  Linked (pinned) matches: ${row._contactDebug?.linkedMatches ?? '—'}
   Prospect domains: ${row._contactDebug?.prospectDomains?.join(', ') || '(none registered)'}
   Sample HubSpot companies w/ overlapping tokens:
     ${(row._contactDebug?.similarContactCompanies || []).join('\n    ') || '(none found)'}`;
@@ -1648,10 +1649,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     })();
   }, [isAdmin]);
 
-  const { hubspotCompanies, decisionMakerByCompany, contactsByCompany, bucketsByCompany, contactsByEmailDomain, bucketsByEmailDomain } = useMemo(() => {
+  const { hubspotCompanies, decisionMakerByCompany, contactsByCompany, bucketsByCompany, contactsByEmailDomain, bucketsByEmailDomain, linkableContactById } = useMemo(() => {
     const list = [];
     const dmMap = {}; // company lowercase → [names]
     const contactsMap = {}; // company lowercase → Set<contactId>
+    const linkMap = {}; // contact id|vid → cid (non-hidden only)
     const bucketMap = {}; // company lowercase → Set of matched bucket tags
     // Email-domain-keyed parallels so a prospect can pick up
     // contacts whose Company text is "TIAA" / "TIAA-CREF" / blank
@@ -1669,6 +1671,15 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         const cid = c.id || c.email || (c.firstname + '|' + c.lastname);
         const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').split(';').map(t => t.trim().toLowerCase()).filter(Boolean);
         const lower = (c.company || '').toLowerCase();
+        // Index non-hidden contacts by HubSpot id so the account contact
+        // count can also include people explicitly pinned to a company
+        // (settings.companyContactLinks) — mirroring the popup — even when
+        // their Company text doesn't match. Keyed by id|vid like the popup
+        // stores links; value is the canonical cid so dedup still works.
+        if (!isHidden) {
+          const linkId = String(c.id || c.vid || '');
+          if (linkId) linkMap[linkId] = cid;
+        }
         if (lower) {
           if (!seen.has(lower)) { seen.add(lower); list.push(lower); }
           if (!isHidden) {
@@ -1708,6 +1719,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       bucketsByCompany: bucketMap,
       contactsByEmailDomain: domainContacts,
       bucketsByEmailDomain: domainBuckets,
+      linkableContactById: linkMap,
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prospects, hubspotCache]);
@@ -1914,6 +1926,16 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           for (const b of bucketsByEmailDomain[d]) bucketsSeen.add(b);
         }
       }
+      // Contacts the user explicitly pinned to this company on the popup
+      // (settings.companyContactLinks, keyed by lowercased company name).
+      // Include them in the count — minus any since-hidden ones — so the
+      // Contacts column matches what the popup shows.
+      let linkedMatches = 0;
+      const linkKey = (p.company || '').trim().toLowerCase();
+      for (const lid of ((settings?.companyContactLinks || {})[linkKey] || [])) {
+        const cid = linkableContactById[String(lid)];
+        if (cid != null && !matchedContactIds.has(cid)) { matchedContactIds.add(cid); linkedMatches++; }
+      }
       const contactCount = matchedContactIds.size;
       const bucketCount = bucketsSeen.size;
       // Find contact-company strings that share any significant token
@@ -1945,6 +1967,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         cacheSize: Object.values(contactsByCompany).reduce((s, set) => s + set.size, 0),
         exactNameMatches,
         domainMatches,
+        linkedMatches,
         prospectDomains: [...prospectDomains],
         similarContactCompanies,
       };
@@ -2136,7 +2159,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     if (DEBUG_MA && skippedCdm.length > 0) console.log('My Accounts: skipped (CDM not Baldauf):', skippedCdm);
     if (DEBUG_MA) console.log(`My Accounts: ${t1.length} Tier 1, ${t2.length} Tier 2 (incl ${oppsOnlyAdded} opps-only)`);
     return { tier1: t1, tier2: t2, allAccounts: all, statusCounts: counts };
-  }, [prospects, targetMap, targetAccounts, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, displayNameByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactsByCompany, bucketsByCompany, contactsByEmailDomain, bucketsByEmailDomain, divisionsMap, pePartnerAccountSet]);
+  }, [prospects, targetMap, targetAccounts, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, displayNameByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactsByCompany, bucketsByCompany, contactsByEmailDomain, bucketsByEmailDomain, linkableContactById, settings?.companyContactLinks, divisionsMap, pePartnerAccountSet]);
 
   const clientCount = statusCounts['Client'] || 0;
   const tier3Count = allAccounts.filter(a => a.myTier === 'Tier 3').length;
