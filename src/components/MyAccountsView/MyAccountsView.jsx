@@ -2683,6 +2683,49 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
             </div>
           );
         })()}
+        {(() => {
+          // Surface dismissed matches — dismissed companies are removed
+          // from the accounts list entirely, so searching for one comes up
+          // empty with no explanation. Flag them like inactive-hidden rows,
+          // with a quick restore so they can be brought back to the list.
+          const term = search.trim().toLowerCase();
+          if (!term) return null;
+          const matched = dismissedCompanies.filter(name => (name || '').toLowerCase().includes(term)).slice(0, 10);
+          if (matched.length === 0) return null;
+          return (
+            <div
+              role="status"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: '0.3rem',
+                padding: '0.25rem 0.55rem',
+                background: '#F1F5F9',
+                border: '1px solid #CBD5E1',
+                borderRadius: '6px',
+                fontSize: '0.7rem',
+                color: '#475569',
+                fontWeight: 600,
+              }}
+              title="These accounts match your search but were dismissed. Click × to restore one to your list."
+            >
+              🚫 Dismissed:
+              {matched.map(name => (
+                <span key={name} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', padding: '0.05rem 0.45rem', background: '#fff', border: '1px solid #E2E8F0', borderRadius: '999px' }}>
+                  <span style={{ color: '#475569' }}>{name}</span>
+                  <button
+                    onClick={() => undismissCompany(name)}
+                    title="Restore"
+                    style={{ background: 'none', border: 'none', color: '#94A3B8', fontSize: '0.75rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
+                    onMouseEnter={e => e.target.style.color = '#22C55E'}
+                    onMouseLeave={e => e.target.style.color = '#94A3B8'}
+                  >&times;</button>
+                </span>
+              ))}
+            </div>
+          );
+        })()}
         {bucketFilter && <span style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', borderRadius: '999px', background: '#EBF2FC', color: '#3B7DDD', fontWeight: 600 }}>Showing: {bucketFilter === 'tier1' ? 'Tier 1' : bucketFilter === 'tier2' ? 'Tier 2' : bucketFilter === 'client' ? 'Clients' : bucketFilter === 'noTarget' ? 'No Target Mapped' : 'Tier 3'}</span>}
         {(activeFilterCount > 0 || bucketFilter) && <button className={styles.clearBtn} onClick={clearFilters}>Clear all</button>}
         <button
