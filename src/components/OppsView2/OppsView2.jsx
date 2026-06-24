@@ -129,6 +129,9 @@ const DEFAULT_HEADERS = [
   // Quote-stage detail columns. Captured via the QuotedFollowUpModal that
   // pops when an opp moves into the "Quoted" stage.
   'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date',
+  // Free-text note tracking where the deal sits with credit approval
+  // (e.g. "Pending", "Approved 6/24"). Shown as a line in the Opp details.
+  'Credit approval',
 ];
 
 // Key columns to show by default (the rest are available via Columns toggle)
@@ -284,7 +287,7 @@ const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
 // it up — and its "Find out the Story" default lands somewhere
 // visible on the next new opp.
 const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'No Further Action Today', 'Sales Partner',
-  'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date', 'BFO Company Name', 'PE Owner'];
+  'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date', 'BFO Company Name', 'PE Owner', 'Credit approval'];
 
 // Strips zero-width / BOM characters. Built with fromCharCode so the
 // source stays pure ASCII — embedding the literal invisible characters
