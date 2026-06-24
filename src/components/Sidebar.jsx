@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import styles from './Sidebar.module.css';
 
-export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, onOpenCdmName, onOpenDailyLog, isAdmin = false, issuesCount = 0 }) {
+export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, onOpenCdmName, onOpenDailyLog, isAdmin = false, dailyLogEnabled = true, whatToDoTodayEnabled = true, onToggleDailyLog, onToggleWhatToDoToday, issuesCount = 0 }) {
   const initials = user?.displayName
     ? user.displayName.split(' ').map(n => n[0]).join('').toUpperCase()
     : user?.email?.[0]?.toUpperCase() || '?';
@@ -38,7 +38,11 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
     { kind: 'action',  key: 'cdm',     label: 'CDM Name',           icon: '\u{1F464}',   onClick: () => { onOpenCdmName?.(); setSettingsOpen(false); } },
     { kind: 'action',  key: 'backups', label: 'Backups',            icon: '\u{1F4BE}',   onClick: () => { onOpenBackups?.(); setSettingsOpen(false); } },
     ...(isAdmin ? [
-      { kind: 'action', key: 'dailyLog', label: 'Daily Success Log', icon: '\u{1F4DD}', onClick: () => { onOpenDailyLog?.(); setSettingsOpen(false); } },
+      { kind: 'toggle', key: 'toggleWhatToDo', label: 'What to do today', icon: '☀', checked: whatToDoTodayEnabled, onToggle: () => onToggleWhatToDoToday?.() },
+      { kind: 'toggle', key: 'toggleDailyLog', label: 'Daily Success Log', icon: '\u{1F4DD}', checked: dailyLogEnabled, onToggle: () => onToggleDailyLog?.() },
+      ...(dailyLogEnabled ? [
+        { kind: 'action', key: 'dailyLog', label: 'Open Daily Success Log', icon: '\u{1F4D6}', onClick: () => { onOpenDailyLog?.(); setSettingsOpen(false); } },
+      ] : []),
     ] : []),
     { kind: 'view',    key: 'privacy', label: 'Privacy & Security', icon: '\u{1F512}' },
   ];
@@ -188,15 +192,24 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
               return (
                 <button
                   key={it.key}
-                  role="menuitem"
+                  role={it.kind === 'toggle' ? 'menuitemcheckbox' : 'menuitem'}
+                  aria-checked={it.kind === 'toggle' ? it.checked : undefined}
                   className={isActive ? styles.settingsItemActive : styles.settingsItem}
                   onClick={() => {
-                    if (it.kind === 'action') it.onClick();
+                    // Toggles flip a setting in place and keep the menu
+                    // open so several can be changed in one pass.
+                    if (it.kind === 'toggle') it.onToggle();
+                    else if (it.kind === 'action') it.onClick();
                     else chooseView(it.key);
                   }}
                 >
                   <span className={styles.navIcon}>{it.icon}</span>
                   {it.label}
+                  {it.kind === 'toggle' && (
+                    <span className={it.checked ? styles.toggleStateOn : styles.toggleStateOff}>
+                      {it.checked ? 'On' : 'Off'}
+                    </span>
+                  )}
                 </button>
               );
             })}
