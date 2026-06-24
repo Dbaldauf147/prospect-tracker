@@ -56,6 +56,12 @@ function App() {
   // to "Dan Baldauf" so existing data keeps matching even before a value
   // is written. Other accounts pick this at signup.
   const cdmName = settings.cdmName || (user?.email === 'baldaufdan@gmail.com' ? 'Dan Baldauf' : (user?.displayName || ''));
+
+  // Daily Success features can be toggled off from the Settings menu.
+  // Default to on (treat an absent setting as enabled) so existing
+  // admins keep the morning prompt and log they had before.
+  const dailyLogEnabled = settings.dailyLogEnabled !== false;
+  const whatToDoTodayEnabled = settings.whatToDoTodayEnabled !== false;
   // Open (non-snoozed) issue count for the sidebar badge. Shares the same
   // hook the Issues tab uses so the badge and the tab never disagree.
   const { openCount: openIssuesCount } = useIssues({ prospects, cdmName, user });
@@ -229,6 +235,10 @@ function App() {
         onOpenCdmName={() => setShowCdmName(true)}
         onOpenDailyLog={() => setShowDailyLog(true)}
         isAdmin={isAdmin}
+        dailyLogEnabled={dailyLogEnabled}
+        whatToDoTodayEnabled={whatToDoTodayEnabled}
+        onToggleDailyLog={() => updateSettings({ dailyLogEnabled: !dailyLogEnabled })}
+        onToggleWhatToDoToday={() => updateSettings({ whatToDoTodayEnabled: !whatToDoTodayEnabled })}
         issuesCount={openIssuesCount}
       />
       <div className="main">
@@ -374,11 +384,11 @@ function App() {
         }}
       />
       <DailySuccessLogModal
-        open={showDailyLog}
+        open={showDailyLog && dailyLogEnabled}
         onClose={() => setShowDailyLog(false)}
         user={user}
       />
-      {isAdmin && <DailySuccessManager user={user} />}
+      {isAdmin && whatToDoTodayEnabled && <DailySuccessManager user={user} />}
       <UpdateBanner />
     </div>
   );
