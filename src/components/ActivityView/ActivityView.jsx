@@ -372,6 +372,8 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
           _toName: [e.hs_email_to_firstname, e.hs_email_to_lastname].filter(Boolean).join(' '),
           _from: e.hs_email_from_email || '',
           _fromName: [e.hs_email_from_firstname, e.hs_email_from_lastname].filter(Boolean).join(' '),
+          _cc: e.hs_email_cc_email || '',
+          _ccName: [e.hs_email_cc_firstname, e.hs_email_cc_lastname].filter(Boolean).join(' '),
           _direction: direction,
           _status: e.hs_email_status || '',
           _duration: null,
@@ -567,7 +569,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     if (search.trim()) {
       const term = search.toLowerCase();
       result = result.filter(a =>
-        [a._subject, a._to, a._toName, a._from, a._fromName, a._status, a._company]
+        [a._subject, a._to, a._toName, a._from, a._fromName, a._cc, a._ccName, a._status, a._company]
           .filter(Boolean).join(' ').toLowerCase().includes(term)
       );
     }
@@ -855,6 +857,29 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     { key: '_subject', label: 'Subject / Title', defaultWidth: 250, render: (a) => <span className={styles.subject}>{a._subject || '—'}</span> },
     { key: '_to', label: 'To', defaultWidth: 200, render: (a) => a._toName ? <span><button className={styles.contactLink} onClick={e => { e.stopPropagation(); openContactPopup(a._toName, a._to, a._company, a._phone); }}>{a._toName}</button> <span className={styles.metaText}>{a._to}</span></span> : a._to ? <button className={styles.contactLink} onClick={e => { e.stopPropagation(); openContactPopup('', a._to, a._company, a._phone); }}>{a._to}</button> : <span className={styles.metaText}>—</span> },
     { key: '_from', label: 'From', defaultWidth: 200, render: (a) => a._fromName ? <span><button className={styles.contactLink} onClick={e => { e.stopPropagation(); openContactPopup(a._fromName, a._from, a._company, ''); }}>{a._fromName}</button> <span className={styles.metaText}>{a._from}</span></span> : a._from ? <button className={styles.contactLink} onClick={e => { e.stopPropagation(); openContactPopup('', a._from, a._company, ''); }}>{a._from}</button> : <span className={styles.metaText}>—</span> },
+    { key: '_cc', label: 'CC', defaultWidth: 220, render: (a) => {
+      // Contacts CC'd on the email. Parse the cc address list, resolve each
+      // to a HubSpot contact name where we have one (falling back to the
+      // email's cc-name for a single recipient, else just the address).
+      const emails = String(a._cc || '').split(/[;,]/).map(s => s.trim()).filter(Boolean);
+      if (emails.length === 0) return <span className={styles.metaText}>—</span>;
+      return (
+        <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 1, lineHeight: 1.25 }}>
+          {emails.map((em, i) => {
+            const ct = contactByEmail.get(em.toLowerCase());
+            const name = ct
+              ? [ct.firstname, ct.lastname].filter(Boolean).join(' ').trim()
+              : (emails.length === 1 ? (a._ccName || '') : '');
+            return (
+              <span key={em + i} title={name ? `${name} <${em}>` : em}>
+                {name && <span style={{ fontWeight: 600, marginRight: 4 }}>{name}</span>}
+                <span style={{ color: name ? '#94A3B8' : 'var(--color-text)' }}>{em}</span>
+              </span>
+            );
+          })}
+        </span>
+      );
+    } },
     { key: '_attendees', label: 'Attendees', defaultWidth: 200, render: (a) => a._attendees ? <span className={styles.contactText}>{a._attendees}</span> : <span className={styles.metaText}>—</span> },
     { key: '_status', label: 'Status', defaultWidth: 110 },
     { key: '_duration', label: 'Duration', defaultWidth: 80, render: (a) => <span className={styles.duration}>{fmtDuration(a._duration)}</span> },
