@@ -7620,6 +7620,29 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
 
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);
 
+  // Recently-closed history the default view keeps visible: the 100
+  // most-recently-closed (Sold / Not Sold) opps that have no active Call
+  // In value. Without this they'd be swept away by the Hide-history gate
+  // below (which drops every Call-In-less row); surfacing the freshest
+  // 100 gives a rolling window of just-closed work alongside the active
+  // callback rows. Sorted by Close Date descending; rows with an
+  // unparseable / missing Close Date sink to the bottom and only make the
+  // cut when fewer than 100 dated rows exist.
+  const RECENT_CLOSED_HISTORY_LIMIT = 100;
+  const recentClosedHistoryIds = useMemo(() => {
+    const closedNoCallIn = records.filter(
+      r => CLOSED_STAGES.has((r['Stage'] || '').trim()) && resolveCallIn(r) == null,
+    );
+    closedNoCallIn.sort((a, b) => {
+      const da = parseCloseDate(a['Close Date']);
+      const db = parseCloseDate(b['Close Date']);
+      return (db ? db.getTime() : -Infinity) - (da ? da.getTime() : -Infinity);
+    });
+    return new Set(
+      closedNoCallIn.slice(0, RECENT_CLOSED_HISTORY_LIMIT).map(r => r._id),
+    );
+  }, [records, CLOSED_STAGES]);
+
   // Rows the current Date / Status / Show / Hide-history filters allow.
   // Always computed so `hiddenByFilterCount` stays accurate even when
   // the Show-hidden toggle is on.
@@ -7629,7 +7652,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return records.filter(r => {
       // History gate runs first so it short-circuits before the more
       // expensive date / stage checks for the bulk of dormant rows.
-      if (hideHistory && resolveCallIn(r) == null) return false;
+      // Call-In-less rows are history and hidden by default — except the
+      // 100 most-recently-closed ones, which stay visible alongside the
+      // active callback rows.
+      if (hideHistory && resolveCallIn(r) == null && !recentClosedHistoryIds.has(r._id)) return false;
       if (fromTs != null || toTs != null) {
         const raw = r['Start Date'];
         const ts = raw ? Date.parse(raw) : NaN;
@@ -7643,14 +7669,19 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       if (activityFilter === 'closed' && !CLOSED_STAGES.has(stage)) return false;
       return true;
     });
-  }, [records, dateFrom, dateTo, statusFilter, activityFilter, hideHistory, CLOSED_STAGES]);
+  }, [records, dateFrom, dateTo, statusFilter, activityFilter, hideHistory, CLOSED_STAGES, recentClosedHistoryIds]);
 
   // Standalone count of rows the Hide-history gate is suppressing, so
   // the toggle button can show "Show history (N)" without depending on
-  // the rest of the filter chain.
+  // the rest of the filter chain. The recently-closed 100 are already
+  // visible by default, so they don't count toward what "Show history"
+  // would reveal.
   const historyCount = useMemo(
-    () => records.reduce((n, r) => n + (resolveCallIn(r) == null ? 1 : 0), 0),
-    [records],
+    () => records.reduce(
+      (n, r) => n + (resolveCallIn(r) == null && !recentClosedHistoryIds.has(r._id) ? 1 : 0),
+      0,
+    ),
+    [records, recentClosedHistoryIds],
   );
 
   // When the user clicks "Show hidden", bypass the active filters and
