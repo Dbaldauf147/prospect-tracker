@@ -192,7 +192,7 @@ export function SelectCell({ value, onChange, options }) {
 // Multi-select cell — checkbox popover. Stores the chosen options as a
 // comma-separated string so the value round-trips through plain text
 // storage (CSV export, Firestore strings, etc.).
-export function MultiSelectCell({ value, onChange, options, extraGroups, extraGroupsLabel, extraGroupsPlaceholder, nowrap }) {
+export function MultiSelectCell({ value, onChange, options, extraGroups, extraGroupsLabel, extraGroupsPlaceholder, nowrap, placeholder }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [popPos, setPopPos] = useState({ top: 0, left: 0 });
@@ -259,6 +259,10 @@ export function MultiSelectCell({ value, onChange, options, extraGroups, extraGr
   }
 
   const isEmpty = selected.length === 0;
+  // When nothing is selected and a placeholder was supplied, show it in
+  // muted italics so it reads as a hint (e.g. Scope's default "AEM"),
+  // not an actual selected service. Falls back to the plain "—" dash.
+  const showPlaceholder = isEmpty && !!placeholder;
   return (
     <div ref={wrapRef} style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
       <span
@@ -267,14 +271,15 @@ export function MultiSelectCell({ value, onChange, options, extraGroups, extraGr
           display: 'block', cursor: 'pointer', minHeight: '1em',
           padding: '1px 2px',
           color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
+          fontStyle: showPlaceholder ? 'italic' : 'normal',
           whiteSpace: nowrap ? 'nowrap' : 'normal',
           wordBreak: nowrap ? 'normal' : 'break-word',
           overflow: nowrap ? 'hidden' : undefined,
           textOverflow: nowrap ? 'ellipsis' : undefined,
         }}
-        title={isEmpty ? 'Click to pick values' : selected.join(', ')}
+        title={showPlaceholder ? `${placeholder} (placeholder — no service selected)` : isEmpty ? 'Click to pick values' : selected.join(', ')}
       >
-        {isEmpty ? '—' : selected.join(', ')}
+        {showPlaceholder ? placeholder : isEmpty ? '—' : selected.join(', ')}
       </span>
       {open && createPortal(
         <div

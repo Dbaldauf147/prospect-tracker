@@ -399,7 +399,6 @@ export const STAGE_AGE_GUIDANCE = [
 // Long Solutions / Service catalog — listed separately so it can scroll
 // inside its own card without crowding the main grid.
 export const SOLUTIONS_CATALOG = [
-  'AEM',
   'AP upload (indirect payment)',
   'API/ETL',
   'Arc performance certs',
