@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { parsePricingWorkbook } from '../../utils/pricingParse';
 import styles from './CompareTab.module.css';
 
 // Map a workbook Option's CTS rows into the Compare tab's row shape.
@@ -145,7 +146,7 @@ function CellInput({ value, onCommit, align, placeholder, title }) {
   );
 }
 
-function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onRemoveRow, onReplaceRows, onClear, tone, importOptions, onImportOption, getLinkedOtherId, setLink, clearLink, linkedOtherIds, linkedThisIds }) {
+function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onRemoveRow, onReplaceRows, onClear, tone, importOptions, onImportOption, getLinkedOtherId, setLink, clearLink, linkedOtherIds, linkedThisIds, onFileDrop }) {
   // Lookup map keyed by category + type so each row compares against
   // the matching row(s) of the same type on the other side. Keying by
   // category alone collapses rows like "Commercial Client Manager"
@@ -201,6 +202,35 @@ function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onR
   const [flash, setFlash] = useState('');
   const [importOpen, setImportOpen] = useState(false);
   const importMenuRef = useRef(null);
+  // Highlight state while a file is dragged over this side's panel. Only
+  // set for actual file drags (not text / row selections) so hovering a
+  // copied cell range doesn't flash the drop hint.
+  const [fileDragOver, setFileDragOver] = useState(false);
+
+  const isFileDrag = (e) => {
+    const types = e.dataTransfer?.types;
+    return !!types && Array.from(types).includes('Files');
+  };
+  function handleFileDragOver(e) {
+    if (!onFileDrop || !isFileDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
+    if (!fileDragOver) setFileDragOver(true);
+  }
+  function handleFileDragLeave(e) {
+    if (!onFileDrop) return;
+    if (e.currentTarget.contains(e.relatedTarget)) return;
+    setFileDragOver(false);
+  }
+  function handleFileDrop(e) {
+    if (!onFileDrop || !isFileDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setFileDragOver(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file) onFileDrop(file);
+  }
 
   useEffect(() => {
     if (!importOpen) return;
@@ -236,7 +266,20 @@ function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onR
   const cellClass = tone === 'new' ? styles.cellNew : styles.cellCurrent;
 
   return (
-    <div className={styles.tablePanel} onPaste={handleTablePaste}>
+    <div
+      className={`${styles.tablePanel} ${fileDragOver ? styles.fileDragOver : ''}`.trim()}
+      onPaste={handleTablePaste}
+      onDragOver={handleFileDragOver}
+      onDragLeave={handleFileDragLeave}
+      onDrop={handleFileDrop}
+    >
+      {fileDragOver && (
+        <div className={styles.dropOverlay}>
+          <div className={styles.dropOverlayText}>
+            Drop a pricing workbook to import an Option into “{title}”
+          </div>
+        </div>
+      )}
       <div className={styles.tableHeader}>
         <div className={styles.tableTitle}>{title}</div>
         {importOptions && (
@@ -561,6 +604,25 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
 
   const update = (next) => setState(next);
 
+  // Drop-to-import: when a pricing workbook is dropped on either side's
+  // panel, parse it and open a picker asking which Option tab's costs to
+  // pull in. `dropImport` holds { side, fileName, options, error } while
+  // the picker is open; null when closed.
+  const [dropImport, setDropImport] = useState(null);
+  async function handleDroppedFile(side, file) {
+    let options = [];
+    let error = '';
+    try {
+      const buf = await file.arrayBuffer();
+      const parsed = parsePricingWorkbook(buf);
+      options = Array.isArray(parsed?.options) ? parsed.options : [];
+      if (!options.length) error = `No “Option 1–5” tabs were found in “${file.name}”.`;
+    } catch (err) {
+      error = err?.message || `Could not read “${file.name}”.`;
+    }
+    setDropImport({ side, fileName: file.name, options, error });
+  }
+
   const updateRow = (side) => (idx, key, value) => {
     const rows = safe[side].slice();
     rows[idx] = { ...rows[idx], [key]: value };
@@ -726,7 +788,9 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
         a first-year roll-up update as you edit. Each row's <strong>Compare</strong> column shows
         the delta vs the matching row on the other side, or a missing-row marker when the
         category isn't there. Click the 🔗 icon to manually tie a row to a specific row on the
-        other side when the categories don't match exactly.
+        other side when the categories don't match exactly. You can also <strong>drag &amp; drop
+        a pricing workbook</strong> (the same file you drop on the Pricing subtab) onto either
+        table — you'll be asked which Option tab's costs to import.
       </div>
 
       <div className={styles.labelRow}>
@@ -807,6 +871,7 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
           clearLink={clearLinkFor('current')}
           linkedThisIds={linkedCurrentIds}
           linkedOtherIds={linkedNextIds}
+          onFileDrop={(file) => handleDroppedFile('current', file)}
         />
         <CostTable
           title={safe.nextLabel}
@@ -826,6 +891,7 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
           clearLink={clearLinkFor('next')}
           linkedThisIds={linkedNextIds}
           linkedOtherIds={linkedCurrentIds}
+          onFileDrop={(file) => handleDroppedFile('next', file)}
         />
       </div>
 
@@ -889,6 +955,48 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
           </table>
         </div>
       </div>
+
+      {dropImport && (
+        <div className={styles.modalOverlay} onMouseDown={() => setDropImport(null)}>
+          <div className={styles.modalCard} onMouseDown={(e) => e.stopPropagation()}>
+            <div className={styles.modalTitle}>
+              Import costs into “{dropImport.side === 'current' ? safe.currentLabel : safe.nextLabel}”
+            </div>
+            <div className={styles.modalSub}>
+              From <strong>{dropImport.fileName}</strong> — choose which Option tab to import the CTS costs from.
+            </div>
+            {dropImport.error ? (
+              <div className={styles.modalError}>{dropImport.error}</div>
+            ) : (
+              <div className={styles.modalList}>
+                {dropImport.options.map(opt => (
+                  <button
+                    key={opt.optionNumber}
+                    type="button"
+                    className={styles.modalItem}
+                    onClick={() => {
+                      const targetRows = dropImport.side === 'current' ? safe.current : safe.next;
+                      const targetLabel = dropImport.side === 'current' ? safe.currentLabel : safe.nextLabel;
+                      const hasData = targetRows.some(r => r.feeBucket || r.category || r.type || r.cts || r.startMonth);
+                      if (hasData && !window.confirm(`Replace the rows in “${targetLabel}” with the CTS items from “${opt.sheetName}”?`)) return;
+                      importOption(dropImport.side)(opt);
+                      setDropImport(null);
+                    }}
+                  >
+                    <span className={styles.modalItemTitle}>{opt.sheetName}</span>
+                    <span className={styles.modalItemMeta}>
+                      {(opt.sections || []).reduce((n, s) => n + (s.items ? s.items.filter(i => typeof i.cts === 'number').length : 0), 0)} CTS rows
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className={styles.modalActions}>
+              <button type="button" className={styles.btn} onClick={() => setDropImport(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
