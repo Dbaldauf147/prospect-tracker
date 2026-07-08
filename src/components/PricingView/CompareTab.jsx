@@ -558,9 +558,23 @@ function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onR
               );
             })}
             <tr className={styles.totalsRow}>
-              <td colSpan={3} style={{ textAlign: 'right' }}>Totals</td>
+              <td colSpan={3} style={{ textAlign: 'right' }}>Recurring</td>
               <td className={styles.numCell}>{fmtMoney(totals.recurringMonthly)}<span className={styles.unitTag}>/mo</span></td>
-              <td className={styles.numCell}>{fmtMoney(totals.setupTotal + totals.oneTimeTotal)}<span className={styles.unitTag}>setup</span></td>
+              <td />
+              <td />
+              <td />
+            </tr>
+            <tr className={styles.totalsRow}>
+              <td colSpan={3} style={{ textAlign: 'right' }}>Setup</td>
+              <td className={styles.numCell}>{fmtMoney(totals.setupTotal)}</td>
+              <td />
+              <td />
+              <td />
+            </tr>
+            <tr className={styles.totalsRow}>
+              <td colSpan={3} style={{ textAlign: 'right' }}>One-time</td>
+              <td className={styles.numCell}>{fmtMoney(totals.oneTimeTotal)}</td>
+              <td />
               <td />
               <td />
             </tr>
