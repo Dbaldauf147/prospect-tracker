@@ -410,12 +410,12 @@ function makeBlankOpp(id, headers, accountOverride, sourceOverride, peOwnerOverr
   row['Open Year'] = String(new Date().getFullYear());
   row['Stage'] = 'Not Started';
   row['Status'] = 'Client waiting on ESS team member';
-  // Default Scope to AEM (the most common service the user tags on a
-  // new opp) and seed the Next Steps column with the prompt the user
-  // always types first. Set unconditionally — even if a column was
-  // hidden via the columns toggle the value sticks around for when
-  // it's unhidden later.
-  row['Scope'] = 'AEM';
+  // Leave Scope blank so the cell renders "AEM" as a muted-italic
+  // placeholder (see MultiSelectCell) rather than an actual selected
+  // service — AEM stands in until the user picks real services. Seed the
+  // Next Steps column with the prompt the user always types first. Set
+  // unconditionally — even if a column was hidden via the columns toggle
+  // the value sticks around for when it's unhidden later.
   row['Next Steps'] = 'Find out the Story';
   // Seed the BFO Opportunity Name (BFO Link) column with a dash so a
   // brand-new opp reads as "BFO opp still needs to be created" — the
@@ -3983,6 +3983,7 @@ export function OppInfoModal({
             extraGroupsLabel="Add from Pricing Option"
             extraGroupsPlaceholder="— pick an option —"
             nowrap={h === 'Scope'}
+            placeholder={h === 'Scope' ? 'AEM' : undefined}
           />
         );
       }
@@ -7230,6 +7231,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                   extraGroupsLabel="Add from Pricing Option"
                   extraGroupsPlaceholder="— pick an option —"
                   nowrap={h === 'Scope'}
+                  placeholder={h === 'Scope' ? 'AEM' : undefined}
                 />
               );
             }
