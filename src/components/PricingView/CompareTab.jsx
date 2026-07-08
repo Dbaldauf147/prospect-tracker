@@ -146,7 +146,7 @@ function CellInput({ value, onCommit, align, placeholder, title }) {
   );
 }
 
-function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onRemoveRow, onReplaceRows, onClear, tone, importOptions, onImportOption, getLinkedOtherId, setLink, clearLink, linkedOtherIds, linkedThisIds, onFileDrop }) {
+function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onRemoveRow, onReplaceRows, onClear, tone, importOptions, onImportOption, getLinkedOtherId, setLink, clearLink, linkedOtherIds, linkedThisIds, onFileDrop, techDeprPct = 0 }) {
   // Lookup map keyed by category + type so each row compares against
   // the matching row(s) of the same type on the other side. Keying by
   // category alone collapses rows like "Commercial Client Manager"
@@ -263,6 +263,16 @@ function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onR
   }
 
   const totals = summarize(rows);
+  // Tech depreciation booked against each cost type's CTS at the rate
+  // set on the Pricing subtab (Tech Depr. %). Recurring depr is monthly
+  // (matches the recurring total); setup / one-time depr are one-shot.
+  const deprPct = typeof techDeprPct === 'number' && techDeprPct > 0 ? techDeprPct : 0;
+  const depr = {
+    recurringMonthly: totals.recurringMonthly * deprPct,
+    setup: totals.setupTotal * deprPct,
+    oneTime: totals.oneTimeTotal * deprPct,
+  };
+  const deprPctLabel = `${(deprPct * 100).toFixed(1)}% of CTS`;
   const cellClass = tone === 'new' ? styles.cellNew : styles.cellCurrent;
 
   return (
@@ -560,23 +570,35 @@ function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onR
             <tr className={styles.totalsRow}>
               <td colSpan={3} style={{ textAlign: 'right' }}>Recurring</td>
               <td className={styles.numCell}>{fmtMoney(totals.recurringMonthly)}<span className={styles.unitTag}>/mo</span></td>
-              <td />
-              <td />
-              <td />
+              <td colSpan={3} className={styles.deprCell}>
+                {deprPct > 0 && totals.recurringMonthly ? (
+                  <span className={styles.deprTag} title={`Tech depreciation — ${deprPctLabel}`}>
+                    +{fmtMoney(depr.recurringMonthly)} tech depr/mo
+                  </span>
+                ) : null}
+              </td>
             </tr>
             <tr className={styles.totalsRow}>
               <td colSpan={3} style={{ textAlign: 'right' }}>Setup</td>
               <td className={styles.numCell}>{fmtMoney(totals.setupTotal)}</td>
-              <td />
-              <td />
-              <td />
+              <td colSpan={3} className={styles.deprCell}>
+                {deprPct > 0 && totals.setupTotal ? (
+                  <span className={styles.deprTag} title={`Tech depreciation — ${deprPctLabel}`}>
+                    +{fmtMoney(depr.setup)} tech depr
+                  </span>
+                ) : null}
+              </td>
             </tr>
             <tr className={styles.totalsRow}>
               <td colSpan={3} style={{ textAlign: 'right' }}>One-time</td>
               <td className={styles.numCell}>{fmtMoney(totals.oneTimeTotal)}</td>
-              <td />
-              <td />
-              <td />
+              <td colSpan={3} className={styles.deprCell}>
+                {deprPct > 0 && totals.oneTimeTotal ? (
+                  <span className={styles.deprTag} title={`Tech depreciation — ${deprPctLabel}`}>
+                    +{fmtMoney(depr.oneTime)} tech depr
+                  </span>
+                ) : null}
+              </td>
             </tr>
           </tbody>
         </table>
@@ -585,7 +607,7 @@ function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onR
   );
 }
 
-export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
+export function CompareTab({ state, setState, workbook, resolvedLinkedTo, techDeprPct = 0 }) {
   const importOptions = Array.isArray(workbook?.options) ? workbook.options : [];
   const safe = state && state.current && state.next
     ? state
@@ -886,6 +908,7 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
           linkedThisIds={linkedCurrentIds}
           linkedOtherIds={linkedNextIds}
           onFileDrop={(file) => handleDroppedFile('current', file)}
+          techDeprPct={techDeprPct}
         />
         <CostTable
           title={safe.nextLabel}
@@ -906,6 +929,7 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
           linkedThisIds={linkedNextIds}
           linkedOtherIds={linkedCurrentIds}
           onFileDrop={(file) => handleDroppedFile('next', file)}
+          techDeprPct={techDeprPct}
         />
       </div>
 

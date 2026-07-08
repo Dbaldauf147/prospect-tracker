@@ -3493,6 +3493,7 @@ export function PricingView({ settings } = {}) {
           workbook={workbook}
           resolvedLinkedTo={resolvedLinkedTo}
           effectiveType={effectiveType}
+          techDeprPct={techDeprPct}
         />
       )}
 
