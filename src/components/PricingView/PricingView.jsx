@@ -1879,6 +1879,49 @@ export function PricingView({ settings } = {}) {
     return 0;
   }
 
+  // Per-year revenue (marked-up price) from a single upper-table CTS
+  // item — the price mirror of ctsItemYearCost. Setup / One Time land
+  // upfront in the year containing their start month; Recurring
+  // (monthly) bills 12 months per year; Rolled variants amortize their
+  // billing evenly across the term. Recurring / Rolled revenue escalates
+  // with the revenue escalator (annualEscalator), matching how term
+  // price is projected elsewhere. Used by the line-item year-over-year
+  // table so a tag with linked CTS rows but no Alternative Fee row still
+  // shows the Fee and Margin from the prices the customer actually pays.
+  function ctsItemYearRevenue(item, yearIndex) {
+    if (typeof item.cts !== 'number') return 0;
+    const { price } = priceFor(item);
+    if (typeof price !== 'number' || !Number.isFinite(price)) return 0;
+    const t = effectiveType(item);
+    const isRecurring = /recurring.*monthly|monthly.*recurring|^recurring/i.test(t);
+    const isRolled = /\brolled\b/i.test(t);
+    const yearStart = (yearIndex - 1) * 12 + 1;
+    const yearEnd = yearIndex * 12;
+    const startMonth = Math.max(1, Math.round(Number(item.startMonth) || 1));
+    if (isRecurring) {
+      const billStart = Math.max(yearStart, startMonth);
+      const billEnd = Math.min(yearEnd, termMonths);
+      if (billEnd < billStart) return 0;
+      const months = billEnd - billStart + 1;
+      const esc = Math.pow(1 + annualEscalator, yearIndex - 1);
+      return price * months * esc;
+    }
+    if (isRolled && termMonths > 0) {
+      // Cost books upfront (ctsItemYearCost) but billing is amortized
+      // across the term on the revenue side, so spread the price evenly
+      // over every month of the term and escalate it annually.
+      const billStart = Math.max(yearStart, startMonth);
+      const billEnd = Math.min(yearEnd, termMonths);
+      if (billEnd < billStart) return 0;
+      const months = billEnd - billStart + 1;
+      const esc = Math.pow(1 + annualEscalator, yearIndex - 1);
+      return (price / termMonths) * months * esc;
+    }
+    if (startMonth > termMonths) return 0;
+    if (startMonth >= yearStart && startMonth <= yearEnd) return price;
+    return 0;
+  }
+
   // Revenue from a single Alt Fee row in calendar year `yearIndex`
   // (1-based). Setup / One Time charges land in the year containing
   // their start month. Recurring (monthly) bills every month from
@@ -4286,9 +4329,21 @@ export function PricingView({ settings } = {}) {
                         const matchingAltRows = target
                           ? (altFees[opt.optionNumber] || []).filter(r => (r.altItem || '').trim().toLowerCase() === target)
                           : [];
-                        const chartData = years.map(y => {
+                        // Fee comes from Alternative Fee rows sharing the
+                        // tag. When the tag has none (it was only tagged on
+                        // CTS rows' Linked To for cost), fall back to the
+                        // marked-up-price revenue of those linked CTS rows so
+                        // the Fee and Margin still populate. Decide the source
+                        // once for the whole line item — never mix alt-fee and
+                        // CTS revenue across years — so a one-time alt fee in
+                        // Y1 doesn't leak CTS revenue into later years.
+                        const altRevenueByYear = years.map(y => matchingAltRows.reduce((s, r) => s + altFeeYearRevenue(r, y), 0));
+                        const useAltRevenue = altRevenueByYear.some(v => v > 0);
+                        const chartData = years.map((y, i) => {
                           const cost = linkedItems.reduce((s, it) => s + ctsItemYearCost(it, y), 0);
-                          const fee = matchingAltRows.reduce((s, r) => s + altFeeYearRevenue(r, y), 0);
+                          const fee = useAltRevenue
+                            ? altRevenueByYear[i]
+                            : linkedItems.reduce((s, it) => s + ctsItemYearRevenue(it, y), 0);
                           return { year: `Y${y}`, Cost: Math.round(cost), Fee: Math.round(fee) };
                         });
                         return (
