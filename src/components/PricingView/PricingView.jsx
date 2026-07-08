@@ -1611,6 +1611,7 @@ export function PricingView({ settings } = {}) {
   const [chartTag, setChartTag] = useState(''); // selected line-item / tag for the breakdown chart
   const [chartView, setChartView] = useState('chart'); // 'chart' | 'table'
   const [chartVisible, setChartVisible] = useState(false); // "Line item year-over-year" panel — hidden by default, user opts in via Show
+  const [chartUnitCounts, setChartUnitCounts] = useState({}); // per-line-item unit count (keyed by lowercased tag) for the Fee / Unit column
   const [techDeprPct, setTechDeprPct] = useState(0.04);
   const [colVisibility, setColVisibility] = useState({}); // upper table: { [colKey]: bool, default true }
   const [summaryColWidths, setSummaryColWidths] = useState({});
@@ -1718,6 +1719,7 @@ export function PricingView({ settings } = {}) {
         if (typeof saved.chartTag === 'string') setChartTag(saved.chartTag);
         if (saved.chartView === 'chart' || saved.chartView === 'table') setChartView(saved.chartView);
         if (typeof saved.chartVisible === 'boolean') setChartVisible(saved.chartVisible);
+        if (saved.chartUnitCounts && typeof saved.chartUnitCounts === 'object') setChartUnitCounts(saved.chartUnitCounts);
         if (typeof saved.techDeprPct === 'number') setTechDeprPct(saved.techDeprPct);
         if (saved.colVisibility) setColVisibility(saved.colVisibility);
         if (saved.summaryColWidths) setSummaryColWidths(saved.summaryColWidths);
@@ -1739,9 +1741,9 @@ export function PricingView({ settings } = {}) {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
 
   // Mirror Linked-To defaults under their dedicated key so they
   // outlive the main cache (parser-version bumps, Clear button,
@@ -2277,6 +2279,7 @@ export function PricingView({ settings } = {}) {
     if (typeof s.chartTag === 'string') setChartTag(s.chartTag);
     if (s.chartView === 'chart' || s.chartView === 'table') setChartView(s.chartView);
     if (typeof s.chartVisible === 'boolean') setChartVisible(s.chartVisible);
+    if (s.chartUnitCounts && typeof s.chartUnitCounts === 'object') setChartUnitCounts(s.chartUnitCounts);
     if (typeof s.techDeprPct === 'number') setTechDeprPct(s.techDeprPct);
     setColVisibility(s.colVisibility || {});
     setSummaryColWidths(s.summaryColWidths || {});
@@ -2869,7 +2872,7 @@ export function PricingView({ settings } = {}) {
       parserVersion: PARSER_VERSION,
       workbook, globalGmPct, overrides, activeOption, colWidths,
       altFees, linkedToDefaults, termMonths, annualEscalator, costEscalator,
-      chartTag, chartView, chartVisible, techDeprPct, colVisibility,
+      chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility,
       summaryColWidths, summaryColVisibility,
     };
     const json = JSON.stringify(snapshot);
@@ -4346,6 +4349,21 @@ export function PricingView({ settings } = {}) {
                             : linkedItems.reduce((s, it) => s + ctsItemYearRevenue(it, y), 0);
                           return { year: `Y${y}`, Cost: Math.round(cost), Fee: Math.round(fee) };
                         });
+                        // Unit count for the Fee / Unit column. Use the value
+                        // the user typed for this line item; if they haven't
+                        // typed one, fall back to the total unit count on the
+                        // matching Alternative Fee rows so the column is
+                        // populated out of the box when that data exists.
+                        const storedUnits = chartUnitCounts[target];
+                        const typedUnits = Number(storedUnits);
+                        const hasTypedUnits = storedUnits != null && storedUnits !== ''
+                          && Number.isFinite(typedUnits) && typedUnits > 0;
+                        const autoUnits = matchingAltRows.reduce((s, r) => {
+                          const uc = Number(r.unitCount);
+                          return s + (Number.isFinite(uc) ? uc : 0);
+                        }, 0);
+                        const unitCount = hasTypedUnits ? typedUnits : autoUnits;
+                        const hasUnits = Number.isFinite(unitCount) && unitCount > 0;
                         return (
                           <div className={styles.chartPanel}>
                             <div className={styles.chartHeader}>
@@ -4377,6 +4395,23 @@ export function PricingView({ settings } = {}) {
                                         {tagOptions.map(t => <option key={t} value={t}>{t}</option>)}
                                       </select>
                                     </label>
+                                    <label className={styles.chartTagLabel} title="Number of units for this line item. The Fee / Unit column divides each year's fee by this count.">
+                                      Units:{' '}
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="any"
+                                        className={styles.chartTagSelect}
+                                        style={{ width: '5.5rem' }}
+                                        value={target ? (chartUnitCounts[target] ?? '') : ''}
+                                        placeholder={autoUnits > 0 ? String(autoUnits) : '—'}
+                                        disabled={!target}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          setChartUnitCounts(m => ({ ...m, [target]: v }));
+                                        }}
+                                      />
+                                    </label>
                                   </>
                                 )}
                                 <button
@@ -4395,6 +4430,7 @@ export function PricingView({ settings } = {}) {
                                       <th>Year</th>
                                       <th className={styles.numCell}>Cost</th>
                                       <th className={styles.priceCell}>Fee</th>
+                                      <th className={styles.priceCell} title={hasUnits ? `Fee ÷ ${unitCount.toLocaleString('en-US')} units` : 'Enter a unit count above to see fee per unit'}>Fee / Unit</th>
                                       <th className={styles.priceCell}>Margin</th>
                                     </tr>
                                   </thead>
@@ -4406,6 +4442,7 @@ export function PricingView({ settings } = {}) {
                                           <td>{d.year}</td>
                                           <td className={styles.numCell}>{fmtMoney(d.Cost)}</td>
                                           <td className={styles.priceCell}>{fmtMoney(d.Fee)}</td>
+                                          <td className={styles.priceCell}>{hasUnits ? fmtMoney(d.Fee / unitCount) : ''}</td>
                                           <td className={styles.priceCell}>{margin === null ? '' : `${(margin * 100).toFixed(1)}%`}</td>
                                         </tr>
                                       );
@@ -4414,6 +4451,7 @@ export function PricingView({ settings } = {}) {
                                       <td>Total</td>
                                       <td className={styles.numCell}>{fmtMoney(chartData.reduce((s, d) => s + d.Cost, 0))}</td>
                                       <td className={styles.priceCell}>{fmtMoney(chartData.reduce((s, d) => s + d.Fee, 0))}</td>
+                                      <td className={styles.priceCell}>{hasUnits ? fmtMoney(chartData.reduce((s, d) => s + d.Fee, 0) / unitCount) : ''}</td>
                                       <td className={styles.priceCell}>{(() => {
                                         const tc = chartData.reduce((s, d) => s + d.Cost, 0);
                                         const tf = chartData.reduce((s, d) => s + d.Fee, 0);
