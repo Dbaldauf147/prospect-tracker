@@ -35,6 +35,7 @@ const CLOSE_NOT_SOLDS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-close-not-solds';
 const UPDATE_BFO_ACTIVITY_PROMPT_STORAGE_KEY = 'agents-ai-prompt-update-bfo-activity';
 const BFO_PREP_PROMPT_STORAGE_KEY = 'agents-ai-prompt-bfo-prep';
 const MARKETING_LEADS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-marketing-leads';
+const MARKETING_LEAD_STATUS_UPDATE_PROMPT_STORAGE_KEY = 'agents-ai-prompt-marketing-lead-status-update';
 
 // IndexedDB store + key the BFO Activity tab persists its pasted rows
 // into. The Close Dates + Amount Updates prompts read it so each row's
@@ -125,6 +126,12 @@ const DEFAULT_AI_PROMPT_MARKETING_LEADS = `1.  Go to this Salesforce Leads list:
 2.  For each lead listed below (by Name), click the lead's name in Salesforce to open their record page.
 3.  Copy the record page's URL from the browser address bar.
 4.  Paste that URL into the Salesforce Link cell for that lead in the table below (on the Agents tab of this website https://prospect-tracker-ashen.vercel.app/). It saves straight to the Marketing Leads subtab on the Contacts page, and the row drops off this list once the link is set.
+5.  Repeat for every lead listed below.`;
+
+const DEFAULT_AI_PROMPT_MARKETING_LEAD_STATUS_UPDATE = `1.  Go to this Salesforce Leads list: https://se.lightning.force.com/lightning/o/Lead/list?filterName=00BKj00000QYbyfMAD
+2.  For each lead listed below (by Name), find the matching lead in the Salesforce list and compare its Status in Salesforce against the Marketing Leads Status shown below. The Marketing Leads Status (from this website's Marketing Leads page) is the source of truth.
+3.  If the two statuses already match, do nothing and move on to the next lead.
+4.  If they differ, click the lead's Name to open their record page, go to the Assessment tab, set the Status to the Marketing Leads Status listed below, and Save.
 5.  Repeat for every lead listed below.`;
 
 // Opps 2 "Reason Not Sold" → corresponding BFO Status + Reason. Used by
@@ -387,6 +394,19 @@ function readMarketingLeadsPrompt() {
 
 function writeMarketingLeadsPrompt(next) {
   try { userLsSet(MARKETING_LEADS_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
+}
+
+function readMarketingLeadStatusUpdatePrompt() {
+  try {
+    const raw = userLsGet(MARKETING_LEAD_STATUS_UPDATE_PROMPT_STORAGE_KEY);
+    return raw == null ? DEFAULT_AI_PROMPT_MARKETING_LEAD_STATUS_UPDATE : raw;
+  } catch {
+    return DEFAULT_AI_PROMPT_MARKETING_LEAD_STATUS_UPDATE;
+  }
+}
+
+function writeMarketingLeadStatusUpdatePrompt(next) {
+  try { userLsSet(MARKETING_LEAD_STATUS_UPDATE_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
 }
 
 // Small editable cell for the Marketing Leads agent's Salesforce Link
@@ -982,6 +1002,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   const [updateBfoActivityPrompt, setUpdateBfoActivityPrompt] = useState(readUpdateBfoActivityPrompt);
   const [bfoPrepPrompt, setBfoPrepPrompt] = useState(readBfoPrepPrompt);
   const [marketingLeadsPrompt, setMarketingLeadsPrompt] = useState(readMarketingLeadsPrompt);
+  const [marketingLeadStatusUpdatePrompt, setMarketingLeadStatusUpdatePrompt] = useState(readMarketingLeadStatusUpdatePrompt);
   const [bfoActivity, setBfoActivity] = useState(null);
   // Tagging state for the "BFO Opportunity Name not tagged to an opp"
   // warning mirrored from the BFO Activity page.
@@ -989,6 +1010,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   const [bfoAssignFlash, setBfoAssignFlash] = useState('');
   const [copyFlash, setCopyFlash] = useState('');
   const [marketingLeadsCopyFlash, setMarketingLeadsCopyFlash] = useState('');
+  const [marketingLeadStatusUpdateCopyFlash, setMarketingLeadStatusUpdateCopyFlash] = useState('');
   const [newBfoOppCopyFlash, setNewBfoOppCopyFlash] = useState('');
   const [closeDatesCopyFlash, setCloseDatesCopyFlash] = useState('');
   const [amountUpdatesCopyFlash, setAmountUpdatesCopyFlash] = useState('');
@@ -1069,6 +1091,11 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     writeMarketingLeadsPrompt(next);
   };
   const resetMarketingLeadsPrompt = () => updateMarketingLeadsPrompt(DEFAULT_AI_PROMPT_MARKETING_LEADS);
+  const updateMarketingLeadStatusUpdatePrompt = (next) => {
+    setMarketingLeadStatusUpdatePrompt(next);
+    writeMarketingLeadStatusUpdatePrompt(next);
+  };
+  const resetMarketingLeadStatusUpdatePrompt = () => updateMarketingLeadStatusUpdatePrompt(DEFAULT_AI_PROMPT_MARKETING_LEAD_STATUS_UPDATE);
 
   // Marketing Leads that still need a Salesforce Link — sourced live from
   // the Marketing Leads subtab's store (settings.marketingLeads). A lead
@@ -1076,6 +1103,14 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   const marketingLeadsMissing = useMemo(() => {
     const arr = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
     return arr.filter(r => String(r?.name || '').trim() && !String(r?.sfUrl || '').trim());
+  }, [settings]);
+
+  // Marketing Leads that have a Status set on the Marketing Leads page —
+  // the source of truth the status-update agent reconciles Salesforce
+  // against. A lead qualifies when it has both a Name and a Status.
+  const marketingLeadStatusRows = useMemo(() => {
+    const arr = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
+    return arr.filter(r => String(r?.name || '').trim() && String(r?.status || '').trim());
   }, [settings]);
 
   // Write a Salesforce Link back onto the matching lead in
@@ -2358,6 +2393,8 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
 
     const marketingLeadsBlock = ['Name\tCompany', ...marketingLeadsMissing.map(l => `${(l.name || '').trim()}\t${(l.company || '').trim()}`)].join('\n');
 
+    const marketingLeadStatusBlock = ['Name\tCompany\tMarketing Leads Status', ...marketingLeadStatusRows.map(l => `${(l.name || '').trim()}\t${(l.company || '').trim()}\t${(l.status || '').trim()}`)].join('\n');
+
     const sections = [
       { title: 'BFO Prep', prompt: bfoPrepPrompt, block: bfoPrepBlock, hasData: bfoPrepOpps.length > 0 },
       { title: 'Activity', prompt: aiPrompt, block: activityBlock, hasData: activityLines.length > 1 },
@@ -2370,6 +2407,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       // missing a Salesforce Link — its prompt stands alone as a reusable
       // instruction, so `always` keeps it in every copy regardless of data.
       { title: 'Marketing Leads', prompt: marketingLeadsPrompt, block: marketingLeadsBlock, hasData: marketingLeadsMissing.length > 0, always: true },
+      { title: 'Marketing Lead Status Update', prompt: marketingLeadStatusUpdatePrompt, block: marketingLeadStatusBlock, hasData: marketingLeadStatusRows.length > 0, always: true },
     ];
     // Skip sections that carry no data — when a section is just its prompt
     // with an empty data block (no BFO links, names, or opportunities to
@@ -2393,6 +2431,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     bfoPrepPrompt, todaysOutbound, calledOpps, markedMeetingOpps, newBfoOpps, closeDateOpps,
     amountUpdateOpps, stageChangeOpps, closeNotSoldOpps, bfoPrepOpps,
     marketingLeadsPrompt, marketingLeadsMissing,
+    marketingLeadStatusUpdatePrompt, marketingLeadStatusRows,
   ]);
 
   const [copyAllFlash, setCopyAllFlash] = useState('');
@@ -2880,6 +2919,76 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                       onCommit={(v) => updateMarketingLeadSfUrl(l.id, v)}
                     />
                   </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className={styles.section}>
+        <h2 className={styles.sectionHeader}>
+          Marketing Lead Status Update
+          <span className={styles.sectionCount}>{marketingLeadStatusRows.length}</span>
+        </h2>
+        <p className={styles.subnote}>
+          Reconciles Salesforce lead statuses against the Marketing Leads subtab on the Contacts page (the source of truth). Copy the prompt to have your AI assistant compare each lead&rsquo;s Salesforce status against the Marketing Leads Status below; where they differ, it opens the lead by name, goes to the Assessment tab, and updates the status to match. The prompt is always part of &ldquo;Copy all prompts.&rdquo;
+        </p>
+        {revealedPrompts.marketingLeadStatusUpdate && (
+          <textarea
+            className={styles.aiPromptInput}
+            value={marketingLeadStatusUpdatePrompt}
+            onChange={(e) => updateMarketingLeadStatusUpdatePrompt(e.target.value)}
+            rows={10}
+            spellCheck={false}
+          />
+        )}
+        <div className={styles.aiPromptControls}>
+          <button
+            type="button"
+            className={styles.aiPromptBtn}
+            onClick={async () => {
+              // With no leads carrying a Status there's nothing to reconcile,
+              // so copy the prompt on its own — it's still useful standalone.
+              const fullPrompt = marketingLeadStatusRows.length === 0
+                ? marketingLeadStatusUpdatePrompt
+                : `${marketingLeadStatusUpdatePrompt}\n\n${['Name\tCompany\tMarketing Leads Status', ...marketingLeadStatusRows.map(l => `${(l.name || '').trim()}\t${(l.company || '').trim()}\t${(l.status || '').trim()}`)].join('\n')}`;
+              try {
+                await navigator.clipboard.writeText(fullPrompt);
+                setMarketingLeadStatusUpdateCopyFlash('Copied!');
+              } catch {
+                setMarketingLeadStatusUpdateCopyFlash('Copy failed');
+              }
+              window.setTimeout(() => setMarketingLeadStatusUpdateCopyFlash(''), 1500);
+            }}
+          >Copy full prompt</button>
+          <button type="button" className={styles.aiPromptBtnGhost} onClick={() => togglePrompt('marketingLeadStatusUpdate')}>
+            {revealedPrompts.marketingLeadStatusUpdate ? 'Hide prompt' : 'Edit prompt'}
+          </button>
+          {revealedPrompts.marketingLeadStatusUpdate && (
+            <button type="button" className={styles.aiPromptBtnGhost} onClick={resetMarketingLeadStatusUpdatePrompt}>Reset to default</button>
+          )}
+          {marketingLeadStatusUpdateCopyFlash && <span className={styles.copyFlash}>{marketingLeadStatusUpdateCopyFlash}</span>}
+        </div>
+        <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Company</th>
+                <th>Marketing Leads Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {marketingLeadStatusRows.length === 0 ? (
+                <tr className={styles.emptyRow}>
+                  <td colSpan={3}>No marketing leads have a Status set yet.</td>
+                </tr>
+              ) : marketingLeadStatusRows.map((l, i) => (
+                <tr key={l.id || `${l.name}-${i}`}>
+                  <td>{l.name || '—'}</td>
+                  <td className={l.company ? '' : styles.muted}>{l.company || '—'}</td>
+                  <td className={l.status ? '' : styles.muted}>{l.status || '—'}</td>
                 </tr>
               ))}
             </tbody>
