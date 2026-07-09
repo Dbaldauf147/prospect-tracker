@@ -389,7 +389,7 @@ const HubSpotContactAutocomplete = memo(function HubSpotContactAutocomplete({ co
   );
 });
 
-export function MarketingLeadsView({ prospects = [], settings, updateSettings, onAddProspect }) {
+export function MarketingLeadsView({ prospects = [], settings, updateSettings, onAddProspect, onSelectProspect }) {
   const persistedRows = useMemo(() => {
     const arr = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
     return arr.map(r => {
@@ -1675,36 +1675,62 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                           );
                         })()
                       ) : c.key === 'mappedCompany' ? (
-                        <div>
-                          <CompanyAutocomplete
-                            value={r.mappedCompany || ''}
-                            onCommit={v => updateCell(r.id, 'mappedCompany', v)}
-                            suggestions={companyOptions}
-                            placeholder={isPad ? '' : 'Map to account…'}
-                            style={cellInputStyle}
-                          />
-                          {!isPad && (() => {
-                            // Once a mapping is set, we don't re-badge it here —
-                            // the Table View column already shows "✓ On Table
-                            // View". Only surface the accept-suggestion pill for
-                            // rows that aren't mapped yet.
-                            if ((r.mappedCompany || '').trim()) return null;
-                            const sugg = bestCompanyMatch(r.company);
-                            if (!sugg) return null;
+                        (() => {
+                          const mapped = (r.mappedCompany || '').trim();
+                          const prospect = mapped ? findProspectByCompany(mapped) : null;
+                          // A mapping that resolves to a Table View account
+                          // renders as a link into the company popup, with an ×
+                          // to re-map. Unmapped / free-text values keep the
+                          // editable picker + accept-suggestion pill below.
+                          if (mapped && prospect && onSelectProspect && !isPad) {
                             return (
-                              <div style={{ padding: '0 0.6rem 0.3rem' }}>
+                              <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem', display: 'flex', alignItems: 'center', gap: 6 }}>
                                 <button
                                   type="button"
-                                  onClick={() => updateCell(r.id, 'mappedCompany', sugg.name)}
-                                  title={sugg.exact
-                                    ? `Map "${r.company}" to the Table View account "${sugg.name}". Click to accept.`
-                                    : `Suggested Table View account for "${r.company}": "${sugg.name}" (fuzzy match, score ${sugg.score}/100). Click to accept.`}
-                                  style={{ background: sugg.exact ? '#DCFCE7' : '#FEF3C7', border: `1px solid ${sugg.exact ? '#86EFAC' : '#FCD34D'}`, color: sugg.exact ? '#166534' : '#92400E', padding: '1px 7px', borderRadius: 999, fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                                >→ {sugg.name}</button>
+                                  onClick={() => onSelectProspect(prospect)}
+                                  title={`Open the company popup for "${prospect.company || mapped}"`}
+                                  style={{ background: 'none', border: 'none', padding: 0, color: '#0369A1', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer', textAlign: 'left', textDecoration: 'underline', fontFamily: 'inherit', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                >{prospect.company || mapped}</button>
+                                <button
+                                  type="button"
+                                  onClick={() => updateCell(r.id, 'mappedCompany', '')}
+                                  title="Clear this mapping"
+                                  style={{ border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer', fontSize: '0.85rem', lineHeight: 1, padding: 0 }}
+                                >×</button>
                               </div>
                             );
-                          })()}
-                        </div>
+                          }
+                          return (
+                            <div>
+                              <CompanyAutocomplete
+                                value={r.mappedCompany || ''}
+                                onCommit={v => updateCell(r.id, 'mappedCompany', v)}
+                                suggestions={companyOptions}
+                                placeholder={isPad ? '' : 'Map to account…'}
+                                style={cellInputStyle}
+                              />
+                              {!isPad && (() => {
+                                // Only surface the accept-suggestion pill for
+                                // rows that aren't mapped yet.
+                                if (mapped) return null;
+                                const sugg = bestCompanyMatch(r.company);
+                                if (!sugg) return null;
+                                return (
+                                  <div style={{ padding: '0 0.6rem 0.3rem' }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => updateCell(r.id, 'mappedCompany', sugg.name)}
+                                      title={sugg.exact
+                                        ? `Map "${r.company}" to the Table View account "${sugg.name}". Click to accept.`
+                                        : `Suggested Table View account for "${r.company}": "${sugg.name}" (fuzzy match, score ${sugg.score}/100). Click to accept.`}
+                                      style={{ background: sugg.exact ? '#DCFCE7' : '#FEF3C7', border: `1px solid ${sugg.exact ? '#86EFAC' : '#FCD34D'}`, color: sugg.exact ? '#166534' : '#92400E', padding: '1px 7px', borderRadius: 999, fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                    >→ {sugg.name}</button>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          );
+                        })()
                       ) : c.key === 'name' ? (
                         (() => {
                           const nameVal = (r.name || '').trim();
