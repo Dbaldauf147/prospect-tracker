@@ -95,16 +95,58 @@ function detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedM
   return issues;
 }
 
+// Account statuses that MyAccountsView treats as inactive — an account
+// parked in one of these isn't chased for a missing HQ Region (mirrors
+// the check at MyAccountsView's hqRegion flag). Kept in sync with the
+// STATUSES the My Accounts page suppresses.
+const ACCOUNT_INACTIVE_STATUSES = new Set(['Old Client', 'Hold Off', 'Lost - Not Sold']);
+
 // Issue #2: tier / status / missing-HQ-Region flags raised on the My
-// Accounts page. MyAccountsView already computes these against Target
-// Accounts + Opps data and publishes a flat snapshot (one record per
-// account+flag) to the my-accounts:flags store, so the Issues tab simply
-// maps each published flag to a row rather than re-deriving the matching.
-function detectMyAccountsFlags({ myAccountsFlags = [] }) {
+// Accounts page. MyAccountsView computes these against Target Accounts +
+// Opps data and publishes a flat snapshot (one record per account+flag)
+// to the my-accounts:flags store. That snapshot is only rewritten while
+// MyAccountsView is mounted and recomputing, so it can lag behind an
+// account the user just edited elsewhere (e.g. accept a status suggestion
+// from the account modal) — leaving a row that repeats a stale status.
+//
+// So before mapping a published flag to a row we re-validate it against
+// the LIVE account (matched by id): drop flags whose mismatch has since
+// been resolved or whose account no longer exists (merged/deleted), and
+// render the live status rather than the snapshot's frozen copy. The
+// Opps-derived `suggestedStatus` isn't stored on the prospect, so it's
+// still taken from the flag — but the comparison uses the live status.
+//
+// Re-validation only kicks in once `prospects` is populated; during the
+// initial pre-load pass (empty list) we fall back to the stored snapshot
+// so the sidebar badge doesn't momentarily undercount.
+function detectMyAccountsFlags({ myAccountsFlags = [], prospects = [] }) {
   const issues = [];
+  const canValidate = prospects.length > 0;
+  const prospectById = new Map();
+  if (canValidate) for (const p of prospects) prospectById.set(p.id, p);
+
   for (const f of myAccountsFlags) {
     if (!f || !f.id || !f.kind) continue;
-    const company = f.company || '—';
+    // Re-validate against the live account when we have one to check.
+    const live = canValidate ? prospectById.get(f.id) : undefined;
+    if (canValidate && !live) continue; // account was merged or deleted
+
+    if (live && f.kind === 'status') {
+      const suggested = f.suggestedStatus || '';
+      // Same predicate MyAccountsView uses to raise the flag, but against
+      // the live status — so accepting/dismissing the suggestion clears it.
+      const stillMismatched = !live.hideStatusSuggestion
+        && suggested && live.status && suggested !== live.status
+        && live.dismissedSuggestedStatus !== suggested;
+      if (!stillMismatched) continue;
+    } else if (live && f.kind === 'hqRegion') {
+      // Cleared once an HQ Region is set or the account goes inactive.
+      if (live.hqRegion || ACCOUNT_INACTIVE_STATUSES.has(live.status)) continue;
+    }
+
+    // Prefer live company/status so the row never shows a stale copy.
+    const company = (live && live.company) || f.company || '—';
+    const liveStatus = live ? (live.status || '—') : (f.status || '—');
     if (f.kind === 'tier') {
       issues.push({
         id: `tier-mismatch:${f.id}`,
@@ -125,7 +167,7 @@ function detectMyAccountsFlags({ myAccountsFlags = [] }) {
         prospectId: f.id,
         daysUntil: null,
         expirationDate: null,
-        detail: `Status "${f.status || '—'}" doesn't match Opps-suggested status "${f.suggestedStatus || '—'}"`,
+        detail: `Status "${liveStatus}" doesn't match Opps-suggested status "${f.suggestedStatus || '—'}"`,
       });
     } else if (f.kind === 'hqRegion') {
       issues.push({
@@ -149,6 +191,6 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   const dealsByClient = groupDealsByClient(dealsList, clientMap);
   const issues = [];
   issues.push(...detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedMap }));
-  issues.push(...detectMyAccountsFlags({ myAccountsFlags }));
+  issues.push(...detectMyAccountsFlags({ myAccountsFlags, prospects }));
   return issues;
 }
