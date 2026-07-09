@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
+import { SF_INSTANCE_URL, resolveSfUrl } from '../../utils/salesforceLeads';
 
 // Marketing Leads subtab on the Contacts page. The user pastes a block
 // copied from a Salesforce Leads list view; a column-mapping modal pops
@@ -109,24 +110,8 @@ function companyKey(s) {
   return String(s || '').toLowerCase().trim();
 }
 
-// The Salesforce Lightning instance these leads live on. Relative record
-// links pulled off the clipboard HTML are resolved against this, and a
-// bare Lead record id is expanded into a record URL here.
-const SF_INSTANCE_URL = 'https://se.lightning.force.com';
-
-// Resolve a stored Salesforce Link cell value into a clickable URL, or
-// null when it isn't linkable. Accepts a full http(s) URL as-is, and
-// expands a bare 15- or 18-char Salesforce record id into a Lead record
-// URL on the instance above.
-function resolveSfUrl(value) {
-  const v = String(value || '').trim();
-  if (!v) return null;
-  if (/^https?:\/\//i.test(v)) return v;
-  if (/^[a-zA-Z0-9]{15}$|^[a-zA-Z0-9]{18}$/.test(v)) {
-    return `${SF_INSTANCE_URL}/lightning/r/Lead/${v}/view`;
-  }
-  return null;
-}
+// Salesforce-link resolution (SF_INSTANCE_URL / resolveSfUrl) is shared
+// with the Agents Activity table via utils/salesforceLeads.
 
 // Pull the per-lead record links out of the clipboard's text/html payload
 // (Salesforce list rows carry the record URL as an <a href> on the Name
