@@ -616,6 +616,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
   // subtabs read from). Used to auto-match leads and to power the picker.
   const [hubspotContacts, setHubspotContacts] = useState([]);
   const [hubspotBusyId, setHubspotBusyId] = useState('');
+  const [bulkAddingHubspot, setBulkAddingHubspot] = useState(false);
   useEffect(() => {
     let alive = true;
     const load = () => {
@@ -680,14 +681,12 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     persist(persistedRows.map(r => (r.id === rowId ? { ...r, hubspotContactId: id, hubspotContact: label } : r)));
   }
 
-  // Create a brand-new HubSpot contact from the lead's fields, push it
-  // into the local cache, and map the lead to it. Uses the same
-  // create-contact endpoint the Prospect modal's contact import uses.
-  async function addLeadToHubspot(row) {
-    if (String(row.id).startsWith('__pad_')) return;
+  // Build the HubSpot contact properties for a lead. Name is split into
+  // first / last on whitespace (the name is already normalised to
+  // "First Last"), company prefers the mapped Table View account.
+  function hubspotPropsForRow(row) {
     const name = (row.name || '').trim();
     const email = (row.email || '').trim();
-    if (!name && !email) { window.alert('This lead needs at least a name or email to add to HubSpot.'); return; }
     const props = {};
     if (name) {
       const parts = name.split(/\s+/);
@@ -698,26 +697,98 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     const companyName = (row.mappedCompany || '').trim() || (row.company || '').trim();
     if (companyName) props.company = companyName;
     if ((row.jobTitle || '').trim()) props.jobtitle = row.jobTitle.trim();
-    setHubspotBusyId(row.id);
+    return props;
+  }
+
+  // Create one HubSpot contact from a lead via the same create-contact
+  // endpoint the Prospect modal uses. Returns { ok, contact, error }
+  // without touching state, so both the single-row and bulk callers can
+  // reuse it and batch their cache / mapping writes.
+  async function createHubspotContactForRow(row) {
+    const name = (row.name || '').trim();
+    const email = (row.email || '').trim();
+    if (!name && !email) return { ok: false, error: 'needs a name or email' };
     try {
       const res = await apiFetch('/api/hubspot?action=create-contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ properties: props }),
+        body: JSON.stringify({ properties: hubspotPropsForRow(row) }),
       });
       const data = await res.json().catch(() => null);
-      if (data?.success && data?.contact) {
-        try { await updateHubspotCache(draft => { draft.contacts.push({ ...data.contact, _source: 'manual' }); }); } catch { /* ignore */ }
-        notifyCacheUpdated();
-        setHubspotMapping(row.id, data.contact);
-      } else {
-        window.alert(`Could not create the HubSpot contact${data?.error ? `: ${data.error}` : '.'}`);
-      }
+      if (data?.success && data?.contact) return { ok: true, contact: data.contact };
+      return { ok: false, error: data?.error || 'create failed' };
     } catch (err) {
-      window.alert(`Failed to create the HubSpot contact: ${err?.message || err}`);
-    } finally {
-      setHubspotBusyId('');
+      return { ok: false, error: err?.message || String(err) };
     }
+  }
+
+  // Create a brand-new HubSpot contact from the lead's fields, push it
+  // into the local cache, and map the lead to it.
+  async function addLeadToHubspot(row) {
+    if (String(row.id).startsWith('__pad_')) return;
+    if (!(row.name || '').trim() && !(row.email || '').trim()) {
+      window.alert('This lead needs at least a name or email to add to HubSpot.');
+      return;
+    }
+    setHubspotBusyId(row.id);
+    const res = await createHubspotContactForRow(row);
+    if (res.ok && res.contact) {
+      try { await updateHubspotCache(draft => { draft.contacts.push({ ...res.contact, _source: 'manual' }); }); } catch { /* ignore */ }
+      notifyCacheUpdated();
+      setHubspotMapping(row.id, res.contact);
+    } else {
+      window.alert(`Could not create the HubSpot contact${res.error ? `: ${res.error}` : '.'}`);
+    }
+    setHubspotBusyId('');
+  }
+
+  // Leads eligible for the bulk "Add all to HubSpot" action: not already
+  // mapped, have a name or email, and aren't Closed-Recycle (dead leads
+  // shouldn't spawn new HubSpot contacts).
+  const hubspotAddable = useMemo(
+    () => persistedRows.filter(r =>
+      !String(r.hubspotContactId || '').trim()
+      && ((r.name || '').trim() || (r.email || '').trim())
+      && !isClosedRecycle(r)),
+    [persistedRows],
+  );
+
+  // Create HubSpot contacts for every eligible lead, then push all new
+  // contacts to the cache and persist all lead→contact mappings in a
+  // single write (mapping in the loop would each read a stale
+  // persistedRows and clobber earlier maps).
+  async function bulkAddToHubspot() {
+    if (bulkAddingHubspot) return;
+    if (!hubspotAddable.length) { window.alert('No unmapped leads to add to HubSpot.'); return; }
+    const ok = window.confirm(
+      `Create ${hubspotAddable.length} new HubSpot contact${hubspotAddable.length === 1 ? '' : 's'} from the leads that aren't mapped yet? Already-mapped and Closed-Recycle leads are skipped.`,
+    );
+    if (!ok) return;
+    setBulkAddingHubspot(true);
+    const created = [];
+    const mappingById = new Map();
+    let failed = 0;
+    for (const row of hubspotAddable) {
+      const res = await createHubspotContactForRow(row); // eslint-disable-line no-await-in-loop
+      if (res.ok && res.contact) {
+        created.push({ ...res.contact, _source: 'manual' });
+        mappingById.set(row.id, { id: String(res.contact.id || res.contact.vid || ''), label: hubspotDisplay(res.contact) });
+      } else {
+        failed += 1;
+      }
+    }
+    if (created.length) {
+      try { await updateHubspotCache(draft => { for (const c of created) draft.contacts.push(c); }); } catch { /* ignore */ }
+      notifyCacheUpdated();
+    }
+    if (mappingById.size) {
+      persist(persistedRows.map(r => {
+        const m = mappingById.get(r.id);
+        return m ? { ...r, hubspotContactId: m.id, hubspotContact: m.label } : r;
+      }));
+    }
+    setBulkAddingHubspot(false);
+    window.alert(`Added ${created.length} contact${created.length === 1 ? '' : 's'} to HubSpot${failed ? ` — ${failed} failed` : ''}.`);
   }
 
   // Visible list = persisted rows + synthetic padding rows up to the
@@ -1141,6 +1212,15 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
             style={btn({ border: 'none', background: unmatchedCompanies.length ? '#0EA5E9' : '#CBD5E1', color: '#fff', fontWeight: 700, cursor: unmatchedCompanies.length ? 'pointer' : 'not-allowed' })}
           >+ Add {unmatchedCompanies.length || ''} to Table View</button>
         )}
+        <button
+          type="button"
+          onClick={bulkAddToHubspot}
+          disabled={!hubspotAddable.length || bulkAddingHubspot}
+          title={hubspotAddable.length
+            ? `Create HubSpot contacts for the ${hubspotAddable.length} lead${hubspotAddable.length === 1 ? '' : 's'} that aren't mapped yet (Closed-Recycle leads skipped).`
+            : 'Every lead is already mapped to a HubSpot contact.'}
+          style={btn({ border: 'none', background: (hubspotAddable.length && !bulkAddingHubspot) ? '#FF7A59' : '#CBD5E1', color: '#fff', fontWeight: 700, cursor: (hubspotAddable.length && !bulkAddingHubspot) ? 'pointer' : 'not-allowed' })}
+        >{bulkAddingHubspot ? 'Adding to HubSpot…' : `+ Add ${hubspotAddable.length || ''} to HubSpot`}</button>
         <button
           type="button"
           onClick={clearTable}
