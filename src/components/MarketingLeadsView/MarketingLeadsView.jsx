@@ -8,6 +8,8 @@ import { STATUS_COLORS } from '../../data/enums';
 import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
+import { useAuth } from '../../contexts/AuthContext';
+import { resolveSignature, plainBodyToHtml, personalizeDraftText, buildUnsentEml, downloadDrafts, safeFileName } from '../../utils/draftEmail';
 
 // Marketing Leads subtab on the Contacts page. The user pastes a block
 // copied from a Salesforce Leads list view; a column-mapping modal pops
@@ -1143,6 +1145,59 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     [filtered],
   );
 
+  // ---- Draft emails to the visible leads ------------------------------
+  // "Draft Emails" builds one Outlook draft (.eml, X-Unsent) per shown
+  // lead that has a real email address, all carrying the same signature
+  // from the Draft Emails page (settings.emailSignature). Targets the
+  // currently filtered rows so a search / status filter narrows the batch.
+  const { isAdmin } = useAuth();
+  const [draftModalOpen, setDraftModalOpen] = useState(false);
+  const [draftSubject, setDraftSubject] = useState('');
+  const [draftBody, setDraftBody] = useState('');
+  const [draftResult, setDraftResult] = useState('');
+
+  const emailableLeads = useMemo(() => {
+    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const seen = new Set();
+    const out = [];
+    for (const r of filtered) {
+      if (String(r.id).startsWith('__pad_')) continue;
+      const email = String(r.email || '').trim();
+      if (!emailRe.test(email)) continue;
+      const key = email.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(r);
+    }
+    return out;
+  }, [filtered]);
+
+  function createDraftEmails() {
+    const signature = resolveSignature(settings, isAdmin);
+    const subject = draftSubject.trim();
+    if (!subject || !emailableLeads.length) return;
+    const drafts = emailableLeads.map(r => {
+      const name = String(r.name || '').trim();
+      const contact = {
+        name,
+        firstName: name.split(' ')[0] || '',
+        email: String(r.email || '').trim(),
+        company: effectiveCompany(r),
+        title: String(r.jobTitle || '').trim(),
+      };
+      const eml = buildUnsentEml({
+        toName: name,
+        toEmail: contact.email,
+        subject: personalizeDraftText(subject, contact),
+        bodyHtml: plainBodyToHtml(personalizeDraftText(draftBody, contact)),
+        signature,
+      });
+      return { fileName: `draft_${safeFileName(name || contact.email)}.eml`, eml };
+    });
+    downloadDrafts(drafts);
+    setDraftResult(`${drafts.length} draft .eml file${drafts.length === 1 ? '' : 's'} downloading — double-click each to open in Outlook.`);
+  }
+
   // ---- Contact popup (shared with the other Contacts subtabs) ---------
   // Clicking a lead's Name opens the same ContactEditModal used across the
   // Contacts page. The lead row is held here; the contact object is
@@ -1427,6 +1482,15 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
           title="Copy every saved lead as tab-separated values, ready to paste into Excel."
           style={btn({ border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text)' })}
         >Copy as TSV</button>
+        <button
+          type="button"
+          onClick={() => { setDraftResult(''); setDraftModalOpen(true); }}
+          disabled={!emailableLeads.length}
+          title={emailableLeads.length
+            ? `Draft an Outlook email to each of the ${emailableLeads.length} shown lead${emailableLeads.length === 1 ? '' : 's'} with an email address, using your saved email signature.`
+            : 'No shown leads have an email address to draft to.'}
+          style={btn({ border: 'none', background: emailableLeads.length ? '#0EA5E9' : '#CBD5E1', color: '#fff', fontWeight: 700, cursor: emailableLeads.length ? 'pointer' : 'not-allowed' })}
+        >✉️ Draft {emailableLeads.length || ''} Email{emailableLeads.length === 1 ? '' : 's'}</button>
         {hasCustomWidths && (
           <button
             type="button"
@@ -1541,7 +1605,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
         >Clear table</button>
       </div>
       <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
-        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, drag a header to reorder it (drag its right edge to resize), use <strong>Filters</strong> for per-column filtering, and <strong>Columns</strong> to show / hide or reorder columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account — accept the suggested match or type to pick another. The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand. The <strong>HubSpot Contact</strong> column maps each lead to a HubSpot contact — accept the email/name match, search to pick another, or <strong>+ Add to HubSpot</strong> to create a new contact from the lead. The read-only <strong>HubSpot Title</strong> column shows the mapped contact's job title. The <strong>Status</strong> column is a dropdown driven by the <strong>Marketing Lead Status</strong> list on the <strong>Dropdowns</strong> tab — edit that list to change the options. Click a lead's <strong>Name</strong> to open it in the contact popup (the <strong>✎</strong> next to it edits the name inline instead).
+        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, drag a header to reorder it (drag its right edge to resize), use <strong>Filters</strong> for per-column filtering, and <strong>Columns</strong> to show / hide or reorder columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account — accept the suggested match or type to pick another. The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand. The <strong>HubSpot Contact</strong> column maps each lead to a HubSpot contact — accept the email/name match, search to pick another, or <strong>+ Add to HubSpot</strong> to create a new contact from the lead. The read-only <strong>HubSpot Title</strong> column shows the mapped contact's job title. The <strong>Status</strong> column is a dropdown driven by the <strong>Marketing Lead Status</strong> list on the <strong>Dropdowns</strong> tab — edit that list to change the options. <strong>✉️ Draft Emails</strong> creates an Outlook draft for every shown lead with an email address, signed with your saved email signature (respects the current search / filters). Click a lead's <strong>Name</strong> to open it in the contact popup (the <strong>✎</strong> next to it edits the name inline instead).
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -2041,6 +2105,56 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
           onConfirm={executePasteImport}
           onChangeMapping={setHeaderTarget}
         />,
+        document.body,
+      )}
+
+      {draftModalOpen && createPortal(
+        <div onClick={() => setDraftModalOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 12, padding: '1.5rem', width: 640, maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>Draft Emails to {emailableLeads.length} Lead{emailableLeads.length === 1 ? '' : 's'}</h3>
+              <button onClick={() => setDraftModalOpen(false)} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}>×</button>
+            </div>
+            <p style={{ fontSize: '0.74rem', color: 'var(--color-text-secondary)', margin: '0 0 0.9rem', lineHeight: 1.5 }}>
+              Creates one Outlook draft (<strong>.eml</strong>) per shown lead that has an email address, each addressed to that lead and signed with your saved email signature{resolveSignature(settings, isAdmin) ? '' : ' (none saved yet — add one on the Draft Emails page)'}. Double-click each downloaded file to open it as a draft in Outlook.
+              {' '}Tokens: <code>{'{firstName}'}</code>, <code>{'{fullName}'}</code>, <code>{'{company}'}</code>, <code>{'{title}'}</code>, <code>{'{email}'}</code>.
+            </p>
+            <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: '#475569', marginBottom: 3 }}>Subject</label>
+            <input
+              type="text"
+              value={draftSubject}
+              onChange={e => setDraftSubject(e.target.value)}
+              placeholder="e.g. Quick intro for {company}"
+              style={{ width: '100%', boxSizing: 'border-box', padding: '0.45rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.82rem', fontFamily: 'inherit', marginBottom: '0.7rem' }}
+            />
+            <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: '#475569', marginBottom: 3 }}>Body</label>
+            <textarea
+              value={draftBody}
+              onChange={e => setDraftBody(e.target.value)}
+              placeholder={'Hi {firstName},\n\n…'}
+              style={{ width: '100%', boxSizing: 'border-box', minHeight: 160, padding: '0.5rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.82rem', fontFamily: 'inherit', lineHeight: 1.5, resize: 'vertical' }}
+            />
+            {draftResult && (
+              <div style={{ marginTop: '0.7rem', padding: '0.5rem 0.7rem', background: '#F0FDF4', border: '1px solid #86EFAC', borderRadius: 6, fontSize: '0.76rem', color: '#166534', fontWeight: 600 }}>
+                {draftResult}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1.1rem' }}>
+              <button
+                type="button"
+                onClick={() => setDraftModalOpen(false)}
+                style={btn({ border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)' })}
+              >{draftResult ? 'Close' : 'Cancel'}</button>
+              <button
+                type="button"
+                onClick={createDraftEmails}
+                disabled={!draftSubject.trim() || !emailableLeads.length}
+                title={!draftSubject.trim() ? 'Enter a subject first.' : ''}
+                style={btn({ border: 'none', background: (draftSubject.trim() && emailableLeads.length) ? '#009530' : '#CBD5E1', color: '#fff', fontWeight: 700, cursor: (draftSubject.trim() && emailableLeads.length) ? 'pointer' : 'not-allowed' })}
+              >Create {emailableLeads.length} draft{emailableLeads.length === 1 ? '' : 's'}</button>
+            </div>
+          </div>
+        </div>,
         document.body,
       )}
 
