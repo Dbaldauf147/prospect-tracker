@@ -42,6 +42,11 @@ const MARKETING_LEAD_STATUS_UPDATE_PROMPT_STORAGE_KEY = 'agents-ai-prompt-market
 // BFO Sales Stage + Amount can be joined to the Opps tab data.
 const BFO_ACTIVITY_STORE = 'bfo-activity';
 const BFO_ACTIVITY_KEY = 'current';
+// The BFO Activity page's "Leads" subtab (pasted Salesforce Leads
+// printable view) persists under its own key in the same store. The
+// Marketing Lead Status Update agent reads it to compare each lead's
+// current Salesforce status against the Marketing Leads source of truth.
+const BFO_LEADS_KEY = 'leads-current';
 
 const DEFAULT_AI_PROMPT = `1.  I am logged into BFO.  Open the first BFO Address in the list below.
 2.  Choose the New Tast (green button) under the Activity menu on the righthand side of the screen.
@@ -750,6 +755,29 @@ function normalizeCompany(name) {
     .trim();
 }
 
+// Order-insensitive name key so the Marketing Leads page's "First Last"
+// matches the Salesforce Leads printable view's "Last, First". Drops
+// punctuation (the comma) and sorts the remaining tokens, so both
+// orderings collapse to the same key ("Victor Blancarte" and
+// "Blancarte, Victor" → "blancarte victor").
+function leadNameKey(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .sort()
+    .join(' ');
+}
+
+// Loose status key for comparing a Marketing Lead's Status against the
+// Leads subtab's Status. Lower-cases and strips everything but letters
+// and digits so hyphen/en-dash/spacing differences ("Closed-Recycle" vs
+// "Closed–Recycle", "1 - New" vs "1 – New") don't read as a mismatch.
+function leadStatusKey(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 // Best-effort company guess from a recipient's email domain — used
 // only when neither an Opps-tab row nor a HubSpot contact carries a
 // company so the Company column doesn't render empty.
@@ -1004,6 +1032,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   const [marketingLeadsPrompt, setMarketingLeadsPrompt] = useState(readMarketingLeadsPrompt);
   const [marketingLeadStatusUpdatePrompt, setMarketingLeadStatusUpdatePrompt] = useState(readMarketingLeadStatusUpdatePrompt);
   const [bfoActivity, setBfoActivity] = useState(null);
+  const [bfoLeads, setBfoLeads] = useState(null);
   // Tagging state for the "BFO Opportunity Name not tagged to an opp"
   // warning mirrored from the BFO Activity page.
   const [assigningBfo, setAssigningBfo] = useState(false);
@@ -1105,13 +1134,51 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     return arr.filter(r => String(r?.name || '').trim() && !String(r?.sfUrl || '').trim());
   }, [settings]);
 
-  // Marketing Leads that have a Status set on the Marketing Leads page —
-  // the source of truth the status-update agent reconciles Salesforce
-  // against. A lead qualifies when it has both a Name and a Status.
+  // Index of the BFO Activity "Leads" subtab: order-insensitive name key
+  // → the lead's current Salesforce Status from that paste. Detects the
+  // Name and Status columns from the pasted headers (the printable view
+  // labels them "Name" and "Status"). Empty until the user pastes the
+  // Leads subtab, which leaves the agent's discrepancy list empty.
+  const leadsSubtabStatusByName = useMemo(() => {
+    const map = new Map();
+    const headers = Array.isArray(bfoLeads?.headers) ? bfoLeads.headers : [];
+    const rows = Array.isArray(bfoLeads?.rows) ? bfoLeads.rows : [];
+    if (!headers.length || !rows.length) return map;
+    const norm = (h) => String(h || '').trim().toLowerCase();
+    const nameCol = headers.find(h => norm(h) === 'name')
+      || headers.find(h => /\bname\b/i.test(h) && !/company|account/i.test(h));
+    const statusCol = headers.find(h => norm(h) === 'status')
+      || headers.find(h => /status/i.test(h));
+    if (!nameCol || !statusCol) return map;
+    for (const r of rows) {
+      const key = leadNameKey(r[nameCol]);
+      if (!key || map.has(key)) continue;
+      map.set(key, String(r[statusCol] || '').trim());
+    }
+    return map;
+  }, [bfoLeads]);
+
+  // Marketing Leads whose Status (the source of truth on the Marketing
+  // Leads page) DIFFERS from the same lead's status on the BFO Activity
+  // "Leads" subtab — the only ones the status-update agent needs to act
+  // on. A lead qualifies when it has a Name + Status, has a matching row
+  // in the Leads subtab, and the two statuses don't match. Leads with no
+  // matching Leads-subtab row are hidden (we can't confirm a diff).
   const marketingLeadStatusRows = useMemo(() => {
     const arr = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
-    return arr.filter(r => String(r?.name || '').trim() && String(r?.status || '').trim());
-  }, [settings]);
+    const out = [];
+    for (const r of arr) {
+      const name = String(r?.name || '').trim();
+      const status = String(r?.status || '').trim();
+      if (!name || !status) continue;
+      const key = leadNameKey(name);
+      if (!leadsSubtabStatusByName.has(key)) continue; // no match → hide
+      const bfoStatus = leadsSubtabStatusByName.get(key);
+      if (leadStatusKey(status) === leadStatusKey(bfoStatus)) continue; // same → hide
+      out.push({ ...r, bfoStatus });
+    }
+    return out;
+  }, [settings, leadsSubtabStatusByName]);
 
   // Write a Salesforce Link back onto the matching lead in
   // settings.marketingLeads so it saves through the same settings →
@@ -1358,6 +1425,23 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     const refresh = () => {
       dbGet(BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY)
         .then(d => { if (!cancelled) setBfoActivity(d || null); })
+        .catch(() => {});
+    };
+    refresh();
+    window.addEventListener('focus', refresh);
+    return () => { cancelled = true; window.removeEventListener('focus', refresh); };
+  }, []);
+
+  // Leads subtab rows — pasted on the BFO Activity page's "Leads" tab
+  // (Salesforce Leads printable view), persisted under BFO_LEADS_KEY.
+  // Read here so the Marketing Lead Status Update agent can surface only
+  // the leads whose Salesforce status differs from the Marketing Leads
+  // source of truth. Refresh on focus so a fresh paste shows up live.
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      dbGet(BFO_ACTIVITY_STORE, BFO_LEADS_KEY)
+        .then(d => { if (!cancelled) setBfoLeads(d || null); })
         .catch(() => {});
     };
     refresh();
@@ -2932,7 +3016,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
           <span className={styles.sectionCount}>{marketingLeadStatusRows.length}</span>
         </h2>
         <p className={styles.subnote}>
-          Reconciles Salesforce lead statuses against the Marketing Leads subtab on the Contacts page (the source of truth). Copy the prompt to have your AI assistant compare each lead&rsquo;s Salesforce status against the Marketing Leads Status below; where they differ, it opens the lead by name, goes to the Assessment tab, and updates the status to match. The prompt is always part of &ldquo;Copy all prompts.&rdquo;
+          Only lists leads whose Marketing Leads Status (the source of truth on the Contacts page) differs from that lead&rsquo;s status on the BFO Activity page&rsquo;s <strong>Leads</strong> subtab &mdash; the ones that actually need updating. Leads that match, or that aren&rsquo;t on the Leads subtab, are hidden. Copy the prompt to have your AI assistant open each lead by name, go to the Assessment tab, and update the status to the Marketing Leads Status. Paste the Salesforce Leads printable view into the BFO Activity page&rsquo;s Leads subtab to feed this comparison. The prompt is always part of &ldquo;Copy all prompts.&rdquo;
         </p>
         {revealedPrompts.marketingLeadStatusUpdate && (
           <textarea
@@ -2976,18 +3060,24 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
               <tr>
                 <th>Name</th>
                 <th>Company</th>
-                <th>Marketing Leads Status</th>
+                <th>Leads Subtab Status</th>
+                <th>Marketing Leads Status (apply)</th>
               </tr>
             </thead>
             <tbody>
               {marketingLeadStatusRows.length === 0 ? (
                 <tr className={styles.emptyRow}>
-                  <td colSpan={3}>No marketing leads have a Status set yet.</td>
+                  <td colSpan={4}>
+                    {leadsSubtabStatusByName.size === 0
+                      ? 'Paste the Salesforce Leads printable view into the BFO Activity page’s Leads subtab to compare statuses.'
+                      : 'No status discrepancies — every matched lead already agrees with the Leads subtab.'}
+                  </td>
                 </tr>
               ) : marketingLeadStatusRows.map((l, i) => (
                 <tr key={l.id || `${l.name}-${i}`}>
                   <td>{l.name || '—'}</td>
                   <td className={l.company ? '' : styles.muted}>{l.company || '—'}</td>
+                  <td className={l.bfoStatus ? '' : styles.muted}>{l.bfoStatus || '—'}</td>
                   <td className={l.status ? '' : styles.muted}>{l.status || '—'}</td>
                 </tr>
               ))}
