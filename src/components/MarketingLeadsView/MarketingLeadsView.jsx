@@ -1544,7 +1544,20 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                   }}
                 >
                   {visibleColumnList.map(c => (
-                    <td key={c.key} style={{ padding: 0, verticalAlign: 'top' }}>
+                    <td
+                      key={c.key}
+                      style={{
+                        padding: 0,
+                        verticalAlign: 'top',
+                        // Clip cell content to the (draggable) column width so
+                        // long text hides as the column narrows instead of
+                        // spilling into the next column. The two cells that
+                        // render an autocomplete dropdown stay visible so the
+                        // popover isn't cut off — their inner content clips on
+                        // its own (input width 100%, pills ellipsis).
+                        overflow: (c.key === 'mappedCompany' || c.key === 'hubspotContact') ? 'visible' : 'hidden',
+                      }}
+                    >
                       {c.key === 'sfUrl' ? (
                         (() => {
                           const raw = (r.sfUrl || '').trim();
