@@ -883,14 +883,11 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                             style={cellInputStyle}
                           />
                           {!isPad && (() => {
-                            const mapped = (r.mappedCompany || '').trim();
-                            if (mapped) {
-                              return findProspectByCompany(mapped) ? (
-                                <div style={{ padding: '0 0.6rem 0.3rem' }}>
-                                  <span title={`"${mapped}" is a Table View account.`} style={{ fontSize: '0.66rem', color: '#166534', fontWeight: 600 }}>✓ matches Table View</span>
-                                </div>
-                              ) : null;
-                            }
+                            // Once a mapping is set, we don't re-badge it here —
+                            // the Table View column already shows "✓ On Table
+                            // View". Only surface the accept-suggestion pill for
+                            // rows that aren't mapped yet.
+                            if ((r.mappedCompany || '').trim()) return null;
                             const sugg = bestCompanyMatch(r.company);
                             if (!sugg) return null;
                             return (
