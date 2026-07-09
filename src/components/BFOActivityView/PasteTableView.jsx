@@ -12,6 +12,34 @@ import styles from './BFOActivityView.module.css';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { parseTSV, compareValues, cleanHeader } from '../../utils/tsvTable';
 
+// Salesforce Leads print the Name column as "Last, First"; the Leads tab
+// wants it shown as "First Last". Split on the first comma only, so any
+// middle name / suffix that follows the first name stays put
+// ("Varankaval, Rama" → "Rama Varankaval"). Values without a comma — or
+// with an empty last/first half — are left untouched.
+function flipNameToFirstLast(value) {
+  const s = String(value ?? '').trim();
+  const idx = s.indexOf(',');
+  if (idx === -1) return s;
+  const last = s.slice(0, idx).trim();
+  const first = s.slice(idx + 1).trim();
+  if (!last || !first) return s;
+  return `${first} ${last}`;
+}
+
+// Flip the "Name" column (case-insensitive) of a freshly-parsed table
+// from "Last, First" to "First Last". Returns the input unchanged when
+// there's no Name column.
+function withFlippedNames(parsed) {
+  const nameHeader = parsed.headers.find(h => /^name$/i.test(String(h).trim()));
+  if (!nameHeader) return parsed;
+  const rows = parsed.rows.map(r => {
+    const flipped = flipNameToFirstLast(r[nameHeader]);
+    return flipped === r[nameHeader] ? r : { ...r, [nameHeader]: flipped };
+  });
+  return { headers: parsed.headers, rows };
+}
+
 export function PasteTableView({
   title,
   subtitle,
@@ -21,6 +49,9 @@ export function PasteTableView({
   prefsKey,
   csvPrefix = 'table',
   emptyHint,
+  // When set, the "Name" column is rewritten from "Last, First" to
+  // "First Last" as rows are pasted in.
+  flipNameColumn = false,
 }) {
   const [data, setData] = useState({ headers: [], rows: [] });
   const [search, setSearch] = useState('');
@@ -109,8 +140,9 @@ export function PasteTableView({
       window.setTimeout(() => setFlash(''), 2500);
       return;
     }
-    setData(parsed);
-    setFlash(`Imported ${parsed.rows.length} rows · ${parsed.headers.length} columns.`);
+    const next = flipNameColumn ? withFlippedNames(parsed) : parsed;
+    setData(next);
+    setFlash(`Imported ${next.rows.length} rows · ${next.headers.length} columns.`);
     window.setTimeout(() => setFlash(''), 2500);
   }
 
