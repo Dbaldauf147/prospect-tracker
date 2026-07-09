@@ -281,7 +281,7 @@ function App() {
           ) : view === 'activity' ? (
             <ActivityView prospects={prospects} settings={settings} updateSettings={updateSettings} />
           ) : view === 'agents' ? (
-            <AgentsView prospects={prospects} settings={settings} updateProspect={updateProspect} />
+            <AgentsView prospects={prospects} settings={settings} updateProspect={updateProspect} updateSettings={updateSettings} />
           ) : view === 'pe' ? (
             <PEPortfolioView prospects={prospects} onSelectProspect={handleSelect} metInPersonMap={settings.contactMetInPerson || {}} onUpdateProspect={updateProspect} onAddProspect={addProspect} settings={settings} updateSettings={updateSettings} />
           ) : view === 'contacts' ? (

@@ -32,6 +32,7 @@ const STAGE_CHANGE_PROMPT_STORAGE_KEY = 'agents-ai-prompt-stage-change';
 const CLOSE_NOT_SOLDS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-close-not-solds';
 const UPDATE_BFO_ACTIVITY_PROMPT_STORAGE_KEY = 'agents-ai-prompt-update-bfo-activity';
 const BFO_PREP_PROMPT_STORAGE_KEY = 'agents-ai-prompt-bfo-prep';
+const MARKETING_LEADS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-marketing-leads';
 
 // IndexedDB store + key the BFO Activity tab persists its pasted rows
 // into. The Close Dates + Amount Updates prompts read it so each row's
@@ -117,6 +118,12 @@ const DEFAULT_AI_PROMPT_CLOSE_NOT_SOLDS = `1.  Reference the BFO links below.
 
 const DEFAULT_AI_PROMPT_BFO_PREP = `1.  I am logged on to this website https://se.lightning.force.com/lightning/o/Opportunity/list?filterName=00B8V00000B0XsD&0.sfdcIFrameOrigin=https%3A%2F%2Fse.lightning.force.com
 2.  Reference the BFO Opportunity names below.  My goal is to have you open their websites and copy and paste the BFO website Address to the BFO address table here on the Agents tab of this website https://prospect-tracker-ashen.vercel.app/ in the AI BFO Prep table.`;
+
+const DEFAULT_AI_PROMPT_MARKETING_LEADS = `1.  Go to this Salesforce Leads list: https://se.lightning.force.com/lightning/o/Lead/list?filterName=00BKj00000QYbyfMAD
+2.  For each lead listed below (by Name), click the lead's name in Salesforce to open their record page.
+3.  Copy the record page's URL from the browser address bar.
+4.  Paste that URL into the Salesforce Link cell for that lead in the table below (on the Agents tab of this website https://prospect-tracker-ashen.vercel.app/). It saves straight to the Marketing Leads subtab on the Contacts page, and the row drops off this list once the link is set.
+5.  Repeat for every lead listed below.`;
 
 // Opps 2 "Reason Not Sold" → corresponding BFO Status + Reason. Used by
 // the Close Not Solds prompt so the AI assistant can advance each BFO
@@ -342,6 +349,48 @@ function readBfoPrepPrompt() {
 
 function writeBfoPrepPrompt(next) {
   try { userLsSet(BFO_PREP_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
+}
+
+function readMarketingLeadsPrompt() {
+  try {
+    const raw = userLsGet(MARKETING_LEADS_PROMPT_STORAGE_KEY);
+    return raw == null ? DEFAULT_AI_PROMPT_MARKETING_LEADS : raw;
+  } catch {
+    return DEFAULT_AI_PROMPT_MARKETING_LEADS;
+  }
+}
+
+function writeMarketingLeadsPrompt(next) {
+  try { userLsSet(MARKETING_LEADS_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
+}
+
+// Small editable cell for the Marketing Leads agent's Salesforce Link
+// column. Commits the trimmed value verbatim (a full record URL or a
+// Lead id) — unlike BfoAddressCell it does NOT force an https:// prefix,
+// so a bare Lead id round-trips intact.
+function MarketingLeadSfCell({ value, onCommit }) {
+  const initial = String(value ?? '');
+  const commit = (el) => {
+    const next = el.value.trim();
+    if (next !== initial.trim()) onCommit(next);
+  };
+  return (
+    <input
+      key={initial}
+      type="text"
+      defaultValue={initial}
+      placeholder="Paste Salesforce record link…"
+      onBlur={(e) => commit(e.currentTarget)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+        else if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.value = initial; e.currentTarget.blur(); }
+      }}
+      style={{
+        width: '100%', boxSizing: 'border-box', padding: '3px 6px',
+        border: '1px solid var(--color-border)', borderRadius: 4, font: 'inherit',
+      }}
+    />
+  );
 }
 
 // Pull the leading stage digit from BFO Sales Stage values like
@@ -859,7 +908,7 @@ function NewBfoCompanyNameCell({ prospect, value, onCommit }) {
   );
 }
 
-export function AgentsView({ prospects = [], settings, updateProspect }) {
+export function AgentsView({ prospects = [], settings, updateProspect, updateSettings }) {
   const { user } = useAuth();
   // Configured per-user via Settings → CDM Name. The Sent emails section
   // matches HubSpot's hs_email_from_email against this address; blank
@@ -907,8 +956,10 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
   const [closeNotSoldsPrompt, setCloseNotSoldsPrompt] = useState(readCloseNotSoldsPrompt);
   const [updateBfoActivityPrompt, setUpdateBfoActivityPrompt] = useState(readUpdateBfoActivityPrompt);
   const [bfoPrepPrompt, setBfoPrepPrompt] = useState(readBfoPrepPrompt);
+  const [marketingLeadsPrompt, setMarketingLeadsPrompt] = useState(readMarketingLeadsPrompt);
   const [bfoActivity, setBfoActivity] = useState(null);
   const [copyFlash, setCopyFlash] = useState('');
+  const [marketingLeadsCopyFlash, setMarketingLeadsCopyFlash] = useState('');
   const [newBfoOppCopyFlash, setNewBfoOppCopyFlash] = useState('');
   const [closeDatesCopyFlash, setCloseDatesCopyFlash] = useState('');
   const [amountUpdatesCopyFlash, setAmountUpdatesCopyFlash] = useState('');
@@ -984,6 +1035,30 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
     writeBfoPrepPrompt(next);
   };
   const resetBfoPrepPrompt = () => updateBfoPrepPrompt(DEFAULT_AI_PROMPT_BFO_PREP);
+  const updateMarketingLeadsPrompt = (next) => {
+    setMarketingLeadsPrompt(next);
+    writeMarketingLeadsPrompt(next);
+  };
+  const resetMarketingLeadsPrompt = () => updateMarketingLeadsPrompt(DEFAULT_AI_PROMPT_MARKETING_LEADS);
+
+  // Marketing Leads that still need a Salesforce Link — sourced live from
+  // the Marketing Leads subtab's store (settings.marketingLeads). A lead
+  // qualifies when it has a Name but an empty Salesforce Link (sfUrl).
+  const marketingLeadsMissing = useMemo(() => {
+    const arr = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
+    return arr.filter(r => String(r?.name || '').trim() && !String(r?.sfUrl || '').trim());
+  }, [settings]);
+
+  // Write a Salesforce Link back onto the matching lead in
+  // settings.marketingLeads so it saves through the same settings →
+  // Firestore pipeline and shows up on the Marketing Leads page.
+  const updateMarketingLeadSfUrl = (leadId, value) => {
+    if (!updateSettings || !leadId) return;
+    const arr = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
+    const v = String(value || '').trim();
+    const next = arr.map(r => (r?.id != null && String(r.id) === String(leadId) ? { ...r, sfUrl: v } : r));
+    updateSettings({ marketingLeads: next });
+  };
 
   // The "Update BFO Activity" prompt is appended to the end of every
   // individual prompt copy (and the Copy-all bundle). Helper keeps that
@@ -2493,6 +2568,79 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
                     <BfoAddressCell
                       value={o.bfoAddress}
                       onCommit={(v) => updateOppBfoAddress(o.id, v)}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className={styles.section}>
+        <h2 className={styles.sectionHeader}>
+          Marketing Leads
+          <span className={styles.sectionCount}>{marketingLeadsMissing.length}</span>
+        </h2>
+        <p className={styles.subnote}>
+          Leads from the Marketing Leads subtab on the Contacts page that don&rsquo;t have a Salesforce Link yet. Copy the prompt to have your AI assistant open each lead in Salesforce and grab its record URL, then paste it into the Salesforce Link column below &mdash; it saves straight to the Marketing Leads page and the row drops off this list once set.
+        </p>
+        {revealedPrompts.marketingLeads && (
+          <textarea
+            className={styles.aiPromptInput}
+            value={marketingLeadsPrompt}
+            onChange={(e) => updateMarketingLeadsPrompt(e.target.value)}
+            rows={10}
+            spellCheck={false}
+          />
+        )}
+        <div className={styles.aiPromptControls}>
+          <button
+            type="button"
+            className={styles.aiPromptBtn}
+            disabled={marketingLeadsMissing.length === 0}
+            onClick={async () => {
+              const block = ['Name\tCompany', ...marketingLeadsMissing.map(l => `${(l.name || '').trim()}\t${(l.company || '').trim()}`)].join('\n');
+              const fullPrompt = `${marketingLeadsPrompt}\n\n${block}`;
+              try {
+                await navigator.clipboard.writeText(fullPrompt);
+                setMarketingLeadsCopyFlash('Copied!');
+              } catch {
+                setMarketingLeadsCopyFlash('Copy failed');
+              }
+              window.setTimeout(() => setMarketingLeadsCopyFlash(''), 1500);
+            }}
+          >Copy full prompt</button>
+          <button type="button" className={styles.aiPromptBtnGhost} onClick={() => togglePrompt('marketingLeads')}>
+            {revealedPrompts.marketingLeads ? 'Hide prompt' : 'Edit prompt'}
+          </button>
+          {revealedPrompts.marketingLeads && (
+            <button type="button" className={styles.aiPromptBtnGhost} onClick={resetMarketingLeadsPrompt}>Reset to default</button>
+          )}
+          {marketingLeadsCopyFlash && <span className={styles.copyFlash}>{marketingLeadsCopyFlash}</span>}
+        </div>
+        <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Company</th>
+                <th style={{ minWidth: 280 }}>Salesforce Link</th>
+              </tr>
+            </thead>
+            <tbody>
+              {marketingLeadsMissing.length === 0 ? (
+                <tr className={styles.emptyRow}>
+                  <td colSpan={3}>No marketing leads are missing a Salesforce Link.</td>
+                </tr>
+              ) : marketingLeadsMissing.map((l, i) => (
+                <tr key={l.id || `${l.name}-${i}`}>
+                  <td>{l.name || '—'}</td>
+                  <td className={l.company ? '' : styles.muted}>{l.company || '—'}</td>
+                  <td>
+                    <MarketingLeadSfCell
+                      value={l.sfUrl}
+                      onCommit={(v) => updateMarketingLeadSfUrl(l.id, v)}
                     />
                   </td>
                 </tr>
