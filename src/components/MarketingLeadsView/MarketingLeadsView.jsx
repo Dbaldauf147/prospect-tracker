@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 
@@ -16,6 +16,7 @@ const COLUMNS = [
   { key: 'email',               label: 'Email',                      defaultWidth: 220 },
   { key: 'jobTitle',            label: 'Job Title',                  defaultWidth: 170 },
   { key: 'company',             label: 'Company',                    defaultWidth: 190 },
+  { key: 'mappedCompany',       label: 'Company Mapping',            defaultWidth: 200 },
   { key: 'status',              label: 'Status',                     defaultWidth: 110 },
   { key: 'createdDate',         label: 'Created Date',               defaultWidth: 150 },
   { key: 'leadSource',          label: 'Last Lead Source',           defaultWidth: 150 },
@@ -100,6 +101,102 @@ function autoDetectMapping(headers) {
 function companyKey(s) {
   return String(s || '').toLowerCase().trim();
 }
+
+// Placeholder Table View company names ("N/A", "TBD", a lone dash, …)
+// that shouldn't pollute the mapping autocomplete or fuzzy index.
+function isPlaceholderCompany(s) {
+  const t = String(s || '').trim();
+  if (!t) return true;
+  if (/^[-—–_]+$/.test(t)) return true;
+  if (/^(n\.?a\.?|n\/a|none|null|tbd|unknown|\?|\.|test)$/i.test(t)) return true;
+  return false;
+}
+
+// Inline autocomplete for the Company Mapping cell — filters the Table
+// View company list by prefix-then-substring as the user types; ↑ / ↓
+// navigates, Enter / click commits, Escape cancels. Local state until
+// commit so the table doesn't re-render on every keystroke. Ported from
+// the Zoom Info view's company picker.
+const CompanyAutocomplete = memo(function CompanyAutocomplete({ value, onCommit, suggestions, placeholder, style }) {
+  const [draft, setDraft] = useState(value ?? '');
+  const [open, setOpen] = useState(false);
+  const [hoverIdx, setHoverIdx] = useState(0);
+  const wrapRef = useRef(null);
+  const lastExternal = useRef(value ?? '');
+
+  useEffect(() => {
+    const v = value ?? '';
+    if (v !== lastExternal.current) { lastExternal.current = v; setDraft(v); }
+  }, [value]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDocDown(e) { if (!wrapRef.current?.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', onDocDown);
+    return () => document.removeEventListener('mousedown', onDocDown);
+  }, [open]);
+
+  const matches = useMemo(() => {
+    const q = draft.trim().toLowerCase();
+    if (!q || !suggestions?.length) return [];
+    const prefix = [];
+    const sub = [];
+    for (const s of suggestions) {
+      const lower = String(s).toLowerCase();
+      if (lower === q) continue;
+      if (lower.startsWith(q)) prefix.push(s);
+      else if (lower.includes(q)) sub.push(s);
+      if (prefix.length + sub.length >= 25) break;
+    }
+    return [...prefix, ...sub].slice(0, 8);
+  }, [draft, suggestions]);
+
+  function commit(v) {
+    const next = v ?? draft;
+    if (next !== lastExternal.current) { lastExternal.current = next; onCommit(next); }
+    setOpen(false);
+  }
+
+  function handleKey(e) {
+    if (open && matches.length > 0) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setHoverIdx(i => (i + 1) % matches.length); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setHoverIdx(i => (i - 1 + matches.length) % matches.length); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); const pick = matches[hoverIdx] || matches[0]; setDraft(pick); commit(pick); return; }
+      if (e.key === 'Escape') { e.preventDefault(); setOpen(false); return; }
+    }
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+  }
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <input
+        type="text"
+        value={draft}
+        onChange={e => { setDraft(e.target.value); setOpen(true); setHoverIdx(0); }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => { requestAnimationFrame(() => { if (!wrapRef.current?.contains(document.activeElement)) commit(); }); }}
+        onKeyDown={handleKey}
+        placeholder={placeholder}
+        style={style}
+      />
+      {open && matches.length > 0 && (
+        <div
+          onMouseDown={e => e.preventDefault()}
+          style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 5, background: '#fff', border: '1px solid var(--color-border)', borderRadius: 4, boxShadow: '0 8px 20px rgba(15, 23, 42, 0.12)', maxHeight: 220, overflowY: 'auto', fontSize: '0.78rem' }}
+        >
+          {matches.map((m, i) => (
+            <div
+              key={m + i}
+              onClick={() => { setDraft(m); commit(m); }}
+              onMouseEnter={() => setHoverIdx(i)}
+              style={{ padding: '0.35rem 0.6rem', cursor: 'pointer', background: i === hoverIdx ? '#DCFCE7' : 'transparent', color: i === hoverIdx ? '#166534' : '#1E293B', fontWeight: i === hoverIdx ? 700 : 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+            >{m}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+});
 
 export function MarketingLeadsView({ prospects = [], settings, updateSettings, onAddProspect }) {
   const persistedRows = useMemo(() => {
@@ -234,6 +331,91 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
   function isOnTableView(company) {
     const k = companyKey(company);
     return !!k && prospectCompanies.has(k);
+  }
+
+  // The company a lead effectively resolves to: the accepted mapping when
+  // set, otherwise the raw pasted Company. Drives the Table View status +
+  // add-to-Table-View bridge so mapping a lead to an existing account
+  // stops it looking like a brand-new company.
+  function effectiveCompany(r) {
+    return (r.mappedCompany || '').trim() || (r.company || '').trim();
+  }
+
+  // Fuzzy index of Table View companies, mirroring the Zoom Info view so
+  // the mapping suggestions here agree with those elsewhere. `strip`
+  // drops punctuation + common corp suffixes for loose matching.
+  const prospectIndex = useMemo(() => {
+    const strip = (s) => String(s || '').toLowerCase()
+      .replace(/[.,]/g, '')
+      .replace(/\b(inc|llc|ltd|corp|co|lp|gmbh|plc|sa|ag)\b/g, '')
+      .replace(/\s+/g, ' ').trim();
+    const map = new Map();
+    for (const p of prospects) {
+      const raw = p?.company;
+      if (isPlaceholderCompany(raw)) continue;
+      const key = String(raw || '').toLowerCase().trim();
+      if (key) map.set(key, p);
+      const norm = strip(raw);
+      if (norm && !map.has(norm)) map.set(norm, p);
+    }
+    return { map, strip };
+  }, [prospects]);
+
+  const companyOptions = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const p of prospects) {
+      const c = (p?.company || '').trim();
+      if (isPlaceholderCompany(c)) continue;
+      const k = c.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(c);
+    }
+    return out.sort((a, b) => a.localeCompare(b));
+  }, [prospects]);
+
+  function findProspectByCompany(company) {
+    if (!company) return null;
+    const direct = prospectIndex.map.get(String(company).toLowerCase().trim());
+    if (direct) return direct;
+    const norm = prospectIndex.strip(company);
+    return norm ? prospectIndex.map.get(norm) || null : null;
+  }
+
+  // Best Table View account for a raw company string: an exact / strip-
+  // normalized hit wins (exact: true); otherwise the closest fuzzy match
+  // by containment + token overlap, gated at score ≥ 50 so we don't
+  // surface low-confidence guesses. Returns null when nothing qualifies.
+  function bestCompanyMatch(typed) {
+    const raw = String(typed || '').trim();
+    if (!raw || raw.length < 2) return null;
+    const exact = findProspectByCompany(raw);
+    if (exact) return { name: (exact.company || raw).trim(), exact: true, score: 100 };
+    const target = prospectIndex.strip(raw);
+    if (!target) return null;
+    const targetTokens = new Set(target.split(' ').filter(Boolean));
+    if (!targetTokens.size) return null;
+    let best = null;
+    let bestScore = 0;
+    for (const opt of companyOptions) {
+      const norm = prospectIndex.strip(opt);
+      if (!norm) continue;
+      let score = 0;
+      if (norm === target) score = 100;
+      else if (norm.startsWith(target) || target.startsWith(norm)) score = 80;
+      else if (norm.includes(target) || target.includes(norm)) score = 70;
+      else {
+        const optTokens = new Set(norm.split(' ').filter(Boolean));
+        let intersect = 0;
+        for (const t of targetTokens) if (optTokens.has(t)) intersect++;
+        if (!intersect) continue;
+        const union = targetTokens.size + optTokens.size - intersect;
+        score = Math.round((intersect / union) * 60);
+      }
+      if (score > bestScore) { best = opt; bestScore = score; }
+    }
+    return bestScore >= 50 ? { name: best, exact: false, score: bestScore } : null;
   }
 
   // Visible list = persisted rows + synthetic padding rows up to the
@@ -408,14 +590,14 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     const seen = new Set();
     const out = [];
     for (const r of persistedRows) {
-      const c = (r.company || '').trim();
+      const c = effectiveCompany(r);
       const k = companyKey(c);
       if (!k || seen.has(k) || prospectCompanies.has(k)) continue;
       seen.add(k);
       out.push(c);
     }
     return out;
-  }, [persistedRows, prospectCompanies]);
+  }, [persistedRows, prospectCompanies]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function addCompanyToTableView(company) {
     if (!onAddProspect) return;
@@ -561,7 +743,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
         >Clear table</button>
       </div>
       <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
-        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, use <strong>Filters</strong> for per-column filtering, drag a header edge to resize, and <strong>Columns</strong> to show/hide columns.
+        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, use <strong>Filters</strong> for per-column filtering, drag a header edge to resize, and <strong>Columns</strong> to show/hide columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account — accept the suggested match or type to pick another.
       </div>
 
       {pasteHelper !== null && (
@@ -673,7 +855,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                       {c.key === 'tvStatus' ? (
                         <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem' }}>
                           {(() => {
-                            const company = (r.company || '').trim();
+                            const company = effectiveCompany(r);
                             if (!company) return <span style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}>—</span>;
                             if (isOnTableView(company)) {
                               return (
@@ -688,6 +870,40 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                                 title={`Create a new Table View account for "${company}".`}
                                 style={{ background: '#fff', border: '1px solid #0EA5E9', color: '#0369A1', padding: '2px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
                               >+ Add to Table View</button>
+                            );
+                          })()}
+                        </div>
+                      ) : c.key === 'mappedCompany' ? (
+                        <div>
+                          <CompanyAutocomplete
+                            value={r.mappedCompany || ''}
+                            onCommit={v => updateCell(r.id, 'mappedCompany', v)}
+                            suggestions={companyOptions}
+                            placeholder={isPad ? '' : 'Map to account…'}
+                            style={cellInputStyle}
+                          />
+                          {!isPad && (() => {
+                            const mapped = (r.mappedCompany || '').trim();
+                            if (mapped) {
+                              return findProspectByCompany(mapped) ? (
+                                <div style={{ padding: '0 0.6rem 0.3rem' }}>
+                                  <span title={`"${mapped}" is a Table View account.`} style={{ fontSize: '0.66rem', color: '#166534', fontWeight: 600 }}>✓ matches Table View</span>
+                                </div>
+                              ) : null;
+                            }
+                            const sugg = bestCompanyMatch(r.company);
+                            if (!sugg) return null;
+                            return (
+                              <div style={{ padding: '0 0.6rem 0.3rem' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => updateCell(r.id, 'mappedCompany', sugg.name)}
+                                  title={sugg.exact
+                                    ? `Map "${r.company}" to the Table View account "${sugg.name}". Click to accept.`
+                                    : `Suggested Table View account for "${r.company}": "${sugg.name}" (fuzzy match, score ${sugg.score}/100). Click to accept.`}
+                                  style={{ background: sugg.exact ? '#DCFCE7' : '#FEF3C7', border: `1px solid ${sugg.exact ? '#86EFAC' : '#FCD34D'}`, color: sugg.exact ? '#166534' : '#92400E', padding: '1px 7px', borderRadius: 999, fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                >→ {sugg.name}</button>
+                              </div>
                             );
                           })()}
                         </div>
