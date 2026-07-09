@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState, memo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { SF_INSTANCE_URL, resolveSfUrl } from '../../utils/salesforceLeads';
 import { getHubspotContacts, updateHubspotCache, notifyCacheUpdated } from '../../utils/hubspotContactsCache';
 import { apiFetch } from '../../utils/apiFetch';
+import { ContactEditModal } from '../ProspectModal/ProspectModal';
 
 // Marketing Leads subtab on the Contacts page. The user pastes a block
 // copied from a Salesforce Leads list view; a column-mapping modal pops
@@ -775,6 +776,68 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     [filtered],
   );
 
+  // ---- Contact popup (shared with the other Contacts subtabs) ---------
+  // Clicking a lead's Name opens the same ContactEditModal used across the
+  // Contacts page. The lead row is held here; the contact object is
+  // derived on render. `editingNameId` toggles a row's Name back to an
+  // inline input so blank / pad rows can still be typed without the popup.
+  const [editingLead, setEditingLead] = useState(null);
+  const [editingNameId, setEditingNameId] = useState(null);
+
+  // Build the contact object handed to ContactEditModal from a lead row.
+  // When the lead's email matches a HubSpot contact already in the cache
+  // (or the lead is mapped to one) that record is spread in — carrying its
+  // id — so the popup edits the real contact; otherwise it's a fresh
+  // contact the modal can create in HubSpot on save. Names are already
+  // healed to "First Last" by normalizeLeadName on load.
+  function buildLeadContact(r) {
+    const email = (r.email || '').trim();
+    const mapped = r.hubspotContactId ? findHubspotById(r.hubspotContactId) : null;
+    const match = mapped || (email ? hubspotByEmail.get(email.toLowerCase()) : null);
+    const parts = normalizeLeadName(r.name).split(/\s+/).filter(Boolean);
+    const base = {
+      firstname: parts[0] || '',
+      lastname: parts.length > 1 ? parts.slice(1).join(' ') : '',
+      email,
+      jobtitle: (r.jobTitle || '').trim(),
+      company: effectiveCompany(r),
+      country: (r.country || '').trim(),
+    };
+    return match ? { ...base, ...match } : base;
+  }
+
+  // Same-company HubSpot contacts + company-name autocomplete list for the
+  // popup's Reports-To / company fields, mirroring the Key Contacts wiring.
+  const editContact = editingLead ? buildLeadContact(editingLead) : null;
+  const editCompanyContacts = useMemo(() => {
+    if (!editContact) return [];
+    const k = companyKey(editContact.company);
+    if (!k) return [];
+    return hubspotContacts.filter(c => companyKey(c?.company) === k);
+  }, [editContact?.company, hubspotContacts]); // eslint-disable-line react-hooks/exhaustive-deps
+  const editEmailDomains = useMemo(() => {
+    if (!editContact) return [];
+    const matched = prospects.find(p => companyKey(p.company) === companyKey(editContact.company));
+    return matched?.emailDomain
+      ? String(matched.emailDomain).split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)
+      : [];
+  }, [editContact?.company, prospects]); // eslint-disable-line react-hooks/exhaustive-deps
+  const editCompanyNames = useMemo(() => prospects.map(p => p.company).filter(Boolean), [prospects]);
+
+  // Per-contact metadata handlers — thin settings-map updaters, identical
+  // in shape to the Key Contacts page so notes / tags / nicknames written
+  // from either place land in the same Firestore settings.
+  const handleContactSaved = useCallback((_updated, opts) => {
+    if (!opts?.silent) setEditingLead(null);
+  }, []);
+  const saveSettingsMap = useCallback((mapKey, cid, value) => {
+    if (cid == null) return;
+    const cur = settings?.[mapKey] || {};
+    const next = { ...cur };
+    if (value && String(value).trim()) next[cid] = value; else delete next[cid];
+    updateSettings({ [mapKey]: next });
+  }, [settings, updateSettings]);
+
   function persist(next) {
     updateSettings({ marketingLeads: next });
   }
@@ -1073,7 +1136,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
         >Clear table</button>
       </div>
       <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
-        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, use <strong>Filters</strong> for per-column filtering, drag a header edge to resize, and <strong>Columns</strong> to show/hide columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account — accept the suggested match or type to pick another. The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand. The <strong>HubSpot Contact</strong> column maps each lead to a HubSpot contact — accept the email/name match, search to pick another, or <strong>+ Add to HubSpot</strong> to create a new contact from the lead.
+        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, use <strong>Filters</strong> for per-column filtering, drag a header edge to resize, and <strong>Columns</strong> to show/hide columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account — accept the suggested match or type to pick another. The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand. The <strong>HubSpot Contact</strong> column maps each lead to a HubSpot contact — accept the email/name match, search to pick another, or <strong>+ Add to HubSpot</strong> to create a new contact from the lead. Click a lead's <strong>Name</strong> to open it in the contact popup (the <strong>✎</strong> next to it edits the name inline instead).
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -1350,11 +1413,49 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                             );
                           })()}
                         </div>
+                      ) : c.key === 'name' ? (
+                        (() => {
+                          const nameVal = (r.name || '').trim();
+                          const isEditingName = editingNameId === r.id;
+                          // Pad rows, blank names, and the explicit "edit"
+                          // toggle fall back to the inline input so leads can
+                          // still be typed / renamed in place. A populated
+                          // name renders as a link into the contact popup.
+                          if (isPad || !nameVal || isEditingName) {
+                            return (
+                              <CommitOnBlurInput
+                                value={r.name || ''}
+                                onCommit={v => { updateCell(r.id, 'name', v); if (isEditingName) setEditingNameId(null); }}
+                                placeholder={isPad ? 'Type or paste a lead…' : '—'}
+                                style={cellInputStyle}
+                                autoFocus={isEditingName}
+                              />
+                            );
+                          }
+                          return (
+                            <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <button
+                                type="button"
+                                onClick={() => setEditingLead(r)}
+                                title={`Open ${nameVal} in the contact popup`}
+                                style={{ border: 'none', background: 'transparent', color: '#0369A1', fontWeight: 700, fontSize: '0.8rem', textDecoration: 'underline', textUnderlineOffset: 2, cursor: 'pointer', padding: 0, fontFamily: 'inherit', textAlign: 'left', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}
+                              >{nameVal}</button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingNameId(r.id)}
+                                title="Edit name inline"
+                                style={{ border: 'none', background: 'transparent', color: '#CBD5E1', cursor: 'pointer', fontSize: '0.75rem', lineHeight: 1, padding: 0, flexShrink: 0 }}
+                                onMouseEnter={e => { e.currentTarget.style.color = '#64748B'; }}
+                                onMouseLeave={e => { e.currentTarget.style.color = '#CBD5E1'; }}
+                              >✎</button>
+                            </div>
+                          );
+                        })()
                       ) : (
                         <CommitOnBlurInput
                           value={r[c.key] || ''}
                           onCommit={v => updateCell(r.id, c.key, v)}
-                          placeholder={isPad && c.key === 'name' ? 'Type or paste a lead…' : '—'}
+                          placeholder="—"
                           style={cellInputStyle}
                         />
                       )}
@@ -1385,6 +1486,59 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
           onCancel={() => setPasteModal(null)}
           onConfirm={executePasteImport}
           onChangeMapping={setHeaderTarget}
+        />,
+        document.body,
+      )}
+
+      {editingLead && editContact && createPortal(
+        <ContactEditModal
+          contact={editContact}
+          onSave={handleContactSaved}
+          onClose={() => setEditingLead(null)}
+          contactNotes={settings?.contactNotes || {}}
+          onSaveNote={(cid, v) => saveSettingsMap('contactNotes', cid, v)}
+          contactOldEmails={settings?.contactOldEmails || {}}
+          onSaveOldEmails={(cid, v) => saveSettingsMap('contactOldEmails', cid, v)}
+          contactNicknames={settings?.contactNicknames || {}}
+          onSaveNickname={(cid, v) => saveSettingsMap('contactNicknames', cid, v)}
+          contactTeamNames={settings?.contactTeamNames || {}}
+          onSaveTeamName={(cid, v) => saveSettingsMap('contactTeamNames', cid, v && v.trim())}
+          contactReportsTo={settings?.contactReportsTo || {}}
+          onSaveReportsTo={(cid, managerIds) => {
+            if (cid == null) return;
+            const cur = settings?.contactReportsTo || {};
+            const next = { ...cur };
+            const arr = Array.isArray(managerIds) ? managerIds.filter(Boolean).map(String) : (managerIds ? [String(managerIds)] : []);
+            if (arr.length) next[cid] = arr; else delete next[cid];
+            updateSettings({ contactReportsTo: next });
+          }}
+          ccMap={settings?.ccMap || {}}
+          onSaveCcMap={m => updateSettings({ ccMap: m })}
+          toAlsoMap={settings?.toAlsoMap || {}}
+          onSaveToAlsoMap={m => updateSettings({ toAlsoMap: m })}
+          contactFamilies={settings?.contactFamilies || {}}
+          onSaveFamily={(cid, info) => {
+            if (cid == null) return;
+            const cur = settings?.contactFamilies || {};
+            const next = { ...cur };
+            const partner = String(info?.partner || '').trim();
+            const kids = String(info?.kids || '').trim();
+            if (!partner && !kids) delete next[cid]; else next[cid] = { partner, kids };
+            updateSettings({ contactFamilies: next });
+          }}
+          contactMetInPerson={settings?.contactMetInPerson || {}}
+          onSaveMetInPerson={(cid, met) => {
+            if (cid == null) return;
+            updateSettings({ contactMetInPerson: { ...(settings?.contactMetInPerson || {}), [cid]: !!met } });
+          }}
+          contactInvitedToLouisville={settings?.contactInvitedToLouisville || {}}
+          onSaveInvitedToLouisville={(cid, invited) => {
+            if (cid == null) return;
+            updateSettings({ contactInvitedToLouisville: { ...(settings?.contactInvitedToLouisville || {}), [cid]: !!invited } });
+          }}
+          companyContacts={editCompanyContacts}
+          emailDomains={editEmailDomains}
+          companyNames={editCompanyNames}
         />,
         document.body,
       )}
