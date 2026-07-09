@@ -385,6 +385,25 @@ export const DROPDOWN_LISTS = [
     label: 'Asset Types',
     options: [...ASSET_TYPES],
   },
+  {
+    // Lead statuses for the Contacts → Marketing Leads tab. Editing this
+    // list on the Dropdowns tab drives the Status column's dropdown there.
+    // Seeded with the common Salesforce lead statuses; "Closed - Converted"
+    // counts as a win and "Closed - Recycle" as a loss for the page's
+    // close-rate summary.
+    key: 'marketingLeadStatus',
+    label: 'Marketing Lead Status',
+    options: [
+      'Open',
+      'Working',
+      'Nurture',
+      'Meeting Set',
+      'Qualified',
+      'Unqualified',
+      'Closed - Converted',
+      'Closed - Recycle',
+    ],
+  },
 ];
 
 // Max-target-age + next-move guidance keyed by Stage. Surfaced beside
