@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { SF_INSTANCE_URL, resolveSfUrl } from '../../utils/salesforceLeads';
+import { getHubspotContacts, updateHubspotCache, notifyCacheUpdated } from '../../utils/hubspotContactsCache';
+import { apiFetch } from '../../utils/apiFetch';
 
 // Marketing Leads subtab on the Contacts page. The user pastes a block
 // copied from a Salesforce Leads list view; a column-mapping modal pops
@@ -19,6 +21,7 @@ const COLUMNS = [
   { key: 'jobTitle',            label: 'Job Title',                  defaultWidth: 170 },
   { key: 'company',             label: 'Company',                    defaultWidth: 190 },
   { key: 'mappedCompany',       label: 'Company Mapping',            defaultWidth: 200 },
+  { key: 'hubspotContact',      label: 'HubSpot Contact',            defaultWidth: 220 },
   { key: 'status',              label: 'Status',                     defaultWidth: 110 },
   { key: 'createdDate',         label: 'Created Date',               defaultWidth: 150 },
   { key: 'leadSource',          label: 'Last Lead Source',           defaultWidth: 150 },
@@ -269,6 +272,91 @@ const CompanyAutocomplete = memo(function CompanyAutocomplete({ value, onCommit,
   );
 });
 
+// Display helpers for a cached HubSpot contact record (slim shape: id /
+// vid, firstname, lastname, email, …).
+function hubspotName(c) {
+  return [c?.firstname, c?.lastname].filter(Boolean).join(' ').trim();
+}
+function hubspotDisplay(c) {
+  const name = hubspotName(c);
+  const email = (c?.email || '').trim();
+  if (name && email) return `${name} — ${email}`;
+  return name || email || '(unnamed contact)';
+}
+
+// Type-to-search picker over the cached HubSpot contacts. Filters by
+// name / email substring; picking a row hands the whole contact object
+// back to onPick. Same interaction model as the Company picker.
+const HubSpotContactAutocomplete = memo(function HubSpotContactAutocomplete({ contacts, onPick, placeholder, style }) {
+  const [draft, setDraft] = useState('');
+  const [open, setOpen] = useState(false);
+  const [hoverIdx, setHoverIdx] = useState(0);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDocDown(e) { if (!wrapRef.current?.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', onDocDown);
+    return () => document.removeEventListener('mousedown', onDocDown);
+  }, [open]);
+
+  const matches = useMemo(() => {
+    const q = draft.trim().toLowerCase();
+    if (!q || !contacts?.length) return [];
+    const out = [];
+    for (const c of contacts) {
+      const name = hubspotName(c).toLowerCase();
+      const email = (c.email || '').toLowerCase();
+      if (name.includes(q) || email.includes(q)) out.push(c);
+      if (out.length >= 8) break;
+    }
+    return out;
+  }, [draft, contacts]);
+
+  function pick(c) { if (c) onPick(c); setDraft(''); setOpen(false); }
+
+  function handleKey(e) {
+    if (open && matches.length > 0) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setHoverIdx(i => (i + 1) % matches.length); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setHoverIdx(i => (i - 1 + matches.length) % matches.length); return; }
+      if (e.key === 'Enter') { e.preventDefault(); pick(matches[hoverIdx] || matches[0]); return; }
+      if (e.key === 'Escape') { e.preventDefault(); setOpen(false); return; }
+    }
+  }
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <input
+        type="text"
+        value={draft}
+        onChange={e => { setDraft(e.target.value); setOpen(true); setHoverIdx(0); }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={handleKey}
+        placeholder={placeholder}
+        style={style}
+      />
+      {open && matches.length > 0 && (
+        <div
+          onMouseDown={e => e.preventDefault()}
+          style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 5, background: '#fff', border: '1px solid var(--color-border)', borderRadius: 4, boxShadow: '0 8px 20px rgba(15, 23, 42, 0.12)', maxHeight: 240, overflowY: 'auto', fontSize: '0.75rem', minWidth: 240 }}
+        >
+          {matches.map((c, i) => (
+            <div
+              key={String(c.id || c.vid || i)}
+              onClick={() => pick(c)}
+              onMouseEnter={() => setHoverIdx(i)}
+              style={{ padding: '0.35rem 0.6rem', cursor: 'pointer', background: i === hoverIdx ? '#DCFCE7' : 'transparent', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+            >
+              <span style={{ fontWeight: 600, color: '#1E293B' }}>{hubspotName(c) || '(no name)'}</span>
+              {c.email && <span style={{ color: '#64748B' }}> — {c.email}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+});
+
 export function MarketingLeadsView({ prospects = [], settings, updateSettings, onAddProspect }) {
   const persistedRows = useMemo(() => {
     const arr = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
@@ -487,6 +575,116 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
       if (score > bestScore) { best = opt; bestScore = score; }
     }
     return bestScore >= 50 ? { name: best, exact: false, score: bestScore } : null;
+  }
+
+  // ---- HubSpot contact mapping ----------------------------------------
+  // Cached HubSpot contacts, loaded from IndexedDB and kept fresh via the
+  // shared hubspot-cache-updated event (same source the Contacts page
+  // subtabs read from). Used to auto-match leads and to power the picker.
+  const [hubspotContacts, setHubspotContacts] = useState([]);
+  const [hubspotBusyId, setHubspotBusyId] = useState('');
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      getHubspotContacts()
+        .then(cs => { if (alive) setHubspotContacts(Array.isArray(cs) ? cs : []); })
+        .catch(() => {});
+    };
+    load();
+    window.addEventListener('hubspot-cache-updated', load);
+    return () => { alive = false; window.removeEventListener('hubspot-cache-updated', load); };
+  }, []);
+
+  const hubspotByEmail = useMemo(() => {
+    const m = new Map();
+    for (const c of hubspotContacts) {
+      const e = (c.email || '').toLowerCase().trim();
+      if (e && !m.has(e)) m.set(e, c);
+    }
+    return m;
+  }, [hubspotContacts]);
+  const hubspotByName = useMemo(() => {
+    const m = new Map();
+    for (const c of hubspotContacts) {
+      const n = hubspotName(c).toLowerCase();
+      if (n && !m.has(n)) m.set(n, c);
+    }
+    return m;
+  }, [hubspotContacts]);
+  const hubspotById = useMemo(() => {
+    const m = new Map();
+    for (const c of hubspotContacts) {
+      const id = String(c.id || c.vid || '');
+      if (id) m.set(id, c);
+    }
+    return m;
+  }, [hubspotContacts]);
+
+  const findHubspotById = (id) => (id ? hubspotById.get(String(id)) || null : null);
+
+  // Best existing HubSpot contact for a lead: an exact email match wins
+  // (kind 'email'), else an exact full-name match (kind 'name'). Null when
+  // neither hits, in which case the cell offers "+ Add to HubSpot".
+  function bestHubspotMatch(row) {
+    const email = (row.email || '').toLowerCase().trim();
+    if (email && hubspotByEmail.has(email)) return { contact: hubspotByEmail.get(email), kind: 'email' };
+    const name = (row.name || '').toLowerCase().trim();
+    if (name && hubspotByName.has(name)) return { contact: hubspotByName.get(name), kind: 'name' };
+    return null;
+  }
+
+  // Persist a lead → HubSpot contact mapping (or clear it with contact =
+  // null). Stores the contact id plus a display-label snapshot so the
+  // cell still reads sensibly if the contact later drops out of the cache.
+  function setHubspotMapping(rowId, contact) {
+    const id = contact ? String(contact.id || contact.vid || '') : '';
+    const label = contact ? hubspotDisplay(contact) : '';
+    if (String(rowId).startsWith('__pad_')) {
+      if (!id) return;
+      persist([...persistedRows, { ...emptyRow(), hubspotContactId: id, hubspotContact: label }]);
+      return;
+    }
+    persist(persistedRows.map(r => (r.id === rowId ? { ...r, hubspotContactId: id, hubspotContact: label } : r)));
+  }
+
+  // Create a brand-new HubSpot contact from the lead's fields, push it
+  // into the local cache, and map the lead to it. Uses the same
+  // create-contact endpoint the Prospect modal's contact import uses.
+  async function addLeadToHubspot(row) {
+    if (String(row.id).startsWith('__pad_')) return;
+    const name = (row.name || '').trim();
+    const email = (row.email || '').trim();
+    if (!name && !email) { window.alert('This lead needs at least a name or email to add to HubSpot.'); return; }
+    const props = {};
+    if (name) {
+      const parts = name.split(/\s+/);
+      props.firstname = parts[0];
+      if (parts.length > 1) props.lastname = parts.slice(1).join(' ');
+    }
+    if (email) props.email = email;
+    const companyName = (row.mappedCompany || '').trim() || (row.company || '').trim();
+    if (companyName) props.company = companyName;
+    if ((row.jobTitle || '').trim()) props.jobtitle = row.jobTitle.trim();
+    setHubspotBusyId(row.id);
+    try {
+      const res = await apiFetch('/api/hubspot?action=create-contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ properties: props }),
+      });
+      const data = await res.json().catch(() => null);
+      if (data?.success && data?.contact) {
+        try { await updateHubspotCache(draft => { draft.contacts.push({ ...data.contact, _source: 'manual' }); }); } catch { /* ignore */ }
+        notifyCacheUpdated();
+        setHubspotMapping(row.id, data.contact);
+      } else {
+        window.alert(`Could not create the HubSpot contact${data?.error ? `: ${data.error}` : '.'}`);
+      }
+    } catch (err) {
+      window.alert(`Failed to create the HubSpot contact: ${err?.message || err}`);
+    } finally {
+      setHubspotBusyId('');
+    }
   }
 
   // Visible list = persisted rows + synthetic padding rows up to the
@@ -847,7 +1045,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
         >Clear table</button>
       </div>
       <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
-        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, use <strong>Filters</strong> for per-column filtering, drag a header edge to resize, and <strong>Columns</strong> to show/hide columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account — accept the suggested match or type to pick another. The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand.
+        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, use <strong>Filters</strong> for per-column filtering, drag a header edge to resize, and <strong>Columns</strong> to show/hide columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account — accept the suggested match or type to pick another. The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand. The <strong>HubSpot Contact</strong> column maps each lead to a HubSpot contact — accept the email/name match, search to pick another, or <strong>+ Add to HubSpot</strong> to create a new contact from the lead.
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -1038,6 +1236,61 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                             );
                           })()}
                         </div>
+                      ) : c.key === 'hubspotContact' ? (
+                        (() => {
+                          const id = r.hubspotContactId ? String(r.hubspotContactId) : '';
+                          if (id) {
+                            const live = findHubspotById(id);
+                            const label = live ? hubspotDisplay(live) : (r.hubspotContact || 'Mapped contact');
+                            return (
+                              <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span title={label} style={{ background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534', padding: '2px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>✓ {label}</span>
+                                {!isPad && (
+                                  <button type="button" onClick={() => setHubspotMapping(r.id, null)} title="Unmap this HubSpot contact" style={{ border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer', fontSize: '0.85rem', lineHeight: 1, padding: 0 }}>×</button>
+                                )}
+                              </div>
+                            );
+                          }
+                          return (
+                            <div>
+                              <HubSpotContactAutocomplete
+                                contacts={hubspotContacts}
+                                onPick={(c) => setHubspotMapping(r.id, c)}
+                                placeholder={isPad ? '' : 'Search HubSpot…'}
+                                style={cellInputStyle}
+                              />
+                              {!isPad && (() => {
+                                const sugg = bestHubspotMatch(r);
+                                if (sugg) {
+                                  const disp = hubspotDisplay(sugg.contact);
+                                  return (
+                                    <div style={{ padding: '0 0.6rem 0.3rem' }}>
+                                      <button
+                                        type="button"
+                                        onClick={() => setHubspotMapping(r.id, sugg.contact)}
+                                        title={`Map to HubSpot contact "${disp}" (${sugg.kind === 'email' ? 'email match' : 'name match'}). Click to accept.`}
+                                        style={{ background: sugg.kind === 'email' ? '#DCFCE7' : '#FEF3C7', border: `1px solid ${sugg.kind === 'email' ? '#86EFAC' : '#FCD34D'}`, color: sugg.kind === 'email' ? '#166534' : '#92400E', padding: '1px 7px', borderRadius: 999, fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                      >→ {disp}</button>
+                                    </div>
+                                  );
+                                }
+                                if (!(r.name || '').trim() && !(r.email || '').trim()) return null;
+                                const busy = hubspotBusyId === r.id;
+                                return (
+                                  <div style={{ padding: '0 0.6rem 0.3rem' }}>
+                                    <button
+                                      type="button"
+                                      disabled={busy}
+                                      onClick={() => addLeadToHubspot(r)}
+                                      title="Create a new HubSpot contact from this lead (name, email, company, job title) and map it here."
+                                      style={{ background: '#fff', border: '1px solid #0EA5E9', color: '#0369A1', padding: '1px 7px', borderRadius: 999, fontSize: '0.68rem', fontWeight: 700, cursor: busy ? 'default' : 'pointer', fontFamily: 'inherit', opacity: busy ? 0.6 : 1 }}
+                                    >{busy ? 'Adding…' : '+ Add to HubSpot'}</button>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          );
+                        })()
                       ) : c.key === 'mappedCompany' ? (
                         <div>
                           <CompanyAutocomplete
