@@ -695,7 +695,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
       for (const r of sheet.records) {
         const company = findCol(r, ['account', 'company', 'client', 'name']);
         if (!company) continue;
-        const rec = { status: findCol(r, ['status']), cdm: resolveTargetAccountCdm(r, cdmCol) };
+        const rec = { name: company.trim(), status: findCol(r, ['status']), cdm: resolveTargetAccountCdm(r, cdmCol) };
         const keyLower = company.toLowerCase().trim();
         if (keyLower && !map.has(keyLower)) map.set(keyLower, rec);
         const norm = prospectIndex.strip(company);
@@ -713,19 +713,91 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     return norm ? targetAccountsIndex.get(norm) || null : null;
   }
 
+  // Every account that carries a non-empty Status — the user's own Table
+  // View accounts plus the cross-CDM Target Accounts — used to borrow a
+  // status for a company whose exact record has a blank one.
+  const companyStatusCandidates = useMemo(() => {
+    const out = [];
+    for (const p of prospects) {
+      const name = (p?.company || '').trim();
+      const status = (p?.status || '').trim();
+      if (!name || !status || isPlaceholderCompany(name)) continue;
+      out.push({ name, status, cdm: (p.cdm || '').trim(), owned: true });
+    }
+    const seen = new Set();
+    for (const rec of targetAccountsIndex.values()) {
+      if (!rec.name || !rec.status) continue;
+      const k = rec.name.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push({ name: rec.name, status: rec.status, cdm: rec.cdm, owned: false });
+    }
+    return out;
+  }, [prospects, targetAccountsIndex]);
+
+  // Closest account (by name) that HAS a status, for when a company's own
+  // record is blank — so "JP Morgan Asset Management" (no status) can
+  // surface the status of a sibling like "JP Morgan Asset Management Real
+  // Estate". Requires a containment / strong token overlap so unrelated
+  // same-word companies (e.g. a different "JP Morgan Chase") don't leak in.
+  function fuzzyStatusFor(company) {
+    const target = prospectIndex.strip(company);
+    if (!target) return null;
+    const targetTokens = new Set(target.split(' ').filter(Boolean));
+    if (!targetTokens.size) return null;
+    let best = null;
+    let bestScore = 0;
+    for (const e of companyStatusCandidates) {
+      const norm = prospectIndex.strip(e.name);
+      if (!norm) continue;
+      let score = 0;
+      if (norm === target) score = 100;
+      else if (norm.startsWith(target) || target.startsWith(norm)) score = 85;
+      else if (norm.includes(target) || target.includes(norm)) score = 75;
+      else {
+        const optTokens = new Set(norm.split(' ').filter(Boolean));
+        let inter = 0;
+        for (const t of targetTokens) if (optTokens.has(t)) inter++;
+        if (!inter) continue;
+        const union = targetTokens.size + optTokens.size - inter;
+        score = Math.round((inter / union) * 60);
+      }
+      // On ties, prefer the user's own account.
+      if (score > bestScore || (score === bestScore && e.owned && !best?.owned)) { best = e; bestScore = score; }
+    }
+    return bestScore >= 70 ? best : null;
+  }
+
   // Combined company info for a lead's company: the user's own Table View
-  // account wins (richest, editable data); otherwise fall back to the
-  // cross-CDM Target Accounts list so an account owned by another CDM
-  // still shows a Status + who owns it. Returns { status, cdm, name,
-  // owned } or null when the company is unknown everywhere.
+  // account wins (richest, editable data); otherwise the cross-CDM Target
+  // Accounts list. When the exact record's Status is blank, borrow one
+  // from the closest related account that has a status (statusFrom names
+  // it). Returns { status, cdm, name, owned, statusFrom } or null.
   function lookupCompanyInfo(company) {
     const c = String(company || '').trim();
     if (!c) return null;
     const p = findProspectByCompany(c);
-    if (p) return { status: (p.status || '').trim(), cdm: (p.cdm || '').trim(), name: (p.company || c).trim(), owned: true };
-    const t = findTargetAccount(c);
-    if (t) return { status: (t.status || '').trim(), cdm: (t.cdm || '').trim(), name: c, owned: false };
-    return null;
+    let primary = null;
+    if (p) primary = { status: (p.status || '').trim(), cdm: (p.cdm || '').trim(), name: (p.company || c).trim(), owned: true };
+    else {
+      const t = findTargetAccount(c);
+      if (t) primary = { status: (t.status || '').trim(), cdm: (t.cdm || '').trim(), name: (t.name || c).trim(), owned: false };
+    }
+    if (primary?.status) return primary;
+    // Exact record has no status (or no exact match) — borrow one from the
+    // closest related account that does.
+    const fuzzy = fuzzyStatusFor(c);
+    if (fuzzy) {
+      const fromName = fuzzy.name !== (primary?.name || c) ? fuzzy.name : null;
+      return {
+        status: fuzzy.status,
+        cdm: primary?.cdm || fuzzy.cdm,
+        name: primary?.name || c,
+        owned: primary?.owned ?? fuzzy.owned,
+        statusFrom: fromName,
+      };
+    }
+    return primary;
   }
 
   // Best Table View account for a raw company string: an exact / strip-
@@ -1701,9 +1773,11 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                           return (
                             <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem' }}>
                               <span
-                                title={`Status for "${info.name}"${info.owned ? '' : ' (from Target Accounts — another CDM)'}`}
-                                style={{ display: 'inline-block', maxWidth: '100%', background: `${color}1A`, border: `1px solid ${color}`, color, padding: '2px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                              >{status}</span>
+                                title={info.statusFrom
+                                  ? `Status borrowed from the related account "${info.statusFrom}" — "${info.name}" has no status set.`
+                                  : `Status for "${info.name}"${info.owned ? '' : ' (from Target Accounts — another CDM)'}`}
+                                style={{ display: 'inline-block', maxWidth: '100%', background: `${color}1A`, border: `1px ${info.statusFrom ? 'dashed' : 'solid'} ${color}`, color, padding: '2px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                              >{status}{info.statusFrom ? ' *' : ''}</span>
                             </div>
                           );
                         })()
