@@ -4,6 +4,7 @@ import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { SF_INSTANCE_URL, resolveSfUrl } from '../../utils/salesforceLeads';
 import { getHubspotContacts, updateHubspotCache, notifyCacheUpdated } from '../../utils/hubspotContactsCache';
 import { apiFetch } from '../../utils/apiFetch';
+import { STATUS_COLORS } from '../../data/enums';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 
@@ -23,6 +24,7 @@ const COLUMNS = [
   { key: 'jobTitle',            label: 'Job Title',                  defaultWidth: 170 },
   { key: 'company',             label: 'Company',                    defaultWidth: 190 },
   { key: 'mappedCompany',       label: 'Company Mapping',            defaultWidth: 200 },
+  { key: 'companyStatus',       label: 'Company Status',             defaultWidth: 150, readonly: true },
   { key: 'hubspotContact',      label: 'HubSpot Contact',            defaultWidth: 220 },
   { key: 'hubspotTitle',        label: 'HubSpot Title',              defaultWidth: 170, readonly: true },
   { key: 'status',              label: 'Status',                     defaultWidth: 110 },
@@ -1618,6 +1620,32 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                               placeholder={isPad ? '' : 'Paste link or Lead ID…'}
                               style={cellInputStyle}
                             />
+                          );
+                        })()
+                      ) : c.key === 'companyStatus' ? (
+                        (() => {
+                          // The mapped Table View account's Status (Client /
+                          // Inside Sales / Qualifying / …), shown as a colored
+                          // chip. Resolves against the lead's effective company
+                          // (mapped account, else the raw Company).
+                          const company = effectiveCompany(r);
+                          const prospect = company ? findProspectByCompany(company) : null;
+                          const status = (prospect?.status || '').trim();
+                          if (!status) {
+                            return (
+                              <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem' }}>
+                                <span style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}>—</span>
+                              </div>
+                            );
+                          }
+                          const color = STATUS_COLORS[status] || '#64748B';
+                          return (
+                            <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem' }}>
+                              <span
+                                title={`Table View status for "${prospect.company || company}"`}
+                                style={{ display: 'inline-block', maxWidth: '100%', background: `${color}1A`, border: `1px solid ${color}`, color, padding: '2px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                              >{status}</span>
+                            </div>
                           );
                         })()
                       ) : c.key === 'tvStatus' ? (
