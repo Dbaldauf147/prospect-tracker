@@ -13,12 +13,14 @@ import { ZoomInfoView } from '../ZoomInfoView/ZoomInfoView';
 import { AllContactsView } from '../AllContactsView/AllContactsView';
 import { KeyProspectsView } from '../KeyProspectsView/KeyProspectsView';
 import { EventsView } from '../EventsView/EventsView';
+import { MarketingLeadsView } from '../MarketingLeadsView/MarketingLeadsView';
 import { setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
 
 const ALL_SUBTABS = [
   { key: 'hubspot',    label: 'HubSpot',          adminOnly: true },
   { key: 'se',         label: 'SE',               adminOnly: true },
   { key: 'bulk',       label: 'Bulk Add' },
+  { key: 'marketing',  label: 'Marketing Leads' },
   { key: 'all',        label: 'All Contacts' },
   { key: 'key',        label: 'Key Contacts' },
   { key: 'keyprospects', label: 'Key Prospects' },
@@ -156,6 +158,14 @@ export function ContactsView({
             settings={settings}
             updateSettings={updateSettings}
             targetAccountsData={targetAccountsData}
+          />
+        )}
+        {subtab === 'marketing' && (
+          <MarketingLeadsView
+            prospects={prospects}
+            settings={settings}
+            updateSettings={updateSettings}
+            onAddProspect={onAddProspect}
           />
         )}
         {subtab === 'all' && (
