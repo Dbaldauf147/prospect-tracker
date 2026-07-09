@@ -35,6 +35,11 @@ const COLUMNS = [
 const MIN_COLUMN_WIDTH = 60;
 const MIN_VISIBLE_ROWS = 25;
 
+// Note stamped onto a HubSpot contact the moment it's created from a
+// Marketing Lead, so its origin is recorded on the contact's timeline
+// (and mirrored into the app's Notes column).
+const MARKETING_LEAD_NOTE = 'Marketing Lead';
+
 // Target fields the paste-mapping modal can fill. Aliases match common
 // Salesforce / Excel header conventions case- and punctuation-
 // insensitively, so "Job Title", "jobtitle", "Title" all hit jobTitle.
@@ -779,8 +784,29 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     }
   }
 
+  // Post a note engagement to a HubSpot contact (its own timeline entry,
+  // not a contact property). Returns true when it lands. Best-effort —
+  // the caller ignores failures so a note hiccup never blocks the create.
+  async function postHubspotContactNote(contactId, body) {
+    const id = String(contactId || '');
+    const text = String(body || '').trim();
+    if (!id || !text) return false;
+    try {
+      const res = await apiFetch('/api/hubspot?action=create-contact-note', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactId: id, body: text }),
+      });
+      const data = await res.json().catch(() => null);
+      return !!(data?.success || data?.note || data?.engagement);
+    } catch {
+      return false;
+    }
+  }
+
   // Create a brand-new HubSpot contact from the lead's fields, push it
-  // into the local cache, and map the lead to it.
+  // into the local cache, map the lead to it, and stamp a "Marketing
+  // Lead" note on the contact.
   async function addLeadToHubspot(row) {
     if (String(row.id).startsWith('__pad_')) return;
     if (!(row.name || '').trim() && !(row.email || '').trim()) {
@@ -793,6 +819,15 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
       try { await updateHubspotCache(draft => { draft.contacts.push({ ...res.contact, _source: 'manual' }); }); } catch { /* ignore */ }
       notifyCacheUpdated();
       setHubspotMapping(row.id, res.contact);
+      const contactId = String(res.contact.id || res.contact.vid || '');
+      const noted = await postHubspotContactNote(contactId, MARKETING_LEAD_NOTE);
+      if (noted && contactId) {
+        const cur = settings?.contactNotes || {};
+        const prior = String(cur[contactId] || '').trim();
+        if (!prior.includes(MARKETING_LEAD_NOTE)) {
+          updateSettings({ contactNotes: { ...cur, [contactId]: prior ? `${prior}\n${MARKETING_LEAD_NOTE}` : MARKETING_LEAD_NOTE } });
+        }
+      }
     } else {
       window.alert(`Could not create the HubSpot contact${res.error ? `: ${res.error}` : '.'}`);
     }
@@ -838,12 +873,30 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
       try { await updateHubspotCache(draft => { for (const c of created) draft.contacts.push(c); }); } catch { /* ignore */ }
       notifyCacheUpdated();
     }
+    // Stamp a "Marketing Lead" note on each new contact (best effort),
+    // collecting the ones that land so we can mirror them into the local
+    // Notes store alongside the mapping write below.
+    const curNotes = settings?.contactNotes || {};
+    const notesPatch = {};
+    for (const c of created) {
+      const cid = String(c.id || c.vid || '');
+      if (!cid) continue;
+      const noted = await postHubspotContactNote(cid, MARKETING_LEAD_NOTE); // eslint-disable-line no-await-in-loop
+      if (!noted) continue;
+      const prior = String((notesPatch[cid] ?? curNotes[cid]) || '').trim();
+      notesPatch[cid] = prior && !prior.includes(MARKETING_LEAD_NOTE) ? `${prior}\n${MARKETING_LEAD_NOTE}` : (prior || MARKETING_LEAD_NOTE);
+    }
+    // One settings write for both the lead→contact mappings and the note
+    // mirror, so the page doesn't churn through two round-trips.
+    const patch = {};
     if (mappingById.size) {
-      persist(persistedRows.map(r => {
+      patch.marketingLeads = persistedRows.map(r => {
         const m = mappingById.get(r.id);
         return m ? { ...r, hubspotContactId: m.id, hubspotContact: m.label } : r;
-      }));
+      });
     }
+    if (Object.keys(notesPatch).length) patch.contactNotes = { ...curNotes, ...notesPatch };
+    if (Object.keys(patch).length) updateSettings(patch);
     setBulkAddingHubspot(false);
     window.alert(`Added ${created.length} contact${created.length === 1 ? '' : 's'} to HubSpot${failed ? ` — ${failed} failed` : ''}.`);
   }
