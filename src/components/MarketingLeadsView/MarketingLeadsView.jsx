@@ -108,6 +108,33 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
   }, [settings]);
 
   const [search, setSearch] = useState('');
+  // Click-to-sort state (display-only; not persisted). sortDir cycles
+  // asc → desc → none as the user re-clicks a header.
+  const [sortKey, setSortKey] = useState('');
+  const [sortDir, setSortDir] = useState('asc'); // 'asc' | 'desc'
+  // Per-column contains-filters, keyed by column key. Shown in a filter
+  // row under the header when the "Filters" toggle is on.
+  const [columnFilters, setColumnFilters] = useState({});
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
+  function cycleSort(key) {
+    if (sortKey !== key) { setSortKey(key); setSortDir('asc'); return; }
+    if (sortDir === 'asc') { setSortDir('desc'); return; }
+    // Was descending → clear the sort back to natural (paste) order.
+    setSortKey('');
+    setSortDir('asc');
+  }
+  function setColumnFilter(key, value) {
+    setColumnFilters(prev => {
+      const next = { ...prev };
+      if (value) next[key] = value; else delete next[key];
+      return next;
+    });
+  }
+  function clearAllFilters() {
+    setColumnFilters({});
+    setSearch('');
+  }
 
   // Column visibility — toggleable via the "Columns" dropdown, persisted
   // via settings.marketingLeadsVisibleCols. Falls back to every column
@@ -212,19 +239,56 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
   // Visible list = persisted rows + synthetic padding rows up to the
   // minimum. Padding rows have ids prefixed with "__pad_" so updateCell
   // can promote them into the persisted set on first edit.
-  const visibleRows = useMemo(() => {
-    const padding = Math.max(0, MIN_VISIBLE_ROWS - persistedRows.length);
-    const padRows = Array.from({ length: padding }, (_, i) => ({ ...emptyRow(), id: `__pad_${i}` }));
-    return [...persistedRows, ...padRows];
-  }, [persistedRows]);
+  const activeColumnFilters = useMemo(
+    () => Object.entries(columnFilters).filter(([, v]) => String(v || '').trim()),
+    [columnFilters],
+  );
+  const isFiltering = !!search.trim() || activeColumnFilters.length > 0;
+  const isSorting = !!sortKey;
 
+  // Compare two rows for the active sort column. Created Date sorts
+  // chronologically when both values parse as dates; everything else
+  // falls back to a case-insensitive locale string compare. Blank cells
+  // always sink to the bottom regardless of direction.
+  function sortCompare(a, b) {
+    const av = String(a[sortKey] ?? '').trim();
+    const bv = String(b[sortKey] ?? '').trim();
+    if (!av && !bv) return 0;
+    if (!av) return 1;
+    if (!bv) return -1;
+    let cmp;
+    if (sortKey === 'createdDate') {
+      const at = Date.parse(av);
+      const bt = Date.parse(bv);
+      if (!Number.isNaN(at) && !Number.isNaN(bt)) cmp = at - bt;
+      else cmp = av.localeCompare(bv, undefined, { numeric: true, sensitivity: 'base' });
+    } else {
+      cmp = av.localeCompare(bv, undefined, { numeric: true, sensitivity: 'base' });
+    }
+    return sortDir === 'desc' ? -cmp : cmp;
+  }
+
+  // Display list = real rows passing the search + per-column filters,
+  // sorted if a sort is active, then padded with empty scratch rows up
+  // to the minimum — but only in the unfiltered / unsorted default view
+  // so a filter or sort never surfaces phantom blank rows.
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return visibleRows;
-    return visibleRows.filter(r =>
-      EDITABLE_KEYS.some(k => String(r[k] || '').toLowerCase().includes(q)),
-    );
-  }, [visibleRows, search]);
+    let rows = persistedRows.filter(r => {
+      if (q && !EDITABLE_KEYS.some(k => String(r[k] || '').toLowerCase().includes(q))) return false;
+      for (const [key, val] of activeColumnFilters) {
+        if (!String(r[key] || '').toLowerCase().includes(String(val).trim().toLowerCase())) return false;
+      }
+      return true;
+    });
+    if (isSorting) rows = [...rows].sort(sortCompare);
+    if (!isFiltering && !isSorting) {
+      const padding = Math.max(0, MIN_VISIBLE_ROWS - rows.length);
+      const padRows = Array.from({ length: padding }, (_, i) => ({ ...emptyRow(), id: `__pad_${i}` }));
+      rows = [...rows, ...padRows];
+    }
+    return rows;
+  }, [persistedRows, search, activeColumnFilters, isFiltering, isSorting, sortKey, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function persist(next) {
     updateSettings({ marketingLeads: next });
@@ -429,6 +493,24 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
             style={btn({ border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)' })}
           >Reset widths</button>
         )}
+        <button
+          type="button"
+          onClick={() => setFiltersOpen(o => !o)}
+          title="Show a per-column filter row under the header. Type in any column to narrow the list; filters combine with the search box."
+          style={btn({
+            border: `1px solid ${filtersOpen || activeColumnFilters.length ? '#009530' : 'var(--color-border)'}`,
+            background: filtersOpen || activeColumnFilters.length ? '#F0FDF4' : '#fff',
+            color: filtersOpen || activeColumnFilters.length ? '#166534' : 'var(--color-text-secondary)',
+          })}
+        >Filters{activeColumnFilters.length ? ` (${activeColumnFilters.length})` : ''}</button>
+        {(activeColumnFilters.length > 0 || search.trim() || sortKey) && (
+          <button
+            type="button"
+            onClick={() => { clearAllFilters(); setSortKey(''); }}
+            title="Clear the search, every column filter, and the active sort."
+            style={btn({ border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)' })}
+          >Reset view</button>
+        )}
         <div ref={colsPickerRef} style={{ position: 'relative' }}>
           <button
             type="button"
@@ -479,7 +561,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
         >Clear table</button>
       </div>
       <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
-        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing.
+        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, use <strong>Filters</strong> for per-column filtering, drag a header edge to resize, and <strong>Columns</strong> to show/hide columns.
       </div>
 
       {pasteHelper !== null && (
@@ -527,7 +609,18 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                   borderBottom: '1px solid var(--color-border)', position: 'sticky', top: 0, zIndex: 1,
                   overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
                 }}>
-                  <span style={{ position: 'relative', display: 'block' }}>{c.label}</span>
+                  <span
+                    onClick={c.readonly ? undefined : () => cycleSort(c.key)}
+                    title={c.readonly ? undefined : `Sort by ${c.label}`}
+                    style={{ position: 'relative', display: 'block', paddingRight: 12, cursor: c.readonly ? 'default' : 'pointer', userSelect: 'none' }}
+                  >
+                    {c.label}
+                    {sortKey === c.key && (
+                      <span style={{ position: 'absolute', right: 0, top: 0, color: '#009530', fontSize: '0.68rem' }}>
+                        {sortDir === 'asc' ? '▲' : '▼'}
+                      </span>
+                    )}
+                  </span>
                   <span
                     onMouseDown={e => startResize(e, c.key)}
                     onDoubleClick={() => {
@@ -544,12 +637,30 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
               ))}
               <th style={{ background: '#F1F5F9', borderBottom: '1px solid var(--color-border)', position: 'sticky', top: 0, zIndex: 1 }} />
             </tr>
+            {filtersOpen && (
+              <tr>
+                {visibleColumnList.map(c => (
+                  <th key={c.key} style={{ padding: '2px 4px', background: '#F8FAFC', borderBottom: '1px solid var(--color-border)', position: 'sticky', top: 28, zIndex: 1 }}>
+                    {c.readonly ? null : (
+                      <input
+                        type="text"
+                        value={columnFilters[c.key] || ''}
+                        onChange={e => setColumnFilter(c.key, e.target.value)}
+                        placeholder="Filter…"
+                        style={{ width: '100%', boxSizing: 'border-box', padding: '3px 5px', fontSize: '0.72rem', border: '1px solid var(--color-border)', borderRadius: 3, fontFamily: 'inherit', fontWeight: 400 }}
+                      />
+                    )}
+                  </th>
+                ))}
+                <th style={{ background: '#F8FAFC', borderBottom: '1px solid var(--color-border)', position: 'sticky', top: 28, zIndex: 1 }} />
+              </tr>
+            )}
           </thead>
           <tbody>
             {filtered.length === 0 && (
               <tr>
                 <td colSpan={visibleColumnList.length + 1} style={{ padding: '1.2rem', textAlign: 'center', color: 'var(--color-text-muted)', fontStyle: 'italic', fontSize: '0.78rem' }}>
-                  No matches for the current search.
+                  {isFiltering ? 'No leads match the current search / filters.' : 'No leads yet — paste from Salesforce to get started.'}
                 </td>
               </tr>
             )}
