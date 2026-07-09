@@ -2,7 +2,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
-import { setOppField, loadOpps2Cache, loadOpps2FromFirestore, mergeOpps2Datasets } from '../../utils/opps2Store';
+import { setOppField, setOppBfoLink, loadOpps2Cache, loadOpps2FromFirestore, mergeOpps2Datasets } from '../../utils/opps2Store';
+import { normalizeCompany as canonCompany } from '../../utils/companyNorm';
 import { dbGet } from '../../utils/db';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { apiFetch } from '../../utils/apiFetch';
@@ -246,6 +247,29 @@ function writeHiddenActivityCols(set) {
 // space on either side doesn't drop the match.
 function normalizeBfoOppName(s) {
   return String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+// Values an Opps "BFO Link" (BFO Opportunity Name) cell can hold that
+// mean "no name yet" — a dash placeholder on new opps, #N/A on sheet
+// imports. Neither counts as "already tagged". Mirrors the BFO Activity
+// page so the two views agree on which opps still need a tag.
+const BFO_BLANK_SENTINELS = new Set(['', '-', '#n/a', 'n/a']);
+
+// The opp's BFO Opportunity Name, or '' when it holds only a blank
+// placeholder. Use this everywhere we decide whether an opp is tagged.
+function bfoOppNameOf(r) {
+  const v = String(r?.['BFO Link'] || '').trim();
+  return BFO_BLANK_SENTINELS.has(v.toLowerCase()) ? '' : v;
+}
+
+// Readable label for an Opps opp shown as an assignment target — Scope
+// plus Stage / Open Year context, falling back to the row id. Mirrors
+// the BFO Activity page's oppTargetLabel.
+function bfoOppTargetLabel(r) {
+  const scope = String(r?.Scope || '').trim();
+  const meta = [r?.Stage, r?.['Open Year']].map(v => String(v || '').trim()).filter(Boolean).join(' · ');
+  const base = scope || `Opp ${r?._id}`;
+  return meta ? `${base} (${meta})` : base;
 }
 
 function readAiPrompt() {
@@ -959,6 +983,10 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   const [bfoPrepPrompt, setBfoPrepPrompt] = useState(readBfoPrepPrompt);
   const [marketingLeadsPrompt, setMarketingLeadsPrompt] = useState(readMarketingLeadsPrompt);
   const [bfoActivity, setBfoActivity] = useState(null);
+  // Tagging state for the "BFO Opportunity Name not tagged to an opp"
+  // warning mirrored from the BFO Activity page.
+  const [assigningBfo, setAssigningBfo] = useState(false);
+  const [bfoAssignFlash, setBfoAssignFlash] = useState('');
   const [copyFlash, setCopyFlash] = useState('');
   const [marketingLeadsCopyFlash, setMarketingLeadsCopyFlash] = useState('');
   const [newBfoOppCopyFlash, setNewBfoOppCopyFlash] = useState('');
@@ -2155,6 +2183,105 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     }
   };
 
+  // ---- BFO Opportunity Names not tagged to an opp on Opps ----
+  // Mirrors the warning on the BFO Activity page: any Opportunity Name in
+  // the pasted BFO Activity data that has no matching opp on the Opps tab
+  // is surfaced up top so it can be tagged onto an untagged opp.
+
+  // Set of BFO Opportunity Names that already exist on the Opps tab
+  // (keyed by "BFO Link", lower-cased + trimmed).
+  const taggedBfoOppNameKeys = useMemo(() => {
+    const set = new Set();
+    for (const r of (oppsCache?.records || [])) {
+      const k = bfoOppNameOf(r).toLowerCase();
+      if (k) set.add(k);
+    }
+    return set;
+  }, [oppsCache]);
+
+  // BFO Activity Opportunity Names with no matching opp on the Opps tab,
+  // paired with the BFO Account they came from. Suppressed until the Opps
+  // cache has loaded (taggedBfoOppNameKeys empty) so we don't flag every
+  // row before there's anything to match against.
+  const untaggedBfoOppNames = useMemo(() => {
+    if (!bfoActivity?.headers?.length || taggedBfoOppNameKeys.size === 0) return [];
+    const oppCol = bfoActivity.headers.find(h => /opportunity\s*name/i.test(h));
+    if (!oppCol) return [];
+    const acctCol = bfoActivity.headers.find(h => /^account(\s*name)?$/i.test(h.trim()))
+      || bfoActivity.headers.find(h => /account/i.test(h));
+    const seen = new Set();
+    const missing = [];
+    for (const r of bfoActivity.rows) {
+      const raw = String(r[oppCol] || '').trim();
+      if (!raw) continue;
+      const k = raw.toLowerCase();
+      if (taggedBfoOppNameKeys.has(k) || seen.has(k)) continue;
+      seen.add(k);
+      missing.push({ name: raw, account: acctCol ? String(r[acctCol] || '').trim() : '' });
+    }
+    return missing;
+  }, [bfoActivity, taggedBfoOppNameKeys]);
+
+  // Normalized company → that company's BFO Company Name, sourced from the
+  // Table View prospect records. Keyed with the canonical companyNorm so
+  // it lines up with the BFO Activity page's matching.
+  const bfoCompanyByAccountCanon = useMemo(() => {
+    const map = new Map();
+    for (const p of (prospects || [])) {
+      const key = canonCompany(p?.company || '');
+      const bfo = String(p?.bfoCompanyName || '').trim();
+      if (key && bfo) map.set(key, bfo);
+    }
+    return map;
+  }, [prospects]);
+
+  // Opps that have NO BFO Opportunity Name yet, indexed by every key we
+  // might match a BFO Activity row on: the normalized Account, the opp's
+  // own normalized BFO Company Name, and the normalized BFO Company Name
+  // carried on the matching Table View company. Closed opps excluded.
+  const untaggedOppsByCanonKey = useMemo(() => {
+    const map = new Map();
+    const add = (key, opp) => {
+      if (!key) return;
+      let list = map.get(key);
+      if (!list) { list = []; map.set(key, list); }
+      if (!list.some(o => o._id === opp._id)) list.push(opp);
+    };
+    for (const r of (oppsCache?.records || [])) {
+      if (bfoOppNameOf(r) !== '') continue;
+      if (CLOSED_OPP_STAGES.has(String(r.Stage || '').trim().toLowerCase())) continue;
+      const acctKey = canonCompany(r.Account || '');
+      add(acctKey, r);
+      add(canonCompany(r['BFO Company Name'] || ''), r);
+      const bfo = bfoCompanyByAccountCanon.get(acctKey);
+      if (bfo) add(canonCompany(bfo), r);
+    }
+    return map;
+  }, [oppsCache, bfoCompanyByAccountCanon]);
+
+  // Tag the chosen Opps opp with the BFO Opportunity Name, persist through
+  // the shared Opps 2 store, then refresh the local cache so the warning
+  // reflects the new tag. Optimistically drops the opp off the candidate
+  // lists immediately.
+  async function assignBfoOppName(oppId, bfoName) {
+    if (assigningBfo) return;
+    setAssigningBfo(true);
+    setOppsCache(prev => (prev && Array.isArray(prev.records))
+      ? { ...prev, records: prev.records.map(r => (String(r._id) === String(oppId) ? { ...r, 'BFO Link': bfoName } : r)) }
+      : prev);
+    try {
+      await setOppBfoLink(user?.uid, oppId, bfoName);
+      const refreshed = await loadOppsFromCache();
+      if (refreshed) setOppsCache(refreshed);
+      setBfoAssignFlash(`Tagged an Opps opp with "${bfoName}".`);
+    } catch (err) {
+      setBfoAssignFlash(`Could not tag opp: ${err?.message || err}`);
+    } finally {
+      setAssigningBfo(false);
+      window.setTimeout(() => setBfoAssignFlash(''), 3500);
+    }
+  }
+
   const dateLabel = useMemo(() => parseIsoDate(referenceDate).toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
   }), [referenceDate]);
@@ -2338,6 +2465,52 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
         >Copy all prompts</button>
         {copyAllFlash && <span className={styles.copyFlash}>{copyAllFlash}</span>}
       </div>
+      {bfoAssignFlash && (
+        <div className={styles.bfoAssignFlash}>{bfoAssignFlash}</div>
+      )}
+      {untaggedBfoOppNames.length > 0 && (
+        <div className={styles.warning}>
+          <strong>
+            ⚠ {untaggedBfoOppNames.length} BFO Opportunity Name{untaggedBfoOppNames.length === 1 ? '' : 's'} not tagged to an opp on Opps
+          </strong>
+          <div className={styles.warningHint}>
+            Click an Opps opp below to tag it with the BFO Opportunity Name. Only opps that don&apos;t already have a BFO Opportunity Name are listed.
+          </div>
+          <ul className={styles.warnList}>
+            {untaggedBfoOppNames.map(({ name, account }) => {
+              const candidates = untaggedOppsByCanonKey.get(canonCompany(account)) || [];
+              return (
+                <li key={name} className={styles.warnItem}>
+                  <div className={styles.warnName}>
+                    <span className={styles.warnNameText}>{name}</span>
+                    {account && <span className={styles.warnAcct}> · {account}</span>}
+                  </div>
+                  {candidates.length === 0 ? (
+                    <div className={styles.warnNone}>
+                      No untagged Opps opps{account ? ` for “${account}”` : ''} to assign.
+                    </div>
+                  ) : (
+                    <div className={styles.warnChips}>
+                      {candidates.map(c => (
+                        <button
+                          key={c._id}
+                          type="button"
+                          className={styles.assignChip}
+                          disabled={assigningBfo}
+                          title={`Tag this opp's BFO Opportunity Name as "${name}"`}
+                          onClick={() => assignBfoOppName(c._id, name)}
+                        >
+                          + {bfoOppTargetLabel(c)}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
       {newBfoMissingData.length > 0 && (
         <div className={styles.errorBanner}>
           <strong>New BFO Opp prompt is missing data for {newBfoMissingData.length} opp{newBfoMissingData.length === 1 ? '' : 's'}:</strong>{' '}
