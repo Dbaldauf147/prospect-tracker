@@ -132,6 +132,13 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
           Agents
         </button>
         <button
+          className={view === 'weekly' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('weekly')}
+        >
+          <span className={styles.navIcon}>&#128197;</span>
+          Weekly Report
+        </button>
+        <button
           className={view === 'pe' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('pe')}
         >
