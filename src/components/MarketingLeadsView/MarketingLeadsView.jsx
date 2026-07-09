@@ -1,0 +1,743 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
+
+// Marketing Leads subtab on the Contacts page. The user pastes a block
+// copied from a Salesforce Leads list view; a column-mapping modal pops
+// up so they can confirm which pasted column fills each lead field. The
+// leads persist under settings.marketingLeads and sync through the same
+// settings → Firestore pipeline every other list tab uses.
+
+// Canonical columns, in the order the Salesforce list surfaces them.
+// defaultWidth (px) can be resized by dragging a header edge; the widths
+// persist via settings.marketingLeadsColumnWidths.
+const COLUMNS = [
+  { key: 'name',                label: 'Name',                       defaultWidth: 170 },
+  { key: 'email',               label: 'Email',                      defaultWidth: 220 },
+  { key: 'jobTitle',            label: 'Job Title',                  defaultWidth: 170 },
+  { key: 'company',             label: 'Company',                    defaultWidth: 190 },
+  { key: 'status',              label: 'Status',                     defaultWidth: 110 },
+  { key: 'createdDate',         label: 'Created Date',               defaultWidth: 150 },
+  { key: 'leadSource',          label: 'Last Lead Source',           defaultWidth: 150 },
+  { key: 'owner',               label: 'Owner',                      defaultWidth: 120 },
+  { key: 'country',             label: 'Country',                    defaultWidth: 100 },
+  { key: 'qualificationDetail', label: 'Qualification Source Detail', defaultWidth: 220 },
+  { key: 'tvStatus',            label: 'Table View',                 defaultWidth: 160, readonly: true },
+];
+
+const MIN_COLUMN_WIDTH = 60;
+const MIN_VISIBLE_ROWS = 25;
+
+// Target fields the paste-mapping modal can fill. Aliases match common
+// Salesforce / Excel header conventions case- and punctuation-
+// insensitively, so "Job Title", "jobtitle", "Title" all hit jobTitle.
+const PASTE_TARGETS = [
+  { key: 'name',                label: 'Name',                       required: true,
+    aliases: ['name', 'fullname', 'leadname', 'contactname', 'contact'] },
+  { key: 'email',               label: 'Email',                      required: false,
+    aliases: ['email', 'emailaddress', 'workemail', 'e-mail'] },
+  { key: 'jobTitle',            label: 'Job Title',                  required: false,
+    aliases: ['jobtitle', 'title', 'position', 'role'] },
+  { key: 'company',             label: 'Company',                    required: false,
+    aliases: ['company', 'companyname', 'account', 'accountname', 'organization'] },
+  { key: 'status',              label: 'Status',                     required: false,
+    aliases: ['status', 'leadstatus'] },
+  { key: 'createdDate',         label: 'Created Date',               required: false,
+    aliases: ['createddate', 'created', 'datecreated', 'createdon', 'createddatetime'] },
+  { key: 'leadSource',          label: 'Last Lead Source',           required: false,
+    aliases: ['lastleadsource', 'leadsource', 'source'] },
+  { key: 'owner',               label: 'Owner',                      required: false,
+    aliases: ['owner', 'leadowner', 'ownername', 'accountowner', 'ownerfullname'] },
+  { key: 'country',             label: 'Country',                    required: false,
+    aliases: ['country', 'countrycode', 'mailingcountry', 'billingcountry'] },
+  { key: 'qualificationDetail', label: 'Qualification Source Detail', required: false,
+    aliases: ['qualificationsourcedetail', 'qualificationdetail', 'qualificationsource', 'sourcedetail'] },
+];
+
+const EDITABLE_KEYS = COLUMNS.filter(c => !c.readonly).map(c => c.key);
+
+function makeId() {
+  return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function emptyRow() {
+  const r = { id: makeId() };
+  for (const k of EDITABLE_KEYS) r[k] = '';
+  return r;
+}
+
+// Tab / comma / semicolon-tolerant split for a clipboard row — handles
+// Excel + Salesforce ("Ana Higueras<TAB>ana@x.com<TAB>…") and the
+// occasional CSV that leaks in from a spreadsheet export.
+function splitPasteRow(line) {
+  if (line.includes('\t')) return line.split('\t');
+  return line.split(/,(?![^"]*"\s*(?:,|$))|;/).map(s => s.replace(/^"|"$/g, ''));
+}
+
+function normaliseHeader(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// Build a default header → target-key mapping. Each header is matched
+// case- and punctuation-insensitively against every target's aliases;
+// the first hit wins so a header can't accidentally double-map.
+function autoDetectMapping(headers) {
+  const mapping = {}; // targetKey → header
+  const used = new Set();
+  for (const t of PASTE_TARGETS) {
+    for (const h of headers) {
+      if (used.has(h)) continue;
+      if (t.aliases.includes(normaliseHeader(h))) {
+        mapping[t.key] = h;
+        used.add(h);
+        break;
+      }
+    }
+  }
+  return mapping;
+}
+
+function companyKey(s) {
+  return String(s || '').toLowerCase().trim();
+}
+
+export function MarketingLeadsView({ prospects = [], settings, updateSettings, onAddProspect }) {
+  const persistedRows = useMemo(() => {
+    const arr = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
+    return arr.map(r => ({ ...emptyRow(), ...r, id: r.id || makeId() }));
+  }, [settings]);
+
+  const [search, setSearch] = useState('');
+
+  // Column visibility — toggleable via the "Columns" dropdown, persisted
+  // via settings.marketingLeadsVisibleCols. Falls back to every column
+  // visible when nothing has been saved.
+  const visibleCols = useMemo(() => {
+    const saved = settings?.marketingLeadsVisibleCols;
+    if (Array.isArray(saved) && saved.length) return new Set(saved);
+    return new Set(COLUMNS.map(c => c.key));
+  }, [settings]);
+
+  function setColVisible(key, on) {
+    const next = new Set(visibleCols);
+    if (on) next.add(key); else next.delete(key);
+    if (next.size === 0) next.add('name'); // never hide everything
+    updateSettings({ marketingLeadsVisibleCols: [...next] });
+  }
+  const visibleColumnList = useMemo(
+    () => COLUMNS.filter(c => visibleCols.has(c.key)),
+    [visibleCols],
+  );
+
+  const [colsPickerOpen, setColsPickerOpen] = useState(false);
+  const colsPickerRef = useRef(null);
+  useEffect(() => {
+    if (!colsPickerOpen) return;
+    function onDocDown(e) {
+      if (!colsPickerRef.current?.contains(e.target)) setColsPickerOpen(false);
+    }
+    document.addEventListener('mousedown', onDocDown);
+    return () => document.removeEventListener('mousedown', onDocDown);
+  }, [colsPickerOpen]);
+
+  // Column widths (px), keyed by column.key so a future re-order doesn't
+  // scramble saved widths. Hydrates from settings on every render.
+  const columnWidths = useMemo(() => {
+    const saved = settings?.marketingLeadsColumnWidths || {};
+    const out = {};
+    for (const c of COLUMNS) {
+      const v = Number(saved[c.key]);
+      out[c.key] = Number.isFinite(v) && v >= MIN_COLUMN_WIDTH ? v : c.defaultWidth;
+    }
+    return out;
+  }, [settings]);
+
+  const dragRef = useRef(null);
+  const colRefs = useRef({});
+  function startResize(e, colKey) {
+    e.preventDefault();
+    e.stopPropagation();
+    const colEl = colRefs.current[colKey];
+    if (!colEl) return;
+    dragRef.current = {
+      key: colKey,
+      startX: e.clientX,
+      startWidth: columnWidths[colKey] || COLUMNS.find(c => c.key === colKey)?.defaultWidth || 120,
+      colEl,
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    function onMove(ev) {
+      const drag = dragRef.current;
+      if (!drag) return;
+      const next = Math.max(MIN_COLUMN_WIDTH, drag.startWidth + (ev.clientX - drag.startX));
+      drag.colEl.style.width = `${next}px`;
+      drag.lastWidth = next;
+    }
+    function onUp() {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      const drag = dragRef.current;
+      dragRef.current = null;
+      if (drag && drag.lastWidth && drag.lastWidth !== drag.startWidth) {
+        const nextMap = { ...(settings?.marketingLeadsColumnWidths || {}), [drag.key]: Math.round(drag.lastWidth) };
+        updateSettings({ marketingLeadsColumnWidths: nextMap });
+      }
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+  const hasCustomWidths = !!Object.keys(settings?.marketingLeadsColumnWidths || {}).length;
+  function resetColumnWidths() {
+    updateSettings({ marketingLeadsColumnWidths: {} });
+  }
+
+  // Index Table View prospects by lower-cased company so a lead's
+  // Company resolves to "already on Table View" for the add bridge.
+  const prospectCompanies = useMemo(() => {
+    const set = new Set();
+    for (const p of prospects) {
+      const k = companyKey(p?.company);
+      if (k) set.add(k);
+    }
+    return set;
+  }, [prospects]);
+  function isOnTableView(company) {
+    const k = companyKey(company);
+    return !!k && prospectCompanies.has(k);
+  }
+
+  // Visible list = persisted rows + synthetic padding rows up to the
+  // minimum. Padding rows have ids prefixed with "__pad_" so updateCell
+  // can promote them into the persisted set on first edit.
+  const visibleRows = useMemo(() => {
+    const padding = Math.max(0, MIN_VISIBLE_ROWS - persistedRows.length);
+    const padRows = Array.from({ length: padding }, (_, i) => ({ ...emptyRow(), id: `__pad_${i}` }));
+    return [...persistedRows, ...padRows];
+  }, [persistedRows]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return visibleRows;
+    return visibleRows.filter(r =>
+      EDITABLE_KEYS.some(k => String(r[k] || '').toLowerCase().includes(q)),
+    );
+  }, [visibleRows, search]);
+
+  function persist(next) {
+    updateSettings({ marketingLeads: next });
+  }
+
+  function updateCell(rowId, key, value) {
+    if (String(rowId).startsWith('__pad_')) {
+      if (!String(value || '').trim()) return; // don't persist blank padding rows
+      persist([...persistedRows, { ...emptyRow(), [key]: value }]);
+      return;
+    }
+    persist(persistedRows.map(r => (r.id === rowId ? { ...r, [key]: value } : r)));
+  }
+
+  function addRow() {
+    persist([...persistedRows, emptyRow()]);
+  }
+  function deleteRow(id) {
+    if (String(id).startsWith('__pad_')) return;
+    persist(persistedRows.filter(r => r.id !== id));
+  }
+  function clearTable() {
+    if (!persistedRows.length) return;
+    const ok = window.confirm(
+      `Delete all ${persistedRows.length} saved lead${persistedRows.length === 1 ? '' : 's'}? This cannot be undone.`,
+    );
+    if (!ok) return;
+    persist([]);
+  }
+
+  // ---- Paste → column mapping -----------------------------------------
+  const [pasteModal, setPasteModal] = useState(null); // { headers, rows, mapping } | null
+  const [pasteHelper, setPasteHelper] = useState(null); // null | string (manual paste box)
+
+  // Paste anywhere on the page (unless focused in an input/textarea)
+  // routes the clipboard text into the mapping ingester.
+  function handlePaste(e) {
+    const tag = (e.target?.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea') return;
+    const text = e.clipboardData?.getData('text/plain') || '';
+    if (!text.trim()) return;
+    e.preventDefault();
+    ingestPastedText(text);
+  }
+
+  async function pasteFromClipboard() {
+    try {
+      const text = await navigator.clipboard?.readText?.();
+      if (text && text.trim()) { ingestPastedText(text); return; }
+    } catch {
+      /* permission denied / insecure context — fall through to manual box */
+    }
+    setPasteHelper('');
+  }
+
+  function ingestPastedText(text) {
+    if (!text || !text.trim()) return;
+    const allLines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+    if (!allLines.length) return;
+    const parsed = allLines.map(l => splitPasteRow(l).map(c => (c || '').trim()));
+    const headerCells = parsed[0] || [];
+    const dataRows = parsed.slice(1).filter(r => r.some(c => c));
+    if (!dataRows.length) return;
+    // De-dupe blank / repeated header cells so each column has a stable key.
+    const headers = [];
+    const seenH = new Map();
+    for (const raw of headerCells) {
+      let h = raw || '(blank)';
+      if (seenH.has(h)) { const n = seenH.get(h) + 1; seenH.set(h, n); h = `${h} (${n})`; }
+      else seenH.set(h, 1);
+      headers.push(h);
+    }
+    setPasteModal({ headers, rows: dataRows, mapping: autoDetectMapping(headers) });
+  }
+
+  // Right-side dropdown changes "this header → that target". Picking a
+  // target claims it for this header and evicts any other header that
+  // held it, keeping a 1:1 mapping.
+  function setHeaderTarget(header, targetKey) {
+    setPasteModal(m => {
+      if (!m) return m;
+      const next = { ...m.mapping };
+      for (const k of Object.keys(next)) if (next[k] === header) delete next[k];
+      if (targetKey) next[targetKey] = header;
+      return { ...m, mapping: next };
+    });
+  }
+
+  function executePasteImport() {
+    if (!pasteModal) return;
+    const { headers, rows, mapping } = pasteModal;
+    const idxOf = {};
+    headers.forEach((h, i) => { idxOf[h] = i; });
+    const incoming = [];
+    for (const cells of rows) {
+      const fresh = emptyRow();
+      let any = false;
+      for (const t of PASTE_TARGETS) {
+        const h = mapping[t.key];
+        if (!h) continue;
+        const i = idxOf[h];
+        if (i == null) continue;
+        const v = (cells[i] || '').trim();
+        if (v) any = true;
+        fresh[t.key] = v;
+      }
+      if (any) incoming.push(fresh);
+    }
+    if (incoming.length) persist([...persistedRows, ...incoming]);
+    setPasteModal(null);
+  }
+
+  // ---- Add to Table View bridge ---------------------------------------
+  // Companies represented by leads that aren't already on Table View —
+  // the candidates the bulk button can add.
+  const unmatchedCompanies = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const r of persistedRows) {
+      const c = (r.company || '').trim();
+      const k = companyKey(c);
+      if (!k || seen.has(k) || prospectCompanies.has(k)) continue;
+      seen.add(k);
+      out.push(c);
+    }
+    return out;
+  }, [persistedRows, prospectCompanies]);
+
+  async function addCompanyToTableView(company) {
+    if (!onAddProspect) return;
+    const c = (company || '').trim();
+    if (!c || isOnTableView(c)) return;
+    try { await onAddProspect({ company: c }); } catch (err) { console.error('Add to Table View failed', err); }
+  }
+
+  async function bulkAddToTableView() {
+    if (!onAddProspect || !unmatchedCompanies.length) return;
+    const ok = window.confirm(
+      `Add ${unmatchedCompanies.length} compan${unmatchedCompanies.length === 1 ? 'y' : 'ies'} from these leads to Table View? Companies already on Table View are skipped.`,
+    );
+    if (!ok) return;
+    for (const c of unmatchedCompanies) {
+      try { await onAddProspect({ company: c }); } catch (err) { console.error('Bulk add failed', c, err); }
+    }
+  }
+
+  function copyToClipboard() {
+    const lines = [EDITABLE_KEYS.map(k => COLUMNS.find(c => c.key === k).label).join('\t')];
+    for (const r of persistedRows) {
+      lines.push(EDITABLE_KEYS.map(k => r[k] || '').join('\t'));
+    }
+    navigator.clipboard?.writeText(lines.join('\n')).catch(() => {});
+  }
+
+  const cellInputStyle = {
+    width: '100%', border: 'none', padding: '0.45rem 0.6rem',
+    fontFamily: 'inherit', fontSize: '0.8rem', background: 'transparent',
+    boxSizing: 'border-box', outline: 'none',
+  };
+  const btn = (extra) => ({
+    fontSize: '0.75rem', padding: '0.4rem 0.8rem', borderRadius: 4,
+    cursor: 'pointer', fontWeight: 600, fontFamily: 'inherit', ...extra,
+  });
+
+  return (
+    <div onPaste={handlePaste} style={{ padding: '0.75rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.6rem', minHeight: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+        <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>Marketing Leads</h2>
+        <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+          {persistedRows.length.toLocaleString()} {persistedRows.length === 1 ? 'lead' : 'leads'} saved
+        </span>
+        <div style={{ flex: 1 }} />
+        <input
+          type="search"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search…"
+          style={{ padding: '0.35rem 0.55rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.8rem', minWidth: 180 }}
+        />
+        <button
+          type="button"
+          onClick={pasteFromClipboard}
+          title="Paste a block of leads copied from the Salesforce list view. A column-mapping modal appears so you can confirm which pasted column fills each lead field."
+          style={btn({ border: '1px solid #009530', background: '#fff', color: '#009530', fontWeight: 700 })}
+        >📋 Paste from Salesforce</button>
+        <button
+          type="button"
+          onClick={addRow}
+          style={btn({ border: 'none', background: '#009530', color: '#fff' })}
+        >+ Add Row</button>
+        <button
+          type="button"
+          onClick={copyToClipboard}
+          title="Copy every saved lead as tab-separated values, ready to paste into Excel."
+          style={btn({ border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text)' })}
+        >Copy as TSV</button>
+        {hasCustomWidths && (
+          <button
+            type="button"
+            onClick={resetColumnWidths}
+            title="Restore every column to its default width."
+            style={btn({ border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)' })}
+          >Reset widths</button>
+        )}
+        <div ref={colsPickerRef} style={{ position: 'relative' }}>
+          <button
+            type="button"
+            onClick={() => setColsPickerOpen(o => !o)}
+            title="Show or hide individual columns."
+            style={btn({ border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)' })}
+          >Columns ({visibleColumnList.length}/{COLUMNS.length})</button>
+          {colsPickerOpen && (
+            <div style={{
+              position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 20,
+              background: '#fff', border: '1px solid var(--color-border)', borderRadius: 6,
+              boxShadow: '0 8px 20px rgba(15, 23, 42, 0.12)', minWidth: 240, padding: '0.4rem 0', fontSize: '0.78rem',
+            }}>
+              {COLUMNS.map(c => {
+                const on = visibleCols.has(c.key);
+                const locked = c.key === 'name';
+                return (
+                  <label
+                    key={c.key}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.3rem 0.7rem', cursor: locked ? 'not-allowed' : 'pointer', color: locked ? '#94A3B8' : 'var(--color-text)' }}
+                    title={locked ? 'Name is always visible.' : `Show / hide the ${c.label} column.`}
+                  >
+                    <input type="checkbox" checked={on} disabled={locked} onChange={e => setColVisible(c.key, e.target.checked)} style={{ accentColor: '#0078D4' }} />
+                    <span style={{ flex: 1 }}>{c.label}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        {onAddProspect && (
+          <button
+            type="button"
+            onClick={bulkAddToTableView}
+            disabled={!unmatchedCompanies.length}
+            title={unmatchedCompanies.length
+              ? `Create Table View accounts for the ${unmatchedCompanies.length} compan${unmatchedCompanies.length === 1 ? 'y' : 'ies'} on these leads that aren't there yet.`
+              : 'Every company on these leads is already on Table View.'}
+            style={btn({ border: 'none', background: unmatchedCompanies.length ? '#0EA5E9' : '#CBD5E1', color: '#fff', fontWeight: 700, cursor: unmatchedCompanies.length ? 'pointer' : 'not-allowed' })}
+          >+ Add {unmatchedCompanies.length || ''} to Table View</button>
+        )}
+        <button
+          type="button"
+          onClick={clearTable}
+          disabled={!persistedRows.length}
+          title={persistedRows.length ? 'Delete every saved lead.' : 'Nothing to clear yet.'}
+          style={btn({ border: '1px solid #FCA5A5', background: persistedRows.length ? '#fff' : '#F8FAFC', color: persistedRows.length ? '#B91C1C' : '#CBD5E1', cursor: persistedRows.length ? 'pointer' : 'not-allowed' })}
+        >Clear table</button>
+      </div>
+      <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing.
+      </div>
+
+      {pasteHelper !== null && (
+        <div style={{ border: '1px dashed #009530', borderRadius: 6, padding: '0.6rem', background: '#F0FDF4', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+          <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#166534' }}>
+            Paste your Salesforce leads here (Ctrl/⌘+V), then click Next:
+          </div>
+          <textarea
+            autoFocus
+            value={pasteHelper}
+            onChange={e => setPasteHelper(e.target.value)}
+            placeholder="Paste the copied block — the first row should be the headers (Name, Email, Job Title, …)."
+            style={{ width: '100%', minHeight: 90, padding: '0.4rem', border: '1px solid #86EFAC', borderRadius: 4, fontSize: '0.78rem', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', boxSizing: 'border-box', resize: 'vertical' }}
+          />
+          <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end' }}>
+            <button
+              type="button"
+              onClick={() => setPasteHelper(null)}
+              style={btn({ fontSize: '0.72rem', padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)' })}
+            >Cancel</button>
+            <button
+              type="button"
+              disabled={!pasteHelper.trim()}
+              onClick={() => { ingestPastedText(pasteHelper); setPasteHelper(null); }}
+              style={btn({ fontSize: '0.72rem', padding: '0.3rem 0.8rem', border: 'none', background: pasteHelper.trim() ? '#009530' : '#CBD5E1', color: '#fff', fontWeight: 700, cursor: pasteHelper.trim() ? 'pointer' : 'not-allowed' })}
+            >Next: map columns</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ flex: 1, overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: 4 }}>
+        <table style={{ borderCollapse: 'collapse', fontSize: '0.8rem', tableLayout: 'fixed', width: 'max-content', minWidth: '100%' }}>
+          <colgroup>
+            {visibleColumnList.map(c => (
+              <col key={c.key} ref={el => { colRefs.current[c.key] = el; }} style={{ width: `${columnWidths[c.key]}px` }} />
+            ))}
+            <col style={{ width: 44 }} />
+          </colgroup>
+          <thead>
+            <tr>
+              {visibleColumnList.map(c => (
+                <th key={c.key} style={{
+                  textAlign: 'left', padding: '0.45rem 0.6rem', paddingRight: '0.95rem',
+                  background: '#F1F5F9', fontWeight: 700, fontSize: '0.72rem', color: '#475569',
+                  borderBottom: '1px solid var(--color-border)', position: 'sticky', top: 0, zIndex: 1,
+                  overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
+                }}>
+                  <span style={{ position: 'relative', display: 'block' }}>{c.label}</span>
+                  <span
+                    onMouseDown={e => startResize(e, c.key)}
+                    onDoubleClick={() => {
+                      const nextMap = { ...(settings?.marketingLeadsColumnWidths || {}) };
+                      delete nextMap[c.key];
+                      updateSettings({ marketingLeadsColumnWidths: nextMap });
+                    }}
+                    title="Drag to resize. Double-click to reset this column to its default width."
+                    style={{ position: 'absolute', top: 0, right: 0, width: 8, height: '100%', cursor: 'col-resize', userSelect: 'none', zIndex: 2, borderRight: '1px solid #E2E8F0' }}
+                    onMouseEnter={e => { e.currentTarget.style.borderRight = '2px solid #009530'; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderRight = '1px solid #E2E8F0'; }}
+                  />
+                </th>
+              ))}
+              <th style={{ background: '#F1F5F9', borderBottom: '1px solid var(--color-border)', position: 'sticky', top: 0, zIndex: 1 }} />
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 && (
+              <tr>
+                <td colSpan={visibleColumnList.length + 1} style={{ padding: '1.2rem', textAlign: 'center', color: 'var(--color-text-muted)', fontStyle: 'italic', fontSize: '0.78rem' }}>
+                  No matches for the current search.
+                </td>
+              </tr>
+            )}
+            {filtered.map(r => {
+              const isPad = String(r.id).startsWith('__pad_');
+              return (
+                <tr key={r.id} style={{ borderBottom: '1px solid var(--color-border-light)' }}>
+                  {visibleColumnList.map(c => (
+                    <td key={c.key} style={{ padding: 0, verticalAlign: 'top' }}>
+                      {c.key === 'tvStatus' ? (
+                        <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem' }}>
+                          {(() => {
+                            const company = (r.company || '').trim();
+                            if (!company) return <span style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}>—</span>;
+                            if (isOnTableView(company)) {
+                              return (
+                                <span title={`"${company}" is already on Table View.`} style={{ background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534', padding: '2px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 700, whiteSpace: 'nowrap' }}>✓ On Table View</span>
+                              );
+                            }
+                            if (!onAddProspect || isPad) return <span style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}>—</span>;
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => addCompanyToTableView(company)}
+                                title={`Create a new Table View account for "${company}".`}
+                                style={{ background: '#fff', border: '1px solid #0EA5E9', color: '#0369A1', padding: '2px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                              >+ Add to Table View</button>
+                            );
+                          })()}
+                        </div>
+                      ) : (
+                        <CommitOnBlurInput
+                          value={r[c.key] || ''}
+                          onCommit={v => updateCell(r.id, c.key, v)}
+                          placeholder={isPad && c.key === 'name' ? 'Type or paste a lead…' : '—'}
+                          style={cellInputStyle}
+                        />
+                      )}
+                    </td>
+                  ))}
+                  <td style={{ padding: '0.2rem', textAlign: 'center' }}>
+                    {!isPad && (
+                      <button
+                        type="button"
+                        onClick={() => deleteRow(r.id)}
+                        title="Delete lead"
+                        style={{ border: 'none', background: 'transparent', color: '#94A3B8', fontSize: '1rem', cursor: 'pointer', padding: '0 6px', lineHeight: 1 }}
+                        onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
+                        onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
+                      >×</button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {pasteModal && createPortal(
+        <PasteMappingModal
+          modal={pasteModal}
+          onCancel={() => setPasteModal(null)}
+          onConfirm={executePasteImport}
+          onChangeMapping={setHeaderTarget}
+        />,
+        document.body,
+      )}
+    </div>
+  );
+}
+
+function PasteMappingModal({ modal, onCancel, onConfirm, onChangeMapping }) {
+  const { headers, rows, mapping } = modal;
+  const targetForHeader = useMemo(() => {
+    const out = {};
+    for (const t of PASTE_TARGETS) {
+      const h = mapping[t.key];
+      if (h) out[h] = t.key;
+    }
+    return out;
+  }, [mapping]);
+
+  const missingRequired = PASTE_TARGETS.filter(t => t.required && !mapping[t.key]).map(t => t.label);
+  const previewRows = rows.slice(0, 3);
+  const idxOf = useMemo(() => {
+    const o = {};
+    headers.forEach((h, i) => { o[h] = i; });
+    return o;
+  }, [headers]);
+
+  const colHeader = { fontSize: '0.7rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', padding: '0.5rem 0.75rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' };
+  const cellBase = { padding: '0.4rem 0.75rem', borderBottom: '1px solid #F1F5F9', fontSize: '0.78rem' };
+
+  return (
+    <div onClick={onCancel} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 12, padding: '1.5rem', width: 1000, maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>Import Marketing Leads — Column Mapping</h3>
+          <button onClick={onCancel} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}>×</button>
+        </div>
+        <p style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', margin: '0 0 1rem 0', lineHeight: 1.4 }}>
+          Detected <strong>{rows.length.toLocaleString()}</strong> row{rows.length === 1 ? '' : 's'} and <strong>{headers.length}</strong> column{headers.length === 1 ? '' : 's'} from your clipboard. The first row was treated as headers — pick which pasted column should fill each lead field. Headers that match common names (Name, Email, Company, …) are mapped automatically.
+        </p>
+        {missingRequired.length > 0 && (
+          <div style={{ margin: '0 0 0.75rem', padding: '0.4rem 0.6rem', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 6, fontSize: '0.75rem', color: '#991B1B', fontWeight: 600 }}>
+            Still need to map: {missingRequired.join(', ')}
+          </div>
+        )}
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+          <div style={{ border: '1px solid #E2E8F0', borderRadius: 6, overflow: 'auto' }}>
+            <div style={colHeader}>Lead field</div>
+            {PASTE_TARGETS.map(t => {
+              const header = mapping[t.key];
+              return (
+                <div key={t.key} style={{ ...cellBase, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {t.label}{t.required && <span style={{ color: '#DC2626', marginLeft: 2 }}>*</span>}
+                  </span>
+                  {header ? (
+                    <span title={`Mapped from "${header}"`} style={{ background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534', padding: '1px 8px', borderRadius: 999, fontSize: '0.68rem', fontWeight: 600, maxWidth: '55%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>← {header}</span>
+                  ) : (
+                    <span style={{ color: t.required ? '#DC2626' : '#94A3B8', fontSize: '0.68rem', fontWeight: 600 }}>{t.required ? '— not mapped —' : '— optional —'}</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ border: '1px solid #E2E8F0', borderRadius: 6, overflow: 'auto' }}>
+            <div style={colHeader}>Columns in your paste ({headers.length})</div>
+            {headers.map(h => {
+              const target = targetForHeader[h] || '';
+              return (
+                <div key={h} style={{ ...cellBase, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <span title={h} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h}</span>
+                  <span style={{ color: '#94A3B8', fontSize: '0.7rem' }}>→</span>
+                  <select
+                    value={target}
+                    onChange={e => onChangeMapping(h, e.target.value)}
+                    style={{ minWidth: 170, maxWidth: 220, padding: '0.25rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: 4, fontFamily: 'inherit', fontSize: '0.75rem', background: target ? '#DCFCE7' : '#fff', color: target ? '#166534' : 'var(--color-text)' }}
+                  >
+                    <option value="">— Ignore —</option>
+                    {PASTE_TARGETS.map(t => (
+                      <option key={t.key} value={t.key}>{t.label}{t.required ? ' *' : ''}</option>
+                    ))}
+                  </select>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ marginTop: '1rem', border: '1px solid #E2E8F0', borderRadius: 6, overflow: 'auto' }}>
+          <div style={colHeader}>Preview (first {previewRows.length} of {rows.length.toLocaleString()})</div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.74rem' }}>
+            <thead>
+              <tr>
+                {PASTE_TARGETS.map(t => (
+                  <th key={t.key} style={{ ...cellBase, fontWeight: 700, color: '#475569', background: '#FAFBFC', textAlign: 'left' }}>{t.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {previewRows.map((cells, ri) => (
+                <tr key={ri}>
+                  {PASTE_TARGETS.map(t => {
+                    const h = mapping[t.key];
+                    const v = h && idxOf[h] != null ? cells[idxOf[h]] || '' : '';
+                    return (
+                      <td key={t.key} style={{ ...cellBase, color: v ? '#1E293B' : '#CBD5E1', fontStyle: v ? 'normal' : 'italic' }}>{v || '—'}</td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1.25rem' }}>
+          <button onClick={onCancel} style={{ padding: '0.5rem 1rem', border: '1px solid var(--color-border)', borderRadius: 6, background: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer', color: 'var(--color-text-secondary)' }}>Cancel</button>
+          <button
+            onClick={onConfirm}
+            disabled={missingRequired.length > 0}
+            style={{ padding: '0.5rem 1rem', border: 'none', borderRadius: 6, background: missingRequired.length ? '#CBD5E1' : '#009530', color: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: missingRequired.length ? 'not-allowed' : 'pointer', fontWeight: 600 }}
+          >Import {rows.length.toLocaleString()} lead{rows.length === 1 ? '' : 's'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
