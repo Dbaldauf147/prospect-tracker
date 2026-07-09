@@ -13,6 +13,7 @@ import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 // persist via settings.marketingLeadsColumnWidths.
 const COLUMNS = [
   { key: 'name',                label: 'Name',                       defaultWidth: 170 },
+  { key: 'sfUrl',               label: 'Salesforce Link',            defaultWidth: 120 },
   { key: 'email',               label: 'Email',                      defaultWidth: 220 },
   { key: 'jobTitle',            label: 'Job Title',                  defaultWidth: 170 },
   { key: 'company',             label: 'Company',                    defaultWidth: 190 },
@@ -53,6 +54,12 @@ const PASTE_TARGETS = [
     aliases: ['country', 'countrycode', 'mailingcountry', 'billingcountry'] },
   { key: 'qualificationDetail', label: 'Qualification Source Detail', required: false,
     aliases: ['qualificationsourcedetail', 'qualificationdetail', 'qualificationsource', 'sourcedetail'] },
+  // Salesforce record link / id. Auto-filled from the clipboard's HTML
+  // anchors when pasting a list view; a mapped URL / Lead-ID column takes
+  // precedence. Listed last so its generic aliases (url / id / link)
+  // don't claim a header a more specific field wants.
+  { key: 'sfUrl',               label: 'Salesforce Link',            required: false,
+    aliases: ['salesforcelink', 'salesforceurl', 'sfurl', 'sflink', 'leadurl', 'recordurl', 'url', 'link', 'leadid', 'recordid', 'id'] },
 ];
 
 const EDITABLE_KEYS = COLUMNS.filter(c => !c.readonly).map(c => c.key);
@@ -100,6 +107,59 @@ function autoDetectMapping(headers) {
 
 function companyKey(s) {
   return String(s || '').toLowerCase().trim();
+}
+
+// The Salesforce Lightning instance these leads live on. Relative record
+// links pulled off the clipboard HTML are resolved against this, and a
+// bare Lead record id is expanded into a record URL here.
+const SF_INSTANCE_URL = 'https://se.lightning.force.com';
+
+// Resolve a stored Salesforce Link cell value into a clickable URL, or
+// null when it isn't linkable. Accepts a full http(s) URL as-is, and
+// expands a bare 15- or 18-char Salesforce record id into a Lead record
+// URL on the instance above.
+function resolveSfUrl(value) {
+  const v = String(value || '').trim();
+  if (!v) return null;
+  if (/^https?:\/\//i.test(v)) return v;
+  if (/^[a-zA-Z0-9]{15}$|^[a-zA-Z0-9]{18}$/.test(v)) {
+    return `${SF_INSTANCE_URL}/lightning/r/Lead/${v}/view`;
+  }
+  return null;
+}
+
+// Pull the per-lead record links out of the clipboard's text/html payload
+// (Salesforce list rows carry the record URL as an <a href> on the Name
+// cell). Returns a map of lower-cased anchor text → absolute URL, or null
+// when nothing usable is found. Relative Lightning hrefs are resolved
+// against the SF instance. Parsing is done with DOMParser, which never
+// executes scripts or loads sub-resources.
+function extractLeadLinks(html) {
+  if (!html || typeof DOMParser === 'undefined') return null;
+  let doc;
+  try { doc = new DOMParser().parseFromString(html, 'text/html'); } catch { return null; }
+  if (!doc) return null;
+  const map = {};
+  for (const a of doc.querySelectorAll('a[href]')) {
+    const text = (a.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!text) continue;
+    let href = a.getAttribute('href') || '';
+    if (!href) continue;
+    if (/^https?:\/\//i.test(href)) {
+      if (!/force\.com|salesforce\.com/i.test(href)) continue;
+    } else if (href.startsWith('/')) {
+      href = SF_INSTANCE_URL + href;
+    } else {
+      continue;
+    }
+    const key = text.toLowerCase();
+    if (!(key in map)) map[key] = href;
+  }
+  return Object.keys(map).length ? map : null;
+}
+
+function nameKey(s) {
+  return String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 // Placeholder Table View company names ("N/A", "TBD", a lone dash, …)
@@ -513,20 +573,35 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     const text = e.clipboardData?.getData('text/plain') || '';
     if (!text.trim()) return;
     e.preventDefault();
-    ingestPastedText(text);
+    const html = e.clipboardData?.getData('text/html') || '';
+    ingestPastedText(text, html ? extractLeadLinks(html) : null);
   }
 
   async function pasteFromClipboard() {
     try {
+      // Prefer the rich clipboard read so we can pull the per-lead record
+      // links out of the HTML; fall back to plain text when unavailable.
+      if (navigator.clipboard?.read) {
+        try {
+          const items = await navigator.clipboard.read();
+          let text = '';
+          let html = '';
+          for (const item of items) {
+            if (item.types.includes('text/plain')) text = await (await item.getType('text/plain')).text();
+            if (item.types.includes('text/html')) html = await (await item.getType('text/html')).text();
+          }
+          if (text && text.trim()) { ingestPastedText(text, html ? extractLeadLinks(html) : null); return; }
+        } catch { /* fall through to readText */ }
+      }
       const text = await navigator.clipboard?.readText?.();
-      if (text && text.trim()) { ingestPastedText(text); return; }
+      if (text && text.trim()) { ingestPastedText(text, null); return; }
     } catch {
       /* permission denied / insecure context — fall through to manual box */
     }
     setPasteHelper('');
   }
 
-  function ingestPastedText(text) {
+  function ingestPastedText(text, linkMap = null) {
     if (!text || !text.trim()) return;
     const allLines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
     if (!allLines.length) return;
@@ -543,7 +618,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
       else seenH.set(h, 1);
       headers.push(h);
     }
-    setPasteModal({ headers, rows: dataRows, mapping: autoDetectMapping(headers) });
+    setPasteModal({ headers, rows: dataRows, mapping: autoDetectMapping(headers), linkMap: linkMap || null });
   }
 
   // Right-side dropdown changes "this header → that target". Picking a
@@ -561,7 +636,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
 
   function executePasteImport() {
     if (!pasteModal) return;
-    const { headers, rows, mapping } = pasteModal;
+    const { headers, rows, mapping, linkMap } = pasteModal;
     const idxOf = {};
     headers.forEach((h, i) => { idxOf[h] = i; });
     const incoming = [];
@@ -577,7 +652,16 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
         if (v) any = true;
         fresh[t.key] = v;
       }
-      if (any) incoming.push(fresh);
+      if (!any) continue;
+      // Backfill the Salesforce Link from the clipboard's HTML anchors
+      // (matched by the lead's name) when no URL / Lead-ID column was
+      // mapped — this is how the record link travels through a plain
+      // list-view copy.
+      if (!fresh.sfUrl && linkMap && fresh.name) {
+        const hit = linkMap[nameKey(fresh.name)];
+        if (hit) fresh.sfUrl = hit;
+      }
+      incoming.push(fresh);
     }
     if (incoming.length) persist([...persistedRows, ...incoming]);
     setPasteModal(null);
@@ -743,7 +827,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
         >Clear table</button>
       </div>
       <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
-        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, use <strong>Filters</strong> for per-column filtering, drag a header edge to resize, and <strong>Columns</strong> to show/hide columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account — accept the suggested match or type to pick another.
+        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, use <strong>Filters</strong> for per-column filtering, drag a header edge to resize, and <strong>Columns</strong> to show/hide columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account — accept the suggested match or type to pick another. The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand.
       </div>
 
       {pasteHelper !== null && (
@@ -852,7 +936,41 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                 <tr key={r.id} style={{ borderBottom: '1px solid var(--color-border-light)' }}>
                   {visibleColumnList.map(c => (
                     <td key={c.key} style={{ padding: 0, verticalAlign: 'top' }}>
-                      {c.key === 'tvStatus' ? (
+                      {c.key === 'sfUrl' ? (
+                        (() => {
+                          const raw = (r.sfUrl || '').trim();
+                          const url = resolveSfUrl(raw);
+                          if (url) {
+                            return (
+                              <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <a
+                                  href={url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title={`Open this lead in Salesforce\n${url}`}
+                                  style={{ color: '#0369A1', fontWeight: 700, fontSize: '0.75rem', textDecoration: 'none', whiteSpace: 'nowrap' }}
+                                >Open ↗</a>
+                                {!isPad && (
+                                  <button
+                                    type="button"
+                                    onClick={() => updateCell(r.id, 'sfUrl', '')}
+                                    title="Clear this link"
+                                    style={{ border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer', fontSize: '0.85rem', lineHeight: 1, padding: 0 }}
+                                  >×</button>
+                                )}
+                              </div>
+                            );
+                          }
+                          return (
+                            <CommitOnBlurInput
+                              value={raw}
+                              onCommit={v => updateCell(r.id, 'sfUrl', v)}
+                              placeholder={isPad ? '' : 'Paste link or Lead ID…'}
+                              style={cellInputStyle}
+                            />
+                          );
+                        })()
+                      ) : c.key === 'tvStatus' ? (
                         <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem' }}>
                           {(() => {
                             const company = effectiveCompany(r);
