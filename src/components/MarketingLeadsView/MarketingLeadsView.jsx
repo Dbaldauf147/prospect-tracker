@@ -440,10 +440,67 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     if (next.size === 0) next.add('name'); // never hide everything
     updateSettings({ marketingLeadsVisibleCols: [...next] });
   }
+
+  // Column order — persisted via settings.marketingLeadsColumnOrder as a
+  // list of column keys. Any key that's since been removed is dropped, and
+  // any newly added column (not yet in the saved order) is appended so a
+  // future column never disappears. Falls back to the natural COLUMNS
+  // order. Order covers hidden columns too, so toggling a column back on
+  // restores it to its chosen position.
+  const orderedColumns = useMemo(() => {
+    const saved = settings?.marketingLeadsColumnOrder;
+    const byKey = new Map(COLUMNS.map(c => [c.key, c]));
+    if (!Array.isArray(saved) || !saved.length) return COLUMNS;
+    const seen = new Set();
+    const out = [];
+    for (const k of saved) {
+      const c = byKey.get(k);
+      if (c && !seen.has(k)) { out.push(c); seen.add(k); }
+    }
+    for (const c of COLUMNS) if (!seen.has(c.key)) out.push(c);
+    return out;
+  }, [settings]);
+
+  // Move `fromKey` to sit before (or after) `toKey` and persist the new
+  // order. Operates on the full column list so hidden columns keep their
+  // relative position.
+  function moveColumn(fromKey, toKey, placeAfter = false) {
+    if (!fromKey || !toKey || fromKey === toKey) return;
+    const keys = orderedColumns.map(c => c.key);
+    const from = keys.indexOf(fromKey);
+    if (from === -1) return;
+    keys.splice(from, 1);
+    let to = keys.indexOf(toKey);
+    if (to === -1) return;
+    if (placeAfter) to += 1;
+    keys.splice(to, 0, fromKey);
+    updateSettings({ marketingLeadsColumnOrder: keys });
+  }
+  // Shift a column one slot left / right among ALL columns (used by the
+  // Columns dropdown's ▲/▼ controls).
+  function nudgeColumn(key, dir) {
+    const keys = orderedColumns.map(c => c.key);
+    const i = keys.indexOf(key);
+    const j = i + dir;
+    if (i === -1 || j < 0 || j >= keys.length) return;
+    [keys[i], keys[j]] = [keys[j], keys[i]];
+    updateSettings({ marketingLeadsColumnOrder: keys });
+  }
+  const hasCustomOrder = Array.isArray(settings?.marketingLeadsColumnOrder) && settings.marketingLeadsColumnOrder.length > 0;
+  function resetColumnOrder() {
+    updateSettings({ marketingLeadsColumnOrder: [] });
+  }
+
   const visibleColumnList = useMemo(
-    () => COLUMNS.filter(c => visibleCols.has(c.key)),
-    [visibleCols],
+    () => orderedColumns.filter(c => visibleCols.has(c.key)),
+    [orderedColumns, visibleCols],
   );
+
+  // Header drag-to-reorder state. dragColKey is the column being dragged;
+  // dragOverKey / dragAfter drive the drop indicator on the hovered header.
+  const [dragColKey, setDragColKey] = useState('');
+  const [dragOverKey, setDragOverKey] = useState('');
+  const [dragAfter, setDragAfter] = useState(false);
 
   const [colsPickerOpen, setColsPickerOpen] = useState(false);
   const colsPickerRef = useRef(null);
@@ -1153,6 +1210,14 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
             style={btn({ border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)' })}
           >Reset widths</button>
         )}
+        {hasCustomOrder && (
+          <button
+            type="button"
+            onClick={resetColumnOrder}
+            title="Restore the columns to their default left-to-right order."
+            style={btn({ border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)' })}
+          >Reset order</button>
+        )}
         <button
           type="button"
           onClick={() => setFiltersOpen(o => !o)}
@@ -1182,20 +1247,41 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
             <div style={{
               position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 20,
               background: '#fff', border: '1px solid var(--color-border)', borderRadius: 6,
-              boxShadow: '0 8px 20px rgba(15, 23, 42, 0.12)', minWidth: 240, padding: '0.4rem 0', fontSize: '0.78rem',
+              boxShadow: '0 8px 20px rgba(15, 23, 42, 0.12)', minWidth: 260, padding: '0.4rem 0', fontSize: '0.78rem',
             }}>
-              {COLUMNS.map(c => {
+              <div style={{ padding: '0.15rem 0.7rem 0.4rem', fontSize: '0.68rem', color: '#94A3B8' }}>
+                Check to show, ▲▼ to reorder. Drag a column header to reorder there too.
+              </div>
+              {orderedColumns.map((c, i) => {
                 const on = visibleCols.has(c.key);
                 const locked = c.key === 'name';
                 return (
-                  <label
+                  <div
                     key={c.key}
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.3rem 0.7rem', cursor: locked ? 'not-allowed' : 'pointer', color: locked ? '#94A3B8' : 'var(--color-text)' }}
-                    title={locked ? 'Name is always visible.' : `Show / hide the ${c.label} column.`}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.3rem 0.7rem', color: locked ? '#94A3B8' : 'var(--color-text)' }}
                   >
-                    <input type="checkbox" checked={on} disabled={locked} onChange={e => setColVisible(c.key, e.target.checked)} style={{ accentColor: '#0078D4' }} />
-                    <span style={{ flex: 1 }}>{c.label}</span>
-                  </label>
+                    <label
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0, cursor: locked ? 'not-allowed' : 'pointer' }}
+                      title={locked ? 'Name is always visible.' : `Show / hide the ${c.label} column.`}
+                    >
+                      <input type="checkbox" checked={on} disabled={locked} onChange={e => setColVisible(c.key, e.target.checked)} style={{ accentColor: '#0078D4' }} />
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.label}</span>
+                    </label>
+                    <button
+                      type="button"
+                      disabled={i === 0}
+                      onClick={() => nudgeColumn(c.key, -1)}
+                      title="Move left"
+                      style={{ border: 'none', background: 'transparent', cursor: i === 0 ? 'default' : 'pointer', color: i === 0 ? '#E2E8F0' : '#64748B', fontSize: '0.7rem', lineHeight: 1, padding: '2px 4px' }}
+                    >▲</button>
+                    <button
+                      type="button"
+                      disabled={i === orderedColumns.length - 1}
+                      onClick={() => nudgeColumn(c.key, 1)}
+                      title="Move right"
+                      style={{ border: 'none', background: 'transparent', cursor: i === orderedColumns.length - 1 ? 'default' : 'pointer', color: i === orderedColumns.length - 1 ? '#E2E8F0' : '#64748B', fontSize: '0.7rem', lineHeight: 1, padding: '2px 4px' }}
+                    >▼</button>
+                  </div>
                 );
               })}
             </div>
@@ -1230,7 +1316,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
         >Clear table</button>
       </div>
       <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
-        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, use <strong>Filters</strong> for per-column filtering, drag a header edge to resize, and <strong>Columns</strong> to show/hide columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account — accept the suggested match or type to pick another. The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand. The <strong>HubSpot Contact</strong> column maps each lead to a HubSpot contact — accept the email/name match, search to pick another, or <strong>+ Add to HubSpot</strong> to create a new contact from the lead. Click a lead's <strong>Name</strong> to open it in the contact popup (the <strong>✎</strong> next to it edits the name inline instead).
+        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, drag a header to reorder it (drag its right edge to resize), use <strong>Filters</strong> for per-column filtering, and <strong>Columns</strong> to show / hide or reorder columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account — accept the suggested match or type to pick another. The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand. The <strong>HubSpot Contact</strong> column maps each lead to a HubSpot contact — accept the email/name match, search to pick another, or <strong>+ Add to HubSpot</strong> to create a new contact from the lead. Click a lead's <strong>Name</strong> to open it in the contact popup (the <strong>✎</strong> next to it edits the name inline instead).
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -1298,17 +1384,39 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
           </colgroup>
           <thead>
             <tr>
-              {visibleColumnList.map(c => (
-                <th key={c.key} style={{
+              {visibleColumnList.map(c => {
+                const isDropTarget = dragColKey && dragOverKey === c.key && dragColKey !== c.key;
+                const isDragging = dragColKey === c.key;
+                return (
+                <th
+                  key={c.key}
+                  onDragOver={dragColKey ? (e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const after = e.clientX > rect.left + rect.width / 2;
+                    if (dragOverKey !== c.key || dragAfter !== after) { setDragOverKey(c.key); setDragAfter(after); }
+                  } : undefined}
+                  onDrop={dragColKey ? (e) => {
+                    e.preventDefault();
+                    moveColumn(dragColKey, c.key, dragAfter);
+                    setDragColKey(''); setDragOverKey('');
+                  } : undefined}
+                  style={{
                   textAlign: 'left', padding: '0.45rem 0.6rem', paddingRight: '0.95rem',
                   background: '#F1F5F9', fontWeight: 700, fontSize: '0.72rem', color: '#475569',
                   borderBottom: '1px solid var(--color-border)', position: 'sticky', top: 0, zIndex: 1,
                   overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
+                  opacity: isDragging ? 0.4 : 1,
+                  boxShadow: isDropTarget ? `inset ${dragAfter ? '-3px' : '3px'} 0 0 0 #009530` : undefined,
                 }}>
                   <span
+                    draggable
+                    onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', c.key); } catch { /* noop */ } setDragColKey(c.key); }}
+                    onDragEnd={() => { setDragColKey(''); setDragOverKey(''); }}
                     onClick={c.readonly ? undefined : () => cycleSort(c.key)}
-                    title={c.readonly ? undefined : `Sort by ${c.label}`}
-                    style={{ position: 'relative', display: 'block', paddingRight: 12, cursor: c.readonly ? 'default' : 'pointer', userSelect: 'none' }}
+                    title={c.readonly ? `Drag to reorder ${c.label}` : `Sort by ${c.label} · drag to reorder`}
+                    style={{ position: 'relative', display: 'block', paddingRight: 12, cursor: dragColKey ? 'grabbing' : (c.readonly ? 'grab' : 'pointer'), userSelect: 'none' }}
                   >
                     {c.label}
                     {sortKey === c.key && (
@@ -1330,7 +1438,8 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                     onMouseLeave={e => { e.currentTarget.style.borderRight = '1px solid #E2E8F0'; }}
                   />
                 </th>
-              ))}
+                );
+              })}
               <th style={{ background: '#F1F5F9', borderBottom: '1px solid var(--color-border)', position: 'sticky', top: 0, zIndex: 1 }} />
             </tr>
             {filtersOpen && (
