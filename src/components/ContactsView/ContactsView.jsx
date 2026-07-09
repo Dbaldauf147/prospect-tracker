@@ -167,6 +167,7 @@ export function ContactsView({
             updateSettings={updateSettings}
             onAddProspect={onAddProspect}
             onSelectProspect={onSelectProspect}
+            targetAccountsData={targetAccountsData}
           />
         )}
         {subtab === 'all' && (

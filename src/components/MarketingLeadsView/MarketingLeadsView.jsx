@@ -5,6 +5,7 @@ import { SF_INSTANCE_URL, resolveSfUrl } from '../../utils/salesforceLeads';
 import { getHubspotContacts, updateHubspotCache, notifyCacheUpdated } from '../../utils/hubspotContactsCache';
 import { apiFetch } from '../../utils/apiFetch';
 import { STATUS_COLORS } from '../../data/enums';
+import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 
@@ -25,6 +26,7 @@ const COLUMNS = [
   { key: 'company',             label: 'Company',                    defaultWidth: 190 },
   { key: 'mappedCompany',       label: 'Company Mapping',            defaultWidth: 200 },
   { key: 'companyStatus',       label: 'Company Status',             defaultWidth: 150, readonly: true },
+  { key: 'companyCdm',          label: 'CDM',                        defaultWidth: 140, readonly: true },
   { key: 'hubspotContact',      label: 'HubSpot Contact',            defaultWidth: 220 },
   { key: 'hubspotTitle',        label: 'HubSpot Title',              defaultWidth: 170, readonly: true },
   { key: 'status',              label: 'Status',                     defaultWidth: 110 },
@@ -392,7 +394,7 @@ const HubSpotContactAutocomplete = memo(function HubSpotContactAutocomplete({ co
   );
 });
 
-export function MarketingLeadsView({ prospects = [], settings, updateSettings, onAddProspect, onSelectProspect }) {
+export function MarketingLeadsView({ prospects = [], settings, updateSettings, onAddProspect, onSelectProspect, targetAccountsData }) {
   const persistedRows = useMemo(() => {
     const arr = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
     return arr.map(r => {
@@ -666,6 +668,64 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     if (direct) return direct;
     const norm = prospectIndex.strip(company);
     return norm ? prospectIndex.map.get(norm) || null : null;
+  }
+
+  // Cross-CDM account lookup from the uploaded Target Accounts workbook
+  // (Lists → Target Accounts). Unlike `prospects` — which holds only the
+  // current user's own accounts — this spans every CDM's accounts, so a
+  // lead mapped to a company another CDM owns still resolves a Status and
+  // its CDM. Keyed by lower-cased and strip-normalized company name.
+  const targetAccountsIndex = useMemo(() => {
+    const map = new Map();
+    const data = targetAccountsData;
+    if (!data?.sheets) return map;
+    const findCol = (r, keywords) => {
+      for (const key of Object.keys(r)) {
+        const lower = key.toLowerCase();
+        for (const kw of keywords) {
+          if (lower.includes(kw)) return String(r[key] || '').trim();
+        }
+      }
+      return '';
+    };
+    const cdmCol = settings?.targetRepColumn || settings?.targetCdmColumn;
+    for (const sheetName of data.sheetNames || []) {
+      const sheet = data.sheets[sheetName];
+      if (!sheet?.records) continue;
+      for (const r of sheet.records) {
+        const company = findCol(r, ['account', 'company', 'client', 'name']);
+        if (!company) continue;
+        const rec = { status: findCol(r, ['status']), cdm: resolveTargetAccountCdm(r, cdmCol) };
+        const keyLower = company.toLowerCase().trim();
+        if (keyLower && !map.has(keyLower)) map.set(keyLower, rec);
+        const norm = prospectIndex.strip(company);
+        if (norm && !map.has(norm)) map.set(norm, rec);
+      }
+    }
+    return map;
+  }, [targetAccountsData, settings?.targetRepColumn, settings?.targetCdmColumn, prospectIndex]);
+
+  function findTargetAccount(company) {
+    if (!company) return null;
+    const direct = targetAccountsIndex.get(String(company).toLowerCase().trim());
+    if (direct) return direct;
+    const norm = prospectIndex.strip(company);
+    return norm ? targetAccountsIndex.get(norm) || null : null;
+  }
+
+  // Combined company info for a lead's company: the user's own Table View
+  // account wins (richest, editable data); otherwise fall back to the
+  // cross-CDM Target Accounts list so an account owned by another CDM
+  // still shows a Status + who owns it. Returns { status, cdm, name,
+  // owned } or null when the company is unknown everywhere.
+  function lookupCompanyInfo(company) {
+    const c = String(company || '').trim();
+    if (!c) return null;
+    const p = findProspectByCompany(c);
+    if (p) return { status: (p.status || '').trim(), cdm: (p.cdm || '').trim(), name: (p.company || c).trim(), owned: true };
+    const t = findTargetAccount(c);
+    if (t) return { status: (t.status || '').trim(), cdm: (t.cdm || '').trim(), name: c, owned: false };
+    return null;
   }
 
   // Best Table View account for a raw company string: an exact / strip-
@@ -1624,13 +1684,12 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                         })()
                       ) : c.key === 'companyStatus' ? (
                         (() => {
-                          // The mapped Table View account's Status (Client /
-                          // Inside Sales / Qualifying / …), shown as a colored
-                          // chip. Resolves against the lead's effective company
-                          // (mapped account, else the raw Company).
-                          const company = effectiveCompany(r);
-                          const prospect = company ? findProspectByCompany(company) : null;
-                          const status = (prospect?.status || '').trim();
+                          // The company's Status, shown as a colored chip. Uses
+                          // the user's own Table View account when present, else
+                          // falls back to the cross-CDM Target Accounts list so a
+                          // company another CDM owns still shows a status.
+                          const info = lookupCompanyInfo(effectiveCompany(r));
+                          const status = (info?.status || '').trim();
                           if (!status) {
                             return (
                               <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem' }}>
@@ -1642,9 +1701,21 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                           return (
                             <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem' }}>
                               <span
-                                title={`Table View status for "${prospect.company || company}"`}
+                                title={`Status for "${info.name}"${info.owned ? '' : ' (from Target Accounts — another CDM)'}`}
                                 style={{ display: 'inline-block', maxWidth: '100%', background: `${color}1A`, border: `1px solid ${color}`, color, padding: '2px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                               >{status}</span>
+                            </div>
+                          );
+                        })()
+                      ) : c.key === 'companyCdm' ? (
+                        (() => {
+                          // Who owns the company — the CDM from the user's own
+                          // account, else from the cross-CDM Target Accounts list.
+                          const info = lookupCompanyInfo(effectiveCompany(r));
+                          const cdm = (info?.cdm || '').trim();
+                          return (
+                            <div title={cdm ? `CDM for "${info.name}"${info.owned ? '' : ' (Target Accounts)'}` : undefined} style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem', fontSize: '0.78rem', color: info?.owned ? '#334155' : '#7C3AED', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {cdm || <span style={{ color: '#CBD5E1', fontStyle: 'italic' }}>—</span>}
                             </div>
                           );
                         })()
