@@ -5,6 +5,7 @@ import { SF_INSTANCE_URL, resolveSfUrl } from '../../utils/salesforceLeads';
 import { getHubspotContacts, updateHubspotCache, notifyCacheUpdated } from '../../utils/hubspotContactsCache';
 import { apiFetch } from '../../utils/apiFetch';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
+import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 
 // Marketing Leads subtab on the Contacts page. The user pastes a block
 // copied from a Salesforce Leads list view; a column-mapping modal pops
@@ -400,6 +401,22 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
       if (base.name) base.name = normalizeLeadName(base.name);
       return base;
     });
+  }, [settings]);
+
+  // Status column options come from the "Marketing Lead Status" list on
+  // the Dropdowns tab, so the vocabulary is managed in one place. Matched
+  // by its stable built-in key, falling back to a case-insensitive label
+  // match so a user-created custom list of the same name also binds.
+  const statusOptions = useMemo(() => {
+    const lists = getEffectiveDropdownLists(settings);
+    const norm = s => String(s || '').trim().toLowerCase();
+    // Prefer a user-created custom list named "Marketing Lead Status"
+    // (they built it deliberately), then the built-in list, then any
+    // remaining label match.
+    const list = lists.find(l => !l.builtin && norm(l.label) === 'marketing lead status')
+      || lists.find(l => l.key === 'marketingLeadStatus')
+      || lists.find(l => norm(l.label) === 'marketing lead status');
+    return Array.isArray(list?.options) ? list.options.filter(o => String(o || '').trim()) : [];
   }, [settings]);
 
   const [search, setSearch] = useState('');
@@ -1379,7 +1396,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
         >Clear table</button>
       </div>
       <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
-        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, drag a header to reorder it (drag its right edge to resize), use <strong>Filters</strong> for per-column filtering, and <strong>Columns</strong> to show / hide or reorder columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account — accept the suggested match or type to pick another. The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand. The <strong>HubSpot Contact</strong> column maps each lead to a HubSpot contact — accept the email/name match, search to pick another, or <strong>+ Add to HubSpot</strong> to create a new contact from the lead. The read-only <strong>HubSpot Title</strong> column shows the mapped contact's job title. Click a lead's <strong>Name</strong> to open it in the contact popup (the <strong>✎</strong> next to it edits the name inline instead).
+        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, drag a header to reorder it (drag its right edge to resize), use <strong>Filters</strong> for per-column filtering, and <strong>Columns</strong> to show / hide or reorder columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account — accept the suggested match or type to pick another. The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand. The <strong>HubSpot Contact</strong> column maps each lead to a HubSpot contact — accept the email/name match, search to pick another, or <strong>+ Add to HubSpot</strong> to create a new contact from the lead. The read-only <strong>HubSpot Title</strong> column shows the mapped contact's job title. The <strong>Status</strong> column is a dropdown driven by the <strong>Marketing Lead Status</strong> list on the <strong>Dropdowns</strong> tab — edit that list to change the options. Click a lead's <strong>Name</strong> to open it in the contact popup (the <strong>✎</strong> next to it edits the name inline instead).
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -1742,6 +1759,28 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                                 );
                               })()}
                             </div>
+                          );
+                        })()
+                      ) : c.key === 'status' ? (
+                        (() => {
+                          const cur = (r.status || '').trim();
+                          // Keep an off-list value (e.g. a status pasted from
+                          // Salesforce that isn't in the Dropdowns list) as a
+                          // selectable option so it isn't silently dropped.
+                          const offList = cur && !statusOptions.includes(cur);
+                          return (
+                            <select
+                              value={cur}
+                              onChange={e => updateCell(r.id, 'status', e.target.value)}
+                              title={offList ? `"${cur}" isn't in the Marketing Lead Status list. Manage the list on the Dropdowns tab.` : 'Set the lead status (managed on the Dropdowns tab → Marketing Lead Status).'}
+                              style={{ ...cellInputStyle, cursor: 'pointer', appearance: 'auto' }}
+                            >
+                              <option value="">{isPad ? '' : '—'}</option>
+                              {offList && <option value={cur}>{cur} (not in list)</option>}
+                              {statusOptions.map(opt => (
+                                <option key={opt} value={opt}>{opt}</option>
+                              ))}
+                            </select>
                           );
                         })()
                       ) : c.key === 'name' ? (
