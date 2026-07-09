@@ -312,10 +312,16 @@ export function YOYView() {
     return fiscalMonths(currentYear).map((m) => {
       const key = `${m.year}-${String(m.monthIdx + 1).padStart(2, '0')}`;
       // Manually-recorded values win; otherwise the current month falls
-      // back to the live Opps 2 / BFO computation.
-      const saved = quotedTable[key] || null;
-      const isLive = !saved && key === liveKey && liveCurrentMonth != null;
-      const v = saved || (isLive ? liveCurrentMonth : null);
+      // back to the live Opps 2 / BFO computation. An `_auto` entry is the
+      // persisted copy of a live snapshot (written by the auto-capture
+      // effect below) — while it's still the current month we keep showing
+      // the freshly-computed live values, and once the month rolls over the
+      // persisted copy becomes the fixed month-end figure so it doesn't
+      // vanish. A manual save clears `_auto` and always wins.
+      const rawSaved = quotedTable[key] || null;
+      const manualSaved = rawSaved && !rawSaved._auto ? rawSaved : null;
+      const isLive = !manualSaved && key === liveKey && liveCurrentMonth != null;
+      const v = manualSaved || (isLive ? liveCurrentMonth : rawSaved);
       const weak = v ? num(v.weak) : null;
       const ok = v ? num(v.ok) : null;
       const expected = v ? num(v.expected) : null;
@@ -325,6 +331,33 @@ export function YOYView() {
       return { month: m.label, year: m.year, monthKey: key, weak, ok, expected, agreements, bfoPipe, _hasData, _live: isLive && _hasData };
     });
   }, [quotedTable, currentYear, liveCurrentMonth]);
+
+  // Persist the live current-month snapshot so it survives the calendar
+  // roll-over. Previously the in-progress month was only ever computed
+  // live and never written, so on the 1st of the next month it reverted to
+  // a gap — e.g. June's figures vanished once July began. We mirror the
+  // live values into the table under an `_auto` flag (rounded to whole $K,
+  // matching what "Edit values" stores) whenever they change and the month
+  // has no manual entry. The flag keeps the month "live" — still recomputed
+  // for display and overwritable — until it rolls over into a fixed figure.
+  useEffect(() => {
+    if (!liveCurrentMonth) return;
+    const key = currentMonthKey();
+    const existing = quotedTable[key];
+    if (existing && !existing._auto) return; // manual entry — leave it alone
+    const snap = {};
+    let any = false;
+    for (const f of QUOTED_FIELDS) {
+      const val = liveCurrentMonth[f];
+      if (val != null && Number.isFinite(val)) { snap[f] = Math.round(val); any = true; }
+    }
+    if (!any) return;
+    // Skip a redundant write if the persisted auto snapshot already matches.
+    if (existing && existing._auto &&
+        QUOTED_FIELDS.every(f => (existing[f] ?? null) === (snap[f] ?? null))) return;
+    updateQuotedTable({ ...quotedTable, [key]: { ...snap, _auto: true } });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveCurrentMonth]);
 
   // Close Rate — stacked bar of In Progress / Sold / Not Sold per Open
   // Year (percentages summing to 100), plus two C/R lines.
