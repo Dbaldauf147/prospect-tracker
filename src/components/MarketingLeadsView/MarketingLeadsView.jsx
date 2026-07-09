@@ -113,6 +113,13 @@ function companyKey(s) {
   return String(s || '').toLowerCase().trim();
 }
 
+// A lead whose Status is "Closed-Recycle" (any spacing / punctuation:
+// "Closed - Recycle", "Closed Recycle", …). These are dead leads — shown
+// with a red background and sunk below the active leads.
+function isClosedRecycle(row) {
+  return String(row?.status || '').toLowerCase().replace(/[^a-z0-9]/g, '') === 'closedrecycle';
+}
+
 // Lead-status classification for the close-rate summary. Statuses are
 // free-form text pasted from the Salesforce Leads list, so we match
 // loosely: a converted lead is a "win", a Closed-Recycle lead is a
@@ -758,6 +765,13 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
       return true;
     });
     if (isSorting) rows = [...rows].sort(sortCompare);
+    // Closed-Recycle leads always sink below the active leads, keeping the
+    // current (natural or sorted) order within each group. Stable so the
+    // two groups don't otherwise reshuffle.
+    const active = [];
+    const recycled = [];
+    for (const r of rows) (isClosedRecycle(r) ? recycled : active).push(r);
+    rows = [...active, ...recycled];
     if (!isFiltering && !isSorting) {
       const padding = Math.max(0, MIN_VISIBLE_ROWS - rows.length);
       const padRows = Array.from({ length: padding }, (_, i) => ({ ...emptyRow(), id: `__pad_${i}` }));
@@ -1205,8 +1219,15 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
             )}
             {filtered.map(r => {
               const isPad = String(r.id).startsWith('__pad_');
+              const recycled = !isPad && isClosedRecycle(r);
               return (
-                <tr key={r.id} style={{ borderBottom: '1px solid var(--color-border-light)' }}>
+                <tr
+                  key={r.id}
+                  style={{
+                    borderBottom: '1px solid var(--color-border-light)',
+                    background: recycled ? '#FEE2E2' : undefined,
+                  }}
+                >
                   {visibleColumnList.map(c => (
                     <td key={c.key} style={{ padding: 0, verticalAlign: 'top' }}>
                       {c.key === 'sfUrl' ? (
