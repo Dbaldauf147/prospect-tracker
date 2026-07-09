@@ -2229,6 +2229,8 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
 
     const bfoPrepBlock = ['BFO Opportunity Names', ...bfoPrepOpps.map(o => o.name)].join('\n');
 
+    const marketingLeadsBlock = ['Name\tCompany', ...marketingLeadsMissing.map(l => `${(l.name || '').trim()}\t${(l.company || '').trim()}`)].join('\n');
+
     const sections = [
       { title: 'BFO Prep', prompt: bfoPrepPrompt, block: bfoPrepBlock, hasData: bfoPrepOpps.length > 0 },
       { title: 'Activity', prompt: aiPrompt, block: activityBlock, hasData: activityLines.length > 1 },
@@ -2237,15 +2239,21 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       { title: 'Amount Updates', prompt: amountUpdatesPrompt, block: amountBlock, hasData: amountUpdateOpps.length > 0 },
       { title: 'Stage Change', prompt: stageChangePrompt, block: stageBlock, hasData: stageChangeOpps.length > 0 },
       { title: 'Close Not Solds', prompt: closeNotSoldsPrompt, block: closeNotSoldBlock, hasData: closeNotSoldLines.length > 1 },
+      // Marketing Leads always rides along in the bundle, even with no leads
+      // missing a Salesforce Link — its prompt stands alone as a reusable
+      // instruction, so `always` keeps it in every copy regardless of data.
+      { title: 'Marketing Leads', prompt: marketingLeadsPrompt, block: marketingLeadsBlock, hasData: marketingLeadsMissing.length > 0, always: true },
     ];
     // Skip sections that carry no data — when a section is just its prompt
     // with an empty data block (no BFO links, names, or opportunities to
     // act on), there's nothing for the assistant to do, so leave it out of
     // the bundle. hasData checks the underlying rows (the header-only line
     // count for the deduped / filtered blocks) rather than the prompt text.
+    // `always` sections stay in even when empty, dropping just their data
+    // block so only the prompt itself carries through.
     const base = sections
-      .filter(s => s.hasData)
-      .map(s => `===== ${s.title} =====\n${s.prompt}\n\n${s.block}`)
+      .filter(s => s.hasData || s.always)
+      .map(s => s.hasData ? `===== ${s.title} =====\n${s.prompt}\n\n${s.block}` : `===== ${s.title} =====\n${s.prompt}`)
       .join('\n\n');
     // Update BFO Activity closes out the bundle (no data block of its own).
     const bfoSuffix = (updateBfoActivityPrompt || '').trim();
@@ -2257,6 +2265,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     stageChangePrompt, closeNotSoldsPrompt, updateBfoActivityPrompt,
     bfoPrepPrompt, todaysOutbound, calledOpps, markedMeetingOpps, newBfoOpps, closeDateOpps,
     amountUpdateOpps, stageChangeOpps, closeNotSoldOpps, bfoPrepOpps,
+    marketingLeadsPrompt, marketingLeadsMissing,
   ]);
 
   const [copyAllFlash, setCopyAllFlash] = useState('');
@@ -2651,10 +2660,12 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
           <button
             type="button"
             className={styles.aiPromptBtn}
-            disabled={marketingLeadsMissing.length === 0}
             onClick={async () => {
-              const block = ['Name\tCompany', ...marketingLeadsMissing.map(l => `${(l.name || '').trim()}\t${(l.company || '').trim()}`)].join('\n');
-              const fullPrompt = `${marketingLeadsPrompt}\n\n${block}`;
+              // With no leads missing a link there's no data block to append,
+              // so copy the prompt on its own — it's still useful standalone.
+              const fullPrompt = marketingLeadsMissing.length === 0
+                ? marketingLeadsPrompt
+                : `${marketingLeadsPrompt}\n\n${['Name\tCompany', ...marketingLeadsMissing.map(l => `${(l.name || '').trim()}\t${(l.company || '').trim()}`)].join('\n')}`;
               try {
                 await navigator.clipboard.writeText(fullPrompt);
                 setMarketingLeadsCopyFlash('Copied!');
