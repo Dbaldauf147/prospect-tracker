@@ -43,6 +43,16 @@ const COLUMNS = [
 const MIN_COLUMN_WIDTH = 60;
 const MIN_VISIBLE_ROWS = 25;
 
+// Columns present in the original Marketing Leads view. Used only to
+// migrate a legacy "visible columns" whitelist into the hidden-list
+// model — only these can be auto-hidden by the migration, so every
+// column added since (mapping / status / CDM / HubSpot / …) stays
+// visible by default even for users who had customized their columns.
+const LEGACY_COLUMN_KEYS = [
+  'name', 'email', 'jobTitle', 'company', 'status', 'createdDate',
+  'leadSource', 'owner', 'country', 'qualificationDetail', 'tvStatus',
+];
+
 // Note stamped onto a HubSpot contact the moment it's created from a
 // Marketing Lead, so its origin is recorded on the contact's timeline
 // (and mirrored into the app's Notes column).
@@ -454,20 +464,36 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     setSearch('');
   }
 
-  // Column visibility — toggleable via the "Columns" dropdown, persisted
-  // via settings.marketingLeadsVisibleCols. Falls back to every column
-  // visible when nothing has been saved.
-  const visibleCols = useMemo(() => {
-    const saved = settings?.marketingLeadsVisibleCols;
-    if (Array.isArray(saved) && saved.length) return new Set(saved);
-    return new Set(COLUMNS.map(c => c.key));
+  // Column visibility — persisted as a HIDDEN list
+  // (settings.marketingLeadsHiddenCols) rather than a visible whitelist,
+  // so a newly-added column shows by default instead of being hidden for
+  // anyone who had previously customized their columns. A one-time
+  // migration folds a legacy visible-list into the hidden list, but only
+  // for the columns that existed back then — new columns are never
+  // auto-hidden. Once migrated, the legacy key is ignored.
+  const hiddenCols = useMemo(() => {
+    const savedHidden = settings?.marketingLeadsHiddenCols;
+    if (Array.isArray(savedHidden)) return new Set(savedHidden);
+    const legacyVisible = settings?.marketingLeadsVisibleCols;
+    if (Array.isArray(legacyVisible) && legacyVisible.length) {
+      const visible = new Set(legacyVisible);
+      // Hide only legacy columns the user had turned off; the recently
+      // added columns (not present in that saved set's era) stay visible.
+      return new Set(LEGACY_COLUMN_KEYS.filter(k => !visible.has(k)));
+    }
+    return new Set();
   }, [settings]);
 
+  const visibleCols = useMemo(
+    () => new Set(COLUMNS.filter(c => !hiddenCols.has(c.key)).map(c => c.key)),
+    [hiddenCols],
+  );
+
   function setColVisible(key, on) {
-    const next = new Set(visibleCols);
-    if (on) next.add(key); else next.delete(key);
-    if (next.size === 0) next.add('name'); // never hide everything
-    updateSettings({ marketingLeadsVisibleCols: [...next] });
+    if (key === 'name') return; // Name is always visible — table needs an anchor
+    const next = new Set(hiddenCols);
+    if (on) next.delete(key); else next.add(key);
+    updateSettings({ marketingLeadsHiddenCols: [...next] });
   }
 
   // Column order — persisted via settings.marketingLeadsColumnOrder as a
