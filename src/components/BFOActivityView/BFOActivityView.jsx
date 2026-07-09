@@ -396,6 +396,7 @@ export function BFOActivityView({ prospects = [] } = {}) {
           dataKey={LEADS_DATA_KEY}
           prefsKey={LEADS_PREFS_KEY}
           csvPrefix="leads"
+          flipNameColumn
           emptyHint="Open the Salesforce Leads list, click Printable View, select the table (including the header row), copy, then paste anywhere on this page. The data persists in your browser until you clear or replace it."
         />
       ) : (
