@@ -531,6 +531,17 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     return out;
   }, [settings]);
 
+  // Definite table width = sum of the visible column widths (+ 44px for
+  // the action column). Giving the table an explicit width keeps
+  // table-layout:fixed authoritative, so every column honors its dragged
+  // width and long cell text (e.g. a HubSpot Title) clips with an ellipsis
+  // instead of stretching the column. `width: max-content` let wide
+  // readonly cells grow past the dragged width.
+  const tableWidth = useMemo(
+    () => visibleColumnList.reduce((sum, c) => sum + (columnWidths[c.key] || 0), 0) + 44,
+    [visibleColumnList, columnWidths],
+  );
+
   const dragRef = useRef(null);
   const colRefs = useRef({});
   function startResize(e, colKey) {
@@ -1438,7 +1449,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
       )}
 
       <div style={{ flex: 1, overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: 4 }}>
-        <table style={{ borderCollapse: 'collapse', fontSize: '0.8rem', tableLayout: 'fixed', width: 'max-content', minWidth: '100%' }}>
+        <table style={{ borderCollapse: 'collapse', fontSize: '0.8rem', tableLayout: 'fixed', width: tableWidth, minWidth: '100%' }}>
           <colgroup>
             {visibleColumnList.map(c => (
               <col key={c.key} ref={el => { colRefs.current[c.key] = el; }} style={{ width: `${columnWidths[c.key]}px` }} />
@@ -1639,10 +1650,10 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                             const live = findHubspotById(id);
                             const label = live ? hubspotDisplay(live) : (r.hubspotContact || 'Mapped contact');
                             return (
-                              <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem', display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <span title={label} style={{ background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534', padding: '2px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>✓ {label}</span>
+                              <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem', display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, overflow: 'hidden' }}>
+                                <span title={label} style={{ background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534', padding: '2px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>✓ {label}</span>
                                 {!isPad && (
-                                  <button type="button" onClick={() => setHubspotMapping(r.id, null)} title="Unmap this HubSpot contact" style={{ border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer', fontSize: '0.85rem', lineHeight: 1, padding: 0 }}>×</button>
+                                  <button type="button" onClick={() => setHubspotMapping(r.id, null)} title="Unmap this HubSpot contact" style={{ border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer', fontSize: '0.85rem', lineHeight: 1, padding: 0, flexShrink: 0 }}>×</button>
                                 )}
                               </div>
                             );
@@ -1697,18 +1708,18 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                           // editable picker + accept-suggestion pill below.
                           if (mapped && prospect && onSelectProspect && !isPad) {
                             return (
-                              <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem', display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, overflow: 'hidden' }}>
                                 <button
                                   type="button"
                                   onClick={() => onSelectProspect(prospect)}
                                   title={`Open the company popup for "${prospect.company || mapped}"`}
-                                  style={{ background: 'none', border: 'none', padding: 0, color: '#0369A1', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer', textAlign: 'left', textDecoration: 'underline', fontFamily: 'inherit', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                  style={{ background: 'none', border: 'none', padding: 0, color: '#0369A1', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer', textAlign: 'left', textDecoration: 'underline', fontFamily: 'inherit', flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                                 >{prospect.company || mapped}</button>
                                 <button
                                   type="button"
                                   onClick={() => updateCell(r.id, 'mappedCompany', '')}
                                   title="Clear this mapping"
-                                  style={{ border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer', fontSize: '0.85rem', lineHeight: 1, padding: 0 }}
+                                  style={{ border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer', fontSize: '0.85rem', lineHeight: 1, padding: 0, flexShrink: 0 }}
                                 >×</button>
                               </div>
                             );
