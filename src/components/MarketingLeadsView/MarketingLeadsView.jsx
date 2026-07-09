@@ -110,6 +110,32 @@ function companyKey(s) {
   return String(s || '').toLowerCase().trim();
 }
 
+// Lead-status classification for the close-rate summary. Statuses are
+// free-form text pasted from the Salesforce Leads list, so we match
+// loosely: a converted lead is a "win", a Closed-Recycle lead is a
+// "loss", and together they make up the closed (decided) population.
+// Close rate = wins / decided. Everything still open (Working, Nurture,
+// Qualified, …) is excluded from the denominator so in-flight leads
+// don't drag the rate down.
+function isWonStatus(status) {
+  const s = String(status || '').toLowerCase();
+  return /convert/.test(s); // "Closed - Converted"
+}
+function isLostStatus(status) {
+  const s = String(status || '').toLowerCase();
+  return /recycle/.test(s); // "Closed - Recycle" — lost on this page
+}
+function computeCloseStats(rows) {
+  let won = 0;
+  let lost = 0;
+  for (const r of rows) {
+    if (isWonStatus(r.status)) won++;
+    else if (isLostStatus(r.status)) lost++;
+  }
+  const decided = won + lost;
+  return { won, lost, decided, rate: decided ? won / decided : null };
+}
+
 // Salesforce-link resolution (SF_INSTANCE_URL / resolveSfUrl) is shared
 // with the Agents Activity table via utils/salesforceLeads.
 
@@ -517,6 +543,15 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     return rows;
   }, [persistedRows, search, activeColumnFilters, isFiltering, isSorting, sortKey, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Close-rate summary over the currently shown leads (padding rows are
+  // synthetic scratch rows, so drop them). When a search / column filter
+  // is active this reflects just the filtered slice, so the rate updates
+  // as you narrow by owner, source, country, etc.
+  const closeStats = useMemo(
+    () => computeCloseStats(filtered.filter(r => !String(r.id).startsWith('__pad_'))),
+    [filtered],
+  );
+
   function persist(next) {
     updateSettings({ marketingLeads: next });
   }
@@ -813,6 +848,33 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
       </div>
       <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
         Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, use <strong>Filters</strong> for per-column filtering, drag a header edge to resize, and <strong>Columns</strong> to show/hide columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account — accept the suggested match or type to pick another. The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand.
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <div
+          title="Close rate = converted leads ÷ decided leads (converted + Closed-Recycle). Open leads (Working, Nurture, Qualified, …) are excluded from the denominator."
+          style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: '#F0FDF4', border: '1px solid #86EFAC', borderRadius: 999, padding: '0.25rem 0.75rem' }}
+        >
+          <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#166534', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            Close rate{isFiltering ? ' (filtered)' : ''}
+          </span>
+          <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#009530' }}>
+            {closeStats.rate == null ? '—' : `${(closeStats.rate * 100).toFixed(1)}%`}
+          </span>
+        </div>
+        <span style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>
+          <strong style={{ color: '#166534' }}>{closeStats.won.toLocaleString()}</strong> won
+          {' · '}
+          <strong style={{ color: '#B91C1C' }}>{closeStats.lost.toLocaleString()}</strong> lost
+          {' '}<span style={{ color: 'var(--color-text-muted)' }}>(Closed-Recycle)</span>
+          {' · '}
+          <strong>{closeStats.decided.toLocaleString()}</strong> decided
+        </span>
+        {closeStats.rate == null && (
+          <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
+            No converted or Closed-Recycle leads yet.
+          </span>
+        )}
       </div>
 
       {pasteHelper !== null && (
