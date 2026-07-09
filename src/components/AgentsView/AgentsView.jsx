@@ -2683,6 +2683,13 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
           )}
           {marketingLeadsCopyFlash && <span className={styles.copyFlash}>{marketingLeadsCopyFlash}</span>}
         </div>
+        {/* With no leads to act on there's no data block below, so surface the
+            prompt itself as a read-only preview — it stays visible (and
+            copyable) even when the table is empty. Editing swaps in the
+            textarea above, so only show the preview when not editing. */}
+        {marketingLeadsMissing.length === 0 && !revealedPrompts.marketingLeads && (
+          <pre className={styles.aiPromptPreview}>{marketingLeadsPrompt}</pre>
+        )}
         <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
           <table className={styles.table}>
             <thead>
