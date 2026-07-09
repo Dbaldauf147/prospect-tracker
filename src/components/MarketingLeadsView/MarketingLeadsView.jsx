@@ -172,6 +172,24 @@ function extractLeadLinks(html) {
   return Object.keys(map).length ? map : null;
 }
 
+// Salesforce lists render person names "Last, First" (e.g. "Blancarte,
+// Victor"). Flip a simple "Last, First" into "First Last" for display,
+// HubSpot matching, and the create-contact name split. Names without a
+// comma pass through untouched, and it's idempotent so re-running never
+// re-flips an already-normalised name.
+function normalizeLeadName(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return s;
+  const ci = s.indexOf(',');
+  if (ci === -1) return s;
+  const last = s.slice(0, ci).trim();
+  const first = s.slice(ci + 1).trim();
+  // Only flip a clean two-part "Last, First" — bail on empty halves or a
+  // multi-comma value so odd inputs aren't mangled.
+  if (!last || !first || first.includes(',')) return s;
+  return `${first} ${last}`;
+}
+
 function nameKey(s) {
   return String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
 }
@@ -360,7 +378,14 @@ const HubSpotContactAutocomplete = memo(function HubSpotContactAutocomplete({ co
 export function MarketingLeadsView({ prospects = [], settings, updateSettings, onAddProspect }) {
   const persistedRows = useMemo(() => {
     const arr = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
-    return arr.map(r => ({ ...emptyRow(), ...r, id: r.id || makeId() }));
+    return arr.map(r => {
+      const base = { ...emptyRow(), ...r, id: r.id || makeId() };
+      // Heal legacy rows stored as "Last, First" so they display (and
+      // match / add to HubSpot) as "First Last". Idempotent — any later
+      // write persists the normalised form.
+      if (base.name) base.name = normalizeLeadName(base.name);
+      return base;
+    });
   }, [settings]);
 
   const [search, setSearch] = useState('');
@@ -879,6 +904,9 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
         const hit = linkMap[nameKey(fresh.name)];
         if (hit) fresh.sfUrl = hit;
       }
+      // Flip "Last, First" → "First Last" AFTER the link lookup above,
+      // which matches on the raw name as it appears in the pasted HTML.
+      fresh.name = normalizeLeadName(fresh.name);
       incoming.push(fresh);
     }
     if (incoming.length) persist([...persistedRows, ...incoming]);
