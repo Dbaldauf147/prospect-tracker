@@ -87,6 +87,10 @@ function parseDateYear(v) {
 
 const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
+// June 2026 was never captured before the month-end auto-persist existed,
+// leaving a gap on the chart. It's backfilled once with today's live values.
+const JUNE_2026_KEY = '2026-06';
+
 // Quoted Projections runs on a Dec-to-Nov fiscal year, starting in
 // December of the previous calendar year and ending in November of the
 // current calendar year. Returns 12 buckets each { label, year,
@@ -333,29 +337,49 @@ export function YOYView() {
   }, [quotedTable, currentYear, liveCurrentMonth]);
 
   // Persist the live current-month snapshot so it survives the calendar
-  // roll-over. Previously the in-progress month was only ever computed
-  // live and never written, so on the 1st of the next month it reverted to
-  // a gap — e.g. June's figures vanished once July began. We mirror the
-  // live values into the table under an `_auto` flag (rounded to whole $K,
-  // matching what "Edit values" stores) whenever they change and the month
-  // has no manual entry. The flag keeps the month "live" — still recomputed
-  // for display and overwritable — until it rolls over into a fixed figure.
+  // roll-over, and one-time backfill the June 2026 gap. Previously the
+  // in-progress month was only ever computed live and never written, so on
+  // the 1st of the next month it reverted to a gap — that's how June's
+  // figures vanished once July began. Both writes are batched into a single
+  // update to avoid one clobbering the other.
   useEffect(() => {
     if (!liveCurrentMonth) return;
-    const key = currentMonthKey();
-    const existing = quotedTable[key];
-    if (existing && !existing._auto) return; // manual entry — leave it alone
-    const snap = {};
-    let any = false;
-    for (const f of QUOTED_FIELDS) {
-      const val = liveCurrentMonth[f];
-      if (val != null && Number.isFinite(val)) { snap[f] = Math.round(val); any = true; }
+    // Round the live snapshot to whole $K, matching what "Edit values"
+    // stores. Returns null when nothing computed.
+    const liveSnap = () => {
+      const snap = {};
+      let any = false;
+      for (const f of QUOTED_FIELDS) {
+        const val = liveCurrentMonth[f];
+        if (val != null && Number.isFinite(val)) { snap[f] = Math.round(val); any = true; }
+      }
+      return any ? snap : null;
+    };
+    const patch = {};
+    // 1) Mirror the live current month under an `_auto` flag. The flag keeps
+    //    the month "live" — still recomputed for display and overwritable —
+    //    until it rolls over into a fixed month-end figure. A manual save
+    //    clears it and always wins.
+    const curKey = currentMonthKey();
+    const curExisting = quotedTable[curKey];
+    if (!curExisting || curExisting._auto) {
+      const snap = liveSnap();
+      const unchanged = snap && curExisting && curExisting._auto &&
+        QUOTED_FIELDS.every(f => (curExisting[f] ?? null) === (snap[f] ?? null));
+      if (snap && !unchanged) patch[curKey] = { ...snap, _auto: true };
     }
-    if (!any) return;
-    // Skip a redundant write if the persisted auto snapshot already matches.
-    if (existing && existing._auto &&
-        QUOTED_FIELDS.every(f => (existing[f] ?? null) === (snap[f] ?? null))) return;
-    updateQuotedTable({ ...quotedTable, [key]: { ...snap, _auto: true } });
+    // 2) One-time backfill: June 2026 predates the auto-persist above, so
+    //    its point is a gap and its real month-end values are unrecoverable.
+    //    Fill it with today's live values (a deliberate stand-in) as a fixed
+    //    recorded entry the user can correct via "Edit values". Scoped to the
+    //    2026 fiscal year — the only time June 2026 is on the chart — and
+    //    self-limiting: once written it persists and won't be re-filled.
+    if (currentYear === 2026 && !quotedTable[JUNE_2026_KEY]) {
+      const snap = liveSnap();
+      if (snap) patch[JUNE_2026_KEY] = snap; // no `_auto` → fixed, editable
+    }
+    if (Object.keys(patch).length === 0) return;
+    updateQuotedTable({ ...quotedTable, ...patch });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveCurrentMonth]);
 
