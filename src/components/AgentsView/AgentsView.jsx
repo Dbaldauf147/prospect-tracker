@@ -8,6 +8,7 @@ import { userLsGet, userLsSet } from '../../utils/userLs';
 import { apiFetch } from '../../utils/apiFetch';
 import { useAuth } from '../../contexts/AuthContext';
 import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
+import { resolveSfUrl } from '../../utils/salesforceLeads';
 import { OppInfoModal } from '../OppsView2/OppsView2';
 import styles from './AgentsView.module.css';
 
@@ -1295,6 +1296,26 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
     return null;
   };
 
+  // Marketing Leads (Contacts tab) indexed by lower-cased email → the
+  // lead's resolvable Salesforce record link. Lets the Activity table
+  // recognise when an outbound email's external recipient is a known
+  // lead, so the same activity can be logged on that lead's Salesforce
+  // record in addition to any matched Opp. Only leads whose Salesforce
+  // Link resolves to a real URL are indexed — there's nothing to open
+  // (or log against) otherwise.
+  const leadSfByEmail = useMemo(() => {
+    const map = new Map();
+    const leads = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
+    for (const lead of leads) {
+      const email = String(lead?.email || '').toLowerCase().trim();
+      if (!email || map.has(email)) continue;
+      const url = resolveSfUrl(lead?.sfUrl);
+      if (!url) continue;
+      map.set(email, { url, name: String(lead?.name || '').trim() });
+    }
+    return map;
+  }, [settings?.marketingLeads]);
+
   const { todaysOutbound, todaysMeetings } = useMemo(() => {
     const bounds = boundsForDate(referenceDate);
     const inToday = (ts) => {
@@ -1347,6 +1368,14 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
           matchedOpp = findOppForRecipient(addr, companyCandidate);
           if (matchedOpp) break;
         }
+        // If any external recipient is a known Marketing Lead, capture
+        // that lead's Salesforce record link so the activity can also be
+        // logged on the lead. First matching recipient wins.
+        let leadMatch = null;
+        for (const addr of recipients) {
+          const m = leadSfByEmail.get(String(addr).toLowerCase());
+          if (m) { leadMatch = m; break; }
+        }
         // Override key — keyed by the first external recipient so a
         // future email to the same person reuses the manual tag.
         const overrideKey = recipients[0] || '';
@@ -1387,6 +1416,8 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
           company,
           bfoOpp,
           bfoUrl,
+          leadSfUrl: leadMatch?.url || '',
+          leadName: leadMatch?.name || '',
           nextStepsType,
           overrideKey,
           isManual: Boolean(override),
@@ -1466,7 +1497,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
     // dependency set as cache + hubspotCache + oppIndex + overrides,
     // so they don't need their own entries here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cache, hubspotCache, oppIndex, overrides, ignoredEmailIds, ignoredMeetingIds, excludedRecipientSet, referenceDate, senderEmail]);
+  }, [cache, hubspotCache, oppIndex, overrides, ignoredEmailIds, ignoredMeetingIds, excludedRecipientSet, referenceDate, senderEmail, leadSfByEmail]);
 
   // Opps that count as "called" in the activity window. Two signals:
   //   • An explicit mark from the Opps tab's Called button (`_calledOn`
@@ -1772,6 +1803,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
         rowKey: `email:${e.id}`, type: 'email', ts: e.ts, endTs: null,
         title: e.subject, to: e.to, rawTo: e.rawTo, recipients: e.recipients || [],
         company: e.company, bfoOpp: e.bfoOpp, bfoUrl: e.bfoUrl,
+        leadSfUrl: e.leadSfUrl || '', leadName: e.leadName || '',
         outcome: e.status || '', location: '', overrideKey: e.overrideKey,
         isManual: e.isManual, editable: true, emailId: e.id,
       });
@@ -2084,6 +2116,14 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
         activityLines.push(`${e.bfoUrl}: Type ${e.nextStepsType}`);
         seen.add(e.bfoUrl);
       }
+      // Log the same email touch on any matched Marketing Lead's
+      // Salesforce record too. Lead links live on their own SF records,
+      // so they never collide with the opp BFO addresses above.
+      for (const e of todaysOutbound) {
+        if (!e.leadSfUrl || seen.has(e.leadSfUrl)) continue;
+        activityLines.push(`${e.leadSfUrl}: Type ${e.nextStepsType}`);
+        seen.add(e.leadSfUrl);
+      }
     }
     const activityBlock = activityLines.join('\n');
 
@@ -2365,13 +2405,26 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
                   {isActivityColVisible('lastActivity') && <td className={lastActivity ? '' : styles.muted}>{lastActivity || '—'}</td>}
                   {isActivityColVisible('bfoLink') && (
                     <td>
-                      {r.bfoUrl ? (
-                        <a
-                          href={r.bfoUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className={styles.bfoLink}
-                        >Open</a>
+                      {(r.bfoUrl || r.leadSfUrl) ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                          {r.bfoUrl && (
+                            <a
+                              href={r.bfoUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={styles.bfoLink}
+                            >Open</a>
+                          )}
+                          {r.leadSfUrl && (
+                            <a
+                              href={r.leadSfUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={styles.bfoLink}
+                              title={`Log this activity on the matched Marketing Lead${r.leadName ? ` (${r.leadName})` : ''} in Salesforce`}
+                            >Lead ↗</a>
+                          )}
+                        </span>
                       ) : (
                         <span className={styles.muted}>—</span>
                       )}
@@ -2526,6 +2579,13 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
           lines.push(`${e.bfoUrl}: Type ${e.nextStepsType}`);
           seen.add(e.bfoUrl);
         }
+        // Log the same email touch on any matched Marketing Lead's
+        // Salesforce record too (see the master bundle for rationale).
+        for (const e of todaysOutbound) {
+          if (!e.leadSfUrl || seen.has(e.leadSfUrl)) continue;
+          lines.push(`${e.leadSfUrl}: Type ${e.nextStepsType}`);
+          seen.add(e.leadSfUrl);
+        }
         const addressBlock = lines.join('\n');
         const fullPrompt = `${aiPrompt}\n\n${addressBlock}`;
         const onCopy = async () => {
@@ -2541,7 +2601,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
           <section className={styles.section}>
             <h2 className={styles.sectionHeader}>AI Prompt (Activity)</h2>
             <p className={styles.subnote}>
-              The past 2 business days&rsquo; BFO addresses (sent emails, calls, and meetings marked on the Opps tab) are appended automatically. Click Copy to grab the full prompt for your AI assistant, or Edit prompt to tweak the wording.
+              The past 2 business days&rsquo; BFO addresses (sent emails, calls, and meetings marked on the Opps tab) are appended automatically. When an email&rsquo;s external recipient matches a Marketing Lead (Contacts tab), that lead&rsquo;s Salesforce Link is appended too so the touch is logged on the lead as well. Click Copy to grab the full prompt for your AI assistant, or Edit prompt to tweak the wording.
             </p>
             {revealedPrompts.activity && (
               <textarea
