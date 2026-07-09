@@ -23,6 +23,7 @@ const COLUMNS = [
   { key: 'company',             label: 'Company',                    defaultWidth: 190 },
   { key: 'mappedCompany',       label: 'Company Mapping',            defaultWidth: 200 },
   { key: 'hubspotContact',      label: 'HubSpot Contact',            defaultWidth: 220 },
+  { key: 'hubspotTitle',        label: 'HubSpot Title',              defaultWidth: 170, readonly: true },
   { key: 'status',              label: 'Status',                     defaultWidth: 110 },
   { key: 'createdDate',         label: 'Created Date',               defaultWidth: 150 },
   { key: 'leadSource',          label: 'Last Lead Source',           defaultWidth: 150 },
@@ -718,6 +719,14 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
 
   const findHubspotById = (id) => (id ? hubspotById.get(String(id)) || null : null);
 
+  // Job title of the HubSpot contact a lead is mapped to. Prefers the live
+  // cached record so it tracks title changes in HubSpot; falls back to the
+  // snapshot stored at mapping time when the contact isn't in the cache.
+  function hubspotTitleForRow(r) {
+    const live = r.hubspotContactId ? findHubspotById(r.hubspotContactId) : null;
+    return String(live?.jobtitle || r.hubspotContactTitle || '').trim();
+  }
+
   // Best existing HubSpot contact for a lead: an exact email match wins
   // (kind 'email'), else an exact full-name match (kind 'name'). Null when
   // neither hits, in which case the cell offers "+ Add to HubSpot".
@@ -735,12 +744,13 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
   function setHubspotMapping(rowId, contact) {
     const id = contact ? String(contact.id || contact.vid || '') : '';
     const label = contact ? hubspotDisplay(contact) : '';
+    const title = contact ? String(contact.jobtitle || '').trim() : '';
     if (String(rowId).startsWith('__pad_')) {
       if (!id) return;
-      persist([...persistedRows, { ...emptyRow(), hubspotContactId: id, hubspotContact: label }]);
+      persist([...persistedRows, { ...emptyRow(), hubspotContactId: id, hubspotContact: label, hubspotContactTitle: title }]);
       return;
     }
-    persist(persistedRows.map(r => (r.id === rowId ? { ...r, hubspotContactId: id, hubspotContact: label } : r)));
+    persist(persistedRows.map(r => (r.id === rowId ? { ...r, hubspotContactId: id, hubspotContact: label, hubspotContactTitle: title } : r)));
   }
 
   // Build the HubSpot contact properties for a lead. Name is split into
@@ -864,7 +874,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
       const res = await createHubspotContactForRow(row); // eslint-disable-line no-await-in-loop
       if (res.ok && res.contact) {
         created.push({ ...res.contact, _source: 'manual' });
-        mappingById.set(row.id, { id: String(res.contact.id || res.contact.vid || ''), label: hubspotDisplay(res.contact) });
+        mappingById.set(row.id, { id: String(res.contact.id || res.contact.vid || ''), label: hubspotDisplay(res.contact), title: String(res.contact.jobtitle || '').trim() });
       } else {
         failed += 1;
       }
@@ -892,7 +902,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     if (mappingById.size) {
       patch.marketingLeads = persistedRows.map(r => {
         const m = mappingById.get(r.id);
-        return m ? { ...r, hubspotContactId: m.id, hubspotContact: m.label } : r;
+        return m ? { ...r, hubspotContactId: m.id, hubspotContact: m.label, hubspotContactTitle: m.title } : r;
       });
     }
     if (Object.keys(notesPatch).length) patch.contactNotes = { ...curNotes, ...notesPatch };
@@ -1369,7 +1379,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
         >Clear table</button>
       </div>
       <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
-        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, drag a header to reorder it (drag its right edge to resize), use <strong>Filters</strong> for per-column filtering, and <strong>Columns</strong> to show / hide or reorder columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account — accept the suggested match or type to pick another. The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand. The <strong>HubSpot Contact</strong> column maps each lead to a HubSpot contact — accept the email/name match, search to pick another, or <strong>+ Add to HubSpot</strong> to create a new contact from the lead. Click a lead's <strong>Name</strong> to open it in the contact popup (the <strong>✎</strong> next to it edits the name inline instead).
+        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, drag a header to reorder it (drag its right edge to resize), use <strong>Filters</strong> for per-column filtering, and <strong>Columns</strong> to show / hide or reorder columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account — accept the suggested match or type to pick another. The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand. The <strong>HubSpot Contact</strong> column maps each lead to a HubSpot contact — accept the email/name match, search to pick another, or <strong>+ Add to HubSpot</strong> to create a new contact from the lead. The read-only <strong>HubSpot Title</strong> column shows the mapped contact's job title. Click a lead's <strong>Name</strong> to open it in the contact popup (the <strong>✎</strong> next to it edits the name inline instead).
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -1590,6 +1600,25 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                             );
                           })()}
                         </div>
+                      ) : c.key === 'hubspotTitle' ? (
+                        (() => {
+                          const title = hubspotTitleForRow(r);
+                          if (title) {
+                            return (
+                              <div title={title} style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem', fontSize: '0.78rem', color: '#334155', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {title}
+                              </div>
+                            );
+                          }
+                          return (
+                            <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem' }}>
+                              <span
+                                title={r.hubspotContactId ? 'The mapped HubSpot contact has no job title set.' : 'Map a HubSpot contact to see its title.'}
+                                style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}
+                              >—</span>
+                            </div>
+                          );
+                        })()
                       ) : c.key === 'hubspotContact' ? (
                         (() => {
                           const id = r.hubspotContactId ? String(r.hubspotContactId) : '';
