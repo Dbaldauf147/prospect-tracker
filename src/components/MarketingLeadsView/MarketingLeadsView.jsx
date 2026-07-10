@@ -10,6 +10,7 @@ import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { useAuth } from '../../contexts/AuthContext';
 import { resolveSignature, plainBodyToHtml, personalizeDraftText, buildUnsentEml, downloadDrafts, safeFileName } from '../../utils/draftEmail';
+import { addQueuedLeads } from '../../utils/draftLeadsQueue';
 
 // Marketing Leads subtab on the Contacts page. The user pastes a block
 // copied from a Salesforce Leads list view; a column-mapping modal pops
@@ -406,7 +407,7 @@ const HubSpotContactAutocomplete = memo(function HubSpotContactAutocomplete({ co
   );
 });
 
-export function MarketingLeadsView({ prospects = [], settings, updateSettings, onAddProspect, onSelectProspect, targetAccountsData }) {
+export function MarketingLeadsView({ prospects = [], settings, updateSettings, onAddProspect, onSelectProspect, targetAccountsData, onNavigate }) {
   const persistedRows = useMemo(() => {
     const arr = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
     return arr.map(r => {
@@ -587,7 +588,8 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
   // instead of stretching the column. `width: max-content` let wide
   // readonly cells grow past the dragged width.
   const tableWidth = useMemo(
-    () => visibleColumnList.reduce((sum, c) => sum + (columnWidths[c.key] || 0), 0) + 44,
+    // + 34 leading select column, + 44 trailing delete-gutter column.
+    () => visibleColumnList.reduce((sum, c) => sum + (columnWidths[c.key] || 0), 0) + 34 + 44,
     [visibleColumnList, columnWidths],
   );
 
@@ -1198,6 +1200,83 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     return out;
   }, [filtered]);
 
+  // ---- Multi-select → Draft Emails page --------------------------------
+  // Tick leads here, then "Send to Draft Emails" queues them (as
+  // contact-shaped objects) for the Draft Emails composer and jumps to
+  // that page. Selection is by lead id and survives search / filtering.
+  const [selectedLeadIds, setSelectedLeadIds] = useState(() => new Set());
+  const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  // Drop ids from the selection once their lead is deleted / re-imported so
+  // a stale id can never be sent.
+  useEffect(() => {
+    setSelectedLeadIds(prev => {
+      if (prev.size === 0) return prev;
+      const live = new Set(persistedRows.map(r => r.id));
+      let changed = false;
+      const next = new Set();
+      for (const id of prev) { if (live.has(id)) next.add(id); else changed = true; }
+      return changed ? next : prev;
+    });
+  }, [persistedRows]);
+
+  // Real (non-padding) rows currently shown — the pool the header
+  // select-all checkbox toggles.
+  const shownRealRows = useMemo(
+    () => filtered.filter(r => !String(r.id).startsWith('__pad_')),
+    [filtered],
+  );
+  const allShownSelected = shownRealRows.length > 0 && shownRealRows.every(r => selectedLeadIds.has(r.id));
+  const someShownSelected = shownRealRows.some(r => selectedLeadIds.has(r.id));
+
+  // Selected leads that actually have an email — the ones we can draft to.
+  const selectedEmailable = useMemo(
+    () => persistedRows.filter(r => selectedLeadIds.has(r.id) && emailRe.test(String(r.email || '').trim())),
+    [persistedRows, selectedLeadIds], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
+  function toggleLeadSelected(id) {
+    setSelectedLeadIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  function toggleSelectAllShown() {
+    setSelectedLeadIds(prev => {
+      const next = new Set(prev);
+      if (shownRealRows.every(r => next.has(r.id))) {
+        for (const r of shownRealRows) next.delete(r.id);
+      } else {
+        for (const r of shownRealRows) next.add(r.id);
+      }
+      return next;
+    });
+  }
+
+  // Shape a lead into the contact object the Draft Emails composer expects,
+  // splitting the "First Last" name into first / last for {firstName} etc.
+  function leadToDraftContact(r) {
+    const name = String(r.name || '').trim();
+    const parts = name.split(/\s+/).filter(Boolean);
+    return {
+      id: `lead:${r.id}`,
+      name: name || String(r.email || '').trim(),
+      firstName: parts[0] || '',
+      lastName: parts.slice(1).join(' '),
+      email: String(r.email || '').trim(),
+      company: String(r.company || '').trim(),
+      title: String(r.jobTitle || '').trim(),
+    };
+  }
+
+  function sendSelectedToDrafts() {
+    if (!selectedEmailable.length) return;
+    addQueuedLeads(selectedEmailable.map(leadToDraftContact));
+    setSelectedLeadIds(new Set());
+    if (onNavigate) onNavigate('drafts');
+  }
+
   function createDraftEmails() {
     const signature = resolveSignature(settings, isAdmin);
     const subject = draftSubject.trim();
@@ -1517,6 +1596,15 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
             : 'No shown leads have an email address to draft to.'}
           style={btn({ border: 'none', background: emailableLeads.length ? '#0EA5E9' : '#CBD5E1', color: '#fff', fontWeight: 700, cursor: emailableLeads.length ? 'pointer' : 'not-allowed' })}
         >✉️ Draft {emailableLeads.length || ''} Email{emailableLeads.length === 1 ? '' : 's'}</button>
+        <button
+          type="button"
+          onClick={sendSelectedToDrafts}
+          disabled={!selectedEmailable.length}
+          title={selectedEmailable.length
+            ? `Send the ${selectedEmailable.length} selected lead${selectedEmailable.length === 1 ? '' : 's'} with an email to the Draft Emails page, then open it. Selected leads without an email are skipped.`
+            : 'Tick the checkbox on one or more leads (with an email) to send them to the Draft Emails page.'}
+          style={btn({ border: 'none', background: selectedEmailable.length ? '#7C3AED' : '#CBD5E1', color: '#fff', fontWeight: 700, cursor: selectedEmailable.length ? 'pointer' : 'not-allowed' })}
+        >➤ Send {selectedEmailable.length || ''} to Draft Emails</button>
         {hasCustomWidths && (
           <button
             type="button"
@@ -1692,6 +1780,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
       <div style={{ flex: 1, overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: 4 }}>
         <table style={{ borderCollapse: 'collapse', fontSize: '0.8rem', tableLayout: 'fixed', width: tableWidth, minWidth: '100%' }}>
           <colgroup>
+            <col style={{ width: 34 }} />
             {visibleColumnList.map(c => (
               <col key={c.key} ref={el => { colRefs.current[c.key] = el; }} style={{ width: `${columnWidths[c.key]}px` }} />
             ))}
@@ -1699,6 +1788,17 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
           </colgroup>
           <thead>
             <tr>
+              <th style={{ width: 34, textAlign: 'center', background: '#F1F5F9', borderBottom: '1px solid var(--color-border)', position: 'sticky', top: 0, zIndex: 1 }}>
+                <input
+                  type="checkbox"
+                  checked={allShownSelected}
+                  ref={el => { if (el) el.indeterminate = someShownSelected && !allShownSelected; }}
+                  onChange={toggleSelectAllShown}
+                  disabled={shownRealRows.length === 0}
+                  title="Select all shown leads"
+                  style={{ cursor: shownRealRows.length === 0 ? 'default' : 'pointer' }}
+                />
+              </th>
               {visibleColumnList.map(c => {
                 const isDropTarget = dragColKey && dragOverKey === c.key && dragColKey !== c.key;
                 const isDragging = dragColKey === c.key;
@@ -1759,6 +1859,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
             </tr>
             {filtersOpen && (
               <tr>
+                <th style={{ background: '#F8FAFC', borderBottom: '1px solid var(--color-border)', position: 'sticky', top: 28, zIndex: 1 }} />
                 {visibleColumnList.map(c => (
                   <th key={c.key} style={{ padding: '2px 4px', background: '#F8FAFC', borderBottom: '1px solid var(--color-border)', position: 'sticky', top: 28, zIndex: 1 }}>
                     {c.readonly ? null : (
@@ -1779,7 +1880,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
           <tbody>
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={visibleColumnList.length + 1} style={{ padding: '1.2rem', textAlign: 'center', color: 'var(--color-text-muted)', fontStyle: 'italic', fontSize: '0.78rem' }}>
+                <td colSpan={visibleColumnList.length + 2} style={{ padding: '1.2rem', textAlign: 'center', color: 'var(--color-text-muted)', fontStyle: 'italic', fontSize: '0.78rem' }}>
                   {isFiltering ? 'No leads match the current search / filters.' : 'No leads yet — paste from Salesforce to get started.'}
                 </td>
               </tr>
@@ -1792,9 +1893,20 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                   key={r.id}
                   style={{
                     borderBottom: '1px solid var(--color-border-light)',
-                    background: recycled ? '#FEE2E2' : undefined,
+                    background: recycled ? '#FEE2E2' : (!isPad && selectedLeadIds.has(r.id) ? '#EFF6FF' : undefined),
                   }}
                 >
+                  <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                    {!isPad && (
+                      <input
+                        type="checkbox"
+                        checked={selectedLeadIds.has(r.id)}
+                        onChange={() => toggleLeadSelected(r.id)}
+                        title="Select this lead to send to Draft Emails"
+                        style={{ cursor: 'pointer' }}
+                      />
+                    )}
+                  </td>
                   {visibleColumnList.map(c => (
                     <td
                       key={c.key}

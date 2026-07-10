@@ -51,6 +51,7 @@ export function ContactsView({
   settings,
   updateSettings,
   targetAccountsData,
+  onNavigate,
 }) {
   const { isAdmin } = useAuth();
   // The HubSpot Contacts and SE Contacts subtabs both hit /api/hubspot,
@@ -168,6 +169,7 @@ export function ContactsView({
             onAddProspect={onAddProspect}
             onSelectProspect={onSelectProspect}
             targetAccountsData={targetAccountsData}
+            onNavigate={onNavigate}
           />
         )}
         {subtab === 'all' && (

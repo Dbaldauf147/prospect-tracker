@@ -302,6 +302,7 @@ function App() {
               settings={settings}
               updateSettings={updateSettings}
               targetAccountsData={targetAccountsData}
+              onNavigate={setView}
             />
           ) : view === 'lists' ? (
             <ListsView onTargetAccountsLoaded={setTargetAccountsData} prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} updateProspect={updateProspect} />
