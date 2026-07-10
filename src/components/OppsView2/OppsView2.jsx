@@ -73,6 +73,11 @@ const NFAT_SCHEDULES_KEY = 'opps2-nfat-schedules';
 const NFAT_SCHEDULE_TYPES = ['check', 'x', 'any'];
 const NFAT_TYPE_LABELS = { check: '✓ Check marks', x: '✗ X marks', any: 'Any value' };
 
+// HQ Region choices offered when the New Opp modal creates a new Table
+// View company. Mirrors the option set the MyAccounts / PE Portfolio
+// cells use so regions stay consistent across views.
+const HQ_REGION_OPTIONS = ['North America', 'Outside of North America'];
+
 function defaultNfatSchedules() {
   const base = { enabled: false, days: [1, 2, 3, 4, 5], time: '06:00', lastRunAt: 0 };
   return { check: { ...base }, x: { ...base }, any: { ...base } };
@@ -2588,6 +2593,11 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
   const [typeInput, setTypeInput] = useState('');
   const [typeTouched, setTypeTouched] = useState(false);
   const [addToTableView, setAddToTableView] = useState(true);
+  // HQ Region is required when this flow creates a brand-new Table View
+  // company, so the record doesn't land missing a region (see the
+  // MyAccounts "HQ Region missing" flag). Same two-option set the
+  // MyAccounts / PE Portfolio cells use.
+  const [hqRegion, setHqRegion] = useState('');
 
   const trimmedCompany = company.trim();
   const matchedProspect = useMemo(
@@ -2598,6 +2608,10 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
   const companyType = String(matchedProspect?.type || '').trim();
   // Only meaningful when the Company is new (not yet in Table View).
   const canAddCompany = !!trimmedCompany && !companyExists;
+  // True when we're actually about to create a Table View company — that's
+  // the case where HQ Region is required.
+  const willAddCompany = canAddCompany && addToTableView;
+  const needsHqRegion = willAddCompany && !hqRegion;
   // Prefill the PE Owners from the matched Table View company until the
   // user edits the chips.
   const peOwners = peOwnerTouched ? peOwnersInput : splitPeOwners(matchedProspect?.peOwner || '');
@@ -2671,6 +2685,9 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
   const showCompanyInfo = !!trimmedCompany;
 
   function submit() {
+    // A new Table View company must have an HQ Region — block the submit
+    // and let the field's required styling flag the gap.
+    if (needsHqRegion) return;
     // Fold in a typed-but-uncommitted draft so an owner the user didn't
     // chip (no Enter / suggestion pick) still lands on the opp.
     const owners = [...peOwners];
@@ -2684,7 +2701,8 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
       type: type.trim(),
       frameworks,
       frameworksEdited,
-      addToTableView: canAddCompany && addToTableView,
+      addToTableView: willAddCompany,
+      hqRegion: willAddCompany ? hqRegion : '',
     });
   }
 
@@ -2758,6 +2776,31 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
                 />
                 Add <strong>{trimmedCompany}</strong> to Table View (not found there yet)
               </label>
+            )}
+            {willAddCompany && (
+              <div style={{ marginTop: 8 }}>
+                <label style={labelStyle}>
+                  HQ Region <span style={{ color: '#dc2626' }}>*</span>
+                </label>
+                <select
+                  value={hqRegion}
+                  onChange={(e) => setHqRegion(e.target.value)}
+                  style={{
+                    ...fieldStyle,
+                    ...(needsHqRegion ? { border: '1px solid #dc2626' } : null),
+                  }}
+                >
+                  <option value="">— Select an HQ Region —</option>
+                  {HQ_REGION_OPTIONS.map(r => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                </select>
+                {needsHqRegion && (
+                  <div style={{ fontSize: '0.7rem', color: '#dc2626', marginTop: 4 }}>
+                    Required to add a new company to Table View.
+                  </div>
+                )}
+              </div>
             )}
             {showCompanyInfo && (
               <div style={{
@@ -2909,11 +2952,14 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
           <button
             type="button"
             onClick={submit}
+            disabled={needsHqRegion}
+            title={needsHqRegion ? 'Select an HQ Region to add this company to Table View' : undefined}
             style={{
               padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
               border: '1px solid var(--color-accent)', borderRadius: 4,
               fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
-              color: '#fff', cursor: 'pointer',
+              color: '#fff', cursor: needsHqRegion ? 'not-allowed' : 'pointer',
+              opacity: needsHqRegion ? 0.55 : 1,
             }}
           >Create opp</button>
         </div>
@@ -8347,7 +8393,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           companySuggestions={companySuggestions}
           peOwnerSuggestions={peOwnerSuggestions}
           prospects={prospects}
-          onCreate={({ company, source, peOwner, type, frameworks, frameworksEdited, addToTableView }) => {
+          onCreate={({ company, source, peOwner, type, frameworks, frameworksEdited, addToTableView, hqRegion }) => {
             // Create the company on Table View first (when requested and
             // it isn't there yet) so the new opp's Account immediately
             // resolves to a real prospect record. addProspect is
@@ -8355,7 +8401,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             // existing company is harmless.
             if (addToTableView && company && addProspect) {
               try {
-                Promise.resolve(addProspect({ company, peOwner: peOwner || '', type: type || '', frameworks: frameworksEdited ? frameworks : [] }))
+                Promise.resolve(addProspect({ company, peOwner: peOwner || '', type: type || '', hqRegion: hqRegion || '', frameworks: frameworksEdited ? frameworks : [] }))
                   .catch(err => console.error('opps2: add company to Table View failed', err));
               } catch (err) {
                 console.error('opps2: add company to Table View failed', err);
