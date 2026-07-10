@@ -278,6 +278,17 @@ const PROGRESS_CHART_DEFS = [
   { id: 'inactivePct',    label: '% of Accounts Inactive (Lost / Hold Off / Old Client)' },
   { id: 'tierTotals',     label: 'My Accounts by Tier' },
   { id: 'noOppsActivity', label: 'Activity on Accounts with No Opportunities (30d)' },
+  { id: 'peStages',       label: 'PE Firms by PE Stage' },
+];
+
+// PE Stage → snapshot field + chart color. Mirrors the four PE_STAGES on
+// the PE Portfolio page so this chart tracks the same buckets. The snapshot
+// stores one count per stage plus a rollup total.
+const PE_STAGE_SERIES = [
+  { stage: 'Discovery',            key: 'peDiscovery',           color: '#3B82F6' },
+  { stage: 'Piloting',             key: 'pePiloting',            color: '#F59E0B' },
+  { stage: 'Existing Partnership', key: 'peExistingPartnership', color: '#10B981' },
+  { stage: 'Not Sold',             key: 'peNotSold',             color: '#DC2626' },
 ];
 function loadHiddenCharts() {
   try {
@@ -639,6 +650,22 @@ export function ProgressView({ prospects, settings, cdmName }) {
     const noOppsActivityTotal = noOppsActivityT1 + noOppsActivityT2 + noOppsActivityT3;
     const noOppsAccountCount = t1NotConnected.length + t2NotConnected.length + t3.filter(p => !hasOpp(p.company)).length;
 
+    // PE firms by PE Stage — mirrors the PE Portfolio page, which lists
+    // every prospect typed "Private Equity" and buckets it by the peStage
+    // set in its company popup (Discovery / Piloting / Existing Partnership
+    // / Not Sold). No CDM filter here, to match that page's total.
+    const peFirms = prospects.filter(p => p.type === 'Private Equity');
+    const peStageCounts = {};
+    const peStageDetails = {};
+    for (const s of PE_STAGE_SERIES) { peStageCounts[s.key] = 0; peStageDetails[s.key] = []; }
+    for (const p of peFirms) {
+      const s = PE_STAGE_SERIES.find(x => x.stage === String(p.peStage || '').trim());
+      if (!s) continue;
+      peStageCounts[s.key]++;
+      peStageDetails[s.key].push(p.company);
+    }
+    const peTotal = peFirms.length;
+
     return {
       week: getWeekKey(new Date()),
       t1Total, t2Total, t3Total: t3.length,
@@ -652,6 +679,8 @@ export function ProgressView({ prospects, settings, cdmName }) {
       noOppsActivityT3,
       noOppsActivityTotal,
       noOppsAccountCount,
+      ...peStageCounts,
+      peTotal,
       t1ContactPct: t1Total > 0 ? Math.round((t1WithContacts / t1Total) * 100) : 0,
       t2ContactPct: t2Total > 0 ? Math.round((t2WithContacts / t2Total) * 100) : 0,
       t1DMPct: t1Total > 0 ? Math.round((t1WithDM / t1Total) * 100) : 0,
@@ -676,6 +705,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
         t2NotConnected: t2NotConnected.map(p => p.company),
         t1Inactive: t1InactiveList.map(p => ({ company: p.company, status: p.status })),
         t2Inactive: t2InactiveList.map(p => ({ company: p.company, status: p.status })),
+        ...peStageDetails,
       },
     };
   }, [prospects, settings, oppsRecordsState, hubspotContactsState, cdmName]);
@@ -699,6 +729,9 @@ export function ProgressView({ prospects, settings, cdmName }) {
     currentSnapshot.t1Connected, currentSnapshot.t2Connected,
     currentSnapshot.t1Inactive, currentSnapshot.t2Inactive,
     currentSnapshot.noOppsActivityTotal, currentSnapshot.noOppsAccountCount,
+    currentSnapshot.peTotal,
+    currentSnapshot.peDiscovery, currentSnapshot.pePiloting,
+    currentSnapshot.peExistingPartnership, currentSnapshot.peNotSold,
   ]);
 
   // Save current week snapshot — re-reads Firestore first to avoid overwriting
@@ -979,6 +1012,19 @@ export function ProgressView({ prospects, settings, cdmName }) {
                 ]}
                 onHide={() => toggleChartHidden('noOppsActivity')}
                 onRename={(t) => renameChart('noOppsActivity', t)}
+              />
+            )}
+            {!hiddenCharts.has('peStages') && (
+              <ProgressChart
+                title={titleFor('peStages', 'PE Firms by PE Stage')}
+                data={chartData}
+                series={PE_STAGE_SERIES.map(s => ({ key: s.key, name: s.stage, color: s.color }))}
+                secondarySeries={[
+                  { key: 'peTotal', name: 'Total PE Firms', color: '#111827' },
+                ]}
+                defaultView="stackedBar"
+                onHide={() => toggleChartHidden('peStages')}
+                onRename={(t) => renameChart('peStages', t)}
               />
             )}
           </div>
