@@ -993,51 +993,64 @@ export function YOYView() {
     [annualSalesBase, overrides, editCtx],
   );
 
-  // Deal Size — composed chart per Closed Year (the calendar year of each
-  // opp's Close Date, falling back to Open Year when the Close Date is
-  // missing/unparseable):
-  //   Deals (gray bars)     = count of Sold opps (won deals)
-  //   Quoted (red line)     = mean Quoted Amount across closed opps
-  //   Deal Size (blue line) = average deal size = mean Quoted Amount of Sold opps
-  // The year span is built from the closed years present in the data so a
-  // deal that closed outside the Open-Year range still gets a bar.
-  // Projected bar treats still-active pipeline opps as expected future
-  // wins, so the Projected count reflects YTD wins + open pipeline.
+  // Deal Size — composed chart. The bars and blue line are bucketed by
+  // Closed Year (calendar year of Close Date, falling back to Open Year
+  // when Close Date is missing/unparseable); the red line is bucketed
+  // independently by the year each opp was quoted (its Quoted On date):
+  //   Deals (gray bars)     = count of Sold opps (won deals), by Closed Year
+  //   Deal Size (blue line) = avg Quoted Amount of Sold opps, by Closed Year
+  //   Quoted (red line)     = avg Quoted Amount of opps quoted that year,
+  //                           by Quoted Year (Quoted On date)
+  // The year span covers both the closed years (bars/blue) and the quoted
+  // years (red) so neither series is clipped. The Projected bar treats
+  // still-active pipeline opps as expected future wins.
   const dealSizeBase = useMemo(() => {
     if (records.length === 0) return [];
-    // Collect closed opps keyed by Closed Year and track the min→max span.
-    const closed = [];
+    // Closed opps feed the bars + blue line (by Closed Year); quoted opps
+    // feed the red line (by Quoted Year). Track the combined min→max span.
     let minYear = currentYear, maxYear = currentYear, any = false;
-    for (const r of records) {
-      const stage = String(r.Stage || '').trim();
-      if (stage !== 'Sold' && stage !== 'Not Sold') continue;
-      const y = parseDateYear(r['Close Date']) ?? parseYear(r['Open Year']);
-      if (y === null) continue;
-      closed.push({ r, y, stage });
+    const bump = (y) => {
+      if (y == null) return;
       any = true;
       if (y < minYear) minYear = y;
       if (y > maxYear) maxYear = y;
+    };
+    const closed = []; // { cy, stage, amt|null }
+    const quoted = []; // { qy, amt }
+    for (const r of records) {
+      const amt = parseMoney(r['Quoted Amount']);
+      const hasAmt = typeof amt === 'number' && amt > 0;
+      // Red line: any opp quoted (has a Quoted On date + positive amount),
+      // regardless of stage — an average of every quote written that year.
+      const qy = hasAmt ? parseDateYear(r['Quoted On'] || r['Quoted Date'] || '') : null;
+      if (qy != null) { quoted.push({ qy, amt }); bump(qy); }
+      // Bars + blue line: closed opps only, by Closed Year.
+      const stage = String(r.Stage || '').trim();
+      if (stage !== 'Sold' && stage !== 'Not Sold') continue;
+      const cy = parseDateYear(r['Close Date']) ?? parseYear(r['Open Year']);
+      if (cy === null) continue;
+      closed.push({ cy, stage, amt: hasAmt ? amt : null });
+      bump(cy);
     }
     if (!any) return [];
     const stats = new Map();
     for (let y = minYear; y <= maxYear; y++) {
       stats.set(y, { soldOppCount: 0, quotedSum: 0, quotedCount: 0, soldSum: 0, soldCount: 0 });
     }
-    for (const { r, y, stage } of closed) {
-      const s = stats.get(y);
+    for (const { cy, stage, amt } of closed) {
+      const s = stats.get(cy);
       if (!s) continue;
-      // Grey bars count won deals — every Sold opp, regardless of whether
-      // it carries a Quoted Amount.
-      if (stage === 'Sold') s.soldOppCount += 1;
-      const amt = parseMoney(r['Quoted Amount']);
-      if (typeof amt === 'number' && amt > 0) {
-        s.quotedSum += amt;
-        s.quotedCount += 1;
-        if (stage === 'Sold') {
-          s.soldSum += amt;
-          s.soldCount += 1;
-        }
+      // Grey bars count won deals — every Sold opp, regardless of amount.
+      if (stage === 'Sold') {
+        s.soldOppCount += 1;
+        if (amt != null) { s.soldSum += amt; s.soldCount += 1; }
       }
+    }
+    for (const { qy, amt } of quoted) {
+      const s = stats.get(qy);
+      if (!s) continue;
+      s.quotedSum += amt;
+      s.quotedCount += 1;
     }
     const rows = [];
     for (let y = minYear; y <= maxYear; y++) {
@@ -1055,29 +1068,31 @@ export function YOYView() {
     }
     // Projected — deals closed this year (by Closed Year) plus every
     // still-open pipeline opp opened this year, counted as expected future
-    // wins. Not Sold opps are excluded from the bar count. Deal Size /
-    // Quoted means reuse the same Sold / closed math as the actual years.
+    // wins. Not Sold opps are excluded from the bar count. The red Quoted
+    // point is the average of every opp quoted this calendar year; the blue
+    // Deal Size point is the average Sold $ closed this year.
     let projWon = 0, projPipeline = 0, projQuotedSum = 0, projQuotedCount = 0;
     let projSoldSum = 0, projSoldCount = 0;
     for (const r of records) {
+      const amt = parseMoney(r['Quoted Amount']);
+      const hasAmt = typeof amt === 'number' && amt > 0;
+      // Red: opps quoted this calendar year (any stage).
+      if (hasAmt && parseDateYear(r['Quoted On'] || r['Quoted Date'] || '') === currentYear) {
+        projQuotedSum += amt;
+        projQuotedCount += 1;
+      }
       const stage = String(r.Stage || '').trim();
       const isClosed = (stage === 'Sold' || stage === 'Not Sold');
       if (isClosed) {
         const y = parseDateYear(r['Close Date']) ?? parseYear(r['Open Year']);
         if (y !== currentYear) continue;
-        if (stage === 'Sold') projWon += 1;
-        const amt = parseMoney(r['Quoted Amount']);
-        if (typeof amt === 'number' && amt > 0) {
-          projQuotedSum += amt;
-          projQuotedCount += 1;
-          if (stage === 'Sold') {
-            projSoldSum += amt;
-            projSoldCount += 1;
-          }
+        if (stage === 'Sold') {
+          projWon += 1;
+          if (hasAmt) { projSoldSum += amt; projSoldCount += 1; }
         }
-      } else {
+      } else if (parseYear(r['Open Year']) === currentYear) {
         // Active pipeline opened this year = expected future win.
-        if (parseYear(r['Open Year']) === currentYear) projPipeline += 1;
+        projPipeline += 1;
       }
     }
     rows.push({
@@ -1303,12 +1318,18 @@ export function YOYView() {
     // (`_deals`, bucketed by Close Date), so they aren't rebuilt here.
     for (const r of records) {
       const oy = parseYear(r['Open Year']);
-      if (oy === null) continue;
       const account = String(r.Account || '').trim();
       const stage = String(r.Stage || '').trim();
       const closedStage = (stage === 'Sold' || stage === 'Not Sold');
       const amt = parseMoney(r['Quoted Amount']);
-      if (stage === 'Sold') {
+      const hasAmt = typeof amt === 'number' && amt > 0;
+      const quotedOn = r['Quoted On'] || r['Quoted Date'] || '';
+      const closeDate = r['Close Date'] || '';
+      // Bucketing keys: bars/blue use Closed Year, the red line uses Quoted
+      // Year — mirror the same fallbacks dealSizeBase applies.
+      const closedYear = closedStage ? (parseDateYear(closeDate) ?? oy) : null;
+      const quotedYear = hasAmt ? parseDateYear(quotedOn) : null;
+      if (oy !== null && stage === 'Sold') {
         topAccountsRecs.push({
           Account: account,
           'Open Year': oy,
@@ -1316,25 +1337,28 @@ export function YOYView() {
           'Top-4 Bucket': topSet.has(account) ? account : 'Remaining',
         });
       }
-      if (closedStage) {
-        // Closed Year is the bucket the chart uses — Close Date's calendar
-        // year, falling back to Open Year when Close Date is missing.
-        const closedYear = parseDateYear(r['Close Date']) ?? oy;
+      // Deal Size contributors — every closed opp (bars + blue Deal Size
+      // line, by Closed Year) and every quoted opp (red Quoted line, by
+      // Quoted Year). An opp that is both appears once with both years set.
+      if (closedStage || quotedYear != null) {
         dealSizeRecs.push({
           Account: account,
-          'Closed Year': closedYear,
-          'Close Date': r['Close Date'] || '',
-          'Open Year': oy,
           Stage: stage,
+          'Closed Year': closedYear ?? '',
+          'Close Date': closeDate,
+          'Open Year': oy ?? '',
+          'Quoted Year': quotedYear ?? '',
+          'Quoted Date': quotedOn,
           'Quoted Amount': amt ?? '',
-          'Counts in Deals': stage === 'Sold' ? 'Yes' : 'No',
-          'Counts in Quoted avg': (amt && amt > 0) ? 'Yes' : 'No',
-          'Counts in Deal Size avg': (stage === 'Sold' && amt && amt > 0) ? 'Yes' : 'No',
+          'Counts in Deals (Sold)': stage === 'Sold' ? 'Yes' : 'No',
+          'Counts in Quoted avg': quotedYear != null ? 'Yes' : 'No',
+          'Counts in Deal Size avg': (stage === 'Sold' && hasAmt) ? 'Yes' : 'No',
         });
       }
     }
     topAccountsRecs.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
-    dealSizeRecs.sort((a, b) => a['Closed Year'] - b['Closed Year'] || a.Account.localeCompare(b.Account));
+    const dsSortYear = (r) => Number(r['Closed Year'] || r['Quoted Year'] || 0);
+    dealSizeRecs.sort((a, b) => dsSortYear(a) - dsSortYear(b) || a.Account.localeCompare(b.Account));
     // Commissions contributors — one row per deal that fed a year's Paid to
     // Date total, bucketed by the calendar year of its Current Term Start
     // Date. Mirrors commissionsBase exactly (same BFO-roster-vs-deal-row
@@ -1384,7 +1408,14 @@ export function YOYView() {
       quotedByYear: { list: contributingRecords.quotedByYear, keyCol: 'Quoted Year', sheet: 'Quoted' },
       notSolds: { list: contributingRecords.notSolds, keyCol: 'Open Year', sheet: 'Not Solds' },
       topAccounts: { list: contributingRecords.topAccounts, keyCol: 'Open Year', sheet: 'Top Accounts' },
-      dealSize: { list: contributingRecords.dealSize, keyCol: 'Closed Year', sheet: 'Deal Size' },
+      // Deal Size conflates two year dimensions per point (bars/blue by
+      // Closed Year, red by Quoted Year), so a pinned year pulls opps that
+      // match on either.
+      dealSize: {
+        list: contributingRecords.dealSize,
+        match: (rec, key) => String(rec['Closed Year']) === key || String(rec['Quoted Year']) === key,
+        sheet: 'Deal Size',
+      },
       commissions: { list: contributingRecords.commissions, keyCol: 'Year', sheet: 'Commissions' },
     };
     const conf = CONF[chartId];
@@ -1392,7 +1423,9 @@ export function YOYView() {
     const rawKey = chartId === 'leadSources'
       ? String(row.source ?? '')
       : (row.isProjected || row.year === 'Projected') ? String(currentYear) : String(row.year);
-    const rows = (conf.list || []).filter(rec => String(rec[conf.keyCol]) === rawKey);
+    const rows = (conf.list || []).filter(
+      conf.match ? (rec) => conf.match(rec, rawKey) : (rec) => String(rec[conf.keyCol]) === rawKey
+    );
     if (rows.length === 0) {
       window.alert('No opportunity rows are tied to this point.');
       return;
@@ -1544,7 +1577,7 @@ export function YOYView() {
       Year: r.year,
       Type: r._isProjected ? 'Projected (YTD + active pipeline)' : 'Actual',
       'Deals (Sold count)': r.deals,
-      'Quoted (mean of closed, $)': r.quoted == null ? '' : r.quoted,
+      'Quoted (avg by Quoted Year, $)': r.quoted == null ? '' : r.quoted,
       'Deal Size (avg of Sold, $)': r.dealSize == null ? '' : r.dealSize,
     }));
     const wb = XLSX.utils.book_new();
@@ -2741,10 +2774,10 @@ function DealSizeCard({ data, hasOpps, onDownload, onExportPoint }) {
                   return v ? fmtMoneyLabel(v) : '$0';
                 }}
                 explain={(row) => ({
-                  formula: 'Deals = count of Sold opps (won deals). Quoted = mean Quoted Amount across closed opps. Deal Size = average deal size (mean Quoted Amount of Sold opps).',
+                  formula: 'Deals = count of Sold opps (won deals), by Closed Year. Quoted = mean Quoted Amount of opps quoted that year, by Quoted On date. Deal Size = average deal size (mean Quoted Amount of Sold opps), by Closed Year.',
                   inputs: [
                     { label: 'Deals (Sold)', value: (row.deals ?? 0).toLocaleString('en-US') },
-                    { label: 'Quoted mean', value: row.quoted == null ? '—' : `${fmtMoneyLabel(row.quoted)} (n=${row._quotedCount ?? 0})` },
+                    { label: 'Quoted mean (by Quoted Year)', value: row.quoted == null ? '—' : `${fmtMoneyLabel(row.quoted)} (n=${row._quotedCount ?? 0})` },
                     { label: 'Deal Size mean', value: row.dealSize == null ? '—' : `${fmtMoneyLabel(row.dealSize)} (n=${row._soldCount ?? 0})` },
                   ],
                   note: row._isProjected ? 'Projected counts active pipeline opps as expected future closes.' : null,
