@@ -50,7 +50,7 @@ const EMPTY_OBJ = Object.freeze({});
 function App() {
   const { user, isAdmin, loading: authLoading, authError, signInWithEmail, createAccount, resetPassword, logout } = useAuth();
   const { prospects, loading: dataLoading, addProspect, updateProspect, deleteProspect, replaceAll, findDuplicates, dedupe } = useProspects(user);
-  const { settings, updateSettings, updateSettingsPath } = useUserSettings(user);
+  const { settings, loaded: settingsLoaded, updateSettings, updateSettingsPath } = useUserSettings(user);
 
   // The CDM name to filter and default new-prospect ownership against.
   // Stored per-user in userSettings.cdmName; the admin account falls back
@@ -60,9 +60,14 @@ function App() {
 
   // Daily Success features can be toggled off from the Settings menu.
   // Default to on (treat an absent setting as enabled) so existing
-  // admins keep the morning prompt and log they had before.
-  const dailyLogEnabled = settings.dailyLogEnabled !== false;
-  const whatToDoTodayEnabled = settings.whatToDoTodayEnabled !== false;
+  // admins keep the morning prompt and log they had before — but only
+  // once settings have actually loaded. Before the Firestore snapshot
+  // arrives `settings` is an empty object, so `!== false` would read as
+  // enabled and pop the morning prompt for a beat even when the user has
+  // saved it off. Gate on `settingsLoaded` so a saved "off" is respected
+  // from the first render instead of flashing on every page load.
+  const dailyLogEnabled = settingsLoaded && settings.dailyLogEnabled !== false;
+  const whatToDoTodayEnabled = settingsLoaded && settings.whatToDoTodayEnabled !== false;
   // Open (non-snoozed) issue count for the sidebar badge. Shares the same
   // hook the Issues tab uses so the badge and the tab never disagree.
   const { openCount: openIssuesCount } = useIssues({ prospects, cdmName, user, marketingLeads: settings.marketingLeads });
