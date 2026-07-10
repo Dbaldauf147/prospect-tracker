@@ -185,12 +185,51 @@ function detectMyAccountsFlags({ myAccountsFlags = [], prospects = [] }) {
   return issues;
 }
 
+// Marketing Lead statuses that count as "closed out" — a lead in one of
+// these needs no further action, so it's NOT an issue. Everything else
+// (Working, 1 - New, etc.) is an open lead that still needs to be worked.
+// Compared loosely (lower-cased, non-alphanumerics stripped) so hyphen /
+// en-dash / spacing differences don't matter ("Closed-Recycle" ==
+// "Closed–Recycle").
+const MARKETING_LEAD_CLOSED_STATUSES = new Set(['closedconverted', 'closedrecycle']);
+function marketingLeadStatusKey(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// Issue #3: a Marketing Lead (Contacts page → Marketing Leads subtab)
+// whose Status is set to anything other than Closed-Converted or
+// Closed-Recycle — i.e. an open lead that still needs to be pushed to a
+// terminal state. Leads with no Status yet are skipped (nothing to act
+// on until the lead has been triaged).
+function detectMarketingLeadStatuses({ marketingLeads = [] }) {
+  const issues = [];
+  for (const lead of marketingLeads) {
+    const name = String(lead?.name || '').trim();
+    const status = String(lead?.status || '').trim();
+    if (!name || !status) continue;
+    if (MARKETING_LEAD_CLOSED_STATUSES.has(marketingLeadStatusKey(status))) continue;
+    const idPart = lead?.id != null ? String(lead.id) : name;
+    issues.push({
+      id: `marketing-lead-status:${idPart}`,
+      source: 'Marketing Leads',
+      type: 'Lead not closed out',
+      company: lead.company || '—',
+      prospectId: null,
+      daysUntil: null,
+      expirationDate: null,
+      detail: `${name} — status "${status}" (not Closed-Converted or Closed-Recycle)`,
+    });
+  }
+  return issues;
+}
+
 // Build the full list of outstanding issues. Each detector contributes
 // rows; add more detectors here as new issue classes are mapped.
-export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, myAccountsFlags = [] }) {
+export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, myAccountsFlags = [], marketingLeads = [] }) {
   const dealsByClient = groupDealsByClient(dealsList, clientMap);
   const issues = [];
   issues.push(...detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedMap }));
   issues.push(...detectMyAccountsFlags({ myAccountsFlags, prospects }));
+  issues.push(...detectMarketingLeadStatuses({ marketingLeads }));
   return issues;
 }

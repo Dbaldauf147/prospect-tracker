@@ -18,7 +18,7 @@ import { useIssues } from '../../hooks/useIssues';
 export function IssuesView({ prospects = [], cdmName, settings, updateSettings, onSelectProspect }) {
   // useIssues handles loading the source data + listening for cross-tab
   // refreshes, and tags each row with a `snoozed` flag.
-  const { issues, openCount } = useIssues({ prospects, cdmName });
+  const { issues, openCount } = useIssues({ prospects, cdmName, marketingLeads: settings?.marketingLeads });
 
   // Client Manager is owned by the Clients tab; mirror it here (read-only)
   // and re-read when it changes there so the column stays in sync.

@@ -65,7 +65,7 @@ function App() {
   const whatToDoTodayEnabled = settings.whatToDoTodayEnabled !== false;
   // Open (non-snoozed) issue count for the sidebar badge. Shares the same
   // hook the Issues tab uses so the badge and the tab never disagree.
-  const { openCount: openIssuesCount } = useIssues({ prospects, cdmName, user });
+  const { openCount: openIssuesCount } = useIssues({ prospects, cdmName, user, marketingLeads: settings.marketingLeads });
   useSheetSync(user);
   const {
     filtered, searchTerm, setSearchTerm,
