@@ -14,11 +14,141 @@ import { loadCommissions } from '../../utils/commissionsStore';
 import { loadDealsList } from '../../utils/dealsStore';
 import { indexCommissionsByBfo, normBfo, DEAL_BFO_KEY } from '../../utils/dealCommissions';
 import { loadQuotedProjections, saveQuotedProjections, QUOTED_FIELDS } from '../../utils/quotedProjectionsStore';
+import { loadYoyOverrides, saveYoyOverrides } from '../../utils/yoyOverridesStore';
 import styles from './YOYView.module.css';
 
 const PIPELINE_STORE = 'pipeline-dashboard';
 const PIPELINE_KEY = 'current';
 const DEFAULT_ANNUAL_TARGET = 1325000;
+
+// Lets any ChartHeader open the shared data editor for its chart without
+// threading a callback through every card. Provided by YOYView around the
+// chart grid; value is `openEditor(chartId)`.
+const EditChartContext = createContext(null);
+
+// Describes which plotted fields of each chart the "Edit data" popup can
+// overwrite. keyField identifies a row (its x-axis category); fields are
+// the plotted numbers, each with a display label and a kind that drives
+// formatting of the computed-value placeholder. `recompute(row, fields,
+// ctx)` optionally re-derives dependent fields (totals / %s) after an
+// override is applied so on-chart labels stay consistent. Quoted
+// Projections is intentionally absent — it already has its own editor.
+const YOY_CHART_EDITS = {
+  leads: {
+    title: 'Leads', keyField: 'year', keyLabel: 'Year',
+    fields: [{ key: 'count', label: 'Leads', kind: 'int' }],
+  },
+  closeRate: {
+    title: 'Close Rate', keyField: 'year', keyLabel: 'Open Year',
+    fields: [
+      { key: 'totalNotSold', label: 'Total Not Sold %', kind: 'pct' },
+      { key: 'totalSold', label: 'Total Sold %', kind: 'pct' },
+      { key: 'inProgress', label: 'In Progress %', kind: 'pct' },
+      { key: 'quotedCR', label: 'Quoted C/R %', kind: 'pct' },
+      { key: 'totalCR', label: 'Total C/R %', kind: 'pct' },
+    ],
+  },
+  leadSources: {
+    title: 'Lead Sources 2020+', keyField: 'source', keyLabel: 'Lead Source',
+    fields: [
+      { key: 'inProgress', label: 'In Progress', kind: 'int' },
+      { key: 'notSold', label: 'Not Sold', kind: 'int' },
+      { key: 'sold', label: 'Sold', kind: 'int' },
+    ],
+    // Total and the row-end close-rate label are derived from the counts.
+    recompute: (r) => {
+      const sold = Number(r.sold) || 0;
+      const notSold = Number(r.notSold) || 0;
+      const inProgress = Number(r.inProgress) || 0;
+      const decided = sold + notSold;
+      return { ...r, total: inProgress + notSold + sold, closeRate: decided ? sold / decided : null };
+    },
+  },
+  quotedByYear: {
+    title: 'Quoted (Thousands)', keyField: 'year', keyLabel: 'Quoted Year',
+    fields: [{ key: 'thousands', label: 'Quoted ($k)', kind: 'int' }],
+  },
+  notSolds: {
+    title: 'Not Solds', keyField: 'year', keyLabel: 'Open Year',
+    fields: [
+      { key: 'notSold', label: 'Not Solds', kind: 'int' },
+      { key: 'avgOppLife', label: 'Avg Opp Life (days)', kind: 'int' },
+      { key: 'ageNotQuoted', label: 'Age of not Quoted (days)', kind: 'int' },
+      { key: 'quoteToClose', label: 'Quote to Close (days)', kind: 'int' },
+    ],
+  },
+  topAccounts: {
+    title: 'Top Accounts', keyField: 'year', keyLabel: 'Year',
+    // Columns are the top-account names + Remaining, so they're supplied
+    // per-render from the data rather than fixed here.
+    dynamic: true,
+    recompute: (r, fields) => {
+      let total = 0;
+      for (const f of fields) total += Number(r[f.key]) || 0;
+      return { ...r, _total: Math.round(total) };
+    },
+  },
+  annualSales: {
+    title: 'Annual Sales', keyField: 'year', keyLabel: 'Year',
+    fields: [
+      { key: 'currentClient', label: 'Current Client ($)', kind: 'money' },
+      { key: 'newClient', label: 'New Client ($)', kind: 'money' },
+    ],
+    recompute: (r, _fields, ctx) => {
+      const total = (Number(r.currentClient) || 0) + (Number(r.newClient) || 0);
+      const tgt = ctx?.annualTarget || 0;
+      return { ...r, _total: Math.round(total), pctQuota: tgt > 0 ? Math.round((total / tgt) * 100) : r.pctQuota };
+    },
+  },
+  dealSize: {
+    title: 'Deal Size', keyField: 'year', keyLabel: 'Year',
+    fields: [
+      { key: 'deals', label: 'Deals', kind: 'int' },
+      { key: 'quoted', label: 'Quoted mean ($)', kind: 'money' },
+      { key: 'dealSize', label: 'Deal Size mean ($)', kind: 'money' },
+    ],
+  },
+  commissions: {
+    title: 'Commissions', keyField: 'year', keyLabel: 'Year',
+    fields: [{ key: 'total', label: 'Commissions ($)', kind: 'money' }],
+  },
+};
+
+// Apply a chart's saved overrides onto its computed rows. Only the fields
+// present in a row's override patch are replaced (with finite numbers);
+// everything else stays as computed. When a row is touched, the chart's
+// optional recompute() re-derives dependent fields. Returns the original
+// array reference untouched when the chart has no overrides.
+function applyYoyOverrides(rows, cfg, table, ctx, fieldsOverride) {
+  if (!table || !rows || rows.length === 0) return rows;
+  const fields = fieldsOverride || cfg.fields || [];
+  let changed = false;
+  const out = rows.map((r) => {
+    const patch = table[String(r[cfg.keyField])];
+    if (!patch) return r;
+    let next = { ...r };
+    let touched = false;
+    for (const f of fields) {
+      const v = patch[f.key];
+      if (v != null && Number.isFinite(Number(v))) { next[f.key] = Number(v); touched = true; }
+    }
+    if (!touched) return r;
+    if (cfg.recompute) next = cfg.recompute(next, fields, ctx);
+    changed = true;
+    return next;
+  });
+  return changed ? out : rows;
+}
+
+// Format a computed value for the editor's placeholder, so the user sees
+// what the live number is before typing a replacement.
+function fmtOverrideValue(v, kind) {
+  if (v == null || v === '' || !Number.isFinite(Number(v))) return '';
+  const n = Number(v);
+  if (kind === 'money') return `$${Math.round(n).toLocaleString('en-US')}`;
+  if (kind === 'pct') return `${n}%`;
+  return n.toLocaleString('en-US');
+}
 // BFO Activity cache — pasted BFO pipeline rows, used to total the live
 // "BFO Pipe Total" for the current Quoted Projections month.
 const BFO_ACTIVITY_STORE = 'bfo-activity';
@@ -179,6 +309,27 @@ export function YOYView() {
   // (seeded with the supplied Dec–May history) rather than a live compute.
   const [quotedTable, setQuotedTable] = useState(loadQuotedProjections);
   const updateQuotedTable = (next) => { setQuotedTable(next); saveQuotedProjections(next); };
+  // User overrides for every chart's data points (per-user localStorage).
+  // Applied on top of the live-computed rows so a corrected value wins.
+  const [overrides, setOverrides] = useState(loadYoyOverrides);
+  // Which chart's data editor is open (chartId | null).
+  const [editingChart, setEditingChart] = useState(null);
+  // Persist a chart's override table; an empty table clears it entirely.
+  const saveChartOverrides = useCallback((chartId, table) => {
+    setOverrides((prev) => {
+      const next = { ...prev };
+      if (table && Object.keys(table).length) next[chartId] = table;
+      else delete next[chartId];
+      saveYoyOverrides(next);
+      return next;
+    });
+    setEditingChart(null);
+  }, []);
+  // Fiscal target that the Annual Sales % Quota override recompute needs.
+  const editCtx = useMemo(
+    () => ({ annualTarget: target > 0 ? target : DEFAULT_ANNUAL_TARGET }),
+    [target],
+  );
   useEffect(() => {
     function onStorage(e) {
       if (!e || e.key === 'commissions-list-override') {
@@ -242,7 +393,7 @@ export function YOYView() {
   // Leads — count of opps by Open Year. Bars go from earliest non-empty
   // year through the current year, then a separate "Projected" bar that
   // annualizes the current year's YTD count.
-  const leadsData = useMemo(() => {
+  const leadsBase = useMemo(() => {
     if (records.length === 0) return [];
     const byYear = new Map();
     let minYear = currentYear;
@@ -267,6 +418,10 @@ export function YOYView() {
     rows.push({ year: 'Projected', count: projected, isProjected: true, _ytd: ytdCount, _frac: frac });
     return rows;
   }, [records, currentYear]);
+  const leadsData = useMemo(
+    () => applyYoyOverrides(leadsBase, YOY_CHART_EDITS.leads, overrides.leads, editCtx),
+    [leadsBase, overrides, editCtx],
+  );
 
   // Quoted Projections — month-end snapshots the user records (editable
   // via "Edit values"), plotted across the Dec→Nov fiscal year. Values
@@ -385,7 +540,7 @@ export function YOYView() {
 
   // Close Rate — stacked bar of In Progress / Sold / Not Sold per Open
   // Year (percentages summing to 100), plus two C/R lines.
-  const closeRateData = useMemo(() => {
+  const closeRateBase = useMemo(() => {
     if (records.length === 0) return [];
     // Group records by year.
     const byYear = new Map();
@@ -439,13 +594,17 @@ export function YOYView() {
     }
     return rows;
   }, [records, currentYear]);
+  const closeRateData = useMemo(
+    () => applyYoyOverrides(closeRateBase, YOY_CHART_EDITS.closeRate, overrides.closeRate, editCtx),
+    [closeRateBase, overrides, editCtx],
+  );
 
   // Lead Sources 2020+ — horizontal stacked bars per source value with
   // counts of In Progress / Not Sold / Sold plus the Sold-count and
   // close-rate (Sold / (Sold + Not Sold)) label at the end of each row.
   // `Lead Source` is preferred; we fall back to `Source` per the column
   // names already used elsewhere (PipelineView).
-  const leadSourcesData = useMemo(() => {
+  const leadSourcesBase = useMemo(() => {
     if (records.length === 0) return [];
     const byKey = new Map();
     for (const r of records) {
@@ -473,12 +632,16 @@ export function YOYView() {
     rows.sort((a, b) => b.total - a.total);
     return rows;
   }, [records]);
+  const leadSourcesData = useMemo(
+    () => applyYoyOverrides(leadSourcesBase, YOY_CHART_EDITS.leadSources, overrides.leadSources, editCtx),
+    [leadSourcesBase, overrides, editCtx],
+  );
 
   // Quoted (Thousands) — sum of Quoted Amount bucketed by the calendar
   // year of each opp's Quoted On date (any stage), displayed in $k. Opps
   // without a parseable Quoted On date are excluded since they have no
   // quote year to attribute. Includes a Projected bar for the current year.
-  const quotedByYearData = useMemo(() => {
+  const quotedByYearBase = useMemo(() => {
     if (records.length === 0) return [];
     const byYear = new Map();
     let minYear = currentYear;
@@ -514,6 +677,10 @@ export function YOYView() {
     });
     return rows;
   }, [records, currentYear]);
+  const quotedByYearData = useMemo(
+    () => applyYoyOverrides(quotedByYearBase, YOY_CHART_EDITS.quotedByYear, overrides.quotedByYear, editCtx),
+    [quotedByYearBase, overrides, editCtx],
+  );
 
   // Not Solds — count of Stage=Not Sold per Open Year + Projected, with
   // three day-count lines on the same axis:
@@ -522,7 +689,7 @@ export function YOYView() {
   //                       (Lead / Not Started / Qualifying / Quoting).
   //   Quote to Close    — mean (Close Date − Quoted On) for closed opps
   //                       that have a parseable Quoted On / Quoted Date.
-  const notSoldsData = useMemo(() => {
+  const notSoldsBase = useMemo(() => {
     if (records.length === 0) return [];
     const NOT_QUOTED_STAGES = new Set(['Lead', 'Not Started', 'Qualifying', 'Quoting']);
     const byYear = new Map();
@@ -588,6 +755,10 @@ export function YOYView() {
     });
     return rows;
   }, [records, currentYear]);
+  const notSoldsData = useMemo(
+    () => applyYoyOverrides(notSoldsBase, YOY_CHART_EDITS.notSolds, overrides.notSolds, editCtx),
+    [notSoldsBase, overrides, editCtx],
+  );
 
   // Year range shared by Top Accounts / Annual Sales / Deal Size — use
   // the same min-year-with-data → max(currentYear, maxYearInData) span
@@ -616,7 +787,7 @@ export function YOYView() {
   // "Remaining" bucket. The Projected bar for the current year adds
   // YTD Sold $ + the in-progress pipeline (opps opened this year that
   // haven't closed yet) using the same per-account breakdown.
-  const topAccountsData = useMemo(() => {
+  const topAccountsBase = useMemo(() => {
     if (records.length === 0 || yearRange.length === 0) return { years: [], topAccounts: [], colors: {} };
     const lifetimeSold = new Map();
     for (const r of records) {
@@ -689,6 +860,16 @@ export function YOYView() {
     rows.push(projected);
     return { years: rows, topAccounts, colors };
   }, [records, yearRange, currentYear]);
+  // The overridable columns for Top Accounts are the per-account stacks +
+  // Remaining, discovered from the computed data.
+  const topAccountsFields = useMemo(() => ([
+    ...(topAccountsBase.topAccounts || []).map(a => ({ key: a, label: a, kind: 'money' })),
+    { key: 'Remaining', label: 'Remaining', kind: 'money' },
+  ]), [topAccountsBase]);
+  const topAccountsData = useMemo(() => {
+    const years = applyYoyOverrides(topAccountsBase.years, YOY_CHART_EDITS.topAccounts, overrides.topAccounts, editCtx, topAccountsFields);
+    return years === topAccountsBase.years ? topAccountsBase : { ...topAccountsBase, years };
+  }, [topAccountsBase, topAccountsFields, overrides, editCtx]);
 
   // Annual Sales — Sold Quoted Amount per *Close Date* year split into
   // Current Client vs New Client buckets. Current Client classification
@@ -696,7 +877,7 @@ export function YOYView() {
   // cross-sell|expansion|upsell on the Lead Source value). Each bar also
   // carries the list of deals that make up its total (`_deals`) so the
   // hover panel can show — and the user can export — the contributors.
-  const annualSalesData = useMemo(() => {
+  const annualSalesBase = useMemo(() => {
     if (records.length === 0) return [];
     const CLIENT_RE = /client|existing|renewal|cross[\s-]?sell|expansion|upsell/i;
     const annualTarget = target > 0 ? target : DEFAULT_ANNUAL_TARGET;
@@ -782,6 +963,10 @@ export function YOYView() {
     });
     return rows;
   }, [records, currentYear, target]);
+  const annualSalesData = useMemo(
+    () => applyYoyOverrides(annualSalesBase, YOY_CHART_EDITS.annualSales, overrides.annualSales, editCtx),
+    [annualSalesBase, overrides, editCtx],
+  );
 
   // Deal Size — composed chart per Open Year:
   //   Deals (gray bars)     = count of closed opps (Sold + Not Sold)
@@ -790,7 +975,7 @@ export function YOYView() {
   // Projected bar treats still-active pipeline opps as if they were
   // future closes, so the Projected count/Quoted average reflect the
   // pipeline as well as YTD actuals.
-  const dealSizeData = useMemo(() => {
+  const dealSizeBase = useMemo(() => {
     if (records.length === 0 || yearRange.length === 0) return [];
     const stats = new Map();
     for (const y of yearRange) {
@@ -862,6 +1047,10 @@ export function YOYView() {
     });
     return rows;
   }, [records, yearRange, currentYear]);
+  const dealSizeData = useMemo(
+    () => applyYoyOverrides(dealSizeBase, YOY_CHART_EDITS.dealSize, overrides.dealSize, editCtx),
+    [dealSizeBase, overrides, editCtx],
+  );
 
   const hasOpps = records.length > 0;
 
@@ -873,7 +1062,7 @@ export function YOYView() {
   // otherwise the amount stored on the deal row. Years between the
   // earliest and latest are kept even if blank so a missing year shows
   // as a $0 bar instead of a gap.
-  const commissionsData = useMemo(() => {
+  const commissionsBase = useMemo(() => {
     const commByBfo = indexCommissionsByBfo(commissions || []);
     const byYear = new Map();
     const countByYear = new Map();
@@ -902,6 +1091,10 @@ export function YOYView() {
     }
     return rows;
   }, [deals, commissions]);
+  const commissionsData = useMemo(
+    () => applyYoyOverrides(commissionsBase, YOY_CHART_EDITS.commissions, overrides.commissions, editCtx),
+    [commissionsBase, overrides, editCtx],
+  );
   const hasCommissions = commissionsData.length > 0;
 
   // Per-chart underlying records. Each entry mirrors the filter used by
@@ -1273,6 +1466,23 @@ export function YOYView() {
   }, [pinned]);
   const stop = useCallback((e) => e.stopPropagation(), []);
 
+  // Data the editor reads for the open chart: the computed (pre-override)
+  // rows shown as placeholders, and the overridable field list. Top
+  // Accounts' columns are dynamic, so it supplies its own field list.
+  const editRegistry = {
+    leads: { rows: leadsBase, fields: YOY_CHART_EDITS.leads.fields },
+    closeRate: { rows: closeRateBase, fields: YOY_CHART_EDITS.closeRate.fields },
+    leadSources: { rows: leadSourcesBase, fields: YOY_CHART_EDITS.leadSources.fields },
+    quotedByYear: { rows: quotedByYearBase, fields: YOY_CHART_EDITS.quotedByYear.fields },
+    notSolds: { rows: notSoldsBase, fields: YOY_CHART_EDITS.notSolds.fields },
+    topAccounts: { rows: topAccountsBase.years, fields: topAccountsFields },
+    annualSales: { rows: annualSalesBase, fields: YOY_CHART_EDITS.annualSales.fields },
+    dealSize: { rows: dealSizeBase, fields: YOY_CHART_EDITS.dealSize.fields },
+    commissions: { rows: commissionsBase, fields: YOY_CHART_EDITS.commissions.fields },
+  };
+  const editReg = editingChart ? editRegistry[editingChart] : null;
+  const editCfg = editingChart ? YOY_CHART_EDITS[editingChart] : null;
+
   return (
     <div className={styles.wrapper}>
       <div className={styles.header}>
@@ -1286,6 +1496,7 @@ export function YOYView() {
       </div>
       <div className={styles.body} onClick={handleBodyClick}>
         <CalcPanelContext.Provider value={calcCtx}>
+        <EditChartContext.Provider value={setEditingChart}>
         <div
           ref={setCalcPanelEl}
           className={styles.calcPanel}
@@ -1319,8 +1530,20 @@ export function YOYView() {
           <div style={{ flex: '1 1 0' }} aria-hidden="true" />
           <div style={{ flex: '1 1 0' }} aria-hidden="true" />
         </div>
+        </EditChartContext.Provider>
         </CalcPanelContext.Provider>
       </div>
+      {editReg && editCfg && (
+        <ChartDataEditor
+          chartId={editingChart}
+          cfg={editCfg}
+          rows={editReg.rows}
+          fields={editReg.fields}
+          table={overrides[editingChart]}
+          onClose={() => setEditingChart(null)}
+          onSave={saveChartOverrides}
+        />
+      )}
     </div>
   );
 }
@@ -1379,20 +1602,130 @@ function useInteractiveLegend() {
   return { hidden, legendProps };
 }
 
-function ChartHeader({ title, onDownload, canDownload }) {
+function ChartHeader({ title, onDownload, canDownload, chartId }) {
+  const openEditor = useContext(EditChartContext);
   return (
     <div className={styles.chartHeader}>
       <h2 className={styles.chartTitle}>{title}</h2>
-      <button
-        type="button"
-        className={styles.downloadBtn}
-        onClick={onDownload}
-        disabled={!canDownload}
-        title={canDownload
-          ? `Download ${title} data as Excel (.xlsx)`
-          : 'No data to download'}
-      >Download .xlsx</button>
+      <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+        {chartId && openEditor && (
+          <button
+            type="button"
+            className={styles.downloadBtn}
+            onClick={() => openEditor(chartId)}
+            title={`View and overwrite the ${title} data points`}
+          >✎ Edit data</button>
+        )}
+        <button
+          type="button"
+          className={styles.downloadBtn}
+          onClick={onDownload}
+          disabled={!canDownload}
+          title={canDownload
+            ? `Download ${title} data as Excel (.xlsx)`
+            : 'No data to download'}
+        >Download .xlsx</button>
+      </div>
     </div>
+  );
+}
+
+// Generic "Edit data" popup for a YOY chart. Each row's computed value is
+// shown as the input placeholder; typing a replacement stores it as an
+// override that wins over the live number until cleared. A blank cell
+// keeps the computed value, and a value equal to the computed one is not
+// stored (so an override always represents a real change). "Clear
+// overrides" drops every saved value for the chart at once.
+function ChartDataEditor({ chartId, cfg, rows, fields, table, onClose, onSave }) {
+  const keyField = cfg.keyField;
+  const [draft, setDraft] = useState(() => {
+    const d = {};
+    for (const r of rows) {
+      const key = String(r[keyField]);
+      const saved = table?.[key] || {};
+      const cells = {};
+      for (const f of fields) cells[f.key] = saved[f.key] != null ? String(saved[f.key]) : '';
+      d[key] = cells;
+    }
+    return d;
+  });
+  const setCell = (key, field, value) =>
+    setDraft(prev => ({ ...prev, [key]: { ...prev[key], [field]: value } }));
+
+  const handleSave = () => {
+    const next = {};
+    for (const r of rows) {
+      const key = String(r[keyField]);
+      const cells = draft[key] || {};
+      const out = {};
+      for (const f of fields) {
+        const raw = String(cells[f.key] ?? '').trim().replace(/[$,%\s]/g, '');
+        if (raw === '') continue;
+        const n = Number(raw);
+        if (!Number.isFinite(n)) continue;
+        const base = r[f.key];
+        if (base != null && Number(base) === n) continue; // no real change
+        out[f.key] = n;
+      }
+      if (Object.keys(out).length) next[key] = out;
+    }
+    onSave(chartId, next);
+  };
+
+  return createPortal(
+    <div className={styles.modalOverlay} onClick={onClose}>
+      <div className={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+        <div className={styles.modalHead}>
+          <div>
+            <div className={styles.modalTitle}>{cfg.title} — edit data</div>
+            <div className={styles.modalSub}>
+              Type a value to overwrite that data point; it wins over the live-computed
+              number until you clear it. Leave a cell blank to keep the computed value
+              (shown greyed as the placeholder).
+            </div>
+          </div>
+          <button type="button" className={styles.downloadBtn} onClick={onClose}>Close</button>
+        </div>
+        <div className={styles.modalBody}>
+          <table className={styles.editTable}>
+            <thead>
+              <tr>
+                <th>{cfg.keyLabel}</th>
+                {fields.map(f => <th key={f.key}>{f.label}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => {
+                const key = String(r[keyField]);
+                return (
+                  <tr key={key}>
+                    <td className={styles.editMonthCell}>{key}</td>
+                    {fields.map(f => (
+                      <td key={f.key}>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          className={styles.editInput}
+                          value={draft[key]?.[f.key] ?? ''}
+                          onChange={(e) => setCell(key, f.key, e.target.value)}
+                          placeholder={fmtOverrideValue(r[f.key], f.kind) || '—'}
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className={styles.modalFoot}>
+          <button type="button" className={styles.downloadBtn} onClick={() => onSave(chartId, {})}>Clear overrides</button>
+          <button type="button" className={styles.downloadBtn} onClick={onClose}>Cancel</button>
+          <button type="button" className={styles.saveBtn} onClick={handleSave}>Save</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -1514,7 +1847,7 @@ function LeadsCard({ data, hasOpps, onDownload }) {
   const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
-      <ChartHeader title="Leads" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
+      <ChartHeader title="Leads" chartId="leads" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
       {!hasOpps ? (
         <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
       ) : data.length === 0 ? (
@@ -1742,7 +2075,7 @@ function CloseRateCard({ data, hasOpps, onDownload }) {
   const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
-      <ChartHeader title="Close Rate" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
+      <ChartHeader title="Close Rate" chartId="closeRate" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
       {!hasOpps ? (
         <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
       ) : data.length === 0 ? (
@@ -1816,7 +2149,7 @@ function LeadSourcesCard({ data, hasOpps, onDownload }) {
   const height = Math.max(minHeight, data.length * rowHeight + 80);
   return (
     <div className={styles.chartCard}>
-      <ChartHeader title="Lead Sources 2020+" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
+      <ChartHeader title="Lead Sources 2020+" chartId="leadSources" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
       {!hasOpps ? (
         <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
       ) : data.length === 0 ? (
@@ -1882,7 +2215,7 @@ function QuotedByYearCard({ data, hasOpps, onDownload }) {
   const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
-      <ChartHeader title="Quoted (Thousands)" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
+      <ChartHeader title="Quoted (Thousands)" chartId="quotedByYear" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
       {!hasOpps ? (
         <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
       ) : data.length === 0 ? (
@@ -1938,7 +2271,7 @@ function NotSoldsCard({ data, hasOpps, onDownload }) {
   const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
-      <ChartHeader title="Not Solds" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
+      <ChartHeader title="Not Solds" chartId="notSolds" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
       {!hasOpps ? (
         <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
       ) : data.length === 0 ? (
@@ -2043,7 +2376,7 @@ function TopAccountsCard({ data, hasOpps, onDownload }) {
   const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
-      <ChartHeader title="Top Accounts" onDownload={onDownload} canDownload={hasOpps && hasAny} />
+      <ChartHeader title="Top Accounts" chartId="topAccounts" onDownload={onDownload} canDownload={hasOpps && hasAny} />
       {!hasOpps ? (
         <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
       ) : !hasAny ? (
@@ -2155,7 +2488,7 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
   };
   return (
     <div className={styles.chartCard}>
-      <ChartHeader title="Annual Sales" onDownload={onDownload} canDownload={hasOpps && hasAny} />
+      <ChartHeader title="Annual Sales" chartId="annualSales" onDownload={onDownload} canDownload={hasOpps && hasAny} />
       {!hasOpps ? (
         <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
       ) : !hasAny ? (
@@ -2230,7 +2563,7 @@ function DealSizeCard({ data, hasOpps, onDownload }) {
   const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
-      <ChartHeader title="Deal Size" onDownload={onDownload} canDownload={hasOpps && hasAny} />
+      <ChartHeader title="Deal Size" chartId="dealSize" onDownload={onDownload} canDownload={hasOpps && hasAny} />
       {!hasOpps ? (
         <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
       ) : !hasAny ? (
@@ -2314,7 +2647,7 @@ function CommissionsCard({ data, hasCommissions, onDownload }) {
   const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
-      <ChartHeader title="Commissions" onDownload={onDownload} canDownload={hasCommissions && data.length > 0} />
+      <ChartHeader title="Commissions" chartId="commissions" onDownload={onDownload} canDownload={hasCommissions && data.length > 0} />
       {!hasCommissions ? (
         <div className={styles.empty}>No deals with a Paid to Date amount — add deals on the Clients › Deals tab.</div>
       ) : data.length === 0 ? (
