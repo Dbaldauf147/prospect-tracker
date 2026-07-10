@@ -1164,7 +1164,9 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       cc: draftCc,
       createdAt: new Date().toISOString(),
     };
-    const updated = [draft, ...drafts];
+    // Keep only the 5 most recent drafts — older ones are dropped
+    // automatically so the list never grows unbounded.
+    const updated = [draft, ...drafts].slice(0, 5);
     setDrafts(updated);
     setResult({ type: 'success', message: 'Draft saved' });
     setTimeout(() => setResult(null), 3000);
@@ -1832,35 +1834,6 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
             </div>
           </div>
 
-          {/* Saved drafts */}
-          <div className={`${styles.draftsCard} ${styles.coverageCard}`}>
-            <div className={styles.draftsHeader}>
-              <h3 className={styles.cardTitle}>Saved Drafts ({drafts.length})</h3>
-              {drafts.length > 0 && (
-                <button className={styles.clearAllDrafts} onClick={clearAllDrafts} title="Delete all saved drafts">
-                  Clear all
-                </button>
-              )}
-            </div>
-            {drafts.length === 0 ? (
-              <p className={styles.emptyDrafts}>No saved drafts yet</p>
-            ) : (
-              <div className={styles.draftsList}>
-                {drafts.map(d => (
-                  <div key={d.id} className={styles.draftItem}>
-                    <button className={styles.draftLoad} onClick={() => loadDraft(d)}>
-                      <span className={styles.draftSubject}>{d.subject || '(No subject)'}</span>
-                      <span className={styles.draftMeta}>
-                        {d.contacts?.length || 0} contact{(d.contacts?.length || 0) !== 1 ? 's' : ''} · {new Date(d.createdAt).toLocaleDateString()}
-                      </span>
-                    </button>
-                    <button className={styles.draftDelete} onClick={() => deleteDraft(d.id)}>&times;</button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
           {/* Variable Coverage — table view of every selected contact
               and the resolved value for every variable token used in
               the current subject + body. Empty cells render in red so
@@ -1898,6 +1871,37 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                 }
               }}
             />
+          </div>
+
+          {/* Saved drafts — sits below Variable Coverage. Only the 5
+              most recent drafts are kept; older ones are dropped
+              automatically when a new draft is saved. */}
+          <div className={`${styles.draftsCard} ${styles.coverageCard}`}>
+            <div className={styles.draftsHeader}>
+              <h3 className={styles.cardTitle}>Saved Drafts ({drafts.length})</h3>
+              {drafts.length > 0 && (
+                <button className={styles.clearAllDrafts} onClick={clearAllDrafts} title="Delete all saved drafts">
+                  Clear all
+                </button>
+              )}
+            </div>
+            {drafts.length === 0 ? (
+              <p className={styles.emptyDrafts}>No saved drafts yet</p>
+            ) : (
+              <div className={styles.draftsList}>
+                {drafts.map(d => (
+                  <div key={d.id} className={styles.draftItem}>
+                    <button className={styles.draftLoad} onClick={() => loadDraft(d)}>
+                      <span className={styles.draftSubject}>{d.subject || '(No subject)'}</span>
+                      <span className={styles.draftMeta}>
+                        {d.contacts?.length || 0} contact{(d.contacts?.length || 0) !== 1 ? 's' : ''} · {new Date(d.createdAt).toLocaleDateString()}
+                      </span>
+                    </button>
+                    <button className={styles.draftDelete} onClick={() => deleteDraft(d.id)}>&times;</button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
