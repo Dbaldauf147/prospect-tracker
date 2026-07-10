@@ -10,9 +10,8 @@ import {
 } from 'recharts';
 import { dbGet } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
-import { loadCommissions } from '../../utils/commissionsStore';
 import { loadDealsList } from '../../utils/dealsStore';
-import { indexCommissionsByBfo, normBfo, DEAL_BFO_KEY } from '../../utils/dealCommissions';
+import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
 import { loadQuotedProjections, saveQuotedProjections, QUOTED_FIELDS } from '../../utils/quotedProjectionsStore';
 import { loadYoyOverrides, saveYoyOverrides } from '../../utils/yoyOverridesStore';
 import { loadHiddenCharts, saveHiddenCharts } from '../../utils/yoyHiddenChartsStore';
@@ -347,7 +346,6 @@ export function YOYView() {
   const [opps, setOpps] = useState(null);
   const [bfo, setBfo] = useState(null);
   const [target, setTarget] = useState(DEFAULT_ANNUAL_TARGET);
-  const [commissions, setCommissions] = useState(() => loadCommissions().data);
   const [deals, setDeals] = useState(() => loadDealsList().data);
   // Quoted Projections is now a user-maintained table of month-end values
   // (seeded with the supplied Dec–May history) rather than a live compute.
@@ -400,15 +398,11 @@ export function YOYView() {
   );
   useEffect(() => {
     function onStorage(e) {
-      if (!e || e.key === 'commissions-list-override') {
-        setCommissions(loadCommissions().data);
-      }
       if (!e || e.key === 'deals-list-override') {
         setDeals(loadDealsList().data);
       }
     }
     function onFocus() {
-      setCommissions(loadCommissions().data);
       setDeals(loadDealsList().data);
     }
     window.addEventListener('storage', onStorage);
@@ -1160,21 +1154,20 @@ export function YOYView() {
 
   const hasOpps = records.length > 0;
 
-  // Commissions — total commission per year, sourced from the Deals tab
-  // (Clients page) crossed with the Commissions roster. Each deal is
-  // bucketed by the calendar year of its Original Contract Start (falling
-  // back to Current Term Start Date when that's blank), and the commission
-  // amount from its matching Commissions roster entry (matched by BFO opp
-  // name) is summed in. Deals with no matching roster entry — or a roster
-  // entry with no commission dollars — are excluded; the deal-row Paid to
-  // Date value is intentionally ignored so the chart reflects actual
-  // commission amounts only. Years between the earliest and latest are
-  // kept even if blank so a missing year shows as a $0 bar instead of a
-  // gap. The span always extends to the current year — mirroring the Deal
-  // Size / Annual Sales charts — so the current year shows a $0 bar until
-  // its first commission lands, rather than being absent.
+  // Commissions — total expected commission per year, sourced from the
+  // Deals tab (Clients page). Each deal is bucketed by the calendar year
+  // of its Original Contract Start (falling back to Current Term Start
+  // Date when that's blank), and the deal's total expected commission —
+  // the `Commission` column, the same denominator the Deals grid shows in
+  // the "$paid/$commission" Paid to Date cell — is summed in. This is the
+  // full contracted commission, NOT what's been paid to date, so a signed
+  // deal shows its expected commission immediately rather than waiting for
+  // payments to land. Deals with no Commission amount are excluded. Years
+  // between the earliest and latest are kept even if blank so a missing
+  // year shows as a $0 bar instead of a gap. The span always extends to
+  // the current year — mirroring the Deal Size / Annual Sales charts — so
+  // the current year shows a $0 bar until its first deal lands.
   const commissionsBase = useMemo(() => {
-    const commByBfo = indexCommissionsByBfo(commissions || []);
     const byYear = new Map();
     const countByYear = new Map();
     for (const row of (deals || [])) {
@@ -1187,21 +1180,18 @@ export function YOYView() {
       if (Number.isNaN(ts)) continue;
       const year = new Date(ts).getFullYear();
       if (!Number.isFinite(year) || year < 1900 || year > 2100) continue;
-      // Commission comes only from the matching Commissions roster entry
-      // (matched by BFO name). Deals with no roster match contribute
-      // nothing — the deal-row Paid to Date value is deliberately ignored.
-      const bfo = normBfo(row?.[DEAL_BFO_KEY]);
-      const hit = bfo ? commByBfo.get(bfo) : null;
-      const paid = hit ? hit.commission : 0;
-      if (!paid) continue;
-      byYear.set(year, (byYear.get(year) || 0) + paid);
+      // Total expected commission for the deal (the Commission column).
+      // Not the paid-to-date amount.
+      const expected = parseMoney(row?.['Commission']) ?? 0;
+      if (!expected) continue;
+      byYear.set(year, (byYear.get(year) || 0) + expected);
       countByYear.set(year, (countByYear.get(year) || 0) + 1);
     }
     if (byYear.size === 0) return [];
     const minY = Math.min(...byYear.keys());
     // Extend the upper bound to the current year so it always gets a bar
-    // (a $0 placeholder until its first commission lands), matching the
-    // other YOY charts.
+    // (a $0 placeholder until its first deal lands), matching the other
+    // YOY charts.
     const maxY = Math.max(...byYear.keys(), currentYear);
     const rows = [];
     for (let y = minY; y <= maxY; y++) {
@@ -1209,7 +1199,7 @@ export function YOYView() {
       rows.push({ year: String(y), total: byYear.get(y) || 0, _rowCount: countByYear.get(y) || 0 });
     }
     return rows;
-  }, [deals, commissions, currentYear]);
+  }, [deals, currentYear]);
   const commissionsData = useMemo(
     () => applyYoyOverrides(commissionsBase, YOY_CHART_EDITS.commissions, overrides.commissions, editCtx),
     [commissionsBase, overrides, editCtx],
@@ -1416,30 +1406,26 @@ export function YOYView() {
     // Commissions contributors — one row per deal that fed a year's total,
     // bucketed by the calendar year of its Original Contract Start (falling
     // back to Current Term Start Date when that's blank). Mirrors
-    // commissionsBase exactly (same Original-Contract-Start bucketing,
-    // roster-only commission resolution, and the `if (!paid) continue`
-    // skip) so the rows tie back to each bar. The commission comes only
-    // from the matching Commissions roster entry — the deal-row Paid to
-    // Date value is ignored.
+    // commissionsBase exactly (same Original-Contract-Start bucketing and
+    // the `if (!expected) continue` skip) so the rows tie back to each
+    // bar. The Commission value is the deal's total expected commission
+    // (the Commission column), not the paid-to-date amount.
     const commissionsRecs = [];
-    const commByBfoForExport = indexCommissionsByBfo(commissions || []);
     for (const row of (deals || [])) {
       let ts = Date.parse(row?.['Original Contract Start']);
       if (Number.isNaN(ts)) ts = Date.parse(row?.['Current Term Start Date']);
       if (Number.isNaN(ts)) continue;
       const year = new Date(ts).getFullYear();
       if (!Number.isFinite(year) || year < 1900 || year > 2100) continue;
-      const bfo = normBfo(row?.[DEAL_BFO_KEY]);
-      const hit = bfo ? commByBfoForExport.get(bfo) : null;
-      const paid = hit ? hit.commission : 0;
-      if (!paid) continue;
+      const expected = parseMoney(row?.['Commission']) ?? 0;
+      if (!expected) continue;
       commissionsRecs.push({
         'Client Name': String(row?.['Client Name'] || '').trim(),
         'BFO Name': String(row?.[DEAL_BFO_KEY] || '').trim(),
         'Original Contract Start': row?.['Original Contract Start'] || '',
         'Current Term Start Date': row?.['Current Term Start Date'] || '',
         Year: year,
-        'Commission ($)': Math.round(paid),
+        'Commission ($)': Math.round(expected),
       });
     }
     commissionsRecs.sort((a, b) => a.Year - b.Year || a['Client Name'].localeCompare(b['Client Name']));
@@ -1448,7 +1434,7 @@ export function YOYView() {
       topAccounts: topAccountsRecs, dealSize: dealSizeRecs,
       commissions: commissionsRecs,
     };
-  }, [records, currentYear, topAccountsData, deals, commissions]);
+  }, [records, currentYear, topAccountsData, deals]);
 
   // Download just the opportunity rows behind one pinned chart point, so a
   // pinned bar/line can be deep-dived in Excel. Each chart's contributing
@@ -2924,7 +2910,7 @@ function CommissionsCard({ data, hasCommissions, onDownload, onExportPoint }) {
     <div className={styles.chartCard}>
       <ChartHeader title="Commissions" chartId="commissions" onDownload={onDownload} canDownload={hasCommissions && data.length > 0} />
       {!hasCommissions ? (
-        <div className={styles.empty}>No deals matched to a Commissions roster amount — check the BFO names on the Clients › Deals and Commissions tabs.</div>
+        <div className={styles.empty}>No deals with a Commission amount — add expected commission on the Clients › Deals tab.</div>
       ) : data.length === 0 ? (
         <div className={styles.empty}>No deals with an Original Contract Start date.</div>
       ) : (
@@ -2942,7 +2928,7 @@ function CommissionsCard({ data, hasCommissions, onDownload, onExportPoint }) {
                 labelText={(label) => `Year ${label}`}
                 valueFormat={(v) => (v == null ? '—' : fmtMoneyFull(v))}
                 explain={(row) => ({
-                  formula: 'Sum of each deal’s commission amount from the matching Commissions roster entry (matched by BFO name), bucketed by the calendar year of its Original Contract Start (falling back to Current Term Start Date when blank). Deals with no matching Commissions roster entry are excluded — the deal-row Paid to Date value is ignored.',
+                  formula: 'Sum of each deal’s total expected commission (the Commission column on the Clients › Deals tab), bucketed by the calendar year of its Original Contract Start (falling back to Current Term Start Date when blank). This is the full contracted commission, not what has been paid to date.',
                   inputs: [
                     { label: 'Deals counted', value: (row._rowCount ?? 0).toLocaleString('en-US') },
                     { label: 'Total', value: fmtMoneyFull(row.total) },
