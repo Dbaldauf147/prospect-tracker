@@ -12,6 +12,7 @@ import { userLsGet } from './userLs';
 // flag definition tightened were caused by the suggestion path; running
 // this version once resolves them.
 export const LIST_FLAG_SOURCES = [
+  { label: 'Largest',  storageKey: 'largest-list-override', color: { bg: '#FEE2E2', text: '#991B1B' } },
   { label: 'RECA',     storageKey: 'reca-clients-override', color: { bg: '#DBEAFE', text: '#1E40AF' } },
   { label: 'CSRD',     storageKey: 'csrd-list-override',    color: { bg: '#EDE9FE', text: '#5B21B6' } },
   { label: 'CDP',      storageKey: 'cdp-list-override',     color: { bg: '#DCFCE7', text: '#166534' } },

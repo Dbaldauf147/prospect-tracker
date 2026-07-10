@@ -103,6 +103,7 @@ export const ASSET_TYPES = [
 // Kept in sync with LIST_FLAG_SOURCES so the modal and the My Accounts
 // Frameworks column read from the same vocabulary.
 export const FRAMEWORKS = [
+  'Largest',
   'RECA',
   'CSRD',
   'CDP',
