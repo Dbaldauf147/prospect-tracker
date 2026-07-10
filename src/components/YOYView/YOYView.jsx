@@ -1117,7 +1117,8 @@ export function YOYView() {
 
   // Commissions — total Paid to Date per year, sourced from the Deals
   // tab (Clients page). Each deal is bucketed by the calendar year of its
-  // Current Term Start Date, and its Paid to Date amount is summed in.
+  // Original Contract Start (falling back to Current Term Start Date when
+  // that's blank), and its Paid to Date amount is summed in.
   // Paid to Date mirrors what the Deals grid shows: the matching
   // Commissions roster total when the deal's BFO opp name maps to one,
   // otherwise the amount stored on the deal row. Years between the
@@ -1131,7 +1132,12 @@ export function YOYView() {
     const byYear = new Map();
     const countByYear = new Map();
     for (const row of (deals || [])) {
-      const ts = Date.parse(row?.['Current Term Start Date']);
+      // Bucket each deal by the year of its Original Contract Start. Fall
+      // back to Current Term Start Date only when the original date is
+      // missing so a deal without it still counts rather than dropping
+      // off the chart.
+      let ts = Date.parse(row?.['Original Contract Start']);
+      if (Number.isNaN(ts)) ts = Date.parse(row?.['Current Term Start Date']);
       if (Number.isNaN(ts)) continue;
       const year = new Date(ts).getFullYear();
       if (!Number.isFinite(year) || year < 1900 || year > 2100) continue;
@@ -2834,7 +2840,7 @@ function CommissionsCard({ data, hasCommissions, onDownload, onExportPoint }) {
       {!hasCommissions ? (
         <div className={styles.empty}>No deals with a Paid to Date amount — add deals on the Clients › Deals tab.</div>
       ) : data.length === 0 ? (
-        <div className={styles.empty}>No deals with a Current Term Start Date.</div>
+        <div className={styles.empty}>No deals with an Original Contract Start date.</div>
       ) : (
         <ResponsiveContainer width="100%" height={320}>
           <BarChart data={data} margin={{ top: 22, right: 8, left: 16, bottom: 4 }}>
@@ -2850,7 +2856,7 @@ function CommissionsCard({ data, hasCommissions, onDownload, onExportPoint }) {
                 labelText={(label) => `Year ${label}`}
                 valueFormat={(v) => (v == null ? '—' : fmtMoneyFull(v))}
                 explain={(row) => ({
-                  formula: 'Sum of each deal’s Paid to Date amount, bucketed by the calendar year of its Current Term Start Date. Paid to Date mirrors the Deals tab — the matching Commissions roster total when the BFO name maps, else the value stored on the deal.',
+                  formula: 'Sum of each deal’s Paid to Date amount, bucketed by the calendar year of its Original Contract Start (falling back to Current Term Start Date when blank). Paid to Date mirrors the Deals tab — the matching Commissions roster total when the BFO name maps, else the value stored on the deal.',
                   inputs: [
                     { label: 'Deals counted', value: (row._rowCount ?? 0).toLocaleString('en-US') },
                     { label: 'Total', value: fmtMoneyFull(row.total) },
