@@ -1160,18 +1160,19 @@ export function YOYView() {
 
   const hasOpps = records.length > 0;
 
-  // Commissions — total Paid to Date per year, sourced from the Deals
-  // tab (Clients page). Each deal is bucketed by the calendar year of its
-  // Original Contract Start (falling back to Current Term Start Date when
-  // that's blank), and its Paid to Date amount is summed in.
-  // Paid to Date mirrors what the Deals grid shows: the matching
-  // Commissions roster total when the deal's BFO opp name maps to one,
-  // otherwise the amount stored on the deal row. Years between the
-  // earliest and latest are kept even if blank so a missing year shows
-  // as a $0 bar instead of a gap. The span always extends to the current
-  // year — mirroring the Deal Size / Annual Sales charts — so the current
-  // year shows a $0 bar until its first commission lands, rather than
-  // being absent.
+  // Commissions — total commission per year, sourced from the Deals tab
+  // (Clients page) crossed with the Commissions roster. Each deal is
+  // bucketed by the calendar year of its Original Contract Start (falling
+  // back to Current Term Start Date when that's blank), and the commission
+  // amount from its matching Commissions roster entry (matched by BFO opp
+  // name) is summed in. Deals with no matching roster entry — or a roster
+  // entry with no commission dollars — are excluded; the deal-row Paid to
+  // Date value is intentionally ignored so the chart reflects actual
+  // commission amounts only. Years between the earliest and latest are
+  // kept even if blank so a missing year shows as a $0 bar instead of a
+  // gap. The span always extends to the current year — mirroring the Deal
+  // Size / Annual Sales charts — so the current year shows a $0 bar until
+  // its first commission lands, rather than being absent.
   const commissionsBase = useMemo(() => {
     const commByBfo = indexCommissionsByBfo(commissions || []);
     const byYear = new Map();
@@ -1186,12 +1187,12 @@ export function YOYView() {
       if (Number.isNaN(ts)) continue;
       const year = new Date(ts).getFullYear();
       if (!Number.isFinite(year) || year < 1900 || year > 2100) continue;
-      // Match the Deals grid's Paid to Date numerator: auto-populate from
-      // the Commissions roster when the BFO name matches, else fall back
-      // to the value stored on the deal row.
+      // Commission comes only from the matching Commissions roster entry
+      // (matched by BFO name). Deals with no roster match contribute
+      // nothing — the deal-row Paid to Date value is deliberately ignored.
       const bfo = normBfo(row?.[DEAL_BFO_KEY]);
       const hit = bfo ? commByBfo.get(bfo) : null;
-      const paid = hit ? hit.commission : (parseMoney(row?.['Paid to Date']) ?? 0);
+      const paid = hit ? hit.commission : 0;
       if (!paid) continue;
       byYear.set(year, (byYear.get(year) || 0) + paid);
       countByYear.set(year, (countByYear.get(year) || 0) + 1);
@@ -1412,14 +1413,14 @@ export function YOYView() {
     topAccountsRecs.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
     const dsSortYear = (r) => Number(r['Closed Year'] || r['Quoted Year'] || 0);
     dealSizeRecs.sort((a, b) => dsSortYear(a) - dsSortYear(b) || a.Account.localeCompare(b.Account));
-    // Commissions contributors — one row per deal that fed a year's Paid to
-    // Date total, bucketed by the calendar year of its Original Contract
-    // Start (falling back to Current Term Start Date when that's blank).
-    // Mirrors commissionsBase exactly (same Original-Contract-Start
-    // bucketing, BFO-roster-vs-deal-row resolution, and the
-    // `if (!paid) continue` skip) so the rows tie back to each bar.
-    // Sourced from the Deals tab + Commissions roster rather than the opps
-    // `records`.
+    // Commissions contributors — one row per deal that fed a year's total,
+    // bucketed by the calendar year of its Original Contract Start (falling
+    // back to Current Term Start Date when that's blank). Mirrors
+    // commissionsBase exactly (same Original-Contract-Start bucketing,
+    // roster-only commission resolution, and the `if (!paid) continue`
+    // skip) so the rows tie back to each bar. The commission comes only
+    // from the matching Commissions roster entry — the deal-row Paid to
+    // Date value is ignored.
     const commissionsRecs = [];
     const commByBfoForExport = indexCommissionsByBfo(commissions || []);
     for (const row of (deals || [])) {
@@ -1430,7 +1431,7 @@ export function YOYView() {
       if (!Number.isFinite(year) || year < 1900 || year > 2100) continue;
       const bfo = normBfo(row?.[DEAL_BFO_KEY]);
       const hit = bfo ? commByBfoForExport.get(bfo) : null;
-      const paid = hit ? hit.commission : (parseMoney(row?.['Paid to Date']) ?? 0);
+      const paid = hit ? hit.commission : 0;
       if (!paid) continue;
       commissionsRecs.push({
         'Client Name': String(row?.['Client Name'] || '').trim(),
@@ -1439,7 +1440,6 @@ export function YOYView() {
         'Current Term Start Date': row?.['Current Term Start Date'] || '',
         Year: year,
         'Commission ($)': Math.round(paid),
-        'Commission source': hit ? 'Commissions roster' : 'Deal row',
       });
     }
     commissionsRecs.sort((a, b) => a.Year - b.Year || a['Client Name'].localeCompare(b['Client Name']));
@@ -2924,7 +2924,7 @@ function CommissionsCard({ data, hasCommissions, onDownload, onExportPoint }) {
     <div className={styles.chartCard}>
       <ChartHeader title="Commissions" chartId="commissions" onDownload={onDownload} canDownload={hasCommissions && data.length > 0} />
       {!hasCommissions ? (
-        <div className={styles.empty}>No deals with a Paid to Date amount — add deals on the Clients › Deals tab.</div>
+        <div className={styles.empty}>No deals matched to a Commissions roster amount — check the BFO names on the Clients › Deals and Commissions tabs.</div>
       ) : data.length === 0 ? (
         <div className={styles.empty}>No deals with an Original Contract Start date.</div>
       ) : (
@@ -2942,7 +2942,7 @@ function CommissionsCard({ data, hasCommissions, onDownload, onExportPoint }) {
                 labelText={(label) => `Year ${label}`}
                 valueFormat={(v) => (v == null ? '—' : fmtMoneyFull(v))}
                 explain={(row) => ({
-                  formula: 'Sum of each deal’s Paid to Date amount, bucketed by the calendar year of its Original Contract Start (falling back to Current Term Start Date when blank). Paid to Date mirrors the Deals tab — the matching Commissions roster total when the BFO name maps, else the value stored on the deal.',
+                  formula: 'Sum of each deal’s commission amount from the matching Commissions roster entry (matched by BFO name), bucketed by the calendar year of its Original Contract Start (falling back to Current Term Start Date when blank). Deals with no matching Commissions roster entry are excluded — the deal-row Paid to Date value is ignored.',
                   inputs: [
                     { label: 'Deals counted', value: (row._rowCount ?? 0).toLocaleString('en-US') },
                     { label: 'Total', value: fmtMoneyFull(row.total) },
