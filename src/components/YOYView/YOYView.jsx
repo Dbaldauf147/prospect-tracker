@@ -1105,7 +1105,10 @@ export function YOYView() {
   // Commissions roster total when the deal's BFO opp name maps to one,
   // otherwise the amount stored on the deal row. Years between the
   // earliest and latest are kept even if blank so a missing year shows
-  // as a $0 bar instead of a gap.
+  // as a $0 bar instead of a gap. The span always extends to the current
+  // year — mirroring the Deal Size / Annual Sales charts — so the current
+  // year shows a $0 bar until its first commission lands, rather than
+  // being absent.
   const commissionsBase = useMemo(() => {
     const commByBfo = indexCommissionsByBfo(commissions || []);
     const byYear = new Map();
@@ -1127,14 +1130,17 @@ export function YOYView() {
     }
     if (byYear.size === 0) return [];
     const minY = Math.min(...byYear.keys());
-    const maxY = Math.max(...byYear.keys());
+    // Extend the upper bound to the current year so it always gets a bar
+    // (a $0 placeholder until its first commission lands), matching the
+    // other YOY charts.
+    const maxY = Math.max(...byYear.keys(), currentYear);
     const rows = [];
     for (let y = minY; y <= maxY; y++) {
       // _rowCount = deal rows that fed this year's total (tooltip input).
       rows.push({ year: String(y), total: byYear.get(y) || 0, _rowCount: countByYear.get(y) || 0 });
     }
     return rows;
-  }, [deals, commissions]);
+  }, [deals, commissions, currentYear]);
   const commissionsData = useMemo(
     () => applyYoyOverrides(commissionsBase, YOY_CHART_EDITS.commissions, overrides.commissions, editCtx),
     [commissionsBase, overrides, editCtx],
