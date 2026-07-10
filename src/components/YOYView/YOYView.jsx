@@ -54,14 +54,20 @@ const YOY_CHART_EDITS = {
       { key: 'inProgress', label: 'In Progress', kind: 'int' },
       { key: 'notSold', label: 'Not Sold', kind: 'int' },
       { key: 'sold', label: 'Sold', kind: 'int' },
+      { key: 'closeRate', label: 'Close Rate %', kind: 'ratioPct' },
     ],
-    // Total and the row-end close-rate label are derived from the counts.
-    recompute: (r) => {
+    // Total (used for sorting) and the row-end close-rate label are derived
+    // from the counts — unless the close-rate data label was overridden.
+    recompute: (r, _fields, _ctx, ov) => {
       const sold = Number(r.sold) || 0;
       const notSold = Number(r.notSold) || 0;
       const inProgress = Number(r.inProgress) || 0;
       const decided = sold + notSold;
-      return { ...r, total: inProgress + notSold + sold, closeRate: decided ? sold / decided : null };
+      return {
+        ...r,
+        total: inProgress + notSold + sold,
+        closeRate: ov && ov.has('closeRate') ? r.closeRate : (decided ? sold / decided : null),
+      };
     },
   },
   quotedByYear: {
@@ -82,9 +88,12 @@ const YOY_CHART_EDITS = {
     // Columns are the top-account names + Remaining, so they're supplied
     // per-render from the data rather than fixed here.
     dynamic: true,
-    recompute: (r, fields) => {
+    // _total is the bar-top data label = sum of the account stacks +
+    // Remaining, unless the user overrode the Total directly.
+    recompute: (r, fields, _ctx, ov) => {
+      if (ov && ov.has('_total')) return { ...r, _total: Math.round(Number(r._total) || 0) };
       let total = 0;
-      for (const f of fields) total += Number(r[f.key]) || 0;
+      for (const f of fields) { if (f.key === '_total') continue; total += Number(r[f.key]) || 0; }
       return { ...r, _total: Math.round(total) };
     },
   },
@@ -93,11 +102,20 @@ const YOY_CHART_EDITS = {
     fields: [
       { key: 'currentClient', label: 'Current Client ($)', kind: 'money' },
       { key: 'newClient', label: 'New Client ($)', kind: 'money' },
+      { key: '_total', label: 'Total ($)', kind: 'money' },
+      { key: 'pctQuota', label: '% Quota', kind: 'pct' },
     ],
-    recompute: (r, _fields, ctx) => {
-      const total = (Number(r.currentClient) || 0) + (Number(r.newClient) || 0);
+    // Total and % Quota are the bar-top data labels. Each derives from the
+    // two client segments (and the annual target) unless overridden.
+    recompute: (r, _fields, ctx, ov) => {
+      const total = (ov && ov.has('_total'))
+        ? (Number(r._total) || 0)
+        : (Number(r.currentClient) || 0) + (Number(r.newClient) || 0);
       const tgt = ctx?.annualTarget || 0;
-      return { ...r, _total: Math.round(total), pctQuota: tgt > 0 ? Math.round((total / tgt) * 100) : r.pctQuota };
+      const pctQuota = (ov && ov.has('pctQuota'))
+        ? r.pctQuota
+        : (tgt > 0 ? Math.round((total / tgt) * 100) : r.pctQuota);
+      return { ...r, _total: Math.round(total), pctQuota };
     },
   },
   dealSize: {
@@ -127,13 +145,16 @@ function applyYoyOverrides(rows, cfg, table, ctx, fieldsOverride) {
     const patch = table[String(r[cfg.keyField])];
     if (!patch) return r;
     let next = { ...r };
-    let touched = false;
+    const overridden = new Set();
     for (const f of fields) {
       const v = patch[f.key];
-      if (v != null && Number.isFinite(Number(v))) { next[f.key] = Number(v); touched = true; }
+      if (v != null && Number.isFinite(Number(v))) { next[f.key] = Number(v); overridden.add(f.key); }
     }
-    if (!touched) return r;
-    if (cfg.recompute) next = cfg.recompute(next, fields, ctx);
+    if (overridden.size === 0) return r;
+    // recompute re-derives dependent fields, but must leave any field the
+    // user overrode directly (e.g. an edited Total / % Quota data label)
+    // untouched — so it's told which keys were explicitly set.
+    if (cfg.recompute) next = cfg.recompute(next, fields, ctx, overridden);
     changed = true;
     return next;
   });
@@ -147,6 +168,8 @@ function fmtOverrideValue(v, kind) {
   const n = Number(v);
   if (kind === 'money') return `$${Math.round(n).toLocaleString('en-US')}`;
   if (kind === 'pct') return `${n}%`;
+  // A 0–1 ratio the chart draws as a whole-number percent (e.g. close rate).
+  if (kind === 'ratioPct') return `${Math.round(n * 100)}%`;
   return n.toLocaleString('en-US');
 }
 // BFO Activity cache — pasted BFO pipeline rows, used to total the live
@@ -865,6 +888,7 @@ export function YOYView() {
   const topAccountsFields = useMemo(() => ([
     ...(topAccountsBase.topAccounts || []).map(a => ({ key: a, label: a, kind: 'money' })),
     { key: 'Remaining', label: 'Remaining', kind: 'money' },
+    { key: '_total', label: 'Total ($)', kind: 'money' },
   ]), [topAccountsBase]);
   const topAccountsData = useMemo(() => {
     const years = applyYoyOverrides(topAccountsBase.years, YOY_CHART_EDITS.topAccounts, overrides.topAccounts, editCtx, topAccountsFields);
@@ -1644,7 +1668,13 @@ function ChartDataEditor({ chartId, cfg, rows, fields, table, onClose, onSave })
       const key = String(r[keyField]);
       const saved = table?.[key] || {};
       const cells = {};
-      for (const f of fields) cells[f.key] = saved[f.key] != null ? String(saved[f.key]) : '';
+      for (const f of fields) {
+        const sv = saved[f.key];
+        // ratioPct is stored as a 0–1 ratio but edited as a whole percent.
+        cells[f.key] = sv != null
+          ? (f.kind === 'ratioPct' ? String(+(sv * 100).toFixed(2)) : String(sv))
+          : '';
+      }
       d[key] = cells;
     }
     return d;
@@ -1661,11 +1691,13 @@ function ChartDataEditor({ chartId, cfg, rows, fields, table, onClose, onSave })
       for (const f of fields) {
         const raw = String(cells[f.key] ?? '').trim().replace(/[$,%\s]/g, '');
         if (raw === '') continue;
-        const n = Number(raw);
-        if (!Number.isFinite(n)) continue;
+        const typed = Number(raw);
+        if (!Number.isFinite(typed)) continue;
+        // ratioPct cells are typed as a whole percent but stored as a ratio.
+        const value = f.kind === 'ratioPct' ? typed / 100 : typed;
         const base = r[f.key];
-        if (base != null && Number(base) === n) continue; // no real change
-        out[f.key] = n;
+        if (base != null && Number(base) === value) continue; // no real change
+        out[f.key] = value;
       }
       if (Object.keys(out).length) next[key] = out;
     }
