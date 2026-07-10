@@ -121,9 +121,9 @@ const YOY_CHART_EDITS = {
   dealSize: {
     title: 'Deal Size', keyField: 'year', keyLabel: 'Year',
     fields: [
-      { key: 'deals', label: 'Deals', kind: 'int' },
+      { key: 'deals', label: 'Deals (Sold)', kind: 'int' },
       { key: 'quoted', label: 'Quoted mean ($)', kind: 'money' },
-      { key: 'dealSize', label: 'Deal Size mean ($)', kind: 'money' },
+      { key: 'dealSize', label: 'Deal Size avg ($)', kind: 'money' },
     ],
   },
   commissions: {
@@ -993,17 +993,16 @@ export function YOYView() {
   );
 
   // Deal Size — composed chart per Open Year:
-  //   Deals (gray bars)     = count of closed opps (Sold + Not Sold)
+  //   Deals (gray bars)     = count of Sold opps (won deals)
   //   Quoted (red line)     = mean Quoted Amount across closed opps
-  //   Deal Size (blue line) = mean Quoted Amount of Sold opps only
-  // Projected bar treats still-active pipeline opps as if they were
-  // future closes, so the Projected count/Quoted average reflect the
-  // pipeline as well as YTD actuals.
+  //   Deal Size (blue line) = average deal size = mean Quoted Amount of Sold opps
+  // Projected bar treats still-active pipeline opps as expected future
+  // wins, so the Projected count reflects YTD wins + open pipeline.
   const dealSizeBase = useMemo(() => {
     if (records.length === 0 || yearRange.length === 0) return [];
     const stats = new Map();
     for (const y of yearRange) {
-      stats.set(y, { closedCount: 0, quotedSum: 0, quotedCount: 0, soldSum: 0, soldCount: 0 });
+      stats.set(y, { soldOppCount: 0, quotedSum: 0, quotedCount: 0, soldSum: 0, soldCount: 0 });
     }
     for (const r of records) {
       const y = parseYear(r['Open Year']);
@@ -1011,7 +1010,9 @@ export function YOYView() {
       const stage = String(r.Stage || '').trim();
       if (stage !== 'Sold' && stage !== 'Not Sold') continue;
       const s = stats.get(y);
-      s.closedCount += 1;
+      // Grey bars count won deals — every Sold opp, regardless of whether
+      // it carries a Quoted Amount.
+      if (stage === 'Sold') s.soldOppCount += 1;
       const amt = parseMoney(r['Quoted Amount']);
       if (typeof amt === 'number' && amt > 0) {
         s.quotedSum += amt;
@@ -1027,7 +1028,7 @@ export function YOYView() {
       const s = stats.get(y);
       rows.push({
         year: String(y),
-        deals: s.closedCount,
+        deals: s.soldOppCount,
         quoted: s.quotedCount > 0 ? Math.round(s.quotedSum / s.quotedCount) : null,
         dealSize: s.soldCount > 0 ? Math.round(s.soldSum / s.soldCount) : null,
         _isProjected: false,
@@ -1036,21 +1037,20 @@ export function YOYView() {
         _soldCount: s.soldCount,
       });
     }
-    // Projected — active-pipeline opps for the current year are added
-    // to deals count and Quoted mean (treated as future closes). Deal
-    // Size is reused from Sold actuals (no Sold $ to project on yet
-    // for still-open opps).
-    let projClosed = 0, projQuotedSum = 0, projQuotedCount = 0;
+    // Projected — won deals so far this year plus every still-open
+    // pipeline opp, counted as expected future wins. Not Sold opps are
+    // excluded from the bar. Deal Size / Quoted means reuse the same
+    // Sold / closed math as the actual years.
+    let projWon = 0, projPipeline = 0, projQuotedSum = 0, projQuotedCount = 0;
     let projSoldSum = 0, projSoldCount = 0;
     for (const r of records) {
       const y = parseYear(r['Open Year']);
       if (y !== currentYear) continue;
       const stage = String(r.Stage || '').trim();
       const isClosed = (stage === 'Sold' || stage === 'Not Sold');
-      const isPipeline = !isClosed; // any non-closed stage
+      if (stage === 'Sold') projWon += 1;
+      else if (!isClosed) projPipeline += 1; // active pipeline = expected future win
       const amt = parseMoney(r['Quoted Amount']);
-      if (isClosed) projClosed += 1;
-      else if (isPipeline) projClosed += 1; // counted toward "expected deals"
       if (typeof amt === 'number' && amt > 0) {
         projQuotedSum += amt;
         projQuotedCount += 1;
@@ -1062,7 +1062,7 @@ export function YOYView() {
     }
     rows.push({
       year: 'Projected',
-      deals: projClosed,
+      deals: projWon + projPipeline,
       quoted: projQuotedCount > 0 ? Math.round(projQuotedSum / projQuotedCount) : null,
       dealSize: projSoldCount > 0 ? Math.round(projSoldSum / projSoldCount) : null,
       _isProjected: true,
@@ -1296,7 +1296,7 @@ export function YOYView() {
           'Open Year': oy,
           Stage: stage,
           'Quoted Amount': amt ?? '',
-          'Counts in Deals': 'Yes',
+          'Counts in Deals': stage === 'Sold' ? 'Yes' : 'No',
           'Counts in Quoted avg': (amt && amt > 0) ? 'Yes' : 'No',
           'Counts in Deal Size avg': (stage === 'Sold' && amt && amt > 0) ? 'Yes' : 'No',
         });
@@ -1481,9 +1481,9 @@ export function YOYView() {
     const summary = dealSizeData.map(r => ({
       Year: r.year,
       Type: r._isProjected ? 'Projected (YTD + active pipeline)' : 'Actual',
-      Deals: r.deals,
+      'Deals (Sold count)': r.deals,
       'Quoted (mean of closed, $)': r.quoted == null ? '' : r.quoted,
-      'Deal Size (mean of Sold, $)': r.dealSize == null ? '' : r.dealSize,
+      'Deal Size (avg of Sold, $)': r.dealSize == null ? '' : r.dealSize,
     }));
     const wb = XLSX.utils.book_new();
     appendSheet(wb, 'Deal Size', summary);
@@ -2652,7 +2652,7 @@ function DealSizeCard({ data, hasOpps, onDownload, onExportPoint }) {
       {!hasOpps ? (
         <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
       ) : !hasAny ? (
-        <div className={styles.empty}>No closed opps yet.</div>
+        <div className={styles.empty}>No sold opps yet.</div>
       ) : (
         <ResponsiveContainer width="100%" height={320}>
           <ComposedChart data={data} margin={{ top: 20, right: 16, left: 16, bottom: 4 }}>
@@ -2679,9 +2679,9 @@ function DealSizeCard({ data, hasOpps, onDownload, onExportPoint }) {
                   return v ? fmtMoneyLabel(v) : '$0';
                 }}
                 explain={(row) => ({
-                  formula: 'Deals = count of closed opps (Sold + Not Sold). Quoted = mean Quoted Amount across closed opps. Deal Size = mean Quoted Amount of Sold opps only.',
+                  formula: 'Deals = count of Sold opps (won deals). Quoted = mean Quoted Amount across closed opps. Deal Size = average deal size (mean Quoted Amount of Sold opps).',
                   inputs: [
-                    { label: 'Deals (closed)', value: (row.deals ?? 0).toLocaleString('en-US') },
+                    { label: 'Deals (Sold)', value: (row.deals ?? 0).toLocaleString('en-US') },
                     { label: 'Quoted mean', value: row.quoted == null ? '—' : `${fmtMoneyLabel(row.quoted)} (n=${row._quotedCount ?? 0})` },
                     { label: 'Deal Size mean', value: row.dealSize == null ? '—' : `${fmtMoneyLabel(row.dealSize)} (n=${row._soldCount ?? 0})` },
                   ],
