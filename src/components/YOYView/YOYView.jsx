@@ -1324,11 +1324,39 @@ export function YOYView() {
     }
     topAccountsRecs.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
     dealSizeRecs.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
+    // Commissions contributors — one row per deal that fed a year's Paid to
+    // Date total, bucketed by the calendar year of its Current Term Start
+    // Date. Mirrors commissionsBase exactly (same BFO-roster-vs-deal-row
+    // resolution and the `if (!paid) continue` skip) so the rows tie back
+    // to each bar. Sourced from the Deals tab + Commissions roster rather
+    // than the opps `records`.
+    const commissionsRecs = [];
+    const commByBfoForExport = indexCommissionsByBfo(commissions || []);
+    for (const row of (deals || [])) {
+      const ts = Date.parse(row?.['Current Term Start Date']);
+      if (Number.isNaN(ts)) continue;
+      const year = new Date(ts).getFullYear();
+      if (!Number.isFinite(year) || year < 1900 || year > 2100) continue;
+      const bfo = normBfo(row?.[DEAL_BFO_KEY]);
+      const hit = bfo ? commByBfoForExport.get(bfo) : null;
+      const paid = hit ? hit.commission : (parseMoney(row?.['Paid to Date']) ?? 0);
+      if (!paid) continue;
+      commissionsRecs.push({
+        'Client Name': String(row?.['Client Name'] || '').trim(),
+        'BFO Name': String(row?.[DEAL_BFO_KEY] || '').trim(),
+        'Current Term Start Date': row?.['Current Term Start Date'] || '',
+        Year: year,
+        'Paid to Date ($)': Math.round(paid),
+        'Paid to Date source': hit ? 'Commissions roster' : 'Deal row',
+      });
+    }
+    commissionsRecs.sort((a, b) => a.Year - b.Year || a['Client Name'].localeCompare(b['Client Name']));
     return {
       leads, quoted, closeRate, leadSources, quotedByYear, notSolds,
       topAccounts: topAccountsRecs, dealSize: dealSizeRecs,
+      commissions: commissionsRecs,
     };
-  }, [records, currentYear, topAccountsData]);
+  }, [records, currentYear, topAccountsData, deals, commissions]);
 
   // Download just the opportunity rows behind one pinned chart point, so a
   // pinned bar/line can be deep-dived in Excel. Each chart's contributing
@@ -1345,6 +1373,7 @@ export function YOYView() {
       notSolds: { list: contributingRecords.notSolds, keyCol: 'Open Year', sheet: 'Not Solds' },
       topAccounts: { list: contributingRecords.topAccounts, keyCol: 'Open Year', sheet: 'Top Accounts' },
       dealSize: { list: contributingRecords.dealSize, keyCol: 'Open Year', sheet: 'Deal Size' },
+      commissions: { list: contributingRecords.commissions, keyCol: 'Year', sheet: 'Commissions' },
     };
     const conf = CONF[chartId];
     if (!conf) return;
@@ -1494,6 +1523,7 @@ export function YOYView() {
     }));
     const wb = XLSX.utils.book_new();
     appendSheet(wb, 'Commissions by Year', summary);
+    appendSheet(wb, 'Contributing Deals', contributingRecords.commissions);
     XLSX.writeFile(wb, `yoy-commissions-${todayStamp()}.xlsx`);
   }
 
@@ -1599,7 +1629,7 @@ export function YOYView() {
           <DealSizeCard data={dealSizeData} hasOpps={hasOpps} onDownload={downloadDealSize} onExportPoint={(row) => exportPinnedOpps('dealSize', row)} />
         </div>
         <div className={styles.row}>
-          <CommissionsCard data={commissionsData} hasCommissions={hasCommissions} onDownload={downloadCommissions} />
+          <CommissionsCard data={commissionsData} hasCommissions={hasCommissions} onDownload={downloadCommissions} onExportPoint={(row) => exportPinnedOpps('commissions', row)} />
           {/* Empty slots keep the Commissions card at one-third row width
               so it matches the other charts above rather than stretching
               to the full row. */}
