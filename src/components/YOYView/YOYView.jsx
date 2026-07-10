@@ -15,6 +15,7 @@ import { loadDealsList } from '../../utils/dealsStore';
 import { indexCommissionsByBfo, normBfo, DEAL_BFO_KEY } from '../../utils/dealCommissions';
 import { loadQuotedProjections, saveQuotedProjections, QUOTED_FIELDS } from '../../utils/quotedProjectionsStore';
 import { loadYoyOverrides, saveYoyOverrides } from '../../utils/yoyOverridesStore';
+import { loadHiddenCharts, saveHiddenCharts } from '../../utils/yoyHiddenChartsStore';
 import styles from './YOYView.module.css';
 
 const PIPELINE_STORE = 'pipeline-dashboard';
@@ -25,6 +26,26 @@ const DEFAULT_ANNUAL_TARGET = 1325000;
 // threading a callback through every card. Provided by YOYView around the
 // chart grid; value is `openEditor(chartId)`.
 const EditChartContext = createContext(null);
+
+// Lets any ChartHeader hide its own chart without threading a callback
+// through every card. Provided by YOYView around the chart grid; value is
+// `hideChart(chartId)`.
+const HideChartContext = createContext(null);
+
+// Display names for the hidden-chart restore chips, keyed by the same id
+// each ChartHeader hides under.
+const YOY_CHART_TITLES = {
+  leads: 'Leads',
+  quotedProjections: 'Quoted Projections',
+  closeRate: 'Close Rate',
+  leadSources: 'Lead Sources 2020+',
+  quotedByYear: 'Quoted (Thousands)',
+  notSolds: 'Not Solds',
+  topAccounts: 'Top Accounts',
+  annualSales: 'Annual Sales',
+  dealSize: 'Deal Size',
+  commissions: 'Commissions',
+};
 
 // Describes which plotted fields of each chart the "Edit data" popup can
 // overwrite. keyField identifies a row (its x-axis category); fields are
@@ -337,6 +358,30 @@ export function YOYView() {
   const [overrides, setOverrides] = useState(loadYoyOverrides);
   // Which chart's data editor is open (chartId | null).
   const [editingChart, setEditingChart] = useState(null);
+  // Charts the user has hidden (per-user localStorage). A Set backs the
+  // per-render lookups; the stored form is a plain array.
+  const [hiddenCharts, setHiddenCharts] = useState(loadHiddenCharts);
+  const hiddenSet = useMemo(() => new Set(hiddenCharts), [hiddenCharts]);
+  const hideChart = useCallback((chartId) => {
+    setHiddenCharts((prev) => {
+      if (prev.includes(chartId)) return prev;
+      const next = [...prev, chartId];
+      saveHiddenCharts(next);
+      return next;
+    });
+  }, []);
+  const showChart = useCallback((chartId) => {
+    setHiddenCharts((prev) => {
+      if (!prev.includes(chartId)) return prev;
+      const next = prev.filter((id) => id !== chartId);
+      saveHiddenCharts(next);
+      return next;
+    });
+  }, []);
+  const showAllCharts = useCallback(() => {
+    setHiddenCharts([]);
+    saveHiddenCharts([]);
+  }, []);
   // Persist a chart's override table; an empty table clears it entirely.
   const saveChartOverrides = useCallback((chartId, table) => {
     setOverrides((prev) => {
@@ -1652,10 +1697,26 @@ export function YOYView() {
             {opps?.fetchedAt ? ` Opps fetched ${new Date(opps.fetchedAt).toLocaleString()}.` : ' Open the Opps tab to load data.'}
           </div>
         </div>
+        {hiddenCharts.length > 0 && (
+          <div className={styles.hiddenBar}>
+            <span className={styles.hiddenBarLabel}>Hidden charts:</span>
+            {hiddenCharts.map((id) => (
+              <button
+                key={id}
+                type="button"
+                className={styles.hiddenChip}
+                onClick={() => showChart(id)}
+                title={`Show the ${YOY_CHART_TITLES[id] || id} chart`}
+              >{YOY_CHART_TITLES[id] || id} <span aria-hidden="true">＋</span></button>
+            ))}
+            <button type="button" className={styles.showAllBtn} onClick={showAllCharts}>Show all</button>
+          </div>
+        )}
       </div>
       <div className={styles.body} onClick={handleBodyClick}>
         <CalcPanelContext.Provider value={calcCtx}>
         <EditChartContext.Provider value={setEditingChart}>
+        <HideChartContext.Provider value={hideChart}>
         <div
           ref={setCalcPanelEl}
           className={styles.calcPanel}
@@ -1666,29 +1727,43 @@ export function YOYView() {
             <CalcContent {...pinned} pinned onUnpin={() => setPinned(null)} />
           </div>
         ) : null}
-        <div className={styles.row}>
-          <LeadsCard data={leadsData} hasOpps={hasOpps} onDownload={downloadLeads} onExportPoint={(row) => exportPinnedOpps('leads', row)} />
-          <QuotedProjectionsCard data={quotedData} quotedTable={quotedTable} onSaveTable={updateQuotedTable} onDownload={downloadQuoted} />
-          <CloseRateCard data={closeRateData} hasOpps={hasOpps} onDownload={downloadCloseRate} onExportPoint={(row) => exportPinnedOpps('closeRate', row)} />
-        </div>
-        <div className={styles.row}>
-          <LeadSourcesCard data={leadSourcesData} hasOpps={hasOpps} onDownload={downloadLeadSources} onExportPoint={(row) => exportPinnedOpps('leadSources', row)} />
-          <QuotedByYearCard data={quotedByYearData} hasOpps={hasOpps} onDownload={downloadQuotedByYear} onExportPoint={(row) => exportPinnedOpps('quotedByYear', row)} />
-          <NotSoldsCard data={notSoldsData} hasOpps={hasOpps} onDownload={downloadNotSolds} onExportPoint={(row) => exportPinnedOpps('notSolds', row)} />
-        </div>
-        <div className={styles.row}>
-          <TopAccountsCard data={topAccountsData} hasOpps={hasOpps} onDownload={downloadTopAccounts} onExportPoint={(row) => exportPinnedOpps('topAccounts', row)} />
-          <AnnualSalesCard data={annualSalesData} hasOpps={hasOpps} target={target} onDownload={downloadAnnualSales} onExportYear={downloadAnnualSalesYear} />
-          <DealSizeCard data={dealSizeData} hasOpps={hasOpps} onDownload={downloadDealSize} onExportPoint={(row) => exportPinnedOpps('dealSize', row)} />
-        </div>
-        <div className={styles.row}>
-          <CommissionsCard data={commissionsData} hasCommissions={hasCommissions} onDownload={downloadCommissions} onExportPoint={(row) => exportPinnedOpps('commissions', row)} />
-          {/* Empty slots keep the Commissions card at one-third row width
-              so it matches the other charts above rather than stretching
-              to the full row. */}
-          <div style={{ flex: '1 1 0' }} aria-hidden="true" />
-          <div style={{ flex: '1 1 0' }} aria-hidden="true" />
-        </div>
+        {/* Charts laid out three per row. Each is keyed by its hide id so
+            a hidden chart drops out and the remaining ones keep their
+            one-third column width via spacers; a fully hidden row is
+            skipped entirely. */}
+        {[
+          [
+            { id: 'leads', node: <LeadsCard key="leads" data={leadsData} hasOpps={hasOpps} onDownload={downloadLeads} onExportPoint={(row) => exportPinnedOpps('leads', row)} /> },
+            { id: 'quotedProjections', node: <QuotedProjectionsCard key="quotedProjections" data={quotedData} quotedTable={quotedTable} onSaveTable={updateQuotedTable} onDownload={downloadQuoted} /> },
+            { id: 'closeRate', node: <CloseRateCard key="closeRate" data={closeRateData} hasOpps={hasOpps} onDownload={downloadCloseRate} onExportPoint={(row) => exportPinnedOpps('closeRate', row)} /> },
+          ],
+          [
+            { id: 'leadSources', node: <LeadSourcesCard key="leadSources" data={leadSourcesData} hasOpps={hasOpps} onDownload={downloadLeadSources} onExportPoint={(row) => exportPinnedOpps('leadSources', row)} /> },
+            { id: 'quotedByYear', node: <QuotedByYearCard key="quotedByYear" data={quotedByYearData} hasOpps={hasOpps} onDownload={downloadQuotedByYear} onExportPoint={(row) => exportPinnedOpps('quotedByYear', row)} /> },
+            { id: 'notSolds', node: <NotSoldsCard key="notSolds" data={notSoldsData} hasOpps={hasOpps} onDownload={downloadNotSolds} onExportPoint={(row) => exportPinnedOpps('notSolds', row)} /> },
+          ],
+          [
+            { id: 'topAccounts', node: <TopAccountsCard key="topAccounts" data={topAccountsData} hasOpps={hasOpps} onDownload={downloadTopAccounts} onExportPoint={(row) => exportPinnedOpps('topAccounts', row)} /> },
+            { id: 'annualSales', node: <AnnualSalesCard key="annualSales" data={annualSalesData} hasOpps={hasOpps} target={target} onDownload={downloadAnnualSales} onExportYear={downloadAnnualSalesYear} /> },
+            { id: 'dealSize', node: <DealSizeCard key="dealSize" data={dealSizeData} hasOpps={hasOpps} onDownload={downloadDealSize} onExportPoint={(row) => exportPinnedOpps('dealSize', row)} /> },
+          ],
+          [
+            { id: 'commissions', node: <CommissionsCard key="commissions" data={commissionsData} hasCommissions={hasCommissions} onDownload={downloadCommissions} onExportPoint={(row) => exportPinnedOpps('commissions', row)} /> },
+          ],
+        ].map((row, ri) => {
+          const visible = row.filter((c) => !hiddenSet.has(c.id));
+          if (visible.length === 0) return null;
+          const slots = [...visible];
+          while (slots.length < 3) slots.push(null);
+          return (
+            <div className={styles.row} key={ri}>
+              {slots.map((c, ci) => c
+                ? c.node
+                : <div key={`spacer-${ri}-${ci}`} style={{ flex: '1 1 0' }} aria-hidden="true" />)}
+            </div>
+          );
+        })}
+        </HideChartContext.Provider>
         </EditChartContext.Provider>
         </CalcPanelContext.Provider>
       </div>
@@ -1762,8 +1837,10 @@ function useInteractiveLegend(initialHidden) {
   return { hidden, legendProps };
 }
 
-function ChartHeader({ title, onDownload, canDownload, chartId }) {
+function ChartHeader({ title, onDownload, canDownload, chartId, hideId }) {
   const openEditor = useContext(EditChartContext);
+  const hideChart = useContext(HideChartContext);
+  const hideKey = hideId || chartId;
   return (
     <div className={styles.chartHeader}>
       <h2 className={styles.chartTitle}>{title}</h2>
@@ -1785,6 +1862,15 @@ function ChartHeader({ title, onDownload, canDownload, chartId }) {
             ? `Download ${title} data as Excel (.xlsx)`
             : 'No data to download'}
         >Download .xlsx</button>
+        {hideKey && hideChart && (
+          <button
+            type="button"
+            className={styles.hideBtn}
+            onClick={() => hideChart(hideKey)}
+            title={`Hide the ${title} chart`}
+            aria-label={`Hide the ${title} chart`}
+          >✕</button>
+        )}
       </div>
     </div>
   );
@@ -2085,7 +2171,7 @@ function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload, onE
   const { hidden, legendProps } = useInteractiveLegend({ bfoPipe: true });
   return (
     <div className={styles.chartCard}>
-      <ChartHeader title="Quoted Projections" onDownload={onDownload} canDownload={hasAnyValues} />
+      <ChartHeader title="Quoted Projections" hideId="quotedProjections" onDownload={onDownload} canDownload={hasAnyValues} />
       <div className={styles.quotedEditRow}>
         <span className={styles.quotedUnitNote}>values in $K</span>
         <button type="button" className={styles.editValuesBtn} onClick={() => setEditing(true)}>Edit values</button>
