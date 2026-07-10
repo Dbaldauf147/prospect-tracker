@@ -647,6 +647,7 @@ function ListSection({
             columns={columns}
             rows={filtered}
             alwaysVisible={[]}
+            enableColumnFilters
             emptyMessage="No records found"
             settings={settings}
             updateSettings={updateSettings}
