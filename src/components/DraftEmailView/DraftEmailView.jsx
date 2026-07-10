@@ -7,6 +7,7 @@ import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { useDraftCampaignQueue, clearQueuedContacts, setQueuedContactIds } from '../../utils/draftCampaignQueue';
+import { useDraftLeadsQueue, clearQueuedLeads, removeQueuedLead, leadQueueKey } from '../../utils/draftLeadsQueue';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import styles from './DraftEmailView.module.css';
 
@@ -690,6 +691,77 @@ function CampaignQueueSection({ allContacts, selectedContacts, setSelectedContac
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+// Renders the "queued from Marketing Leads" section inside the Custom
+// Email Campaign card. Reads the full contact objects the Marketing Leads
+// page pushed via useDraftLeadsQueue (Marketing Leads aren't necessarily
+// HubSpot contacts, so they carry their own name / email / company rather
+// than an id resolved against the HubSpot cache) and offers Add / Clear.
+// Hidden entirely until at least one lead has been sent over.
+function MarketingLeadsQueueSection({ selectedContacts, setSelectedContacts }) {
+  const queuedLeads = useDraftLeadsQueue();
+  if (queuedLeads.length === 0) return null;
+
+  const selectedIds = new Set(selectedContacts.map(c => c.id));
+  const selectedEmails = new Set(selectedContacts.map(c => String(c.email || '').trim().toLowerCase()).filter(Boolean));
+  const inDraft = (c) => selectedIds.has(c.id) || (c.email && selectedEmails.has(c.email.toLowerCase()));
+  const allInDraft = queuedLeads.every(inDraft);
+
+  const addAll = () => {
+    setSelectedContacts(prev => {
+      const ids = new Set(prev.map(c => c.id));
+      const emails = new Set(prev.map(c => String(c.email || '').trim().toLowerCase()).filter(Boolean));
+      const toAdd = queuedLeads.filter(c => c.email && !ids.has(c.id) && !emails.has(c.email.toLowerCase()));
+      return [...prev, ...toAdd];
+    });
+  };
+
+  return (
+    <div style={{ borderTop: '1px solid #E2E8F0', marginTop: '0.75rem', paddingTop: '0.75rem' }}>
+      <h4 style={{ margin: '0 0 0.5rem', fontSize: '0.78rem', fontWeight: 700, color: '#1E293B' }}>From Marketing Leads</h4>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: '0.74rem', color: '#475569' }}>
+          <strong>{queuedLeads.length}</strong> lead{queuedLeads.length === 1 ? '' : 's'} sent from the Marketing Leads page
+        </div>
+        <div style={{ display: 'inline-flex', gap: 6 }}>
+          <button
+            type="button"
+            onClick={addAll}
+            disabled={allInDraft}
+            title={allInDraft ? 'All queued leads are already in the draft' : 'Add every queued lead to the current draft'}
+            style={{ fontSize: '0.7rem', padding: '0.25rem 0.55rem', border: '1px solid #7C3AED', background: allInDraft ? '#F1F5F9' : '#7C3AED', color: allInDraft ? '#94A3B8' : '#fff', borderRadius: 4, cursor: allInDraft ? 'default' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
+          >Add all to draft</button>
+          <button
+            type="button"
+            onClick={() => clearQueuedLeads()}
+            title="Empty the Marketing Leads queue (does not affect the draft)"
+            style={{ fontSize: '0.7rem', padding: '0.25rem 0.55rem', border: '1px solid #CBD5E1', background: '#fff', color: '#475569', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit' }}
+          >Clear queue</button>
+        </div>
+      </div>
+      <div style={{ maxHeight: 160, overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: 4, background: '#F8FAFC' }}>
+        {queuedLeads.map(c => {
+          const isIn = inDraft(c);
+          return (
+            <div key={leadQueueKey(c)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0.25rem 0.5rem', borderTop: '1px solid #E2E8F0', fontSize: '0.72rem' }}>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`${c.name}${c.company ? ` · ${c.company}` : ''}${c.email ? ` · ${c.email}` : ''}`}>
+                <span style={{ fontWeight: 600, color: '#1E293B' }}>{c.name || c.email}</span>
+                {c.company && <span style={{ color: '#64748B' }}> · {c.company}</span>}
+              </span>
+              {isIn ? <span style={{ fontSize: '0.62rem', color: '#16A34A', fontWeight: 700 }}>in draft</span> : null}
+              <button
+                type="button"
+                onClick={() => removeQueuedLead(leadQueueKey(c))}
+                title="Remove from queue"
+                style={{ border: '1px solid #CBD5E1', background: '#fff', color: '#64748B', borderRadius: 3, fontSize: '0.65rem', cursor: 'pointer', fontFamily: 'inherit', padding: '0 5px', lineHeight: 1.4 }}
+              >×</button>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1723,6 +1795,10 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
             <h3 className={styles.cardTitle}>Custom Email Campaign</h3>
             <CampaignQueueSection
               allContacts={allContacts}
+              selectedContacts={selectedContacts}
+              setSelectedContacts={setSelectedContacts}
+            />
+            <MarketingLeadsQueueSection
               selectedContacts={selectedContacts}
               setSelectedContacts={setSelectedContacts}
             />
