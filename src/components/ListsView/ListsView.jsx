@@ -13,7 +13,8 @@ import styles from './ListsView.module.css';
 
 const SUBTABS = [
   { key: 'raclients', label: 'RA Clients' },
-  { key: 'targets', label: 'Target Accounts' },
+  { key: 'targets', label: 'Targets' },
+  { key: 'largest', label: 'Largest', storageKey: 'largest-list-override' },
   { key: 'strategic', label: 'Strategic Accounts', storageKey: 'strategic-accounts-override' },
   { key: 'sites', label: 'Utility Lookup' },
   { key: 'mastersites', label: 'Master Site List' },
@@ -405,6 +406,21 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             title="Strategic Accounts"
             singular="account"
             plural="accounts"
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
+            cdmName={cdmName}
+            settings={settings}
+            updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
+          />
+        )}
+        {subtab === 'largest' && (
+          <UploadedListView
+            storageKey="largest-list-override"
+            tableIdPrefix="largest-list"
+            title="Largest"
+            singular="company"
+            plural="companies"
             prospects={prospects}
             onSelectProspect={onSelectProspect}
             cdmName={cdmName}
