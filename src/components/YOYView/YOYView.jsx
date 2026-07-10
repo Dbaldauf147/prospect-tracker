@@ -1635,9 +1635,10 @@ function appendSheet(wb, name, rows) {
 // Makes a chart's <Legend> interactive: clicking a series label toggles
 // it on/off. Spread `legendProps` onto <Legend> and set `hide={hidden[key]}`
 // on each series (key = its dataKey). Hidden labels render struck-through
-// and greyed so it's clear what's currently filtered out.
-function useInteractiveLegend() {
-  const [hidden, setHidden] = useState({});
+// and greyed so it's clear what's currently filtered out. Pass
+// `initialHidden` (keyed by dataKey) to start a series toggled off.
+function useInteractiveLegend(initialHidden) {
+  const [hidden, setHidden] = useState(initialHidden ?? {});
   const legendProps = {
     wrapperStyle: { fontSize: 12, cursor: 'pointer' },
     onClick: (o) => {
@@ -1976,7 +1977,9 @@ function LeadsCard({ data, hasOpps, onDownload, onExportPoint }) {
 function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload, onExportPoint }) {
   const [editing, setEditing] = useState(false);
   const hasAnyValues = data.some(r => r._hasData);
-  const { hidden, legendProps } = useInteractiveLegend();
+  // BFO Pipe Total starts hidden — it rides its own right-hand axis and
+  // overwhelms the quoted buckets, so surface it only on demand via the legend.
+  const { hidden, legendProps } = useInteractiveLegend({ bfoPipe: true });
   return (
     <div className={styles.chartCard}>
       <ChartHeader title="Quoted Projections" onDownload={onDownload} canDownload={hasAnyValues} />
