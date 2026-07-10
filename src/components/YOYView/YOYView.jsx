@@ -2802,7 +2802,7 @@ function DealSizeCard({ data, hasOpps, onDownload, onExportPoint }) {
               connectNulls
               hide={hidden.quoted}
             >
-              <LabelList dataKey="quoted" position="top" style={{ fontSize: 10, fontWeight: 600, fill: '#991b1b' }} formatter={(v) => fmtMoneyLabel(v)} />
+              <LabelList dataKey="quoted" position="top" style={{ fontSize: 10, fontWeight: 600, fill: '#991b1b' }} formatter={(v) => fmtThousandsLabel(v)} />
             </Line>
             <Line
               yAxisId="dollars"
@@ -2815,7 +2815,7 @@ function DealSizeCard({ data, hasOpps, onDownload, onExportPoint }) {
               connectNulls
               hide={hidden.dealSize}
             >
-              <LabelList dataKey="dealSize" position="bottom" style={{ fontSize: 10, fontWeight: 600, fill: '#1d4ed8' }} formatter={(v) => fmtMoneyLabel(v)} />
+              <LabelList dataKey="dealSize" position="bottom" style={{ fontSize: 10, fontWeight: 600, fill: '#1d4ed8' }} formatter={(v) => fmtThousandsLabel(v)} />
             </Line>
           </ComposedChart>
         </ResponsiveContainer>
