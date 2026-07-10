@@ -783,10 +783,11 @@ export function YOYView() {
     [notSoldsBase, overrides, editCtx],
   );
 
-  // Year range shared by Top Accounts / Annual Sales / Deal Size — use
-  // the same min-year-with-data → max(currentYear, maxYearInData) span
-  // as the other charts so future-dated Open Years (e.g. 2026 entered
-  // while the browser clock still reads 2025) still get a bar.
+  // Year range for the Top Accounts chart — min-year-with-data →
+  // max(currentYear, maxYearInData) span by Open Year so future-dated
+  // Open Years (e.g. 2026 entered while the browser clock still reads
+  // 2025) still get a bar. (Annual Sales and Deal Size derive their own
+  // spans from Close Date years.)
   const yearRange = useMemo(() => {
     if (records.length === 0) return [];
     let minYear = currentYear;
@@ -992,24 +993,39 @@ export function YOYView() {
     [annualSalesBase, overrides, editCtx],
   );
 
-  // Deal Size — composed chart per Open Year:
+  // Deal Size — composed chart per Closed Year (the calendar year of each
+  // opp's Close Date, falling back to Open Year when the Close Date is
+  // missing/unparseable):
   //   Deals (gray bars)     = count of Sold opps (won deals)
   //   Quoted (red line)     = mean Quoted Amount across closed opps
   //   Deal Size (blue line) = average deal size = mean Quoted Amount of Sold opps
+  // The year span is built from the closed years present in the data so a
+  // deal that closed outside the Open-Year range still gets a bar.
   // Projected bar treats still-active pipeline opps as expected future
   // wins, so the Projected count reflects YTD wins + open pipeline.
   const dealSizeBase = useMemo(() => {
-    if (records.length === 0 || yearRange.length === 0) return [];
-    const stats = new Map();
-    for (const y of yearRange) {
-      stats.set(y, { soldOppCount: 0, quotedSum: 0, quotedCount: 0, soldSum: 0, soldCount: 0 });
-    }
+    if (records.length === 0) return [];
+    // Collect closed opps keyed by Closed Year and track the min→max span.
+    const closed = [];
+    let minYear = currentYear, maxYear = currentYear, any = false;
     for (const r of records) {
-      const y = parseYear(r['Open Year']);
-      if (y === null || !stats.has(y)) continue;
       const stage = String(r.Stage || '').trim();
       if (stage !== 'Sold' && stage !== 'Not Sold') continue;
+      const y = parseDateYear(r['Close Date']) ?? parseYear(r['Open Year']);
+      if (y === null) continue;
+      closed.push({ r, y, stage });
+      any = true;
+      if (y < minYear) minYear = y;
+      if (y > maxYear) maxYear = y;
+    }
+    if (!any) return [];
+    const stats = new Map();
+    for (let y = minYear; y <= maxYear; y++) {
+      stats.set(y, { soldOppCount: 0, quotedSum: 0, quotedCount: 0, soldSum: 0, soldCount: 0 });
+    }
+    for (const { r, y, stage } of closed) {
       const s = stats.get(y);
+      if (!s) continue;
       // Grey bars count won deals — every Sold opp, regardless of whether
       // it carries a Quoted Amount.
       if (stage === 'Sold') s.soldOppCount += 1;
@@ -1024,7 +1040,7 @@ export function YOYView() {
       }
     }
     const rows = [];
-    for (const y of yearRange) {
+    for (let y = minYear; y <= maxYear; y++) {
       const s = stats.get(y);
       rows.push({
         year: String(y),
@@ -1037,27 +1053,31 @@ export function YOYView() {
         _soldCount: s.soldCount,
       });
     }
-    // Projected — won deals so far this year plus every still-open
-    // pipeline opp, counted as expected future wins. Not Sold opps are
-    // excluded from the bar. Deal Size / Quoted means reuse the same
-    // Sold / closed math as the actual years.
+    // Projected — deals closed this year (by Closed Year) plus every
+    // still-open pipeline opp opened this year, counted as expected future
+    // wins. Not Sold opps are excluded from the bar count. Deal Size /
+    // Quoted means reuse the same Sold / closed math as the actual years.
     let projWon = 0, projPipeline = 0, projQuotedSum = 0, projQuotedCount = 0;
     let projSoldSum = 0, projSoldCount = 0;
     for (const r of records) {
-      const y = parseYear(r['Open Year']);
-      if (y !== currentYear) continue;
       const stage = String(r.Stage || '').trim();
       const isClosed = (stage === 'Sold' || stage === 'Not Sold');
-      if (stage === 'Sold') projWon += 1;
-      else if (!isClosed) projPipeline += 1; // active pipeline = expected future win
-      const amt = parseMoney(r['Quoted Amount']);
-      if (typeof amt === 'number' && amt > 0) {
-        projQuotedSum += amt;
-        projQuotedCount += 1;
-        if (stage === 'Sold') {
-          projSoldSum += amt;
-          projSoldCount += 1;
+      if (isClosed) {
+        const y = parseDateYear(r['Close Date']) ?? parseYear(r['Open Year']);
+        if (y !== currentYear) continue;
+        if (stage === 'Sold') projWon += 1;
+        const amt = parseMoney(r['Quoted Amount']);
+        if (typeof amt === 'number' && amt > 0) {
+          projQuotedSum += amt;
+          projQuotedCount += 1;
+          if (stage === 'Sold') {
+            projSoldSum += amt;
+            projSoldCount += 1;
+          }
         }
+      } else {
+        // Active pipeline opened this year = expected future win.
+        if (parseYear(r['Open Year']) === currentYear) projPipeline += 1;
       }
     }
     rows.push({
@@ -1070,7 +1090,7 @@ export function YOYView() {
       _soldCount: projSoldCount,
     });
     return rows;
-  }, [records, yearRange, currentYear]);
+  }, [records, currentYear]);
   const dealSizeData = useMemo(
     () => applyYoyOverrides(dealSizeBase, YOY_CHART_EDITS.dealSize, overrides.dealSize, editCtx),
     [dealSizeBase, overrides, editCtx],
