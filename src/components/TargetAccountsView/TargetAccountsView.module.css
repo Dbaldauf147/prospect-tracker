@@ -25,6 +25,18 @@
   color: var(--color-text-muted);
 }
 
+.tierLegend {
+  margin: 0.4rem 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.tierLegend strong {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
 .headerActions {
   display: flex;
   gap: 0.5rem;

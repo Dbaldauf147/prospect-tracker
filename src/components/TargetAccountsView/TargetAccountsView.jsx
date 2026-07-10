@@ -469,6 +469,11 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
               {data.fileName} — uploaded {new Date(data.uploadedAt).toLocaleString()}
             </span>
           )}
+          <div className={styles.tierLegend}>
+            <div><strong>Tier 1:</strong> Existing Clients</div>
+            <div><strong>Tier 2:</strong> Critical/Major Prospects (10 total)</div>
+            <div><strong>Tier 3:</strong> All remaining assigned in your segments</div>
+          </div>
         </div>
         <div className={styles.headerActions}>
           <label className={styles.uploadBtn}>
