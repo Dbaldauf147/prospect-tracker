@@ -1727,42 +1727,38 @@ export function YOYView() {
             <CalcContent {...pinned} pinned onUnpin={() => setPinned(null)} />
           </div>
         ) : null}
-        {/* Charts laid out three per row. Each is keyed by its hide id so
-            a hidden chart drops out and the remaining ones keep their
-            one-third column width via spacers; a fully hidden row is
-            skipped entirely. */}
-        {[
-          [
+        {/* Charts flow three per row in a single ordered list. Hidden
+            charts drop out and the visible ones repack left-to-right so no
+            gaps are left behind; only the final row is padded with spacers
+            to keep every card at its one-third column width. */}
+        {(() => {
+          const charts = [
             { id: 'leads', node: <LeadsCard key="leads" data={leadsData} hasOpps={hasOpps} onDownload={downloadLeads} onExportPoint={(row) => exportPinnedOpps('leads', row)} /> },
             { id: 'quotedProjections', node: <QuotedProjectionsCard key="quotedProjections" data={quotedData} quotedTable={quotedTable} onSaveTable={updateQuotedTable} onDownload={downloadQuoted} /> },
             { id: 'closeRate', node: <CloseRateCard key="closeRate" data={closeRateData} hasOpps={hasOpps} onDownload={downloadCloseRate} onExportPoint={(row) => exportPinnedOpps('closeRate', row)} /> },
-          ],
-          [
             { id: 'leadSources', node: <LeadSourcesCard key="leadSources" data={leadSourcesData} hasOpps={hasOpps} onDownload={downloadLeadSources} onExportPoint={(row) => exportPinnedOpps('leadSources', row)} /> },
             { id: 'quotedByYear', node: <QuotedByYearCard key="quotedByYear" data={quotedByYearData} hasOpps={hasOpps} onDownload={downloadQuotedByYear} onExportPoint={(row) => exportPinnedOpps('quotedByYear', row)} /> },
             { id: 'notSolds', node: <NotSoldsCard key="notSolds" data={notSoldsData} hasOpps={hasOpps} onDownload={downloadNotSolds} onExportPoint={(row) => exportPinnedOpps('notSolds', row)} /> },
-          ],
-          [
             { id: 'topAccounts', node: <TopAccountsCard key="topAccounts" data={topAccountsData} hasOpps={hasOpps} onDownload={downloadTopAccounts} onExportPoint={(row) => exportPinnedOpps('topAccounts', row)} /> },
             { id: 'annualSales', node: <AnnualSalesCard key="annualSales" data={annualSalesData} hasOpps={hasOpps} target={target} onDownload={downloadAnnualSales} onExportYear={downloadAnnualSalesYear} /> },
             { id: 'dealSize', node: <DealSizeCard key="dealSize" data={dealSizeData} hasOpps={hasOpps} onDownload={downloadDealSize} onExportPoint={(row) => exportPinnedOpps('dealSize', row)} /> },
-          ],
-          [
             { id: 'commissions', node: <CommissionsCard key="commissions" data={commissionsData} hasCommissions={hasCommissions} onDownload={downloadCommissions} onExportPoint={(row) => exportPinnedOpps('commissions', row)} /> },
-          ],
-        ].map((row, ri) => {
-          const visible = row.filter((c) => !hiddenSet.has(c.id));
-          if (visible.length === 0) return null;
-          const slots = [...visible];
-          while (slots.length < 3) slots.push(null);
-          return (
-            <div className={styles.row} key={ri}>
-              {slots.map((c, ci) => c
-                ? c.node
-                : <div key={`spacer-${ri}-${ci}`} style={{ flex: '1 1 0' }} aria-hidden="true" />)}
-            </div>
-          );
-        })}
+          ];
+          const visible = charts.filter((c) => !hiddenSet.has(c.id));
+          const rows = [];
+          for (let i = 0; i < visible.length; i += 3) rows.push(visible.slice(i, i + 3));
+          return rows.map((row, ri) => {
+            const slots = [...row];
+            while (slots.length < 3) slots.push(null);
+            return (
+              <div className={styles.row} key={ri}>
+                {slots.map((c, ci) => c
+                  ? c.node
+                  : <div key={`spacer-${ri}-${ci}`} style={{ flex: '1 1 0' }} aria-hidden="true" />)}
+              </div>
+            );
+          });
+        })()}
         </HideChartContext.Provider>
         </EditChartContext.Provider>
         </CalcPanelContext.Provider>
