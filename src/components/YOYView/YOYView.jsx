@@ -1413,15 +1413,18 @@ export function YOYView() {
     const dsSortYear = (r) => Number(r['Closed Year'] || r['Quoted Year'] || 0);
     dealSizeRecs.sort((a, b) => dsSortYear(a) - dsSortYear(b) || a.Account.localeCompare(b.Account));
     // Commissions contributors — one row per deal that fed a year's Paid to
-    // Date total, bucketed by the calendar year of its Current Term Start
-    // Date. Mirrors commissionsBase exactly (same BFO-roster-vs-deal-row
-    // resolution and the `if (!paid) continue` skip) so the rows tie back
-    // to each bar. Sourced from the Deals tab + Commissions roster rather
-    // than the opps `records`.
+    // Date total, bucketed by the calendar year of its Original Contract
+    // Start (falling back to Current Term Start Date when that's blank).
+    // Mirrors commissionsBase exactly (same Original-Contract-Start
+    // bucketing, BFO-roster-vs-deal-row resolution, and the
+    // `if (!paid) continue` skip) so the rows tie back to each bar.
+    // Sourced from the Deals tab + Commissions roster rather than the opps
+    // `records`.
     const commissionsRecs = [];
     const commByBfoForExport = indexCommissionsByBfo(commissions || []);
     for (const row of (deals || [])) {
-      const ts = Date.parse(row?.['Current Term Start Date']);
+      let ts = Date.parse(row?.['Original Contract Start']);
+      if (Number.isNaN(ts)) ts = Date.parse(row?.['Current Term Start Date']);
       if (Number.isNaN(ts)) continue;
       const year = new Date(ts).getFullYear();
       if (!Number.isFinite(year) || year < 1900 || year > 2100) continue;
@@ -1432,10 +1435,11 @@ export function YOYView() {
       commissionsRecs.push({
         'Client Name': String(row?.['Client Name'] || '').trim(),
         'BFO Name': String(row?.[DEAL_BFO_KEY] || '').trim(),
+        'Original Contract Start': row?.['Original Contract Start'] || '',
         'Current Term Start Date': row?.['Current Term Start Date'] || '',
         Year: year,
-        'Paid to Date ($)': Math.round(paid),
-        'Paid to Date source': hit ? 'Commissions roster' : 'Deal row',
+        'Commission ($)': Math.round(paid),
+        'Commission source': hit ? 'Commissions roster' : 'Deal row',
       });
     }
     commissionsRecs.sort((a, b) => a.Year - b.Year || a['Client Name'].localeCompare(b['Client Name']));
