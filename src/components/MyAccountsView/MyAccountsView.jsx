@@ -1359,6 +1359,44 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     return out;
   }, [targetAccountsData, cdmName, settings?.targetCdmColumn]);
 
+  // Same all-tier parse as `targetAccountTiers`, but WITHOUT the CDM
+  // filter. Used ONLY as a fallback resolver for the tier-mismatch flag:
+  // an account that's already in My Accounts should still surface a
+  // Targets-list tier difference even when the workbook row carrying the
+  // tier isn't attributed to the configured CDM (a blank owner cell, or an
+  // account tiered under another rep). The account is already "yours" by
+  // the time the mismatch is computed, so the owner column shouldn't gate
+  // the *warning*. Deliberately never feeds the target book, the
+  // missing-target buckets, or the 'Target List' source badge.
+  const targetAccountTiersAllReps = useMemo(() => {
+    const data = targetAccountsData;
+    if (!data?.sheets) return [];
+    const findCol = (r, keywords) => {
+      for (const key of Object.keys(r)) {
+        const lower = key.toLowerCase();
+        for (const kw of keywords) {
+          if (lower.includes(kw.toLowerCase())) return String(r[key] || '').trim();
+        }
+      }
+      return '';
+    };
+    const out = [];
+    for (const sheetName of data.sheetNames || []) {
+      const sheet = data.sheets[sheetName];
+      if (!sheet?.records) continue;
+      for (const r of sheet.records) {
+        const company = findCol(r, ['Account', 'Company', 'Account Name', 'Client', 'Name']);
+        if (!company) continue;
+        let tierRaw = findCol(r, ['Tier', 'Account Tier', 'Tier Level', 'Target']);
+        if (!tierRaw) tierRaw = String(Object.values(r).find(v => /Tier\s*[1-9]/i.test(String(v || ''))) || '');
+        const m = tierRaw.match(/(?:Tier\s*)?([1-9])/i);
+        if (!m) continue;
+        out.push({ company: company.trim(), tier: `Tier ${m[1]}` });
+      }
+    }
+    return out;
+  }, [targetAccountsData]);
+
   // All Target Accounts with their salesperson (for cross-rep detection)
   const allTargetReps = useMemo(() => {
     const data = targetAccountsData;
@@ -1796,6 +1834,16 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       if (k && !targetTierByName.has(k)) targetTierByName.set(k, t.tier);
     }
     const targetTierIndex = buildCompanyIndex(targetAccountTiers.map(t => t.company || ''));
+    // All-reps fallback lookups (no CDM filter) — only consulted when the
+    // CDM-scoped resolution above finds no Targets tier, so an already-
+    // included account still flags a mismatch against a tier attributed to
+    // another rep / a blank owner cell.
+    const targetTierByNameAllReps = new Map();
+    for (const t of targetAccountTiersAllReps) {
+      const k = (t.company || '').toLowerCase().trim();
+      if (k && !targetTierByNameAllReps.has(k)) targetTierByNameAllReps.set(k, t.tier);
+    }
+    const targetTierIndexAllReps = buildCompanyIndex(targetAccountTiersAllReps.map(t => t.company || ''));
     const contactsByCompanyIndex = buildCompanyIndex(Object.keys(contactsByCompany));
     const dmIndex = buildCompanyIndex(Object.keys(decisionMakerByCompany));
     const peIndex = buildCompanyIndex([...(pePartnerAccountSet || [])]);
@@ -1921,6 +1969,14 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
             if (tt) { targetTier = tt; break; }
           }
         }
+        // Nothing under the configured CDM — fall back to the all-reps
+        // parse so a mapped name tiered under another rep still flags.
+        if (!targetTier) {
+          for (const nm of targetNames) {
+            const tt = targetTierByNameAllReps.get((nm || '').toLowerCase().trim());
+            if (tt) { targetTier = tt; break; }
+          }
+        }
       } else if (!hasExplicitMapping) {
         // Only fuzzy-match if user never explicitly set/cleared the mapping
         for (const tName of findMatchesInIndex(targetAccountsIndex, p.company)) {
@@ -1935,6 +1991,17 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         if (!targetTier) {
           for (const tName of findMatchesInIndex(targetTierIndex, p.company)) {
             const tt = targetTierByName.get((tName || '').toLowerCase().trim());
+            if (tt) { targetTier = tt; break; }
+          }
+        }
+        // Still nothing under the configured CDM — fall back to the
+        // all-reps parse so a Targets tier attributed to another rep (or a
+        // blank CDM cell) still flags a mismatch for an account that's
+        // already in My Accounts. This is what surfaces e.g. TIAA showing
+        // Tier 2 here while the Targets list has it at Tier 3.
+        if (!targetTier) {
+          for (const tName of findMatchesInIndex(targetTierIndexAllReps, p.company)) {
+            const tt = targetTierByNameAllReps.get((tName || '').toLowerCase().trim());
             if (tt) { targetTier = tt; break; }
           }
         }
@@ -2235,7 +2302,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     if (DEBUG_MA && skippedCdm.length > 0) console.log('My Accounts: skipped (CDM not Baldauf):', skippedCdm);
     if (DEBUG_MA) console.log(`My Accounts: ${t1.length} Tier 1, ${t2.length} Tier 2 (incl ${oppsOnlyAdded} opps-only)`);
     return { tier1: t1, tier2: t2, allAccounts: all, statusCounts: counts };
-  }, [prospects, targetMap, targetAccounts, targetAccountTiers, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, displayNameByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactsByCompany, bucketsByCompany, contactsByEmailDomain, bucketsByEmailDomain, linkableContactById, settings?.companyContactLinks, divisionsMap, pePartnerAccountSet]);
+  }, [prospects, targetMap, targetAccounts, targetAccountTiers, targetAccountTiersAllReps, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, displayNameByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactsByCompany, bucketsByCompany, contactsByEmailDomain, bucketsByEmailDomain, linkableContactById, settings?.companyContactLinks, divisionsMap, pePartnerAccountSet]);
 
   const clientCount = statusCounts['Client'] || 0;
   const tier3Count = allAccounts.filter(a => a.myTier === 'Tier 3').length;
