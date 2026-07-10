@@ -1311,8 +1311,13 @@ export function YOYView() {
         });
       }
       if (closedStage) {
+        // Closed Year is the bucket the chart uses — Close Date's calendar
+        // year, falling back to Open Year when Close Date is missing.
+        const closedYear = parseDateYear(r['Close Date']) ?? oy;
         dealSizeRecs.push({
           Account: account,
+          'Closed Year': closedYear,
+          'Close Date': r['Close Date'] || '',
           'Open Year': oy,
           Stage: stage,
           'Quoted Amount': amt ?? '',
@@ -1323,7 +1328,7 @@ export function YOYView() {
       }
     }
     topAccountsRecs.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
-    dealSizeRecs.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
+    dealSizeRecs.sort((a, b) => a['Closed Year'] - b['Closed Year'] || a.Account.localeCompare(b.Account));
     // Commissions contributors — one row per deal that fed a year's Paid to
     // Date total, bucketed by the calendar year of its Current Term Start
     // Date. Mirrors commissionsBase exactly (same BFO-roster-vs-deal-row
@@ -1360,8 +1365,9 @@ export function YOYView() {
 
   // Download just the opportunity rows behind one pinned chart point, so a
   // pinned bar/line can be deep-dived in Excel. Each chart's contributing
-  // set already carries the point's key (Open Year / Quoted Year / Lead
-  // Source), so we filter that set to the pinned row. A "Projected" bar
+  // set already carries the point's key (Open Year / Closed Year / Quoted
+  // Year / Lead Source), so we filter that set to the pinned row. A
+  // "Projected" bar
   // annualizes the current year, so its raw opps are the current year's.
   function exportPinnedOpps(chartId, row) {
     if (!row) return;
@@ -1372,7 +1378,7 @@ export function YOYView() {
       quotedByYear: { list: contributingRecords.quotedByYear, keyCol: 'Quoted Year', sheet: 'Quoted' },
       notSolds: { list: contributingRecords.notSolds, keyCol: 'Open Year', sheet: 'Not Solds' },
       topAccounts: { list: contributingRecords.topAccounts, keyCol: 'Open Year', sheet: 'Top Accounts' },
-      dealSize: { list: contributingRecords.dealSize, keyCol: 'Open Year', sheet: 'Deal Size' },
+      dealSize: { list: contributingRecords.dealSize, keyCol: 'Closed Year', sheet: 'Deal Size' },
       commissions: { list: contributingRecords.commissions, keyCol: 'Year', sheet: 'Commissions' },
     };
     const conf = CONF[chartId];
