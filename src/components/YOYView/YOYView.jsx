@@ -2148,14 +2148,7 @@ function CloseRateCard({ data, hasOpps, onDownload }) {
             } />
             <Legend {...legendProps} />
             <Bar yAxisId="pct" dataKey="totalNotSold" stackId="cr" name="Total Not Sold" fill="#ef4444" isAnimationActive={false} hide={hidden.totalNotSold} />
-            <Bar yAxisId="pct" dataKey="totalSold" stackId="cr" name="Total Sold (OY)" fill="#facc15" isAnimationActive={false} hide={hidden.totalSold}>
-              <LabelList
-                dataKey="totalSold"
-                position="insideTop"
-                style={{ fontSize: 10, fontWeight: 600, fill: '#1f2937' }}
-                formatter={(v) => v >= 3 ? `${Math.round(v)}%` : ''}
-              />
-            </Bar>
+            <Bar yAxisId="pct" dataKey="totalSold" stackId="cr" name="Total Sold (OY)" fill="#facc15" isAnimationActive={false} hide={hidden.totalSold} />
             <Bar yAxisId="pct" dataKey="inProgress" stackId="cr" name="In Progress (OY)" fill="#3b82f6" isAnimationActive={false} hide={hidden.inProgress} />
             <Line yAxisId="cr" dataKey="quotedCR" name="Quoted C/R" stroke="#f97316" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls hide={hidden.quotedCR}>
               <LabelList dataKey="quotedCR" position="top" style={{ fontSize: 10, fontWeight: 600, fill: '#c2410c' }} formatter={(v) => v == null ? '' : `${Math.round(v)}%`} />
