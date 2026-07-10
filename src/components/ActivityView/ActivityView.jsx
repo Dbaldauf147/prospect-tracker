@@ -343,9 +343,21 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
         // outbound; everything else with a sender is inbound.
         const from = (e.hs_email_from_email || '').toLowerCase();
         const workEmail = (settings?.workEmail || '').toLowerCase();
+        // When the sender is known, it decides direction. When the email
+        // object has a blank sender (common for one-to-many / sequence
+        // sends that HubSpot logs as a contact association), fall back to
+        // HubSpot's own hs_email_direction: INCOMING_EMAIL = received,
+        // everything else (EMAIL / FORWARDED_EMAIL) = a user-sent outbound.
+        const rawDir = String(e.hs_email_direction || '').toUpperCase();
         const direction = from.includes('@se.com') || (workEmail && from === workEmail)
           ? 'Outbound'
-          : from ? 'Inbound' : e.hs_email_direction || '';
+          : from
+            ? 'Inbound'
+            : rawDir === 'INCOMING_EMAIL'
+              ? 'Inbound'
+              : rawDir
+                ? 'Outbound'
+                : '';
         // Look up phone from associated contacts or email match
         let emailPhone = '';
         const emailContactIds = e._contactIds || [];
@@ -677,10 +689,25 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
         const externals = tos.filter(t => !t.toLowerCase().endsWith('@se.com'));
         // Mixed to-line (se.com + non-se.com) stays in; fully
         // internal blasts drop.
-        if (externals.length === 0) continue;
-        recipients = externals
-          .map(em => recipientFor(em, a._toName))
-          .filter(Boolean);
+        if (externals.length > 0) {
+          recipients = externals
+            .map(em => recipientFor(em, a._toName))
+            .filter(Boolean);
+        } else {
+          // No usable To-line on the email object. HubSpot often logs a
+          // send (one-to-many / sequence) with a blank hs_email_to_email
+          // and only a contact association, so recover the recipients from
+          // the associated contacts instead — mirroring the call branch.
+          // Fully internal (@se.com-only) sends still drop.
+          for (const id of (a._contactIds || [])) {
+            const ct = contactIdMap.get(id);
+            const em = String(ct?.email || '').toLowerCase().trim();
+            if (!em || em.endsWith('@se.com')) continue;
+            const name = [ct?.firstname, ct?.lastname].filter(Boolean).join(' ').trim();
+            recipients.push({ name, email: em });
+          }
+          if (recipients.length === 0) continue;
+        }
       } else {
         const cids = a._contactIds || [];
         for (const id of cids) {

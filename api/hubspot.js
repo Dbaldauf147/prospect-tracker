@@ -588,14 +588,19 @@ async function handler(req, res) {
 
       const params = new URLSearchParams({ limit: String(limit), properties: props, sort: '-hs_timestamp' });
       if (after) params.set('after', after);
-      // Request contact associations for meetings
-      if (type === 'meeting') params.set('associations', 'contacts');
+      // Request contact associations for every type. Meetings have always
+      // needed them (attendees). Emails need them too: HubSpot often logs a
+      // send as a contact association with a blank hs_email_to_email (e.g.
+      // one-to-many / sequence sends), so the association is the only way to
+      // recover the recipient. Calls carry them as a phone-number fallback.
+      params.set('associations', 'contacts');
 
       const data = await hubspotFetch(`/crm/v3/objects/${objectType}?${params}`, token);
       const results = (data.results || []).map(r => {
         const item = { id: r.id, type, ...r.properties };
-        // Include associated contact IDs for meetings
-        if (type === 'meeting' && r.associations?.contacts?.results) {
+        // Include associated contact IDs so the client can recover
+        // recipients when the object's own to/from fields are blank.
+        if (r.associations?.contacts?.results) {
           item._contactIds = r.associations.contacts.results.map(a => a.id);
         }
         return item;
