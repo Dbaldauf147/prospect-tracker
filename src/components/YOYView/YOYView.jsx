@@ -1002,8 +1002,9 @@ export function YOYView() {
   //   Quoted (red line)     = avg Quoted Amount of opps quoted that year,
   //                           by Quoted Year (Quoted On date)
   // The year span covers both the closed years (bars/blue) and the quoted
-  // years (red) so neither series is clipped. The Projected bar treats
-  // still-active pipeline opps as expected future wins.
+  // years (red) so neither series is clipped. The Projected bar counts
+  // this year's Sold deals plus opps in the Agreement Sent stage, treated
+  // as expected future wins.
   const dealSizeBase = useMemo(() => {
     if (records.length === 0) return [];
     // Closed opps feed the bars + blue line (by Closed Year); quoted opps
@@ -1066,11 +1067,12 @@ export function YOYView() {
         _soldCount: s.soldCount,
       });
     }
-    // Projected — deals closed this year (by Closed Year) plus every
-    // still-open pipeline opp opened this year, counted as expected future
-    // wins. Not Sold opps are excluded from the bar count. The red Quoted
-    // point is the average of every opp quoted this calendar year; the blue
-    // Deal Size point is the average Sold $ closed this year.
+    // Projected — deals Sold this year (by Closed Year) plus every opp
+    // still in the Agreement Sent stage, counted as expected future wins.
+    // Not Sold opps and earlier-stage pipeline are excluded from the bar
+    // count. The red Quoted point is the average of every opp quoted this
+    // calendar year; the blue Deal Size point is the average Sold $ closed
+    // this year.
     let projWon = 0, projPipeline = 0, projQuotedSum = 0, projQuotedCount = 0;
     let projSoldSum = 0, projSoldCount = 0;
     for (const r of records) {
@@ -1090,8 +1092,8 @@ export function YOYView() {
           projWon += 1;
           if (hasAmt) { projSoldSum += amt; projSoldCount += 1; }
         }
-      } else if (parseYear(r['Open Year']) === currentYear) {
-        // Active pipeline opened this year = expected future win.
+      } else if (stage === 'Agreement Sent') {
+        // Late-stage opp awaiting signature = expected future win.
         projPipeline += 1;
       }
     }
@@ -1575,7 +1577,7 @@ export function YOYView() {
   function downloadDealSize() {
     const summary = dealSizeData.map(r => ({
       Year: r.year,
-      Type: r._isProjected ? 'Projected (YTD + active pipeline)' : 'Actual',
+      Type: r._isProjected ? 'Projected (YTD Sold + Agreement Sent)' : 'Actual',
       'Deals (Sold count)': r.deals,
       'Quoted (avg by Quoted Year, $)': r.quoted == null ? '' : r.quoted,
       'Deal Size (avg of Sold, $)': r.dealSize == null ? '' : r.dealSize,
@@ -2750,7 +2752,7 @@ function DealSizeCard({ data, hasOpps, onDownload, onExportPoint }) {
         <div className={styles.empty}>No sold opps yet.</div>
       ) : (
         <ResponsiveContainer width="100%" height={320}>
-          <ComposedChart data={data} margin={{ top: 20, right: 16, left: 16, bottom: 4 }}>
+          <ComposedChart data={data} margin={{ top: 20, right: 2, left: 0, bottom: 4 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
             <XAxis dataKey="year" interval={0} tick={{ fontSize: 12 }} />
             <YAxis
@@ -2767,7 +2769,7 @@ function DealSizeCard({ data, hasOpps, onDownload, onExportPoint }) {
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 onExportPoint={onExportPoint}
-                labelText={(label, row) => row._isProjected ? 'Projected (YTD + active pipeline)' : `Year ${label}`}
+                labelText={(label, row) => row._isProjected ? 'Projected (YTD Sold + Agreement Sent)' : `Year ${label}`}
                 valueFormat={(v, name) => {
                   if (v == null) return '—';
                   if (name === 'Deals') return v.toLocaleString('en-US');
@@ -2780,7 +2782,7 @@ function DealSizeCard({ data, hasOpps, onDownload, onExportPoint }) {
                     { label: 'Quoted mean (by Quoted Year)', value: row.quoted == null ? '—' : `${fmtMoneyLabel(row.quoted)} (n=${row._quotedCount ?? 0})` },
                     { label: 'Deal Size mean', value: row.dealSize == null ? '—' : `${fmtMoneyLabel(row.dealSize)} (n=${row._soldCount ?? 0})` },
                   ],
-                  note: row._isProjected ? 'Projected counts active pipeline opps as expected future closes.' : null,
+                  note: row._isProjected ? 'Projected = this year’s Sold deals + every opp in the Agreement Sent stage, counted as expected future closes.' : null,
                 })}
               />
             } />
