@@ -1087,17 +1087,23 @@ export function YOYView() {
   // otherwise the amount stored on the deal row. Years between the
   // earliest and latest are kept even if blank so a missing year shows
   // as a $0 bar instead of a gap.
-  const commissionsBase = useMemo(() => {
+  // One entry per deal that contributes a Paid to Date amount, tagged
+  // with the year it's bucketed into and the contract-start date used.
+  // commissionsBase sums these; the xlsx export lists them per-deal so
+  // the yearly totals reconcile against the underlying rows.
+  const commissionsDeals = useMemo(() => {
     const commByBfo = indexCommissionsByBfo(commissions || []);
-    const byYear = new Map();
-    const countByYear = new Map();
+    const out = [];
     for (const row of (deals || [])) {
       // Bucket each deal by the year of its Original Contract Start. Fall
       // back to Current Term Start Date only when the original date is
       // missing so a deal without it still counts rather than dropping
       // off the chart.
-      let ts = Date.parse(row?.['Original Contract Start']);
-      if (Number.isNaN(ts)) ts = Date.parse(row?.['Current Term Start Date']);
+      const originalStart = row?.['Original Contract Start'];
+      const termStart = row?.['Current Term Start Date'];
+      let ts = Date.parse(originalStart);
+      let usedFallback = false;
+      if (Number.isNaN(ts)) { ts = Date.parse(termStart); usedFallback = true; }
       if (Number.isNaN(ts)) continue;
       const year = new Date(ts).getFullYear();
       if (!Number.isFinite(year) || year < 1900 || year > 2100) continue;
@@ -1108,8 +1114,17 @@ export function YOYView() {
       const hit = bfo ? commByBfo.get(bfo) : null;
       const paid = hit ? hit.commission : (parseMoney(row?.['Paid to Date']) ?? 0);
       if (!paid) continue;
-      byYear.set(year, (byYear.get(year) || 0) + paid);
-      countByYear.set(year, (countByYear.get(year) || 0) + 1);
+      out.push({ year, paid, row, originalStart, termStart, usedFallback });
+    }
+    return out;
+  }, [deals, commissions]);
+
+  const commissionsBase = useMemo(() => {
+    const byYear = new Map();
+    const countByYear = new Map();
+    for (const d of commissionsDeals) {
+      byYear.set(d.year, (byYear.get(d.year) || 0) + d.paid);
+      countByYear.set(d.year, (countByYear.get(d.year) || 0) + 1);
     }
     if (byYear.size === 0) return [];
     const minY = Math.min(...byYear.keys());
@@ -1120,7 +1135,7 @@ export function YOYView() {
       rows.push({ year: String(y), total: byYear.get(y) || 0, _rowCount: countByYear.get(y) || 0 });
     }
     return rows;
-  }, [deals, commissions]);
+  }, [commissionsDeals]);
   const commissionsData = useMemo(
     () => applyYoyOverrides(commissionsBase, YOY_CHART_EDITS.commissions, overrides.commissions, editCtx),
     [commissionsBase, overrides, editCtx],
@@ -1478,8 +1493,24 @@ export function YOYView() {
       Year: r.year,
       'Total Commissions ($)': round0(r.total),
     }));
+    // Per-deal breakdown behind the yearly totals, sorted by contract
+    // start year. Each row carries the commission amount that fed the
+    // chart and the contract start date it was bucketed by.
+    const contributingDeals = [...commissionsDeals]
+      .sort((a, b) => a.year - b.year
+        || String(a.row?.['Client Name'] || '').localeCompare(String(b.row?.['Client Name'] || '')))
+      .map(d => ({
+        Year: d.year,
+        'Client Name': d.row?.['Client Name'] || '',
+        Deal: d.row?.[DEAL_BFO_KEY] || d.row?.['Agreement Name'] || '',
+        'Commission ($)': round0(d.paid),
+        'Original Contract Start': d.originalStart || '',
+        'Current Term Start Date': d.termStart || '',
+        'Bucketed By': d.usedFallback ? 'Current Term Start Date (no Original)' : 'Original Contract Start',
+      }));
     const wb = XLSX.utils.book_new();
     appendSheet(wb, 'Commissions by Year', summary);
+    appendSheet(wb, 'Contributing Deals', contributingDeals);
     XLSX.writeFile(wb, `yoy-commissions-${todayStamp()}.xlsx`);
   }
 
