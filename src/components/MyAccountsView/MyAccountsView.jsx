@@ -1757,7 +1757,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       if (isDismissed(p.company)) continue;
       // Use Firestore tier if explicitly set, otherwise fall back to map/target accounts
       let tier;
-      if (p.tier === 'Tier 1' || p.tier === 'Tier 2') {
+      if (p.tier === 'Tier 1' || p.tier === 'Tier 2' || p.tier === 'Tier 3') {
+        // Any explicitly-chosen tier wins — including Tier 3. Previously
+        // Tier 3 fell through to the hardcoded map below, so setting a
+        // mapped account (e.g. one the map lists as Tier 2) to Tier 3 got
+        // silently re-upgraded back to Tier 2. The target-list difference
+        // is still surfaced via the tierMismatch warning, so the user's
+        // explicit choice should stick here.
         tier = p.tier;
       } else if (p.tier === '-' || p.tier === '') {
         // Blank / no-tier accounts default to Tier 3 instead of showing a dash.
