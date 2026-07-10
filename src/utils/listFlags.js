@@ -66,7 +66,7 @@ export function companiesMatch(a, b) {
 
 export function pickListNameKey(headers) {
   if (!headers?.length) return null;
-  return headers.find(k => /company|name|organi[sz]ation|signatory|entity/i.test(k)) || headers[0];
+  return headers.find(k => /company|name|organi[sz]ation|signatory|entity|\bfirm\b/i.test(k)) || headers[0];
 }
 
 // List mappings (which row maps to which prospect/portfolio company)

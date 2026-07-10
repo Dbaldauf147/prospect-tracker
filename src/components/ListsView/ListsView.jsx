@@ -42,7 +42,7 @@ function normalizeListCompany(name) {
 }
 function pickListNameKey(headers) {
   if (!headers?.length) return null;
-  return headers.find(k => /company|name|organi[sz]ation|signatory|entity/i.test(k)) || headers[0];
+  return headers.find(k => /company|name|organi[sz]ation|signatory|entity|\bfirm\b/i.test(k)) || headers[0];
 }
 function safeReadMap(key) {
   try {
