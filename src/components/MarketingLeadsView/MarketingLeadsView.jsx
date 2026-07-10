@@ -588,8 +588,8 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
   // instead of stretching the column. `width: max-content` let wide
   // readonly cells grow past the dragged width.
   const tableWidth = useMemo(
-    // + 34 leading select column, + 44 trailing delete-gutter column.
-    () => visibleColumnList.reduce((sum, c) => sum + (columnWidths[c.key] || 0), 0) + 34 + 44,
+    // + 34 leading select column, + 62 trailing hide/delete-gutter column.
+    () => visibleColumnList.reduce((sum, c) => sum + (columnWidths[c.key] || 0), 0) + 34 + 62,
     [visibleColumnList, columnWidths],
   );
 
@@ -1135,13 +1135,32 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     return sortDir === 'desc' ? -cmp : cmp;
   }
 
+  // Hidden leads — persisted as a list of lead ids in
+  // settings.marketingLeadsHiddenLeads. Hiding is non-destructive (unlike
+  // the row × delete): a hidden lead drops out of the default table (and
+  // the close-rate), but stays saved and can be brought back from the
+  // "Show hidden" view. `showHidden` flips the table to list only the
+  // hidden leads so they can be unhidden.
+  const hiddenLeadIds = useMemo(() => {
+    const arr = settings?.marketingLeadsHiddenLeads;
+    return new Set(Array.isArray(arr) ? arr : []);
+  }, [settings]);
+  const hiddenCount = hiddenLeadIds.size;
+  // `showHidden` flips the table to the hidden-only view. The unhide /
+  // delete paths that can empty the hidden set flip it back off directly,
+  // so there's no view left stranded on an empty list.
+  const [showHidden, setShowHidden] = useState(false);
+
   // Display list = real rows passing the search + per-column filters,
   // sorted if a sort is active, then padded with empty scratch rows up
   // to the minimum — but only in the unfiltered / unsorted default view
-  // so a filter or sort never surfaces phantom blank rows.
+  // so a filter or sort never surfaces phantom blank rows. Hidden leads
+  // are excluded from the default view and are the only rows shown while
+  // `showHidden` is on.
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     let rows = persistedRows.filter(r => {
+      if (showHidden ? !hiddenLeadIds.has(r.id) : hiddenLeadIds.has(r.id)) return false;
       if (q && !EDITABLE_KEYS.some(k => String(r[k] || '').toLowerCase().includes(q))) return false;
       for (const [key, val] of activeColumnFilters) {
         if (!String(r[key] || '').toLowerCase().includes(String(val).trim().toLowerCase())) return false;
@@ -1156,13 +1175,13 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     const recycled = [];
     for (const r of rows) (isClosedRecycle(r) ? recycled : active).push(r);
     rows = [...active, ...recycled];
-    if (!isFiltering && !isSorting) {
+    if (!showHidden && !isFiltering && !isSorting) {
       const padding = Math.max(0, MIN_VISIBLE_ROWS - rows.length);
       const padRows = Array.from({ length: padding }, (_, i) => ({ ...emptyRow(), id: `__pad_${i}` }));
       rows = [...rows, ...padRows];
     }
     return rows;
-  }, [persistedRows, search, activeColumnFilters, isFiltering, isSorting, sortKey, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [persistedRows, hiddenLeadIds, showHidden, search, activeColumnFilters, isFiltering, isSorting, sortKey, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close-rate summary over the currently shown leads (padding rows are
   // synthetic scratch rows, so drop them). When a search / column filter
@@ -1383,7 +1402,14 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
   }
   function deleteRow(id) {
     if (String(id).startsWith('__pad_')) return;
-    persist(persistedRows.filter(r => r.id !== id));
+    const patch = { marketingLeads: persistedRows.filter(r => r.id !== id) };
+    // Drop the id from the hidden list too so it can't linger there.
+    if (hiddenLeadIds.has(id)) {
+      const next = new Set(hiddenLeadIds); next.delete(id);
+      patch.marketingLeadsHiddenLeads = [...next];
+      if (next.size === 0) setShowHidden(false);
+    }
+    updateSettings(patch);
   }
   function clearTable() {
     if (!persistedRows.length) return;
@@ -1391,7 +1417,45 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
       `Delete all ${persistedRows.length} saved lead${persistedRows.length === 1 ? '' : 's'}? This cannot be undone.`,
     );
     if (!ok) return;
-    persist([]);
+    updateSettings({ marketingLeads: [], marketingLeadsHiddenLeads: [] });
+    setShowHidden(false);
+  }
+
+  // ---- Hide / unhide leads --------------------------------------------
+  // Non-destructive: hidden lead ids are stored in
+  // settings.marketingLeadsHiddenLeads and filtered out of the default
+  // view. Bulk variants act on the current checkbox selection (reusing the
+  // same selection the "Send to Draft Emails" action uses); the per-row
+  // buttons act on a single lead.
+  function writeHidden(nextSet) {
+    updateSettings({ marketingLeadsHiddenLeads: [...nextSet] });
+  }
+  function hideSelected() {
+    if (!selectedLeadIds.size) return;
+    const next = new Set(hiddenLeadIds);
+    for (const id of selectedLeadIds) if (!String(id).startsWith('__pad_')) next.add(id);
+    writeHidden(next);
+    setSelectedLeadIds(new Set());
+  }
+  function unhideSelected() {
+    if (!selectedLeadIds.size) return;
+    const next = new Set(hiddenLeadIds);
+    for (const id of selectedLeadIds) next.delete(id);
+    writeHidden(next);
+    setSelectedLeadIds(new Set());
+    if (next.size === 0) setShowHidden(false);
+  }
+  function hideRow(id) {
+    if (String(id).startsWith('__pad_')) return;
+    const next = new Set(hiddenLeadIds); next.add(id);
+    writeHidden(next);
+    setSelectedLeadIds(prev => { if (!prev.has(id)) return prev; const n = new Set(prev); n.delete(id); return n; });
+  }
+  function unhideRow(id) {
+    const next = new Set(hiddenLeadIds); next.delete(id);
+    writeHidden(next);
+    setSelectedLeadIds(prev => { if (!prev.has(id)) return prev; const n = new Set(prev); n.delete(id); return n; });
+    if (next.size === 0) setShowHidden(false);
   }
 
   // ---- Paste → column mapping -----------------------------------------
@@ -1560,7 +1624,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
         <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>Marketing Leads</h2>
         <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
-          {persistedRows.length.toLocaleString()} {persistedRows.length === 1 ? 'lead' : 'leads'} saved
+          {persistedRows.length.toLocaleString()} {persistedRows.length === 1 ? 'lead' : 'leads'} saved{hiddenCount ? ` · ${hiddenCount.toLocaleString()} hidden` : ''}
         </span>
         <div style={{ flex: 1 }} />
         <input
@@ -1605,6 +1669,41 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
             : 'Tick the checkbox on one or more leads (with an email) to send them to the Draft Emails page.'}
           style={btn({ border: 'none', background: selectedEmailable.length ? '#7C3AED' : '#CBD5E1', color: '#fff', fontWeight: 700, cursor: selectedEmailable.length ? 'pointer' : 'not-allowed' })}
         >➤ Send {selectedEmailable.length || ''} to Draft Emails</button>
+        {showHidden ? (
+          <button
+            type="button"
+            onClick={unhideSelected}
+            disabled={!selectedLeadIds.size}
+            title={selectedLeadIds.size
+              ? `Unhide the ${selectedLeadIds.size} selected lead${selectedLeadIds.size === 1 ? '' : 's'} — they return to the active list.`
+              : 'Tick one or more hidden leads to bring them back.'}
+            style={btn({ border: '1px solid #86EFAC', background: selectedLeadIds.size ? '#F0FDF4' : '#F8FAFC', color: selectedLeadIds.size ? '#166534' : '#CBD5E1', cursor: selectedLeadIds.size ? 'pointer' : 'not-allowed' })}
+          >👁 Unhide {selectedLeadIds.size || ''}</button>
+        ) : (
+          <button
+            type="button"
+            onClick={hideSelected}
+            disabled={!selectedLeadIds.size}
+            title={selectedLeadIds.size
+              ? `Hide the ${selectedLeadIds.size} selected lead${selectedLeadIds.size === 1 ? '' : 's'} from the list. They aren't deleted — bring them back with "Show hidden".`
+              : 'Tick the checkbox on one or more leads to hide them.'}
+            style={btn({ border: '1px solid #FDBA74', background: selectedLeadIds.size ? '#FFF7ED' : '#F8FAFC', color: selectedLeadIds.size ? '#9A3412' : '#CBD5E1', cursor: selectedLeadIds.size ? 'pointer' : 'not-allowed' })}
+          >🙈 Hide {selectedLeadIds.size || ''}</button>
+        )}
+        {(hiddenCount > 0 || showHidden) && (
+          <button
+            type="button"
+            onClick={() => { setShowHidden(s => !s); setSelectedLeadIds(new Set()); }}
+            title={showHidden
+              ? 'Back to the active leads.'
+              : `Show the ${hiddenCount} hidden lead${hiddenCount === 1 ? '' : 's'} so you can review or unhide them.`}
+            style={btn({
+              border: `1px solid ${showHidden ? '#009530' : 'var(--color-border)'}`,
+              background: showHidden ? '#F0FDF4' : '#fff',
+              color: showHidden ? '#166534' : 'var(--color-text-secondary)',
+            })}
+          >{showHidden ? '← Back to active' : `Show hidden (${hiddenCount})`}</button>
+        )}
         {hasCustomWidths && (
           <button
             type="button"
@@ -1719,7 +1818,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
         >Clear table</button>
       </div>
       <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
-        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, drag a header to reorder it (drag its right edge to resize), use <strong>Filters</strong> for per-column filtering, and <strong>Columns</strong> to show / hide or reorder columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account — accept the suggested match or type to pick another. The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand. The <strong>HubSpot Contact</strong> column maps each lead to a HubSpot contact — accept the email/name match, search to pick another, or <strong>+ Add to HubSpot</strong> to create a new contact from the lead. The read-only <strong>HubSpot Title</strong> column shows the mapped contact's job title. The <strong>Status</strong> column is a dropdown driven by the <strong>Marketing Lead Status</strong> list on the <strong>Dropdowns</strong> tab — edit that list to change the options. <strong>✉️ Draft Emails</strong> creates an Outlook draft for every shown lead with an email address, signed with your saved email signature (respects the current search / filters). Click a lead's <strong>Name</strong> to open it in the contact popup (the <strong>✎</strong> next to it edits the name inline instead).
+        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, drag a header to reorder it (drag its right edge to resize), use <strong>Filters</strong> for per-column filtering, and <strong>Columns</strong> to show / hide or reorder columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account — accept the suggested match or type to pick another. The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand. The <strong>HubSpot Contact</strong> column maps each lead to a HubSpot contact — accept the email/name match, search to pick another, or <strong>+ Add to HubSpot</strong> to create a new contact from the lead. The read-only <strong>HubSpot Title</strong> column shows the mapped contact's job title. The <strong>Status</strong> column is a dropdown driven by the <strong>Marketing Lead Status</strong> list on the <strong>Dropdowns</strong> tab — edit that list to change the options. <strong>✉️ Draft Emails</strong> creates an Outlook draft for every shown lead with an email address, signed with your saved email signature (respects the current search / filters). Click a lead's <strong>Name</strong> to open it in the contact popup (the <strong>✎</strong> next to it edits the name inline instead). Tick the checkboxes and click <strong>🙈 Hide</strong> (or the per-row 🙈) to hide leads you're done with — they aren't deleted; use <strong>Show hidden</strong> to review or 👁 unhide them.
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -1784,7 +1883,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
             {visibleColumnList.map(c => (
               <col key={c.key} ref={el => { colRefs.current[c.key] = el; }} style={{ width: `${columnWidths[c.key]}px` }} />
             ))}
-            <col style={{ width: 44 }} />
+            <col style={{ width: 62 }} />
           </colgroup>
           <thead>
             <tr>
@@ -1881,7 +1980,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
             {filtered.length === 0 && (
               <tr>
                 <td colSpan={visibleColumnList.length + 2} style={{ padding: '1.2rem', textAlign: 'center', color: 'var(--color-text-muted)', fontStyle: 'italic', fontSize: '0.78rem' }}>
-                  {isFiltering ? 'No leads match the current search / filters.' : 'No leads yet — paste from Salesforce to get started.'}
+                  {showHidden ? 'No hidden leads.' : isFiltering ? 'No leads match the current search / filters.' : 'No leads yet — paste from Salesforce to get started.'}
                 </td>
               </tr>
             )}
@@ -1902,7 +2001,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                         type="checkbox"
                         checked={selectedLeadIds.has(r.id)}
                         onChange={() => toggleLeadSelected(r.id)}
-                        title="Select this lead to send to Draft Emails"
+                        title="Select this lead (to hide or send to Draft Emails)"
                         style={{ cursor: 'pointer' }}
                       />
                     )}
@@ -2217,13 +2316,23 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                       )}
                     </td>
                   ))}
-                  <td style={{ padding: '0.2rem', textAlign: 'center' }}>
+                  <td style={{ padding: '0.2rem', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                    {!isPad && (
+                      <button
+                        type="button"
+                        onClick={() => (showHidden ? unhideRow(r.id) : hideRow(r.id))}
+                        title={showHidden ? 'Unhide lead' : 'Hide lead (not deleted)'}
+                        style={{ border: 'none', background: 'transparent', color: '#94A3B8', fontSize: '0.9rem', cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}
+                        onMouseEnter={e => e.currentTarget.style.color = showHidden ? '#166534' : '#9A3412'}
+                        onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
+                      >{showHidden ? '👁' : '🙈'}</button>
+                    )}
                     {!isPad && (
                       <button
                         type="button"
                         onClick={() => deleteRow(r.id)}
                         title="Delete lead"
-                        style={{ border: 'none', background: 'transparent', color: '#94A3B8', fontSize: '1rem', cursor: 'pointer', padding: '0 6px', lineHeight: 1 }}
+                        style={{ border: 'none', background: 'transparent', color: '#94A3B8', fontSize: '1rem', cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}
                         onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
                         onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
                       >×</button>
