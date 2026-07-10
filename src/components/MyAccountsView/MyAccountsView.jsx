@@ -986,6 +986,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   const [hqLookupRunning, setHqLookupRunning] = useState(false);
   const [dedupeRunning, setDedupeRunning] = useState(false);
   const [tierSyncRunning, setTierSyncRunning] = useState(false);
+  const [tier3BulkRunning, setTier3BulkRunning] = useState(false);
   // Mass edit: checkbox selection + a field/value applied to all selected rows.
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkField, setBulkField] = useState('');
@@ -2207,6 +2208,35 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     }
   }
 
+  // One-click: move every account in the "on My Accounts but NOT on Target
+  // Accounts List" banner down to Tier 3. Only accounts backed by a real
+  // record id can be updated; the rest are surfaced in the confirm.
+  async function moveOnlyMyAccountsToTier3(list) {
+    if (tier3BulkRunning) return;
+    const updatable = (list || []).filter(a => a.id);
+    if (updatable.length === 0) {
+      alert('No updatable accounts — these rows have no saved record to write to.');
+      return;
+    }
+    const sample = updatable.slice(0, 12).map(a => `• ${a.company}: ${a.myTier || '—'} → Tier 3`).join('\n');
+    const more = updatable.length > 12 ? `\n…and ${updatable.length - 12} more` : '';
+    const skipped = (list || []).length - updatable.length;
+    const skippedNote = skipped > 0 ? `\n\n(${skipped} not saved yet and will be skipped.)` : '';
+    const ok = window.confirm(
+      `Move ${updatable.length} account${updatable.length === 1 ? '' : 's'} not on the Target Accounts List to Tier 3:\n\n${sample}${more}${skippedNote}`
+    );
+    if (!ok) return;
+    setTier3BulkRunning(true);
+    try {
+      await Promise.all(updatable.map(a => onUpdate(a.id, { tier: 'Tier 3' })));
+    } catch (err) {
+      console.error('Bulk Tier 3 update failed:', err);
+      alert('Bulk Tier 3 update failed: ' + (err?.message || err));
+    } finally {
+      setTier3BulkRunning(false);
+    }
+  }
+
   // Prospects whose tier-mismatch warning was previously dismissed (the
   // per-row "Dismiss" action sets ignoreTierMismatch). Count the raw
   // prospect list, not just the visible rows, so the reset also catches
@@ -3000,8 +3030,17 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           <div className={styles.mismatchSection}>
             {onlyMyAccounts.length > 0 && (
               <div className={styles.missingBanner}>
-                <div className={styles.missingTitle}>
-                  {onlyMyAccounts.length} on My Accounts but NOT on Target Accounts List
+                <div className={styles.missingTitle} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+                  <span>{onlyMyAccounts.length} on My Accounts but NOT on Target Accounts List</span>
+                  <button
+                    type="button"
+                    onClick={() => moveOnlyMyAccountsToTier3(onlyMyAccounts)}
+                    disabled={tier3BulkRunning}
+                    title="Set every account listed here (on My Accounts but not on the Target Accounts List) to Tier 3."
+                    style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid #3B82F6', background: tier3BulkRunning ? 'var(--color-surface)' : '#3B82F6', color: tier3BulkRunning ? 'var(--color-text-secondary)' : '#fff', fontSize: '0.7rem', fontWeight: 700, cursor: tier3BulkRunning ? 'wait' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                  >
+                    {tier3BulkRunning ? 'Moving…' : `Move all to Tier 3 (${onlyMyAccounts.length})`}
+                  </button>
                 </div>
                 <div className={styles.missingList}>
                   {onlyMyAccounts.map(a => (
