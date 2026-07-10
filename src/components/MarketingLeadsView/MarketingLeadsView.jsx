@@ -93,6 +93,15 @@ const PASTE_TARGETS = [
 
 const EDITABLE_KEYS = COLUMNS.filter(c => !c.readonly).map(c => c.key);
 
+// Fields offered in the Bulk Edit modal — the editable columns whose value
+// makes sense to set across many leads at once. Deliberately excludes the
+// per-lead-unique fields (Name, Email, Salesforce Link) and the special
+// HubSpot Contact picker (a mapping to one contact record, not a value).
+const BULK_EDIT_KEYS = [
+  'status', 'owner', 'leadSource', 'company', 'mappedCompany',
+  'jobTitle', 'country', 'createdDate', 'qualificationDetail',
+];
+
 function makeId() {
   return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -1273,6 +1282,26 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     });
   }
 
+  // ---- Bulk edit one field across the selected leads ------------------
+  // Pick a field + a value in the modal; Apply writes that value onto
+  // every selected lead in a single persist. Leaving the value blank
+  // clears the field. The modal stays open after Apply (with a result
+  // line) so several fields can be set on the same selection in a row.
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [bulkField, setBulkField] = useState('status');
+  const [bulkValue, setBulkValue] = useState('');
+  const [bulkResult, setBulkResult] = useState('');
+  const bulkFieldLabel = COLUMNS.find(c => c.key === bulkField)?.label || bulkField;
+
+  function applyBulkEdit() {
+    if (!selectedLeadIds.size || !bulkField) return;
+    const ids = selectedLeadIds;
+    const val = bulkValue;
+    persist(persistedRows.map(r => (ids.has(r.id) ? { ...r, [bulkField]: val } : r)));
+    const n = ids.size;
+    setBulkResult(`Set ${bulkFieldLabel} on ${n} lead${n === 1 ? '' : 's'}${val.trim() ? ` to “${val.trim()}”` : ' (cleared)'}.`);
+  }
+
   // Shape a lead into the contact object the Draft Emails composer expects,
   // splitting the "First Last" name into first / last for {firstName} etc.
   function leadToDraftContact(r) {
@@ -1669,6 +1698,15 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
             : 'Tick the checkbox on one or more leads (with an email) to send them to the Draft Emails page.'}
           style={btn({ border: 'none', background: selectedEmailable.length ? '#7C3AED' : '#CBD5E1', color: '#fff', fontWeight: 700, cursor: selectedEmailable.length ? 'pointer' : 'not-allowed' })}
         >➤ Send {selectedEmailable.length || ''} to Draft Emails</button>
+        <button
+          type="button"
+          onClick={() => { setBulkResult(''); setBulkEditOpen(true); }}
+          disabled={!selectedLeadIds.size}
+          title={selectedLeadIds.size
+            ? `Set one field (Status, Owner, …) on the ${selectedLeadIds.size} selected lead${selectedLeadIds.size === 1 ? '' : 's'} at once.`
+            : 'Tick the checkbox on one or more leads to bulk-edit a field.'}
+          style={btn({ border: 'none', background: selectedLeadIds.size ? '#0D9488' : '#CBD5E1', color: '#fff', fontWeight: 700, cursor: selectedLeadIds.size ? 'pointer' : 'not-allowed' })}
+        >✏️ Bulk Edit {selectedLeadIds.size || ''}</button>
         {showHidden ? (
           <button
             type="button"
@@ -1818,7 +1856,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
         >Clear table</button>
       </div>
       <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
-        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, drag a header to reorder it (drag its right edge to resize), use <strong>Filters</strong> for per-column filtering, and <strong>Columns</strong> to show / hide or reorder columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account — accept the suggested match or type to pick another. The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand. The <strong>HubSpot Contact</strong> column maps each lead to a HubSpot contact — accept the email/name match, search to pick another, or <strong>+ Add to HubSpot</strong> to create a new contact from the lead. The read-only <strong>HubSpot Title</strong> column shows the mapped contact's job title. The <strong>Status</strong> column is a dropdown driven by the <strong>Marketing Lead Status</strong> list on the <strong>Dropdowns</strong> tab — edit that list to change the options. <strong>✉️ Draft Emails</strong> creates an Outlook draft for every shown lead with an email address, signed with your saved email signature (respects the current search / filters). Click a lead's <strong>Name</strong> to open it in the contact popup (the <strong>✎</strong> next to it edits the name inline instead). Tick the checkboxes and click <strong>🙈 Hide</strong> (or the per-row 🙈) to hide leads you're done with — they aren't deleted; use <strong>Show hidden</strong> to review or 👁 unhide them.
+        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, drag a header to reorder it (drag its right edge to resize), use <strong>Filters</strong> for per-column filtering, and <strong>Columns</strong> to show / hide or reorder columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account — accept the suggested match or type to pick another. The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand. The <strong>HubSpot Contact</strong> column maps each lead to a HubSpot contact — accept the email/name match, search to pick another, or <strong>+ Add to HubSpot</strong> to create a new contact from the lead. The read-only <strong>HubSpot Title</strong> column shows the mapped contact's job title. The <strong>Status</strong> column is a dropdown driven by the <strong>Marketing Lead Status</strong> list on the <strong>Dropdowns</strong> tab — edit that list to change the options. <strong>✉️ Draft Emails</strong> creates an Outlook draft for every shown lead with an email address, signed with your saved email signature (respects the current search / filters). Click a lead's <strong>Name</strong> to open it in the contact popup (the <strong>✎</strong> next to it edits the name inline instead). Tick the checkboxes and click <strong>🙈 Hide</strong> (or the per-row 🙈) to hide leads you're done with — they aren't deleted; use <strong>Show hidden</strong> to review or 👁 unhide them. Tick leads and click <strong>✏️ Bulk Edit</strong> to set one field (Status, Owner, Company Mapping, …) across all of them at once.
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -2399,6 +2437,75 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                 title={!draftSubject.trim() ? 'Enter a subject first.' : ''}
                 style={btn({ border: 'none', background: (draftSubject.trim() && emailableLeads.length) ? '#009530' : '#CBD5E1', color: '#fff', fontWeight: 700, cursor: (draftSubject.trim() && emailableLeads.length) ? 'pointer' : 'not-allowed' })}
               >Create {emailableLeads.length} draft{emailableLeads.length === 1 ? '' : 's'}</button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {bulkEditOpen && createPortal(
+        <div onClick={() => setBulkEditOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 12, padding: '1.5rem', width: 460, maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>Bulk Edit {selectedLeadIds.size} Lead{selectedLeadIds.size === 1 ? '' : 's'}</h3>
+              <button onClick={() => setBulkEditOpen(false)} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}>×</button>
+            </div>
+            <p style={{ fontSize: '0.74rem', color: 'var(--color-text-secondary)', margin: '0 0 0.9rem', lineHeight: 1.5 }}>
+              Pick a field and a value, then <strong>Apply</strong> to set it on all {selectedLeadIds.size} selected lead{selectedLeadIds.size === 1 ? '' : 's'}. Leave the value blank to clear the field. Other fields are left untouched.
+            </p>
+            <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: '#475569', marginBottom: 3 }}>Field</label>
+            <select
+              value={bulkField}
+              onChange={e => { setBulkField(e.target.value); setBulkValue(''); setBulkResult(''); }}
+              style={{ width: '100%', boxSizing: 'border-box', padding: '0.45rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.82rem', fontFamily: 'inherit', marginBottom: '0.7rem', background: '#fff' }}
+            >
+              {BULK_EDIT_KEYS.map(k => (
+                <option key={k} value={k}>{COLUMNS.find(c => c.key === k)?.label || k}</option>
+              ))}
+            </select>
+            <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: '#475569', marginBottom: 3 }}>
+              New {bulkFieldLabel} <span style={{ fontWeight: 400, color: '#94A3B8' }}>(blank clears it)</span>
+            </label>
+            {bulkField === 'status' && statusOptions.length ? (
+              <>
+                <input
+                  type="text"
+                  list="bulk-status-options"
+                  value={bulkValue}
+                  onChange={e => { setBulkValue(e.target.value); setBulkResult(''); }}
+                  placeholder="Pick or type a status…"
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '0.45rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.82rem', fontFamily: 'inherit' }}
+                />
+                <datalist id="bulk-status-options">
+                  {statusOptions.map(o => <option key={o} value={o} />)}
+                </datalist>
+              </>
+            ) : (
+              <input
+                type="text"
+                value={bulkValue}
+                onChange={e => { setBulkValue(e.target.value); setBulkResult(''); }}
+                placeholder={`New ${bulkFieldLabel}…`}
+                style={{ width: '100%', boxSizing: 'border-box', padding: '0.45rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.82rem', fontFamily: 'inherit' }}
+              />
+            )}
+            {bulkResult && (
+              <div style={{ marginTop: '0.7rem', padding: '0.5rem 0.7rem', background: '#F0FDF4', border: '1px solid #86EFAC', borderRadius: 6, fontSize: '0.76rem', color: '#166534', fontWeight: 600 }}>
+                {bulkResult}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1.1rem' }}>
+              <button
+                type="button"
+                onClick={() => setBulkEditOpen(false)}
+                style={btn({ border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)' })}
+              >{bulkResult ? 'Done' : 'Cancel'}</button>
+              <button
+                type="button"
+                onClick={applyBulkEdit}
+                disabled={!selectedLeadIds.size}
+                style={btn({ border: 'none', background: selectedLeadIds.size ? '#0D9488' : '#CBD5E1', color: '#fff', fontWeight: 700, cursor: selectedLeadIds.size ? 'pointer' : 'not-allowed' })}
+              >Apply to {selectedLeadIds.size} lead{selectedLeadIds.size === 1 ? '' : 's'}</button>
             </div>
           </div>
         </div>,
