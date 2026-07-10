@@ -23,7 +23,7 @@ import { computeIssues } from '../utils/clientIssues';
 //
 // Each returned issue carries a `snoozed` flag. `openCount` is the number
 // of issues that are NOT snoozed — that's the number shown on the sidebar.
-export function useIssues({ prospects = [], cdmName, user }) {
+export function useIssues({ prospects = [], cdmName, user, marketingLeads = [] }) {
   const [dealsList, setDealsList] = useState(() => loadDealsList().data);
   const [clientMap, setClientMap] = useState(() => loadDealClientMap());
   const [untrackedMap, setUntrackedMap] = useState(() => loadClientUntrackedMap());
@@ -71,9 +71,9 @@ export function useIssues({ prospects = [], cdmName, user }) {
   }, []);
 
   const issues = useMemo(() => {
-    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, myAccountsFlags });
+    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, myAccountsFlags, marketingLeads });
     return rows.map((r) => ({ ...r, snoozed: !!snoozedMap[r.id] }));
-  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, snoozedMap, myAccountsFlags]);
+  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, snoozedMap, myAccountsFlags, marketingLeads]);
 
   const openCount = useMemo(() => issues.reduce((n, r) => n + (r.snoozed ? 0 : 1), 0), [issues]);
 
