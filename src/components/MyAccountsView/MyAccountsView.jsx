@@ -1317,6 +1317,48 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     return accounts;
   }, [targetAccountsData, cdmName, settings?.targetCdmColumn]);
 
+  // All-tier view of the CDM's Target Accounts — same rows as
+  // `targetAccounts` above, but WITHOUT the Tier 1/2 restriction and with
+  // a tier normalizer that keeps Tier 3+. Used only to surface a tier
+  // mismatch when an account that's already in My Accounts sits at Tier 3
+  // (or lower) on the Targets list. The Tier 1/2 `targetAccounts` still
+  // drives the target book, the missing-target buckets, and the 'Target
+  // List' source badge, so those are unchanged.
+  const targetAccountTiers = useMemo(() => {
+    const data = targetAccountsData;
+    if (!data?.sheets) return [];
+    const findCol = (r, keywords) => {
+      for (const key of Object.keys(r)) {
+        const lower = key.toLowerCase();
+        for (const kw of keywords) {
+          if (lower.includes(kw.toLowerCase())) return String(r[key] || '').trim();
+        }
+      }
+      return '';
+    };
+    const cdmLastName = (cdmName || '').toLowerCase().split(/\s+/).filter(Boolean).pop() || '';
+    const out = [];
+    for (const sheetName of data.sheetNames || []) {
+      const sheet = data.sheets[sheetName];
+      if (!sheet?.records) continue;
+      for (const r of sheet.records) {
+        let cdm = resolveTargetAccountCdm(r, settings?.targetCdmColumn).toLowerCase();
+        if (!cdm && cdmLastName) {
+          cdm = String(Object.values(r).find(v => String(v || '').toLowerCase().includes(cdmLastName)) || '').toLowerCase();
+        }
+        if (!matchesCdm(cdm, cdmName)) continue;
+        const company = findCol(r, ['Account', 'Company', 'Account Name', 'Client', 'Name']);
+        if (!company) continue;
+        let tierRaw = findCol(r, ['Tier', 'Account Tier', 'Tier Level', 'Target']);
+        if (!tierRaw) tierRaw = String(Object.values(r).find(v => /Tier\s*[1-9]/i.test(String(v || ''))) || '');
+        const m = tierRaw.match(/(?:Tier\s*)?([1-9])/i);
+        if (!m) continue;
+        out.push({ company: company.trim(), tier: `Tier ${m[1]}` });
+      }
+    }
+    return out;
+  }, [targetAccountsData, cdmName, settings?.targetCdmColumn]);
+
   // All Target Accounts with their salesperson (for cross-rep detection)
   const allTargetReps = useMemo(() => {
     const data = targetAccountsData;
@@ -1746,6 +1788,14 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       const k = (t.company || '').toLowerCase().trim();
       if (k && !targetByName.has(k)) targetByName.set(k, t);
     }
+    // All-tier lookups (incl. Tier 3+), used only to resolve the true
+    // Targets-list tier for the mismatch flag.
+    const targetTierByName = new Map();
+    for (const t of targetAccountTiers) {
+      const k = (t.company || '').toLowerCase().trim();
+      if (k && !targetTierByName.has(k)) targetTierByName.set(k, t.tier);
+    }
+    const targetTierIndex = buildCompanyIndex(targetAccountTiers.map(t => t.company || ''));
     const contactsByCompanyIndex = buildCompanyIndex(Object.keys(contactsByCompany));
     const dmIndex = buildCompanyIndex(Object.keys(decisionMakerByCompany));
     const peIndex = buildCompanyIndex([...(pePartnerAccountSet || [])]);
@@ -1863,11 +1913,30 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       if (targetNames.length > 0) {
         const matched = targetAccounts.find(t => targetNames.includes(t.company));
         if (matched) targetTier = matched.tier;
+        // Mapped name isn't in the Tier 1/2 book — resolve its true tier
+        // (Tier 3+) purely so the mismatch flag can fire.
+        if (!targetTier) {
+          for (const nm of targetNames) {
+            const tt = targetTierByName.get((nm || '').toLowerCase().trim());
+            if (tt) { targetTier = tt; break; }
+          }
+        }
       } else if (!hasExplicitMapping) {
         // Only fuzzy-match if user never explicitly set/cleared the mapping
         for (const tName of findMatchesInIndex(targetAccountsIndex, p.company)) {
           const t = targetByName.get((tName || '').toLowerCase().trim());
           if (t) { targetNames = [t.company]; targetTier = t.tier; break; }
+        }
+        // No Tier 1/2 target matched. Check the all-tier lookup so a Tier
+        // 3+ target still surfaces a tier mismatch (e.g. My Accounts Tier
+        // 2 vs Targets Tier 3). Deliberately don't touch targetNames /
+        // sources so the target book and 'Target List' badge stay Tier
+        // 1/2 only.
+        if (!targetTier) {
+          for (const tName of findMatchesInIndex(targetTierIndex, p.company)) {
+            const tt = targetTierByName.get((tName || '').toLowerCase().trim());
+            if (tt) { targetTier = tt; break; }
+          }
         }
       }
       if (targetNames.length > 0) sources.push('Target List');
@@ -2166,7 +2235,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     if (DEBUG_MA && skippedCdm.length > 0) console.log('My Accounts: skipped (CDM not Baldauf):', skippedCdm);
     if (DEBUG_MA) console.log(`My Accounts: ${t1.length} Tier 1, ${t2.length} Tier 2 (incl ${oppsOnlyAdded} opps-only)`);
     return { tier1: t1, tier2: t2, allAccounts: all, statusCounts: counts };
-  }, [prospects, targetMap, targetAccounts, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, displayNameByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactsByCompany, bucketsByCompany, contactsByEmailDomain, bucketsByEmailDomain, linkableContactById, settings?.companyContactLinks, divisionsMap, pePartnerAccountSet]);
+  }, [prospects, targetMap, targetAccounts, targetAccountTiers, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, displayNameByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactsByCompany, bucketsByCompany, contactsByEmailDomain, bucketsByEmailDomain, linkableContactById, settings?.companyContactLinks, divisionsMap, pePartnerAccountSet]);
 
   const clientCount = statusCounts['Client'] || 0;
   const tier3Count = allAccounts.filter(a => a.myTier === 'Tier 3').length;
