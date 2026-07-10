@@ -1310,6 +1310,38 @@ export function YOYView() {
     };
   }, [records, currentYear, topAccountsData]);
 
+  // Download just the opportunity rows behind one pinned chart point, so a
+  // pinned bar/line can be deep-dived in Excel. Each chart's contributing
+  // set already carries the point's key (Open Year / Quoted Year / Lead
+  // Source), so we filter that set to the pinned row. A "Projected" bar
+  // annualizes the current year, so its raw opps are the current year's.
+  function exportPinnedOpps(chartId, row) {
+    if (!row) return;
+    const CONF = {
+      leads: { list: contributingRecords.leads, keyCol: 'Open Year', sheet: 'Leads' },
+      closeRate: { list: contributingRecords.closeRate, keyCol: 'Open Year', sheet: 'Close Rate' },
+      leadSources: { list: contributingRecords.leadSources, keyCol: 'Lead Source', sheet: 'Lead Sources' },
+      quotedByYear: { list: contributingRecords.quotedByYear, keyCol: 'Quoted Year', sheet: 'Quoted' },
+      notSolds: { list: contributingRecords.notSolds, keyCol: 'Open Year', sheet: 'Not Solds' },
+      topAccounts: { list: contributingRecords.topAccounts, keyCol: 'Open Year', sheet: 'Top Accounts' },
+      dealSize: { list: contributingRecords.dealSize, keyCol: 'Open Year', sheet: 'Deal Size' },
+    };
+    const conf = CONF[chartId];
+    if (!conf) return;
+    const rawKey = chartId === 'leadSources'
+      ? String(row.source ?? '')
+      : (row.isProjected || row.year === 'Projected') ? String(currentYear) : String(row.year);
+    const rows = (conf.list || []).filter(rec => String(rec[conf.keyCol]) === rawKey);
+    if (rows.length === 0) {
+      window.alert('No opportunity rows are tied to this point.');
+      return;
+    }
+    const wb = XLSX.utils.book_new();
+    appendSheet(wb, `${conf.sheet} ${rawKey}`, rows);
+    const tag = rawKey.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'point';
+    XLSX.writeFile(wb, `yoy-${chartId}-${tag}-${todayStamp()}.xlsx`);
+  }
+
   function downloadLeads() {
     const summary = leadsData.map(r => ({
       Year: r.year,
@@ -1532,19 +1564,19 @@ export function YOYView() {
           </div>
         ) : null}
         <div className={styles.row}>
-          <LeadsCard data={leadsData} hasOpps={hasOpps} onDownload={downloadLeads} />
+          <LeadsCard data={leadsData} hasOpps={hasOpps} onDownload={downloadLeads} onExportPoint={(row) => exportPinnedOpps('leads', row)} />
           <QuotedProjectionsCard data={quotedData} quotedTable={quotedTable} onSaveTable={updateQuotedTable} onDownload={downloadQuoted} />
-          <CloseRateCard data={closeRateData} hasOpps={hasOpps} onDownload={downloadCloseRate} />
+          <CloseRateCard data={closeRateData} hasOpps={hasOpps} onDownload={downloadCloseRate} onExportPoint={(row) => exportPinnedOpps('closeRate', row)} />
         </div>
         <div className={styles.row}>
-          <LeadSourcesCard data={leadSourcesData} hasOpps={hasOpps} onDownload={downloadLeadSources} />
-          <QuotedByYearCard data={quotedByYearData} hasOpps={hasOpps} onDownload={downloadQuotedByYear} />
-          <NotSoldsCard data={notSoldsData} hasOpps={hasOpps} onDownload={downloadNotSolds} />
+          <LeadSourcesCard data={leadSourcesData} hasOpps={hasOpps} onDownload={downloadLeadSources} onExportPoint={(row) => exportPinnedOpps('leadSources', row)} />
+          <QuotedByYearCard data={quotedByYearData} hasOpps={hasOpps} onDownload={downloadQuotedByYear} onExportPoint={(row) => exportPinnedOpps('quotedByYear', row)} />
+          <NotSoldsCard data={notSoldsData} hasOpps={hasOpps} onDownload={downloadNotSolds} onExportPoint={(row) => exportPinnedOpps('notSolds', row)} />
         </div>
         <div className={styles.row}>
-          <TopAccountsCard data={topAccountsData} hasOpps={hasOpps} onDownload={downloadTopAccounts} />
+          <TopAccountsCard data={topAccountsData} hasOpps={hasOpps} onDownload={downloadTopAccounts} onExportPoint={(row) => exportPinnedOpps('topAccounts', row)} />
           <AnnualSalesCard data={annualSalesData} hasOpps={hasOpps} target={target} onDownload={downloadAnnualSales} onExportYear={downloadAnnualSalesYear} />
-          <DealSizeCard data={dealSizeData} hasOpps={hasOpps} onDownload={downloadDealSize} />
+          <DealSizeCard data={dealSizeData} hasOpps={hasOpps} onDownload={downloadDealSize} onExportPoint={(row) => exportPinnedOpps('dealSize', row)} />
         </div>
         <div className={styles.row}>
           <CommissionsCard data={commissionsData} hasCommissions={hasCommissions} onDownload={downloadCommissions} />
@@ -1782,6 +1814,14 @@ function CalcContent({ payload, label, labelText, valueFormat, explain, pinned, 
     <div className={styles.calcDock}>
       <div className={styles.calcDockLabel}>
         <span className={styles.calcDockHeading}>{heading}</span>
+        {pinned && typeof info?.exportOpps === 'function' ? (
+          <button
+            type="button"
+            className={styles.calcExportBtn}
+            onClick={info.exportOpps}
+            title="Download the opportunity rows behind this point to Excel"
+          >⬇ Excel</button>
+        ) : null}
         {pinned ? (
           <button type="button" className={styles.calcPinBtn} onClick={onUnpin} title="Unstick this panel">📌 Pinned ✕</button>
         ) : (
@@ -1845,10 +1885,19 @@ function CalcContent({ payload, label, labelText, valueFormat, explain, pinned, 
 // no panel is mounted (defensive), it falls back to a small floating box.
 function CalcTooltip({
   active, payload, label,
-  labelText, valueFormat, explain,
+  labelText, valueFormat, explain, onExportPoint,
 }) {
   const ctx = useContext(CalcPanelContext);
   const isActive = !!(active && payload && payload.length > 0);
+  // When the chart can export the opps behind a point, fold an `exportOpps`
+  // callback into whatever the chart's explain() returns, so the pinned
+  // panel can offer a per-point Excel download. Wrapped here (rather than in
+  // every card's explain) and captured in the pinned snapshot below.
+  const wrappedExplain = (onExportPoint && explain)
+    ? (row, ...rest) => ({ ...(explain(row, ...rest) || {}), exportOpps: () => onExportPoint(row) })
+    : (onExportPoint
+        ? (row) => ({ exportOpps: () => onExportPoint(row) })
+        : explain);
   // Report the currently-hovered point up to the page so a click anywhere
   // in the YOY body can pin (stick) this exact content. Runs in an effect
   // so we never setState/refs mid-render. Snapshot the payload (Recharts
@@ -1856,7 +1905,7 @@ function CalcTooltip({
   const reportHover = ctx?.reportHover;
   useEffect(() => {
     if (!reportHover) return;
-    reportHover(isActive ? { payload: payload.slice(), label, labelText, valueFormat, explain } : null);
+    reportHover(isActive ? { payload: payload.slice(), label, labelText, valueFormat, explain: wrappedExplain } : null);
   });
   if (!isActive) return null;
   // While a panel is pinned, the hover panel steps aside so it doesn't
@@ -1868,14 +1917,14 @@ function CalcTooltip({
       label={label}
       labelText={labelText}
       valueFormat={valueFormat}
-      explain={explain}
+      explain={wrappedExplain}
     />
   );
   if (ctx?.el) return createPortal(body, ctx.el);
   return <div className={styles.calcTip}>{body}</div>;
 }
 
-function LeadsCard({ data, hasOpps, onDownload }) {
+function LeadsCard({ data, hasOpps, onDownload, onExportPoint }) {
   const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
@@ -1892,6 +1941,7 @@ function LeadsCard({ data, hasOpps, onDownload }) {
             <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
+                onExportPoint={onExportPoint}
                 labelText={(label, row) => row.isProjected ? 'Projected (annualized YTD)' : `Open Year ${label}`}
                 valueFormat={(v) => (v == null ? '—' : v.toLocaleString('en-US'))}
                 explain={(row) => row.isProjected
@@ -1923,7 +1973,7 @@ function LeadsCard({ data, hasOpps, onDownload }) {
   );
 }
 
-function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload }) {
+function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload, onExportPoint }) {
   const [editing, setEditing] = useState(false);
   const hasAnyValues = data.some(r => r._hasData);
   const { hidden, legendProps } = useInteractiveLegend();
@@ -1954,6 +2004,7 @@ function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload }) {
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
+                onExportPoint={onExportPoint}
                 labelText={(label, row) => `${label} ${row.year}`}
                 valueFormat={(v) => (v == null ? '—' : fmtKLabel(v))}
                 explain={(row) => ({
@@ -2103,7 +2154,7 @@ function QuotedProjectionsEditor({ rows, table, onClose, onSave }) {
   );
 }
 
-function CloseRateCard({ data, hasOpps, onDownload }) {
+function CloseRateCard({ data, hasOpps, onDownload, onExportPoint }) {
   const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
@@ -2132,6 +2183,7 @@ function CloseRateCard({ data, hasOpps, onDownload }) {
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
+                onExportPoint={onExportPoint}
                 labelText={(label) => `Open Year ${label}`}
                 valueFormat={(v) => (v == null ? '—' : `${v.toFixed(0)}%`)}
                 explain={(row) => ({
@@ -2163,7 +2215,7 @@ function CloseRateCard({ data, hasOpps, onDownload }) {
   );
 }
 
-function LeadSourcesCard({ data, hasOpps, onDownload }) {
+function LeadSourcesCard({ data, hasOpps, onDownload, onExportPoint }) {
   const { hidden, legendProps } = useInteractiveLegend();
   // Per-row height keeps the chart legible even when source values
   // accumulate (e.g. opps tagged with novel sources over time). Pad
@@ -2197,6 +2249,7 @@ function LeadSourcesCard({ data, hasOpps, onDownload }) {
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
+                onExportPoint={onExportPoint}
                 labelText={(label) => `Lead Source: ${label}`}
                 valueFormat={(v) => (v == null ? '—' : v.toLocaleString('en-US'))}
                 explain={(row) => ({
@@ -2236,7 +2289,7 @@ function LeadSourcesCard({ data, hasOpps, onDownload }) {
   );
 }
 
-function QuotedByYearCard({ data, hasOpps, onDownload }) {
+function QuotedByYearCard({ data, hasOpps, onDownload, onExportPoint }) {
   const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
@@ -2256,6 +2309,7 @@ function QuotedByYearCard({ data, hasOpps, onDownload }) {
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
+                onExportPoint={onExportPoint}
                 labelText={(label, row) => row.isProjected ? 'Projected (annualized YTD)' : `Quoted ${label}`}
                 valueFormat={(v) => (v == null ? '—' : `$${v.toLocaleString('en-US')}k`)}
                 explain={(row) => row.isProjected
@@ -2292,7 +2346,7 @@ function QuotedByYearCard({ data, hasOpps, onDownload }) {
   );
 }
 
-function NotSoldsCard({ data, hasOpps, onDownload }) {
+function NotSoldsCard({ data, hasOpps, onDownload, onExportPoint }) {
   const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
@@ -2309,6 +2363,7 @@ function NotSoldsCard({ data, hasOpps, onDownload }) {
             <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
+                onExportPoint={onExportPoint}
                 labelText={(label, row) => row.isProjected ? 'Projected (annualized YTD)' : `Open Year ${label}`}
                 valueFormat={(v, name) => {
                   if (v == null) return '—';
@@ -2395,7 +2450,7 @@ function fmtThousandsLabel(v) {
   return `$${Math.trunc(v / 1000).toLocaleString('en-US')}k`;
 }
 
-function TopAccountsCard({ data, hasOpps, onDownload }) {
+function TopAccountsCard({ data, hasOpps, onDownload, onExportPoint }) {
   const { years = [], topAccounts = [], colors = {} } = data || {};
   const hasAny = years.some(r => r._total > 0);
   const { hidden, legendProps } = useInteractiveLegend();
@@ -2417,6 +2472,7 @@ function TopAccountsCard({ data, hasOpps, onDownload }) {
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
+                onExportPoint={onExportPoint}
                 labelText={(label, row) => row._isProjected ? 'Projected (YTD + active pipeline)' : `Year ${label}`}
                 valueFormat={(v) => (v ? fmtMoneyLabel(v) : '$0')}
                 explain={(row) => ({
@@ -2463,7 +2519,7 @@ function TopAccountsCard({ data, hasOpps, onDownload }) {
   );
 }
 
-function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
+function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear, onExportPoint }) {
   const hasAny = data.some(r => r._total > 0);
   const annualTarget = target > 0 ? target : DEFAULT_ANNUAL_TARGET;
   const { hidden, legendProps } = useInteractiveLegend();
@@ -2531,6 +2587,7 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
+                onExportPoint={onExportPoint}
                 labelText={(label, row) => row._isProjected ? 'Projected (Sold + Agreement Sent + Contracting)' : `Sold in ${label}`}
                 valueFormat={(v, name) => (name === '% Quota' ? `${v}%` : (v ? fmtMoneyLabel(v) : '$0'))}
                 explain={(row) => ({
@@ -2583,7 +2640,7 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
   );
 }
 
-function DealSizeCard({ data, hasOpps, onDownload }) {
+function DealSizeCard({ data, hasOpps, onDownload, onExportPoint }) {
   const hasAny = data.some(r => r.deals > 0);
   const { hidden, legendProps } = useInteractiveLegend();
   return (
@@ -2611,6 +2668,7 @@ function DealSizeCard({ data, hasOpps, onDownload }) {
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
+                onExportPoint={onExportPoint}
                 labelText={(label, row) => row._isProjected ? 'Projected (YTD + active pipeline)' : `Year ${label}`}
                 valueFormat={(v, name) => {
                   if (v == null) return '—';
@@ -2668,7 +2726,7 @@ function DealSizeCard({ data, hasOpps, onDownload }) {
   );
 }
 
-function CommissionsCard({ data, hasCommissions, onDownload }) {
+function CommissionsCard({ data, hasCommissions, onDownload, onExportPoint }) {
   const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
@@ -2688,6 +2746,7 @@ function CommissionsCard({ data, hasCommissions, onDownload }) {
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
+                onExportPoint={onExportPoint}
                 labelText={(label) => `Year ${label}`}
                 valueFormat={(v) => (v == null ? '—' : fmtMoneyFull(v))}
                 explain={(row) => ({
