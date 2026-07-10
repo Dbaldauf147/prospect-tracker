@@ -27,6 +27,12 @@ import { isInactiveAgreement, normClientName, soonestExpiration } from '../../ut
 
 const MS_PER_DAY = 86400000;
 
+// A client row is tinted light red as a "needs a status" warning when its
+// soonest renewal is inside this many days AND the Status column is still
+// blank. Shared by the row-highlight logic and the on-page legend so the two
+// can't drift apart.
+const RENEWAL_WARNING_DAYS = 270;
+
 // Column layout for the per-client contract drill-down. Each entry's
 // `key` is the canonical field name stored on the deal row; `label` is
 // the heading shown on the Clients tab. Several labels are shorter
@@ -758,6 +764,14 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
         Loaded {totalProspects} prospects · {myProspects.length} match CDM &quot;{cdmName || '(unset)'}&quot; · {allClients} are Status={statusLabel} · showing {clients.length}
       </div>
 
+      {/* Legend so the red row tint is self-explanatory on the page. */}
+      <div style={{ padding: '0 1.25rem 0.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.68rem', color: '#64748B', flexShrink: 0, flexWrap: 'wrap' }}>
+        <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 3, background: '#FEE2E2', border: '1px solid #FCA5A5', flexShrink: 0 }} />
+        <span>
+          Red rows need attention: the soonest contract expires within {RENEWAL_WARNING_DAYS} days and the <strong>Status</strong> column is still blank. Set a Status to clear the highlight.
+        </span>
+      </div>
+
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {clients.length === 0 ? (
           <div style={{ margin: '0 1.25rem', padding: '1.25rem', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
@@ -806,7 +820,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
               // the clients that need a status set before they slip.
               const s = String(row.Status || '').trim();
               const noStatus = s === '' || s === '-' || s === '—' || s === '–';
-              if (row.daysUntilExpiration != null && row.daysUntilExpiration < 270 && noStatus) {
+              if (row.daysUntilExpiration != null && row.daysUntilExpiration < RENEWAL_WARNING_DAYS && noStatus) {
                 return { background: '#FEE2E2' };
               }
               return undefined;
