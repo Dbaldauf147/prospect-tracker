@@ -8401,7 +8401,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             // existing company is harmless.
             if (addToTableView && company && addProspect) {
               try {
-                Promise.resolve(addProspect({ company, peOwner: peOwner || '', type: type || '', hqRegion: hqRegion || '', frameworks: frameworksEdited ? frameworks : [] }))
+                // New companies created from this flow default to the
+                // Qualifying status so they land in the active pipeline
+                // rather than statusless.
+                Promise.resolve(addProspect({ company, peOwner: peOwner || '', type: type || '', hqRegion: hqRegion || '', status: 'Qualifying', frameworks: frameworksEdited ? frameworks : [] }))
                   .catch(err => console.error('opps2: add company to Table View failed', err));
               } catch (err) {
                 console.error('opps2: add company to Table View failed', err);
