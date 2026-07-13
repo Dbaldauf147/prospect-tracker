@@ -38,6 +38,15 @@ import { computeListFlags } from '../../utils/listFlags';
 import { splitPeOwners, joinPeOwners } from '../../utils/peOwners';
 import { TYPES, FRAMEWORKS } from '../../data/enums';
 import { NewOppsScheduleModal } from './NewOppsScheduleModal';
+import {
+  TRACKED_STAGES,
+  TRACKED_STAGES_SET,
+  PULL_THROUGH_RE,
+  stageActionFor,
+  buildStageDaysRows,
+  groupStageDaysByStage,
+  StageDaysBoard,
+} from './daysInStage';
 import { downloadNewOppsOutlookDraft } from '../../utils/newOppsDigestEmail';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { buildNewOppsTableHtml, downloadOppsTableOutlookDraft, NEW_OPPS_EMAIL_COLUMNS, NEW_OPPS_EMAIL_DEFAULT_COLUMN_KEYS } from '../../utils/newOppsEmailTable';
@@ -241,42 +250,15 @@ function findCloseDerivedColumns(headers) {
   return { yearCols, monthCols };
 }
 
-// Stages the Days-in-Stage tab reports on. Ordered to mirror the
-// pipeline progression so a row stays under one bucket as it moves
-// forward. Closed stages (Sold / Not Sold) are intentionally excluded
-// — the tab tracks how long active opps are stalling in each step.
-const TRACKED_STAGES = ['Not Started', 'Lead', 'Qualifying', 'Quoting', 'Quoted', 'Contracting', 'Agreement Sent'];
-const TRACKED_STAGES_SET = new Set(TRACKED_STAGES);
+// Days-in-Stage constants + board live in ./daysInStage so the PE
+// Portfolio page can render the identical board over its PE-scoped opps.
+// TRACKED_STAGES, TRACKED_STAGES_SET, PULL_THROUGH_RE, stageActionFor,
+// buildStageDaysRows, groupStageDaysByStage, and StageDaysBoard are
+// imported at the top of the file.
 
 // Closed (won/lost) stages — an opp in one of these is no longer active.
 // Mirrors the in-component CLOSED_STAGES used by the activity filter.
 const CLOSED_STAGES_SET = new Set(['Sold', 'Not Sold']);
-
-// Stage-specific "stalled too long" thresholds. An opp that has sat in
-// one of these stages for more than `days` calendar days surfaces in the
-// Days-in-Stage "Needs action" buckets with the paired suggestion. Stages
-// not listed (Not Started, Quoting, Contracting, Agreement Sent) have no
-// threshold, so they never raise an action prompt. Not Started is
-// intentionally excluded — a brand-new opp shouldn't nag to qualify-or-kill.
-const STAGE_ACTION_THRESHOLDS = {
-  'Lead':        { days: 90,  suggestion: 'Qualify or kill' },
-  'Qualifying':  { days: 60,  suggestion: 'Quote or kill' },
-  'Quoted':      { days: 90,  suggestion: 'Contract or kill' },
-};
-
-// Pull-through opps ride along with a parent sale rather than running
-// their own pipeline, so they're excluded from the Days-in-Stage view.
-// Matched on the Scope text, mirroring PipelineView's close-rate filter.
-const PULL_THROUGH_RE = /pull[\s-]?through/i;
-
-// The stage-action rule an opp has tripped, or null if it's within the
-// limit (or its stage has no limit). Shared by the kanban so flagged opps
-// can render inline with their suggestion instead of in a separate list.
-function stageActionFor(stage, days) {
-  const rule = STAGE_ACTION_THRESHOLDS[stage];
-  if (!rule || days == null || days <= rule.days) return null;
-  return rule;
-}
 
 // Read-only columns whose value is derived from other cells.
 //   Call In    = calendar days from today to the Follow Up date
@@ -7937,60 +7919,18 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     setDateFrom(''); setDateTo(''); setStatusFilter('all'); setActivityFilter('all');
   };
 
-  // Rows for the Days-in-Stage tab. Reads `_stageEnteredAt` (stamped by
-  // updateOppField when Stage flips) and falls back to Start Date so
-  // pre-existing opps that have never had a stage change still
-  // contribute something instead of showing blank. Sorted descending by
-  // days so the longest-stalling opps lead the list.
-  const stageDaysRows = useMemo(() => {
-    if (activeTab !== 'stageDays') return [];
-    const rows = [];
-    for (const r of records) {
-      const stage = String(r['Stage'] || '').trim();
-      if (!TRACKED_STAGES_SET.has(stage)) continue;
-      // Mirror the Opportunities tab's history gate — opps with no
-      // Call In aren't on a callback schedule, so they shouldn't crowd
-      // the kanban either.
-      if (resolveCallIn(r) == null) continue;
-      // Pull-through opps follow a parent sale, so keep them off the board.
-      if (PULL_THROUGH_RE.test(String(r['Scope'] || ''))) continue;
-      const enteredISO = toISODate(r._stageEnteredAt) || toISODate(r['Start Date']);
-      const days = enteredISO ? -daysFromToday(enteredISO) : null;
-      const scope = String(r['Scope'] ?? '').trim();
-      rows.push({
-        id: r._id,
-        Account: r['Account'] || '',
-        Stage: stage,
-        days,
-        enteredAt: enteredISO || '',
-        startDate: toISODate(r['Start Date']) || '',
-        scope: scope && scope !== '-' && scope !== '#N/A' ? scope : '',
-        _hasExplicitEntry: !!toISODate(r._stageEnteredAt),
-        ignoreStall: !!r._ignoreStallFlag,
-      });
-    }
-    rows.sort((a, b) => {
-      // Null days (no Start Date either) settle at the bottom so the
-      // top of the list always shows real numbers.
-      if (a.days == null && b.days == null) return 0;
-      if (a.days == null) return 1;
-      if (b.days == null) return -1;
-      return b.days - a.days;
-    });
-    return rows;
-  }, [activeTab, records]);
+  // Rows for the Days-in-Stage tab (built by the shared ./daysInStage
+  // helper so the PE Portfolio board stays byte-for-byte identical).
+  // Gated on the active tab so we don't walk every record until the
+  // board is on screen.
+  const stageDaysRows = useMemo(
+    () => (activeTab === 'stageDays' ? buildStageDaysRows(records) : []),
+    [activeTab, records],
+  );
 
   // Group Days-in-Stage rows by stage so the Kanban view can render one
-  // column per stage with its cards stacked beneath. stageDaysRows is
-  // pre-sorted descending by days, so each bucket's order falls out for
-  // free — longest-stalling firms lead each column.
-  const stageDaysByStage = useMemo(() => {
-    const map = new Map(TRACKED_STAGES.map(s => [s, []]));
-    for (const r of stageDaysRows) {
-      if (map.has(r.Stage)) map.get(r.Stage).push(r);
-    }
-    return map;
-  }, [stageDaysRows]);
+  // column per stage with its cards stacked beneath.
+  const stageDaysByStage = useMemo(() => groupStageDaysByStage(stageDaysRows), [stageDaysRows]);
 
   // Rows for the Stage History tab. Same gate as the Days-in-Stage tab
   // so the two tabs cover the same set of opps. For each row we sum
@@ -9175,121 +9115,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       )}
 
       {activeTab === 'stageDays' && (
-        <>
-          <div className={styles.searchRow}>
-            <label className={styles.showHiddenLabel}>
-              <input
-                type="checkbox"
-                checked={hideNotStarted}
-                onChange={e => setHideNotStarted(e.target.checked)}
-              />
-              Hide Not Started ({(stageDaysByStage.get('Not Started') || []).length})
-            </label>
-            <span style={{ fontSize: '0.72rem', color: '#B45309', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-              <span style={{
-                width: 10, height: 10, borderRadius: 2,
-                background: '#FEF3C7', border: '1px solid #FCD34D', display: 'inline-block',
-              }} />
-              ⚠ flagged = stalled past its stage limit (hover for the suggested move)
-            </span>
-          </div>
-          <div style={{
-            display: 'flex', gap: 12, overflowX: 'auto',
-            padding: '12px 0', alignItems: 'flex-start',
-          }}>
-            {TRACKED_STAGES.filter(s => !(hideNotStarted && s === 'Not Started')).map(stage => {
-              const items = stageDaysByStage.get(stage) || [];
-              return (
-                <div key={stage} style={{
-                  flex: '0 0 220px', width: 220,
-                  background: '#F1F5F9', borderRadius: 6, padding: 8,
-                  display: 'flex', flexDirection: 'column', gap: 8,
-                }}>
-                  <div style={{
-                    display: 'flex', alignItems: 'baseline',
-                    justifyContent: 'space-between',
-                    padding: '2px 4px 6px',
-                    borderBottom: '1px solid #CBD5E1',
-                  }}>
-                    <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>{stage}</span>
-                    <span style={{ fontSize: '0.72rem', color: '#64748B' }}>{items.length}</span>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {items.length === 0 ? (
-                      <div style={{
-                        color: '#94A3B8', fontSize: '0.72rem',
-                        textAlign: 'center', padding: '8px 0',
-                      }}>—</div>
-                    ) : items.map(row => {
-                      const dayBadgeTitle = row.enteredAt
-                        ? `Stage entered ${formatDateDisplay(row.enteredAt)}${row._hasExplicitEntry ? '' : ' (fallback to Start Date)'}`
-                        : 'No entry date recorded.';
-                      // Flagged opps (stalled past the stage's limit) stay
-                      // in the same column but render in amber, with the
-                      // suggested move on the card and in the hover — so
-                      // the board doubles as the "needs action" list. Opps
-                      // the user ignored on the Opps tab don't flag here.
-                      const action = row.ignoreStall ? null : stageActionFor(row.Stage, row.days);
-                      // Account-name hover surfaces the row's Scope so
-                      // the kanban reads like a triage board — no need
-                      // to bounce back to the Opportunities tab to see
-                      // what the opp is actually selling.
-                      const accountTitle = action
-                        ? `Stalled ${row.days}d (> ${action.days}d) → ${action.suggestion}${row.scope ? `\nScope: ${row.scope}` : ''}`
-                        : (row.scope ? `Scope: ${row.scope}` : 'No scope set on this opp.');
-                      return (
-                        <div
-                          key={row.id}
-                          style={{
-                            background: action ? '#FEF3C7' : '#FFFFFF', borderRadius: 4,
-                            border: `1px solid ${action ? '#FCD34D' : '#E2E8F0'}`,
-                            padding: '6px 8px',
-                            display: 'flex', flexDirection: 'column', gap: 3,
-                          }}
-                        >
-                          <div style={{
-                            display: 'flex', alignItems: 'center',
-                            justifyContent: 'space-between', gap: 8,
-                          }}>
-                            <span
-                              title={accountTitle}
-                              style={{
-                                fontSize: '0.8rem', fontWeight: 500,
-                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                minWidth: 0, cursor: 'help',
-                              }}
-                            >
-                              {action && <span title="Stalled past its stage limit">⚠ </span>}
-                              {row.Account || <span style={{ color: '#94A3B8' }}>(no account)</span>}
-                            </span>
-                            <span
-                              title={dayBadgeTitle}
-                              style={{
-                                fontSize: '0.72rem', fontWeight: action ? 700 : 600,
-                                color: action ? '#B45309' : (row.days != null && row.days > 30 ? '#DC2626' : '#475569'),
-                                fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
-                              }}
-                            >
-                              {row.days == null ? '—' : `${row.days}d`}
-                            </span>
-                          </div>
-                          {action && (
-                            <span style={{
-                              fontSize: '0.68rem', fontWeight: 600, color: '#B45309',
-                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                            }}>
-                              {action.suggestion}
-                            </span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </>
+        <div style={{ padding: '0 1.25rem' }}>
+          <StageDaysBoard
+            byStage={stageDaysByStage}
+            hideNotStarted={hideNotStarted}
+            setHideNotStarted={setHideNotStarted}
+          />
+        </div>
       )}
 
       {activeTab === 'stageHistory' && (
