@@ -724,10 +724,11 @@ function guessNameFromEmail(email) {
   return { firstName: cap(parts[0]), lastName: cap(parts[parts.length - 1]) };
 }
 
-function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptions, ccMap, toAlsoMap, onSaveCcMap, onSaveToAlsoMap, contactOldEmails = {}, onSaveOldEmails, companyDomainsMap = {}, contactNicknames = {}, onSaveNickname, contactFamilies = {}, onSaveFamily }) {
+function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptions, ccMap, toAlsoMap, onSaveCcMap, onSaveToAlsoMap, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, companyDomainsMap = {}, contactNicknames = {}, onSaveNickname, contactFamilies = {}, onSaveFamily }) {
   const isNew = !contact;
   const cid = contact?.id || contact?.vid;
   const savedOldEmails = (cid && contactOldEmails[cid]) || '';
+  const savedOldCompany = (cid && contactOldCompany[cid]) || '';
   const savedNickname = (cid && contactNicknames[cid]) || '';
   const savedFamily = (cid && contactFamilies[cid]) || { partner: '', kids: '' };
   const [fields, setFields] = useState({
@@ -745,6 +746,7 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
     dans_tags: contact?.dans_tags || contact?.dan_s_tags || contact?.dans_tag || '',
     notes: contact?.hs_note || contact?.notes || '',
     oldEmails: savedOldEmails,
+    oldCompany: savedOldCompany,
     partner: savedFamily.partner || '',
     kids: savedFamily.kids || '',
   });
@@ -1131,6 +1133,10 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
               <label className={styles.modalLabel}>Old Emails <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(comma-separated, inactive)</span></label>
               <input className={styles.modalInput} value={fields.oldEmails} onChange={e => set('oldEmails', e.target.value)} placeholder="old.email@company.com" />
             </div>
+            <div className={styles.modalSpan2}>
+              <label className={styles.modalLabel}>Old Company <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(previous employer)</span></label>
+              <input className={styles.modalInput} value={fields.oldCompany} onChange={e => set('oldCompany', e.target.value)} placeholder="Previous company name" />
+            </div>
             <div className={styles.modalFull}>
               <label className={styles.modalLabel}>Notes</label>
               <textarea className={styles.modalInput} value={fields.notes} onChange={e => set('notes', e.target.value)} placeholder="Add notes about this contact..." rows={3} style={{ resize: 'vertical', minHeight: '60px', lineHeight: '1.5' }} />
@@ -1229,6 +1235,9 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
             if (cid && onSaveOldEmails) {
               onSaveOldEmails(cid, fields.oldEmails || '');
             }
+            if (cid && onSaveOldCompany) {
+              onSaveOldCompany(cid, fields.oldCompany || '');
+            }
             if (cid && onSaveNickname) {
               onSaveNickname(cid, fields.nickname || '');
             }
@@ -1236,7 +1245,7 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
               onSaveFamily(cid, { partner: fields.partner || '', kids: fields.kids || '' });
             }
             // Strip local-only fields before HubSpot save
-            const { oldEmails, nickname, partner, kids, ...hsFields } = fields;
+            const { oldEmails, oldCompany, nickname, partner, kids, ...hsFields } = fields;
             onSave(hsFields, contact?.id);
           }} disabled={saving || !fields.email.trim()}>
             {saving ? 'Saving...' : isNew ? 'Create in HubSpot' : 'Update in HubSpot'}
@@ -3054,6 +3063,14 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
             if (oldEmails && oldEmails.trim()) next[contactId] = oldEmails;
             else delete next[contactId];
             updateSettings({ contactOldEmails: next });
+          }}
+          contactOldCompany={settings?.contactOldCompany || {}}
+          onSaveOldCompany={(contactId, oldCompany) => {
+            const current = settings?.contactOldCompany || {};
+            const next = { ...current };
+            if (oldCompany && oldCompany.trim()) next[contactId] = oldCompany;
+            else delete next[contactId];
+            updateSettings({ contactOldCompany: next });
           }}
           companyDomainsMap={(() => {
             const map = {};

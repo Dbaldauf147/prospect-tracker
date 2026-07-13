@@ -1357,6 +1357,12 @@ function KeyContactsViewInner({
     if (val && val.trim()) next[cid] = val; else delete next[cid];
     updateSettings({ contactOldEmails: next });
   }, [settings?.contactOldEmails, updateSettings]);
+  const handleSaveContactOldCompany = useCallback((cid, val) => {
+    const cur = settings?.contactOldCompany || {};
+    const next = { ...cur };
+    if (val && val.trim()) next[cid] = val; else delete next[cid];
+    updateSettings({ contactOldCompany: next });
+  }, [settings?.contactOldCompany, updateSettings]);
   const handleSaveContactNickname = useCallback((cid, val) => {
     const cur = settings?.contactNicknames || {};
     const next = { ...cur };
@@ -3876,6 +3882,8 @@ function KeyContactsViewInner({
             onSaveNote={handleSaveContactNote}
             contactOldEmails={settings?.contactOldEmails || {}}
             onSaveOldEmails={handleSaveContactOldEmails}
+            contactOldCompany={settings?.contactOldCompany || {}}
+            onSaveOldCompany={handleSaveContactOldCompany}
             contactNicknames={settings?.contactNicknames || {}}
             onSaveNickname={handleSaveContactNickname}
             contactTeamNames={settings?.contactTeamNames || {}}

@@ -2521,6 +2521,8 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
           onSaveNote={(cid, v) => saveSettingsMap('contactNotes', cid, v)}
           contactOldEmails={settings?.contactOldEmails || {}}
           onSaveOldEmails={(cid, v) => saveSettingsMap('contactOldEmails', cid, v)}
+          contactOldCompany={settings?.contactOldCompany || {}}
+          onSaveOldCompany={(cid, v) => saveSettingsMap('contactOldCompany', cid, v)}
           contactNicknames={settings?.contactNicknames || {}}
           onSaveNickname={(cid, v) => saveSettingsMap('contactNicknames', cid, v)}
           contactTeamNames={settings?.contactTeamNames || {}}
