@@ -8803,7 +8803,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         >Keith{waitingOnKeith.length ? ` (${waitingOnKeith.length})` : ''}</button>
       </div>
 
-      <div className={styles.filterRow}>
+      <div
+        // On the Opportunities tab the search box + result count + Mass
+        // Edit ride on this row too; the filterRowInline modifier keeps
+        // the whole strip on one line (inline with the Show controls)
+        // instead of letting it wrap below, scrolling horizontally on a
+        // narrow window rather than clipping. Other tabs keep the default
+        // wrapping behavior.
+        className={`${styles.filterRow}${activeTab === 'opps' ? ` ${styles.filterRowInline}` : ''}`}
+      >
         {/* Start Date range + Status filters intentionally hidden — the
             underlying state stays at its no-op defaults (empty range,
             status "all") so nothing is filtered out. */}
