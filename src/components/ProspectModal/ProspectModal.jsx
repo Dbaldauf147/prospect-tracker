@@ -419,7 +419,7 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
 const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', tier: 'Tier 3',
-  hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, competitors: {}, portfolioCompanies: [],
+  hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, competitors: {}, portfolioCompanies: [],
   peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', strategies: [],
 };
 
@@ -1940,7 +1940,19 @@ function SearchableSelect({ options, value, onChange, placeholder = 'Select…',
   );
 }
 
-function MultiSelectDropdown({ options, selected, onToggle }) {
+// Provenance badges for how a Framework landed on a company: auto-mapped
+// from a confirmed Lists-page mapping, manually picked in this popup, or
+// pulled in from Claude sustainability research.
+const FRAMEWORK_SOURCE_BADGES = {
+  auto:   { label: 'Auto',   bg: '#E0E7FF', text: '#3730A3', title: 'Mapped automatically from a confirmed Lists-page mapping' },
+  manual: { label: 'Manual', bg: '#F1F5F9', text: '#475569', title: 'Manually added in this company popup' },
+  claude: { label: 'Claude', bg: '#DCFCE7', text: '#15803D', title: 'Added from Claude sustainability research' },
+};
+
+// `sourceOf(value)` is optional — when supplied (the Frameworks field), each
+// selected pill shows a small provenance badge and auto-mapped pills drop
+// the × since they're managed on the Lists page, not here.
+function MultiSelectDropdown({ options, selected, onToggle, sourceOf = null }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0, width: 0, up: false });
   const ref = useRef(null);
@@ -1984,16 +1996,28 @@ function MultiSelectDropdown({ options, selected, onToggle }) {
         }}
       >
         {selected.length === 0 && <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>Select...</span>}
-        {selected.map(v => (
-          <span key={v} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.1rem 0.5rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '999px', fontSize: '0.7rem', color: '#1E40AF', fontWeight: 500 }}>
+        {selected.map(v => {
+          const src = sourceOf ? sourceOf(v) : null;
+          const badge = src ? FRAMEWORK_SOURCE_BADGES[src] : null;
+          return (
+          <span key={v} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', padding: '0.1rem 0.5rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '999px', fontSize: '0.7rem', color: '#1E40AF', fontWeight: 500 }}>
             {v}
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); onToggle(v); }}
-              style={{ background: 'none', border: 'none', color: '#93C5FD', fontSize: '0.8rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
-            >&times;</button>
+            {badge && (
+              <span
+                title={badge.title}
+                style={{ display: 'inline-block', padding: '0 5px', borderRadius: 999, fontSize: '0.56rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', background: badge.bg, color: badge.text }}
+              >{badge.label}</span>
+            )}
+            {src !== 'auto' && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onToggle(v); }}
+                style={{ background: 'none', border: 'none', color: '#93C5FD', fontSize: '0.8rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
+              >&times;</button>
+            )}
           </span>
-        ))}
+          );
+        })}
         <span style={{ marginLeft: 'auto', fontSize: '0.6rem', color: 'var(--color-text-muted)' }}>{open ? '\u25B2' : '\u25BC'}</span>
       </div>
       {open && createPortal(
@@ -3847,6 +3871,31 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return [...out];
   }, [fields.frameworks, companyFrameworkFlags]);
 
+  // How each framework landed on this company. A confirmed Lists-page
+  // mapping (companyFrameworkFlags) is authoritative → 'auto'; otherwise
+  // the per-framework provenance stored in fields.frameworkSources marks
+  // Claude-research additions, with everything else treated as a manual
+  // pick in this popup.
+  const frameworkSourceOf = useCallback((label) => {
+    if (companyFrameworkFlags.has(label)) return 'auto';
+    return (fields.frameworkSources || {})[label] === 'claude' ? 'claude' : 'manual';
+  }, [companyFrameworkFlags, fields.frameworkSources]);
+
+  // Toggle a framework from the dropdown, recording provenance alongside
+  // the array so the badge can distinguish manual picks from Claude/auto.
+  // Removing a framework also drops its stored source.
+  const toggleFramework = useCallback((value) => {
+    setFields(prev => {
+      const arr = prev.frameworks || [];
+      const has = arr.includes(value);
+      const nextArr = has ? arr.filter(v => v !== value) : [...arr, value];
+      const sources = { ...(prev.frameworkSources || {}) };
+      if (has) delete sources[value];
+      else sources[value] = 'manual';
+      return { ...prev, frameworks: nextArr, frameworkSources: sources };
+    });
+  }, []);
+
   // Strategy-tag vocabulary: built-ins + every tag already in use + the
   // user's custom additions, so the dropdown matches what the PE Firm
   // sub-tab offers.
@@ -4832,7 +4881,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
             <div style={{ gridColumn: 'span 2' }}>
               <label className={styles.label}>Frameworks</label>
-              <MultiSelectDropdown options={FRAMEWORKS} selected={effectiveFrameworks} onToggle={(val) => toggleArrayField('frameworks', val)} />
+              <MultiSelectDropdown options={FRAMEWORKS} selected={effectiveFrameworks} onToggle={toggleFramework} sourceOf={frameworkSourceOf} />
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', marginTop: 4, fontSize: '0.6rem', color: 'var(--color-text-muted)' }}>
+                {Object.entries(FRAMEWORK_SOURCE_BADGES).map(([k, b]) => (
+                  <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }} title={b.title}>
+                    <span style={{ display: 'inline-block', padding: '0 5px', borderRadius: 999, fontSize: '0.56rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', background: b.bg, color: b.text }}>{b.label}</span>
+                    <span>{k === 'auto' ? 'from Lists mapping' : k === 'claude' ? 'from Claude research' : 'added here'}</span>
+                  </span>
+                ))}
+              </div>
             </div>
 
             <div style={{ gridColumn: 'span 2' }}>
@@ -4885,9 +4942,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 onMergeFrameworks={() => {
                   const found = sustainResearch.data?.frameworks || [];
                   if (!found.length) return;
-                  const existing = new Set(fields.frameworks || []);
-                  for (const f of found) existing.add(f);
-                  set('frameworks', [...existing]);
+                  setFields(prev => {
+                    const existing = new Set(prev.frameworks || []);
+                    const sources = { ...(prev.frameworkSources || {}) };
+                    for (const f of found) {
+                      // Only newly-added frameworks are tagged 'claude'; ones
+                      // the user already had keep their existing provenance.
+                      if (!existing.has(f)) { existing.add(f); sources[f] = 'claude'; }
+                    }
+                    return { ...prev, frameworks: [...existing], frameworkSources: sources };
+                  });
                 }}
               />
             </div>
