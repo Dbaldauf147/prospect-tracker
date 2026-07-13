@@ -1119,17 +1119,16 @@ export function YOYView() {
     // count. The red Quoted point is the average of every opp quoted this
     // calendar year; the blue Deal Size point is the average Sold $ closed
     // this year.
+    // Projected point: the Deals bar counts this year's Sold deals plus
+    // every Agreement Sent opp (expected future wins). The Quoted point is
+    // the mean Quoted Amount across *only* those same opps — this year's
+    // Sold deals and the active Agreement Sent pipeline — deliberately
+    // excluding opps in any other stage. Deal Size is intentionally not
+    // projected, so its point is left blank (null) for this bar.
     let projWon = 0, projPipeline = 0, projQuotedSum = 0, projQuotedCount = 0;
-    let projSoldSum = 0, projSoldCount = 0;
-    let projAgrSum = 0, projAgrCount = 0;
     for (const r of records) {
       const amt = parseMoney(r['Quoted Amount']);
       const hasAmt = typeof amt === 'number' && amt > 0;
-      // Red: opps quoted this calendar year (any stage).
-      if (hasAmt && parseDateYear(r['Quoted On'] || r['Quoted Date'] || '') === currentYear) {
-        projQuotedSum += amt;
-        projQuotedCount += 1;
-      }
       const stage = String(r.Stage || '').trim();
       const isClosed = (stage === 'Sold' || stage === 'Not Sold');
       if (isClosed) {
@@ -1137,29 +1136,21 @@ export function YOYView() {
         if (y !== currentYear) continue;
         if (stage === 'Sold') {
           projWon += 1;
-          if (hasAmt) { projSoldSum += amt; projSoldCount += 1; }
+          if (hasAmt) { projQuotedSum += amt; projQuotedCount += 1; }
         }
       } else if (stage === 'Agreement Sent') {
-        // Late-stage opp awaiting signature = expected future win. Its
-        // Quoted Amount joins this year's Sold deals in the Projected
-        // Deal Size average.
         projPipeline += 1;
-        if (hasAmt) { projAgrSum += amt; projAgrCount += 1; }
+        if (hasAmt) { projQuotedSum += amt; projQuotedCount += 1; }
       }
     }
-    // Projected Deal Size = mean Quoted Amount across this year's Sold
-    // deals and the Agreement Sent pipeline combined, so the point
-    // reflects both won and expected-to-win deals.
-    const projDealSum = projSoldSum + projAgrSum;
-    const projDealCount = projSoldCount + projAgrCount;
     rows.push({
       year: 'Projected',
       deals: projWon + projPipeline,
       quoted: projQuotedCount > 0 ? Math.round(projQuotedSum / projQuotedCount) : null,
-      dealSize: projDealCount > 0 ? Math.round(projDealSum / projDealCount) : null,
+      dealSize: null,
       _isProjected: true,
       _quotedCount: projQuotedCount,
-      _soldCount: projDealCount,
+      _soldCount: 0,
     });
     return rows;
   }, [records, currentYear]);
@@ -1374,12 +1365,19 @@ export function YOYView() {
       const quotedYear = hasAmt ? parseDateYear(quotedOn) : null;
       // Agreement Sent opps (with a real amount) feed the Projected point:
       // they count toward its Deals bar as expected wins and toward its
-      // Deal Size average alongside this year's Sold deals. Tie them to the
+      // Quoted average alongside this year's Sold deals. Tie them to the
       // current year so a pinned Projected export pulls them in — mirrors
       // the Projected branch in dealSizeBase, which filters Agreement Sent
       // by stage only (no date filter).
       const feedsProjected = stage === 'Agreement Sent' && hasAmt;
       const projectedYear = feedsProjected ? currentYear : null;
+      // The Projected Quoted average is the mean Quoted Amount across this
+      // year's Sold deals plus every Agreement Sent opp — the same
+      // population the Projected bar counts. Flag both so the export ties
+      // back to that number.
+      const inProjectedQuoted = hasAmt && (
+        (stage === 'Sold' && closedYear === currentYear) || stage === 'Agreement Sent'
+      );
       if (oy !== null && stage === 'Sold') {
         topAccountsRecs.push({
           Account: account,
@@ -1405,7 +1403,8 @@ export function YOYView() {
           'Quoted Amount': amt ?? '',
           'Counts in Deals (Sold)': stage === 'Sold' ? 'Yes' : 'No',
           'Counts in Quoted avg': quotedYear != null ? 'Yes' : 'No',
-          'Counts in Deal Size avg': ((stage === 'Sold' || feedsProjected) && hasAmt) ? 'Yes' : 'No',
+          'Counts in Deal Size avg': (stage === 'Sold' && hasAmt) ? 'Yes' : 'No',
+          'Counts in Projected Quoted avg': inProjectedQuoted ? 'Yes' : 'No',
         });
       }
     }
@@ -2861,10 +2860,10 @@ function DealSizeCard({ data, hasOpps, onDownload, onExportPoint }) {
                   formula: 'Deals = count of Sold opps (won deals), by Closed Year. Quoted = mean Quoted Amount of opps quoted that year, by Quoted On date. Deal Size = average deal size (mean Quoted Amount of Sold opps), by Closed Year.',
                   inputs: [
                     { label: 'Deals (Sold)', value: (row.deals ?? 0).toLocaleString('en-US') },
-                    { label: 'Quoted mean (by Quoted Year)', value: row.quoted == null ? '—' : `${fmtMoneyLabel(row.quoted)} (n=${row._quotedCount ?? 0})` },
+                    { label: row._isProjected ? 'Quoted mean (Sold + Agreement Sent)' : 'Quoted mean (by Quoted Year)', value: row.quoted == null ? '—' : `${fmtMoneyLabel(row.quoted)} (n=${row._quotedCount ?? 0})` },
                     { label: 'Deal Size mean', value: row.dealSize == null ? '—' : `${fmtMoneyLabel(row.dealSize)} (n=${row._soldCount ?? 0})` },
                   ],
-                  note: row._isProjected ? 'Projected = this year’s Sold deals + every opp in the Agreement Sent stage, counted as expected future closes. Deal Size is the average Quoted Amount across both.' : null,
+                  note: row._isProjected ? 'Projected = this year’s Sold deals + every opp in the Agreement Sent stage, counted as expected future closes. Quoted is the mean Quoted Amount across only those Sold and Agreement Sent opps; Deal Size isn’t projected.' : null,
                 })}
               />
             } />
