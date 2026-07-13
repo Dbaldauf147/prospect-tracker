@@ -1899,6 +1899,9 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
             }}
             emptyMessage={search ? `No deals match "${search}"` : 'No deals to display'}
             enableColumnFilters
+            // Always include Commission in the Excel export, even when the
+            // user has hidden that column in the on-screen table.
+            exportExtraColumnKeys={['Commission']}
             settings={settings}
             updateSettings={updateSettings}
           />

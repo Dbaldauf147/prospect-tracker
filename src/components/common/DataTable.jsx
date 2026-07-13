@@ -588,6 +588,10 @@ export function DataTable({
   // formatting, etc.) while reusing the table's sort / visibility /
   // rename state.
   onExport,
+  // Column keys that should always land in the default Excel export even
+  // when the user has hidden them on screen. Included in their natural
+  // column order; ignored when a custom onExport is supplied.
+  exportExtraColumnKeys,
   // When true, every visible column gets a compact text input under
   // its header. Rows are filtered (substring, case-insensitive) by
   // the raw cell value for each column that has a non-empty filter.
@@ -1073,7 +1077,14 @@ export function DataTable({
             return;
           }
           const XLSX = await import('xlsx');
-          const exportCols = visibleColumns;
+          // Start from the on-screen columns, then fold in any
+          // exportExtraColumnKeys the caller wants in the file even when
+          // hidden — kept in natural column order via orderedColumns.
+          const extraKeys = new Set(exportExtraColumnKeys || []);
+          let exportCols = extraKeys.size
+            ? orderedColumns.filter(c => visibleCols.has(c.key) || alwaysVisible.includes(c.key) || extraKeys.has(c.key))
+            : visibleColumns;
+          if (exportCols.length === 0 && orderedColumns.length > 0) exportCols = orderedColumns;
           const data = sortedRows.map(row => {
             const obj = {};
             for (const col of exportCols) {
