@@ -5507,6 +5507,75 @@ function NfatScheduleModal({ schedules, onSave, onClearNow, onClose }) {
   );
 }
 
+// Free-form "To do" scratchpad pinned to the top of the Opportunities
+// tab. Pressing Enter starts a new bullet so the box reads like a
+// checklist (Shift+Enter still inserts a plain newline inside a bullet).
+// The text and the collapsed state persist per-user in localStorage so
+// they survive reloads.
+function TodoBox() {
+  const BULLET = '• ';
+  const [text, setText] = useState(() => userLsGet('opps2:todo') ?? '');
+  const [collapsed, setCollapsed] = useState(() => userLsGet('opps2:todoCollapsed') === '1');
+  useEffect(() => { try { userLsSet('opps2:todo', text); } catch { /* quota — ignore */ } }, [text]);
+  useEffect(() => { try { userLsSet('opps2:todoCollapsed', collapsed ? '1' : '0'); } catch { /* ignore */ } }, [collapsed]);
+
+  function handleKeyDown(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      // Enter = new bullet. Insert at the caret so it works mid-list too,
+      // then restore the cursor just after the inserted bullet.
+      e.preventDefault();
+      const el = e.currentTarget;
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      // Starting a bullet in an empty box shouldn't push a blank first line.
+      const insert = text.length === 0 ? BULLET : '\n' + BULLET;
+      setText(text.slice(0, start) + insert + text.slice(end));
+      requestAnimationFrame(() => {
+        const pos = start + insert.length;
+        try { el.selectionStart = el.selectionEnd = pos; } catch { /* ignore */ }
+      });
+    }
+  }
+  function handleChange(e) {
+    let v = e.target.value;
+    // Seed the first bullet when the user starts typing into an empty box.
+    if (text === '' && v && !v.startsWith(BULLET)) v = BULLET + v;
+    setText(v);
+  }
+
+  return (
+    <div style={{ margin: '0 1.25rem 0.75rem', border: '1px solid var(--color-border)', borderRadius: 8, background: 'var(--color-bg)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.4rem 0.6rem', borderBottom: collapsed ? 'none' : '1px solid var(--color-border-light)' }}>
+        <button
+          type="button"
+          onClick={() => setCollapsed(c => !c)}
+          title={collapsed ? 'Expand the To do list' : 'Collapse the To do list'}
+          style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '0.75rem', color: 'var(--color-text-muted)', padding: 0, width: 14, lineHeight: 1 }}
+        >{collapsed ? '▸' : '▾'}</button>
+        <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--color-text)', flex: 1 }}>To do</span>
+        {text.trim() && (
+          <button
+            type="button"
+            onClick={() => setText('')}
+            title="Clear the To do list"
+            style={{ border: '1px solid var(--color-border)', background: 'var(--color-bg)', borderRadius: 6, fontSize: '0.68rem', fontWeight: 600, color: 'var(--color-text-muted)', padding: '0.15rem 0.5rem', cursor: 'pointer', fontFamily: 'inherit' }}
+          >Clear</button>
+        )}
+      </div>
+      {!collapsed && (
+        <textarea
+          value={text}
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
+          placeholder="Jot a to-do and press Enter for a new bullet…"
+          rows={4}
+          style={{ display: 'block', width: '100%', boxSizing: 'border-box', border: 'none', borderRadius: '0 0 8px 8px', resize: 'vertical', padding: '0.5rem 0.6rem', fontSize: '0.8rem', fontFamily: 'inherit', color: 'var(--color-text)', background: 'transparent', lineHeight: 1.5, outline: 'none', minHeight: 72 }}
+        />
+      )}
+    </div>
+  );
+}
+
 export function OppsView2({ settings, updateSettings, prospects = [], updateProspect, addProspect, onSelectProspect } = {}) {
   const { user, isAdmin } = useAuth();
   // Seeded with DEFAULT_HEADERS so the table renders columns immediately;
@@ -8771,26 +8840,28 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             ? 'Re-apply filters'
             : `Show hidden${hiddenByFilterCount ? ` (${hiddenByFilterCount})` : ''}`}
         </button>
-      </div>
-
-      {activeTab === 'opps' && (
-        <>
-          <div className={styles.searchRow}>
+        {/* Opps-tab search + result count + Mass Edit, hoisted up onto the
+            filter row so the whole control strip sits on one line. Guarded
+            to the Opportunities tab (the other tabs have no free-text
+            search). */}
+        {activeTab === 'opps' && (
+          <>
             <input
               className={styles.searchInput}
               type="text"
               placeholder="Search across all columns (Account, Stage, Scope, Notes, BFO Address, …)"
               value={search}
               onChange={e => setSearch(e.target.value)}
+              style={{ width: 260 }}
             />
             <span className={styles.resultCount}>{filtered.length} of {prefiltered.length}{filtersActive && prefiltered.length !== records.length ? ` (filtered from ${records.length})` : ''}</span>
             <button
               type="button"
               onClick={() => {
                 setMassEditOn(on => {
-                  // Leaving mass-edit mode clears any in-flight
-                  // selection so the bulk toolbar disappears and the
-                  // next time the user re-enters they start fresh.
+                  // Leaving mass-edit mode clears any in-flight selection
+                  // so the bulk toolbar disappears and the next time the
+                  // user re-enters they start fresh.
                   if (on) setSelectedIds(new Set());
                   return !on;
                 });
@@ -8799,7 +8870,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 ? 'Hide the selection checkboxes and exit mass-edit mode.'
                 : 'Show selection checkboxes so you can pick multiple rows to edit at once.'}
               style={{
-                marginLeft: '0.5rem',
                 padding: '0.3rem 0.7rem',
                 fontSize: '0.78rem',
                 fontWeight: 600,
@@ -8819,7 +8889,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                   ? 'Show every row again. Your selection is kept.'
                   : 'Hide every row that isn\'t currently selected.'}
                 style={{
-                  marginLeft: '0.5rem',
                   padding: '0.3rem 0.7rem',
                   fontSize: '0.78rem',
                   fontWeight: 600,
@@ -8832,7 +8901,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 }}
               >{showOnlySelected ? `Showing ${selectedIds.size} selected — Show all` : `Show ${selectedIds.size} selected only`}</button>
             )}
-          </div>
+          </>
+        )}
+      </div>
+
+      {activeTab === 'opps' && (
+        <>
+          <TodoBox />
 
           {massEditOn && selectedIds.size > 0 && (
             <MassEditBar
