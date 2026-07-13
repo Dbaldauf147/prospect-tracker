@@ -3847,24 +3847,27 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return () => { cancelled = true; };
   }, [fields.portfolioCompanies, portfolioFlagVersion, prospects]);
 
-  // Frameworks dropdown shows the union of the prospect's manual
-  // frameworks array and any Lists-page confirmed mappings. Editing
-  // the dropdown writes only to fields.frameworks; Lists-page flags
-  // come through computeListFlags. The two surfaces stay consistent
-  // without a migration.
+  // Frameworks that come from a *confirmed Lists-page mapping* for this
+  // company (My Accounts or Portfolio scope). This is the ONLY source we
+  // treat as "Auto". Deliberately computed WITHOUT passing `prospects`:
+  // computeListFlags also folds a prospect's own frameworks array into its
+  // result, and if we included that here every manually- or Claude-added
+  // framework (once saved on the prospect) would masquerade as an
+  // auto-mapping. Manual / Claude provenance is tracked separately in
+  // fields.frameworkSources.
   const [companyFrameworkFlags, setCompanyFrameworkFlags] = useState(() => new Set());
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const name = fields.company;
       if (!name) { if (!cancelled) setCompanyFrameworkFlags(new Set()); return; }
-      const flags = await computeListFlags([name], { prospects });
+      const flags = await computeListFlags([name]);
       if (cancelled) return;
       const set = flags.get(name.toLowerCase().trim()) || new Set();
       setCompanyFrameworkFlags(set);
     })();
     return () => { cancelled = true; };
-  }, [fields.company, portfolioFlagVersion, prospects, fields.frameworks]);
+  }, [fields.company, portfolioFlagVersion]);
   const effectiveFrameworks = useMemo(() => {
     const out = new Set(fields.frameworks || []);
     for (const f of companyFrameworkFlags) out.add(f);
