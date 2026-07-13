@@ -4,14 +4,13 @@ import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadOpps2Newest, setOppField } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
-import { formatDateDisplay } from '../../utils/oppsCallIn';
+import { formatDateDisplay, toISODate, daysFromToday } from '../../utils/oppsCallIn';
 import { PE_STAGES, STATUSES, TYPES, TIERS, GEOGRAPHIES } from '../../data/enums';
 import { InlineCell } from '../TableView/TableView';
 import { buildTypeOptions, buildCdmOptions, persistCustomOption, buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions } from '../../utils/prospectOptions';
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import { computePortfolioFitScore, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
-import { StageDaysBoard, buildStageDaysRows, groupStageDaysByStage } from '../OppsView2/daysInStage';
 import { DataTable } from '../common/DataTable';
 import { PasteAddModal } from '../TableView/PasteAddModal';
 import { splitPeOwners } from '../../utils/peOwners';
@@ -239,9 +238,6 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     try { return localStorage.getItem('pe-portfolio:pe-firm') || 'Blue Owl'; } catch { return 'Blue Owl'; }
   });
   const [showClosed, setShowClosed] = useState(false);
-  // "Days in Stage" sub-tab toggle: hide the (often noisy) Not Started
-  // column. Mirrors the same control on the Opps 2 Days-in-Stage board.
-  const [stageDaysHideNotStarted, setStageDaysHideNotStarted] = useState(false);
   const [oppsQuery, setOppsQuery] = useState('');
   // Independent search box for the dedicated Blackstone Opps tab.
   const [blackstoneQuery, setBlackstoneQuery] = useState('');
@@ -434,13 +430,6 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     [oppsFirm, peOpps, oppsRecords, prospects],
   );
 
-  // "Days in Stage" sub-tab: the same Kanban the Opps 2 page shows, built
-  // over the PE opps. Follows the firm scope so picking a firm on the PE
-  // Opps tab narrows this board to that firm too. TRACKED_STAGES already
-  // excludes closed stages, so Sold / Not Sold opps drop off the board.
-  const stageDaysRows = useMemo(() => buildStageDaysRows(peOppsScoped), [peOppsScoped]);
-  const stageDaysByStage = useMemo(() => groupStageDaysByStage(stageDaysRows), [stageDaysRows]);
-
   const filteredPeOpps = useMemo(() => {
     const q = oppsQuery.trim().toLowerCase();
     if (!q) return peOppsScoped;
@@ -472,6 +461,25 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       .filter(p => p.type === 'Private Equity')
       .sort((a, b) => (a.company || '').localeCompare(b.company || ''))
   ), [prospects]);
+
+  // "Days in Stage" needs to know when each firm entered its current PE
+  // Stage. Going forward that's stamped on every stage change (see
+  // useProspects.updateProspect). For firms that already had a stage set
+  // before this shipped, "start the clock now": stamp today once so they
+  // begin counting from here instead of showing blank forever. Runs a
+  // single pass per mount once the firms have loaded.
+  const peStageBackfilledRef = useRef(false);
+  useEffect(() => {
+    if (peStageBackfilledRef.current || !peFirms.length) return;
+    peStageBackfilledRef.current = true;
+    const d = new Date();
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    for (const p of peFirms) {
+      if (PE_STAGES.includes(p.peStage) && !p.peStageEnteredAt) {
+        onUpdateProspect?.(p.id, { peStageEnteredAt: today });
+      }
+    }
+  }, [peFirms, onUpdateProspect]);
 
   // Total mapped portfolio companies across every PE firm — drives the
   // "All PCs" sub-tab count.
@@ -908,7 +916,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               : subtab === 'blueOwl'
               ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>{peFirm || '—'}</code>. Pick a different firm from the dropdown to switch the view. Double-click any cell to edit it — same dropdowns as Table View.</>
               : subtab === 'stageDays'
-              ? <>The <strong>PE opps</strong> laid out by pipeline stage, each card showing how many days it has sat in its current stage. Mirrors the <strong>Days in Stage</strong> board on the Opps page. Cards flag amber when they stall past that stage's limit (hover for the suggested move).</>
+              ? <>PE firms grouped by their <strong>PE Stage</strong>, each card showing how many days the firm has sat in that stage. The clock starts when a firm's PE Stage changes (set in its company popup); firms already in a stage started counting the day this shipped. Longest-waiting firms lead each column.</>
               : <>Every opportunity from the <strong>Opps</strong> tab with Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>}
           </div>
         </div>
@@ -928,7 +936,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           { key: 'companies', label: 'All PCs', count: allPortfolioCompanyCount },
           { key: 'blueOwl', label: 'PE Overview', count: peFirmCompanies.length },
           { key: 'opps', label: 'PE Opps', count: peOppsScoped.length },
-          { key: 'stageDays', label: 'Days in Stage', count: stageDaysRows.length },
+          { key: 'stageDays', label: 'Days in Stage', count: peFirms.filter(p => PE_STAGES.includes(p.peStage)).length },
           { key: 'blackstoneOpps', label: 'Blackstone Opps', count: blackstoneOpps.length },
         ].map(t => {
           const isActive = subtab === t.key;
@@ -1027,13 +1035,11 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           updateSettings={updateSettings}
         />
       ) : subtab === 'stageDays' ? (
-        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '0 1.25rem 1rem' }}>
-          <StageDaysBoard
-            byStage={stageDaysByStage}
-            hideNotStarted={stageDaysHideNotStarted}
-            setHideNotStarted={setStageDaysHideNotStarted}
-          />
-        </div>
+        <PEStageDaysTab
+          firms={peFirms}
+          portfolioByPe={portfolioByPe}
+          onSelectProspect={onSelectProspect}
+        />
       ) : (
       <>
       <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -2813,6 +2819,137 @@ function PEStagesTab({ firms, portfolioByPe, onSelectProspect }) {
                         style={{ display: 'block', width: '100%', textAlign: 'left', background: '#fff', border: '1px solid #E2E8F0', borderLeft: `3px solid ${accent}`, borderRadius: 6, padding: '0.55rem 0.6rem', cursor: 'pointer', fontFamily: 'inherit', boxShadow: '0 1px 2px rgba(15,23,42,0.04)' }}
                       >
                         <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pe.company || '—'}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem', marginTop: '0.35rem' }}>
+                          <span style={{ fontSize: '0.7rem', fontWeight: 600, color: pe.peAum ? '#1E293B' : '#CBD5E1' }} title={pe.peAum ? `PE AUM: $${pe.peAum}B` : 'No PE AUM set'}>{formatAum(pe.peAum)}</span>
+                          <span style={{ fontSize: '0.68rem', fontWeight: 600, color: pe.geography ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={pe.geography || 'No geography set'}>{pe.geography || '—'}</span>
+                        </div>
+                        <div style={{ marginTop: '0.3rem', fontSize: '0.66rem', fontWeight: 600, color: pcCount ? '#64748B' : '#CBD5E1' }} title="Portfolio companies linked to this firm">
+                          {pcCount} portfolio co{pcCount === 1 ? '' : 's'}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
+
+// PE firms laid out by PE Stage — the same Kanban shape as the PE Stages
+// board, but each card carries a "days in stage" badge and the columns
+// sort longest-waiting firm first. Mirrors the Opps page's Days-in-Stage
+// board (day counts, longest-stalling on top) at the firm level. The day
+// count reads `peStageEnteredAt` (stamped whenever a firm's PE Stage
+// changes); firms with no stamp yet show "—".
+function PEStageDaysTab({ firms, portfolioByPe, onSelectProspect }) {
+  const [query, setQuery] = useState('');
+  const [hideUnassigned, setHideUnassigned] = useState(false);
+  const STAGE_META = [
+    { stage: 'Discovery', accent: '#2563EB', bg: '#EFF6FF', border: '#BFDBFE' },
+    { stage: 'Piloting', accent: '#D97706', bg: '#FFFBEB', border: '#FDE68A' },
+    { stage: 'Existing Partnership', accent: '#059669', bg: '#ECFDF5', border: '#A7F3D0' },
+    { stage: 'Not Sold', accent: '#DC2626', bg: '#FEF2F2', border: '#FECACA' },
+    { stage: 'Unassigned', accent: '#64748B', bg: '#F8FAFC', border: '#E2E8F0' },
+  ];
+  const stageOf = (pe) => (PE_STAGES.includes(pe.peStage) ? pe.peStage : 'Unassigned');
+  const pcCountOf = (pe) => (portfolioByPe.get((pe.company || '').trim().toLowerCase()) || []).length;
+  // Days the firm has sat in its current PE Stage. null when there's no
+  // entry date recorded (Unassigned firms, or ones not yet stamped).
+  const daysOf = (pe) => {
+    const iso = toISODate(pe.peStageEnteredAt);
+    if (!iso) return null;
+    return Math.max(0, -daysFromToday(iso));
+  };
+  const q = query.trim().toLowerCase();
+  const filtered = q ? firms.filter(p => (p.company || '').toLowerCase().includes(q)) : firms;
+  const groups = new Map(STAGE_META.map(m => [m.stage, []]));
+  for (const pe of filtered) groups.get(stageOf(pe)).push(pe);
+  // Longest-waiting firm first in each column; firms with no day count
+  // settle at the bottom, tie-broken by name so the order is stable.
+  for (const list of groups.values()) {
+    list.sort((a, b) => {
+      const da = daysOf(a); const dbv = daysOf(b);
+      if (da == null && dbv == null) return (a.company || '').localeCompare(b.company || '');
+      if (da == null) return 1;
+      if (dbv == null) return -1;
+      return dbv - da || (a.company || '').localeCompare(b.company || '');
+    });
+  }
+  const columns = STAGE_META.filter(m => !(hideUnassigned && m.stage === 'Unassigned'));
+  const unassignedCount = (groups.get('Unassigned') || []).length;
+  // Day-badge color ramp — the longer a firm has sat in a stage the more
+  // it stands out. Neutral for fresh entries, amber past ~3 months, red
+  // past ~6 so a stalled relationship is obvious at a glance.
+  const dayColor = (days) => (days == null ? '#CBD5E1' : days >= 180 ? '#DC2626' : days >= 90 ? '#B45309' : '#475569');
+
+  return (
+    <>
+      <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        <input
+          type="text"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder={`Search ${firms.length} PE firm${firms.length === 1 ? '' : 's'}…`}
+          style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
+        />
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.72rem', color: '#64748B', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          <input type="checkbox" checked={hideUnassigned} onChange={e => setHideUnassigned(e.target.checked)} />
+          Hide Unassigned ({unassignedCount})
+        </label>
+      </div>
+      {firms.length === 0 ? (
+        <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
+          <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
+            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No PE firms found</div>
+            <div style={{ fontSize: '0.78rem' }}>Set a prospect's <strong>Type</strong> to <code>Private Equity</code> to list it here.</div>
+          </div>
+        </div>
+      ) : (
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: '0.75rem', overflowX: 'auto', overflowY: 'hidden', padding: '0 1.25rem 1.25rem' }}>
+          {columns.map(({ stage, accent, bg, border }) => {
+            const list = groups.get(stage) || [];
+            return (
+              <div key={stage} style={{ flex: '0 0 290px', display: 'flex', flexDirection: 'column', minHeight: 0, border: `1px solid ${border}`, borderRadius: 8, background: '#F8FAFC', overflow: 'hidden' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.55rem 0.75rem', background: bg, borderBottom: `1px solid ${border}`, flexShrink: 0 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: accent }} />
+                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1E293B', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{stage}</span>
+                  <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '1px 7px', borderRadius: 999, background: accent, color: '#fff' }}>{list.length}</span>
+                </div>
+                <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, padding: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {list.length === 0 ? (
+                    <div style={{ padding: '0.6rem 0.5rem', fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic', textAlign: 'center' }}>
+                      {q ? 'No matches here.' : 'No PE firms at this stage.'}
+                    </div>
+                  ) : list.map((pe) => {
+                    const pcCount = pcCountOf(pe);
+                    const days = daysOf(pe);
+                    const enteredISO = toISODate(pe.peStageEnteredAt);
+                    const badgeTitle = stage === 'Unassigned'
+                      ? 'No PE Stage set — set one in this firm\'s company popup to start the clock.'
+                      : enteredISO
+                        ? `In ${stage} since ${formatDateDisplay(enteredISO)} · ${days} day${days === 1 ? '' : 's'}`
+                        : 'No entry date recorded yet.';
+                    return (
+                      <button
+                        key={pe.id}
+                        type="button"
+                        onClick={() => onSelectProspect?.(pe)}
+                        title={`Open ${pe.company || 'this firm'}`}
+                        style={{ display: 'block', width: '100%', textAlign: 'left', background: '#fff', border: '1px solid #E2E8F0', borderLeft: `3px solid ${accent}`, borderRadius: 6, padding: '0.55rem 0.6rem', cursor: 'pointer', fontFamily: 'inherit', boxShadow: '0 1px 2px rgba(15,23,42,0.04)' }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.4rem' }}>
+                          <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{pe.company || '—'}</span>
+                          <span
+                            title={badgeTitle}
+                            style={{ fontSize: '0.72rem', fontWeight: 700, color: dayColor(days), fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', flexShrink: 0 }}
+                          >
+                            {days == null ? '—' : `${days}d`}
+                          </span>
+                        </div>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem', marginTop: '0.35rem' }}>
                           <span style={{ fontSize: '0.7rem', fontWeight: 600, color: pe.peAum ? '#1E293B' : '#CBD5E1' }} title={pe.peAum ? `PE AUM: $${pe.peAum}B` : 'No PE AUM set'}>{formatAum(pe.peAum)}</span>
                           <span style={{ fontSize: '0.68rem', fontWeight: 600, color: pe.geography ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={pe.geography || 'No geography set'}>{pe.geography || '—'}</span>

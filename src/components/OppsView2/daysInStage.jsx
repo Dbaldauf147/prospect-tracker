@@ -1,10 +1,9 @@
-// Shared "Days in Stage" logic + Kanban board.
+// "Days in Stage" logic + Kanban board for the Opps 2 tab.
 //
-// Extracted from the Opps 2 tab so the PE Portfolio page can render the
-// exact same board over its PE-scoped opps. Both callers pass the same
-// shape of opp records (the Opps 2 rows, which carry `_stageEnteredAt`,
-// `_stageHistory`, `Stage`, `Scope`, `Follow Up`, …) so the board reads
-// identically in either place.
+// Factored out of OppsView2 (which is otherwise a single ~9k-line file)
+// so the board, its row builder, and the tracked-stage constants live in
+// one focused module. Operates on Opps 2 rows (which carry
+// `_stageEnteredAt`, `_stageHistory`, `Stage`, `Scope`, `Follow Up`, …).
 import { toISODate, formatDateDisplay, daysFromToday, resolveCallIn } from '../../utils/oppsCallIn';
 
 // Stages the Days-in-Stage board reports on. Ordered to mirror the
