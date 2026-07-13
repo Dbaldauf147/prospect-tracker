@@ -630,6 +630,14 @@ const COLUMN_ORDER = [
   'Follow Up On Sale',
 ];
 
+// The Year column is derived, not stored — it always shows the calendar
+// year of the deal's Original Contract Start date so the two can't drift
+// apart. Returns '' when that date is missing or unparseable.
+function dealYear(row) {
+  const d = asDate(row?.['Original Contract Start']);
+  return d ? String(d.getFullYear()) : '';
+}
+
 function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
   if (!rows.length) return [];
   const keys = new Set();
@@ -639,6 +647,9 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
     if (k === 'id' || k.startsWith('__')) continue;
     keys.add(k);
   }
+  // Year is always present since it's computed from Original Contract
+  // Start — surface the column even when no workbook cell populated it.
+  keys.add('Year');
   // Empty new-row case: nothing in the data has populated keys yet
   // (the user just clicked New Deal on a clean slate). Seed with the
   // canonical lineup so they have somewhere to type instead of staring
@@ -661,6 +672,7 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
     const isPaidToDate = k === 'Paid to Date';
     const isDaysPaidOn = k === 'Days/Paid on';
     const isCurrentlyBeingPaid = k === 'Currently being paid';
+    const isYear = k === 'Year';
     const kind = isCheck ? 'check'
       : isCurrency ? 'currency'
       : isPercent ? 'percent'
@@ -806,6 +818,15 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
         if (isDaysPaidOn) {
           return <DaysPaidOnCell row={row} />;
         }
+        // Year is derived from Original Contract Start — render it
+        // read-only so it always tracks that date instead of drifting to
+        // a hand-typed value.
+        if (isYear) {
+          const year = dealYear(row);
+          return year
+            ? <span style={{ color: '#334155', fontVariantNumeric: 'tabular-nums' }}>{year}</span>
+            : <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+        }
         // Currently being paid mirrors the Commissions tab's Payment
         // Status pill — pulled by the deal's BFO opp name so the user
         // doesn't have to keep two columns in sync by hand. Falls back
@@ -870,6 +891,7 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
         );
       },
       exportValue: (row) => {
+        if (isYear) return dealYear(row);
         const v = row[k];
         if (v == null) return '';
         if (isCurrency || isPercent) {
@@ -1899,9 +1921,11 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
             }}
             emptyMessage={search ? `No deals match "${search}"` : 'No deals to display'}
             enableColumnFilters
-            // Always include Commission in the Excel export, even when the
-            // user has hidden that column in the on-screen table.
-            exportExtraColumnKeys={['Commission']}
+            // Name the downloaded workbook "Deal Export - <date>.xlsx".
+            exportFileName="Deal Export"
+            // Always include Commission and the derived Year in the Excel
+            // export, even when the user has hidden them on screen.
+            exportExtraColumnKeys={['Commission', 'Year']}
             settings={settings}
             updateSettings={updateSettings}
           />
