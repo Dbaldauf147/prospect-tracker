@@ -801,6 +801,17 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
       // fully-paid / no-due-date rows come through as null and fall to
       // the bottom of the sort either direction.
       ...(isDaysPaidOn ? { getSortValue: (row) => effectiveDaysPaidOn(row) } : {}),
+      // Year renders a value derived from Original Contract Start (see the
+      // isYear render branch), so the filter, sort, and export must read
+      // that same derived value — not the raw stored 'Year' cell. Without
+      // this a deal shows e.g. "2026" from its contract date but a Year
+      // filter (which would otherwise fall back to the blank stored cell)
+      // silently skips it.
+      ...(isYear ? {
+        getFilterValue: (row) => dealYear(row),
+        getSortValue: (row) => { const y = dealYear(row); return y ? Number(y) : null; },
+        exportValue: (row) => dealYear(row),
+      } : {}),
       ...(sticky ? { sticky: true } : {}),
       ...(closedWonHeaderUrl ? {
         renderHeader: (label) => (
