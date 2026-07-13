@@ -593,7 +593,7 @@ const PORTFOLIO_FIELD_OPTIONS = [
 // fallback) now lives in ../../data/cities so the All Contacts table
 // can share the exact same auto-fill behavior as this modal.
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, events = [], onToggleContactEvent, companyContacts = [], emailDomains = [], companyNames = [] }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, events = [], onToggleContactEvent, companyContacts = [], emailDomains = [], companyNames = [] }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -606,6 +606,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   const cid = contact.id || contact.vid;
   const savedNote = (cid && contactNotes[cid]) || contact.notes || contact.hs_content_membership_notes || contact.message || '';
   const savedOldEmails = (cid && contactOldEmails[cid]) || '';
+  const savedOldCompany = (cid && contactOldCompany[cid]) || '';
   const savedNickname = (cid && contactNicknames[cid]) || '';
   const savedTeamName = (cid && contactTeamNames[cid]) || '';
   const savedFamily = (cid && contactFamilies[cid]) || { partner: '', kids: '' };
@@ -641,6 +642,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     teamName: savedTeamName,
     notes: savedNote,
     oldEmails: savedOldEmails,
+    oldCompany: savedOldCompany,
     partner: savedFamily.partner || '',
     kids: savedFamily.kids || '',
   });
@@ -967,9 +969,10 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     try {
       const allProps = { ...f, dans_tags: buildTagsString() };
       // HubSpot doesn't have these local-only fields — save them separately via settings.
-      const { notes, oldEmails, nickname, teamName, partner, kids, ...hsProps } = allProps;
+      const { notes, oldEmails, oldCompany, nickname, teamName, partner, kids, ...hsProps } = allProps;
       const noteValue = notes || '';
       const oldEmailsValue = oldEmails || '';
+      const oldCompanyValue = oldCompany || '';
       const nicknameValue = nickname || '';
       const teamNameValue = teamName || '';
       const familyValue = { partner: partner || '', kids: kids || '' };
@@ -1055,6 +1058,9 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       }
       if (savedCid && onSaveOldEmails) {
         onSaveOldEmails(savedCid, oldEmailsValue);
+      }
+      if (savedCid && onSaveOldCompany) {
+        onSaveOldCompany(savedCid, oldCompanyValue);
       }
       if (savedCid && onSaveNickname) {
         onSaveNickname(savedCid, nicknameValue);
@@ -1293,6 +1299,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               );
             })()}
           </div>
+          <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Old Company <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(previous employer)</span></label><input style={inputStyle} value={f.oldCompany} onChange={e => set('oldCompany', e.target.value)} placeholder="Previous company name" /></div>
           <div style={{ gridColumn: 'span 2' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
               <label style={labelStyle}>LinkedIn URL</label>
@@ -1810,7 +1817,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     e.id, e.name, (e.attendees || []).some(a => a.contactId && String(a.contactId) === String(id)),
   ]));
   const eventsEqual = eventSig(prev.events, prevId) === eventSig(next.events, nextId);
-  return prevId === nextId && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions && prev.onSaveNote === next.onSaveNote && prev.onSaveOldEmails === next.onSaveOldEmails && prev.onSaveNickname === next.onSaveNickname && prev.onSaveReportsTo === next.onSaveReportsTo && prevMgrs === nextMgrs && companyContactsEqual && domainsEqual && eventsEqual;
+  return prevId === nextId && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions && prev.onSaveNote === next.onSaveNote && prev.onSaveOldEmails === next.onSaveOldEmails && prev.onSaveOldCompany === next.onSaveOldCompany && prev.onSaveNickname === next.onSaveNickname && prev.onSaveReportsTo === next.onSaveReportsTo && prevMgrs === nextMgrs && companyContactsEqual && domainsEqual && eventsEqual;
 });
 
 function SearchableSelect({ options, value, onChange, placeholder = 'Select…', allowCustom = true }) {
@@ -3117,6 +3124,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     else delete next[contactId];
     updateSettings({ contactOldEmails: next });
   }, [settings.contactOldEmails, updateSettings]);
+
+  const handleSaveContactOldCompany = useCallback((contactId, oldCompany) => {
+    const current = settings.contactOldCompany || {};
+    const next = { ...current };
+    if (oldCompany && oldCompany.trim()) next[contactId] = oldCompany;
+    else delete next[contactId];
+    updateSettings({ contactOldCompany: next });
+  }, [settings.contactOldCompany, updateSettings]);
 
   const handleSaveContactNickname = useCallback((contactId, nickname) => {
     const current = settings.contactNicknames || {};
@@ -7847,6 +7862,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           onSaveNote={handleSaveContactNote}
           contactOldEmails={settings.contactOldEmails || {}}
           onSaveOldEmails={handleSaveContactOldEmails}
+          contactOldCompany={settings.contactOldCompany || {}}
+          onSaveOldCompany={handleSaveContactOldCompany}
           onSaveCompanyOverride={(contactId, value) => {
             // value === null clears the override; a string pins it. Stored
             // in settings.contactLocalFields, the same map App.jsx reads to

@@ -6170,6 +6170,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     if (val && val.trim()) next[cid] = val; else delete next[cid];
     updateSettings({ contactOldEmails: next });
   }, [settings?.contactOldEmails, updateSettings]);
+  const saveContactOldCompany = useCallback((cid, val) => {
+    const cur = settings?.contactOldCompany || {};
+    const next = { ...cur };
+    if (val && val.trim()) next[cid] = val; else delete next[cid];
+    updateSettings({ contactOldCompany: next });
+  }, [settings?.contactOldCompany, updateSettings]);
   const saveContactNickname = useCallback((cid, val) => {
     const cur = settings?.contactNicknames || {};
     const next = { ...cur };
@@ -8736,6 +8742,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           onSaveNote={saveContactNote}
           contactOldEmails={settings?.contactOldEmails || {}}
           onSaveOldEmails={saveContactOldEmails}
+          contactOldCompany={settings?.contactOldCompany || {}}
+          onSaveOldCompany={saveContactOldCompany}
           contactNicknames={settings?.contactNicknames || {}}
           onSaveNickname={saveContactNickname}
           contactTeamNames={settings?.contactTeamNames || {}}
