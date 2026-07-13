@@ -11,6 +11,7 @@ import { buildTypeOptions, buildCdmOptions, persistCustomOption, buildStrategyOp
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import { computePortfolioFitScore, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
+import { StageDaysBoard, buildStageDaysRows, groupStageDaysByStage } from '../OppsView2/daysInStage';
 import { DataTable } from '../common/DataTable';
 import { PasteAddModal } from '../TableView/PasteAddModal';
 import { splitPeOwners } from '../../utils/peOwners';
@@ -238,6 +239,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     try { return localStorage.getItem('pe-portfolio:pe-firm') || 'Blue Owl'; } catch { return 'Blue Owl'; }
   });
   const [showClosed, setShowClosed] = useState(false);
+  // "Days in Stage" sub-tab toggle: hide the (often noisy) Not Started
+  // column. Mirrors the same control on the Opps 2 Days-in-Stage board.
+  const [stageDaysHideNotStarted, setStageDaysHideNotStarted] = useState(false);
   const [oppsQuery, setOppsQuery] = useState('');
   // Independent search box for the dedicated Blackstone Opps tab.
   const [blackstoneQuery, setBlackstoneQuery] = useState('');
@@ -429,6 +433,13 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     () => computeFirmScopedOpps(oppsFirm, peOpps, oppsRecords, prospects),
     [oppsFirm, peOpps, oppsRecords, prospects],
   );
+
+  // "Days in Stage" sub-tab: the same Kanban the Opps 2 page shows, built
+  // over the PE opps. Follows the firm scope so picking a firm on the PE
+  // Opps tab narrows this board to that firm too. TRACKED_STAGES already
+  // excludes closed stages, so Sold / Not Sold opps drop off the board.
+  const stageDaysRows = useMemo(() => buildStageDaysRows(peOppsScoped), [peOppsScoped]);
+  const stageDaysByStage = useMemo(() => groupStageDaysByStage(stageDaysRows), [stageDaysRows]);
 
   const filteredPeOpps = useMemo(() => {
     const q = oppsQuery.trim().toLowerCase();
@@ -896,6 +907,8 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               ? <>Every mapped <strong>portfolio company</strong> across all PE firms (from each firm's Portfolio Companies tab), merged into one searchable, filterable table. <strong>Opportunity Score</strong> is ranked within each PC's own firm — matching that firm's export. The <strong>PE Owner</strong> dropdown filters to one owner, matching the source PE firm, the company's own PE Owner from Table View, or firms that owner owns — so picking <code>Blue Owl</code> also shows the portfolio companies of every Blue Owl-owned firm.</>
               : subtab === 'blueOwl'
               ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>{peFirm || '—'}</code>. Pick a different firm from the dropdown to switch the view. Double-click any cell to edit it — same dropdowns as Table View.</>
+              : subtab === 'stageDays'
+              ? <>The <strong>PE opps</strong> laid out by pipeline stage, each card showing how many days it has sat in its current stage. Mirrors the <strong>Days in Stage</strong> board on the Opps page. Cards flag amber when they stall past that stage's limit (hover for the suggested move).</>
               : <>Every opportunity from the <strong>Opps</strong> tab with Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>}
           </div>
         </div>
@@ -915,6 +928,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           { key: 'companies', label: 'All PCs', count: allPortfolioCompanyCount },
           { key: 'blueOwl', label: 'PE Overview', count: peFirmCompanies.length },
           { key: 'opps', label: 'PE Opps', count: peOppsScoped.length },
+          { key: 'stageDays', label: 'Days in Stage', count: stageDaysRows.length },
           { key: 'blackstoneOpps', label: 'Blackstone Opps', count: blackstoneOpps.length },
         ].map(t => {
           const isActive = subtab === t.key;
@@ -1012,6 +1026,14 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           settings={settings}
           updateSettings={updateSettings}
         />
+      ) : subtab === 'stageDays' ? (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '0 1.25rem 1rem' }}>
+          <StageDaysBoard
+            byStage={stageDaysByStage}
+            hideNotStarted={stageDaysHideNotStarted}
+            setHideNotStarted={setStageDaysHideNotStarted}
+          />
+        </div>
       ) : (
       <>
       <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
