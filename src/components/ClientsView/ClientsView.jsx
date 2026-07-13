@@ -390,6 +390,46 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     }
   }, [subtab]);
 
+  // One-time migration for the Tier column. DataTable permanently hides
+  // any column that didn't exist when a user last customized their
+  // visible-columns set, so users who've touched the Columns menu would
+  // find Tier stuck under "Hidden columns". Inject it once (right after
+  // CDM) into their saved set — both the localStorage copy and the
+  // Firestore-synced tablePrefs — so it shows without them hunting for
+  // it. Sticky per-table flag so re-hiding Tier still sticks. Only ADDs;
+  // never removes a column.
+  useEffect(() => {
+    if (!settings) return;
+    const nextTablePrefs = { ...(settings.tablePrefs || {}) };
+    let touchedRemote = false;
+    for (const tid of ['clients', 'oldclients']) {
+      const flag = `clients-view:mig-tier-col-${tid}`;
+      let alreadyDone = true;
+      try { alreadyDone = !!localStorage.getItem(flag); } catch { /* storage blocked */ }
+      if (alreadyDone) continue;
+      const remote = settings.tablePrefs?.[tid]?.visible;
+      let lsSaved = null;
+      try {
+        const raw = JSON.parse(localStorage.getItem(`prospect-col-visible-${tid}`));
+        if (Array.isArray(raw)) lsSaved = raw;
+      } catch { /* ignore malformed */ }
+      // Firestore prefs win when present; else the local set. No saved
+      // customization at all means every column (incl. Tier) already shows.
+      const saved = Array.isArray(remote) && remote.length > 0
+        ? remote
+        : (Array.isArray(lsSaved) && lsSaved.length > 0 ? lsSaved : null);
+      try { localStorage.setItem(flag, '1'); } catch { /* storage blocked */ }
+      if (!saved || saved.includes('tier')) continue;
+      const next = [...saved];
+      const cdmIdx = next.indexOf('cdm');
+      if (cdmIdx >= 0) next.splice(cdmIdx, 0, 'tier'); else next.push('tier');
+      try { localStorage.setItem(`prospect-col-visible-${tid}`, JSON.stringify(next)); } catch { /* storage blocked */ }
+      nextTablePrefs[tid] = { ...(settings.tablePrefs?.[tid] || {}), visible: next };
+      touchedRemote = true;
+    }
+    if (touchedRemote && updateSettings) updateSettings({ tablePrefs: nextTablePrefs });
+  }, [settings, updateSettings]);
+
   // User-configurable column-to-Dropdowns-list bindings, mirroring the
   // Deals / Opps 2 "Link columns" feature. Lets the Status column on
   // this table pull picks from a Dropdowns-tab list.
@@ -446,6 +486,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
         return (
           (c.company || '').toLowerCase().includes(q) ||
           (c.cdm || '').toLowerCase().includes(q) ||
+          (c.tier || '').toLowerCase().includes(q) ||
           (c.type || '').toLowerCase().includes(q) ||
           (c.website || '').toLowerCase().includes(q) ||
           (managerMap[ck] || '').toLowerCase().includes(q) ||
@@ -549,6 +590,31 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
             value={row.Status}
             onCommit={setClientStatus}
           />
+        );
+      },
+    },
+    {
+      key: 'tier', label: 'Tier', defaultWidth: 100,
+      // Order Tier 1 → 2 → 3, blanks last, so a Tier sort surfaces the
+      // top accounts first regardless of ascending / descending.
+      getSortValue: (row) => {
+        const m = String(row.tier || '').match(/(\d+)/);
+        return m ? Number(m[1]) : Number.POSITIVE_INFINITY;
+      },
+      getFilterValue: (row) => row.tier || '',
+      render: (row) => {
+        const t = String(row.tier || '').trim();
+        if (!t || t === '-') return <span style={{ color: '#94A3B8' }}>—</span>;
+        // Tier 1 pops red (top accounts); Tier 2 blue; anything else slate.
+        const palette = /1/.test(t)
+          ? { bg: '#FEE2E2', color: '#B91C1C' }
+          : /2/.test(t)
+          ? { bg: '#DBEAFE', color: '#1E40AF' }
+          : { bg: '#F1F5F9', color: '#475569' };
+        return (
+          <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: palette.bg, color: palette.color, whiteSpace: 'nowrap' }}>
+            {t}
+          </span>
         );
       },
     },
@@ -745,7 +811,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
           type="text"
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder="Filter by company, CDM, Client Manager, Status, type, website…"
+          placeholder="Filter by company, CDM, Tier, Client Manager, Status, type, website…"
           style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
         <button
