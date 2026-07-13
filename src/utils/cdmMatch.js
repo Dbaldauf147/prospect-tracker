@@ -22,6 +22,23 @@ export function matchesCdm(prospectCdm, cdmName) {
 // Target Accounts page. Order matters — the first matching column wins.
 const CDM_COLUMN_KEYWORDS = ['CDM', 'Salesperson', 'Sales Rep', 'Account Owner', 'Owner', 'Rep', 'Assigned', 'Team Member'];
 
+// Find which header key holds the salesperson/CDM for a Target Accounts
+// sheet — the user-mapped column when present, else the first keyword
+// match. Returns '' when the sheet has no CDM column at all, which callers
+// use to decide whether CDM filtering is even possible on that sheet.
+export function findCdmColumnKey(headers, cdmColumn) {
+  const list = Array.isArray(headers) ? headers : [];
+  const col = String(cdmColumn || '').trim();
+  if (col && list.includes(col)) return col;
+  for (const key of list) {
+    const lower = String(key || '').toLowerCase();
+    for (const kw of CDM_COLUMN_KEYWORDS) {
+      if (lower.includes(kw.toLowerCase())) return key;
+    }
+  }
+  return '';
+}
+
 // Resolve the salesperson/CDM value for a single Target Accounts record.
 // Prefers the column the user explicitly mapped on the Target Accounts
 // page (settings.targetCdmColumn, passed in as `cdmColumn`); falls back

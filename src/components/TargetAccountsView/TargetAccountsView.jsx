@@ -7,6 +7,8 @@ import { DataTable } from '../common/DataTable';
 import { dbGet, dbPut } from '../../utils/db';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { CompareTab } from './CompareTab';
+import { loadOpps2Newest } from '../../utils/opps2Store';
+import { buildActiveOppsIndex, activeOppsForCompany, findUntiedActiveOpps } from '../../utils/targetAccountOpps';
 import styles from './TargetAccountsView.module.css';
 
 const STORE_NAME = 'target-accounts';
@@ -174,6 +176,10 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
   // diff view that compares an ad-hoc upload against the current list
   // filtered to the configured CDM.
   const [innerTab, setInnerTab] = useState('list');
+  // Active opps from the Opps 2 tab, loaded once so the list can show a
+  // per-company active-opp count and flag opps for companies that aren't
+  // tied to the configured CDM on the list.
+  const [oppsRecords, setOppsRecords] = useState([]);
   const fileRef = useRef(null);
   function toggleBlockedAccount(rawName) {
     const key = String(rawName || '').toLowerCase().trim();
@@ -198,6 +204,64 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
       setLoading(false);
     });
   }, [user]);
+
+  // Load the Opps 2 dataset (newest of local cache / Firestore) so the
+  // list can tie opps to accounts. Independent of the target-list load.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const d = await loadOpps2Newest(user?.uid);
+        const recs = Array.isArray(d?.records) ? d.records : [];
+        if (!cancelled) setOppsRecords(recs);
+      } catch { if (!cancelled) setOppsRecords([]); }
+    })();
+    return () => { cancelled = true; };
+  }, [user]);
+
+  // One-time migration so the new "Active Opps" column surfaces for users
+  // who've customized this table's visible columns (DataTable otherwise
+  // keeps any column added later hidden). Adds it to their saved set —
+  // both the localStorage copy and the Firestore-synced tablePrefs. Sticky
+  // flag; only ADDs.
+  useEffect(() => {
+    if (!settings) return;
+    const tid = 'target-accounts';
+    const flag = `${tid}:mig-active-opps-col`;
+    let alreadyDone = true;
+    try { alreadyDone = !!localStorage.getItem(flag); } catch { /* storage blocked */ }
+    if (alreadyDone) return;
+    const remote = settings.tablePrefs?.[tid]?.visible;
+    let lsSaved = null;
+    try {
+      const raw = JSON.parse(localStorage.getItem(`prospect-col-visible-${tid}`));
+      if (Array.isArray(raw)) lsSaved = raw;
+    } catch { /* ignore malformed */ }
+    const saved = Array.isArray(remote) && remote.length > 0
+      ? remote
+      : (Array.isArray(lsSaved) && lsSaved.length > 0 ? lsSaved : null);
+    try { localStorage.setItem(flag, '1'); } catch { /* storage blocked */ }
+    if (!saved || saved.includes('__activeOpps__')) return;
+    // Slot it just after the account-name column (the first non-control
+    // key) when we can find one, else append.
+    const next = [...saved];
+    const firstDataIdx = next.findIndex(k => !String(k).startsWith('__'));
+    if (firstDataIdx >= 0) next.splice(firstDataIdx + 1, 0, '__activeOpps__');
+    else next.push('__activeOpps__');
+    try { localStorage.setItem(`prospect-col-visible-${tid}`, JSON.stringify(next)); } catch { /* storage blocked */ }
+    if (updateSettings) {
+      const curEntry = settings.tablePrefs?.[tid] || {};
+      updateSettings({ tablePrefs: { ...(settings.tablePrefs || {}), [tid]: { ...curEntry, visible: next } } });
+    }
+  }, [settings, updateSettings]);
+
+  // Index of active opps by account, plus the set of active opps whose
+  // company isn't tied to the configured CDM on the target list.
+  const oppsIndex = useMemo(() => buildActiveOppsIndex(oppsRecords), [oppsRecords]);
+  const untiedOpps = useMemo(
+    () => findUntiedActiveOpps(oppsRecords, data, cdmName, settings?.targetCdmColumn),
+    [oppsRecords, data, cdmName, settings?.targetCdmColumn]
+  );
 
   function processFile(file) {
     if (!file) return;
@@ -417,8 +481,32 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
         );
       },
     };
-    return [blockCol, deleteCol, ...dataCols];
-  }, [headers, blockedAccountNames, nameKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Active opps (from the Opps 2 tab) tied to this account. Count badge
+    // with a hover breakdown of each opp's Account → Stage; sorts by count
+    // and filters on Has active opps / None.
+    const oppsCol = {
+      key: '__activeOpps__',
+      label: 'Active Opps',
+      defaultWidth: 110,
+      getSortValue: (row) => activeOppsForCompany(nameKey ? row[nameKey] : '', oppsIndex).length,
+      getFilterValue: (row) => activeOppsForCompany(nameKey ? row[nameKey] : '', oppsIndex).length > 0 ? 'Has active opps' : 'None',
+      render: (row) => {
+        const opps = activeOppsForCompany(nameKey ? row[nameKey] : '', oppsIndex);
+        if (opps.length === 0) return <span style={{ color: '#CBD5E1' }}>—</span>;
+        const tip = opps
+          .slice(0, 12)
+          .map(o => `${o.account} — ${o.stage || 'No stage'}`)
+          .join('\n') + (opps.length > 12 ? `\n…and ${opps.length - 12} more` : '');
+        return (
+          <span
+            title={tip}
+            style={{ display: 'inline-block', minWidth: 22, textAlign: 'center', padding: '1px 8px', borderRadius: 999, fontSize: '0.68rem', fontWeight: 700, background: '#DCFCE7', color: '#166534' }}
+          >{opps.length}</span>
+        );
+      },
+    };
+    return [blockCol, deleteCol, ...(dataCols.length > 0 ? [dataCols[0], oppsCol, ...dataCols.slice(1)] : [oppsCol])];
+  }, [headers, blockedAccountNames, nameKey, oppsIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Union of column headers across every sheet — feeds the "Salesperson /
   // CDM column" picker so the mapping works no matter which sheet is
@@ -518,7 +606,63 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
           updateSettings={updateSettings}
           cdmColumn={cdmColumn}
           allHeaderOptions={allHeaderOptions}
+          untiedOpps={untiedOpps}
+          cdmName={cdmName}
         />
+      )}
+    </div>
+  );
+}
+
+// Top-of-page warning listing active opps whose company isn't tied to the
+// configured CDM on the target list — i.e. opps you're working for
+// companies missing from (or attributed to someone else on) your list.
+// Collapsed to a one-line summary by default; expands to the per-company
+// breakdown. Renders nothing when there's nothing to flag.
+function UntiedOppsWarning({ untiedOpps, cdmName }) {
+  const [open, setOpen] = useState(false);
+  if (!untiedOpps || untiedOpps.totalCompanies === 0) return null;
+  const { groups, totalOpps, totalCompanies } = untiedOpps;
+  const who = cdmName || 'your CDM';
+  return (
+    <div style={{ margin: '0 0 0.75rem', border: '1px solid #FCA5A5', background: '#FEF2F2', borderRadius: 8, overflow: 'hidden' }}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '0.6rem 0.85rem', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}
+      >
+        <span style={{ fontSize: '1rem', flexShrink: 0 }}>⚠️</span>
+        <span style={{ fontSize: '0.8rem', color: '#991B1B', fontWeight: 700 }}>
+          {totalOpps} active opp{totalOpps === 1 ? '' : 's'} across {totalCompanies} compan{totalCompanies === 1 ? 'y' : 'ies'} not tied to {who}
+        </span>
+        <span style={{ marginLeft: 'auto', fontSize: '0.72rem', color: '#B91C1C', fontWeight: 700 }}>{open ? 'Hide ▲' : 'Show ▼'}</span>
+      </button>
+      {open && (
+        <div style={{ padding: '0 0.85rem 0.75rem' }}>
+          <div style={{ fontSize: '0.72rem', color: '#7F1D1D', margin: '0 0 0.5rem' }}>
+            These companies have active opportunities in the Opps tab but don&apos;t appear on the Target Accounts list under {who}. Add them to your list (or fix the account owner) so they&apos;re tracked.
+          </div>
+          <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid #FECACA', borderRadius: 6, background: '#fff' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
+              <thead>
+                <tr style={{ background: '#FFF1F2', position: 'sticky', top: 0 }}>
+                  <th style={{ textAlign: 'left', padding: '0.35rem 0.6rem', color: '#9F1239', fontWeight: 700, borderBottom: '1px solid #FECACA' }}>Company</th>
+                  <th style={{ textAlign: 'center', padding: '0.35rem 0.6rem', color: '#9F1239', fontWeight: 700, borderBottom: '1px solid #FECACA', width: 70 }}>Opps</th>
+                  <th style={{ textAlign: 'left', padding: '0.35rem 0.6rem', color: '#9F1239', fontWeight: 700, borderBottom: '1px solid #FECACA' }}>Stages</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groups.map((g, i) => (
+                  <tr key={g.account} style={{ background: i % 2 ? '#FFFBFB' : '#fff' }}>
+                    <td style={{ padding: '0.3rem 0.6rem', color: '#1E293B', fontWeight: 600, borderBottom: '1px solid #FEE2E2' }}>{g.account}</td>
+                    <td style={{ padding: '0.3rem 0.6rem', textAlign: 'center', color: '#991B1B', fontWeight: 700, borderBottom: '1px solid #FEE2E2' }}>{g.count}</td>
+                    <td style={{ padding: '0.3rem 0.6rem', color: '#64748B', borderBottom: '1px solid #FEE2E2' }}>{g.stages.join(', ') || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -528,11 +672,13 @@ function ListSection({
   error, status, data, loading, dragOver, setDragOver, handleDrop, fileRef,
   activeSheet, setActiveSheet, search, setSearch, filtered, handleFileChange,
   columns, settings, updateSettings, cdmColumn, allHeaderOptions,
+  untiedOpps, cdmName,
 }) {
   return (
     <>
       {error && <div className={styles.error}>{error}</div>}
       {status && <div className={styles.success}>{status}</div>}
+      {data && <UntiedOppsWarning untiedOpps={untiedOpps} cdmName={cdmName} />}
 
       {!data && !loading && (
         <>
