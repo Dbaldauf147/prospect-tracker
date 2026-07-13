@@ -57,6 +57,32 @@ export function collectCdmTargetNames(targetData, cdmName, targetCdmColumn) {
   return names;
 }
 
+// Every account name on the target list (any CDM) mapped to the CDM
+// value(s) it's attributed to, plus a company index over those names.
+// Used to tell the user WHO an untied opp's company is tied to on the
+// list (another rep, or nobody).
+export function collectTargetCdmLookup(targetData, targetCdmColumn) {
+  const names = [];
+  const cdmByName = new Map(); // lowercased name → Set of CDM strings
+  if (!targetData?.sheets) return { names, cdmByName, index: buildCompanyIndex([]) };
+  for (const sheet of Object.values(targetData.sheets)) {
+    const headers = sheet?.headers || [];
+    const nameKey = headers[0];
+    if (!nameKey || !Array.isArray(sheet.records)) continue;
+    const cdmKey = findCdmColumnKey(headers, targetCdmColumn);
+    for (const r of sheet.records) {
+      const name = String(r[nameKey] || '').trim();
+      if (!name) continue;
+      names.push(name);
+      const k = name.toLowerCase();
+      if (!cdmByName.has(k)) cdmByName.set(k, new Set());
+      const cdm = cdmKey ? String(r[cdmKey] || '').trim() : '';
+      if (cdm) cdmByName.get(k).add(cdm);
+    }
+  }
+  return { names, cdmByName, index: buildCompanyIndex(names) };
+}
+
 // Build a reusable index answering "which active opps match this company".
 export function buildActiveOppsIndex(records) {
   const active = collectActiveOpps(records);
@@ -97,6 +123,9 @@ export function findUntiedActiveOpps(records, targetData, cdmName, targetCdmColu
   const active = collectActiveOpps(records);
   if (active.length === 0) return empty;
   const targetIndex = buildCompanyIndex(collectCdmTargetNames(targetData, cdmName, targetCdmColumn));
+  // Full list (any CDM) so we can report who each untied company IS tied
+  // to, or that it isn't on the list at all.
+  const lookup = collectTargetCdmLookup(targetData, targetCdmColumn);
   const groups = new Map(); // lowercased account → { account, opps[] }
   for (const o of active) {
     if (hasMatchInIndex(targetIndex, o.account)) continue; // tied to the CDM
@@ -105,12 +134,28 @@ export function findUntiedActiveOpps(records, targetData, cdmName, targetCdmColu
     groups.get(k).opps.push(o);
   }
   const list = [...groups.values()]
-    .map(g => ({
-      account: g.account,
-      count: g.opps.length,
-      stages: [...new Set(g.opps.map(o => o.stage).filter(Boolean))],
-      opps: g.opps,
-    }))
+    .map(g => {
+      // Resolve who this company is tied to on the target list.
+      const matchedNames = [...findMatchesInIndex(lookup.index, g.account)];
+      const onList = matchedNames.length > 0;
+      const cdmSet = new Set();
+      for (const nm of matchedNames) {
+        for (const cdm of (lookup.cdmByName.get(String(nm).toLowerCase()) || [])) cdmSet.add(cdm);
+      }
+      const cdms = [...cdmSet].sort((a, b) => a.localeCompare(b));
+      const owner = !onList
+        ? 'Not on list'
+        : cdms.length > 0 ? cdms.join(', ') : 'On list · no CDM';
+      return {
+        account: g.account,
+        count: g.opps.length,
+        stages: [...new Set(g.opps.map(o => o.stage).filter(Boolean))],
+        opps: g.opps,
+        onList,
+        cdms,
+        owner,
+      };
+    })
     .sort((a, b) => b.count - a.count || a.account.localeCompare(b.account));
   return {
     groups: list,

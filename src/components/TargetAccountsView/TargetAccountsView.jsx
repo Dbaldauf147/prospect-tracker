@@ -647,6 +647,7 @@ function UntiedOppsWarning({ untiedOpps, cdmName }) {
               <thead>
                 <tr style={{ background: '#FFF1F2', position: 'sticky', top: 0 }}>
                   <th style={{ textAlign: 'left', padding: '0.35rem 0.6rem', color: '#9F1239', fontWeight: 700, borderBottom: '1px solid #FECACA' }}>Company</th>
+                  <th style={{ textAlign: 'left', padding: '0.35rem 0.6rem', color: '#9F1239', fontWeight: 700, borderBottom: '1px solid #FECACA' }}>Tied To (CDM)</th>
                   <th style={{ textAlign: 'center', padding: '0.35rem 0.6rem', color: '#9F1239', fontWeight: 700, borderBottom: '1px solid #FECACA', width: 70 }}>Opps</th>
                   <th style={{ textAlign: 'left', padding: '0.35rem 0.6rem', color: '#9F1239', fontWeight: 700, borderBottom: '1px solid #FECACA' }}>Stages</th>
                 </tr>
@@ -655,6 +656,13 @@ function UntiedOppsWarning({ untiedOpps, cdmName }) {
                 {groups.map((g, i) => (
                   <tr key={g.account} style={{ background: i % 2 ? '#FFFBFB' : '#fff' }}>
                     <td style={{ padding: '0.3rem 0.6rem', color: '#1E293B', fontWeight: 600, borderBottom: '1px solid #FEE2E2' }}>{g.account}</td>
+                    <td style={{ padding: '0.3rem 0.6rem', borderBottom: '1px solid #FEE2E2' }}>
+                      {g.onList
+                        ? (g.cdms.length > 0
+                          ? <span style={{ color: '#1E293B' }}>{g.owner}</span>
+                          : <span style={{ color: '#B45309', fontStyle: 'italic' }}>On list · no CDM</span>)
+                        : <span style={{ color: '#B91C1C', fontWeight: 700 }}>Not on target list</span>}
+                    </td>
                     <td style={{ padding: '0.3rem 0.6rem', textAlign: 'center', color: '#991B1B', fontWeight: 700, borderBottom: '1px solid #FEE2E2' }}>{g.count}</td>
                     <td style={{ padding: '0.3rem 0.6rem', color: '#64748B', borderBottom: '1px solid #FEE2E2' }}>{g.stages.join(', ') || '—'}</td>
                   </tr>
