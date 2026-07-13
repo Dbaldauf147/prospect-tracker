@@ -1120,6 +1120,7 @@ export function YOYView() {
     // this year.
     let projWon = 0, projPipeline = 0, projQuotedSum = 0, projQuotedCount = 0;
     let projSoldSum = 0, projSoldCount = 0;
+    let projAgrSum = 0, projAgrCount = 0;
     for (const r of records) {
       const amt = parseMoney(r['Quoted Amount']);
       const hasAmt = typeof amt === 'number' && amt > 0;
@@ -1138,18 +1139,26 @@ export function YOYView() {
           if (hasAmt) { projSoldSum += amt; projSoldCount += 1; }
         }
       } else if (stage === 'Agreement Sent') {
-        // Late-stage opp awaiting signature = expected future win.
+        // Late-stage opp awaiting signature = expected future win. Its
+        // Quoted Amount joins this year's Sold deals in the Projected
+        // Deal Size average.
         projPipeline += 1;
+        if (hasAmt) { projAgrSum += amt; projAgrCount += 1; }
       }
     }
+    // Projected Deal Size = mean Quoted Amount across this year's Sold
+    // deals and the Agreement Sent pipeline combined, so the point
+    // reflects both won and expected-to-win deals.
+    const projDealSum = projSoldSum + projAgrSum;
+    const projDealCount = projSoldCount + projAgrCount;
     rows.push({
       year: 'Projected',
       deals: projWon + projPipeline,
       quoted: projQuotedCount > 0 ? Math.round(projQuotedSum / projQuotedCount) : null,
-      dealSize: projSoldCount > 0 ? Math.round(projSoldSum / projSoldCount) : null,
+      dealSize: projDealCount > 0 ? Math.round(projDealSum / projDealCount) : null,
       _isProjected: true,
       _quotedCount: projQuotedCount,
-      _soldCount: projSoldCount,
+      _soldCount: projDealCount,
     });
     return rows;
   }, [records, currentYear]);
@@ -2874,7 +2883,7 @@ function DealSizeCard({ data, hasOpps, onDownload, onExportPoint }) {
                     { label: 'Quoted mean (by Quoted Year)', value: row.quoted == null ? '—' : `${fmtMoneyLabel(row.quoted)} (n=${row._quotedCount ?? 0})` },
                     { label: 'Deal Size mean', value: row.dealSize == null ? '—' : `${fmtMoneyLabel(row.dealSize)} (n=${row._soldCount ?? 0})` },
                   ],
-                  note: row._isProjected ? 'Projected = this year’s Sold deals + every opp in the Agreement Sent stage, counted as expected future closes.' : null,
+                  note: row._isProjected ? 'Projected = this year’s Sold deals + every opp in the Agreement Sent stage, counted as expected future closes. Deal Size is the average Quoted Amount across both.' : null,
                 })}
               />
             } />
