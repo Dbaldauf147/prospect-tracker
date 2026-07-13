@@ -10,6 +10,7 @@ import { formatAum } from '../../utils/formatters';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { toggleContactInEvents } from '../../utils/eventsStore';
 import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
+import { buildEmailFormatIndex, predictEmailForContact } from '../../utils/emailFormat';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { checkCity, checkState } from '../../utils/locationStandardize';
 import { getStateForCity, lookupStateForCity, CITY_OPTIONS, matchCities } from '../../data/cities';
@@ -389,6 +390,59 @@ function InlineCell({
   );
 }
 
+// Read-only cell for the Changed Jobs "Expected Email" column. Takes the
+// status-tagged prediction from predictEmailForContact and either shows
+// the guessed address with a Copy button, or a muted explanation of why
+// no address could be produced yet.
+function ExpectedEmailCell({ info, name }) {
+  const [copied, setCopied] = useState(false);
+  const status = info?.status || 'no-company';
+  const muted = (text, title) => (
+    <div
+      title={title || undefined}
+      style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#94A3B8', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+    >{text}</div>
+  );
+  if (status === 'no-company') return muted('—', 'Map a New Company to predict an email.');
+  if (status === 'no-domain') return muted('Domain unknown', `We don't have an email domain on file for "${info.company}", so no address can be predicted. Add the company to the Table View with an Email Domain / Website to enable this.`);
+  if (status === 'no-format') return muted('Format unknown', `We know the domain (${info.domain}) but haven't seen enough contacts there to learn its email format.`);
+  if (status === 'no-name') return muted('Missing name', 'This contact is missing the first/last name needed to build the address.');
+  const email = info.email;
+  const provenance = info.sample
+    ? `Predicted from ${info.domain}'s format (${info.label}). Learned from ${info.votes}/${info.total} known contact${info.total === 1 ? '' : 's'}, e.g. ${info.sample}.`
+    : `Predicted from ${info.domain}'s format (${info.label}).`;
+  const doCopy = (e) => {
+    e.stopPropagation();
+    try {
+      navigator.clipboard?.writeText(email);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch { /* clipboard blocked — ignore */ }
+  };
+  return (
+    <div style={{ padding: '0.3rem 0.5rem', display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }} title={provenance}>
+      <span style={{ color: '#065F46', fontSize: '0.72rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{email}</span>
+      <button
+        type="button"
+        onClick={doCopy}
+        title={`Copy ${name ? `${name}'s ` : ''}predicted email`}
+        style={{
+          background: copied ? '#065F46' : '#ECFDF5',
+          border: '1px solid #6EE7B7',
+          color: copied ? '#fff' : '#065F46',
+          fontSize: '0.6rem',
+          fontWeight: 700,
+          padding: '1px 6px',
+          borderRadius: 4,
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+          flexShrink: 0,
+        }}
+      >{copied ? 'Copied' : 'Copy'}</button>
+    </div>
+  );
+}
+
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
 const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
 
@@ -544,6 +598,11 @@ function KeyContactsViewInner({
   // company for each contact based on their email domain / current
   // Company text. Most useful when paired with `unmappedOnly`.
   showSuggestedCompany = false,
+  // Adds a "New Company" mapping column plus an "Expected Email" column
+  // that predicts the contact's address at that new employer from the
+  // company's learned email format. Used by the Changed Jobs tab so a
+  // person who left their old company can be re-targeted at the new one.
+  showNewCompanyEmail = false,
   // Optional categorisation function. When provided, KeyContactsView
   // renders an extra "Category" column showing coloured pills for
   // each label the function returns. Used by All Contacts to mark
@@ -702,6 +761,25 @@ function KeyContactsViewInner({
         updateSettings({ contactLocalFields: nextLocal });
       }
     }
+  }
+
+  // Persist the "New Company" a changed-jobs contact moved to. Stored in
+  // the same per-contact local settings bag as _companyOverride, under
+  // _newCompany, so it survives refreshes but is never pushed to HubSpot
+  // (pushing it would overwrite the Company field and drop the contact
+  // off the Changed Jobs tab). Empty clears the mapping.
+  function setNewCompanyMapping(contact, value) {
+    const id = String(contact?.id || contact?.vid || '');
+    if (!id) return;
+    const next = String(value ?? '').trim();
+    const cur = settings?.contactLocalFields || {};
+    const merged = { ...(cur[id] || {}) };
+    if (next) merged._newCompany = next;
+    else delete merged._newCompany;
+    const nextLocal = { ...cur };
+    if (Object.keys(merged).length === 0) delete nextLocal[id];
+    else nextLocal[id] = merged;
+    updateSettings({ contactLocalFields: nextLocal });
   }
 
   // When a City is committed inline, auto-fill State and Country the
@@ -1351,7 +1429,7 @@ function KeyContactsViewInner({
   // State sit alongside Location so a user who wants the combined
   // "City, State" string keeps it, while the separate columns are
   // available for filtering / sorting on either field independently.
-  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(storagePrefix === 'all-contacts' ? ['custom'] : []), 'tags', 'lastOutreach', ...(storagePrefix === 'all-contacts' ? ['emailCampaigns'] : [])];
+  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(storagePrefix === 'all-contacts' ? ['custom'] : []), 'tags', 'lastOutreach', ...(storagePrefix === 'all-contacts' ? ['emailCampaigns'] : [])];
   const [visibleCols, setVisibleCols] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('visible-cols')));
@@ -1364,6 +1442,23 @@ function KeyContactsViewInner({
         if (!localStorage.getItem(migKey) && !next.includes('lastOutreach')) {
           try { localStorage.setItem(migKey, '1'); } catch {}
           next = [...next, 'lastOutreach'];
+        }
+        // One-time migration for the Changed Jobs "New Company" +
+        // "Expected Email" columns — inject them (right after Company) for
+        // users whose saved visibility predates the feature. Sticky flag
+        // so re-hiding them sticks.
+        if (showNewCompanyEmail) {
+          const njMigKey = lsKey('visible-cols-mig-newCompanyEmail');
+          if (!localStorage.getItem(njMigKey)) {
+            try { localStorage.setItem(njMigKey, '1'); } catch {}
+            const add = ['newCompany', 'expectedEmail'].filter(k => !next.includes(k));
+            if (add.length > 0) {
+              const compIdx = next.indexOf('company');
+              next = compIdx >= 0
+                ? [...next.slice(0, compIdx + 1), ...add, ...next.slice(compIdx + 1)]
+                : [...next, ...add];
+            }
+          }
         }
         // Same one-time migration for the All Contacts "custom" column —
         // existing users have a saved set that predates it, so inject it
@@ -1777,6 +1872,33 @@ function KeyContactsViewInner({
     [showSuggestedCompany, prospects, hubspotCache]
   );
 
+  // Learned email-format index (domain → address pattern), built from the
+  // Table View prospects and every HubSpot contact. Powers the Changed
+  // Jobs tab's Expected Email column. Only computed when that column is on.
+  const emailFormatIndex = useMemo(
+    () => showNewCompanyEmail ? buildEmailFormatIndex(prospects, hubspotCache?.contacts || []) : null,
+    [showNewCompanyEmail, prospects, hubspotCache]
+  );
+  // Autocomplete for the New Company column: companies we can actually
+  // predict an email for come first (so picking one yields an address),
+  // followed by every Table View company. De-duped, case-insensitive.
+  const newCompanySuggestions = useMemo(() => {
+    if (!showNewCompanyEmail) return [];
+    const out = [];
+    const seen = new Set();
+    const add = (name) => {
+      const v = String(name || '').trim();
+      if (!v) return;
+      const lc = v.toLowerCase();
+      if (seen.has(lc)) return;
+      seen.add(lc);
+      out.push(v);
+    };
+    for (const n of (emailFormatIndex?.companiesWithFormat || [])) add(n);
+    for (const p of prospects) add(p.company);
+    return out;
+  }, [showNewCompanyEmail, emailFormatIndex, prospects]);
+
   // "Met In Person" is now a local checkbox (settings.contactMetInPerson),
   // not a HubSpot tag. Prefer the saved local value; fall back to the legacy
   // HubSpot tag for contacts that haven't been touched yet, so existing
@@ -1840,6 +1962,13 @@ function KeyContactsViewInner({
       const at = email.lastIndexOf('@');
       const rawDomain = at >= 0 ? email.slice(at + 1).trim() : '';
       const domain = rawDomain && !FREE_MAIL.has(rawDomain) ? rawDomain : '';
+      // The new employer the user mapped this changed-jobs contact to,
+      // stored locally (never pushed to HubSpot so it doesn't move the
+      // contact off the tab), plus the address we predict from it.
+      const newCompany = String(local?._newCompany || '').trim();
+      const expectedEmail = emailFormatIndex
+        ? predictEmailForContact({ firstname: c.firstname, lastname: c.lastname, company: newCompany }, emailFormatIndex)
+        : null;
       out.push({
         id: c.id || `${c.email || ''}|${c.firstname || ''}|${c.lastname || ''}`,
         name: [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'Unknown',
@@ -1856,11 +1985,13 @@ function KeyContactsViewInner({
         company,
         domain,
         suggestedCompany: companyGuessIndex ? guessCompanyForContact(c, companyGuessIndex) : '',
+        newCompany,
+        expectedEmail,
         raw: c,
       });
     }
     return out;
-  }, [hubspotCache, FREE_MAIL, contactSelector, resolveMetInPerson, activeOppCompanies, unmappedOnly, prospects, companyGuessIndex, settings?.contactLocalFields]);
+  }, [hubspotCache, FREE_MAIL, contactSelector, resolveMetInPerson, activeOppCompanies, unmappedOnly, prospects, companyGuessIndex, emailFormatIndex, settings?.contactLocalFields]);
 
   // Count of contacts the "unmapped past 30 days" filter WOULD yield,
   // computed independently from the active filters above so we can
@@ -2139,6 +2270,7 @@ function KeyContactsViewInner({
         case 'title':   cmp = (a.jobtitle || '').localeCompare(b.jobtitle || ''); break;
         case 'company': cmp = (a.companyName || '').localeCompare(b.companyName || ''); break;
         case 'suggestedCompany': cmp = (a.suggestedCompany || '').localeCompare(b.suggestedCompany || ''); break;
+        case 'newCompany': cmp = (a.newCompany || '').localeCompare(b.newCompany || ''); break;
         case 'email':   cmp = (a.email || '').localeCompare(b.email || ''); break;
         case 'location':
           cmp = ((a.state || '') + (a.city || '')).localeCompare((b.state || '') + (b.city || ''));
@@ -2181,6 +2313,8 @@ function KeyContactsViewInner({
     title:    c => c.jobtitle || '',
     company:  c => c.companyName || '',
     suggestedCompany: c => c.suggestedCompany || '',
+    newCompany: c => c.newCompany || '',
+    expectedEmail: c => (c.expectedEmail?.status === 'ok' ? c.expectedEmail.email : ''),
     email:    c => c.email || '',
     phone:    c => c.phone || '',
     location: c => [c.city, c.state].filter(Boolean).join(', '),
@@ -2401,6 +2535,7 @@ function KeyContactsViewInner({
                     { key: 'title', label: 'Title' },
                     { key: 'company', label: 'Company' },
                     ...(showSuggestedCompany ? [{ key: 'suggestedCompany', label: 'Suggested Company' }] : []),
+                    ...(showNewCompanyEmail ? [{ key: 'newCompany', label: 'New Company' }, { key: 'expectedEmail', label: 'Expected Email' }] : []),
                     { key: 'email', label: 'Email' },
                     { key: 'phone', label: 'Phone' },
                     { key: 'location', label: 'Location' },
@@ -2762,6 +2897,7 @@ function KeyContactsViewInner({
               { key: 'title',    label: 'Title' },
               { key: 'company',  label: 'Company' },
               ...(showSuggestedCompany ? [{ key: 'suggestedCompany', label: 'Suggested Company' }] : []),
+              ...(showNewCompanyEmail ? [{ key: 'newCompany', label: 'New Company' }, { key: 'expectedEmail', label: 'Expected Email', sortable: false }] : []),
               { key: 'email',    label: 'Email' },
               { key: 'phone',    label: 'Phone' },
               { key: 'location', label: 'Location' },
@@ -3102,6 +3238,22 @@ function KeyContactsViewInner({
                           <span style={{ color: '#CBD5E1' }}>—</span>
                         )}
                       </div>
+                    )}
+                    {showNewCompanyEmail && visibleSet.has('newCompany') && (
+                      <InlineCell
+                        value={c.newCompany}
+                        onCommit={v => setNewCompanyMapping(c.raw || c, v)}
+                        fontSize="0.74rem"
+                        textColor="#1E293B"
+                        fontWeight={600}
+                        suggestions={newCompanySuggestions}
+                        suggestionsNoun="companies"
+                        placeholder="Map new company…"
+                        title="The company this person moved to. Pick one to predict their new email (autocomplete lists companies with a known email format first)."
+                      />
+                    )}
+                    {showNewCompanyEmail && visibleSet.has('expectedEmail') && (
+                      <ExpectedEmailCell info={c.expectedEmail} name={c.name} />
                     )}
                     {visibleSet.has('email') && (
                     <InlineCell
