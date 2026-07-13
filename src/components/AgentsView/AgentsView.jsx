@@ -221,6 +221,236 @@ function writeHideActivityOnDate(on) {
   try { userLsSet(HIDE_ACTIVITY_ON_DATE_STORAGE_KEY, on ? '1' : '0'); } catch {}
 }
 
+// Which sub-tab of the Agents page is showing: 'automations' (the default
+// activity/BFO agent tables) or 'prompts' (the saved Prompt Library).
+// Persisted per user so the choice survives a reload.
+const SUBTAB_STORAGE_KEY = 'agents-active-subtab';
+function readActiveSubTab() {
+  try {
+    const raw = userLsGet(SUBTAB_STORAGE_KEY);
+    return raw === 'prompts' ? 'prompts' : 'automations';
+  } catch { return 'automations'; }
+}
+function writeActiveSubTab(tab) {
+  try { userLsSet(SUBTAB_STORAGE_KEY, tab); } catch {}
+}
+
+// Seed content for the Prompt Library sub-tab. These show immediately so
+// the user can copy them out of the box; they only persist to
+// settings.savedPrompts once the user edits/adds/deletes something.
+const DEFAULT_SAVED_PROMPTS = [
+  {
+    id: 'seed-contract-review',
+    title: 'Contract Review',
+    body: `Take the following energy contract documents and produce a FINAL Excel-ready dataset.
+
+----------------------------------------
+1) OUTPUT STRUCTURE (MANDATORY)
+----------------------------------------
+Create ONE ROW PER CONTRACT.
+
+Columns MUST appear in this exact order:
+
+Address | Customer | Commodity | Supplier | Product Type | Contract Name / Notes | Price | Coverage Start | Coverage End | Term | Number of Accounts | Annual Consumption
+
+----------------------------------------
+2) PRODUCT TYPE (NEW — REQUIRED)
+----------------------------------------
+For each contract, classify the Product Type using the rules below:
+
+- Fixed:
+  → Fully fixed price contracts (e.g., fixed $/kWh or $/MMBtu)
+
+- Hedged:
+  → Any hedge structure, including:
+     - Percent of load hedges (e.g., 50% hedge)
+     - Layered/structured hedges
+  → MUST include hedge % in the label
+     Example formats:
+     - "Hedged – 50% Fixed"
+     - "Hedged – 50% Fixed + 50% Floating" (if applicable)
+
+- Variable / Index:
+  → NYMEX + Adder, load-following, or market-based pricing
+
+- Block / Slice:
+  → Fixed volume contracts (if explicitly stated)
+
+If unclear:
+- Use best classification based on contract language
+- If still unclear → "Other / Unspecified"
+
+----------------------------------------
+3) FULL ACCOUNT EXTRACTION (MANDATORY — NO PARTIAL LISTS)
+----------------------------------------
+For EACH contract, you MUST capture EVERY UNIQUE utility account number.
+
+You must scan ALL sections of the document, including:
+- Exhibit A / Pricing Attachments
+- Account tables
+- Service Location schedules
+- Appendices / addenda
+- Any column labeled:
+  "Account Number", "Utility Account", "UDC Account", "LDC Account"
+
+RULES:
+1) Scan the ENTIRE document (all pages — do not stop early)
+2) Extract account numbers exactly (preserve leading zeros)
+3) De-duplicate to UNIQUE account numbers
+4) Compute:
+   - Number of Accounts = COUNT of UNIQUE account numbers
+
+CRITICAL:
+- If accounts repeat across rows → count only once
+- Do NOT rely on "No. of Accounts" fields alone → independently verify
+- If the table continues across pages → capture all rows before counting
+
+----------------------------------------
+4) DATA EXTRACTION + COMPLETION
+----------------------------------------
+
+Address:
+- Use SERVICE ADDRESS (not billing HQ)
+- Normalize across rows for same site
+
+Customer:
+- Exact legal entity name
+
+Commodity:
+- Electricity or Natural Gas
+
+Supplier:
+- Extract supplier entity
+
+Contract Name / Notes:
+- Short, clean descriptor (e.g., "50% Hedge RTT", "NG Fixed Renewal")
+
+Price:
+- Extract explicitly
+- Electricity: $/kWh or ¢/kWh
+- Gas: $/MMBtu or $/Ccf
+- If missing → "N/A"
+
+Coverage Start / End:
+- Format MM/DD/YYYY
+- If enrollment-based → estimate if clearly stated
+- If unknown → "N/A"
+
+Term:
+- Calculate duration in months
+- Format: "XX Months"
+- If open-ended → "Open"
+
+Annual Consumption:
+- Extract or calculate:
+   → Electricity = kWh
+   → Gas = MMBtu or Ccf
+- If monthly values exist → SUM to annual
+- If partial → estimate clearly
+- If not available → "N/A"
+
+----------------------------------------
+5) CRITICAL VALIDATION RULES
+----------------------------------------
+
+A. DO NOT MISS ROWS
+- If a table spans multiple pages → treat as ONE continuous dataset
+
+B. ACCOUNT RECONCILIATION
+- Ensure:
+   → Account count matches extracted unique accounts
+   → No duplicates inflate totals
+
+C. SITE CONSISTENCY
+- For same Address:
+   → Account counts and consumption must reconcile logically
+   → Flag mismatches internally and correct
+
+D. DO NOT COLLAPSE CONTRACTS
+- Each contract stays its own row even if:
+   → Same supplier
+   → Same address
+   → Same commodity
+
+----------------------------------------
+6) FORMATTING RULES
+----------------------------------------
+
+- Dates → MM/DD/YYYY
+- Term → always include "Months"
+- Consumption → include units
+- Price → consistent formatting
+- Missing values → "N/A"
+
+----------------------------------------
+7) OUTPUT REQUIREMENTS
+----------------------------------------
+
+Return:
+1) FINAL Excel-ready table only
+2) No commentary before or after
+3) Ensure:
+   → Product Type is populated for every row
+   → Number of Accounts is accurate and complete
+
+----------------------------------------
+
+DATA:
+[PASTE CONTRACT FILES OR TEXT HERE]`,
+  },
+  {
+    id: 'seed-deep-research-site-list',
+    title: 'Deep Research - Building a site list for a PC',
+    body: `Populate the file attached in this project (or an Excel file with the standard schema below) with the detailed site/buildings that this company owns or operates.
+Buildings can be owned or rented.
+Ensure this is a global search. Please leverage the company website provided as well as other public sources of data about the company.
+Include all site types (e.g., headquarters, offices, manufacturing plants, R&D, warehouses, etc.).
+Include the zip / postal code for each site wherever it is available from public sources.
+Provide the final deliverable in Excel format — in the template attached to this project.
+Do this for {COMPANY_NAME}.
+Property Type must match one of the following categories as closely as possible (controlled vocabulary — do not invent new categories):
+
+
+University / College Campus
+Industrial (Heavy Manufacturing)
+Data Center
+Hospital / Healthcare
+Office - High-Rise
+Shopping Mall / Retail Center
+Multifamily High-Rise
+Hotel / Lodging
+Industrial (Light Manufacturing)
+Industrial - Other
+Mixed Use
+Laboratory / R&D
+Office - Mid-Rise
+Multifamily Mid-Rise
+Industrial Flex / R&D
+Medical Office
+Refrigerated Warehouse
+School (K-12)
+Senior Housing
+Retail - Neighborhood Retail
+BTR Residential
+Retail - High Street
+Office - Small (Low-Rise)
+Retail - Other
+Non-Refrigerated Warehouse
+Multifamily Low-Rise
+Restaurant (Full-Service)
+Self-Storage (Climate Controlled)
+Office Occupier
+Retail - Outparcel
+Restaurant (Quick-Service)
+Self-Storage (Non-Climate Controlled)`,
+  },
+  {
+    id: 'seed-pe-portfolio-analysis',
+    title: 'PE Portfolio Analysis',
+    body: `https://docs.google.com/document/d/1WoypQRaFrowZ8cK-r_akA7PdgWS2wODoFTQq_XnZcp8/edit?tab=t.0`,
+  },
+];
+
 // Toggleable columns on the Activity table (merged Sent emails + Called
 // + Meetings), in render order. The Actions column is always shown and
 // is not part of this list.
@@ -981,6 +1211,144 @@ function NewBfoCompanyNameCell({ prospect, value, onCommit }) {
   );
 }
 
+// Prompt Library sub-tab: a simple store of reusable AI prompts the user
+// can title, edit, and copy with one click. Prompts persist through
+// settings.savedPrompts (Firestore-backed, so they sync across devices);
+// until the user touches anything, DEFAULT_SAVED_PROMPTS is shown.
+function PromptLibrary({ prompts, onChange }) {
+  // editingId: a prompt id being edited, 'new' for the add form, or null.
+  const [editingId, setEditingId] = useState(null);
+  const [draftTitle, setDraftTitle] = useState('');
+  const [draftBody, setDraftBody] = useState('');
+  const [copyFlashId, setCopyFlashId] = useState(null);
+  const [query, setQuery] = useState('');
+
+  const startNew = () => { setEditingId('new'); setDraftTitle(''); setDraftBody(''); };
+  const startEdit = (p) => { setEditingId(p.id); setDraftTitle(p.title); setDraftBody(p.body); };
+  const cancel = () => { setEditingId(null); setDraftTitle(''); setDraftBody(''); };
+
+  const save = () => {
+    const title = draftTitle.trim() || 'Untitled prompt';
+    const body = draftBody;
+    if (editingId === 'new') {
+      const id = `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      onChange([...prompts, { id, title, body }]);
+    } else {
+      onChange(prompts.map(p => (p.id === editingId ? { ...p, title, body } : p)));
+    }
+    cancel();
+  };
+
+  const remove = (id) => {
+    if (typeof window !== 'undefined' && !window.confirm('Delete this saved prompt?')) return;
+    onChange(prompts.filter(p => p.id !== id));
+    if (editingId === id) cancel();
+  };
+
+  const copy = async (p) => {
+    try {
+      await navigator.clipboard.writeText(p.body);
+      setCopyFlashId(p.id);
+    } catch {
+      setCopyFlashId(`err:${p.id}`);
+    }
+    window.setTimeout(() => setCopyFlashId(null), 1500);
+  };
+
+  const q = query.trim().toLowerCase();
+  const visible = q
+    ? prompts.filter(p =>
+        p.title.toLowerCase().includes(q) || (p.body || '').toLowerCase().includes(q))
+    : prompts;
+
+  const renderForm = () => (
+    <div className={styles.promptForm}>
+      <input
+        type="text"
+        className={styles.promptTitleInput}
+        placeholder="Prompt name (e.g. Contract Review)"
+        value={draftTitle}
+        onChange={(e) => setDraftTitle(e.target.value)}
+        autoFocus
+      />
+      <textarea
+        className={styles.aiPromptInput}
+        placeholder="Paste or type the prompt text here…"
+        value={draftBody}
+        onChange={(e) => setDraftBody(e.target.value)}
+        rows={12}
+        spellCheck={false}
+      />
+      <div className={styles.aiPromptControls}>
+        <button type="button" className={styles.aiPromptBtn} onClick={save} disabled={!draftBody.trim()}>
+          Save prompt
+        </button>
+        <button type="button" className={styles.aiPromptBtnGhost} onClick={cancel}>Cancel</button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className={styles.promptLib}>
+      <p className={styles.subnote}>
+        Save prompts you reuse often and copy any of them with one click. Prompts sync across your devices.
+      </p>
+      <div className={styles.promptLibToolbar}>
+        <input
+          type="search"
+          className={styles.promptSearch}
+          placeholder="Search prompts…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        {editingId !== 'new' && (
+          <button type="button" className={styles.aiPromptBtn} onClick={startNew}>+ New prompt</button>
+        )}
+      </div>
+
+      {editingId === 'new' && (
+        <section className={styles.promptCard}>
+          <h2 className={styles.sectionHeader}>New prompt</h2>
+          {renderForm()}
+        </section>
+      )}
+
+      {prompts.length === 0 && editingId !== 'new' && (
+        <div className={styles.empty}>No saved prompts yet. Click &ldquo;New prompt&rdquo; to add one.</div>
+      )}
+
+      {prompts.length > 0 && visible.length === 0 && (
+        <div className={styles.empty}>No prompts match &ldquo;{query}&rdquo;.</div>
+      )}
+
+      {visible.map(p => (
+        <section key={p.id} className={styles.promptCard}>
+          {editingId === p.id ? (
+            <>
+              <h2 className={styles.sectionHeader}>Edit prompt</h2>
+              {renderForm()}
+            </>
+          ) : (
+            <>
+              <div className={styles.promptCardHead}>
+                <h2 className={styles.promptCardTitle}>{p.title}</h2>
+                <div className={styles.promptCardActions}>
+                  <button type="button" className={styles.aiPromptBtn} onClick={() => copy(p)}>Copy</button>
+                  <button type="button" className={styles.aiPromptBtnGhost} onClick={() => startEdit(p)}>Edit</button>
+                  <button type="button" className={styles.aiPromptBtnGhost} onClick={() => remove(p.id)}>Delete</button>
+                  {copyFlashId === p.id && <span className={styles.copyFlash}>Copied!</span>}
+                  {copyFlashId === `err:${p.id}` && <span className={styles.copyFlashErr}>Copy failed</span>}
+                </div>
+              </div>
+              <pre className={styles.aiPromptPreview}>{p.body}</pre>
+            </>
+          )}
+        </section>
+      ))}
+    </div>
+  );
+}
+
 export function AgentsView({ prospects = [], settings, updateProspect, updateSettings }) {
   const { user } = useAuth();
   // Configured per-user via Settings → CDM Name. The Sent emails section
@@ -1063,6 +1431,20 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   const [revealedPrompts, setRevealedPrompts] = useState({});
   const togglePrompt = (key) =>
     setRevealedPrompts(prev => ({ ...prev, [key]: !prev[key] }));
+
+  // Agents page sub-tab: 'automations' (the default agent tables) or
+  // 'prompts' (the saved Prompt Library).
+  const [activeSubTab, setActiveSubTab] = useState(readActiveSubTab);
+  const selectSubTab = (tab) => { setActiveSubTab(tab); writeActiveSubTab(tab); };
+
+  // Saved prompts for the Prompt Library. Falls back to the seed list
+  // until the user edits anything, then persists via settings.savedPrompts.
+  const savedPrompts = Array.isArray(settings?.savedPrompts)
+    ? settings.savedPrompts
+    : DEFAULT_SAVED_PROMPTS;
+  const handleSavedPromptsChange = (next) => {
+    if (updateSettings) updateSettings({ savedPrompts: next });
+  };
 
   const ignoredEmailIds = useMemo(() => new Set(ignoredEmails), [ignoredEmails]);
   const ignoredMeetingIds = useMemo(() => new Set(ignoredMeetings), [ignoredMeetings]);
@@ -2533,61 +2915,84 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     <div className={styles.wrap}>
       <div className={styles.header}>
         <h1 className={styles.title}>Agents</h1>
-        <span className={styles.dateline}>{dateLabel}</span>
-        <label className={styles.dateField} title="Pick the date the activity sections (sent emails, meetings, called opps) should reference.">
-          Activity date
-          <input
-            type="date"
-            className={styles.dateInput}
-            value={referenceDate}
-            max={todayIso()}
-            onChange={(e) => setReferenceDate(e.target.value || todayIso())}
-          />
-          {!isToday && (
+        {activeSubTab === 'automations' && (
+          <>
+            <span className={styles.dateline}>{dateLabel}</span>
+            <label className={styles.dateField} title="Pick the date the activity sections (sent emails, meetings, called opps) should reference.">
+              Activity date
+              <input
+                type="date"
+                className={styles.dateInput}
+                value={referenceDate}
+                max={todayIso()}
+                onChange={(e) => setReferenceDate(e.target.value || todayIso())}
+              />
+              {!isToday && (
+                <button
+                  type="button"
+                  className={styles.dateResetBtn}
+                  onClick={() => setReferenceDate(todayIso())}
+                  title="Jump back to today"
+                >Today</button>
+              )}
+            </label>
+            <label
+              className={styles.hideActivityField}
+              title="Hide rows in the Called and Sent tables whose Last Activity falls within the past 2 business days (the selected Activity date or the previous business day)."
+            >
+              <input
+                type="checkbox"
+                checked={hideActivityOnDate}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  setHideActivityOnDate(on);
+                  writeHideActivityOnDate(on);
+                }}
+              />
+              Hide rows last active in the past 2 business days
+            </label>
             <button
               type="button"
-              className={styles.dateResetBtn}
-              onClick={() => setReferenceDate(todayIso())}
-              title="Jump back to today"
-            >Today</button>
-          )}
-        </label>
-        <label
-          className={styles.hideActivityField}
-          title="Hide rows in the Called and Sent tables whose Last Activity falls within the past 2 business days (the selected Activity date or the previous business day)."
-        >
-          <input
-            type="checkbox"
-            checked={hideActivityOnDate}
-            onChange={(e) => {
-              const on = e.target.checked;
-              setHideActivityOnDate(on);
-              writeHideActivityOnDate(on);
-            }}
-          />
-          Hide rows last active in the past 2 business days
-        </label>
-        <button
-          type="button"
-          className={styles.refreshActivityBtn}
-          onClick={refreshActivityCache}
-          disabled={activityRefreshing}
-          title="Re-pull every HubSpot email, call, and meeting AND re-sync Opps from the Opps tab's store (local cache reconciled against the cloud copy). Updates the shared activity cache (same as the Activity tab's Refresh)."
-        >
-          {activityRefreshing
-            ? (activityRefreshProgress
-                ? `Refreshing… ${activityRefreshProgress.email || 0} email · ${activityRefreshProgress.call || 0} call · ${activityRefreshProgress.meeting || 0} meeting · ${activityRefreshProgress.opps || 0} opps`
-                : 'Refreshing…')
-            : 'Refresh Activity & Opps'}
-        </button>
-        <button
-          type="button"
-          className={styles.refreshActivityBtn}
-          onClick={onCopyAll}
-          title="Copy every AI Prompt section on this page into one master prompt, ready to paste into an assistant."
-        >Copy all prompts</button>
-        {copyAllFlash && <span className={styles.copyFlash}>{copyAllFlash}</span>}
+              className={styles.refreshActivityBtn}
+              onClick={refreshActivityCache}
+              disabled={activityRefreshing}
+              title="Re-pull every HubSpot email, call, and meeting AND re-sync Opps from the Opps tab's store (local cache reconciled against the cloud copy). Updates the shared activity cache (same as the Activity tab's Refresh)."
+            >
+              {activityRefreshing
+                ? (activityRefreshProgress
+                    ? `Refreshing… ${activityRefreshProgress.email || 0} email · ${activityRefreshProgress.call || 0} call · ${activityRefreshProgress.meeting || 0} meeting · ${activityRefreshProgress.opps || 0} opps`
+                    : 'Refreshing…')
+                : 'Refresh Activity & Opps'}
+            </button>
+            <button
+              type="button"
+              className={styles.refreshActivityBtn}
+              onClick={onCopyAll}
+              title="Copy every AI Prompt section on this page into one master prompt, ready to paste into an assistant."
+            >Copy all prompts</button>
+            {copyAllFlash && <span className={styles.copyFlash}>{copyAllFlash}</span>}
+          </>
+        )}
       </div>
+
+      <div className={styles.subTabs}>
+        <button
+          type="button"
+          className={activeSubTab === 'automations' ? styles.subTabActive : styles.subTab}
+          onClick={() => selectSubTab('automations')}
+        >Automations</button>
+        <button
+          type="button"
+          className={activeSubTab === 'prompts' ? styles.subTabActive : styles.subTab}
+          onClick={() => selectSubTab('prompts')}
+        >Prompt Library</button>
+      </div>
+
+      {activeSubTab === 'prompts' && (
+        <PromptLibrary prompts={savedPrompts} onChange={handleSavedPromptsChange} />
+      )}
+
+      {activeSubTab === 'automations' && (<>
       {bfoAssignFlash && (
         <div className={styles.bfoAssignFlash}>{bfoAssignFlash}</div>
       )}
@@ -3687,6 +4092,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
           </section>
         );
       })()}
+      </>)}
     </div>
   );
 }
