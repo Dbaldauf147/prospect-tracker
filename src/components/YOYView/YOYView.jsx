@@ -1372,6 +1372,14 @@ export function YOYView() {
       // Year — mirror the same fallbacks dealSizeBase applies.
       const closedYear = closedStage ? (parseDateYear(closeDate) ?? oy) : null;
       const quotedYear = hasAmt ? parseDateYear(quotedOn) : null;
+      // Agreement Sent opps (with a real amount) feed the Projected point:
+      // they count toward its Deals bar as expected wins and toward its
+      // Deal Size average alongside this year's Sold deals. Tie them to the
+      // current year so a pinned Projected export pulls them in — mirrors
+      // the Projected branch in dealSizeBase, which filters Agreement Sent
+      // by stage only (no date filter).
+      const feedsProjected = stage === 'Agreement Sent' && hasAmt;
+      const projectedYear = feedsProjected ? currentYear : null;
       if (oy !== null && stage === 'Sold') {
         topAccountsRecs.push({
           Account: account,
@@ -1381,9 +1389,10 @@ export function YOYView() {
         });
       }
       // Deal Size contributors — every closed opp (bars + blue Deal Size
-      // line, by Closed Year) and every quoted opp (red Quoted line, by
-      // Quoted Year). An opp that is both appears once with both years set.
-      if (closedStage || quotedYear != null) {
+      // line, by Closed Year), every quoted opp (red Quoted line, by Quoted
+      // Year), and every Agreement Sent opp that feeds the Projected point.
+      // An opp filling more than one role appears once with each year set.
+      if (closedStage || quotedYear != null || feedsProjected) {
         dealSizeRecs.push({
           Account: account,
           Stage: stage,
@@ -1392,15 +1401,16 @@ export function YOYView() {
           'Open Year': oy ?? '',
           'Quoted Year': quotedYear ?? '',
           'Quoted Date': quotedOn,
+          'Projected Year': projectedYear ?? '',
           'Quoted Amount': amt ?? '',
           'Counts in Deals (Sold)': stage === 'Sold' ? 'Yes' : 'No',
           'Counts in Quoted avg': quotedYear != null ? 'Yes' : 'No',
-          'Counts in Deal Size avg': (stage === 'Sold' && hasAmt) ? 'Yes' : 'No',
+          'Counts in Deal Size avg': ((stage === 'Sold' || feedsProjected) && hasAmt) ? 'Yes' : 'No',
         });
       }
     }
     topAccountsRecs.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
-    const dsSortYear = (r) => Number(r['Closed Year'] || r['Quoted Year'] || 0);
+    const dsSortYear = (r) => Number(r['Closed Year'] || r['Quoted Year'] || r['Projected Year'] || 0);
     dealSizeRecs.sort((a, b) => dsSortYear(a) - dsSortYear(b) || a.Account.localeCompare(b.Account));
     // Commissions contributors — one row per deal that fed a year's total.
     // Mirrors commissionsBase exactly: bucketed by the deal's Year column
@@ -1448,7 +1458,9 @@ export function YOYView() {
       // match on either.
       dealSize: {
         list: contributingRecords.dealSize,
-        match: (rec, key) => String(rec['Closed Year']) === key || String(rec['Quoted Year']) === key,
+        match: (rec, key) => String(rec['Closed Year']) === key
+          || String(rec['Quoted Year']) === key
+          || String(rec['Projected Year']) === key,
         sheet: 'Deal Size',
       },
       commissions: { list: contributingRecords.commissions, keyCol: 'Year', sheet: 'Commissions' },
@@ -1613,7 +1625,7 @@ export function YOYView() {
       Type: r._isProjected ? 'Projected (YTD Sold + Agreement Sent)' : 'Actual',
       'Deals (Sold count)': r.deals,
       'Quoted (avg by Quoted Year, $)': r.quoted == null ? '' : r.quoted,
-      'Deal Size (avg of Sold, $)': r.dealSize == null ? '' : r.dealSize,
+      'Deal Size (avg, $)': r.dealSize == null ? '' : r.dealSize,
     }));
     const wb = XLSX.utils.book_new();
     appendSheet(wb, 'Deal Size', summary);
