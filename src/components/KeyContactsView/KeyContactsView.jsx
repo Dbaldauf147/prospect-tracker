@@ -603,6 +603,10 @@ function KeyContactsViewInner({
   // company's learned email format. Used by the Changed Jobs tab so a
   // person who left their old company can be re-targeted at the new one.
   showNewCompanyEmail = false,
+  // Adds a per-row "Reached out" toggle in the actions column (and a
+  // "Reached Out" status column) so the user can track who they've
+  // already contacted at their new employer. Used by the Changed Jobs tab.
+  showReachedOut = false,
   // Optional categorisation function. When provided, KeyContactsView
   // renders an extra "Category" column showing coloured pills for
   // each label the function returns. Used by All Contacts to mark
@@ -776,6 +780,24 @@ function KeyContactsViewInner({
     const merged = { ...(cur[id] || {}) };
     if (next) merged._newCompany = next;
     else delete merged._newCompany;
+    const nextLocal = { ...cur };
+    if (Object.keys(merged).length === 0) delete nextLocal[id];
+    else nextLocal[id] = merged;
+    updateSettings({ contactLocalFields: nextLocal });
+  }
+
+  // Toggle the "reached out" flag for a changed-jobs contact. Stored in
+  // the same per-contact local settings bag under _reachedOut (+ a
+  // timestamp), synced via Firestore, never pushed to HubSpot. Pass an
+  // explicit `next` to force a value, or omit to flip the current one.
+  function toggleReachedOut(contact, next) {
+    const id = String(contact?.id || contact?.vid || '');
+    if (!id) return;
+    const cur = settings?.contactLocalFields || {};
+    const merged = { ...(cur[id] || {}) };
+    const value = next === undefined ? !merged._reachedOut : !!next;
+    if (value) { merged._reachedOut = true; merged._reachedOutAt = new Date().toISOString(); }
+    else { delete merged._reachedOut; delete merged._reachedOutAt; }
     const nextLocal = { ...cur };
     if (Object.keys(merged).length === 0) delete nextLocal[id];
     else nextLocal[id] = merged;
@@ -1421,7 +1443,7 @@ function KeyContactsViewInner({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, tags: 200, lastOutreach: 160, emailCampaigns: 240,
+    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 150, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, tags: 200, lastOutreach: 160, emailCampaigns: 240,
   };
   // Column visibility — every contact column except Name (always
   // shown; it's the primary identifier). Stored per-page so the Key,
@@ -1429,7 +1451,7 @@ function KeyContactsViewInner({
   // State sit alongside Location so a user who wants the combined
   // "City, State" string keeps it, while the separate columns are
   // available for filtering / sorting on either field independently.
-  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(storagePrefix === 'all-contacts' ? ['custom'] : []), 'tags', 'lastOutreach', ...(storagePrefix === 'all-contacts' ? ['emailCampaigns'] : [])];
+  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(storagePrefix === 'all-contacts' ? ['custom'] : []), 'tags', 'lastOutreach', ...(storagePrefix === 'all-contacts' ? ['emailCampaigns'] : [])];
   const [visibleCols, setVisibleCols] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('visible-cols')));
@@ -1457,6 +1479,20 @@ function KeyContactsViewInner({
               next = compIdx >= 0
                 ? [...next.slice(0, compIdx + 1), ...add, ...next.slice(compIdx + 1)]
                 : [...next, ...add];
+            }
+          }
+        }
+        // One-time migration for the Changed Jobs "Reached Out" column.
+        if (showReachedOut) {
+          const roMigKey = lsKey('visible-cols-mig-reachedOut');
+          if (!localStorage.getItem(roMigKey)) {
+            try { localStorage.setItem(roMigKey, '1'); } catch {}
+            if (!next.includes('reachedOut')) {
+              const eeIdx = next.indexOf('expectedEmail');
+              const anchor = eeIdx >= 0 ? eeIdx : next.indexOf('company');
+              next = anchor >= 0
+                ? [...next.slice(0, anchor + 1), 'reachedOut', ...next.slice(anchor + 1)]
+                : [...next, 'reachedOut'];
             }
           }
         }
@@ -1987,6 +2023,8 @@ function KeyContactsViewInner({
         suggestedCompany: companyGuessIndex ? guessCompanyForContact(c, companyGuessIndex) : '',
         newCompany,
         expectedEmail,
+        reachedOut: !!local?._reachedOut,
+        reachedOutAt: local?._reachedOutAt || '',
         raw: c,
       });
     }
@@ -2271,6 +2309,7 @@ function KeyContactsViewInner({
         case 'company': cmp = (a.companyName || '').localeCompare(b.companyName || ''); break;
         case 'suggestedCompany': cmp = (a.suggestedCompany || '').localeCompare(b.suggestedCompany || ''); break;
         case 'newCompany': cmp = (a.newCompany || '').localeCompare(b.newCompany || ''); break;
+        case 'reachedOut': cmp = Number(!!a.reachedOut) - Number(!!b.reachedOut); break;
         case 'email':   cmp = (a.email || '').localeCompare(b.email || ''); break;
         case 'location':
           cmp = ((a.state || '') + (a.city || '')).localeCompare((b.state || '') + (b.city || ''));
@@ -2314,6 +2353,7 @@ function KeyContactsViewInner({
     company:  c => c.companyName || '',
     suggestedCompany: c => c.suggestedCompany || '',
     newCompany: c => c.newCompany || '',
+    reachedOut: c => c.reachedOut ? 'Reached out' : 'Not yet',
     expectedEmail: c => (c.expectedEmail?.status === 'ok' ? c.expectedEmail.email : ''),
     email:    c => c.email || '',
     phone:    c => c.phone || '',
@@ -2536,6 +2576,7 @@ function KeyContactsViewInner({
                     { key: 'company', label: 'Company' },
                     ...(showSuggestedCompany ? [{ key: 'suggestedCompany', label: 'Suggested Company' }] : []),
                     ...(showNewCompanyEmail ? [{ key: 'newCompany', label: 'New Company' }, { key: 'expectedEmail', label: 'Expected Email' }] : []),
+                    ...(showReachedOut ? [{ key: 'reachedOut', label: 'Reached Out' }] : []),
                     { key: 'email', label: 'Email' },
                     { key: 'phone', label: 'Phone' },
                     { key: 'location', label: 'Location' },
@@ -2898,6 +2939,7 @@ function KeyContactsViewInner({
               { key: 'company',  label: 'Company' },
               ...(showSuggestedCompany ? [{ key: 'suggestedCompany', label: 'Suggested Company' }] : []),
               ...(showNewCompanyEmail ? [{ key: 'newCompany', label: 'New Company' }, { key: 'expectedEmail', label: 'Expected Email', sortable: false }] : []),
+              ...(showReachedOut ? [{ key: 'reachedOut', label: 'Reached Out' }] : []),
               { key: 'email',    label: 'Email' },
               { key: 'phone',    label: 'Phone' },
               { key: 'location', label: 'Location' },
@@ -3254,6 +3296,26 @@ function KeyContactsViewInner({
                     )}
                     {showNewCompanyEmail && visibleSet.has('expectedEmail') && (
                       <ExpectedEmailCell info={c.expectedEmail} name={c.name} />
+                    )}
+                    {showReachedOut && visibleSet.has('reachedOut') && (
+                      <div style={{ padding: '0.3rem 0.5rem', display: 'flex', alignItems: 'center' }}>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); toggleReachedOut(c.raw || c); }}
+                          title={c.reachedOut
+                            ? `Marked reached out${c.reachedOutAt ? ` on ${new Date(c.reachedOutAt).toLocaleDateString()}` : ''} — click to unmark`
+                            : 'Click to mark that you\'ve reached out to this contact'}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                            padding: '2px 8px', borderRadius: 999,
+                            fontSize: '0.62rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                            background: c.reachedOut ? '#DCFCE7' : '#fff',
+                            border: `1px solid ${c.reachedOut ? '#86EFAC' : '#CBD5E1'}`,
+                            color: c.reachedOut ? '#166534' : '#64748B',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >{c.reachedOut ? '✓ Reached out' : 'Mark reached out'}</button>
+                      </div>
                     )}
                     {visibleSet.has('email') && (
                     <InlineCell
