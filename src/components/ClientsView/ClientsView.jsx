@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect } from 'react';
 import { DataTable } from '../common/DataTable';
 import { matchesCdm } from '../../utils/cdmMatch';
+import { buildTargetTierResolver } from '../../utils/targetTier';
 import { DealsView } from '../DealsView/DealsView';
 import { CommissionsView } from './CommissionsView';
 import { loadDealsList } from '../../utils/dealsStore';
@@ -71,6 +72,25 @@ function renderDaysToEnd(endRaw, inactive) {
     : days > 0 ? `${days}d`
     : `${Math.abs(days)}d ago`;
   return <span style={{ color, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{label}</span>;
+}
+
+// Shared Tier pill used by both the account's own Tier column and the
+// mapped Target Tier column. Tier 1 pops red (top accounts), Tier 2 blue,
+// anything else slate; blank / "-" renders an em dash. `title` adds a
+// hover tooltip (e.g. which target account the mapped tier came from).
+function tierBadge(tier, title) {
+  const t = String(tier || '').trim();
+  if (!t || t === '-') return <span style={{ color: '#94A3B8' }} title={title}>—</span>;
+  const palette = /1/.test(t)
+    ? { bg: '#FEE2E2', color: '#B91C1C' }
+    : /2/.test(t)
+    ? { bg: '#DBEAFE', color: '#1E40AF' }
+    : { bg: '#F1F5F9', color: '#475569' };
+  return (
+    <span title={title} style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: palette.bg, color: palette.color, whiteSpace: 'nowrap' }}>
+      {t}
+    </span>
+  );
 }
 
 // Inline editor for the Client Manager column. Local draft so typing
@@ -303,7 +323,7 @@ function normStatus(s) {
 function isClient(p) { return normStatus(p.status) === 'client'; }
 function isOldClient(p) { return normStatus(p.status) === 'old client'; }
 
-export function ClientsView({ prospects = [], cdmName, settings, updateSettings, user }) {
+export function ClientsView({ prospects = [], cdmName, settings, updateSettings, user, targetAccountsData }) {
   const [subtab, setSubtab] = useState(readSavedSubtab);
   function selectSubtab(key) {
     setSubtab(key);
@@ -390,20 +410,20 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     }
   }, [subtab]);
 
-  // One-time migration for the Tier column. DataTable permanently hides
-  // any column that didn't exist when a user last customized their
-  // visible-columns set, so users who've touched the Columns menu would
-  // find Tier stuck under "Hidden columns". Inject it once (right after
-  // CDM) into their saved set — both the localStorage copy and the
-  // Firestore-synced tablePrefs — so it shows without them hunting for
-  // it. Sticky per-table flag so re-hiding Tier still sticks. Only ADDs;
-  // never removes a column.
+  // One-time migration for the Tier / Target Tier columns. DataTable
+  // permanently hides any column that didn't exist when a user last
+  // customized their visible-columns set, so users who've touched the
+  // Columns menu would find these stuck under "Hidden columns". Inject any
+  // that are missing into their saved set — both the localStorage copy and
+  // the Firestore-synced tablePrefs — so they show without hunting. Sticky
+  // per-table flag (bumped when new columns are added) so re-hiding still
+  // sticks. Only ADDs; never removes a column.
   useEffect(() => {
     if (!settings) return;
     const nextTablePrefs = { ...(settings.tablePrefs || {}) };
     let touchedRemote = false;
     for (const tid of ['clients', 'oldclients']) {
-      const flag = `clients-view:mig-tier-col-${tid}`;
+      const flag = `clients-view:mig-tier-cols-v2-${tid}`;
       let alreadyDone = true;
       try { alreadyDone = !!localStorage.getItem(flag); } catch { /* storage blocked */ }
       if (alreadyDone) continue;
@@ -414,15 +434,26 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
         if (Array.isArray(raw)) lsSaved = raw;
       } catch { /* ignore malformed */ }
       // Firestore prefs win when present; else the local set. No saved
-      // customization at all means every column (incl. Tier) already shows.
+      // customization at all means every column already shows.
       const saved = Array.isArray(remote) && remote.length > 0
         ? remote
         : (Array.isArray(lsSaved) && lsSaved.length > 0 ? lsSaved : null);
       try { localStorage.setItem(flag, '1'); } catch { /* storage blocked */ }
-      if (!saved || saved.includes('tier')) continue;
+      if (!saved) continue;
       const next = [...saved];
-      const cdmIdx = next.indexOf('cdm');
-      if (cdmIdx >= 0) next.splice(cdmIdx, 0, 'tier'); else next.push('tier');
+      let changed = false;
+      // Tier sits after CDM; Target Tier sits right after Tier.
+      if (!next.includes('tier')) {
+        const cdmIdx = next.indexOf('cdm');
+        if (cdmIdx >= 0) next.splice(cdmIdx, 0, 'tier'); else next.push('tier');
+        changed = true;
+      }
+      if (!next.includes('targetTier')) {
+        const tierIdx = next.indexOf('tier');
+        if (tierIdx >= 0) next.splice(tierIdx + 1, 0, 'targetTier'); else next.push('targetTier');
+        changed = true;
+      }
+      if (!changed) continue;
       try { localStorage.setItem(`prospect-col-visible-${tid}`, JSON.stringify(next)); } catch { /* storage blocked */ }
       nextTablePrefs[tid] = { ...(settings.tablePrefs?.[tid] || {}), visible: next };
       touchedRemote = true;
@@ -479,6 +510,14 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       .sort((a, b) => (a.company || '').localeCompare(b.company || ''))
   ), [prospects, showOld, cdmName, primaryMatch, secondaryMatch]);
 
+  // Resolver for the Tier a client inherits from the Target Accounts list
+  // it's mapped to (explicit My Accounts mapping first, fuzzy name match as
+  // fallback). Rebuilt when the target book, CDM, or mapping changes.
+  const resolveTargetTier = useMemo(
+    () => buildTargetTierResolver({ targetAccountsData, cdmName, settings }),
+    [targetAccountsData, cdmName, settings?.targetMap, settings?.targetCdmColumn]
+  );
+
   const q = query.trim().toLowerCase();
   const filtered = q
     ? clients.filter(c => {
@@ -487,6 +526,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
           (c.company || '').toLowerCase().includes(q) ||
           (c.cdm || '').toLowerCase().includes(q) ||
           (c.tier || '').toLowerCase().includes(q) ||
+          (resolveTargetTier(c).tier || '').toLowerCase().includes(q) ||
           (c.type || '').toLowerCase().includes(q) ||
           (c.website || '').toLowerCase().includes(q) ||
           (managerMap[ck] || '').toLowerCase().includes(q) ||
@@ -516,9 +556,13 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     const clientDeals = dealsByClient.get(ck) || [];
     const next = soonestExpiration(clientDeals);
     const untracked = !!untrackedMap[ck];
+    const tt = resolveTargetTier(c);
     return {
       ...c,
       id: c.id,
+      targetTier: tt.tier,
+      targetTierName: tt.name,
+      targetTierSource: tt.source,
       services: getServicesCount(c),
       contractCount: clientDeals.length,
       soonestExpiration: next.date,
@@ -533,7 +577,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       notes: notesMap[ck] || '',
       untracked,
     };
-  }), [filtered, dealsByClient, managerMap, inPersonMap, louisvilleMap, statusMap, notesMap, untrackedMap]);
+  }), [filtered, dealsByClient, managerMap, inPersonMap, louisvilleMap, statusMap, notesMap, untrackedMap, resolveTargetTier]);
 
   const columns = useMemo(() => [
     {
@@ -602,20 +646,25 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
         return m ? Number(m[1]) : Number.POSITIVE_INFINITY;
       },
       getFilterValue: (row) => row.tier || '',
+      render: (row) => tierBadge(row.tier),
+    },
+    {
+      key: 'targetTier', label: 'Target Tier', defaultWidth: 120,
+      // Tier the account inherits from the Target Accounts list it's
+      // mapped to (via My Accounts). Sorts / filters like Tier.
+      getSortValue: (row) => {
+        const m = String(row.targetTier || '').match(/(\d+)/);
+        return m ? Number(m[1]) : Number.POSITIVE_INFINITY;
+      },
+      getFilterValue: (row) => row.targetTier || '',
       render: (row) => {
-        const t = String(row.tier || '').trim();
-        if (!t || t === '-') return <span style={{ color: '#94A3B8' }}>—</span>;
-        // Tier 1 pops red (top accounts); Tier 2 blue; anything else slate.
-        const palette = /1/.test(t)
-          ? { bg: '#FEE2E2', color: '#B91C1C' }
-          : /2/.test(t)
-          ? { bg: '#DBEAFE', color: '#1E40AF' }
-          : { bg: '#F1F5F9', color: '#475569' };
-        return (
-          <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: palette.bg, color: palette.color, whiteSpace: 'nowrap' }}>
-            {t}
-          </span>
-        );
+        if (!row.targetTier) {
+          return <span style={{ color: '#94A3B8' }} title="Not mapped to a Target Account (or the mapped account has no tier). Map it on the My Accounts tab.">—</span>;
+        }
+        const via = row.targetTierName
+          ? `From Target Account "${row.targetTierName}"${row.targetTierSource === 'fuzzy' ? ' (name match)' : ''}`
+          : 'From the mapped Target Account';
+        return tierBadge(row.targetTier, via);
       },
     },
     { key: 'cdm', label: 'CDM', defaultWidth: 160 },
@@ -811,7 +860,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
           type="text"
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder="Filter by company, CDM, Tier, Client Manager, Status, type, website…"
+          placeholder="Filter by company, CDM, Tier, Target Tier, Client Manager, Status, type, website…"
           style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
         <button
