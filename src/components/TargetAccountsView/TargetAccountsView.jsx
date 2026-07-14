@@ -640,7 +640,7 @@ function UntiedOppsWarning({ untiedOpps, cdmName }) {
       {open && (
         <div style={{ padding: '0 0.85rem 0.75rem' }}>
           <div style={{ fontSize: '0.72rem', color: '#7F1D1D', margin: '0 0 0.5rem' }}>
-            These companies have active opportunities in the Opps tab but don&apos;t appear on the Target Accounts list under {who}. Add them to your list (or fix the account owner) so they&apos;re tracked.
+            These companies are on the Target Accounts list and have active opportunities in the Opps tab, but they&apos;re tied to another CDM (or none) rather than {who}. Fix the account owner so they&apos;re tracked under you. Companies not on the target list at all are ignored here.
           </div>
           <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid #FECACA', borderRadius: 6, background: '#fff' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
