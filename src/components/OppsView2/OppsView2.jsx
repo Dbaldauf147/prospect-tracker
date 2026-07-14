@@ -5516,8 +5516,20 @@ function TodoBox() {
   const BULLET = '• ';
   const [text, setText] = useState(() => userLsGet('opps2:todo') ?? '');
   const [collapsed, setCollapsed] = useState(() => userLsGet('opps2:todoCollapsed') === '1');
+  const taRef = useRef(null);
   useEffect(() => { try { userLsSet('opps2:todo', text); } catch { /* quota — ignore */ } }, [text]);
   useEffect(() => { try { userLsSet('opps2:todoCollapsed', collapsed ? '1' : '0'); } catch { /* ignore */ } }, [collapsed]);
+
+  // Grow the textarea to fit its content so there's no dead space below
+  // the last bullet — and it expands as bullets are added. Runs before
+  // paint (and whenever the text or expanded state changes) to avoid a
+  // visible resize flash on load or when expanding from collapsed.
+  useLayoutEffect(() => {
+    const el = taRef.current;
+    if (collapsed || !el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [text, collapsed]);
 
   function handleKeyDown(e) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -5564,12 +5576,13 @@ function TodoBox() {
       </div>
       {!collapsed && (
         <textarea
+          ref={taRef}
           value={text}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
           placeholder="Jot a to-do and press Enter for a new bullet…"
-          rows={4}
-          style={{ display: 'block', width: '100%', boxSizing: 'border-box', border: 'none', borderRadius: '0 0 8px 8px', resize: 'vertical', padding: '0.5rem 0.6rem', fontSize: '0.8rem', fontFamily: 'inherit', color: 'var(--color-text)', background: 'transparent', lineHeight: 1.5, outline: 'none', minHeight: 72 }}
+          rows={1}
+          style={{ display: 'block', width: '100%', boxSizing: 'border-box', border: 'none', borderRadius: '0 0 8px 8px', resize: 'none', overflow: 'hidden', padding: '0.5rem 0.6rem', fontSize: '0.8rem', fontFamily: 'inherit', color: 'var(--color-text)', background: 'transparent', lineHeight: 1.5, outline: 'none' }}
         />
       )}
     </div>
