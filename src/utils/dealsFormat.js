@@ -51,6 +51,17 @@ export function asDate(v) {
   return Number.isFinite(d.getTime()) ? d : null;
 }
 
+// The calendar year a deal belongs to, derived from its Original Contract
+// Start date. This is what the Deals tab renders in its read-only Year
+// column, so anything that buckets deals by year (e.g. the YOY Commissions
+// chart) must use this rather than the raw, often-blank stored 'Year' cell
+// — otherwise a deal that shows 2026 from its contract date gets skipped.
+// Returns '' when the date is missing or unparseable.
+export function dealYear(row) {
+  const d = asDate(row?.['Original Contract Start']);
+  return d ? String(d.getFullYear()) : '';
+}
+
 export function fmtDate(v) {
   const d = asDate(v);
   if (!d) return v == null ? '' : String(v);

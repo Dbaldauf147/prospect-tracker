@@ -13,7 +13,7 @@ import { loadOppsFromCache } from '../../utils/oppsCache';
 import { loadCommissions } from '../../utils/commissionsStore';
 import { loadDealsList } from '../../utils/dealsStore';
 import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
-import { asNumber } from '../../utils/dealsFormat';
+import { asNumber, dealYear } from '../../utils/dealsFormat';
 import { loadQuotedProjections, saveQuotedProjections, QUOTED_FIELDS } from '../../utils/quotedProjectionsStore';
 import { loadYoyOverrides, saveYoyOverrides } from '../../utils/yoyOverridesStore';
 import { loadHiddenCharts, saveHiddenCharts } from '../../utils/yoyHiddenChartsStore';
@@ -1161,21 +1161,21 @@ export function YOYView() {
 
   const hasOpps = records.length > 0;
 
-  // Commissions — the Deals tab's Commission column summed by its Year
-  // column. Each deal row is bucketed by the value in its "Year" cell and
-  // its "Commission" dollar amount is added to that year's total. Rows
-  // without a usable Year are skipped; a blank/zero Commission still counts
-  // its row (so the year is represented) but adds nothing. Years between
-  // the earliest and latest are kept even when empty so a missing year
-  // shows as a $0 bar instead of a gap in the axis.
+  // Commissions — the Deals tab's Commission column summed by year. Each
+  // deal row is bucketed by its Year — the same value the Deals tab shows,
+  // derived from Original Contract Start (dealYear), NOT the raw stored
+  // 'Year' cell, which is often blank even when the deal clearly falls in a
+  // year. Its "Commission" dollar amount is added to that year's total.
+  // Rows without a usable year are skipped; a blank/zero Commission still
+  // counts its row (so the year is represented) but adds nothing. Years
+  // between the earliest and latest are kept even when empty so a missing
+  // year shows as a $0 bar instead of a gap in the axis.
   const commissionsBase = useMemo(() => {
     const byYear = new Map();
     const countByYear = new Map();
     for (const row of (deals || [])) {
-      const yearNum = asNumber(row?.['Year']);
-      if (yearNum == null) continue;
-      const year = Math.trunc(yearNum);
-      if (year < 1900 || year > 2100) continue;
+      const year = Number(dealYear(row));
+      if (!Number.isFinite(year) || year < 1900 || year > 2100) continue;
       const commission = asNumber(row?.['Commission']) || 0;
       byYear.set(year, (byYear.get(year) || 0) + commission);
       countByYear.set(year, (countByYear.get(year) || 0) + 1);
@@ -1412,15 +1412,13 @@ export function YOYView() {
     const dsSortYear = (r) => Number(r['Closed Year'] || r['Quoted Year'] || r['Projected Year'] || 0);
     dealSizeRecs.sort((a, b) => dsSortYear(a) - dsSortYear(b) || a.Account.localeCompare(b.Account));
     // Commissions contributors — one row per deal that fed a year's total.
-    // Mirrors commissionsBase exactly: bucketed by the deal's Year column
-    // and carrying its Commission column value, so the rows tie back to
-    // each bar.
+    // Mirrors commissionsBase exactly: bucketed by the deal's derived year
+    // (dealYear, from Original Contract Start) and carrying its Commission
+    // column value, so the rows tie back to each bar.
     const commissionsRecs = [];
     for (const row of (deals || [])) {
-      const yearNum = asNumber(row?.['Year']);
-      if (yearNum == null) continue;
-      const year = Math.trunc(yearNum);
-      if (year < 1900 || year > 2100) continue;
+      const year = Number(dealYear(row));
+      if (!Number.isFinite(year) || year < 1900 || year > 2100) continue;
       const commission = asNumber(row?.['Commission']) || 0;
       commissionsRecs.push({
         'Client Name': String(row?.['Client Name'] || '').trim(),
