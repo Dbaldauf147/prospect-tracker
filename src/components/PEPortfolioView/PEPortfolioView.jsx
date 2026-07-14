@@ -209,6 +209,35 @@ function computeFirmScopedOpps(firm, peOpps, oppsRecords, prospects) {
   return oppsRecords.filter(r => oppWithinRecency(r) && nameList.some(n => accountMatchesCompany(n, r['Account'])));
 }
 
+// Earliest opportunity Start Date across every opp that belongs to a PE
+// firm — the firm itself or any of its portfolio companies (the same
+// peOwner linkage computeFirmScopedOpps uses), but WITHOUT the
+// long-closed-deal drop so a firm's genuinely-earliest opportunity still
+// counts. Returns an ISO YYYY-MM-DD string, or null when the firm has no
+// dated opportunity. Used to back-date a Discovery firm's "days in stage"
+// clock to when its first opportunity opened, instead of the day the board
+// first loaded.
+function earliestFirmOppStartISO(firm, oppsRecords, prospects) {
+  const f = String(firm || '').trim().toLowerCase();
+  if (!f) return null;
+  const names = new Set([f]);
+  for (const p of prospects) {
+    if (prospectOwnedByFirm(p.peOwner, firm)) {
+      const n = (p.company || '').trim().toLowerCase();
+      if (n) names.add(n);
+    }
+  }
+  const nameList = [...names];
+  let best = null;
+  for (const r of oppsRecords) {
+    if (!nameList.some(n => accountMatchesCompany(n, r['Account']))) continue;
+    const iso = toISODate(r['Start Date']);
+    if (!iso) continue;
+    if (best == null || iso < best) best = iso; // ISO YYYY-MM-DD sorts chronologically
+  }
+  return best;
+}
+
 // Reads Opps 2 — the canonical opps store. Local IndexedDB first for
 // speed; falls back to the user's Firestore `opps2Data` doc when the
 // local cache is empty (e.g. fresh browser, never opened Opps 2 here
@@ -497,6 +526,29 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       }
     }
   }, [peFirms, onUpdateProspect]);
+
+  // Discovery firms count from their FIRST opportunity, not the day this
+  // board first loaded: a firm we've been discovering for months should
+  // read its real age, not restart at 0. Waits for opps to load, then
+  // stamps each Discovery firm's peStageEnteredAt with the earliest Start
+  // Date across its opportunities (firm + portfolio companies). Only ever
+  // moves the date EARLIER, so it's idempotent — and self-heals a firm
+  // that was previously stamped "today" by the pass above. Non-Discovery
+  // stages keep their stamp-on-entry date. Runs once opps are present.
+  const peDiscoveryImportRef = useRef(false);
+  useEffect(() => {
+    if (peDiscoveryImportRef.current || !peFirms.length || oppsRecords.length === 0) return;
+    peDiscoveryImportRef.current = true;
+    for (const p of peFirms) {
+      if (p.peStage !== 'Discovery') continue;
+      const earliest = earliestFirmOppStartISO(p.company, oppsRecords, prospects);
+      if (!earliest) continue;
+      const current = toISODate(p.peStageEnteredAt);
+      if (!current || earliest < current) {
+        onUpdateProspect?.(p.id, { peStageEnteredAt: earliest });
+      }
+    }
+  }, [peFirms, oppsRecords, prospects, onUpdateProspect]);
 
   // Total mapped portfolio companies across every PE firm — drives the
   // "All PCs" sub-tab count.
