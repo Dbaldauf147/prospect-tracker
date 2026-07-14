@@ -551,17 +551,19 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
     <div className={styles.wrapper}>
       <div className={styles.header}>
         <div>
-          <h2 className={styles.title}>Target Accounts List</h2>
+          <div className={styles.titleRow}>
+            <h2 className={styles.title}>Target Accounts List</h2>
+            <div className={styles.tierLegend}>
+              <div><strong>Tier 1:</strong> Existing Clients</div>
+              <div><strong>Tier 2:</strong> Critical/Major Prospects (10 total)</div>
+              <div><strong>Tier 3:</strong> All remaining assigned in your segments</div>
+            </div>
+          </div>
           {data?.uploadedAt && (
             <span className={styles.lastUpload}>
               {data.fileName} — uploaded {new Date(data.uploadedAt).toLocaleString()}
             </span>
           )}
-          <div className={styles.tierLegend}>
-            <div><strong>Tier 1:</strong> Existing Clients</div>
-            <div><strong>Tier 2:</strong> Critical/Major Prospects (10 total)</div>
-            <div><strong>Tier 3:</strong> All remaining assigned in your segments</div>
-          </div>
         </div>
         <div className={styles.headerActions}>
           <label className={styles.uploadBtn}>
