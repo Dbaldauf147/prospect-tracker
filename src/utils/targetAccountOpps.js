@@ -156,6 +156,10 @@ export function findUntiedActiveOpps(records, targetData, cdmName, targetCdmColu
         owner,
       };
     })
+    // Only flag companies that are actually on the target list (tied to
+    // another CDM, or on the list with no CDM) — companies missing from
+    // the list entirely are intentionally ignored here.
+    .filter(g => g.onList)
     .sort((a, b) => b.count - a.count || a.account.localeCompare(b.account));
   return {
     groups: list,
