@@ -20,13 +20,20 @@
   margin: 0;
 }
 
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
 .lastUpload {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
 }
 
 .tierLegend {
-  margin: 0.6rem 0 0;
+  margin: 0;
   padding: 0.6rem 0.85rem;
   display: inline-flex;
   flex-direction: column;
