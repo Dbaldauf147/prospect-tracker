@@ -1222,6 +1222,29 @@ function PromptLibrary({ prompts, onChange }) {
   const [draftBody, setDraftBody] = useState('');
   const [copyFlashId, setCopyFlashId] = useState(null);
   const [query, setQuery] = useState('');
+  // Prompt bodies are hidden by default — the library is a pick-and-copy
+  // list, so a wall of prompt text just gets in the way. Each id in this
+  // set has been expanded via its "Show" toggle.
+  const [expandedIds, setExpandedIds] = useState(() => new Set());
+
+  const toggleExpand = (id) => setExpandedIds(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  // Reorder a prompt within the saved list by swapping it with its
+  // neighbor, then persist the new order via onChange. Only offered when
+  // no search filter is active (moving within a filtered subset would be
+  // ambiguous about where the item lands in the full list).
+  const move = (id, dir) => {
+    const idx = prompts.findIndex(p => p.id === id);
+    const swapWith = idx + dir;
+    if (idx < 0 || swapWith < 0 || swapWith >= prompts.length) return;
+    const next = prompts.slice();
+    [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
+    onChange(next);
+  };
 
   const startNew = () => { setEditingId('new'); setDraftTitle(''); setDraftBody(''); };
   const startEdit = (p) => { setEditingId(p.id); setDraftTitle(p.title); setDraftBody(p.body); };
@@ -1291,7 +1314,7 @@ function PromptLibrary({ prompts, onChange }) {
   return (
     <div className={styles.promptLib}>
       <p className={styles.subnote}>
-        Save prompts you reuse often and copy any of them with one click. Prompts sync across your devices.
+        Save prompts you reuse often and copy any of them with one click. Use the arrows to reorder, and click <strong>Show</strong> to reveal a prompt&rsquo;s text. Prompts sync across your devices.
       </p>
       <div className={styles.promptLibToolbar}>
         <input
@@ -1321,7 +1344,11 @@ function PromptLibrary({ prompts, onChange }) {
         <div className={styles.empty}>No prompts match &ldquo;{query}&rdquo;.</div>
       )}
 
-      {visible.map(p => (
+      {visible.map((p, i) => {
+        const expanded = expandedIds.has(p.id);
+        // Reordering is disabled while a search filter is active (see move()).
+        const canReorder = !q;
+        return (
         <section key={p.id} className={styles.promptCard}>
           {editingId === p.id ? (
             <>
@@ -1331,8 +1358,15 @@ function PromptLibrary({ prompts, onChange }) {
           ) : (
             <>
               <div className={styles.promptCardHead}>
+                {canReorder && (
+                  <div className={styles.promptReorder}>
+                    <button type="button" className={styles.promptMoveBtn} onClick={() => move(p.id, -1)} disabled={i === 0} title="Move up" aria-label="Move up">▲</button>
+                    <button type="button" className={styles.promptMoveBtn} onClick={() => move(p.id, 1)} disabled={i === visible.length - 1} title="Move down" aria-label="Move down">▼</button>
+                  </div>
+                )}
                 <h2 className={styles.promptCardTitle}>{p.title}</h2>
                 <div className={styles.promptCardActions}>
+                  <button type="button" className={styles.aiPromptBtnGhost} onClick={() => toggleExpand(p.id)} aria-expanded={expanded}>{expanded ? 'Hide' : 'Show'}</button>
                   <button type="button" className={styles.aiPromptBtn} onClick={() => copy(p)}>Copy</button>
                   <button type="button" className={styles.aiPromptBtnGhost} onClick={() => startEdit(p)}>Edit</button>
                   <button type="button" className={styles.aiPromptBtnGhost} onClick={() => remove(p.id)}>Delete</button>
@@ -1340,11 +1374,12 @@ function PromptLibrary({ prompts, onChange }) {
                   {copyFlashId === `err:${p.id}` && <span className={styles.copyFlashErr}>Copy failed</span>}
                 </div>
               </div>
-              <pre className={styles.aiPromptPreview}>{p.body}</pre>
+              {expanded && <pre className={styles.aiPromptPreview}>{p.body}</pre>}
             </>
           )}
         </section>
-      ))}
+        );
+      })}
     </div>
   );
 }

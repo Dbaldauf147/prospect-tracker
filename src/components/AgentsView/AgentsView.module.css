@@ -668,6 +668,33 @@
   flex-wrap: wrap;
 }
 
+.promptReorder {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.promptMoveBtn {
+  padding: 0 0.4rem;
+  line-height: 1.2;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg, #fff);
+  color: var(--color-text, #0F172A);
+  font-size: 0.6rem;
+  cursor: pointer;
+}
+
+.promptMoveBtn:hover:not(:disabled) {
+  border-color: var(--color-accent);
+}
+
+.promptMoveBtn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .promptForm {
   display: flex;
   flex-direction: column;
