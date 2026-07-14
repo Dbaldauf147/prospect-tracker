@@ -16,6 +16,23 @@ import { PasteAddModal } from '../TableView/PasteAddModal';
 import { splitPeOwners } from '../../utils/peOwners';
 import { loadClientManagerMap, setClientManager, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
 
+// Reference list behind the "Strategies" sub-tab — the core private-equity
+// investment strategies, each with a short plain-language description. The
+// user rates the value of each on a 0–10 slider; the score is saved per
+// user in settings.peStrategyRatings keyed by strategy id.
+const PE_STRATEGIES = [
+  { id: 'buyout', name: 'Buyout / LBO', description: 'Acquire a controlling stake in a mature, cash-generative company, often using significant debt (leverage), then improve operations and exit for a return on equity.' },
+  { id: 'growth', name: 'Growth Equity', description: 'Take minority stakes in established, fast-growing companies that need capital to scale — expansion, new markets, acquisitions — without a control change or heavy leverage.' },
+  { id: 'venture', name: 'Venture Capital', description: 'Fund early-stage, high-growth startups in exchange for equity, accepting high failure rates in return for outsized returns from the winners.' },
+  { id: 'growth_buyout', name: 'Middle-Market Buyout', description: 'Control buyouts of smaller mid-market businesses, where value is driven more by operational improvement and buy-and-build than by financial engineering.' },
+  { id: 'distressed', name: 'Distressed / Special Situations', description: 'Invest in troubled companies — via debt, restructuring, or turnaround equity — betting on a recovery or a favorable outcome in bankruptcy/reorganization.' },
+  { id: 'mezzanine', name: 'Mezzanine / Private Credit', description: 'Provide subordinated debt or direct loans that sit between senior debt and equity, earning higher yields plus occasional equity upside (warrants).' },
+  { id: 'secondaries', name: 'Secondaries', description: 'Buy existing LP interests or portfolios of assets from other investors seeking early liquidity, typically at a discount to net asset value.' },
+  { id: 'fund_of_funds', name: 'Fund of Funds', description: 'Invest in a diversified portfolio of other PE funds rather than companies directly, spreading manager and vintage-year risk for LPs.' },
+  { id: 'infrastructure', name: 'Infrastructure', description: 'Own long-duration real assets — energy, transport, utilities, digital infrastructure — prized for stable, often inflation-linked cash flows.' },
+  { id: 'real_estate', name: 'Real Estate', description: 'Acquire, develop, or reposition property across core, value-add, and opportunistic risk profiles for income plus capital appreciation.' },
+];
+
 // Closed/invalid stages from the Opps tab — these shouldn't count toward "active pipeline".
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
 const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
@@ -917,6 +934,8 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>{peFirm || '—'}</code>. Pick a different firm from the dropdown to switch the view. Double-click any cell to edit it — same dropdowns as Table View.</>
               : subtab === 'stageDays'
               ? <>PE firms grouped by their <strong>PE Stage</strong>, each card showing how many days the firm has sat in that stage. The clock starts when a firm's PE Stage changes (set in its company popup); firms already in a stage started counting the day this shipped. Longest-waiting firms lead each column.</>
+              : subtab === 'strategies'
+              ? <>The core <strong>private-equity investment strategies</strong>, each with a short description. Drag each slider to rate how valuable that strategy is to you (0–10); your ratings save automatically and are ranked highest-first.</>
               : <>Every opportunity from the <strong>Opps</strong> tab with Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>}
           </div>
         </div>
@@ -937,6 +956,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           { key: 'blueOwl', label: 'PE Overview', count: peFirmCompanies.length },
           { key: 'opps', label: 'PE Opps', count: peOppsScoped.length },
           { key: 'stageDays', label: 'Days in Stage', count: peFirms.filter(p => PE_STAGES.includes(p.peStage)).length },
+          { key: 'strategies', label: 'Strategies', count: PE_STRATEGIES.length },
           { key: 'blackstoneOpps', label: 'Blackstone Opps', count: blackstoneOpps.length },
         ].map(t => {
           const isActive = subtab === t.key;
@@ -1039,6 +1059,11 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           firms={peFirms}
           portfolioByPe={portfolioByPe}
           onSelectProspect={onSelectProspect}
+        />
+      ) : subtab === 'strategies' ? (
+        <PEStrategiesTab
+          settings={settings}
+          updateSettings={updateSettings}
         />
       ) : (
       <>
@@ -3320,5 +3345,168 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, firm = '', setFirm, firmO
         )}
       </div>
     </>
+  );
+}
+
+// "Strategies" sub-tab — a reference table of the core PE investment
+// strategies with descriptions, plus a 0–10 value slider per strategy.
+// Ratings persist per user in settings.peStrategyRatings (keyed by id).
+// Rows sort highest-rated first, but the order is frozen while a slider is
+// being dragged so rows don't jump out from under the cursor.
+function PEStrategiesTab({ settings, updateSettings }) {
+  const RATING_MAX = 10;
+
+  // Live, editable copy of the ratings for smooth dragging.
+  const [ratings, setRatings] = useState(() => settings?.peStrategyRatings || {});
+  // Snapshot the row ORDER is derived from. Updated on drag-release (and on
+  // keyboard edits) rather than every slider tick, so rows don't reshuffle
+  // out from under the cursor while a slider is being dragged.
+  const [sortRatings, setSortRatings] = useState(() => settings?.peStrategyRatings || {});
+
+  const draggingRef = useRef(false);
+  const saveTimer = useRef(null);
+  // The last value we wrote (or hydrated), so the sync effect below can
+  // tell "the server echoed our own save" from "another device changed it".
+  const lastSyncedRef = useRef(JSON.stringify(settings?.peStrategyRatings || {}));
+
+  // Hydrate when settings first load, or when another device/tab changes the
+  // ratings. Guarded by a JSON compare (and skipped mid-drag) so our own
+  // optimistic saves don't stomp a slider the user is still holding.
+  useEffect(() => {
+    if (draggingRef.current) return;
+    const incoming = JSON.stringify(settings?.peStrategyRatings || {});
+    if (incoming !== lastSyncedRef.current) {
+      lastSyncedRef.current = incoming;
+      const val = settings?.peStrategyRatings || {};
+      setRatings(val);
+      setSortRatings(val);
+    }
+  }, [settings]);
+
+  useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current); }, []);
+
+  const persist = useCallback((next) => {
+    lastSyncedRef.current = JSON.stringify(next);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => { updateSettings({ peStrategyRatings: next }); }, 400);
+  }, [updateSettings]);
+
+  const setRating = useCallback((id, value) => {
+    setRatings(prev => {
+      const next = { ...prev, [id]: value };
+      persist(next);
+      // Keyboard (arrow-key) edits fire no drag events — reorder immediately.
+      // During a pointer drag we defer reordering to drag-release below.
+      if (!draggingRef.current) setSortRatings(next);
+      return next;
+    });
+  }, [persist]);
+
+  // Read `ratings` directly (not via a ref) — event handlers always close
+  // over the latest committed render, so this sees the final dragged value.
+  const startDrag = () => { draggingRef.current = true; };
+  const endDrag = () => {
+    draggingRef.current = false;
+    setSortRatings(ratings);
+  };
+
+  const ratingOf = (id) => (Number.isFinite(ratings[id]) ? ratings[id] : 0);
+
+  // Display order: highest rating first, ties broken by canonical list order.
+  // Driven by the frozen `sortRatings` snapshot, not the live values.
+  const orderedIds = useMemo(() => {
+    const idx = Object.fromEntries(PE_STRATEGIES.map((s, i) => [s.id, i]));
+    const rank = (id) => (Number.isFinite(sortRatings[id]) ? sortRatings[id] : 0);
+    return PE_STRATEGIES.map(s => s.id).sort((a, b) => {
+      const d = rank(b) - rank(a);
+      return d !== 0 ? d : idx[a] - idx[b];
+    });
+  }, [sortRatings]);
+
+  const byId = Object.fromEntries(PE_STRATEGIES.map(s => [s.id, s]));
+  const rated = PE_STRATEGIES.filter(s => Number.isFinite(ratings[s.id])).length;
+  const GRID_COLS = '48px minmax(160px, 1fr) minmax(240px, 2.2fr) 220px';
+
+  return (
+    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '0 1.25rem 1.25rem' }}>
+      <div style={{ fontSize: '0.72rem', color: '#64748B', margin: '0 0 0.6rem' }}>
+        {rated} of {PE_STRATEGIES.length} strategies rated
+      </div>
+      <div style={{ border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden' }}>
+        {/* Header row */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: GRID_COLS,
+          alignItems: 'center',
+          background: '#F8FAFC',
+          borderBottom: '1px solid #E2E8F0',
+          fontSize: '0.68rem',
+          fontWeight: 700,
+          color: '#475569',
+          textTransform: 'uppercase',
+          letterSpacing: '0.03em',
+        }}>
+          <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center' }}>#</div>
+          <div style={{ padding: '0.55rem 0.6rem' }}>Strategy</div>
+          <div style={{ padding: '0.55rem 0.6rem' }}>Description</div>
+          <div style={{ padding: '0.55rem 0.6rem' }}>Value rating</div>
+        </div>
+        {orderedIds.map((id, i) => {
+          const s = byId[id];
+          const value = ratingOf(id);
+          const pct = (value / RATING_MAX) * 100;
+          return (
+            <div
+              key={id}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: GRID_COLS,
+                alignItems: 'center',
+                borderBottom: i === orderedIds.length - 1 ? 'none' : '1px solid #F1F5F9',
+                background: i % 2 ? '#FFFFFF' : '#FCFCFD',
+              }}
+            >
+              <div style={{ padding: '0.6rem', textAlign: 'center', fontSize: '0.8rem', fontWeight: 700, color: '#94A3B8' }}>{i + 1}</div>
+              <div style={{ padding: '0.6rem', fontSize: '0.78rem', fontWeight: 700, color: '#1E293B' }}>{s.name}</div>
+              <div style={{ padding: '0.6rem', fontSize: '0.72rem', color: '#475569', lineHeight: 1.45 }}>{s.description}</div>
+              <div style={{ padding: '0.6rem', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <input
+                  type="range"
+                  min={0}
+                  max={RATING_MAX}
+                  step={1}
+                  value={value}
+                  onChange={(e) => setRating(id, Number(e.target.value))}
+                  onMouseDown={startDrag}
+                  onMouseUp={endDrag}
+                  onTouchStart={startDrag}
+                  onTouchEnd={endDrag}
+                  onBlur={endDrag}
+                  aria-label={`Value rating for ${s.name}`}
+                  style={{
+                    flex: 1,
+                    accentColor: '#7C3AED',
+                    background: `linear-gradient(to right, #7C3AED 0%, #7C3AED ${pct}%, #E2E8F0 ${pct}%, #E2E8F0 100%)`,
+                    height: 4,
+                    borderRadius: 999,
+                    cursor: 'pointer',
+                  }}
+                />
+                <span style={{
+                  minWidth: 34,
+                  textAlign: 'center',
+                  fontSize: '0.74rem',
+                  fontWeight: 700,
+                  color: value > 0 ? '#7C3AED' : '#94A3B8',
+                  padding: '2px 6px',
+                  borderRadius: 6,
+                  background: value > 0 ? '#F3EEFF' : '#F1F5F9',
+                }}>{value}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
