@@ -550,12 +550,6 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     }
   }, [peFirms, oppsRecords, prospects, onUpdateProspect]);
 
-  // Total mapped portfolio companies across every PE firm — drives the
-  // "All PCs" sub-tab count.
-  const allPortfolioCompanyCount = useMemo(() => (
-    peFirms.reduce((s, pe) => s + (Array.isArray(pe.portfolioCompanies) ? pe.portfolioCompanies.length : 0), 0)
-  ), [peFirms]);
-
   // PE Firm sub-tab: every Table View prospect whose PE Owner names the
   // selected firm (bidirectional contains-match so variants like "Blue
   // Owl Capital" still land here). Prospects typed as Portfolio Company
@@ -1002,14 +996,14 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       {/* Sub-tab bar — Portfolio firms vs. the flat PE Opps list. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid #E2E8F0', margin: '0 1.25rem 0.5rem', flexShrink: 0 }}>
         {[
-          { key: 'portfolio', label: 'Portfolio', count: peFirms.length },
-          { key: 'stages', label: 'PE Stages', count: peFirms.length },
-          { key: 'companies', label: 'All PCs', count: allPortfolioCompanyCount },
-          { key: 'blueOwl', label: 'PE Overview', count: peFirmCompanies.length },
-          { key: 'opps', label: 'PE Opps', count: peOppsScoped.length },
-          { key: 'stageDays', label: 'Days in Stage', count: peFirms.filter(p => PE_STAGES.includes(p.peStage)).length },
-          { key: 'strategies', label: 'Strategies', count: PE_STRATEGIES.length },
-          { key: 'blackstoneOpps', label: 'Blackstone Opps', count: blackstoneOpps.length },
+          { key: 'portfolio', label: 'Portfolio' },
+          { key: 'stages', label: 'PE Stages' },
+          { key: 'companies', label: 'All PCs' },
+          { key: 'blueOwl', label: 'PE Overview' },
+          { key: 'opps', label: 'PE Opps' },
+          { key: 'stageDays', label: 'Days in Stage' },
+          { key: 'strategies', label: 'Strategies' },
+          { key: 'blackstoneOpps', label: 'Blackstone Opps' },
         ].map(t => {
           const isActive = subtab === t.key;
           return (
@@ -1033,14 +1027,6 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               }}
             >
               {t.label}
-              <span style={{
-                fontSize: '0.65rem',
-                fontWeight: 700,
-                padding: '1px 6px',
-                borderRadius: 999,
-                background: isActive ? '#7C3AED' : '#E2E8F0',
-                color: isActive ? '#fff' : '#475569',
-              }}>{t.count}</span>
             </button>
           );
         })}
