@@ -1688,21 +1688,28 @@ export function YOYView() {
             {opps?.fetchedAt ? ` Opps fetched ${new Date(opps.fetchedAt).toLocaleString()}.` : ' Open the Opps tab to load data.'}
           </div>
         </div>
-        {hiddenCharts.length > 0 && (
-          <div className={styles.hiddenBar}>
-            <span className={styles.hiddenBarLabel}>Hidden charts:</span>
-            {hiddenCharts.map((id) => (
-              <button
-                key={id}
-                type="button"
-                className={styles.hiddenChip}
-                onClick={() => showChart(id)}
-                title={`Show the ${YOY_CHART_TITLES[id] || id} chart`}
-              >{YOY_CHART_TITLES[id] || id} <span aria-hidden="true">＋</span></button>
-            ))}
-            <button type="button" className={styles.showAllBtn} onClick={showAllCharts}>Show all</button>
-          </div>
-        )}
+        <div className={styles.headerRight}>
+          <address className={styles.nomadworks}>
+            <span className={styles.nomadworksName}>Nomadworks</span>
+            1216 Broadway (Entrance on W 30th St)<br />
+            New York, NY 10001 — 3rd floor
+          </address>
+          {hiddenCharts.length > 0 && (
+            <div className={styles.hiddenBar}>
+              <span className={styles.hiddenBarLabel}>Hidden charts:</span>
+              {hiddenCharts.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={styles.hiddenChip}
+                  onClick={() => showChart(id)}
+                  title={`Show the ${YOY_CHART_TITLES[id] || id} chart`}
+                >{YOY_CHART_TITLES[id] || id} <span aria-hidden="true">＋</span></button>
+              ))}
+              <button type="button" className={styles.showAllBtn} onClick={showAllCharts}>Show all</button>
+            </div>
+          )}
+        </div>
       </div>
       <div className={styles.body} onClick={handleBodyClick}>
         <CalcPanelContext.Provider value={calcCtx}>
