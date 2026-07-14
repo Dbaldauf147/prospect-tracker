@@ -35,6 +35,7 @@ import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { computeListFlags } from '../../utils/listFlags';
+import { isActiveOppStage } from '../../utils/targetAccountOpps';
 import { splitPeOwners, joinPeOwners } from '../../utils/peOwners';
 import { TYPES, FRAMEWORKS } from '../../data/enums';
 import { NewOppsScheduleModal } from './NewOppsScheduleModal';
@@ -7977,14 +7978,19 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       const stage = (r['Stage'] || '').trim();
       const isWin = stage === 'Sold';
       const isLoss = stage === 'Not Sold';
+      // Active = still in play (not yet won or lost, and a real stage).
+      // Uses the app-wide active-stage test so this agrees with the
+      // "active opps" counts shown elsewhere.
+      const isActive = isActiveOppStage(stage);
       const seen = new Set();
       for (const s of services) {
         if (seen.has(s)) continue;
         seen.add(s);
-        if (!stats[s]) stats[s] = { total: 0, wins: 0, losses: 0 };
+        if (!stats[s]) stats[s] = { total: 0, wins: 0, losses: 0, active: 0 };
         stats[s].total += 1;
         if (isWin) stats[s].wins += 1;
         else if (isLoss) stats[s].losses += 1;
+        if (isActive) stats[s].active += 1;
       }
     }
     const rows = Object.entries(stats)
@@ -7994,6 +8000,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           scope,
           count: s.total,
           wins: s.wins,
+          active: s.active,
           winRate: decided > 0 ? (s.wins / decided) * 100 : null,
           percent: totalOpps > 0 ? (s.total / totalOpps) * 100 : 0,
         };
@@ -8108,6 +8115,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       key: 'winRate',
       label: 'Win Rate',
       defaultWidth: 110,
+      // Win Rate is Sold ÷ (Sold + Not Sold) — decided opps only. Active
+      // opps are excluded, so a service with wins but no losses reads 100%
+      // even while it still has opps in play (see the Active Opps column).
+      renderHeader: (label) => (
+        <span title="Wins ÷ decided opps (Sold + Not Sold). Active opps are not counted.">{label}</span>
+      ),
       render: (row) => (
         <div style={{ textAlign: 'right' }}>
           {row.winRate == null ? '—' : `${row.winRate.toFixed(1)}%`}
@@ -8125,6 +8138,17 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             <div className={styles.serviceBarFill} style={{ width: `${row.percent}%` }} />
           </div>
         </div>
+      ),
+    },
+    {
+      key: 'active',
+      label: 'Active Opps',
+      defaultWidth: 110,
+      renderHeader: (label) => (
+        <span title="Opps still in play — not yet Sold or Not Sold.">{label}</span>
+      ),
+      render: (row) => (
+        <div style={{ textAlign: 'right' }}>{row.active}</div>
       ),
     },
     {
