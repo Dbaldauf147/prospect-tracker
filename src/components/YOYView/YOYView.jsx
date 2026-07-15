@@ -183,6 +183,22 @@ function applyYoyOverrides(rows, cfg, table, ctx, fieldsOverride) {
   return changed ? out : rows;
 }
 
+// Drop empty ($0 / blank) years from the leading and trailing edges of a
+// year-series so the chart doesn't open or close on bare axis ticks (e.g.
+// 2015–2017 before the first commission). Interior empty years are kept —
+// blanking a gap year would misleadingly slide two real years together.
+// `field` is the plotted value that defines "empty"; returns the same
+// array reference when nothing needs trimming.
+function trimEmptyEdgeYears(rows, field = 'total') {
+  if (!Array.isArray(rows) || rows.length === 0) return rows;
+  let start = 0;
+  let end = rows.length - 1;
+  const hasValue = (r) => Number(r?.[field]) > 0;
+  while (start <= end && !hasValue(rows[start])) start++;
+  while (end >= start && !hasValue(rows[end])) end--;
+  return (start === 0 && end === rows.length - 1) ? rows : rows.slice(start, end + 1);
+}
+
 // Format a computed value for the editor's placeholder, so the user sees
 // what the live number is before typing a replacement.
 function fmtOverrideValue(v, kind) {
@@ -1191,7 +1207,7 @@ export function YOYView() {
     return rows;
   }, [deals]);
   const commissionsData = useMemo(
-    () => applyYoyOverrides(commissionsBase, YOY_CHART_EDITS.commissions, overrides.commissions, editCtx),
+    () => trimEmptyEdgeYears(applyYoyOverrides(commissionsBase, YOY_CHART_EDITS.commissions, overrides.commissions, editCtx)),
     [commissionsBase, overrides, editCtx],
   );
   const hasCommissions = commissionsData.length > 0;
