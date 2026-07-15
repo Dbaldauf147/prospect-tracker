@@ -1320,8 +1320,42 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
       getFilterValue: () => '',
     };
     // Drop sticky from the original first column (Client Name) — only
-    // one column can be left-anchored at a time.
-    const clientNameCol = { ...baseColumns[0], sticky: false };
+    // one column can be left-anchored at a time. Also decorate the cell
+    // with a ⚠ warning when the deal's Client Name matches no company
+    // in the Table View roster — directly or through a hand-mapping to
+    // a client. This is broader than the "Mapped to Client" helper,
+    // which only checks the active-client subset: a name can be a real
+    // Table View company that just isn't tagged as a client (that shows
+    // the yellow "Map to client…" prompt), versus a name that matches
+    // nothing in Table View at all (a typo, or an account never added)
+    // — only the latter gets the ⚠. Stays silent when the roster hasn't
+    // loaded (prospectByName empty) so there's nothing to match against,
+    // and respects the same per-name ignore set as the mapping column.
+    const clientNameBaseRender = baseColumns[0].render;
+    const clientNameCol = {
+      ...baseColumns[0],
+      sticky: false,
+      render: (row) => {
+        const raw = String(row['Client Name'] || '').trim();
+        const norm = normClient(raw);
+        const mapped = clientMap[norm];
+        const unknownToTableView = !!raw
+          && prospectByName.size > 0
+          && !ignoreSet.has(norm)
+          && !prospectByName.has(norm)
+          && !(mapped && prospectByName.has(normClient(mapped)));
+        if (!unknownToTableView) return clientNameBaseRender(row);
+        return (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%' }}>
+            <span style={{ flex: 1, minWidth: 0 }}>{clientNameBaseRender(row)}</span>
+            <span
+              title={`"${raw}" isn't a company in Table View. Add it there, or use the Mapped to Client column to point this deal at an existing account.`}
+              style={{ flex: '0 0 auto', color: '#B45309', fontSize: '0.85rem', lineHeight: 1, cursor: 'help' }}
+            >⚠</span>
+          </span>
+        );
+      },
+    };
     if (clientOptions.length === 0) {
       return [selectCol, progressCol, clientNameCol, ...baseColumns.slice(1)];
     }
