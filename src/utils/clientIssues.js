@@ -95,6 +95,50 @@ function detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedM
   return issues;
 }
 
+// A client whose soonest renewal falls inside this many days without a
+// Status set is surfaced as an issue — mirrors the "needs a status" red
+// row tint on the Clients tab (ClientsView's RENEWAL_WARNING_DAYS).
+const RENEWAL_WARNING_DAYS = 270;
+
+// A Clients-tab Status cell counts as "unset" when it's blank or just a
+// dash placeholder. Matches the noStatus check in ClientsView.
+function hasNoClientStatus(statusMap, clientKey) {
+  const s = String(statusMap?.[clientKey] || '').trim();
+  return s === '' || s === '-' || s === '—' || s === '–';
+}
+
+// Issue #4: a client whose soonest active contract renews within
+// RENEWAL_WARNING_DAYS but has no Status set on the Clients tab — the same
+// clients the Clients tab tints red. Already-expired contracts (negative
+// Days Until) are left to the "Contract expired" detector so they aren't
+// listed twice; this covers the upcoming-renewal window (0..270 days).
+// Untracked clients are skipped, matching the Clients tab (blank Days Until).
+function detectRenewalNoStatus({ prospects, cdmName, dealsByClient, untrackedMap, clientStatusMap }) {
+  const issues = [];
+  for (const p of prospects) {
+    if (!matchesCdm(p.cdm, cdmName)) continue;
+    if (!isClientStatus(p)) continue;
+    const ck = normClientName(p.company);
+    if (untrackedMap?.[ck]) continue;
+    const next = soonestExpiration(dealsByClient.get(ck) || []);
+    if (next.days == null || next.days < 0 || next.days >= RENEWAL_WARNING_DAYS) continue;
+    if (!hasNoClientStatus(clientStatusMap, ck)) continue;
+    issues.push({
+      id: `renewal-no-status:${p.id}`,
+      source: 'Clients',
+      type: 'Renewal — no status',
+      company: p.company || '—',
+      prospectId: p.id,
+      daysUntil: next.days,
+      expirationDate: next.date,
+      detail: next.date
+        ? `Renews in ${next.days} day${next.days === 1 ? '' : 's'} (${fmtDate(next.date)}) with no Status set`
+        : `Renews in ${next.days} day${next.days === 1 ? '' : 's'} with no Status set`,
+    });
+  }
+  return issues;
+}
+
 // Account statuses that MyAccountsView treats as inactive — an account
 // parked in one of these isn't chased for a missing HQ Region (mirrors
 // the check at MyAccountsView's hqRegion flag). Kept in sync with the
@@ -225,10 +269,11 @@ function detectMarketingLeadStatuses({ marketingLeads = [] }) {
 
 // Build the full list of outstanding issues. Each detector contributes
 // rows; add more detectors here as new issue classes are mapped.
-export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, myAccountsFlags = [], marketingLeads = [] }) {
+export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [] }) {
   const dealsByClient = groupDealsByClient(dealsList, clientMap);
   const issues = [];
   issues.push(...detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedMap }));
+  issues.push(...detectRenewalNoStatus({ prospects, cdmName, dealsByClient, untrackedMap, clientStatusMap }));
   issues.push(...detectMyAccountsFlags({ myAccountsFlags, prospects }));
   issues.push(...detectMarketingLeadStatuses({ marketingLeads }));
   return issues;

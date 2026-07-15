@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect } from 'react';
 import { loadDealsList, DEALS_LIST_EVENT } from '../utils/dealsStore';
 import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../utils/dealClientMap';
-import { loadClientUntrackedMap, CLIENT_UNTRACKED_EVENT } from '../utils/clientManagerStore';
+import { loadClientUntrackedMap, CLIENT_UNTRACKED_EVENT, loadClientStatusMap, CLIENT_STATUS_EVENT } from '../utils/clientManagerStore';
 import { loadIssueSnoozedMap, ISSUE_SNOOZED_EVENT } from '../utils/issueSnoozeStore';
 import { loadMyAccountsFlags, MY_ACCOUNTS_FLAGS_EVENT, MY_ACCOUNTS_FLAGS_KEY } from '../utils/myAccountsFlagsStore';
 import { computeIssues } from '../utils/clientIssues';
@@ -27,6 +27,7 @@ export function useIssues({ prospects = [], cdmName, user, marketingLeads = [] }
   const [dealsList, setDealsList] = useState(() => loadDealsList().data);
   const [clientMap, setClientMap] = useState(() => loadDealClientMap());
   const [untrackedMap, setUntrackedMap] = useState(() => loadClientUntrackedMap());
+  const [clientStatusMap, setClientStatusMap] = useState(() => loadClientStatusMap());
   const [snoozedMap, setSnoozedMap] = useState(() => loadIssueSnoozedMap());
   const [myAccountsFlags, setMyAccountsFlags] = useState(() => loadMyAccountsFlags());
 
@@ -37,6 +38,7 @@ export function useIssues({ prospects = [], cdmName, user, marketingLeads = [] }
     setDealsList(loadDealsList().data);
     setClientMap(loadDealClientMap());
     setUntrackedMap(loadClientUntrackedMap());
+    setClientStatusMap(loadClientStatusMap());
     setSnoozedMap(loadIssueSnoozedMap());
     setMyAccountsFlags(loadMyAccountsFlags());
   }, [user?.uid]);
@@ -46,18 +48,21 @@ export function useIssues({ prospects = [], cdmName, user, marketingLeads = [] }
       if (e.key === 'deals-list-override') setDealsList(loadDealsList().data);
       if (e.key === 'deals-client-map') setClientMap(loadDealClientMap());
       if (e.key === 'clients-untracked-map') setUntrackedMap(loadClientUntrackedMap());
+      if (e.key === 'clients-status-map') setClientStatusMap(loadClientStatusMap());
       if (e.key === 'issues-snoozed-map') setSnoozedMap(loadIssueSnoozedMap());
       if (e.key === MY_ACCOUNTS_FLAGS_KEY) setMyAccountsFlags(loadMyAccountsFlags());
     }
     function onDealsList() { setDealsList(loadDealsList().data); }
     function onClientMap() { setClientMap(loadDealClientMap()); }
     function onUntracked() { setUntrackedMap(loadClientUntrackedMap()); }
+    function onClientStatus() { setClientStatusMap(loadClientStatusMap()); }
     function onSnoozed() { setSnoozedMap(loadIssueSnoozedMap()); }
     function onMaFlags() { setMyAccountsFlags(loadMyAccountsFlags()); }
     window.addEventListener('storage', onStorage);
     window.addEventListener(DEALS_LIST_EVENT, onDealsList);
     window.addEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
     window.addEventListener(CLIENT_UNTRACKED_EVENT, onUntracked);
+    window.addEventListener(CLIENT_STATUS_EVENT, onClientStatus);
     window.addEventListener(ISSUE_SNOOZED_EVENT, onSnoozed);
     window.addEventListener(MY_ACCOUNTS_FLAGS_EVENT, onMaFlags);
     return () => {
@@ -65,15 +70,16 @@ export function useIssues({ prospects = [], cdmName, user, marketingLeads = [] }
       window.removeEventListener(DEALS_LIST_EVENT, onDealsList);
       window.removeEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
       window.removeEventListener(CLIENT_UNTRACKED_EVENT, onUntracked);
+      window.removeEventListener(CLIENT_STATUS_EVENT, onClientStatus);
       window.removeEventListener(ISSUE_SNOOZED_EVENT, onSnoozed);
       window.removeEventListener(MY_ACCOUNTS_FLAGS_EVENT, onMaFlags);
     };
   }, []);
 
   const issues = useMemo(() => {
-    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, myAccountsFlags, marketingLeads });
+    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads });
     return rows.map((r) => ({ ...r, snoozed: !!snoozedMap[r.id] }));
-  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, snoozedMap, myAccountsFlags, marketingLeads]);
+  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads]);
 
   const openCount = useMemo(() => issues.reduce((n, r) => n + (r.snoozed ? 0 : 1), 0), [issues]);
 
