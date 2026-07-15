@@ -80,7 +80,16 @@ function collapseBodyToBreaks(pBodyHtml, { preview = false } = {}) {
   // them as DROP sentinels so they can be surfaced as struck-through markers.
   return html
     .replace(/((?:<br>\s*)+)(<(?:ul|ol)\b)/gi, (_, brs, list) => (preview ? dropMarks(brs) : '') + list)
-    .replace(/(<\/(?:ul|ol)>)\s*((?:<br>\s*)+)/gi, (_, end, brs) => end + (preview ? dropMarks(brs) : '\n'))
+    // Blank lines *after* a list collapse to a single break instead of being
+    // deleted outright, so one intentional gap (e.g. a Page break between the
+    // bullets and the next line) survives on Send while Outlook still can't
+    // re-inflate a whole stack of them. In preview the surviving break shows as
+    // a faint ↵ and any collapsed extras as struck-through DROP markers.
+    .replace(/(<\/(?:ul|ol)>)\s*((?:<br>\s*)+)/gi, (_, end, brs) => {
+      if (!preview) return end + '<br>\n';
+      const n = (brs.match(/<br>/gi) || []).length;
+      return end + '<br>' + DROP.repeat(Math.max(0, n - 1));
+    })
     .replace(/((?:<br>\s*)+)(<hr\b)/gi, (_, brs, hr) => (preview ? dropMarks(brs) : '') + hr)
     .replace(/(<hr[^>]*>)\s*((?:<br>\s*)+)/gi, (_, hr, brs) => hr + (preview ? dropMarks(brs) : ''))
     .replace(/^((?:\s*<br>\s*)+)/i, (_, brs) => (preview ? dropMarks(brs) : ''))
