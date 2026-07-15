@@ -185,6 +185,35 @@ const DEFAULT_STATE = {
     { id: '3', account: 'Liberty Mutual', scope: 'Capital asset planning', closeDate: '2026-04-13', age: 53 },
     { id: '4', account: 'Realterm', scope: 'E.E.D.', closeDate: '2026-04-13', age: 96 },
   ],
+
+  // Free-text strategy notes shown at the bottom of the page. Each is an
+  // editable textarea that saves to the browser alongside the metrics.
+  notesDistractions: `1.  Deprioritize these services (Arc, GRESB, ECH, etc.)
+2.  Refocus energy away from Brookfield (or other accounts that need saving)
+3.  Partner on smaller opportunities
+4.  Focus on quality vs. quantity outeach (targeting 50 quality relationships - 10 being strategic)
+5.  Minimize broader SE opp bandwidth
+6.  Avoiding offer building where possible`,
+  notesProspectingLeft: ` - Leverage SE to get in where possible (SAEs and broader BFO opps)
+ - PE dinner partnership w/Cristy
+ - Event prospecting (even if not attending)
+ - Direct email/calls
+ - Leverage Zoom intents and contacts`,
+  notesProspectingRight: ` - Sourcing outreach with market intel
+ - Going back to Not Solds with RA+?
+ - Blocking out first hour of each day`,
+  notesEfficientTime: ` - ChatGPT for writing exec summary, propsecting drafts, LinkedIn posts, and for company research
+ - Leverage AI tools like Notebook LM or Gamma for slides/podcast generation
+ - Calendly for meeting scheduling
+ - Leverage fee floating tools
+ - SCLP partnership where possible on company/prospect research
+ - Afternoons for calls/mornings for focused work and outreach`,
+  notesUpdates: `1.  Screen opps with Keith each week for Stage 3 - avoiding smaller opps coming into the pipeline before Dan works on them
+2.  Take PE prospects out for lunch in NYC 1 on 1
+3.  Leverage Keith and Gabe on sourcing calls vs. Beth
+4.  Figure out how to accelerate sourcing pilots w/PCs faster and at a larger deal size
+5.
+6.`,
 };
 
 // Per-stage numeric fields. Anything not in this list is left to the
@@ -1804,9 +1833,67 @@ function PipelineViewInner({ prospects = [], cdmName = '' }) {
             </tbody>
           </table>
         </div>
+
+        {/* Strategy notes — free-text, editable, saved to the browser. */}
+        <div className={styles.section}>
+          <div className={styles.sectionTitle}>Eliminating Distractions</div>
+          <div className={styles.notesBody}>
+            <NotesBox value={state.notesDistractions} onCommit={(v) => setField('notesDistractions', v)} minRows={6} />
+          </div>
+        </div>
+
+        <div className={styles.section}>
+          <div className={styles.sectionTitle}>Prospecting Approach</div>
+          <div className={`${styles.notesBody} ${styles.notesTwoCol}`}>
+            <NotesBox value={state.notesProspectingLeft} onCommit={(v) => setField('notesProspectingLeft', v)} minRows={5} />
+            <NotesBox value={state.notesProspectingRight} onCommit={(v) => setField('notesProspectingRight', v)} minRows={5} />
+          </div>
+        </div>
+
+        <div className={styles.section}>
+          <div className={styles.sectionTitle}>Efficient Time Utilization</div>
+          <div className={styles.notesBody}>
+            <NotesBox value={state.notesEfficientTime} onCommit={(v) => setField('notesEfficientTime', v)} minRows={6} />
+          </div>
+        </div>
+
+        <div className={styles.section}>
+          <div className={styles.sectionTitle}>Updates</div>
+          <div className={styles.notesBody}>
+            <NotesBox value={state.notesUpdates} onCommit={(v) => setField('notesUpdates', v)} minRows={6} />
+          </div>
+        </div>
       </div>
     </div>
     </CalcContext.Provider>
+  );
+}
+
+// Auto-growing editable text area for the strategy-notes sections at the
+// bottom of the page. Keeps a local draft while typing and commits to the
+// persisted state on blur (matching the numeric cells) so IndexedDB isn't
+// written on every keystroke.
+function NotesBox({ value, onCommit, minRows = 5 }) {
+  const [draft, setDraft] = useState(value ?? '');
+  const ref = useRef(null);
+  // Reflect external changes (hydration / reset) into the draft.
+  useEffect(() => { setDraft(value ?? ''); }, [value]);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [draft]);
+  return (
+    <textarea
+      ref={ref}
+      className={styles.notesArea}
+      rows={minRows}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => { if (draft !== value) onCommit(draft); }}
+      spellCheck={false}
+    />
   );
 }
 

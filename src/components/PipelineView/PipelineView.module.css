@@ -390,6 +390,39 @@
   word-break: break-word;
 }
 
+/* Strategy-notes text areas at the bottom of the page. */
+.notesBody {
+  padding: 0.6rem 0.75rem;
+}
+
+.notesTwoCol {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+.notesArea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  padding: 0.5rem 0.65rem;
+}
+
+.notesArea:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
 .delBtn {
   background: transparent;
   border: none;
