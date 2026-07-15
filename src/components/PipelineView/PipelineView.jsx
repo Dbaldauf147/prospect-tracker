@@ -1283,7 +1283,7 @@ function PipelineViewInner() {
                             <LiveValue
                               id={`closerate-${stageNum}`}
                               className={styles.liveCell}
-                              style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.15 }}
+                              style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', lineHeight: 1.15 }}
                               breakdown={{
                                 title: `${st.label} — Close Rate (rolling 365 days)`,
                                 value: `${(liveRate * 100).toFixed(0)}%  (${live.sold}/${live.sold + live.notSold})`,
@@ -1362,7 +1362,7 @@ function PipelineViewInner() {
                     <LiveValue
                       id="closerate-total"
                       className={styles.liveCell}
-                      style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.15 }}
+                      style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', lineHeight: 1.15 }}
                       breakdown={{
                         title: 'Overall Close Rate (rolling 365 days)',
                         value: `${(oppsCloseRateActual.rate * 100).toFixed(0)}%  (${oppsCloseRateActual.sold}/${oppsCloseRateActual.sold + oppsCloseRateActual.notSold})`,
