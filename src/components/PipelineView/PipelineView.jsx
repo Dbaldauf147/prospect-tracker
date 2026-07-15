@@ -70,6 +70,7 @@ function bfoStageMetrics(bfo) {
   const ageCol = findCol(/^age$/i);
   const accountCol = findCol(/^account\s*name$/i) || findCol(/^account$/i);
   const oppCol = findCol(/opportunity\s*name|^opportunity$/i);
+  const scopeCol = findCol(/^scope$/i);
   if (!stageCol) return out;
   const buckets = {};
   let allAmtSum = 0;
@@ -86,6 +87,7 @@ function bfoStageMetrics(bfo) {
     buckets[n].rows.push({
       account: accountCol ? String(r[accountCol] ?? '').trim() : '',
       oppName: oppCol ? String(r[oppCol] ?? '').trim() : '',
+      scope: scopeCol ? String(r[scopeCol] ?? '').trim() : '',
       amount: amt,
       age: Number.isFinite(age) ? age : null,
       excludedFromAvg: n === 6 && amt === STAGE_6_DEAL_SIZE_EXCLUDE,
@@ -404,9 +406,16 @@ function fmtShortDate(s) {
 // (`data` + a `more` overflow count so a busy stage can't render thousands
 // of <tr>) plus the full uncapped set (`allData`) so the "Export to Excel"
 // button can write every contributing row, not just the ~50 shown.
-function mapRows(source, mapFn, max = 50) {
-  const all = (source || []).map(mapFn);
-  return { data: all.slice(0, max), more: Math.max(0, all.length - max), allData: all };
+function mapRows(source, mapFn, opts = {}) {
+  const { max = 50, exportMapFn = null, exportColumns = null } = opts;
+  const arr = source || [];
+  const all = arr.map(mapFn);
+  const out = { data: all.slice(0, max), more: Math.max(0, all.length - max), allData: all };
+  // The Excel export can carry extra columns (e.g. Scope) the compact
+  // on-screen panel omits — supplied here so the two stay decoupled.
+  if (exportMapFn) out.exportData = arr.map(exportMapFn);
+  if (exportColumns) out.exportColumns = exportColumns;
+  return out;
 }
 
 // Build a breakdown row list from a close-rate `included` opp array.
@@ -420,7 +429,16 @@ function closeRateRows(included, head) {
       o.account || '(no account)',
       fmtShortDate(o.closeDate),
       o.amount > 0 ? fmtMoney(Math.round(o.amount)) : '—',
-    ]),
+    ], {
+      exportColumns: ['Result', 'Account', 'Scope', 'Close', 'Amount'],
+      exportMapFn: o => [
+        o.stage,
+        o.account || '(no account)',
+        o.scope || '',
+        fmtShortDate(o.closeDate),
+        o.amount > 0 ? fmtMoney(Math.round(o.amount)) : '—',
+      ],
+    }),
   };
 }
 
@@ -437,11 +455,11 @@ async function exportBreakdown(data) {
   if (data.formula) aoa.push(['Formula', data.formula]);
   if (Array.isArray(data.inputs)) for (const it of data.inputs) aoa.push([it.label, it.value]);
   const rows = data.rows;
-  if (rows && Array.isArray(rows.columns)) {
+  if (rows && Array.isArray(rows.exportColumns || rows.columns)) {
     aoa.push([]);
     if (rows.head) aoa.push([rows.head]);
-    aoa.push(rows.columns);
-    for (const r of (rows.allData || rows.data || [])) aoa.push(r);
+    aoa.push(rows.exportColumns || rows.columns);
+    for (const r of (rows.exportData || rows.allData || rows.data || [])) aoa.push(r);
   }
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   const wb = XLSX.utils.book_new();
@@ -827,11 +845,13 @@ function PipelineViewInner() {
     const stageCol = findCol(/sales\s*stage|^stage$/i);
     if (!oppCol) return null;
     const sourceByName = new Map();
+    const scopeByName = new Map();
     for (const r of oppsRecords) {
       const k = String(r['BFO Link'] || '').trim().toLowerCase();
       if (!k) continue;
       const src = (r['Lead Source'] || r['Source'] || '').toString().trim();
       sourceByName.set(k, src);
+      scopeByName.set(k, String(r.Scope || '').trim());
     }
     const isClient = (src) => /client|existing|renewal|cross[\s-]?sell|expansion|upsell/i.test(src || '');
     let clientCount = 0;
@@ -851,7 +871,7 @@ function PipelineViewInner() {
       const oppName = oppNameRaw.toLowerCase();
       const src = sourceByName.get(oppName) || '';
       const amt = amountCol ? parseMoney(r[amountCol]) : null;
-      const entry = { oppName: oppNameRaw || '(unnamed opp)', source: src || '(no lead source)', amount: amt };
+      const entry = { oppName: oppNameRaw || '(unnamed opp)', source: src || '(no lead source)', scope: scopeByName.get(oppName) || '', amount: amt };
       if (isClient(src)) {
         clientCount += 1;
         clientRows.push(entry);
@@ -920,6 +940,7 @@ function PipelineViewInner() {
         items.push({
           account: String(r.Account || '').trim() || '(no company)',
           opp: String(r['Opportunity Name'] || r.Opportunity || r.Name || '').trim() || '(unnamed opp)',
+          scope: String(r.Scope || '').trim(),
           stage,
           openDate: new Date(openTs).toISOString().slice(0, 10),
         });
@@ -1086,7 +1107,10 @@ function PipelineViewInner() {
                                 head: 'Contributing deals (newest close first)',
                                 columns: ['Account', 'Close', 'Amount'],
                                 aligns: ['', '', 'num'],
-                                ...mapRows(oppsClosedYTD.deals, d => [d.account, fmtShortDate(d.closeDate), fmtMoney(d.amount)]),
+                                ...mapRows(oppsClosedYTD.deals, d => [d.account, fmtShortDate(d.closeDate), fmtMoney(d.amount)], {
+                                  exportColumns: ['Account', 'Scope', 'Close', 'Amount'],
+                                  exportMapFn: d => [d.account, d.scope || '', fmtShortDate(d.closeDate), fmtMoney(d.amount)],
+                                }),
                               },
                               note: 'Auto-fed from the Opps tab. Re-paste the Opps tab to refresh.',
                             }}
@@ -1168,7 +1192,17 @@ function PipelineViewInner() {
                     includeAge
                       ? (r.age ?? '—')
                       : (r.amount == null ? '—' : `${fmtMoney(Math.round(r.amount))}${r.excludedFromAvg ? ' *' : ''}`),
-                  ]),
+                  ], {
+                    exportColumns: ['Account', 'Opportunity', 'Scope', includeAge ? 'Age' : 'Amount'],
+                    exportMapFn: r => [
+                      r.account || '—',
+                      r.oppName || '—',
+                      r.scope || '',
+                      includeAge
+                        ? (r.age ?? '—')
+                        : (r.amount == null ? '—' : `${fmtMoney(Math.round(r.amount))}${r.excludedFromAvg ? ' *' : ''}`),
+                    ],
+                  }),
                 });
                 return (
                   <tr key={st.key}>
@@ -1381,7 +1415,10 @@ function PipelineViewInner() {
                     head,
                     columns: ['Opportunity', 'Lead Source', 'Amount'],
                     aligns: ['', '', 'num'],
-                    ...mapRows(arr || [], r => [r.oppName, r.source, r.amount == null ? '—' : fmtMoney(Math.round(r.amount))]),
+                    ...mapRows(arr || [], r => [r.oppName, r.source, r.amount == null ? '—' : fmtMoney(Math.round(r.amount))], {
+                      exportColumns: ['Opportunity', 'Lead Source', 'Scope', 'Amount'],
+                      exportMapFn: r => [r.oppName, r.source, r.scope || '', r.amount == null ? '—' : fmtMoney(Math.round(r.amount))],
+                    }),
                   });
                   const liveActualPct = cg && cg.clientActualPct !== null
                     ? `${(cg.clientActualPct * 100).toFixed(0)}%`
@@ -1571,7 +1608,10 @@ function PipelineViewInner() {
                         head: 'New opps (by account)',
                         columns: ['Account', 'Opportunity', 'Opened'],
                         aligns: ['', '', ''],
-                        ...mapRows(newOppsPast30.items, it => [it.account, it.opp, it.openDate]),
+                        ...mapRows(newOppsPast30.items, it => [it.account, it.opp, it.openDate], {
+                          exportColumns: ['Account', 'Opportunity', 'Scope', 'Opened'],
+                          exportMapFn: it => [it.account, it.opp, it.scope || '', it.openDate],
+                        }),
                       },
                       note: 'Auto-fed from the Opps tab. Re-paste the Opps tab to refresh.',
                     }}
