@@ -1586,22 +1586,26 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     saveDraft();
   }
 
-  // An auto-CC recipient (settings.ccMap) who is ALSO a primary To recipient in
-  // this draft would get two copies of the email — once on the To line, once
-  // via the CC. Flag the contact whose CC causes that so the duplicate is easy
-  // to spot. The flag stays hidden until both people are actually in the To
-  // line, so it only ever points at a real double-send.
+  // A contact's per-contact extra recipients (auto-CC from settings.ccMap and
+  // "To Also" from settings.toAlsoMap) get folded into that contact's email on
+  // send. When one of those extras is ALSO a primary To recipient in this
+  // draft, that person gets two copies — once as their own To email, once
+  // folded into this contact's. Flag only that overlap so the flag always
+  // points at a real double-send and stays hidden otherwise.
   const ccMapForFlags = settings?.ccMap || {};
+  const toAlsoMapForFlags = settings?.toAlsoMap || {};
   const toEmailSet = new Set(
     selectedContacts.map(x => (x.email || '').trim().toLowerCase()).filter(Boolean)
   );
-  const duplicateCcFor = (c) => {
+  const duplicatesFor = (map, c) => {
     const self = (c.email || '').trim().toLowerCase();
-    return (ccMapForFlags[c.email] || []).filter(addr => {
+    return (map[c.email] || []).filter(addr => {
       const a = (addr || '').trim().toLowerCase();
       return a && a !== self && toEmailSet.has(a);
     });
   };
+  const duplicateCcFor = (c) => duplicatesFor(ccMapForFlags, c);
+  const duplicateToAlsoFor = (c) => duplicatesFor(toAlsoMapForFlags, c);
 
   return (
     <div className={styles.page}>
@@ -1620,18 +1624,16 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
             <label className={styles.label}>To {selectedContacts.length > 0 && <button onClick={() => setSelectedContacts([])} style={{ background: 'none', border: 'none', color: '#9CA3AF', fontSize: '0.65rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 400, textTransform: 'none', letterSpacing: 0, padding: 0, marginLeft: '0.3rem' }}>Clear all</button>}</label>
             <div className={styles.contactsBox}>
               {selectedContacts.map(c => {
-                // Flag a recipient when it carries per-contact extra
-                // recipients. "To Also" addresses are always surfaced (they get
-                // folded into this contact's email on send). CC addresses are
-                // surfaced ONLY when the CC'd person is also a primary To
-                // recipient in this draft — the case where they'd receive two
-                // copies. A CC nobody else is receiving directly stays unflagged
-                // so the flag only ever points at a real double-send.
-                const toAlso = (settings?.toAlsoMap || {})[c.email] || [];
+                // Flag a recipient only for extra addresses (CC or "To Also")
+                // that are ALSO a primary To recipient in this draft — the case
+                // where that person would receive two copies. Extras that nobody
+                // else is receiving directly stay unflagged, so the flag only
+                // ever points at a real double-send.
+                const dupToAlso = duplicateToAlsoFor(c);
                 const dupCc = duplicateCcFor(c);
-                const hasExtras = toAlso.length > 0 || dupCc.length > 0;
+                const hasExtras = dupToAlso.length > 0 || dupCc.length > 0;
                 const flagTitle = [
-                  toAlso.length > 0 ? `To Also: ${toAlso.join(', ')}` : '',
+                  dupToAlso.length > 0 ? `Also in the To line — would double-send: ${dupToAlso.join(', ')}` : '',
                   dupCc.length > 0 ? `Also in the To line — would double-send: ${dupCc.join(', ')}` : '',
                 ].filter(Boolean).join(' · ');
                 return (
@@ -1648,7 +1650,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                       <span
                         title={flagTitle}
                         style={{ marginLeft: 5, display: 'inline-flex', alignItems: 'center', gap: 2, padding: '0 5px', borderRadius: 999, background: '#FEF3C7', color: '#92400E', fontSize: '0.62rem', fontWeight: 700, cursor: 'help', verticalAlign: 'middle' }}
-                      >⚑{toAlso.length > 0 ? ` +${toAlso.length} To Also` : ''}{dupCc.length > 0 ? ` +${dupCc.length} CC` : ''}</span>
+                      >⚑{dupToAlso.length > 0 ? ` +${dupToAlso.length} To Also` : ''}{dupCc.length > 0 ? ` +${dupCc.length} CC` : ''}</span>
                     )}
                     <button className={styles.removeTag} onClick={() => removeContact(c.id)}>&times;</button>
                   </span>
