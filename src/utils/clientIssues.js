@@ -139,6 +139,34 @@ function detectRenewalNoStatus({ prospects, cdmName, dealsByClient, untrackedMap
   return issues;
 }
 
+// Issue: an active client (tracked) with NO soonest contract expiration
+// date — no active deal carries a parseable End Date, so its renewal can't
+// be tracked. Untracked ("Don't Track") clients are skipped, matching the
+// Clients tab. Prompts the user to add a contract / End Date (or mark the
+// client Don't Track).
+function detectMissingExpiration({ prospects, cdmName, dealsByClient, untrackedMap }) {
+  const issues = [];
+  for (const p of prospects) {
+    if (!matchesCdm(p.cdm, cdmName)) continue;
+    if (!isClientStatus(p)) continue;
+    const ck = normClientName(p.company);
+    if (untrackedMap?.[ck]) continue;
+    const next = soonestExpiration(dealsByClient.get(ck) || []);
+    if (next.date != null) continue; // has an expiration date → fine
+    issues.push({
+      id: `no-expiration:${p.id}`,
+      source: 'Clients',
+      type: 'No expiration date',
+      company: p.company || '—',
+      prospectId: p.id,
+      daysUntil: null,
+      expirationDate: null,
+      detail: 'No contract End Date on file — add a contract (or check Don\'t Track on the Clients tab) so its renewal can be tracked',
+    });
+  }
+  return issues;
+}
+
 // Account statuses that MyAccountsView treats as inactive — an account
 // parked in one of these isn't chased for a missing HQ Region (mirrors
 // the check at MyAccountsView's hqRegion flag). Kept in sync with the
@@ -303,6 +331,7 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   const issues = [];
   issues.push(...detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedMap }));
   issues.push(...detectRenewalNoStatus({ prospects, cdmName, dealsByClient, untrackedMap, clientStatusMap }));
+  issues.push(...detectMissingExpiration({ prospects, cdmName, dealsByClient, untrackedMap }));
   issues.push(...detectMyAccountsFlags({ myAccountsFlags, prospects }));
   issues.push(...detectMarketingLeadStatuses({ marketingLeads }));
   return issues;
