@@ -56,7 +56,7 @@ export function ChartsView({ prospects, settings, cdmName }) {
             <ProgressView prospects={prospects} settings={settings} cdmName={cdmName} />
           </Suspense>
         )}
-        {tab === 'pipeline' && <PipelineView />}
+        {tab === 'pipeline' && <PipelineView prospects={prospects} cdmName={cdmName} />}
       </div>
     </div>
   );

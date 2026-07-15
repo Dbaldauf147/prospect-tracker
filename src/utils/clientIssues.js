@@ -223,6 +223,35 @@ function detectMarketingLeadStatuses({ marketingLeads = [] }) {
   return issues;
 }
 
+// Active clients whose soonest contract End Date falls within `withinDays`
+// days (default 270 — the Clients-tab renewal-warning threshold). Mirrors
+// the Clients-tab row build: CDM match + Status = Client, untracked clients
+// skipped, soonest active End Date via soonestExpiration. Already-past
+// contracts (negative days) are included — an expired contract needs
+// attention most — and the list is sorted soonest / most-overdue first.
+// Powers the Pipeline dashboard's renewals table.
+export function computeExpiringClients({ prospects = [], cdmName, dealsList = [], clientMap = {}, managerMap = {}, untrackedMap = {}, withinDays = 270 }) {
+  const dealsByClient = groupDealsByClient(dealsList, clientMap);
+  const out = [];
+  for (const p of prospects) {
+    if (!matchesCdm(p.cdm, cdmName)) continue;
+    if (!isClientStatus(p)) continue;
+    const ck = normClientName(p.company);
+    if (untrackedMap?.[ck]) continue;
+    const next = soonestExpiration(dealsByClient.get(ck) || []);
+    if (next.days == null || next.days >= withinDays) continue;
+    out.push({
+      id: p.id,
+      company: p.company || '—',
+      clientManager: managerMap?.[ck] || '',
+      daysUntil: next.days,
+      expiration: next.date,
+    });
+  }
+  out.sort((a, b) => a.daysUntil - b.daysUntil);
+  return out;
+}
+
 // Build the full list of outstanding issues. Each detector contributes
 // rows; add more detectors here as new issue classes are mapped.
 export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, myAccountsFlags = [], marketingLeads = [] }) {
