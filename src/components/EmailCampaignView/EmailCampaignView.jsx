@@ -13,8 +13,9 @@ export function EmailCampaignView() {
   const [savedCampaigns, setSavedCampaigns] = useState([]);
   const [viewingSaved, setViewingSaved] = useState(null); // index of saved campaign being viewed
   const [saving, setSaving] = useState(false);
-  const [editingIndex, setEditingIndex] = useState(null); // index of saved campaign being renamed
-  const [editName, setEditName] = useState('');
+  const [editingIndex, setEditingIndex] = useState(null); // index of saved campaign being edited
+  const [editTitle, setEditTitle] = useState('');
+  const [editSubject, setEditSubject] = useState('');
 
   // Load saved campaigns from Firestore
   useEffect(() => {
@@ -77,6 +78,11 @@ export function EmailCampaignView() {
     if (!results) return;
     setSaving(true);
     const campaign = {
+      // Title is the campaign's display name; subject is the email subject
+      // line matched against sent mail. A freshly-searched campaign has no
+      // separate title yet, so seed it from the subject — the user can split
+      // them later by editing the saved campaign.
+      title: results.title || results.subject,
       subject: results.subject,
       savedAt: new Date().toISOString(),
       uniqueRecipients: results.uniqueRecipients,
@@ -128,43 +134,53 @@ export function EmailCampaignView() {
     setViewingSaved(index);
   }
 
-  function startRename(index, e) {
+  function startEdit(index, e) {
     if (e) e.stopPropagation();
     setError('');
+    const c = savedCampaigns[index];
     setEditingIndex(index);
-    setEditName(savedCampaigns[index]?.subject || '');
+    setEditTitle(c?.title || c?.subject || '');
+    setEditSubject(c?.subject || '');
   }
 
-  function cancelRename(e) {
+  function cancelEdit(e) {
     if (e) e.stopPropagation();
     setEditingIndex(null);
-    setEditName('');
+    setEditTitle('');
+    setEditSubject('');
   }
 
-  // Rename a saved campaign's subject (the campaign's name — the same field
-  // the All Contacts "Email Campaigns" column shows and the tracker matches
-  // sent emails against). Persists to Firestore and keeps the currently-open
-  // campaign + the search box in sync when the renamed one is being viewed.
-  async function commitRename() {
+  // Edit a saved campaign's two fields: the Title (display name) and the
+  // Subject line (the email subject matched against sent mail). Subject stays
+  // the campaign's identity, so it must be non-empty and can't collide with
+  // another campaign's subject. Persists to Firestore and keeps the open
+  // campaign + the search box in sync when the edited one is being viewed.
+  async function commitEdit() {
     const idx = editingIndex;
     if (idx == null) return;
     const current = savedCampaigns[idx];
-    if (!current) { cancelRename(); return; }
-    const name = editName.trim();
-    if (!name || name === current.subject) { cancelRename(); return; }
-    if (savedCampaigns.some((c, i) => i !== idx && String(c.subject || '').trim().toLowerCase() === name.toLowerCase())) {
-      setError(`A campaign named "${name}" already exists — choose a different name.`);
+    if (!current) { cancelEdit(); return; }
+    const subject = editSubject.trim();
+    const title = editTitle.trim() || subject;
+    if (!subject) {
+      setError('Subject line can’t be empty.');
       return;
     }
+    if (savedCampaigns.some((c, i) => i !== idx && String(c.subject || '').trim().toLowerCase() === subject.toLowerCase())) {
+      setError(`Another campaign already uses the subject "${subject}" — choose a different one.`);
+      return;
+    }
+    if (subject === current.subject && title === (current.title || current.subject)) { cancelEdit(); return; }
     setError('');
-    const updated = savedCampaigns.map((c, i) => (i === idx ? { ...c, subject: name } : c));
+    const updated = savedCampaigns.map((c, i) => (i === idx ? { ...c, title, subject } : c));
     await saveCampaigns(updated);
     if (viewingSaved === idx) {
-      setSubject(name);
-      setResults(r => (r ? { ...r, subject: name } : r));
+      setSubject(subject);
+      setResults(r => (r ? { ...r, title, subject } : r));
     }
     setEditingIndex(null);
-    setEditName('');
+    setEditTitle('');
+    setEditSubject('');
   }
 
   function fmtDate(d) {
@@ -232,6 +248,9 @@ export function EmailCampaignView() {
           {/* Subject + Save button */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
             <div style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)' }}>
+              {(displayResults.title && displayResults.title !== displayResults.subject) && (
+                <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--color-text)', marginBottom: '2px' }}>{displayResults.title}</div>
+              )}
               Matching subject: <strong>"{displayResults.subject}"</strong>
               {viewingSaved !== null && <span style={{ marginLeft: '0.5rem', padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 600, background: '#DBEAFE', color: '#1E40AF' }}>Saved</span>}
               {displayResults.autoRepliesSuppressed > 0 && (
@@ -323,20 +342,44 @@ export function EmailCampaignView() {
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
                   {isEditing ? (
-                    <input
-                      autoFocus
-                      type="text"
-                      value={editName}
-                      onClick={e => e.stopPropagation()}
-                      onChange={e => setEditName(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
-                        else if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
-                      }}
-                      style={{ width: '100%', boxSizing: 'border-box', padding: '0.3rem 0.5rem', border: '1px solid var(--color-accent)', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600, fontFamily: 'inherit' }}
-                    />
+                    <div onClick={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: 'var(--color-text-secondary)', marginBottom: '2px' }}>Title</label>
+                        <input
+                          autoFocus
+                          type="text"
+                          value={editTitle}
+                          onChange={e => setEditTitle(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
+                            else if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+                          }}
+                          placeholder="Campaign title"
+                          style={{ width: '100%', boxSizing: 'border-box', padding: '0.3rem 0.5rem', border: '1px solid var(--color-accent)', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600, fontFamily: 'inherit' }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: 'var(--color-text-secondary)', marginBottom: '2px' }}>Subject line</label>
+                        <input
+                          type="text"
+                          value={editSubject}
+                          onChange={e => setEditSubject(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
+                            else if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+                          }}
+                          placeholder="Email subject line"
+                          style={{ width: '100%', boxSizing: 'border-box', padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.78rem', fontFamily: 'inherit', color: 'var(--color-text-secondary)' }}
+                        />
+                      </div>
+                    </div>
                   ) : (
-                    <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)' }}>{c.subject}</div>
+                    <>
+                      <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.title || c.subject}</div>
+                      {(c.title && c.title !== c.subject) && (
+                        <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', marginTop: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.subject}>Subject: {c.subject}</div>
+                      )}
+                    </>
                   )}
                   <div style={{ fontSize: '0.65rem', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
                     Saved {fmtDate(c.savedAt)} — {c.uniqueRecipients} sent, {c.uniqueRepliers} replies
@@ -346,12 +389,12 @@ export function EmailCampaignView() {
                   {isEditing ? (
                     <>
                       <button
-                        onClick={e => { e.stopPropagation(); commitRename(); }}
+                        onClick={e => { e.stopPropagation(); commitEdit(); }}
                         style={{ border: 'none', background: 'var(--color-accent)', color: '#fff', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer', padding: '0.25rem 0.6rem' }}
-                        title="Save name"
+                        title="Save changes"
                       >Save</button>
                       <button
-                        onClick={cancelRename}
+                        onClick={cancelEdit}
                         style={{ border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text-secondary)', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', padding: '0.25rem 0.55rem' }}
                         title="Cancel"
                       >Cancel</button>
@@ -360,11 +403,11 @@ export function EmailCampaignView() {
                     <>
                       <span style={{ fontSize: '1rem', fontWeight: 700, color: c.responseRate >= 20 ? '#10B981' : c.responseRate >= 10 ? '#F59E0B' : '#DC2626' }}>{c.responseRate}%</span>
                       <button
-                        onClick={e => startRename(i, e)}
+                        onClick={e => startEdit(i, e)}
                         style={{ background: 'none', border: 'none', color: '#94A3B8', fontSize: '0.85rem', cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}
                         onMouseEnter={e => e.currentTarget.style.color = 'var(--color-accent)'}
                         onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
-                        title="Rename campaign"
+                        title="Edit title & subject"
                       >✎</button>
                       <button
                         onClick={e => { e.stopPropagation(); deleteCampaign(i); }}
