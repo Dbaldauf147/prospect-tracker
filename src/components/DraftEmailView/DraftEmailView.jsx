@@ -1586,6 +1586,23 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     saveDraft();
   }
 
+  // An auto-CC recipient (settings.ccMap) who is ALSO a primary To recipient in
+  // this draft would get two copies of the email — once on the To line, once
+  // via the CC. Flag the contact whose CC causes that so the duplicate is easy
+  // to spot. The flag stays hidden until both people are actually in the To
+  // line, so it only ever points at a real double-send.
+  const ccMapForFlags = settings?.ccMap || {};
+  const toEmailSet = new Set(
+    selectedContacts.map(x => (x.email || '').trim().toLowerCase()).filter(Boolean)
+  );
+  const duplicateCcFor = (c) => {
+    const self = (c.email || '').trim().toLowerCase();
+    return (ccMapForFlags[c.email] || []).filter(addr => {
+      const a = (addr || '').trim().toLowerCase();
+      return a && a !== self && toEmailSet.has(a);
+    });
+  };
+
   return (
     <div className={styles.page}>
       <div className={styles.header}>
@@ -1604,17 +1621,18 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
             <div className={styles.contactsBox}>
               {selectedContacts.map(c => {
                 // Flag a recipient when it carries per-contact extra
-                // recipients — a "To Also" contact and/or "CC Emails" saved
-                // for this address on the Contacts page. Those addresses get
-                // folded into this contact's email on send, so surface them
-                // here (with the actual addresses in the tooltip) before the
-                // draft goes out.
+                // recipients. "To Also" addresses are always surfaced (they get
+                // folded into this contact's email on send). CC addresses are
+                // surfaced ONLY when the CC'd person is also a primary To
+                // recipient in this draft — the case where they'd receive two
+                // copies. A CC nobody else is receiving directly stays unflagged
+                // so the flag only ever points at a real double-send.
                 const toAlso = (settings?.toAlsoMap || {})[c.email] || [];
-                const cc = (settings?.ccMap || {})[c.email] || [];
-                const hasExtras = toAlso.length > 0 || cc.length > 0;
+                const dupCc = duplicateCcFor(c);
+                const hasExtras = toAlso.length > 0 || dupCc.length > 0;
                 const flagTitle = [
                   toAlso.length > 0 ? `To Also: ${toAlso.join(', ')}` : '',
-                  cc.length > 0 ? `CC: ${cc.join(', ')}` : '',
+                  dupCc.length > 0 ? `Also in the To line — would double-send: ${dupCc.join(', ')}` : '',
                 ].filter(Boolean).join(' · ');
                 return (
                   <span key={c.id} className={styles.contactTag}>
@@ -1630,7 +1648,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                       <span
                         title={flagTitle}
                         style={{ marginLeft: 5, display: 'inline-flex', alignItems: 'center', gap: 2, padding: '0 5px', borderRadius: 999, background: '#FEF3C7', color: '#92400E', fontSize: '0.62rem', fontWeight: 700, cursor: 'help', verticalAlign: 'middle' }}
-                      >⚑{toAlso.length > 0 ? ` +${toAlso.length} To Also` : ''}{cc.length > 0 ? ` +${cc.length} CC` : ''}</span>
+                      >⚑{toAlso.length > 0 ? ` +${toAlso.length} To Also` : ''}{dupCc.length > 0 ? ` +${dupCc.length} CC` : ''}</span>
                     )}
                     <button className={styles.removeTag} onClick={() => removeContact(c.id)}>&times;</button>
                   </span>
