@@ -1170,9 +1170,15 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     return out;
   }, [prospects]);
 
+  // Normalized set a deal's Client Name auto-maps against. Built from
+  // EVERY company in the Table View roster (companySuggestions), not just
+  // the CDM/status-filtered client pool — so an exact name match auto-maps
+  // regardless of who owns the account or whether it's tagged Client / Old
+  // Client. The Mapped-to-Client dropdown still offers the narrower
+  // clientOptions pool for manual assignment.
   const clientNameSet = useMemo(
-    () => new Set(clientOptions.map(n => normClient(n))),
-    [clientOptions]
+    () => new Set(companySuggestions.map(n => normClient(n))),
+    [companySuggestions]
   );
 
   // Lookup from normalized company name to prospect, so the Client
@@ -1478,7 +1484,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
         );
       },
     };
-    if (clientOptions.length === 0) {
+    if (clientNameSet.size === 0) {
       return [selectCol, progressCol, clientNameCol, ...baseColumns.slice(1)];
     }
     const helperCol = {
@@ -1494,7 +1500,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
         const ignored = ignoreSet.has(norm);
         if (auto) {
           return (
-            <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: '#DCFCE7', color: '#166534' }} title="Client Name matches an active client">
+            <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: '#DCFCE7', color: '#166534' }} title="Client Name matches a company in Table View">
               ✓ Matches
             </span>
           );
@@ -1580,7 +1586,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
   );
 
   function isRowUnmapped(row) {
-    if (clientOptions.length === 0) return false;
+    if (clientNameSet.size === 0) return false;
     const raw = String(row['Client Name'] || '').trim();
     if (!raw) return false;
     const norm = normClient(raw);
@@ -1674,7 +1680,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
   // hasn't been hand-mapped, and hasn't been explicitly ignored.
   // Surfaces the work the user still has to do after a paste import.
   const unmappedCount = useMemo(() => {
-    if (clientOptions.length === 0) return 0;
+    if (clientNameSet.size === 0) return 0;
     let n = 0;
     for (const r of rows) {
       const raw = String(r['Client Name'] || '').trim();
@@ -1686,7 +1692,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
       n++;
     }
     return n;
-  }, [rows, clientNameSet, clientMap, ignoreSet, clientOptions]);
+  }, [rows, clientNameSet, clientMap, ignoreSet]);
 
   // Distinct unmapped source-name strings drive bulk actions: ignoring
   // or assigning happens per source name, so each "Brookfield (BPREP
@@ -1866,7 +1872,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
         <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
           {filtered.length} of {rows.length}
         </span>
-        {clientOptions.length > 0 && (
+        {clientNameSet.size > 0 && (
           <button
             type="button"
             onClick={() => setOnlyUnmapped(v => !v)}
@@ -2077,7 +2083,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
             defaultSort={{ key: 'Days/Paid on', direction: 'desc' }}
             alwaysVisible={alwaysVisible}
             rowStyle={(row) => {
-              if (clientOptions.length === 0) return undefined;
+              if (clientNameSet.size === 0) return undefined;
               const raw = String(row['Client Name'] || '').trim();
               if (!raw) return undefined;
               const norm = normClient(raw);
