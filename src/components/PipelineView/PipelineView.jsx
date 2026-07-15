@@ -8,6 +8,14 @@ import { createPortal } from 'react-dom';
 import styles from './PipelineView.module.css';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
+import { loadDealsList } from '../../utils/dealsStore';
+import { loadDealClientMap } from '../../utils/dealClientMap';
+import { loadClientManagerMap, loadClientUntrackedMap } from '../../utils/clientManagerStore';
+import { computeExpiringClients } from '../../utils/clientIssues';
+
+// Contracts expiring within this many days feed the Pipeline "Client
+// Renewals" table — mirrors the Clients tab's renewal-warning threshold.
+const RENEWAL_WINDOW_DAYS = 270;
 
 const STORE = 'pipeline-dashboard';
 const KEY = 'current';
@@ -623,19 +631,32 @@ function useCalc() {
   return { ctx, popover, pinned, unpin: () => setPinned(null) };
 }
 
-export function PipelineView() {
+export function PipelineView({ prospects = [], cdmName = '' }) {
   return (
     <PipelineRootBoundary>
-      <PipelineViewInner />
+      <PipelineViewInner prospects={prospects} cdmName={cdmName} />
     </PipelineRootBoundary>
   );
 }
 
-function PipelineViewInner() {
+// Snapshot the Clients-tab localStorage stores that feed the renewals
+// table (deals, name remapping, managers, untracked flags). Re-read on
+// focus so an upload/edit on the Clients tab shows up here.
+function readClientStores() {
+  return {
+    deals: loadDealsList().data,
+    clientMap: loadDealClientMap(),
+    managerMap: loadClientManagerMap(),
+    untrackedMap: loadClientUntrackedMap(),
+  };
+}
+
+function PipelineViewInner({ prospects = [], cdmName = '' }) {
   const [state, setState] = useState(DEFAULT_STATE);
   const [hydrated, setHydrated] = useState(false);
   const [bfo, setBfo] = useState(null);
   const [opps, setOpps] = useState(null);
+  const [clientStores, setClientStores] = useState(readClientStores);
   // Hover/pin "what goes into this number" breakdown panels.
   const { ctx: calcCtx, popover: calcPopover, pinned: calcPinned, unpin: calcUnpin } = useCalc();
 
@@ -667,6 +688,7 @@ function PipelineViewInner() {
       // fallback, deletions wouldn't propagate to this view.
       dbGet(BFO_STORE, BFO_KEY).then(b => setBfo(b || null)).catch(() => setBfo(null));
       loadOppsFromCache().then(o => setOpps(o || null)).catch(() => setOpps(null));
+      setClientStores(readClientStores());
     }
     window.addEventListener('focus', onFocus);
     return () => { cancelled = true; window.removeEventListener('focus', onFocus); };
@@ -674,6 +696,22 @@ function PipelineViewInner() {
 
   const bfoMetrics = useMemo(() => bfoStageMetrics(bfo), [bfo]);
   const hasBfo = bfo && bfo.rows && bfo.rows.length > 0;
+
+  // Active clients (from the Clients tab) whose soonest contract expires
+  // within the renewal window. Pulled from the same prospects + Clients-tab
+  // stores the Clients page uses, so this table agrees with that one.
+  const expiringClients = useMemo(
+    () => computeExpiringClients({
+      prospects,
+      cdmName,
+      dealsList: clientStores.deals,
+      clientMap: clientStores.clientMap,
+      managerMap: clientStores.managerMap,
+      untrackedMap: clientStores.untrackedMap,
+      withinDays: RENEWAL_WINDOW_DAYS,
+    }),
+    [prospects, cdmName, clientStores],
+  );
 
   // Lists derived from the Opps tab.
   const oppsRecords = opps && Array.isArray(opps.records) ? opps.records : [];
@@ -1731,6 +1769,40 @@ function PipelineViewInner() {
               </tbody>
             </table>
           </div>
+        </div>
+
+        {/* Client renewals — active clients whose soonest contract End Date
+            is within the renewal window. Pulled from the Clients tab. */}
+        <div className={styles.section}>
+          <div className={styles.sectionTitle}>Client Renewals — Contracts Expiring Within {RENEWAL_WINDOW_DAYS} Days</div>
+          <table className={styles.tinyTable} title={`Auto-fed from the Clients tab — active clients (CDM = ${cdmName || 'your CDM'} and Status = Client) whose soonest contract End Date is within ${RENEWAL_WINDOW_DAYS} days. Sorted soonest first; negative = already overdue.`}>
+            <thead>
+              <tr>
+                <th>Client</th>
+                <th>Client Manager</th>
+                <th>Days Until Expiration</th>
+              </tr>
+            </thead>
+            <tbody>
+              {expiringClients.length > 0 ? (
+                expiringClients.map((c) => (
+                  <tr key={c.id}>
+                    <td>{c.company}</td>
+                    <td>{c.clientManager || '—'}</td>
+                    <td style={{ fontVariantNumeric: 'tabular-nums', color: c.daysUntil < 0 ? '#dc2626' : undefined }}>
+                      {c.daysUntil < 0 ? `${c.daysUntil} (overdue)` : c.daysUntil}
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={3} style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '0.6rem' }}>
+                    No clients with contracts expiring in the next {RENEWAL_WINDOW_DAYS} days.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
