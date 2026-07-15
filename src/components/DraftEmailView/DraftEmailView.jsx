@@ -1602,19 +1602,40 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
           <div className={styles.field}>
             <label className={styles.label}>To {selectedContacts.length > 0 && <button onClick={() => setSelectedContacts([])} style={{ background: 'none', border: 'none', color: '#9CA3AF', fontSize: '0.65rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 400, textTransform: 'none', letterSpacing: 0, padding: 0, marginLeft: '0.3rem' }}>Clear all</button>}</label>
             <div className={styles.contactsBox}>
-              {selectedContacts.map(c => (
-                <span key={c.id} className={styles.contactTag}>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => openContact(c)}
-                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openContact(c); } }}
-                    title={`Open ${c.name}`}
-                    style={{ cursor: 'pointer', textDecoration: 'underline' }}
-                  >{c.name}</span> <span className={styles.contactEmail}>({c.email})</span>
-                  <button className={styles.removeTag} onClick={() => removeContact(c.id)}>&times;</button>
-                </span>
-              ))}
+              {selectedContacts.map(c => {
+                // Flag a recipient when it carries per-contact extra
+                // recipients — a "To Also" contact and/or "CC Emails" saved
+                // for this address on the Contacts page. Those addresses get
+                // folded into this contact's email on send, so surface them
+                // here (with the actual addresses in the tooltip) before the
+                // draft goes out.
+                const toAlso = (settings?.toAlsoMap || {})[c.email] || [];
+                const cc = (settings?.ccMap || {})[c.email] || [];
+                const hasExtras = toAlso.length > 0 || cc.length > 0;
+                const flagTitle = [
+                  toAlso.length > 0 ? `To Also: ${toAlso.join(', ')}` : '',
+                  cc.length > 0 ? `CC: ${cc.join(', ')}` : '',
+                ].filter(Boolean).join(' · ');
+                return (
+                  <span key={c.id} className={styles.contactTag}>
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => openContact(c)}
+                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openContact(c); } }}
+                      title={`Open ${c.name}`}
+                      style={{ cursor: 'pointer', textDecoration: 'underline' }}
+                    >{c.name}</span> <span className={styles.contactEmail}>({c.email})</span>
+                    {hasExtras && (
+                      <span
+                        title={flagTitle}
+                        style={{ marginLeft: 5, display: 'inline-flex', alignItems: 'center', gap: 2, padding: '0 5px', borderRadius: 999, background: '#FEF3C7', color: '#92400E', fontSize: '0.62rem', fontWeight: 700, cursor: 'help', verticalAlign: 'middle' }}
+                      >⚑{toAlso.length > 0 ? ` +${toAlso.length} To Also` : ''}{cc.length > 0 ? ` +${cc.length} CC` : ''}</span>
+                    )}
+                    <button className={styles.removeTag} onClick={() => removeContact(c.id)}>&times;</button>
+                  </span>
+                );
+              })}
               <div style={{ position: 'relative', flex: 1, minWidth: '150px' }} ref={searchRef}>
                 <input
                   className={styles.contactSearchInput}
