@@ -13,6 +13,8 @@ export function EmailCampaignView() {
   const [savedCampaigns, setSavedCampaigns] = useState([]);
   const [viewingSaved, setViewingSaved] = useState(null); // index of saved campaign being viewed
   const [saving, setSaving] = useState(false);
+  const [editingIndex, setEditingIndex] = useState(null); // index of saved campaign being renamed
+  const [editName, setEditName] = useState('');
 
   // Load saved campaigns from Firestore
   useEffect(() => {
@@ -124,6 +126,45 @@ export function EmailCampaignView() {
     setResults(c);
     setSubject(c.subject);
     setViewingSaved(index);
+  }
+
+  function startRename(index, e) {
+    if (e) e.stopPropagation();
+    setError('');
+    setEditingIndex(index);
+    setEditName(savedCampaigns[index]?.subject || '');
+  }
+
+  function cancelRename(e) {
+    if (e) e.stopPropagation();
+    setEditingIndex(null);
+    setEditName('');
+  }
+
+  // Rename a saved campaign's subject (the campaign's name — the same field
+  // the All Contacts "Email Campaigns" column shows and the tracker matches
+  // sent emails against). Persists to Firestore and keeps the currently-open
+  // campaign + the search box in sync when the renamed one is being viewed.
+  async function commitRename() {
+    const idx = editingIndex;
+    if (idx == null) return;
+    const current = savedCampaigns[idx];
+    if (!current) { cancelRename(); return; }
+    const name = editName.trim();
+    if (!name || name === current.subject) { cancelRename(); return; }
+    if (savedCampaigns.some((c, i) => i !== idx && String(c.subject || '').trim().toLowerCase() === name.toLowerCase())) {
+      setError(`A campaign named "${name}" already exists — choose a different name.`);
+      return;
+    }
+    setError('');
+    const updated = savedCampaigns.map((c, i) => (i === idx ? { ...c, subject: name } : c));
+    await saveCampaigns(updated);
+    if (viewingSaved === idx) {
+      setSubject(name);
+      setResults(r => (r ? { ...r, subject: name } : r));
+    }
+    setEditingIndex(null);
+    setEditName('');
   }
 
   function fmtDate(d) {
@@ -268,34 +309,76 @@ export function EmailCampaignView() {
         <div style={{ marginTop: '1.5rem' }}>
           <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.5rem' }}>Saved Campaigns</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-            {savedCampaigns.map((c, i) => (
+            {savedCampaigns.map((c, i) => {
+              const isEditing = editingIndex === i;
+              return (
               <div
                 key={i}
                 style={{
                   display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                   padding: '0.5rem 0.7rem', border: viewingSaved === i ? '1px solid var(--color-accent)' : '1px solid var(--color-border)', borderRadius: '6px',
-                  background: viewingSaved === i ? '#EFF6FF' : 'var(--color-surface)', cursor: 'pointer',
+                  background: viewingSaved === i ? '#EFF6FF' : 'var(--color-surface)', cursor: isEditing ? 'default' : 'pointer',
                 }}
-                onClick={() => viewCampaign(i)}
+                onClick={isEditing ? undefined : () => viewCampaign(i)}
               >
-                <div>
-                  <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)' }}>{c.subject}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {isEditing ? (
+                    <input
+                      autoFocus
+                      type="text"
+                      value={editName}
+                      onClick={e => e.stopPropagation()}
+                      onChange={e => setEditName(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+                        else if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
+                      }}
+                      style={{ width: '100%', boxSizing: 'border-box', padding: '0.3rem 0.5rem', border: '1px solid var(--color-accent)', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600, fontFamily: 'inherit' }}
+                    />
+                  ) : (
+                    <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)' }}>{c.subject}</div>
+                  )}
                   <div style={{ fontSize: '0.65rem', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
                     Saved {fmtDate(c.savedAt)} — {c.uniqueRecipients} sent, {c.uniqueRepliers} replies
                   </div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
-                  <span style={{ fontSize: '1rem', fontWeight: 700, color: c.responseRate >= 20 ? '#10B981' : c.responseRate >= 10 ? '#F59E0B' : '#DC2626' }}>{c.responseRate}%</span>
-                  <button
-                    onClick={e => { e.stopPropagation(); deleteCampaign(i); }}
-                    style={{ background: 'none', border: 'none', color: '#CBD5E1', fontSize: '1rem', cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}
-                    onMouseEnter={e => e.target.style.color = '#EF4444'}
-                    onMouseLeave={e => e.target.style.color = '#CBD5E1'}
-                    title="Delete campaign"
-                  >&times;</button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0, marginLeft: '0.5rem' }}>
+                  {isEditing ? (
+                    <>
+                      <button
+                        onClick={e => { e.stopPropagation(); commitRename(); }}
+                        style={{ border: 'none', background: 'var(--color-accent)', color: '#fff', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer', padding: '0.25rem 0.6rem' }}
+                        title="Save name"
+                      >Save</button>
+                      <button
+                        onClick={cancelRename}
+                        style={{ border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text-secondary)', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', padding: '0.25rem 0.55rem' }}
+                        title="Cancel"
+                      >Cancel</button>
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ fontSize: '1rem', fontWeight: 700, color: c.responseRate >= 20 ? '#10B981' : c.responseRate >= 10 ? '#F59E0B' : '#DC2626' }}>{c.responseRate}%</span>
+                      <button
+                        onClick={e => startRename(i, e)}
+                        style={{ background: 'none', border: 'none', color: '#94A3B8', fontSize: '0.85rem', cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}
+                        onMouseEnter={e => e.currentTarget.style.color = 'var(--color-accent)'}
+                        onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
+                        title="Rename campaign"
+                      >✎</button>
+                      <button
+                        onClick={e => { e.stopPropagation(); deleteCampaign(i); }}
+                        style={{ background: 'none', border: 'none', color: '#CBD5E1', fontSize: '1rem', cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}
+                        onMouseEnter={e => e.currentTarget.style.color = '#EF4444'}
+                        onMouseLeave={e => e.currentTarget.style.color = '#CBD5E1'}
+                        title="Delete campaign"
+                      >&times;</button>
+                    </>
+                  )}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
