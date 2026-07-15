@@ -400,26 +400,60 @@ function fmtShortDate(s) {
   return new Date(t).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' });
 }
 
-// Cap a row list so a very busy stage can't render thousands of <tr>.
-function capRows(arr, max = 50) {
-  return { data: arr.slice(0, max), more: Math.max(0, arr.length - max) };
+// Map a full source array into breakdown rows: the capped display slice
+// (`data` + a `more` overflow count so a busy stage can't render thousands
+// of <tr>) plus the full uncapped set (`allData`) so the "Export to Excel"
+// button can write every contributing row, not just the ~50 shown.
+function mapRows(source, mapFn, max = 50) {
+  const all = (source || []).map(mapFn);
+  return { data: all.slice(0, max), more: Math.max(0, all.length - max), allData: all };
 }
 
 // Build a breakdown row list from a close-rate `included` opp array.
 function closeRateRows(included, head) {
-  const cap = capRows(included);
   return {
     head,
     columns: ['Result', 'Account', 'Close', 'Amount'],
     aligns: ['', '', '', 'num'],
-    data: cap.data.map(o => [
+    ...mapRows(included, o => [
       o.stage,
       o.account || '(no account)',
       fmtShortDate(o.closeDate),
       o.amount > 0 ? fmtMoney(Math.round(o.amount)) : '—',
     ]),
-    more: cap.more,
   };
+}
+
+// Export a live-value breakdown to a one-sheet .xlsx: the metric's value,
+// formula and inputs up top, then the FULL (uncapped) contributing rows —
+// so a pinned panel can be dropped into Excel for deeper analysis.
+async function exportBreakdown(data) {
+  try {
+  const mod = await import('xlsx');
+  const XLSX = mod.utils ? mod : (mod.default || mod);
+  const aoa = [];
+  if (data.title) aoa.push([data.title]);
+  if (data.value != null && data.value !== '') aoa.push(['Value', data.value]);
+  if (data.formula) aoa.push(['Formula', data.formula]);
+  if (Array.isArray(data.inputs)) for (const it of data.inputs) aoa.push([it.label, it.value]);
+  const rows = data.rows;
+  if (rows && Array.isArray(rows.columns)) {
+    aoa.push([]);
+    if (rows.head) aoa.push([rows.head]);
+    aoa.push(rows.columns);
+    for (const r of (rows.allData || rows.data || [])) aoa.push(r);
+  }
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Breakdown');
+  const slug = String(data.title || 'live-value')
+    .replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 40).toLowerCase() || 'live-value';
+  const stamp = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(wb, `pipeline-${slug}-${stamp}.xlsx`);
+  } catch (err) {
+    console.error('Pipeline breakdown export failed', err);
+    if (typeof window !== 'undefined') window.alert('Sorry — the Excel export failed to generate.');
+  }
 }
 
 // Wraps a live value: handles hover-to-preview and click-to-pin. Falls back
@@ -481,11 +515,21 @@ function CalcContent({ data, pinned, onClose }) {
     <>
       <div className={styles.calcHead}>
         <span className={styles.calcTitle}>{data.title}</span>
-        {pinned ? (
-          <button type="button" className={styles.calcPinBtn} onClick={onClose} title="Unpin this panel">📌 Pinned ✕</button>
-        ) : (
-          <span className={styles.calcBadge} title="Recomputed live — not a stored value. Click to pin.">∑ live</span>
-        )}
+        <div className={styles.calcHeadActions}>
+          {data.rows && Array.isArray(data.rows.columns) && (
+            <button
+              type="button"
+              className={styles.calcExportBtn}
+              onClick={() => exportBreakdown(data)}
+              title="Export the full breakdown to Excel for further analysis"
+            >⬇ Excel</button>
+          )}
+          {pinned ? (
+            <button type="button" className={styles.calcPinBtn} onClick={onClose} title="Unpin this panel">📌 Pinned ✕</button>
+          ) : (
+            <span className={styles.calcBadge} title="Recomputed live — not a stored value. Click to pin.">∑ live</span>
+          )}
+        </div>
       </div>
       {data.value != null && data.value !== '' ? <div className={styles.calcValue}>{data.value}</div> : null}
       {data.formula ? <div className={styles.calcFormula}>{data.formula}</div> : null}
@@ -1012,7 +1056,7 @@ function PipelineViewInner() {
       {calcPopover}
       <div className={styles.header}>
         <h1 className={styles.title}>Pipeline</h1>
-        <div className={styles.subtitle}>Pipeline metrics dashboard. Every cell is editable; values save to your browser. Hover a <span className={styles.liveCell} style={{ cursor: 'default' }}>live value</span> to see what feeds it; click to pin the panel.</div>
+        <div className={styles.subtitle}>Pipeline metrics dashboard. Every cell is editable; values save to your browser. Hover a <span className={styles.liveCell} style={{ cursor: 'default' }}>live value</span> to see what feeds it; click to pin the panel, then <strong>⬇ Excel</strong> to export the full breakdown.</div>
       </div>
       <div className={styles.body}>
         {/* Quota header — sits directly above the Pipeline Metrics
@@ -1026,9 +1070,7 @@ function PipelineViewInner() {
                 <td><NumCell value={state.target} kind="money" onCommit={(v) => setField('target', v)} /></td>
                 <td>
                   {oppsClosedYTD !== null
-                    ? (() => {
-                        const cap = capRows(oppsClosedYTD.deals);
-                        return (
+                    ? (
                           <LiveValue
                             id="closedYTD"
                             className={styles.liveCell}
@@ -1044,14 +1086,12 @@ function PipelineViewInner() {
                                 head: 'Contributing deals (newest close first)',
                                 columns: ['Account', 'Close', 'Amount'],
                                 aligns: ['', '', 'num'],
-                                data: cap.data.map(d => [d.account, fmtShortDate(d.closeDate), fmtMoney(d.amount)]),
-                                more: cap.more,
+                                ...mapRows(oppsClosedYTD.deals, d => [d.account, fmtShortDate(d.closeDate), fmtMoney(d.amount)]),
                               },
                               note: 'Auto-fed from the Opps tab. Re-paste the Opps tab to refresh.',
                             }}
                           >{fmtMoney(oppsClosedYTD.total)}</LiveValue>
-                        );
-                      })()
+                        )
                     : <NumCell value={state.closedYTD} kind="money" onCommit={(v) => setField('closedYTD', v)} />}
                 </td>
                 <td className={styles.numCell}>{(closedPctOfQuota * 100).toFixed(2)}%</td>
@@ -1118,22 +1158,18 @@ function PipelineViewInner() {
                 const liveTip = 'Auto-fed from BFO Activity. Re-paste BFO data to refresh.';
                 // Build the row list (account / opportunity / amount-or-age)
                 // that feeds the hover breakdown for the BFO-driven cells.
-                const mkBfoRows = (head, includeAge) => {
-                  const cap = capRows(m?.rows || []);
-                  return {
-                    head,
-                    columns: ['Account', 'Opportunity', includeAge ? 'Age' : 'Amount'],
-                    aligns: ['', '', 'num'],
-                    data: cap.data.map(r => [
-                      r.account || '—',
-                      r.oppName || '—',
-                      includeAge
-                        ? (r.age ?? '—')
-                        : (r.amount == null ? '—' : `${fmtMoney(Math.round(r.amount))}${r.excludedFromAvg ? ' *' : ''}`),
-                    ]),
-                    more: cap.more,
-                  };
-                };
+                const mkBfoRows = (head, includeAge) => ({
+                  head,
+                  columns: ['Account', 'Opportunity', includeAge ? 'Age' : 'Amount'],
+                  aligns: ['', '', 'num'],
+                  ...mapRows(m?.rows || [], r => [
+                    r.account || '—',
+                    r.oppName || '—',
+                    includeAge
+                      ? (r.age ?? '—')
+                      : (r.amount == null ? '—' : `${fmtMoney(Math.round(r.amount))}${r.excludedFromAvg ? ' *' : ''}`),
+                  ]),
+                });
                 return (
                   <tr key={st.key}>
                     <td className={styles.label}>{st.label}</td>
@@ -1341,16 +1377,12 @@ function PipelineViewInner() {
                   const liveCell = (val, id, breakdown) => (
                     <LiveValue id={id} className={styles.liveCell} breakdown={breakdown}>{val}</LiveValue>
                   );
-                  const cgRows = (arr, head) => {
-                    const cap = capRows(arr || []);
-                    return {
-                      head,
-                      columns: ['Opportunity', 'Lead Source', 'Amount'],
-                      aligns: ['', '', 'num'],
-                      data: cap.data.map(r => [r.oppName, r.source, r.amount == null ? '—' : fmtMoney(Math.round(r.amount))]),
-                      more: cap.more,
-                    };
-                  };
+                  const cgRows = (arr, head) => ({
+                    head,
+                    columns: ['Opportunity', 'Lead Source', 'Amount'],
+                    aligns: ['', '', 'num'],
+                    ...mapRows(arr || [], r => [r.oppName, r.source, r.amount == null ? '—' : fmtMoney(Math.round(r.amount))]),
+                  });
                   const liveActualPct = cg && cg.clientActualPct !== null
                     ? `${(cg.clientActualPct * 100).toFixed(0)}%`
                     : null;
@@ -1527,29 +1559,23 @@ function PipelineViewInner() {
               <tr>
                 <td className={styles.label}>{state.newOppsGoal} New Opps Past 30 Days</td>
                 <td className={compareClass(newOppsPast30Count, state.newOppsGoal, 'higher-better')}>
-                  {(() => {
-                    const cap = capRows(newOppsPast30.items);
-                    return (
-                      <LiveValue
-                        id="new-opps-30"
-                        className={styles.liveCell}
-                        breakdown={{
-                          title: 'New Opps — Past 30 Days',
-                          value: String(newOppsPast30Count),
-                          formula: 'COUNT of Opps with a BFO Link opened in the last 30 days. Open date prefers Start Date, else fetchedAt − Age.',
-                          inputs: [{ label: 'New opps', value: newOppsPast30Count }],
-                          rows: {
-                            head: 'New opps (by account)',
-                            columns: ['Account', 'Opportunity', 'Opened'],
-                            aligns: ['', '', ''],
-                            data: cap.data.map(it => [it.account, it.opp, it.openDate]),
-                            more: cap.more,
-                          },
-                          note: 'Auto-fed from the Opps tab. Re-paste the Opps tab to refresh.',
-                        }}
-                      >{newOppsPast30Count}</LiveValue>
-                    );
-                  })()}
+                  <LiveValue
+                    id="new-opps-30"
+                    className={styles.liveCell}
+                    breakdown={{
+                      title: 'New Opps — Past 30 Days',
+                      value: String(newOppsPast30Count),
+                      formula: 'COUNT of Opps with a BFO Link opened in the last 30 days. Open date prefers Start Date, else fetchedAt − Age.',
+                      inputs: [{ label: 'New opps', value: newOppsPast30Count }],
+                      rows: {
+                        head: 'New opps (by account)',
+                        columns: ['Account', 'Opportunity', 'Opened'],
+                        aligns: ['', '', ''],
+                        ...mapRows(newOppsPast30.items, it => [it.account, it.opp, it.openDate]),
+                      },
+                      note: 'Auto-fed from the Opps tab. Re-paste the Opps tab to refresh.',
+                    }}
+                  >{newOppsPast30Count}</LiveValue>
                 </td>
               </tr>
               <tr>
