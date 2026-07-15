@@ -24,6 +24,7 @@ import {
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
 } from '../../utils/dealsFormat';
 import { matchesCdm } from '../../utils/cdmMatch';
+import { STATUSES } from '../../data/enums';
 import {
   loadDealClientMap, setDealClientMapping,
   loadDealClientIgnore, setDealClientIgnore,
@@ -501,6 +502,125 @@ function statusPillStyle(status) {
   return { background: '#F1F5F9', color: '#475569' };
 }
 
+// The ⚠ shown on a Client Name that matches no company in the Table
+// View roster. Clicking it opens a small popover with a one-click
+// "Add to Table View" button (plus a Status picker that defaults to
+// Client, since a deal implies an active relationship, and stamps the
+// current CDM so the new company lands as the user's account). Adding
+// goes through the shared, idempotent addProspect — a double-click
+// can't mint a duplicate — and once the company lands in Table View
+// the roster updates and this warning clears on its own. An "Ignore"
+// link drops the name into the same per-name ignore set the Mapped to
+// Client column uses, for names that shouldn't ever be added.
+function ClientNameWarning({ name, cdmName, onAdd, onIgnore }) {
+  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState(null);
+  const [status, setStatus] = useState('Client');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const btnRef = useRef(null);
+
+  function openPopover(e) {
+    e.stopPropagation();
+    setError(null);
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (rect) {
+      const margin = 8;
+      const width = 260;
+      const estimatedH = 190;
+      const viewportH = window.innerHeight || document.documentElement.clientHeight;
+      const spaceBelow = viewportH - rect.bottom - margin;
+      const placeAbove = spaceBelow < estimatedH && rect.top > spaceBelow;
+      setAnchor({
+        left: Math.max(margin, rect.right - width),
+        top: placeAbove
+          ? Math.max(margin, rect.top - margin - estimatedH)
+          : rect.bottom + 4,
+        width,
+      });
+    }
+    setOpen(true);
+  }
+
+  async function handleAdd() {
+    if (busy || !onAdd) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onAdd({ company: name, status: status || 'Client', cdm: cdmName || '' });
+      setOpen(false);
+    } catch (err) {
+      setError(err?.message || 'Could not add the company. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={openPopover}
+        onDoubleClick={(e) => e.stopPropagation()}
+        title={`"${name}" isn't a company in Table View — click to add it`}
+        style={{ flex: '0 0 auto', background: 'transparent', border: 'none', color: '#B45309', fontSize: '0.85rem', lineHeight: 1, cursor: 'pointer', padding: 0 }}
+      >⚠</button>
+      {open && createPortal(
+        <>
+          <div
+            onClick={() => setOpen(false)}
+            style={{ position: 'fixed', inset: 0, zIndex: 4999, background: 'transparent' }}
+          />
+          <div
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            style={{ position: 'fixed', left: anchor?.left ?? 0, top: anchor?.top ?? 0, width: anchor?.width ?? 260, maxWidth: 'calc(100vw - 16px)', zIndex: 5000, background: '#fff', border: '1px solid #FCD34D', borderRadius: 8, boxShadow: '0 10px 30px rgba(15, 23, 42, 0.18)', padding: '0.6rem 0.7rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}
+          >
+            <div style={{ fontSize: '0.72rem', color: '#92400E', lineHeight: 1.35 }}>
+              <strong>{name}</strong> isn&apos;t a company in Table View.
+            </div>
+            {onAdd ? (
+              <>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.7rem', color: '#475569' }}>
+                  <span style={{ flex: '0 0 auto' }}>Status</span>
+                  <select
+                    value={status}
+                    onChange={(e) => setStatus(e.target.value)}
+                    style={{ flex: 1, minWidth: 0, padding: '0.2rem 0.3rem', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.7rem', fontFamily: 'inherit', background: '#fff', color: '#1E293B' }}
+                  >
+                    {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  onClick={handleAdd}
+                  disabled={busy}
+                  style={{ padding: '0.35rem 0.6rem', border: '1px solid #16A34A', background: busy ? '#86EFAC' : '#16A34A', color: '#fff', borderRadius: 6, fontSize: '0.72rem', fontWeight: 700, fontFamily: 'inherit', cursor: busy ? 'default' : 'pointer' }}
+                >{busy ? 'Adding…' : '+ Add to Table View'}</button>
+              </>
+            ) : (
+              <div style={{ fontSize: '0.68rem', color: '#94A3B8', fontStyle: 'italic' }}>
+                Adding companies isn&apos;t available here.
+              </div>
+            )}
+            {error && <div style={{ fontSize: '0.68rem', color: '#B91C1C' }}>{error}</div>}
+            {onIgnore && (
+              <button
+                type="button"
+                onClick={() => { onIgnore(name, true); setOpen(false); }}
+                title="Stop warning about this name — it won't count against the unmapped tally either"
+                style={{ padding: 0, background: 'none', border: 'none', color: '#64748B', textDecoration: 'underline', fontSize: '0.68rem', fontFamily: 'inherit', cursor: 'pointer', alignSelf: 'flex-start' }}
+              >Ignore this name</button>
+            )}
+          </div>
+        </>,
+        document.body
+      )}
+    </>
+  );
+}
+
 // Render the helper column as a lazy editor. We were previously
 // mounting a full <select> with every client option (often 100+) for
 // every unmapped row — 250 rows × 130 options = 30k+ DOM nodes just
@@ -915,7 +1035,7 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
   });
 }
 
-export function DealsView({ settings, updateSettings, prospects = [], cdmName, user }) {
+export function DealsView({ settings, updateSettings, prospects = [], cdmName, user, addProspect }) {
   const [{ data, source }, setStore] = useState(() => loadDealsList());
   // Opps 2 records, loaded once so the page can flag Sold opps that have
   // no matching deal here (see soldMissingDeals below). Picks the newest
@@ -1348,10 +1468,12 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
         return (
           <span style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%' }}>
             <span style={{ flex: 1, minWidth: 0 }}>{clientNameBaseRender(row)}</span>
-            <span
-              title={`"${raw}" isn't a company in Table View. Add it there, or use the Mapped to Client column to point this deal at an existing account.`}
-              style={{ flex: '0 0 auto', color: '#B45309', fontSize: '0.85rem', lineHeight: 1, cursor: 'help' }}
-            >⚠</span>
+            <ClientNameWarning
+              name={raw}
+              cdmName={cdmName}
+              onAdd={addProspect || null}
+              onIgnore={setDealClientIgnore}
+            />
           </span>
         );
       },
@@ -1439,7 +1561,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     };
     // Order: select · progress · client name · mapped-to-client · status · rest.
     return [selectCol, progressCol, clientNameCol, helperCol, statusCol, ...baseColumns.slice(1)];
-  }, [baseColumns, clientOptions, clientNameSet, clientMap, ignoreSet, prospectByName, columnLinks, listRegistry, selectedIds]);
+  }, [baseColumns, clientOptions, clientNameSet, clientMap, ignoreSet, prospectByName, columnLinks, listRegistry, selectedIds, cdmName, addProspect]);
   const tableId = useMemo(
     () => 'deals:' + columns.map(c => c.key).sort().join('|'),
     [columns]

@@ -307,7 +307,7 @@ function App() {
           ) : view === 'lists' ? (
             <ListsView onTargetAccountsLoaded={setTargetAccountsData} prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} updateProspect={updateProspect} />
           ) : view === 'clients' ? (
-            <ClientsView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} user={user} targetAccountsData={targetAccountsData} />
+            <ClientsView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} user={user} targetAccountsData={targetAccountsData} addProspect={addProspect} />
           ) : view === 'issues' ? (
             <IssuesView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />
           ) : view === 'opps' ? (
