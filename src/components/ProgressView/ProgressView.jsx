@@ -92,8 +92,10 @@ function withGreenKeys(data, series) {
   });
 }
 
-function ProgressChart({ title, data, series, isPct, defaultView = 'line', secondarySeries, onHide, onRename }) {
+function ProgressChart({ title, data, series, isPct, defaultView = 'line', secondarySeries, onHide, onRename, onViewChange }) {
   const [viewType, setViewType] = useState(defaultView);
+  // Persist the picked view so it becomes this chart's default next visit.
+  const changeView = (v) => { setViewType(v); if (onViewChange) onViewChange(v); };
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   // For percent line charts, augment the data with the green-overlay keys.
@@ -136,7 +138,8 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
           <select
             value={viewType}
-            onChange={e => setViewType(e.target.value)}
+            onChange={e => changeView(e.target.value)}
+            title="Chart view — your selection is saved as this chart's default"
             style={{ fontSize: '0.7rem', padding: '0.2rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: '5px', background: 'var(--color-surface)', color: 'var(--color-text)', fontFamily: 'inherit', cursor: 'pointer' }}
           >
             {CHART_VIEW_OPTIONS.map(opt => (
@@ -271,6 +274,7 @@ function companiesMatch(a, b) {
 
 const HIDDEN_CHARTS_KEY = 'progress:hidden-charts';
 const CHART_TITLES_KEY = 'progress:chart-titles';
+const CHART_VIEWS_KEY = 'progress:chart-views';
 const PROGRESS_CHART_DEFS = [
   { id: 'contactPct',     label: '% of Accounts with HubSpot Contacts' },
   { id: 'dmPct',          label: '% of Accounts with Decision Maker Identified' },
@@ -312,6 +316,20 @@ function persistChartTitles(map) {
   try { localStorage.setItem(CHART_TITLES_KEY, JSON.stringify(map)); } catch {}
 }
 
+// Per-chart default view (line / bar / area / …). Whatever view the user
+// picks from a chart's dropdown is saved here keyed by chart id, so it
+// becomes that chart's default on the next visit.
+function loadChartViews() {
+  try {
+    const raw = localStorage.getItem(CHART_VIEWS_KEY);
+    const obj = raw ? JSON.parse(raw) : null;
+    return obj && typeof obj === 'object' ? obj : {};
+  } catch { return {}; }
+}
+function persistChartViews(map) {
+  try { localStorage.setItem(CHART_VIEWS_KEY, JSON.stringify(map)); } catch {}
+}
+
 export function ProgressView({ prospects, settings, cdmName }) {
   const { user, isAdmin } = useAuth();
   const [history, setHistory] = useState([]);
@@ -334,6 +352,14 @@ export function ProgressView({ prospects, settings, cdmName }) {
   const [hiddenCharts, setHiddenCharts] = useState(() => loadHiddenCharts());
   const [showChartsMenu, setShowChartsMenu] = useState(false);
   const [chartTitles, setChartTitles] = useState(() => loadChartTitles());
+  const [chartViews, setChartViews] = useState(() => loadChartViews());
+  const setChartView = (id, view) => {
+    setChartViews(prev => {
+      const next = { ...prev, [id]: view };
+      persistChartViews(next);
+      return next;
+    });
+  };
   const toggleChartHidden = (id) => {
     setHiddenCharts(prev => {
       const next = new Set(prev);
@@ -353,6 +379,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
     });
   };
   const titleFor = (id, fallback) => chartTitles[id] || fallback;
+  const viewFor = (id, fallback = 'line') => chartViews[id] || fallback;
 
   // Load history from Firestore + opps data
   useEffect(() => {
@@ -948,6 +975,8 @@ export function ProgressView({ prospects, settings, cdmName }) {
                 data={chartData}
                 series={[{ key: 't1ContactPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ContactPct', name: 'Tier 2', color: '#3B82F6' }]}
                 isPct
+                defaultView={viewFor('contactPct')}
+                onViewChange={(v) => setChartView('contactPct', v)}
                 onHide={() => toggleChartHidden('contactPct')}
                 onRename={(t) => renameChart('contactPct', t)}
               />
@@ -958,6 +987,8 @@ export function ProgressView({ prospects, settings, cdmName }) {
                 data={chartData}
                 series={[{ key: 't1DMPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2DMPct', name: 'Tier 2', color: '#3B82F6' }]}
                 isPct
+                defaultView={viewFor('dmPct')}
+                onViewChange={(v) => setChartView('dmPct', v)}
                 onHide={() => toggleChartHidden('dmPct')}
                 onRename={(t) => renameChart('dmPct', t)}
               />
@@ -968,6 +999,8 @@ export function ProgressView({ prospects, settings, cdmName }) {
                 data={chartData}
                 series={[{ key: 't1ConnectedPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ConnectedPct', name: 'Tier 2', color: '#3B82F6' }]}
                 isPct
+                defaultView={viewFor('connectedPct')}
+                onViewChange={(v) => setChartView('connectedPct', v)}
                 onHide={() => toggleChartHidden('connectedPct')}
                 onRename={(t) => renameChart('connectedPct', t)}
               />
@@ -978,6 +1011,8 @@ export function ProgressView({ prospects, settings, cdmName }) {
                 data={chartData}
                 series={[{ key: 't1InactivePct', name: 'Tier 1', color: '#DC2626' }, { key: 't2InactivePct', name: 'Tier 2', color: '#3B82F6' }]}
                 isPct
+                defaultView={viewFor('inactivePct')}
+                onViewChange={(v) => setChartView('inactivePct', v)}
                 onHide={() => toggleChartHidden('inactivePct')}
                 onRename={(t) => renameChart('inactivePct', t)}
               />
@@ -994,6 +1029,8 @@ export function ProgressView({ prospects, settings, cdmName }) {
                 secondarySeries={[
                   { key: 'totalAccounts', name: 'Total Accounts', color: '#111827' },
                 ]}
+                defaultView={viewFor('tierTotals')}
+                onViewChange={(v) => setChartView('tierTotals', v)}
                 onHide={() => toggleChartHidden('tierTotals')}
                 onRename={(t) => renameChart('tierTotals', t)}
               />
@@ -1010,6 +1047,8 @@ export function ProgressView({ prospects, settings, cdmName }) {
                 secondarySeries={[
                   { key: 'noOppsAccountCount', name: 'No-Opps Accounts', color: '#111827' },
                 ]}
+                defaultView={viewFor('noOppsActivity')}
+                onViewChange={(v) => setChartView('noOppsActivity', v)}
                 onHide={() => toggleChartHidden('noOppsActivity')}
                 onRename={(t) => renameChart('noOppsActivity', t)}
               />
@@ -1022,7 +1061,8 @@ export function ProgressView({ prospects, settings, cdmName }) {
                 secondarySeries={[
                   { key: 'peTotal', name: 'Total PE Firms', color: '#111827' },
                 ]}
-                defaultView="stackedBar"
+                defaultView={viewFor('peStages', 'stackedBar')}
+                onViewChange={(v) => setChartView('peStages', v)}
                 onHide={() => toggleChartHidden('peStages')}
                 onRename={(t) => renameChart('peStages', t)}
               />
