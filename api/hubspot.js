@@ -587,19 +587,41 @@ async function handler(req, res) {
     if (action === 'activity') {
       // Paginated: fetch one type at a time, one page at a time.
       //
-      // We use the CRM *search* endpoint here rather than the plain
-      // object-list endpoint. The list endpoint (/crm/v3/objects/emails)
-      // silently ignores the `sort` query param and returns objects
-      // oldest-first by creation order. The client caps how much it pulls
-      // (~5000 records) as a safety valve, so against an oldest-first feed
-      // that cap quietly drops the *newest* activity — the user's most
-      // recent outreach stops showing once the mailbox grows past the cap.
-      // The search endpoint honours `sorts`, so a DESCENDING hs_timestamp
-      // sort puts the newest records first and the cap drops the oldest
-      // instead.
+      // We use the CRM *search* endpoint rather than the plain object-list
+      // endpoint. The list endpoint (/crm/v3/objects/emails) silently
+      // ignores `sort` and returns objects oldest-first by creation order,
+      // so a client-side record cap would drop the *newest* activity. Search
+      // honours `sorts`, so a DESCENDING hs_timestamp sort puts the newest
+      // records first — the client walks every page to keep the full
+      // history, newest-first, and any safety truncation drops the oldest.
+      //
+      // Search has one hard limit: it refuses to page past 10,000 results
+      // (offset + limit > 10000). To walk an unbounded history we roll into
+      // a new "window" as we approach that ceiling — continuing below the
+      // oldest hs_timestamp seen so far via an LTE filter with the offset
+      // reset to 0. The `after` cursor we hand back encodes both the
+      // in-window offset and the current window boundary as `offset~before`.
+      // The boundary is LTE (not LT) so records sharing the boundary
+      // millisecond aren't skipped; the client dedupes by id to drop the
+      // handful of overlap rows that reappear at each window seam.
       const type = req.query.type || 'email'; // email | call | meeting
-      const after = req.query.after || '';
+      const rawAfter = req.query.after || '';
       const limit = 100;
+      // Below this the next search page is safely inside the 10k ceiling;
+      // at or above it we roll the window instead of paging further.
+      const WINDOW_ROLL_AT = 9900;
+
+      let offset = 0;
+      let before = ''; // epoch-ms upper bound (exclusive-of-newer) for the window
+      if (rawAfter) {
+        const tilde = rawAfter.indexOf('~');
+        if (tilde >= 0) {
+          offset = parseInt(rawAfter.slice(0, tilde), 10) || 0;
+          before = rawAfter.slice(tilde + 1);
+        } else {
+          offset = parseInt(rawAfter, 10) || 0;
+        }
+      }
 
       const propsMap = {
         email: 'hs_email_subject,hs_email_status,hs_email_direction,hs_timestamp,hs_email_to_email,hs_email_from_email,hs_email_to_firstname,hs_email_to_lastname,hs_email_from_firstname,hs_email_from_lastname,hs_email_cc_email,hs_email_cc_firstname,hs_email_cc_lastname',
@@ -615,7 +637,10 @@ async function handler(req, res) {
         sorts: [{ propertyName: 'hs_timestamp', direction: 'DESCENDING' }],
         properties: props,
       };
-      if (after) body.after = after;
+      if (offset) body.after = String(offset);
+      if (before) {
+        body.filterGroups = [{ filters: [{ propertyName: 'hs_timestamp', operator: 'LTE', value: before }] }];
+      }
 
       const data = await hubspotPost(`/crm/v3/objects/${objectType}/search`, token, body);
       const objects = data.results || [];
@@ -651,7 +676,24 @@ async function handler(req, res) {
         if (cids?.length) item._contactIds = cids;
         return item;
       });
-      const nextAfter = data.paging?.next?.after || null;
+
+      // Compute the next cursor, rolling to a new hs_timestamp window before
+      // we hit search's 10k paging ceiling.
+      let nextAfter = null;
+      const rawNext = data.paging?.next?.after || null; // in-window offset (string)
+      if (rawNext) {
+        const nextOffset = parseInt(rawNext, 10) || 0;
+        if (nextOffset + limit > WINDOW_ROLL_AT) {
+          // Approaching the ceiling — start a fresh window below the oldest
+          // timestamp on this page. Fall back to stopping if we can't read
+          // a usable boundary (rather than risk a malformed filter).
+          const lastTs = objects.length ? objects[objects.length - 1].properties?.hs_timestamp : '';
+          const ms = lastTs ? new Date(lastTs).getTime() : NaN;
+          nextAfter = Number.isFinite(ms) ? `0~${ms}` : null;
+        } else {
+          nextAfter = `${nextOffset}~${before}`;
+        }
+      }
 
       return res.json({ results, nextAfter, total: data.total || null });
     }

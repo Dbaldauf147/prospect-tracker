@@ -136,21 +136,33 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
 
   async function fetchAllPages(type) {
     const all = [];
+    const seenIds = new Set();
     let after = '';
     while (true) {
-      const url = `/api/hubspot?action=activity&type=${type}${after ? `&after=${after}` : ''}`;
+      const url = `/api/hubspot?action=activity&type=${type}${after ? `&after=${encodeURIComponent(after)}` : ''}`;
       const res = await apiFetch(url);
       const json = await res.json();
       if (json.error) throw new Error(json.error);
-      all.push(...(json.results || []));
+      // Dedup by id: the server rolls into a new hs_timestamp window when it
+      // hits HubSpot search's 10k paging ceiling, and the window boundary
+      // (LTE) can re-return a few records we've already collected.
+      for (const r of (json.results || [])) {
+        if (r.id) {
+          if (seenIds.has(r.id)) continue;
+          seenIds.add(r.id);
+        }
+        all.push(r);
+      }
       setProgress(prev => ({ ...prev, [type]: all.length }));
       if (json.nextAfter) {
         after = json.nextAfter;
       } else {
         break;
       }
-      // Safety limit
-      if (all.length > 5000) break;
+      // Runaway guard only — the full activity history is expected to sit
+      // well under this. Records come newest-first, so if this ever trips
+      // it drops the oldest tail, never recent activity.
+      if (all.length > 100000) { console.warn(`Activity ${type} fetch hit 100k safety cap`); break; }
     }
     return all;
   }
