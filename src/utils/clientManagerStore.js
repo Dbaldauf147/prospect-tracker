@@ -11,17 +11,26 @@ import { userLsGet, userLsSet } from './userLs';
 const MANAGER_KEY = 'clients-manager-map';
 const IN_PERSON_KEY = 'clients-inperson-map';
 const STATUS_KEY = 'clients-status-map';
+const STATUS_SET_AT_KEY = 'clients-status-set-at';
 const NOTES_KEY = 'clients-notes-map';
 const UNTRACKED_KEY = 'clients-untracked-map';
 const LOUISVILLE_KEY = 'clients-louisville-map';
 export const CLIENT_MANAGER_EVENT = 'client-manager-changed';
 export const CLIENT_IN_PERSON_EVENT = 'client-inperson-changed';
 export const CLIENT_STATUS_EVENT = 'client-status-changed';
+export const CLIENT_STATUS_SET_AT_EVENT = 'client-status-set-at-changed';
 export const CLIENT_NOTES_EVENT = 'client-notes-changed';
 export const CLIENT_UNTRACKED_EVENT = 'client-untracked-changed';
 export const CLIENT_LOUISVILLE_EVENT = 'client-louisville-changed';
 
 function normKey(s) { return String(s || '').trim().toLowerCase(); }
+
+// Local calendar date (YYYY-MM-DD) — used to stamp when a Status was set so
+// time-boxed statuses (e.g. "Reached out to CM") can auto-expire.
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 function loadMap(key) {
   try {
@@ -42,6 +51,7 @@ function persistMap(key, map, eventName) {
 export function loadClientManagerMap() { return loadMap(MANAGER_KEY); }
 export function loadClientInPersonMap() { return loadMap(IN_PERSON_KEY); }
 export function loadClientStatusMap() { return loadMap(STATUS_KEY); }
+export function loadClientStatusSetAtMap() { return loadMap(STATUS_SET_AT_KEY); }
 export function loadClientNotesMap() { return loadMap(NOTES_KEY); }
 export function loadClientUntrackedMap() { return loadMap(UNTRACKED_KEY); }
 export function loadClientLouisvilleMap() { return loadMap(LOUISVILLE_KEY); }
@@ -79,9 +89,31 @@ export function setClientStatus(company, value) {
   if (!key) return;
   const map = loadClientStatusMap();
   const trimmed = String(value || '').trim();
+  const prev = map[key] || '';
   if (!trimmed) delete map[key];
   else map[key] = trimmed;
   persistMap(STATUS_KEY, map, CLIENT_STATUS_EVENT);
+  // Stamp the moment a status BECOMES a new value so time-boxed statuses
+  // (e.g. "Reached out to CM") can auto-expire. Only re-stamp on an actual
+  // change — re-saving the same value must not reset the clock — and drop
+  // the stamp when the status is cleared.
+  if (trimmed !== prev) {
+    const stamps = loadMap(STATUS_SET_AT_KEY);
+    if (!trimmed) delete stamps[key];
+    else stamps[key] = todayISO();
+    persistMap(STATUS_SET_AT_KEY, stamps, CLIENT_STATUS_SET_AT_EVENT);
+  }
+}
+
+// Set (or clear, with a falsy iso) the "status set at" stamp directly —
+// used to start the clock on a status that predates the stamp store.
+export function setClientStatusSetAt(company, iso) {
+  const key = normKey(company);
+  if (!key) return;
+  const stamps = loadMap(STATUS_SET_AT_KEY);
+  if (!iso) delete stamps[key];
+  else stamps[key] = iso;
+  persistMap(STATUS_SET_AT_KEY, stamps, CLIENT_STATUS_SET_AT_EVENT);
 }
 
 export function setClientUntracked(company, checked) {
@@ -111,6 +143,7 @@ const ALL_CLIENT_MAPS = [
   [MANAGER_KEY, CLIENT_MANAGER_EVENT],
   [IN_PERSON_KEY, CLIENT_IN_PERSON_EVENT],
   [STATUS_KEY, CLIENT_STATUS_EVENT],
+  [STATUS_SET_AT_KEY, CLIENT_STATUS_SET_AT_EVENT],
   [NOTES_KEY, CLIENT_NOTES_EVENT],
   [UNTRACKED_KEY, CLIENT_UNTRACKED_EVENT],
   [LOUISVILLE_KEY, CLIENT_LOUISVILLE_EVENT],

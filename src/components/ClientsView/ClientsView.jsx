@@ -10,6 +10,7 @@ import {
   loadClientManagerMap, setClientManager, CLIENT_MANAGER_EVENT,
   loadClientInPersonMap, setClientInPerson, CLIENT_IN_PERSON_EVENT,
   loadClientStatusMap, setClientStatus, CLIENT_STATUS_EVENT,
+  loadClientStatusSetAtMap, setClientStatusSetAt, CLIENT_STATUS_SET_AT_EVENT,
   loadClientNotesMap, setClientNotes, CLIENT_NOTES_EVENT,
   loadClientUntrackedMap, setClientUntracked, CLIENT_UNTRACKED_EVENT,
   loadClientLouisvilleMap, setClientLouisville, CLIENT_LOUISVILLE_EVENT,
@@ -33,6 +34,32 @@ const MS_PER_DAY = 86400000;
 // blank. Shared by the row-highlight logic and the on-page legend so the two
 // can't drift apart.
 const RENEWAL_WARNING_DAYS = 270;
+
+// "Reached out to CM" is a time-boxed status: it auto-clears this many days
+// after it's set, and a countdown shows how long is left. Kept as one
+// constant so the timer, the badge, and any copy stay in sync.
+const REACHED_OUT_TIMER_DAYS = 30;
+function isReachedOutToCM(status) {
+  const s = String(status || '');
+  return /reached\s*out/i.test(s) && /\bcm\b/i.test(s);
+}
+// Days left before a "Reached out to CM" status auto-clears, given the ISO
+// date it was set. null when there's no stamp. Can go 0 / negative once the
+// window has elapsed (the row-scan effect then clears the status).
+function reachedOutDaysLeft(setAtISO) {
+  if (!setAtISO) return null;
+  const set = new Date(setAtISO);
+  if (Number.isNaN(set.getTime())) return null;
+  set.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const elapsed = Math.round((today.getTime() - set.getTime()) / MS_PER_DAY);
+  return REACHED_OUT_TIMER_DAYS - elapsed;
+}
+function todayISODate() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 // Column layout for the per-client contract drill-down. Each entry's
 // `key` is the canonical field name stored on the deal row; `label` is
@@ -354,6 +381,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
   const [managerMap, setManagerMap] = useState(() => loadClientManagerMap());
   const [inPersonMap, setInPersonMap] = useState(() => loadClientInPersonMap());
   const [statusMap, setStatusMap] = useState(() => loadClientStatusMap());
+  const [statusSetAtMap, setStatusSetAtMap] = useState(() => loadClientStatusSetAtMap());
   const [notesMap, setNotesMap] = useState(() => loadClientNotesMap());
   const [untrackedMap, setUntrackedMap] = useState(() => loadClientUntrackedMap());
   const [louisvilleMap, setLouisvilleMap] = useState(() => loadClientLouisvilleMap());
@@ -364,6 +392,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       if (e.key === 'clients-manager-map') setManagerMap(loadClientManagerMap());
       if (e.key === 'clients-inperson-map') setInPersonMap(loadClientInPersonMap());
       if (e.key === 'clients-status-map') setStatusMap(loadClientStatusMap());
+      if (e.key === 'clients-status-set-at') setStatusSetAtMap(loadClientStatusSetAtMap());
       if (e.key === 'clients-notes-map') setNotesMap(loadClientNotesMap());
       if (e.key === 'clients-untracked-map') setUntrackedMap(loadClientUntrackedMap());
       if (e.key === 'clients-louisville-map') setLouisvilleMap(loadClientLouisvilleMap());
@@ -372,6 +401,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     function onManagerMap() { setManagerMap(loadClientManagerMap()); }
     function onInPersonMap() { setInPersonMap(loadClientInPersonMap()); }
     function onStatusMap() { setStatusMap(loadClientStatusMap()); }
+    function onStatusSetAtMap() { setStatusSetAtMap(loadClientStatusSetAtMap()); }
     function onNotesMap() { setNotesMap(loadClientNotesMap()); }
     function onUntrackedMap() { setUntrackedMap(loadClientUntrackedMap()); }
     function onLouisvilleMap() { setLouisvilleMap(loadClientLouisvilleMap()); }
@@ -380,6 +410,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     window.addEventListener(CLIENT_MANAGER_EVENT, onManagerMap);
     window.addEventListener(CLIENT_IN_PERSON_EVENT, onInPersonMap);
     window.addEventListener(CLIENT_STATUS_EVENT, onStatusMap);
+    window.addEventListener(CLIENT_STATUS_SET_AT_EVENT, onStatusSetAtMap);
     window.addEventListener(CLIENT_NOTES_EVENT, onNotesMap);
     window.addEventListener(CLIENT_UNTRACKED_EVENT, onUntrackedMap);
     window.addEventListener(CLIENT_LOUISVILLE_EVENT, onLouisvilleMap);
@@ -389,6 +420,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       window.removeEventListener(CLIENT_MANAGER_EVENT, onManagerMap);
       window.removeEventListener(CLIENT_IN_PERSON_EVENT, onInPersonMap);
       window.removeEventListener(CLIENT_STATUS_EVENT, onStatusMap);
+      window.removeEventListener(CLIENT_STATUS_SET_AT_EVENT, onStatusSetAtMap);
       window.removeEventListener(CLIENT_NOTES_EVENT, onNotesMap);
       window.removeEventListener(CLIENT_UNTRACKED_EVENT, onUntrackedMap);
       window.removeEventListener(CLIENT_LOUISVILLE_EVENT, onLouisvilleMap);
@@ -404,6 +436,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       setManagerMap(loadClientManagerMap());
       setInPersonMap(loadClientInPersonMap());
       setStatusMap(loadClientStatusMap());
+      setStatusSetAtMap(loadClientStatusSetAtMap());
       setNotesMap(loadClientNotesMap());
       setUntrackedMap(loadClientUntrackedMap());
       setLouisvilleMap(loadClientLouisvilleMap());
@@ -574,10 +607,29 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       inPersonMeeting: !!inPersonMap[ck],
       invitedToLouisville: !!louisvilleMap[ck],
       Status: statusMap[ck] || '',
+      // Days left before a "Reached out to CM" status auto-clears (null for
+      // any other status, or until the set-at stamp is backfilled below).
+      reachedOutDaysLeft: isReachedOutToCM(statusMap[ck]) ? reachedOutDaysLeft(statusSetAtMap[ck]) : null,
       notes: notesMap[ck] || '',
       untracked,
     };
-  }), [filtered, dealsByClient, managerMap, inPersonMap, louisvilleMap, statusMap, notesMap, untrackedMap, resolveTargetTier]);
+  }), [filtered, dealsByClient, managerMap, inPersonMap, louisvilleMap, statusMap, statusSetAtMap, notesMap, untrackedMap, resolveTargetTier]);
+
+  // Drive the "Reached out to CM" 30-day timer: start the clock for any such
+  // status that has no stamp yet (e.g. set before this shipped), and clear
+  // the status once the window has elapsed. Scans the CDM's client list on
+  // every relevant change; each branch only writes when something actually
+  // needs doing, so it settles rather than looping.
+  useEffect(() => {
+    for (const c of clients) {
+      const ck = normClientName(c.company);
+      if (!isReachedOutToCM(statusMap[ck])) continue;
+      const setAt = statusSetAtMap[ck];
+      if (!setAt) { setClientStatusSetAt(c.company, todayISODate()); continue; }
+      const left = reachedOutDaysLeft(setAt);
+      if (left != null && left <= 0) setClientStatus(c.company, '');
+    }
+  }, [clients, statusMap, statusSetAtMap]);
 
   const columns = useMemo(() => [
     {
@@ -620,20 +672,34 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       getFilterValue: (row) => row.Status || '',
       render: (row) => {
         const link = resolveColumnLink('Status', columnLinks);
+        let cell;
         if (link) {
           const opts = listRegistry?.get(link.listKey)?.options || [];
           const onChange = (v) => setClientStatus(row.company, v);
-          if (link.mode === 'multi') {
-            return <MultiSelectCell value={row.Status} onChange={onChange} options={opts} />;
-          }
-          return <SelectCell value={row.Status} onChange={onChange} options={opts} />;
+          cell = link.mode === 'multi'
+            ? <MultiSelectCell value={row.Status} onChange={onChange} options={opts} />
+            : <SelectCell value={row.Status} onChange={onChange} options={opts} />;
+        } else {
+          cell = (
+            <ClientStatusTextCell
+              company={row.company}
+              value={row.Status}
+              onCommit={setClientStatus}
+            />
+          );
         }
+        // Countdown badge for the time-boxed "Reached out to CM" status: how
+        // many days until it auto-clears (30 days after it was set).
+        if (row.reachedOutDaysLeft == null) return cell;
+        const left = Math.max(0, row.reachedOutDaysLeft);
         return (
-          <ClientStatusTextCell
-            company={row.company}
-            value={row.Status}
-            onCommit={setClientStatus}
-          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+            <span style={{ flex: 1, minWidth: 0 }}>{cell}</span>
+            <span
+              title={`This status auto-clears in ${left} day${left === 1 ? '' : 's'} — ${REACHED_OUT_TIMER_DAYS} days after "Reached out to CM" was set.`}
+              style={{ flexShrink: 0, fontSize: '0.64rem', fontWeight: 700, color: left <= 7 ? '#B45309' : '#92400E', background: '#FEF9C3', border: '1px solid #FDE047', borderRadius: 999, padding: '1px 6px', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}
+            >{left}d</span>
+          </div>
         );
       },
     },
@@ -886,7 +952,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
           Red rows need attention: the soonest contract expires within {RENEWAL_WARNING_DAYS} days and the <strong>Status</strong> column is still blank. Set a Status to clear the highlight.
         </span>
         <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 3, background: '#FEF9C3', border: '1px solid #FDE047', flexShrink: 0, marginLeft: '0.6rem' }} />
-        <span>Yellow rows are in progress — <strong>Status</strong> is &ldquo;Reached out to CM&rdquo;.</span>
+        <span>Yellow rows are in progress — <strong>Status</strong> is &ldquo;Reached out to CM&rdquo;; the badge counts down the {REACHED_OUT_TIMER_DAYS} days until that status auto-clears.</span>
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
