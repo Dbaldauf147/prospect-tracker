@@ -193,9 +193,15 @@ export function BFOActivityView({ prospects = [] } = {}) {
       }
       return s;
     };
+    // Amount columns come in as "USD 15,000.00" — export just the dollar
+    // amount, dropping the leading ISO currency code so the cell is a plain
+    // number.
+    const isAmountHeader = (h) => /amount/i.test(h);
+    const stripCurrency = (v) => String(v ?? '').replace(/^\s*[A-Z]{3}\s+/, '').trim();
+    const cellFor = (r, h) => (isAmountHeader(h) ? stripCurrency(r[h]) : r[h]);
     const lines = [
       data.headers.map(escape).join(','),
-      ...data.rows.map(r => data.headers.map(h => escape(r[h])).join(',')),
+      ...data.rows.map(r => data.headers.map(h => escape(cellFor(r, h))).join(',')),
     ];
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
