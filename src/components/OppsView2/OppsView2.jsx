@@ -326,6 +326,31 @@ function needsUsdFlag(row) {
   return usd === '';
 }
 
+// Look up a row value by header name, tolerant to casing / zero-width /
+// whitespace drift in the stored key — needed for user-added columns like
+// "Timeline?" whose key can arrive with odd casing from a paste.
+function rowValueByHeader(row, headerNorm) {
+  if (!row) return undefined;
+  for (const k in row) {
+    if (normCell(k) === headerNorm) return row[k];
+  }
+  return undefined;
+}
+
+// "Budget delivery timeline" flag: the opp has Budgets selected in its
+// Scope column but its "Timeline?" field is still empty, so there's no
+// target for when the budget needs to be delivered. Surfaced as a yellow
+// chip in the Flags column so the gap is obvious.
+function needsBudgetTimelineFlag(row) {
+  if (!row) return false;
+  const scope = normCell(rowValueByHeader(row, 'scope'));
+  if (!/\bbudgets?\b/.test(scope)) return false;
+  const timeline = String(rowValueByHeader(row, 'timeline?') ?? '')
+    .replace(ZERO_WIDTH_RE, '')
+    .replace(/[\s-–—−]/g, '');
+  return timeline === '';
+}
+
 // Record-level merge lives in opps2Store as `mergeOpps2Datasets` so the
 // real-time listener, hydration reconcile, and the guarded flush all
 // resolve conflicts identically (field-level by `_fieldUpdatedAt`).
@@ -7600,6 +7625,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       if (flagsSuppressedForStage(row)) return '';
       const parts = [];
       if (needsUsdFlag(row)) parts.push('Missing USD value');
+      if (needsBudgetTimelineFlag(row)) parts.push('Budget delivery timeline');
       if (oppMissingBfoAddress(row)) parts.push('Missing BFO Address');
       if (oppMissingQuotedAmount(row)) parts.push('Deal Size Missing');
       if (oppMissingMarginApproval(row)) parts.push('Missing Margin Approval');
@@ -7616,6 +7642,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         if (flagsSuppressedForStage(row)) return 0;
         let n = 0;
         if (needsUsdFlag(row)) n += 1;
+        if (needsBudgetTimelineFlag(row)) n += 1;
         if (oppMissingBfoAddress(row)) n += 1;
         if (oppMissingQuotedAmount(row)) n += 1;
         if (oppMissingMarginApproval(row)) n += 1;
@@ -7626,12 +7653,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       render: (row) => {
         if (flagsSuppressedForStage(row)) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
         const missingUsd = needsUsdFlag(row);
+        const missingBudgetTimeline = needsBudgetTimelineFlag(row);
         const missingAddr = oppMissingBfoAddress(row);
         const missingQuote = oppMissingQuotedAmount(row);
         const missingMargin = oppMissingMarginApproval(row);
         const stall = oppStageStall(row);
         const ignored = !!row?._ignoreStallFlag;
-        if (!missingUsd && !missingAddr && !missingQuote && !missingMargin && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+        if (!missingUsd && !missingBudgetTimeline && !missingAddr && !missingQuote && !missingMargin && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
         return (
           <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
             {missingUsd && (
@@ -7639,6 +7667,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 title="Stage is Qualifying or later but the USD? field is blank or “-” — fill in USD? to clear it."
                 style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
               >⚠ Missing USD value</span>
+            )}
+            {missingBudgetTimeline && (
+              <span
+                title="Budgets is in Scope but the Timeline? field is empty — set the budget delivery timeline."
+                style={{ ...chipBase, background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}
+              >⚠ Budget delivery timeline?</span>
             )}
             {missingAddr && (
               <span
