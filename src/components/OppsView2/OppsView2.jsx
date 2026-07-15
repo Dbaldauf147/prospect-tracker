@@ -6780,6 +6780,18 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         monthVal: d ? MONTH_FULL_NAMES[d.getMonth()] : '',
       };
     }
+    // When the Stage flips AWAY FROM "Not Sold" to any other stage, wipe
+    // the three close-out columns that only make sense for a lost opp —
+    // Reason Not Sold, Close Date, and Final Margin (plus the derived
+    // Close Year / Close Month columns kept in sync with Close Date) — so
+    // a re-opened opp doesn't drag stale not-sold data into the active
+    // pipeline and the downstream reporting tabs.
+    const prevStageNorm = String(row?.['Stage'] ?? '').trim().toLowerCase();
+    let closeClear = null;
+    if (stageChanged && prevStageNorm === 'not sold' && newStageNorm !== 'not sold') {
+      const { yearCols, monthCols } = findCloseDerivedColumns(dataRef.current?.headers);
+      closeClear = { yearCols, monthCols };
+    }
     if (row) {
       const snap = (f) => ({ field: f, hadField: f in row, prevValue: f in row ? row[f] : undefined });
       const fields = [snap(field)];
@@ -6807,6 +6819,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       // the Close Date edit restores them in the same step.
       if (closeDerived) {
         for (const c of [...closeDerived.yearCols, ...closeDerived.monthCols]) fields.push(snap(c));
+      }
+      // Snapshot the close-out columns wiped when a Stage moves away from
+      // "Not Sold" (see closeClear) so one undo of that Stage change
+      // brings Reason Not Sold / Close Date / Final Margin back too.
+      if (closeClear) {
+        fields.push(snap('Close Date'));
+        fields.push(snap('Reason Not Sold'));
+        fields.push(snap('Final Margin'));
+        for (const c of [...closeClear.yearCols, ...closeClear.monthCols]) fields.push(snap(c));
       }
       pushUndoEntry({ id, fields });
     }
@@ -6837,6 +6858,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             next['Close Date'] = closeStamp.date;
             for (const c of closeStamp.yearCols) next[c] = closeStamp.yearVal;
             for (const c of closeStamp.monthCols) next[c] = closeStamp.monthVal;
+          }
+          // Wipe the not-sold close-out columns when the Stage leaves
+          // "Not Sold" (see closeClear above).
+          if (closeClear) {
+            next['Close Date'] = '';
+            next['Reason Not Sold'] = '';
+            next['Final Margin'] = '';
+            for (const c of closeClear.yearCols) next[c] = '';
+            for (const c of closeClear.monthCols) next[c] = '';
           }
           // Stamp the stage-entry date whenever Stage flips to a new
           // value so Days-in-Stage measures "time since the last move"
@@ -7000,6 +7030,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     setData(prev => {
       const records = prev?.records || [];
       const stamp = field === 'Stage' ? todayISO() : null;
+      const closeDerivedCols = field === 'Stage'
+        ? findCloseDerivedColumns(prev?.headers)
+        : { yearCols: [], monthCols: [] };
+      const newStageNorm = String(value ?? '').trim().toLowerCase();
       return {
         ...prev,
         records: records.map(r => {
@@ -7023,6 +7057,20 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               { stage: prevStage, enteredAt: prevEntered || '', exitedAt: stamp, days },
             ];
             next._stageEnteredAt = stamp;
+          }
+          // Mirror the single-row updater: a bulk Stage move away from
+          // "Not Sold" wipes the not-sold close-out columns (Reason Not
+          // Sold, Close Date, Final Margin + derived Close Year / Month).
+          if (
+            stamp
+            && String(r['Stage'] ?? '').trim().toLowerCase() === 'not sold'
+            && newStageNorm !== 'not sold'
+          ) {
+            next['Close Date'] = '';
+            next['Reason Not Sold'] = '';
+            next['Final Margin'] = '';
+            for (const c of closeDerivedCols.yearCols) next[c] = '';
+            for (const c of closeDerivedCols.monthCols) next[c] = '';
           }
           // Track when No-Further-Action-Today gets flipped via the
           // mass-edit bar, same as the single-row updater. The 2 PM
