@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { apiFetch } from '../../utils/apiFetch';
+import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import ReactQuill, { Quill } from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { secureSet, secureGet, secureClear } from '../../utils/secureStorage';
@@ -903,13 +905,19 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     return () => clearTimeout(timer);
   }, [subject, body, selectedContacts, draftCc]);
 
-  // Load HubSpot contacts from cache
+  // Load HubSpot contacts from cache. We keep BOTH the flattened list the
+  // composer works with (allContacts) and the raw HubSpot records
+  // (rawContacts) — the contact popup (ContactEditModal) edits raw HubSpot
+  // fields (firstname / lastname / jobtitle / tags…), so clicking a
+  // recipient name resolves back to its raw record here.
   const [allContacts, setAllContacts] = useState([]);
+  const [rawContacts, setRawContacts] = useState([]);
   useEffect(() => {
     let cancelled = false;
     const refresh = () => {
       getHubspotContacts().then(contacts => {
         if (cancelled) return;
+        setRawContacts(contacts);
         setAllContacts(contacts.filter(c => c.email).map(c => ({
           id: c.id,
           name: [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email,
@@ -929,6 +937,74 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     window.addEventListener('hubspot-cache-updated', refresh);
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
+
+  // Contact popup (same ContactEditModal used on the Contacts pages),
+  // opened by clicking a recipient's name. Holds the RAW HubSpot record —
+  // the modal edits raw fields (firstname / lastname / jobtitle / tags…),
+  // not the flattened { name, title } shape the composer carries.
+  const [editingContact, setEditingContact] = useState(null);
+  const rawById = useMemo(() => {
+    const m = new Map();
+    for (const c of rawContacts) {
+      const id = c?.id ?? c?.vid;
+      if (id != null) m.set(String(id), c);
+    }
+    return m;
+  }, [rawContacts]);
+
+  // Resolve a clicked recipient (a flattened composer contact) to the raw
+  // HubSpot record. When it isn't in the cache — e.g. a Marketing Lead added
+  // to the draft that was never a HubSpot contact — synthesize a raw-shaped
+  // object from the flattened fields so the popup still opens and can create
+  // the contact in HubSpot on save (mirrors MarketingLeadsView.buildLeadContact).
+  function openContact(flat) {
+    if (!flat) return;
+    const raw = flat.id != null ? rawById.get(String(flat.id)) : null;
+    if (raw) { setEditingContact(raw); return; }
+    const parts = String(flat.name || '').trim().split(/\s+/).filter(Boolean);
+    setEditingContact({
+      id: flat.id,
+      firstname: flat.firstName || parts[0] || '',
+      lastname: flat.lastName || (parts.length > 1 ? parts.slice(1).join(' ') : ''),
+      email: flat.email || '',
+      jobtitle: flat.title || '',
+      company: flat.company || '',
+      phone: flat.phone || '',
+      city: flat.city || '',
+      state: flat.state || '',
+      hs_linkedin_url: flat.linkedinUrl || '',
+    });
+  }
+
+  // Per-contact metadata handlers for the popup — thin settings-map updaters,
+  // identical in shape to the Key Contacts / Marketing Leads pages so notes,
+  // nicknames, tags, etc. written from here land in the same Firestore settings.
+  const handleContactSaved = (_updated, opts) => { if (!opts?.silent) setEditingContact(null); };
+  const saveSettingsMap = (mapKey, cid, value) => {
+    if (cid == null) return;
+    const cur = settings?.[mapKey] || {};
+    const next = { ...cur };
+    if (value && String(value).trim()) next[cid] = value; else delete next[cid];
+    updateSettings({ [mapKey]: next });
+  };
+
+  // Same-company HubSpot contacts + company-name autocomplete for the popup's
+  // Reports-To / company fields, mirroring the Key Contacts wiring.
+  const editCompanyContacts = useMemo(() => {
+    if (!editingContact) return [];
+    const k = String(editingContact.company || '').trim().toLowerCase();
+    if (!k) return [];
+    return rawContacts.filter(c => String(c?.company || '').trim().toLowerCase() === k);
+  }, [editingContact, rawContacts]);
+  const editEmailDomains = useMemo(() => {
+    if (!editingContact) return [];
+    const k = String(editingContact.company || '').trim().toLowerCase();
+    const matched = (prospects || []).find(p => String(p.company || '').trim().toLowerCase() === k);
+    return matched?.emailDomain
+      ? String(matched.emailDomain).split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)
+      : [];
+  }, [editingContact, prospects]);
+  const editCompanyNames = useMemo(() => (prospects || []).map(p => p.company).filter(Boolean), [prospects]);
 
   // Inline edits from the Variable Coverage table. `{custom}` writes the
   // app-side value (settings.customField); HubSpot-backed variables push
@@ -1519,7 +1595,14 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
             <div className={styles.contactsBox}>
               {selectedContacts.map(c => (
                 <span key={c.id} className={styles.contactTag}>
-                  {c.name} <span className={styles.contactEmail}>({c.email})</span>
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => openContact(c)}
+                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openContact(c); } }}
+                    title={`Open ${c.name}`}
+                    style={{ cursor: 'pointer', textDecoration: 'underline' }}
+                  >{c.name}</span> <span className={styles.contactEmail}>({c.email})</span>
                   <button className={styles.removeTag} onClick={() => removeContact(c.id)}>&times;</button>
                 </span>
               ))}
@@ -1905,6 +1988,60 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
           </div>
         </div>
       </div>
+      {editingContact && createPortal(
+        <ContactEditModal
+          contact={editingContact}
+          onSave={handleContactSaved}
+          onClose={() => setEditingContact(null)}
+          contactNotes={settings?.contactNotes || {}}
+          onSaveNote={(cid, v) => saveSettingsMap('contactNotes', cid, v)}
+          contactOldEmails={settings?.contactOldEmails || {}}
+          onSaveOldEmails={(cid, v) => saveSettingsMap('contactOldEmails', cid, v)}
+          contactOldCompany={settings?.contactOldCompany || {}}
+          onSaveOldCompany={(cid, v) => saveSettingsMap('contactOldCompany', cid, v)}
+          contactNicknames={settings?.contactNicknames || {}}
+          onSaveNickname={(cid, v) => saveSettingsMap('contactNicknames', cid, v)}
+          contactTeamNames={settings?.contactTeamNames || {}}
+          onSaveTeamName={(cid, v) => saveSettingsMap('contactTeamNames', cid, v && v.trim())}
+          contactReportsTo={settings?.contactReportsTo || {}}
+          onSaveReportsTo={(cid, managerIds) => {
+            if (cid == null) return;
+            const cur = settings?.contactReportsTo || {};
+            const next = { ...cur };
+            const arr = Array.isArray(managerIds) ? managerIds.filter(Boolean).map(String) : (managerIds ? [String(managerIds)] : []);
+            if (arr.length) next[cid] = arr; else delete next[cid];
+            updateSettings({ contactReportsTo: next });
+          }}
+          ccMap={settings?.ccMap || {}}
+          onSaveCcMap={m => updateSettings({ ccMap: m })}
+          toAlsoMap={settings?.toAlsoMap || {}}
+          onSaveToAlsoMap={m => updateSettings({ toAlsoMap: m })}
+          contactFamilies={settings?.contactFamilies || {}}
+          onSaveFamily={(cid, info) => {
+            if (cid == null) return;
+            const cur = settings?.contactFamilies || {};
+            const next = { ...cur };
+            const partner = String(info?.partner || '').trim();
+            const kids = String(info?.kids || '').trim();
+            if (!partner && !kids) delete next[cid]; else next[cid] = { partner, kids };
+            updateSettings({ contactFamilies: next });
+          }}
+          contactMetInPerson={settings?.contactMetInPerson || {}}
+          onSaveMetInPerson={(cid, met) => {
+            if (cid == null) return;
+            updateSettings({ contactMetInPerson: { ...(settings?.contactMetInPerson || {}), [cid]: !!met } });
+          }}
+          contactInvitedToLouisville={settings?.contactInvitedToLouisville || {}}
+          onSaveInvitedToLouisville={(cid, invited) => {
+            if (cid == null) return;
+            updateSettings({ contactInvitedToLouisville: { ...(settings?.contactInvitedToLouisville || {}), [cid]: !!invited } });
+          }}
+          companyContacts={editCompanyContacts}
+          emailDomains={editEmailDomains}
+          companyNames={editCompanyNames}
+        />,
+        document.body,
+      )}
     </div>
   );
 }
