@@ -106,14 +106,14 @@ export function getStrategyListOptions(settings) {
 // an option removed from the list never disappears from a firm that
 // still carries it (you can always untag it).
 export function buildStrategyOptions(prospects, settings) {
-  const fromProspects = [];
-  for (const p of (prospects || [])) {
-    if (Array.isArray(p?.strategies)) fromProspects.push(...p.strategies);
-  }
-  return dedupeOrdered([
-    ...getStrategyListOptions(settings),
-    ...fromProspects,
-  ]);
+  // Offer ONLY the canonical Dropdowns-tab PE Strategies list. Legacy tags
+  // still saved on individual firms are intentionally not merged in as
+  // choices: a firm keeps any value it already carries and can untag it
+  // (TagMultiSelect renders selected chips regardless of the options list),
+  // but a retired strategy is no longer offered when tagging. `prospects`
+  // stays in the signature so call sites and their memo deps are unchanged.
+  void prospects;
+  return dedupeOrdered(getStrategyListOptions(settings));
 }
 
 // Add a new strategy tag (from a dropdown's "+ Add") onto the Dropdowns-
