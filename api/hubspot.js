@@ -13,6 +13,19 @@ async function hubspotFetch(path, token) {
   return res.json();
 }
 
+async function hubspotPost(path, token, body) {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`HubSpot API ${res.status}: ${text.slice(0, 200)}`);
+  }
+  return res.json();
+}
+
 async function getAllContacts(token) {
   const contacts = [];
   let after = undefined;
@@ -572,7 +585,18 @@ async function handler(req, res) {
     }
 
     if (action === 'activity') {
-      // Paginated: fetch one type at a time, one page at a time
+      // Paginated: fetch one type at a time, one page at a time.
+      //
+      // We use the CRM *search* endpoint here rather than the plain
+      // object-list endpoint. The list endpoint (/crm/v3/objects/emails)
+      // silently ignores the `sort` query param and returns objects
+      // oldest-first by creation order. The client caps how much it pulls
+      // (~5000 records) as a safety valve, so against an oldest-first feed
+      // that cap quietly drops the *newest* activity — the user's most
+      // recent outreach stops showing once the mailbox grows past the cap.
+      // The search endpoint honours `sorts`, so a DESCENDING hs_timestamp
+      // sort puts the newest records first and the cap drops the oldest
+      // instead.
       const type = req.query.type || 'email'; // email | call | meeting
       const after = req.query.after || '';
       const limit = 100;
@@ -584,25 +608,47 @@ async function handler(req, res) {
       };
       const objectMap = { email: 'emails', call: 'calls', meeting: 'meetings' };
       const objectType = objectMap[type] || 'emails';
-      const props = propsMap[type] || propsMap.email;
+      const props = (propsMap[type] || propsMap.email).split(',');
 
-      const params = new URLSearchParams({ limit: String(limit), properties: props, sort: '-hs_timestamp' });
-      if (after) params.set('after', after);
-      // Request contact associations for every type. Meetings have always
-      // needed them (attendees). Emails need them too: HubSpot often logs a
-      // send as a contact association with a blank hs_email_to_email (e.g.
-      // one-to-many / sequence sends), so the association is the only way to
-      // recover the recipient. Calls carry them as a phone-number fallback.
-      params.set('associations', 'contacts');
+      const body = {
+        limit,
+        sorts: [{ propertyName: 'hs_timestamp', direction: 'DESCENDING' }],
+        properties: props,
+      };
+      if (after) body.after = after;
 
-      const data = await hubspotFetch(`/crm/v3/objects/${objectType}?${params}`, token);
-      const results = (data.results || []).map(r => {
-        const item = { id: r.id, type, ...r.properties };
-        // Include associated contact IDs so the client can recover
-        // recipients when the object's own to/from fields are blank.
-        if (r.associations?.contacts?.results) {
-          item._contactIds = r.associations.contacts.results.map(a => a.id);
+      const data = await hubspotPost(`/crm/v3/objects/${objectType}/search`, token, body);
+      const objects = data.results || [];
+
+      // The search endpoint doesn't return associations, so recover the
+      // associated contact IDs with a batch association read. Meetings need
+      // these for attendee names; emails use them to recover recipients on
+      // one-to-many / sequence sends that log with a blank hs_email_to_email;
+      // calls use them for the contact name / phone fallback.
+      const idToContactIds = new Map();
+      const ids = objects.map(o => o.id).filter(Boolean);
+      if (ids.length) {
+        try {
+          const assoc = await hubspotPost(
+            `/crm/v4/associations/${objectType}/contacts/batch/read`,
+            token,
+            { inputs: ids.map(id => ({ id })) },
+          );
+          for (const r of (assoc.results || [])) {
+            const fromId = r.from?.id;
+            const toIds = (r.to || []).map(t => t.toObjectId).filter(Boolean);
+            if (fromId && toIds.length) idToContactIds.set(String(fromId), toIds.map(String));
+          }
+        } catch (err) {
+          // Non-fatal: fall back to whatever the object's own fields carry.
+          console.warn('activity association read failed:', err?.message || err);
         }
+      }
+
+      const results = objects.map(r => {
+        const item = { id: r.id, type, ...r.properties };
+        const cids = idToContactIds.get(String(r.id));
+        if (cids?.length) item._contactIds = cids;
         return item;
       });
       const nextAfter = data.paging?.next?.after || null;
