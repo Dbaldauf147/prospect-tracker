@@ -885,6 +885,8 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
         <span>
           Red rows need attention: the soonest contract expires within {RENEWAL_WARNING_DAYS} days and the <strong>Status</strong> column is still blank. Set a Status to clear the highlight.
         </span>
+        <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 3, background: '#FEF9C3', border: '1px solid #FDE047', flexShrink: 0, marginLeft: '0.6rem' }} />
+        <span>Yellow rows are in progress — <strong>Status</strong> is &ldquo;Reached out to CM&rdquo;.</span>
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -930,10 +932,16 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
               if (row.untracked) {
                 return { background: '#F1F5F9', color: '#94A3B8' };
               }
+              const s = String(row.Status || '').trim();
+              // Tint yellow once the user has "Reached out to CM" about a
+              // client — these are in progress, distinct from the red rows
+              // that still need any status at all.
+              if (/reached\s*out/i.test(s) && /\bcm\b/i.test(s)) {
+                return { background: '#FEF9C3' };
+              }
               // Tint the row light red when a renewal is closing in
               // (<270 days) and the Status column is unset — those are
               // the clients that need a status set before they slip.
-              const s = String(row.Status || '').trim();
               const noStatus = s === '' || s === '-' || s === '—' || s === '–';
               if (row.daysUntilExpiration != null && row.daysUntilExpiration < RENEWAL_WARNING_DAYS && noStatus) {
                 return { background: '#FEE2E2' };
