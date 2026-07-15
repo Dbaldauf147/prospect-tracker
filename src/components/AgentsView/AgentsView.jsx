@@ -1543,13 +1543,23 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   };
   const resetMarketingLeadStatusUpdatePrompt = () => updateMarketingLeadStatusUpdatePrompt(DEFAULT_AI_PROMPT_MARKETING_LEAD_STATUS_UPDATE);
 
+  // Leads the user hid on the Contacts → Marketing Leads page
+  // (settings.marketingLeadsHiddenLeads holds their ids). Hidden leads are
+  // set aside, so the Marketing Leads agents ignore them entirely.
+  const hiddenMarketingLeadIds = useMemo(() => {
+    const arr = settings?.marketingLeadsHiddenLeads;
+    return new Set(Array.isArray(arr) ? arr.map(String) : []);
+  }, [settings?.marketingLeadsHiddenLeads]);
+
   // Marketing Leads that still need a Salesforce Link — sourced live from
   // the Marketing Leads subtab's store (settings.marketingLeads). A lead
   // qualifies when it has a Name but an empty Salesforce Link (sfUrl).
+  // Leads hidden on the Contacts page are skipped.
   const marketingLeadsMissing = useMemo(() => {
     const arr = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
-    return arr.filter(r => String(r?.name || '').trim() && !String(r?.sfUrl || '').trim());
-  }, [settings]);
+    return arr.filter(r => String(r?.name || '').trim() && !String(r?.sfUrl || '').trim()
+      && !hiddenMarketingLeadIds.has(String(r?.id)));
+  }, [settings, hiddenMarketingLeadIds]);
 
   // Index of the BFO Activity "Leads" subtab: order-insensitive name key
   // → the lead's current Salesforce Status from that paste. Detects the
@@ -1580,11 +1590,13 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   // "Leads" subtab — the only ones the status-update agent needs to act
   // on. A lead qualifies when it has a Name + Status, has a matching row
   // in the Leads subtab, and the two statuses don't match. Leads with no
-  // matching Leads-subtab row are hidden (we can't confirm a diff).
+  // matching Leads-subtab row are hidden (we can't confirm a diff), as are
+  // leads the user hid on the Contacts → Marketing Leads page.
   const marketingLeadStatusRows = useMemo(() => {
     const arr = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
     const out = [];
     for (const r of arr) {
+      if (hiddenMarketingLeadIds.has(String(r?.id))) continue; // hidden on Contacts → skip
       const name = String(r?.name || '').trim();
       const status = String(r?.status || '').trim();
       if (!name || !status) continue;
@@ -1595,7 +1607,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       out.push({ ...r, bfoStatus });
     }
     return out;
-  }, [settings, leadsSubtabStatusByName]);
+  }, [settings, leadsSubtabStatusByName, hiddenMarketingLeadIds]);
 
   // Write a Salesforce Link back onto the matching lead in
   // settings.marketingLeads so it saves through the same settings →
