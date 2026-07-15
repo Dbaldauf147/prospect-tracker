@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '../../utils/apiFetch';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import ReactQuill, { Quill } from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
@@ -819,7 +821,7 @@ function PreviewTabs({ contacts, subject, body, personalizeForContact, draftCc, 
 const AUTOSAVE_KEY = 'prospect-draft-autosave';
 
 export function DraftEmailView({ prospects, settings, updateSettings }) {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   // Restore auto-saved compose state
   const [subject, setSubject] = useState(() => {
     try { return JSON.parse(userLsGet(AUTOSAVE_KEY))?.subject || ''; } catch { return ''; }
@@ -1265,6 +1267,83 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     if (!ok) return;
     setDrafts([]);
     setResult({ type: 'success', message: 'All drafts cleared' });
+  }
+
+  // "Move to Email Campaign": save the current recipients as a named campaign
+  // in Firestore (emailCampaigns/{uid}) — the same collection the Email
+  // Campaigns subtab reads and the All Contacts "Email Campaigns" column
+  // matches against (by lowercased email). The contacts stay in the draft
+  // (copy, not a destructive move). Campaign shape mirrors
+  // EmailCampaignView.handleSave so both places render it consistently; the
+  // send/reply counters start at zero since nothing's been sent yet, and a
+  // later real subject-search Save in the campaign tracker overwrites this
+  // placeholder by subject.
+  const [namingCampaign, setNamingCampaign] = useState(false);
+  const [campaignName, setCampaignName] = useState('');
+  const [savingCampaign, setSavingCampaign] = useState(false);
+
+  async function saveAsCampaign() {
+    const name = campaignName.trim();
+    if (!name) return;
+    if (selectedContacts.length === 0) {
+      setResult({ type: 'error', message: 'Add at least one contact before moving to a campaign' });
+      return;
+    }
+    if (!user?.uid) {
+      setResult({ type: 'error', message: 'You must be signed in to save a campaign' });
+      return;
+    }
+    setSavingCampaign(true);
+    try {
+      const ref = doc(db, 'emailCampaigns', user.uid);
+      const snap = await getDoc(ref);
+      const existing = snap.exists() ? (snap.data().campaigns || []) : [];
+      // Don't clobber an existing campaign (which may hold real tracking
+      // data) that happens to share this name — ask for a unique one.
+      if (existing.some(c => String(c.subject || '').trim().toLowerCase() === name.toLowerCase())) {
+        setResult({ type: 'error', message: `A campaign named "${name}" already exists — choose a different name.` });
+        setSavingCampaign(false);
+        return;
+      }
+      // Recipients, deduped by lowercased email.
+      const seen = new Set();
+      const contacts = [];
+      for (const c of selectedContacts) {
+        const email = String(c.email || '').trim();
+        const key = email.toLowerCase();
+        if (!email || seen.has(key)) continue;
+        seen.add(key);
+        contacts.push({ email, name: c.name || '', company: c.company || '', sentDate: '', replied: false, repliedBy: '', replyDate: '', recipientCount: 1 });
+      }
+      if (contacts.length === 0) {
+        setResult({ type: 'error', message: 'None of the selected contacts have an email address' });
+        setSavingCampaign(false);
+        return;
+      }
+      const nowISO = new Date().toISOString();
+      const campaign = {
+        subject: name,
+        savedAt: nowISO,
+        source: 'draft-emails',
+        uniqueRecipients: contacts.length,
+        uniqueRepliers: 0,
+        responseRate: 0,
+        totalEmails: contacts.length,
+        sent: contacts.length,
+        replies: 0,
+        autoRepliesSuppressed: 0,
+        contacts,
+      };
+      await setDoc(ref, { campaigns: [campaign, ...existing], updatedAt: nowISO });
+      setResult({ type: 'success', message: `Saved ${contacts.length} contact${contacts.length === 1 ? '' : 's'} to Email Campaign "${name}" — find it under the Email Campaigns tab.` });
+      setNamingCampaign(false);
+      setCampaignName('');
+      setTimeout(() => setResult(null), 5000);
+    } catch (err) {
+      setResult({ type: 'error', message: 'Failed to save campaign: ' + (err?.message || 'unknown error') });
+    } finally {
+      setSavingCampaign(false);
+    }
   }
 
   async function createOutlookDrafts() {
@@ -1878,6 +1957,49 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
               feed the same draft, deduped by contact id. */}
           <div className={`${styles.draftsCard} ${styles.coverageCard}`}>
             <h3 className={styles.cardTitle}>Custom Email Campaign</h3>
+            {/* Save the assembled recipients as a named campaign (Email
+                Campaigns tab). Contacts stay in the draft. */}
+            <div style={{ marginBottom: '0.6rem' }}>
+              {!namingCampaign ? (
+                <button
+                  type="button"
+                  onClick={() => { setCampaignName(subject.trim() || ''); setNamingCampaign(true); }}
+                  disabled={selectedContacts.length === 0}
+                  title={selectedContacts.length === 0 ? 'Add contacts first' : 'Save these contacts as a named campaign under the Email Campaigns tab'}
+                  style={{ width: '100%', padding: '0.4rem 0.6rem', border: '1px solid #1D4ED8', borderRadius: 6, background: selectedContacts.length === 0 ? '#F1F5F9' : '#1D4ED8', color: selectedContacts.length === 0 ? '#94A3B8' : '#fff', fontSize: '0.74rem', fontWeight: 700, fontFamily: 'inherit', cursor: selectedContacts.length === 0 ? 'default' : 'pointer' }}
+                >Move to Email Campaign{selectedContacts.length > 0 ? ` (${selectedContacts.length})` : ''}</button>
+              ) : (
+                <div style={{ border: '1px solid #BFDBFE', background: '#EFF6FF', borderRadius: 6, padding: '0.5rem 0.6rem' }}>
+                  <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 700, color: '#1E3A8A', marginBottom: 4 }}>Name this campaign</label>
+                  <input
+                    autoFocus
+                    type="text"
+                    value={campaignName}
+                    onChange={e => setCampaignName(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') { e.preventDefault(); saveAsCampaign(); }
+                      else if (e.key === 'Escape') { setNamingCampaign(false); setCampaignName(''); }
+                    }}
+                    placeholder="e.g. Q3 PE Outreach"
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '0.35rem 0.5rem', border: '1px solid #93C5FD', borderRadius: 4, fontSize: '0.76rem', fontFamily: 'inherit', marginBottom: '0.45rem' }}
+                  />
+                  <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      onClick={() => { setNamingCampaign(false); setCampaignName(''); }}
+                      disabled={savingCampaign}
+                      style={{ padding: '0.25rem 0.6rem', border: '1px solid #CBD5E1', background: '#fff', color: '#475569', borderRadius: 4, fontSize: '0.7rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
+                    >Cancel</button>
+                    <button
+                      type="button"
+                      onClick={saveAsCampaign}
+                      disabled={savingCampaign || !campaignName.trim()}
+                      style={{ padding: '0.25rem 0.7rem', border: 'none', background: (savingCampaign || !campaignName.trim()) ? '#93C5FD' : '#1D4ED8', color: '#fff', borderRadius: 4, fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit', cursor: (savingCampaign || !campaignName.trim()) ? 'default' : 'pointer' }}
+                    >{savingCampaign ? 'Saving…' : `Save ${selectedContacts.length} contact${selectedContacts.length === 1 ? '' : 's'}`}</button>
+                  </div>
+                </div>
+              )}
+            </div>
             <CampaignQueueSection
               allContacts={allContacts}
               selectedContacts={selectedContacts}
