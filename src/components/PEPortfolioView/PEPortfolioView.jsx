@@ -47,6 +47,27 @@ const PE_STRATEGY_CATEGORIES = [
   { id: 'cat_credit', name: 'Credit', description: 'Lend to companies through direct loans, mezzanine, or distressed debt, earning contractual yield that sits senior to equity, sometimes with equity upside.' },
 ];
 
+// Reference list behind the "Case Study" sub-tab — the industries our
+// experience spans. Each row's editable Company / Summary / Results cells
+// are saved per user in settings.peCaseStudies, keyed by industry id.
+const CASE_STUDY_INDUSTRIES = [
+  { id: 'automotive', name: 'Automotive' },
+  { id: 'food_bev', name: 'Food & Bev' },
+  { id: 'hospitality', name: 'Hospitality' },
+  { id: 'retail', name: 'Retail' },
+  { id: 'manufacturing', name: 'Manufacturing' },
+  { id: 'pharmaceutical', name: 'Pharmaceutical' },
+  { id: 'oil_gas', name: 'Oil & Gas' },
+  { id: 'transportation', name: 'Transportation' },
+  { id: 'travel_tourism', name: 'Travel and Tourism' },
+  { id: 'renewable_energy', name: 'Renewable Energy' },
+  { id: 'microgrids', name: 'Microgrids' },
+  { id: 'software', name: 'Software' },
+  { id: 'chemicals', name: 'Chemicals' },
+  { id: 'packaging', name: 'Packaging' },
+  { id: 'aerospace_manufacturing', name: 'Aerospace Manufacturing' },
+];
+
 // Closed/invalid stages from the Opps tab — these shouldn't count toward "active pipeline".
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
 const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
@@ -1007,6 +1028,8 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               ? <>PE firms grouped by their <strong>PE Stage</strong>, each card showing how many days the firm has sat in that stage. The clock starts when a firm's PE Stage changes (set in its company popup); firms already in a stage started counting the day this shipped. Longest-waiting firms lead each column.</>
               : subtab === 'strategies'
               ? <>Reference lists of <strong>private-equity strategies</strong>, each with a short description — switch between the detailed <strong>Investment Strategies</strong> and the higher-level <strong>Categories</strong>. Drag each slider to rate how valuable that strategy is to you (0–10); your ratings save automatically and are ranked highest-first per list.</>
+              : subtab === 'caseStudy'
+              ? <>The <strong>industries our experience spans</strong>. Fill in the <strong>Company</strong>, <strong>Summary</strong>, and <strong>Results</strong> for a case study in each industry — your edits save automatically.</>
               : <>Every opportunity from the <strong>Opps</strong> tab with Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>}
           </div>
         </div>
@@ -1028,6 +1051,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           { key: 'opps', label: 'PE Opps' },
           { key: 'stageDays', label: 'Days in Stage' },
           { key: 'strategies', label: 'Strategies' },
+          { key: 'caseStudy', label: 'Case Study' },
           { key: 'blackstoneOpps', label: 'Blackstone Opps' },
         ].map(t => {
           const isActive = subtab === t.key;
@@ -1125,6 +1149,11 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         />
       ) : subtab === 'strategies' ? (
         <PEStrategiesTab
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      ) : subtab === 'caseStudy' ? (
+        <PECaseStudyTab
           settings={settings}
           updateSettings={updateSettings}
         />
@@ -3611,6 +3640,144 @@ function StrategyRatingTable({ strategies, settingsKey, settings, updateSettings
                   borderRadius: 6,
                   background: value > 0 ? '#F3EEFF' : '#F1F5F9',
                 }}>{value}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// "Case Study" sub-tab — a table of the industries our experience spans.
+// Each industry row has editable Company / Summary / Results cells, saved per
+// user in settings.peCaseStudies (keyed by industry id). Edits are held in
+// local state for responsive typing and flushed to settings on a short
+// debounce, mirroring the Strategies tab's persistence.
+function PECaseStudyTab({ settings, updateSettings }) {
+  const [data, setData] = useState(() => settings?.peCaseStudies || {});
+  const saveTimer = useRef(null);
+  const lastSyncedRef = useRef(JSON.stringify(settings?.peCaseStudies || {}));
+  // True while a cell is focused, so a settings echo doesn't stomp the text
+  // the user is actively typing.
+  const editingRef = useRef(false);
+
+  // Hydrate on first load, or when another device/tab changes the data.
+  useEffect(() => {
+    if (editingRef.current) return;
+    const incoming = JSON.stringify(settings?.peCaseStudies || {});
+    if (incoming !== lastSyncedRef.current) {
+      lastSyncedRef.current = incoming;
+      setData(settings?.peCaseStudies || {});
+    }
+  }, [settings]);
+
+  useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current); }, []);
+
+  const persist = useCallback((next) => {
+    lastSyncedRef.current = JSON.stringify(next);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => { updateSettings({ peCaseStudies: next }); }, 400);
+  }, [updateSettings]);
+
+  const setField = useCallback((id, field, value) => {
+    setData(prev => {
+      const next = { ...prev, [id]: { ...(prev[id] || {}), [field]: value } };
+      persist(next);
+      return next;
+    });
+  }, [persist]);
+
+  const filled = CASE_STUDY_INDUSTRIES.filter(ind => {
+    const d = data[ind.id];
+    return d && (d.company || d.summary || d.results);
+  }).length;
+
+  const GRID_COLS = '48px minmax(150px, 0.9fr) minmax(140px, 1fr) minmax(240px, 1.8fr) minmax(200px, 1.4fr)';
+  const cellInputStyle = {
+    width: '100%',
+    boxSizing: 'border-box',
+    border: '1px solid #E2E8F0',
+    borderRadius: 6,
+    padding: '0.4rem 0.5rem',
+    fontSize: '0.74rem',
+    fontFamily: 'inherit',
+    color: '#1E293B',
+    resize: 'vertical',
+    background: '#fff',
+  };
+
+  return (
+    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '0 1.25rem 1.25rem' }}>
+      <div style={{ fontSize: '0.72rem', color: '#64748B', margin: '0 0 0.6rem' }}>
+        {filled} of {CASE_STUDY_INDUSTRIES.length} industries with a case study
+      </div>
+      <div style={{ border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden' }}>
+        {/* Header row */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: GRID_COLS,
+          background: '#F8FAFC',
+          borderBottom: '1px solid #E2E8F0',
+          fontSize: '0.68rem',
+          fontWeight: 700,
+          color: '#475569',
+          textTransform: 'uppercase',
+          letterSpacing: '0.03em',
+        }}>
+          <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center' }}>#</div>
+          <div style={{ padding: '0.55rem 0.6rem' }}>Industry</div>
+          <div style={{ padding: '0.55rem 0.6rem' }}>Company</div>
+          <div style={{ padding: '0.55rem 0.6rem' }}>Summary</div>
+          <div style={{ padding: '0.55rem 0.6rem' }}>Results</div>
+        </div>
+        {CASE_STUDY_INDUSTRIES.map((ind, i) => {
+          const d = data[ind.id] || {};
+          return (
+            <div
+              key={ind.id}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: GRID_COLS,
+                alignItems: 'start',
+                borderBottom: i === CASE_STUDY_INDUSTRIES.length - 1 ? 'none' : '1px solid #F1F5F9',
+                background: i % 2 ? '#FFFFFF' : '#FCFCFD',
+              }}
+            >
+              <div style={{ padding: '0.6rem', textAlign: 'center', fontSize: '0.8rem', fontWeight: 700, color: '#94A3B8', alignSelf: 'center' }}>{i + 1}</div>
+              <div style={{ padding: '0.6rem', fontSize: '0.78rem', fontWeight: 700, color: '#1E293B', alignSelf: 'center' }}>{ind.name}</div>
+              <div style={{ padding: '0.5rem 0.6rem' }}>
+                <input
+                  type="text"
+                  value={d.company || ''}
+                  placeholder="Company"
+                  onChange={(e) => setField(ind.id, 'company', e.target.value)}
+                  onFocus={() => { editingRef.current = true; }}
+                  onBlur={() => { editingRef.current = false; }}
+                  style={cellInputStyle}
+                />
+              </div>
+              <div style={{ padding: '0.5rem 0.6rem' }}>
+                <textarea
+                  rows={2}
+                  value={d.summary || ''}
+                  placeholder="What was the engagement?"
+                  onChange={(e) => setField(ind.id, 'summary', e.target.value)}
+                  onFocus={() => { editingRef.current = true; }}
+                  onBlur={() => { editingRef.current = false; }}
+                  style={cellInputStyle}
+                />
+              </div>
+              <div style={{ padding: '0.5rem 0.6rem' }}>
+                <textarea
+                  rows={2}
+                  value={d.results || ''}
+                  placeholder="Outcome / results"
+                  onChange={(e) => setField(ind.id, 'results', e.target.value)}
+                  onFocus={() => { editingRef.current = true; }}
+                  onBlur={() => { editingRef.current = false; }}
+                  style={cellInputStyle}
+                />
               </div>
             </div>
           );
