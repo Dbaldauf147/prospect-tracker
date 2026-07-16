@@ -303,7 +303,7 @@ function detectMarketingLeadStatuses({ marketingLeads = [] }) {
 // contracts (negative days) are included — an expired contract needs
 // attention most — and the list is sorted soonest / most-overdue first.
 // Powers the Pipeline dashboard's renewals table.
-export function computeExpiringClients({ prospects = [], cdmName, dealsList = [], clientMap = {}, managerMap = {}, untrackedMap = {}, withinDays = 270 }) {
+export function computeExpiringClients({ prospects = [], cdmName, dealsList = [], clientMap = {}, managerMap = {}, untrackedMap = {}, statusMap = {}, withinDays = 270 }) {
   const dealsByClient = groupDealsByClient(dealsList, clientMap);
   const out = [];
   for (const p of prospects) {
@@ -323,6 +323,10 @@ export function computeExpiringClients({ prospects = [], cdmName, dealsList = []
       // deal row has no Paperwork value). Cancelled/Expired agreements are
       // already excluded by soonestExpiration, so this reflects the live one.
       contractStatus: (next.deal && String(next.deal['Paperwork completed'] || '').trim()) || '',
+      // The user's editable "Renewal Status" from the Clients tab (the
+      // clients-status-map), keyed by normalized company name — same source
+      // and key the Clients page shows in its Renewal Status column.
+      renewalStatus: String(statusMap?.[ck] || '').trim(),
     });
   }
   out.sort((a, b) => a.daysUntil - b.daysUntil);
