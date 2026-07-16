@@ -867,14 +867,11 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       if (!map.has(key)) map.set(key, []);
       map.get(key).push({ contact: c, name, invited: cid != null ? !!invitedMap[cid] : false, isPrimary });
     }
-    // When an account has more than one decision maker, narrow to the one(s)
-    // also tagged "Primary Point of Contact" so the renewals row shows the
-    // single primary DM. If none of that account's DMs carry the Primary tag,
-    // keep them all rather than hiding everyone.
+    // Show exactly one decision maker per account: prefer the one tagged
+    // "Primary Point of Contact", otherwise fall back to the first DM found.
     for (const [key, list] of map) {
       if (list.length > 1) {
-        const primaries = list.filter(d => d.isPrimary);
-        if (primaries.length > 0) map.set(key, primaries);
+        map.set(key, [list.find(d => d.isPrimary) || list[0]]);
       }
     }
     return map;
