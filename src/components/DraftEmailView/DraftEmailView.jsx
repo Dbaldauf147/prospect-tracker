@@ -1290,6 +1290,100 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
   const [namingCampaign, setNamingCampaign] = useState(false);
   const [campaignName, setCampaignName] = useState('');
   const [savingCampaign, setSavingCampaign] = useState(false);
+  // Existing campaigns offered in the "Add to existing campaign" picker,
+  // loaded fresh from Firestore each time the panel opens so the list is
+  // current. `targetCampaign` is the chosen campaign's subject.
+  const [existingCampaigns, setExistingCampaigns] = useState([]);
+  const [targetCampaign, setTargetCampaign] = useState('');
+
+  // Open the campaign panel and pull the current campaign list so the user
+  // can either name a new campaign or add to one that already exists.
+  async function openCampaignPanel() {
+    setCampaignName(subject.trim() || '');
+    setTargetCampaign('');
+    setNamingCampaign(true);
+    if (!user?.uid) { setExistingCampaigns([]); return; }
+    try {
+      const snap = await getDoc(doc(db, 'emailCampaigns', user.uid));
+      const list = snap.exists() ? (snap.data().campaigns || []) : [];
+      setExistingCampaigns(list);
+    } catch { setExistingCampaigns([]); }
+  }
+
+  // Build campaign contact rows from the current selection, deduped by
+  // lowercased email and skipping any email already present in `skipEmails`
+  // (used when merging into an existing campaign's roster).
+  function buildCampaignContacts(skipEmails = []) {
+    const seen = new Set(skipEmails.map(e => String(e || '').trim().toLowerCase()).filter(Boolean));
+    const contacts = [];
+    for (const c of selectedContacts) {
+      const email = String(c.email || '').trim();
+      const key = email.toLowerCase();
+      if (!email || seen.has(key)) continue;
+      seen.add(key);
+      contacts.push({ email, name: c.name || '', company: c.company || '', sentDate: '', replied: false, repliedBy: '', replyDate: '', recipientCount: 1, eventStatus: '' });
+    }
+    return contacts;
+  }
+
+  // Recompute the campaign summary counts from its roster after a merge,
+  // mirroring EmailCampaignView.deriveCounts so both places agree. totalEmails
+  // (real emails found by subject search) is left untouched.
+  function deriveCampaignCounts(contacts) {
+    const list = contacts || [];
+    const sent = list.filter(c => !!c.sentDate).length;
+    const replies = list.filter(c => c.replied).length;
+    const responseRate = sent > 0 ? parseFloat(((replies / sent) * 100).toFixed(1)) : 0;
+    return { totalContacts: list.length, sent, replies, uniqueRecipients: sent, uniqueRepliers: replies, responseRate };
+  }
+
+  // Add the current selection to an already-saved campaign, deduped by email
+  // against its existing roster. Preserves the campaign's tracking data.
+  async function addToExistingCampaign() {
+    const name = targetCampaign.trim();
+    if (!name) return;
+    if (selectedContacts.length === 0) {
+      setResult({ type: 'error', message: 'Add at least one contact before adding to a campaign' });
+      return;
+    }
+    if (!user?.uid) {
+      setResult({ type: 'error', message: 'You must be signed in to update a campaign' });
+      return;
+    }
+    setSavingCampaign(true);
+    try {
+      const ref = doc(db, 'emailCampaigns', user.uid);
+      const snap = await getDoc(ref);
+      const existing = snap.exists() ? (snap.data().campaigns || []) : [];
+      const idx = existing.findIndex(c => String(c.subject || '').trim().toLowerCase() === name.toLowerCase());
+      if (idx === -1) {
+        setResult({ type: 'error', message: `Campaign "${name}" no longer exists — refresh and try again.` });
+        setSavingCampaign(false);
+        return;
+      }
+      const target = existing[idx];
+      const currentContacts = Array.isArray(target.contacts) ? target.contacts : [];
+      const added = buildCampaignContacts(currentContacts.map(c => c.email));
+      if (added.length === 0) {
+        setResult({ type: 'error', message: 'Every selected contact with an email is already in that campaign.' });
+        setSavingCampaign(false);
+        return;
+      }
+      const mergedContacts = [...currentContacts, ...added];
+      const nowISO = new Date().toISOString();
+      const updated = { ...target, contacts: mergedContacts, ...deriveCampaignCounts(mergedContacts) };
+      const nextCampaigns = existing.map((c, i) => (i === idx ? updated : c));
+      await setDoc(ref, { campaigns: nextCampaigns, updatedAt: nowISO });
+      setResult({ type: 'success', message: `Added ${added.length} contact${added.length === 1 ? '' : 's'} to Email Campaign "${name}".` });
+      setNamingCampaign(false);
+      setTargetCampaign('');
+      setTimeout(() => setResult(null), 5000);
+    } catch (err) {
+      setResult({ type: 'error', message: 'Failed to add to campaign: ' + (err?.message || 'unknown error') });
+    } finally {
+      setSavingCampaign(false);
+    }
+  }
 
   async function saveAsCampaign() {
     const name = campaignName.trim();
@@ -1310,20 +1404,12 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       // Don't clobber an existing campaign (which may hold real tracking
       // data) that happens to share this name — ask for a unique one.
       if (existing.some(c => String(c.subject || '').trim().toLowerCase() === name.toLowerCase())) {
-        setResult({ type: 'error', message: `A campaign named "${name}" already exists — choose a different name.` });
+        setResult({ type: 'error', message: `A campaign named "${name}" already exists — choose a different name or add to it instead.` });
         setSavingCampaign(false);
         return;
       }
       // Recipients, deduped by lowercased email.
-      const seen = new Set();
-      const contacts = [];
-      for (const c of selectedContacts) {
-        const email = String(c.email || '').trim();
-        const key = email.toLowerCase();
-        if (!email || seen.has(key)) continue;
-        seen.add(key);
-        contacts.push({ email, name: c.name || '', company: c.company || '', sentDate: '', replied: false, repliedBy: '', replyDate: '', recipientCount: 1, eventStatus: '' });
-      }
+      const contacts = buildCampaignContacts();
       if (contacts.length === 0) {
         setResult({ type: 'error', message: 'None of the selected contacts have an email address' });
         setSavingCampaign(false);
@@ -2016,13 +2102,41 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
               {!namingCampaign ? (
                 <button
                   type="button"
-                  onClick={() => { setCampaignName(subject.trim() || ''); setNamingCampaign(true); }}
+                  onClick={openCampaignPanel}
                   disabled={selectedContacts.length === 0}
-                  title={selectedContacts.length === 0 ? 'Add contacts first' : 'Save these contacts as a named campaign under the Email Campaigns tab'}
+                  title={selectedContacts.length === 0 ? 'Add contacts first' : 'Add these contacts to a new or existing campaign under the Email Campaigns tab'}
                   style={{ width: '100%', padding: '0.4rem 0.6rem', border: '1px solid #1D4ED8', borderRadius: 6, background: selectedContacts.length === 0 ? '#F1F5F9' : '#1D4ED8', color: selectedContacts.length === 0 ? '#94A3B8' : '#fff', fontSize: '0.74rem', fontWeight: 700, fontFamily: 'inherit', cursor: selectedContacts.length === 0 ? 'default' : 'pointer' }}
-                >Move to Email Campaign{selectedContacts.length > 0 ? ` (${selectedContacts.length})` : ''}</button>
+                >Add to Email Campaign{selectedContacts.length > 0 ? ` (${selectedContacts.length})` : ''}</button>
               ) : (
                 <div style={{ border: '1px solid #BFDBFE', background: '#EFF6FF', borderRadius: 6, padding: '0.5rem 0.6rem' }}>
+                  {/* Add to an existing campaign — only shown when the user has
+                      saved campaigns to add to. Merges into that roster. */}
+                  {existingCampaigns.length > 0 && (
+                    <div style={{ marginBottom: '0.6rem' }}>
+                      <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 700, color: '#1E3A8A', marginBottom: 4 }}>Add to existing campaign</label>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <select
+                          value={targetCampaign}
+                          onChange={e => setTargetCampaign(e.target.value)}
+                          style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', padding: '0.35rem 0.4rem', border: '1px solid #93C5FD', borderRadius: 4, fontSize: '0.74rem', fontFamily: 'inherit', background: '#fff' }}
+                        >
+                          <option value="">Choose a campaign…</option>
+                          {existingCampaigns.map((c, i) => {
+                            const subj = String(c.subject || '').trim();
+                            const count = c.totalContacts ?? c.contacts?.length ?? 0;
+                            return <option key={i} value={subj}>{subj || '(untitled)'} — {count}</option>;
+                          })}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={addToExistingCampaign}
+                          disabled={savingCampaign || !targetCampaign}
+                          style={{ padding: '0.25rem 0.7rem', border: 'none', background: (savingCampaign || !targetCampaign) ? '#93C5FD' : '#1D4ED8', color: '#fff', borderRadius: 4, fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit', cursor: (savingCampaign || !targetCampaign) ? 'default' : 'pointer', whiteSpace: 'nowrap' }}
+                        >{savingCampaign ? 'Adding…' : 'Add'}</button>
+                      </div>
+                      <div style={{ textAlign: 'center', fontSize: '0.66rem', fontWeight: 700, color: '#93A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', margin: '0.55rem 0 0.2rem' }}>or create new</div>
+                    </div>
+                  )}
                   <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 700, color: '#1E3A8A', marginBottom: 4 }}>Name this campaign</label>
                   <input
                     autoFocus
@@ -2031,7 +2145,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                     onChange={e => setCampaignName(e.target.value)}
                     onKeyDown={e => {
                       if (e.key === 'Enter') { e.preventDefault(); saveAsCampaign(); }
-                      else if (e.key === 'Escape') { setNamingCampaign(false); setCampaignName(''); }
+                      else if (e.key === 'Escape') { setNamingCampaign(false); setCampaignName(''); setTargetCampaign(''); }
                     }}
                     placeholder="e.g. Q3 PE Outreach"
                     style={{ width: '100%', boxSizing: 'border-box', padding: '0.35rem 0.5rem', border: '1px solid #93C5FD', borderRadius: 4, fontSize: '0.76rem', fontFamily: 'inherit', marginBottom: '0.45rem' }}
@@ -2039,7 +2153,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                   <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                     <button
                       type="button"
-                      onClick={() => { setNamingCampaign(false); setCampaignName(''); }}
+                      onClick={() => { setNamingCampaign(false); setCampaignName(''); setTargetCampaign(''); }}
                       disabled={savingCampaign}
                       style={{ padding: '0.25rem 0.6rem', border: '1px solid #CBD5E1', background: '#fff', color: '#475569', borderRadius: 4, fontSize: '0.7rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
                     >Cancel</button>
