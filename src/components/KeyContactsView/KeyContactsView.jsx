@@ -1660,7 +1660,7 @@ function KeyContactsViewInner({
     // "Met In Person" is edited via a dedicated checkbox in the contact
     // editor, not as a curated tag — but it can still surface here (from
     // existing contact data) so the tag filter keeps working.
-    const CURATED = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Efficiency / Renewables', 'Dan Key Target', 'Decision Maker', 'EU', 'Hide', 'Left'];
+    const CURATED = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Efficiency / Renewables', 'Dan Key Target', 'Decision Maker', 'Primary Point of Contact', 'EU', 'Hide', 'Left'];
     const seen = new Set();
     const out = [];
     const push = (t) => {

@@ -550,7 +550,7 @@ function enrichOverviewFromPortfolio(overview, portfolioRows) {
 // up checked automatically and the PE Portfolio "Met in Person" counts keep
 // working); the checkbox just reads/writes that one value.
 const MET_IN_PERSON_TAG = 'Met In Person';
-const TAG_OPTIONS = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Efficiency / Renewables', 'Dan Key Target', 'Decision Maker', 'Test', 'EU', 'Hide', 'Left'];
+const TAG_OPTIONS = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Efficiency / Renewables', 'Dan Key Target', 'Decision Maker', 'Primary Point of Contact', 'Test', 'EU', 'Hide', 'Left'];
 
 // Portfolio-company sector scoring. Each sector has a 1-10 fit score; the tier
 // bucket (High/Medium/Low) is derived from the score for color-coding only.
