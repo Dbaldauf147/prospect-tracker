@@ -17,6 +17,7 @@ export function EmailCampaignView() {
   const [editTitle, setEditTitle] = useState('');
   const [editSubject, setEditSubject] = useState('');
   const [refreshing, setRefreshing] = useState(false); // auto-refresh of an opened saved campaign in flight
+  const [refreshingAll, setRefreshingAll] = useState(false); // "Refresh all" sweep in flight
   // Identifies the most recent "open a saved campaign" request so a slow
   // refresh for a campaign the user has since navigated away from can't stomp
   // the currently-shown one.
@@ -69,6 +70,53 @@ export function EmailCampaignView() {
     const json = await res.json();
     if (json.error) throw new Error(json.error);
     return json;
+  }
+
+  // Fold freshly-fetched activity into a saved campaign, preserving its own
+  // identity/edits (title, subject, savedAt) and stamping when it refreshed.
+  function mergeActivity(c, json) {
+    return {
+      ...c,
+      uniqueRecipients: json.uniqueRecipients,
+      uniqueRepliers: json.uniqueRepliers,
+      responseRate: json.responseRate,
+      totalEmails: json.totalEmails,
+      sent: json.sent,
+      replies: json.replies,
+      autoRepliesSuppressed: json.autoRepliesSuppressed || 0,
+      contacts: json.contacts,
+      refreshedAt: new Date().toISOString(),
+    };
+  }
+
+  // Re-pull activity for every saved campaign at once. Campaigns that fail to
+  // refresh keep their last saved numbers; everything is persisted in a single
+  // write, and the open campaign (if any) is updated to match.
+  async function refreshAllCampaigns() {
+    if (refreshingAll || savedCampaigns.length === 0) return;
+    setRefreshingAll(true);
+    setError('');
+    const current = savedCampaigns;
+    const outcomes = await Promise.all(current.map(async (c) => {
+      if (!c.subject) return { campaign: c, ok: true };
+      try {
+        return { campaign: mergeActivity(c, await fetchCampaignActivity(c.subject)), ok: true };
+      } catch {
+        return { campaign: c, ok: false };
+      }
+    }));
+    const updated = outcomes.map(o => o.campaign);
+    await saveCampaigns(updated);
+    // Keep the open campaign's view in sync with its refreshed numbers.
+    if (viewingSaved != null && updated[viewingSaved]) {
+      const c = updated[viewingSaved];
+      setResults({ ...c, title: c.title || c.subject, subject: c.subject });
+    }
+    const failed = outcomes.filter(o => !o.ok).length;
+    if (failed > 0) {
+      setError(`Refreshed ${updated.length - failed} of ${updated.length} campaigns — ${failed} couldn’t be reached and kept their last saved numbers.`);
+    }
+    setRefreshingAll(false);
   }
 
   async function handleSearch() {
@@ -166,18 +214,7 @@ export function EmailCampaignView() {
         c.responseRate !== json.responseRate ||
         c.replies !== json.replies;
       if (changed) {
-        const merged = {
-          ...c,
-          uniqueRecipients: json.uniqueRecipients,
-          uniqueRepliers: json.uniqueRepliers,
-          responseRate: json.responseRate,
-          totalEmails: json.totalEmails,
-          sent: json.sent,
-          replies: json.replies,
-          autoRepliesSuppressed: json.autoRepliesSuppressed || 0,
-          contacts: json.contacts,
-          refreshedAt: new Date().toISOString(),
-        };
+        const merged = mergeActivity(c, json);
         saveCampaigns(savedCampaigns.map((x, i) => (i === index ? merged : x)));
       }
     } catch (err) {
@@ -383,7 +420,24 @@ export function EmailCampaignView() {
       {/* Saved Campaigns */}
       {savedCampaigns.length > 0 && (
         <div style={{ marginTop: '1.5rem' }}>
-          <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.5rem' }}>Saved Campaigns</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+            <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Saved Campaigns</div>
+            <button
+              onClick={refreshAllCampaigns}
+              disabled={refreshingAll}
+              title="Re-pull the latest activity for every saved campaign"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
+                padding: '0.3rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px',
+                background: 'var(--color-surface)', color: 'var(--color-text-secondary)',
+                fontSize: '0.7rem', fontWeight: 600, fontFamily: 'inherit',
+                cursor: refreshingAll ? 'wait' : 'pointer', opacity: refreshingAll ? 0.7 : 1,
+              }}
+            >
+              <span style={{ display: 'inline-block' }}>↻</span>
+              {refreshingAll ? 'Refreshing…' : 'Refresh all'}
+            </button>
+          </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
             {savedCampaigns.map((c, i) => {
               const isEditing = editingIndex === i;
