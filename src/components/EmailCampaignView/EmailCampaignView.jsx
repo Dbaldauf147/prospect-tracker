@@ -112,9 +112,9 @@ export function EmailCampaignView() {
       const c = updated[viewingSaved];
       setResults({ ...c, title: c.title || c.subject, subject: c.subject });
     }
-    const failed = outcomes.filter(o => !o.ok).length;
-    if (failed > 0) {
-      setError(`Refreshed ${updated.length - failed} of ${updated.length} campaigns — ${failed} couldn’t be reached and kept their last saved numbers.`);
+    const failedNames = outcomes.filter(o => !o.ok).map(o => o.campaign.title || o.campaign.subject || '(untitled)');
+    if (failedNames.length > 0) {
+      setError(`Refreshed ${updated.length - failedNames.length} of ${updated.length} campaigns — couldn’t reach ${failedNames.length} (kept last saved numbers): ${failedNames.join(', ')}.`);
     }
     setRefreshingAll(false);
   }
