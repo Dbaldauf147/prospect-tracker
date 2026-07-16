@@ -667,7 +667,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       },
     },
     {
-      key: 'Status', label: 'Status', defaultWidth: 160,
+      key: 'Status', label: 'Renewal Status', defaultWidth: 160,
       getSortValue: (row) => (row.Status || '').toLowerCase(),
       getFilterValue: (row) => row.Status || '',
       render: (row) => {
