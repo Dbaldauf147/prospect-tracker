@@ -784,7 +784,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
   const [opps, setOpps] = useState(null);
   const [clientStores, setClientStores] = useState(readClientStores);
   const [hubspotContacts, setHubspotContacts] = useState([]);
-  const [exporting, setExporting] = useState(false); // Excel report build in flight
+  const [exporting, setExporting] = useState(''); // '' | 'multi' | 'single' — which Excel export is building
   // Hover/pin "what goes into this number" breakdown panels.
   const { ctx: calcCtx, popover: calcPopover, pinned: calcPinned, unpin: calcUnpin } = useCalc();
 
@@ -1345,15 +1345,15 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
     };
   }
 
-  async function handleExportExcel() {
+  async function handleExportExcel(layout = 'multi') {
     if (exporting) return;
-    setExporting(true);
+    setExporting(layout);
     try {
-      await downloadPipelineWorkbook(buildExportPayload());
+      await downloadPipelineWorkbook({ ...buildExportPayload(), layout });
     } catch (err) {
       alert('Failed to build the Excel report: ' + (err?.message || err));
     } finally {
-      setExporting(false);
+      setExporting('');
     }
   }
 
@@ -1370,21 +1370,38 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           <h1 className={styles.title}>Pipeline</h1>
           <div className={styles.subtitle}>Pipeline metrics dashboard. Every cell is editable; values save to your browser. Hover a <span className={styles.liveCell} style={{ cursor: 'default' }}>live value</span> to see what feeds it; click to pin the panel, then <strong>⬇ Excel</strong> to export the full breakdown.</div>
         </div>
-        <button
-          type="button"
-          onClick={handleExportExcel}
-          disabled={exporting}
-          title="Download the whole Pipeline tab as a Schneider-formatted Excel report"
-          style={{
-            flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
-            padding: '0.4rem 0.8rem', border: 'none', borderRadius: 6,
-            background: exporting ? '#94A3B8' : '#3DCD58', color: '#fff',
-            fontSize: '0.8rem', fontWeight: 700, fontFamily: 'inherit',
-            cursor: exporting ? 'wait' : 'pointer', whiteSpace: 'nowrap',
-          }}
-        >
-          <span>⬇</span>{exporting ? 'Exporting…' : 'Export Excel report'}
-        </button>
+        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          <button
+            type="button"
+            onClick={() => handleExportExcel('multi')}
+            disabled={!!exporting}
+            title="Download the Pipeline tab as a Schneider-formatted Excel report — one sheet per section"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
+              padding: '0.4rem 0.8rem', border: 'none', borderRadius: 6,
+              background: exporting ? '#94A3B8' : '#3DCD58', color: '#fff',
+              fontSize: '0.8rem', fontWeight: 700, fontFamily: 'inherit',
+              cursor: exporting ? 'wait' : 'pointer', whiteSpace: 'nowrap',
+            }}
+          >
+            <span>⬇</span>{exporting === 'multi' ? 'Exporting…' : 'Export Excel (tabs)'}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleExportExcel('single')}
+            disabled={!!exporting}
+            title="Download the whole Pipeline tab on a single, polished Excel sheet"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
+              padding: '0.4rem 0.8rem', borderRadius: 6, border: '1px solid #009530',
+              background: exporting ? '#F1F5F9' : '#fff', color: '#009530',
+              fontSize: '0.8rem', fontWeight: 700, fontFamily: 'inherit',
+              cursor: exporting ? 'wait' : 'pointer', whiteSpace: 'nowrap',
+            }}
+          >
+            <span>⬇</span>{exporting === 'single' ? 'Exporting…' : 'Export Excel (one page)'}
+          </button>
+        </div>
       </div>
       <div className={styles.body}>
         {/* Quota header — sits directly above the Pipeline Metrics
