@@ -81,9 +81,9 @@ function sectionTitle(ws, rowIdx, colCount, text) {
   ws.getRow(rowIdx).height = 22;
 }
 
-function styleBody(cell, { align = 'left', numFmt, bold = false, zebra = false, fill, fg } = {}) {
-  cell.font = { name: FONT, size: 10, bold, color: { argb: fg || SE_TEXT_DARK } };
-  cell.alignment = { vertical: 'middle', horizontal: align, indent: align === 'left' ? 1 : 0 };
+function styleBody(cell, { align = 'left', numFmt, bold = false, zebra = false, fill, fg, size = 10, wrap = false, vertical = 'middle' } = {}) {
+  cell.font = { name: FONT, size, bold, color: { argb: fg || SE_TEXT_DARK } };
+  cell.alignment = { vertical, horizontal: align, indent: align === 'left' ? 1 : 0, wrapText: wrap };
   cell.border = allThin;
   if (fill) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
   else if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_ZEBRA } };
@@ -99,6 +99,193 @@ function cmpTint(actual, goal, dir = 'higher') {
   return good ? { fill: OK_FILL, fg: OK_FG } : { fill: BAD_FILL, fg: BAD_FG };
 }
 
+// ── Single-tab layout ───────────────────────────────────────────────────
+// Everything on one polished worksheet: a brand band, a KPI card strip, the
+// per-stage metrics table (grouped two-row header), Current-Client-vs-
+// Greenfield, New Opps by Month, Client Renewals and the strategy notes —
+// stacked over a shared 13-column grid with merges so each section reads as
+// its own card.
+function buildSingleSheet(wb, p, { lbl, sub }) {
+  const COLS = 13;
+  const ws = wb.addWorksheet('Pipeline Report', {
+    properties: { tabColor: { argb: SE_GREEN } },
+    views: [{ state: 'frozen', ySplit: 2 }],
+  });
+  ws.columns = [20, 11, 12, 11, 12, 12, 12, 10, 11, 13, 11, 11, 22].map(w => ({ width: w }));
+
+  // Merge a block and style every covered cell (so the full outline renders),
+  // writing `value` into the anchor.
+  const put = (r1, c1, r2, c2, value, opts = {}) => {
+    if (r2 > r1 || c2 > c1) ws.mergeCells(r1, c1, r2, c2);
+    for (let rr = r1; rr <= r2; rr++) {
+      for (let cc = c1; cc <= c2; cc++) {
+        const cell = ws.getCell(rr, cc);
+        if (rr === r1 && cc === c1) cell.value = value === '' || value == null ? null : value;
+        styleBody(cell, opts);
+      }
+    }
+  };
+  const HEAD = { bold: true, fg: 'FFFFFFFF', fill: SE_GREEN_DARK, align: 'center', wrap: true };
+
+  let r = brandBand(ws, COLS, sub);
+  const gap = (h = 6) => { ws.getRow(r).height = h; r++; };
+  const title = (text) => { sectionTitle(ws, r, COLS, text); r++; };
+
+  // ── KPI card strip (6 cards × 2 cols) ──
+  gap();
+  const cg = p.clientGreenfield;
+  const kpis = [
+    { label: lbl('q-target', 'Target'), value: num(p.quota.target), fmt: MONEY },
+    { label: lbl('q-closed-ytd', 'Closed YTD'), value: num(p.quota.closedYTD), fmt: MONEY },
+    { label: lbl('q-pct-quota', '% of Quota'), value: num(p.quota.pctOfQuota), fmt: PCT1 },
+    { label: 'Coverage Ratio', value: num(p.coverage.actual), fmt: '0.00', tint: cmpTint(p.coverage.actual, p.coverage.goal, 'higher') },
+    { label: '% Not Quoted (Yr)', value: num(p.notQuoted.year), fmt: PCT, tint: cmpTint(p.notQuoted.year, p.notQuoted.goal, 'lower') },
+    { label: 'Current Client %', value: num(cg.clientActualPct), fmt: PCT, tint: cmpTint(cg.clientActualPct, cg.clientGoalPct, 'lower') },
+  ];
+  kpis.forEach((k, i) => {
+    const c0 = i * 2 + 1;
+    const c1 = i === kpis.length - 1 ? COLS : c0 + 1; // last card fills to the right edge
+    put(r, c0, r, c1, k.label.toUpperCase(), { align: 'center', bold: true, size: 8, fg: SE_MUTED, fill: 'FFEFF7F0' });
+    put(r + 1, c0, r + 1, c1, k.value, { align: 'center', bold: true, size: 15, numFmt: k.fmt, fill: k.tint ? k.tint.fill : 'FFFFFFFF', fg: k.tint ? k.tint.fg : SE_TEXT_DARK });
+  });
+  ws.getRow(r).height = 15; ws.getRow(r + 1).height = 26;
+  r += 2;
+
+  // ── Pipeline Metrics (grouped two-row header) ──
+  gap();
+  title(lbl('t-pipeline-metrics', 'Pipeline Metrics'));
+  const h1 = r, h2 = r + 1;
+  put(h1, 1, h2, 1, lbl('m-stage', 'Stage'), { ...HEAD, align: 'left' });
+  put(h1, 2, h1, 3, lbl('m-active-opps', 'Active Opportunities'), HEAD);
+  put(h1, 4, h1, 5, lbl('m-deal-size', 'Deal Size'), HEAD);
+  put(h1, 6, h1, 7, lbl('m-pipeline', 'Pipeline'), HEAD);
+  put(h1, 8, h1, 9, lbl('m-close-rate', 'Close Rate'), HEAD);
+  put(h1, 10, h2, 10, lbl('m-target-proj', 'Target Projection'), HEAD);
+  put(h1, 11, h1, 12, lbl('m-opp-life', 'Avg Opp Life'), HEAD);
+  put(h1, 13, h2, 13, lbl('m-flagged-opps', 'Flagged Opps'), HEAD);
+  ['Goal', 'Actual', 'Goal', 'Actual', 'Goal', 'Actual', 'Goal', 'Actual'].forEach((t, i) => put(h2, 2 + i, h2, 2 + i, t, HEAD));
+  put(h2, 11, h2, 11, 'Goal', HEAD);
+  put(h2, 12, h2, 12, 'Actual', HEAD);
+  ws.getRow(h1).height = 16; ws.getRow(h2).height = 16;
+  r += 2;
+
+  const metricRow = (s, opts) => {
+    const flagged = s.flaggedLabel && s.flaggedCount ? `${s.flaggedLabel}: ${s.flaggedCount}` : (s.flaggedCount ? String(s.flaggedCount) : '—');
+    const cells = [
+      [s.label, 'left', null, null],
+      [num(s.activeGoal), 'right', INT, null],
+      [num(s.activeActual), 'right', INT, cmpTint(s.activeActual, s.activeGoal, 'higher')],
+      [num(s.dealSizeGoal), 'right', MONEY, null],
+      [num(s.dealSizeActual), 'right', MONEY, cmpTint(s.dealSizeActual, s.dealSizeGoal, 'higher')],
+      [num(s.pipelineGoal), 'right', MONEY, null],
+      [num(s.pipelineActual), 'right', MONEY, cmpTint(s.pipelineActual, s.pipelineGoal, 'higher')],
+      [num(s.closeGoal), 'right', PCT, null],
+      [num(s.closeActual), 'right', PCT, cmpTint(s.closeActual, s.closeGoal, 'higher')],
+      [num(s.targetProjGoal), 'right', MONEY, null],
+      [num(s.lifeGoal), 'right', INT, null],
+      [num(s.lifeActual), 'right', INT, cmpTint(s.lifeActual, s.lifeGoal, 'lower')],
+      [flagged, 'left', null, s.flaggedCount ? { fill: WARN_FILL, fg: WARN_FG } : null],
+    ];
+    cells.forEach(([v, align, numFmt, tint], i) => {
+      const cell = ws.getRow(r).getCell(i + 1);
+      cell.value = v === '' || v == null ? null : v;
+      styleBody(cell, { align, numFmt, ...opts, ...(tint || {}) });
+    });
+    ws.getRow(r).height = 17;
+    r++;
+  };
+  p.stages.forEach((s, i) => metricRow(s, { zebra: i % 2 === 1 }));
+  // Total row
+  const t = p.totals;
+  const totCells = [
+    [lbl('m-total', 'Total'), 'left', null],
+    [num(t.activeGoal), 'right', INT], [num(t.activeActual), 'right', INT],
+    [num(t.dealSizeGoal), 'right', MONEY], [num(t.dealSizeActual), 'right', MONEY],
+    [num(t.pipelineGoal), 'right', MONEY], [num(t.pipelineActual), 'right', MONEY],
+    ['', 'right', null], [num(t.closeRate), 'right', PCT],
+    [num(t.targetProjGoal), 'right', MONEY],
+    [num(t.lifeGoal), 'right', INT], [num(t.lifeActual), 'right', INT],
+    ['', 'left', null],
+  ];
+  totCells.forEach(([v, align, numFmt], i) => {
+    const cell = ws.getRow(r).getCell(i + 1);
+    cell.value = v === '' || v == null ? null : v;
+    styleBody(cell, { align, numFmt, bold: true, fill: OK_FILL });
+  });
+  ws.getRow(r).height = 18; r++;
+
+  // ── Current Client vs Greenfield ──
+  gap();
+  title('Current Client vs Greenfield');
+  put(r, 1, r, 4, 'Segment', HEAD);
+  put(r, 5, r, 7, 'Opps', { ...HEAD, align: 'right' });
+  put(r, 8, r, 10, 'Amount', { ...HEAD, align: 'right' });
+  put(r, 11, r, 13, 'Client Mix', HEAD);
+  r++;
+  put(r, 1, r, 4, 'Current client', { bold: true });
+  put(r, 5, r, 7, num(cg.clientCount), { align: 'right', numFmt: INT });
+  put(r, 8, r, 10, num(cg.clientAmt), { align: 'right', numFmt: MONEY });
+  put(r, 11, r, 13, cg.clientGoalPct != null ? `Goal ${Math.round(cg.clientGoalPct * 100)}%` : '—', { align: 'center' });
+  r++;
+  put(r, 1, r, 4, 'Greenfield', { bold: true });
+  put(r, 5, r, 7, num(cg.greenfieldCount), { align: 'right', numFmt: INT });
+  put(r, 8, r, 10, num(cg.greenfieldAmt), { align: 'right', numFmt: MONEY });
+  put(r, 11, r, 13, cg.clientActualPct != null ? `Actual ${Math.round(cg.clientActualPct * 100)}%` : '—', { align: 'center', ...(cmpTint(cg.clientActualPct, cg.clientGoalPct, 'lower') || {}) });
+  r++;
+
+  // ── New Opps by Month (horizontal) ──
+  gap();
+  title(`${lbl('nom-month', 'Month')} · ${lbl('nom-new-opps', 'New Opps')}`);
+  const months = p.newOppsByMonth || [];
+  put(r, 1, r, 1, lbl('nom-month', 'Month'), HEAD);
+  put(r + 1, 1, r + 1, 1, lbl('nom-new-opps', 'New Opps'), { ...HEAD, align: 'left' });
+  months.slice(0, 6).forEach((m, i) => {
+    const c0 = 2 + i * 2;
+    put(r, c0, r, c0 + 1, m.label, HEAD);
+    put(r + 1, c0, r + 1, c0 + 1, num(m.count), { align: 'center', bold: true, numFmt: INT, ...(m.count >= 5 ? { fill: OK_FILL, fg: OK_FG } : { fill: BAD_FILL, fg: BAD_FG }) });
+  });
+  ws.getRow(r).height = 16; ws.getRow(r + 1).height = 18;
+  r += 2;
+
+  // ── Client Renewals ──
+  gap();
+  title(lbl('ren-title', `Client Renewals — Contracts Expiring Within ${p.renewals.windowDays} Days`));
+  const renCols = [[1, 2], [3, 4], [5, 6], [7, 9], [10, 11], [12, 13]];
+  const renHdr = [lbl('ren-client', 'Client'), lbl('ren-status', 'Renewal Status'), lbl('ren-client-manager', 'Client Manager'), lbl('ren-decision-maker', 'Decision Maker'), lbl('ren-invited', 'Invited to Louisville'), lbl('ren-days-until', 'Days Until Expiration')];
+  renHdr.forEach((h, i) => put(r, renCols[i][0], r, renCols[i][1], h, { ...HEAD, align: i === 5 ? 'right' : 'left' }));
+  r++;
+  const renRows = p.renewals.rows || [];
+  if (!renRows.length) {
+    put(r, 1, r, COLS, `No clients with contracts expiring in the next ${p.renewals.windowDays} days.`, { fg: SE_MUTED });
+    r++;
+  } else {
+    renRows.forEach((row, idx) => {
+      const zebra = idx % 2 === 1;
+      const overdue = num(row.daysUntil) != null && row.daysUntil < 0;
+      const vals = [row.company || '—', row.renewalStatus || '—', row.clientManager || '—', row.decisionMaker || '—', row.invited || '—', num(row.daysUntil)];
+      vals.forEach((v, i) => {
+        const isDays = i === 5;
+        put(r, renCols[i][0], r, renCols[i][1], v === '' || v == null ? null : v, {
+          align: isDays ? 'right' : 'left', numFmt: isDays ? INT : undefined, wrap: i === 3,
+          ...(isDays && overdue ? { fill: BAD_FILL, fg: BAD_FG } : (zebra ? { zebra: true } : {})),
+        });
+      });
+      r++;
+    });
+  }
+
+  // ── Strategy Notes ──
+  gap();
+  (p.notes || []).forEach(({ title: nt, text }) => {
+    title(nt);
+    String(text || '').split('\n').forEach((line) => {
+      put(r, 1, r, COLS, line, { wrap: true, vertical: 'top' });
+      ws.getRow(r).height = Math.max(15, Math.ceil((line.length || 1) / 120) * 14);
+      r++;
+    });
+  });
+}
+
 export async function downloadPipelineWorkbook(p) {
   const exceljs = await import('exceljs');
   const Workbook = exceljs.Workbook || (exceljs.default && exceljs.default.Workbook);
@@ -112,6 +299,10 @@ export async function downloadPipelineWorkbook(p) {
     // Not fatal — the report still exports the manually-entered numbers.
     wb.description = 'BFO Activity not loaded; live actuals reflect manually entered values.';
   }
+
+  if (p.layout === 'single') {
+    buildSingleSheet(wb, p, { lbl, sub });
+  } else {
 
   // ── Sheet 1: Summary (KV blocks) ──────────────────────────────────────
   {
@@ -333,6 +524,8 @@ export async function downloadPipelineWorkbook(p) {
     });
   }
 
+  } // end multi-sheet layout
+
   // ── Download (repo-standard blob-anchor idiom) ────────────────────────
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -340,7 +533,7 @@ export async function downloadPipelineWorkbook(p) {
   const a = document.createElement('a');
   const stamp = (p.generatedAt || new Date()).toISOString().slice(0, 10);
   a.href = url;
-  a.download = `Pipeline Report — ${stamp}.xlsx`;
+  a.download = `Pipeline Report${p.layout === 'single' ? ' (1 page)' : ''} — ${stamp}.xlsx`;
   document.body.appendChild(a);
   a.click();
   a.remove();
