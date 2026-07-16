@@ -33,6 +33,20 @@ const PE_STRATEGIES = [
   { id: 'real_estate', name: 'Real Estate', description: 'Acquire, develop, or reposition property across core, value-add, and opportunistic risk profiles for income plus capital appreciation.' },
 ];
 
+// Reference list behind the "Categories" sub-tab within Strategies — the
+// higher-level strategy categories, each with a short plain-language
+// description. Same 0–10 value slider as the Investment Strategies list, but
+// rated independently and saved per user in settings.peStrategyCategoryRatings.
+const PE_STRATEGY_CATEGORIES = [
+  { id: 'cat_venture', name: 'Venture Capital', description: 'Fund early-stage, high-growth startups in exchange for equity, accepting high failure rates in return for outsized returns from the winners.' },
+  { id: 'cat_buyout', name: 'Buyout', description: 'Acquire a controlling stake in a mature, cash-generative company, often using significant debt (leverage), then improve operations and exit for a return on equity.' },
+  { id: 'cat_real_estate', name: 'Real Estate', description: 'Acquire, develop, or reposition property across core, value-add, and opportunistic risk profiles for income plus capital appreciation.' },
+  { id: 'cat_infrastructure', name: 'Infrastructure', description: 'Own long-duration real assets — transport, utilities, digital infrastructure — prized for stable, often inflation-linked cash flows.' },
+  { id: 'cat_growth', name: 'Growth Equity', description: 'Take minority stakes in established, fast-growing companies that need capital to scale — expansion, new markets, acquisitions — without a control change or heavy leverage.' },
+  { id: 'cat_energy', name: 'Energy', description: 'Invest across energy assets and companies — traditional and renewable power, oil & gas, transition infrastructure — for cash yield and long-term value.' },
+  { id: 'cat_credit', name: 'Credit', description: 'Lend to companies through direct loans, mezzanine, or distressed debt, earning contractual yield that sits senior to equity, sometimes with equity upside.' },
+];
+
 // Closed/invalid stages from the Opps tab — these shouldn't count toward "active pipeline".
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
 const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
@@ -992,7 +1006,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               : subtab === 'stageDays'
               ? <>PE firms grouped by their <strong>PE Stage</strong>, each card showing how many days the firm has sat in that stage. The clock starts when a firm's PE Stage changes (set in its company popup); firms already in a stage started counting the day this shipped. Longest-waiting firms lead each column.</>
               : subtab === 'strategies'
-              ? <>The core <strong>private-equity investment strategies</strong>, each with a short description. Drag each slider to rate how valuable that strategy is to you (0–10); your ratings save automatically and are ranked highest-first.</>
+              ? <>Reference lists of <strong>private-equity strategies</strong>, each with a short description — switch between the detailed <strong>Investment Strategies</strong> and the higher-level <strong>Categories</strong>. Drag each slider to rate how valuable that strategy is to you (0–10); your ratings save automatically and are ranked highest-first per list.</>
               : <>Every opportunity from the <strong>Opps</strong> tab with Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>}
           </div>
         </div>
@@ -3401,48 +3415,90 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, firm = '', setFirm, firmO
   );
 }
 
-// "Strategies" sub-tab — a reference table of the core PE investment
-// strategies with descriptions, plus a 0–10 value slider per strategy.
-// Ratings persist per user in settings.peStrategyRatings (keyed by id).
-// Rows sort highest-rated first, but the order is frozen while a slider is
-// being dragged so rows don't jump out from under the cursor.
+// "Strategies" sub-tab — hosts two nested, independently-ranked reference
+// lists (Investment Strategies and Categories), each a table of strategies
+// with descriptions and a 0–10 value slider. A small tab bar switches between
+// them; each keeps its own ratings under a separate settings key.
 function PEStrategiesTab({ settings, updateSettings }) {
+  // Two nested lists under Strategies, each ranked independently: the detailed
+  // Investment Strategies list and the higher-level Categories list. Each keeps
+  // its own ratings under a separate settings key.
+  const [stratTab, setStratTab] = useState('investment');
+  const TABS = [
+    { key: 'investment', label: 'Investment Strategies', strategies: PE_STRATEGIES, settingsKey: 'peStrategyRatings' },
+    { key: 'categories', label: 'Categories', strategies: PE_STRATEGY_CATEGORIES, settingsKey: 'peStrategyCategoryRatings' },
+  ];
+  const active = TABS.find(t => t.key === stratTab) || TABS[0];
+
+  return (
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', gap: '0.35rem', padding: '0 1.25rem', marginBottom: '0.5rem' }}>
+        {TABS.map(t => (
+          <button
+            key={t.key}
+            onClick={() => setStratTab(t.key)}
+            style={{
+              padding: '0.3rem 0.7rem', borderRadius: 6, fontSize: '0.72rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+              border: stratTab === t.key ? '1px solid #7C3AED' : '1px solid #E2E8F0',
+              background: stratTab === t.key ? '#F3EEFF' : '#FFFFFF',
+              color: stratTab === t.key ? '#6D28D9' : '#64748B',
+            }}
+          >{t.label}</button>
+        ))}
+      </div>
+      {/* Remount per tab so each list hydrates its own ratings cleanly. */}
+      <StrategyRatingTable
+        key={active.key}
+        strategies={active.strategies}
+        settingsKey={active.settingsKey}
+        settings={settings}
+        updateSettings={updateSettings}
+      />
+    </div>
+  );
+}
+
+// Ranked 0–10 value-slider table for a list of strategies. Ratings persist per
+// user under settings[settingsKey] (keyed by strategy id). Rows sort
+// highest-rated first, but the order is frozen while a slider is being dragged
+// so rows don't jump out from under the cursor.
+function StrategyRatingTable({ strategies, settingsKey, settings, updateSettings }) {
   const RATING_MAX = 10;
 
   // Live, editable copy of the ratings for smooth dragging.
-  const [ratings, setRatings] = useState(() => settings?.peStrategyRatings || {});
+  const [ratings, setRatings] = useState(() => settings?.[settingsKey] || {});
   // Snapshot the row ORDER is derived from. Updated on drag-release (and on
   // keyboard edits) rather than every slider tick, so rows don't reshuffle
   // out from under the cursor while a slider is being dragged.
-  const [sortRatings, setSortRatings] = useState(() => settings?.peStrategyRatings || {});
+  const [sortRatings, setSortRatings] = useState(() => settings?.[settingsKey] || {});
 
   const draggingRef = useRef(false);
   const saveTimer = useRef(null);
   // The last value we wrote (or hydrated), so the sync effect below can
   // tell "the server echoed our own save" from "another device changed it".
-  const lastSyncedRef = useRef(JSON.stringify(settings?.peStrategyRatings || {}));
+  const lastSyncedRef = useRef(JSON.stringify(settings?.[settingsKey] || {}));
 
   // Hydrate when settings first load, or when another device/tab changes the
   // ratings. Guarded by a JSON compare (and skipped mid-drag) so our own
   // optimistic saves don't stomp a slider the user is still holding.
   useEffect(() => {
     if (draggingRef.current) return;
-    const incoming = JSON.stringify(settings?.peStrategyRatings || {});
+    const incoming = JSON.stringify(settings?.[settingsKey] || {});
     if (incoming !== lastSyncedRef.current) {
       lastSyncedRef.current = incoming;
-      const val = settings?.peStrategyRatings || {};
+      const val = settings?.[settingsKey] || {};
       setRatings(val);
       setSortRatings(val);
     }
-  }, [settings]);
+  }, [settings, settingsKey]);
 
   useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current); }, []);
 
   const persist = useCallback((next) => {
     lastSyncedRef.current = JSON.stringify(next);
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => { updateSettings({ peStrategyRatings: next }); }, 400);
-  }, [updateSettings]);
+    saveTimer.current = setTimeout(() => { updateSettings({ [settingsKey]: next }); }, 400);
+  }, [updateSettings, settingsKey]);
 
   const setRating = useCallback((id, value) => {
     setRatings(prev => {
@@ -3468,22 +3524,22 @@ function PEStrategiesTab({ settings, updateSettings }) {
   // Display order: highest rating first, ties broken by canonical list order.
   // Driven by the frozen `sortRatings` snapshot, not the live values.
   const orderedIds = useMemo(() => {
-    const idx = Object.fromEntries(PE_STRATEGIES.map((s, i) => [s.id, i]));
+    const idx = Object.fromEntries(strategies.map((s, i) => [s.id, i]));
     const rank = (id) => (Number.isFinite(sortRatings[id]) ? sortRatings[id] : 0);
-    return PE_STRATEGIES.map(s => s.id).sort((a, b) => {
+    return strategies.map(s => s.id).sort((a, b) => {
       const d = rank(b) - rank(a);
       return d !== 0 ? d : idx[a] - idx[b];
     });
-  }, [sortRatings]);
+  }, [sortRatings, strategies]);
 
-  const byId = Object.fromEntries(PE_STRATEGIES.map(s => [s.id, s]));
-  const rated = PE_STRATEGIES.filter(s => Number.isFinite(ratings[s.id])).length;
+  const byId = Object.fromEntries(strategies.map(s => [s.id, s]));
+  const rated = strategies.filter(s => Number.isFinite(ratings[s.id])).length;
   const GRID_COLS = '48px minmax(160px, 1fr) minmax(240px, 2.2fr) 220px';
 
   return (
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '0 1.25rem 1.25rem' }}>
       <div style={{ fontSize: '0.72rem', color: '#64748B', margin: '0 0 0.6rem' }}>
-        {rated} of {PE_STRATEGIES.length} strategies rated
+        {rated} of {strategies.length} strategies rated
       </div>
       <div style={{ border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden' }}>
         {/* Header row */}
