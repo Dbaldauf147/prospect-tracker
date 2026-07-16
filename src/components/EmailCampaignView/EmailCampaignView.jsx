@@ -18,6 +18,9 @@ export function EmailCampaignView() {
   const [editSubject, setEditSubject] = useState('');
   const [refreshing, setRefreshing] = useState(false); // auto-refresh of an opened saved campaign in flight
   const [refreshingAll, setRefreshingAll] = useState(false); // "Refresh all" sweep in flight
+  // Which column the contact table is sorted by, and the direction. key === null
+  // leaves the table in its natural (roster) order.
+  const [sortConfig, setSortConfig] = useState({ key: null, dir: 'asc' });
   // Identifies the most recent "open a saved campaign" request so a slow
   // refresh for a campaign the user has since navigated away from can't stomp
   // the currently-shown one.
@@ -409,8 +412,69 @@ export function EmailCampaignView() {
     return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   }
 
+  // Click a column header to sort by it; click again to flip direction. A new
+  // column starts ascending.
+  function toggleSort(key) {
+    setSortConfig(prev => (prev.key === key
+      ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+      : { key, dir: 'asc' }));
+  }
+
+  // Where a contact falls in the send/reply lifecycle, used to sort the Status
+  // column meaningfully: Not Sent < No Reply < Replied.
+  function statusRank(c) {
+    if (c.replied) return 2;
+    if (c.sentDate) return 1;
+    return 0;
+  }
+
+  // The comparable value for a contact in a given column. Dates become numeric
+  // timestamps and text is lowercased so sorting is case-insensitive; missing
+  // values sort to one end consistently.
+  function sortValue(c, key) {
+    switch (key) {
+      case 'email': return String(c.email || '').toLowerCase();
+      case 'sentDate': return c.sentDate ? (new Date(c.sentDate).getTime() || 0) : 0;
+      case 'status': return statusRank(c);
+      case 'repliedBy': return String(c.repliedBy || '').toLowerCase();
+      case 'replyDate': return c.replied && c.replyDate ? (new Date(c.replyDate).getTime() || 0) : 0;
+      case 'eventStatus': return String(c.eventStatus || '');
+      default: return '';
+    }
+  }
+
   const displayResults = results;
   const { dupKeys, extraRows } = findDuplicates(displayResults?.contacts);
+
+  // Rows to render, carrying each contact's ORIGINAL index so the row actions
+  // (remove, event status) keep pointing at the right entry in
+  // results.contacts even after the display order changes. A stable sort falls
+  // back to the original index to keep equal rows in their prior order.
+  const sortedContacts = (() => {
+    const list = (displayResults?.contacts || []).map((c, i) => ({ c, i }));
+    if (!sortConfig.key) return list;
+    const dir = sortConfig.dir === 'asc' ? 1 : -1;
+    return list.slice().sort((a, b) => {
+      const va = sortValue(a.c, sortConfig.key);
+      const vb = sortValue(b.c, sortConfig.key);
+      if (va < vb) return -1 * dir;
+      if (va > vb) return 1 * dir;
+      return a.i - b.i;
+    });
+  })();
+
+  const SORT_HEADER_STYLE = { padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)', cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' };
+  function SortHeader({ label, sortKey }) {
+    const active = sortConfig.key === sortKey;
+    return (
+      <th onClick={() => toggleSort(sortKey)} style={SORT_HEADER_STYLE} title={`Sort by ${label}`}>
+        {label}
+        <span style={{ marginLeft: '0.3rem', fontSize: '0.7rem', opacity: active ? 1 : 0.3 }}>
+          {active ? (sortConfig.dir === 'asc' ? '▲' : '▼') : '↕'}
+        </span>
+      </th>
+    );
+  }
 
   return (
     <div style={{ padding: '1.5rem', maxWidth: '1000px' }}>
@@ -517,17 +581,17 @@ export function EmailCampaignView() {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
                 <thead>
                   <tr style={{ background: 'var(--color-surface-alt)', position: 'sticky', top: 0, zIndex: 1 }}>
-                    <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)' }}>Sent To</th>
-                    <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)' }}>Sent Date</th>
-                    <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)' }}>Status</th>
-                    <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)' }}>Replied By</th>
-                    <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)' }}>Reply Date</th>
-                    <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)' }}>Event Status</th>
+                    <SortHeader label="Sent To" sortKey="email" />
+                    <SortHeader label="Sent Date" sortKey="sentDate" />
+                    <SortHeader label="Status" sortKey="status" />
+                    <SortHeader label="Replied By" sortKey="repliedBy" />
+                    <SortHeader label="Reply Date" sortKey="replyDate" />
+                    <SortHeader label="Event Status" sortKey="eventStatus" />
                     <th style={{ padding: '0.45rem 0.6rem', textAlign: 'center', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', borderBottom: '1px solid var(--color-border)', width: '36px' }}></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {displayResults.contacts.map((c, i) => {
+                  {sortedContacts.map(({ c, i }) => {
                     const isDup = dupKeys.has(contactKey(c));
                     return (
                     <tr key={i} style={{ borderBottom: '1px solid var(--color-border-light)', background: isDup ? '#FFFBEB' : undefined }}>
