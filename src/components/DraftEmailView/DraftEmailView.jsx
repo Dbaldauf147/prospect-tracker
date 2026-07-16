@@ -1322,7 +1322,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
         const key = email.toLowerCase();
         if (!email || seen.has(key)) continue;
         seen.add(key);
-        contacts.push({ email, name: c.name || '', company: c.company || '', sentDate: '', replied: false, repliedBy: '', replyDate: '', recipientCount: 1 });
+        contacts.push({ email, name: c.name || '', company: c.company || '', sentDate: '', replied: false, repliedBy: '', replyDate: '', recipientCount: 1, eventStatus: '' });
       }
       if (contacts.length === 0) {
         setResult({ type: 'error', message: 'None of the selected contacts have an email address' });
@@ -1330,17 +1330,22 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
         return;
       }
       const nowISO = new Date().toISOString();
+      // Nothing has been emailed yet, so the send/reply counters start at zero;
+      // the roster is tracked separately as totalContacts. Opening the campaign
+      // in the Email Campaigns tab folds in real send/reply activity by subject.
       const campaign = {
         subject: name,
         savedAt: nowISO,
         source: 'draft-emails',
-        uniqueRecipients: contacts.length,
+        uniqueRecipients: 0,
         uniqueRepliers: 0,
         responseRate: 0,
         totalEmails: contacts.length,
-        sent: contacts.length,
+        totalContacts: contacts.length,
+        sent: 0,
         replies: 0,
         autoRepliesSuppressed: 0,
+        removedEmails: [],
         contacts,
       };
       await setDoc(ref, { campaigns: [campaign, ...existing], updatedAt: nowISO });
