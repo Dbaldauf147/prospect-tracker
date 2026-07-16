@@ -853,14 +853,23 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
   // is a local-only setting keyed by the contact's HubSpot id.
   const dmsByCompany = useMemo(() => {
     const invitedMap = settings.contactInvitedToLouisville || {};
+    // Per-contact local overrides (Firestore settings). A _companyOverride is
+    // the user's typed company name for a contact whose HubSpot company
+    // association refused to update; the contact views (HubSpot / All Contacts
+    // / Key Contacts) all key off it, so this renewals join must too. Without
+    // it, an overridden DM matches on their raw HubSpot company here and goes
+    // missing from the table even though they show up correctly everywhere else.
+    const localFieldsMap = settings.contactLocalFields || {};
     const map = new Map();
     for (const c of hubspotContacts) {
       const tags = String(c.dans_tags || c.dan_s_tags || c.dans_tag || '')
         .split(';').map(t => t.trim().toLowerCase());
       if (!tags.includes('decision maker')) continue;
-      const key = normClientName(c.company);
-      if (!key) continue;
       const cid = c.id || c.vid;
+      const override = cid != null ? localFieldsMap[cid]?._companyOverride : null;
+      const company = (typeof override === 'string' && override) ? override : c.company;
+      const key = normClientName(company);
+      if (!key) continue;
       const name = [c.firstname, c.lastname].filter(Boolean).join(' ').trim()
         || c.name || c.email || '—';
       const isPrimary = tags.includes('primary point of contact');
@@ -875,7 +884,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       }
     }
     return map;
-  }, [hubspotContacts, settings.contactInvitedToLouisville]);
+  }, [hubspotContacts, settings.contactInvitedToLouisville, settings.contactLocalFields]);
 
   // Open the account modal for a renewals row (by matching prospect id, then
   // company name as a fallback). Optionally deep-links straight into a
