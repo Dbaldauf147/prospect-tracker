@@ -250,6 +250,59 @@ export function EmailCampaignView() {
     }
   }
 
+  // A contact's identity for duplicate detection: its recipient set, normalized
+  // and order-independent so "a@x.com; b@x.com" and "b@x.com; a@x.com" match.
+  const contactKey = (c) => String(c?.email || '').split(';').map(normEmail).filter(Boolean).sort().join(',');
+
+  // How much real information a row carries — used to pick which copy of a
+  // duplicate to keep: a replied row beats a sent row beats one with just an
+  // event status.
+  function contactInfoScore(c) {
+    return (c?.replied ? 4 : 0) + (c?.sentDate ? 2 : 0) + (c?.eventStatus ? 1 : 0);
+  }
+
+  // Flag contacts that appear more than once in the campaign (by recipient
+  // set). Returns the set of duplicated keys plus how many extra rows exist so
+  // the UI can both badge the rows and offer to collapse them.
+  function findDuplicates(contacts) {
+    const counts = new Map();
+    for (const c of (contacts || [])) {
+      const k = contactKey(c);
+      if (k) counts.set(k, (counts.get(k) || 0) + 1);
+    }
+    const dupKeys = new Set();
+    let extraRows = 0;
+    for (const [k, n] of counts) {
+      if (n > 1) { dupKeys.add(k); extraRows += n - 1; }
+    }
+    return { dupKeys, extraRows };
+  }
+
+  // Collapse duplicates to one row each, keeping the copy with the most
+  // information and carrying over an event status from a discarded copy if the
+  // kept one has none. This is a de-dup, not a manual removal, so it does NOT
+  // tombstone emails — the surviving copy shares the same address.
+  function removeDuplicates() {
+    if (!results) return;
+    const byKey = new Map(); // key -> index in kept
+    const kept = [];
+    for (const c of results.contacts) {
+      const k = contactKey(c);
+      if (!k) { kept.push(c); continue; }
+      if (!byKey.has(k)) { byKey.set(k, kept.length); kept.push(c); continue; }
+      const idx = byKey.get(k);
+      const winner = contactInfoScore(c) > contactInfoScore(kept[idx]) ? { ...c } : { ...kept[idx] };
+      if (!winner.eventStatus) winner.eventStatus = kept[idx].eventStatus || c.eventStatus || '';
+      kept[idx] = winner;
+    }
+    if (kept.length === results.contacts.length) return; // nothing to collapse
+    const counts = deriveCounts(kept);
+    setResults({ ...results, contacts: kept, ...counts });
+    if (viewingSaved != null) {
+      saveCampaigns(savedCampaigns.map((c, i) => (i === viewingSaved ? { ...c, contacts: kept, ...counts } : c)));
+    }
+  }
+
   function deleteCampaign(index) {
     const updated = savedCampaigns.filter((_, i) => i !== index);
     saveCampaigns(updated);
@@ -357,6 +410,7 @@ export function EmailCampaignView() {
   }
 
   const displayResults = results;
+  const { dupKeys, extraRows } = findDuplicates(displayResults?.contacts);
 
   return (
     <div style={{ padding: '1.5rem', maxWidth: '1000px' }}>
@@ -442,6 +496,21 @@ export function EmailCampaignView() {
             )}
           </div>
 
+          {/* Duplicate contacts warning */}
+          {dupKeys.size > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.75rem', marginBottom: '0.5rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: '6px', fontSize: '0.78rem', color: '#92400E' }}>
+              <span>
+                <strong>⚠ {dupKeys.size} duplicate contact{dupKeys.size === 1 ? '' : 's'}</strong> in this campaign
+                {extraRows > 0 && <> — {extraRows} extra row{extraRows === 1 ? '' : 's'}</>}. Duplicated rows are flagged below.
+              </span>
+              <button
+                onClick={removeDuplicates}
+                style={{ flexShrink: 0, padding: '0.3rem 0.7rem', border: 'none', borderRadius: '6px', background: '#D97706', color: '#fff', fontSize: '0.72rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}
+                title="Collapse each duplicated contact to a single row, keeping the copy with the most activity"
+              >Remove duplicates</button>
+            </div>
+          )}
+
           {/* Contact table */}
           {displayResults.contacts && displayResults.contacts.length > 0 && (
             <div style={{ border: '1px solid var(--color-border)', borderRadius: '8px', overflow: 'hidden', maxHeight: '500px', overflowY: 'auto' }}>
@@ -458,10 +527,15 @@ export function EmailCampaignView() {
                   </tr>
                 </thead>
                 <tbody>
-                  {displayResults.contacts.map((c, i) => (
-                    <tr key={i} style={{ borderBottom: '1px solid var(--color-border-light)' }}>
+                  {displayResults.contacts.map((c, i) => {
+                    const isDup = dupKeys.has(contactKey(c));
+                    return (
+                    <tr key={i} style={{ borderBottom: '1px solid var(--color-border-light)', background: isDup ? '#FFFBEB' : undefined }}>
                       <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text)' }}>
-                        <div style={{ fontWeight: 600 }}>{c.email}</div>
+                        <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                          {c.email}
+                          {isDup && <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 700, background: '#FDE68A', color: '#92400E' }} title="This contact appears more than once in this campaign">Duplicate</span>}
+                        </div>
                         {c.recipientCount > 1 && <div style={{ fontSize: '0.6rem', color: 'var(--color-text-muted)' }}>{c.recipientCount} recipients</div>}
                       </td>
                       <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)' }}>{fmtDate(c.sentDate)}</td>
@@ -507,7 +581,8 @@ export function EmailCampaignView() {
                         >&times;</button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
