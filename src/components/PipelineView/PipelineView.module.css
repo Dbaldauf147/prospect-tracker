@@ -493,3 +493,14 @@
 .linkCell:hover {
   text-decoration: underline;
 }
+
+/* Renewals rows for clients cancelling for sure — muted grey so lost
+   accounts visually recede from the ones still in play. */
+.cancelledRow td {
+  color: #94a3b8;
+  background: #f8fafc;
+}
+
+.cancelledRow .linkCell {
+  color: #94a3b8;
+}
