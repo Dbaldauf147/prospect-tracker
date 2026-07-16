@@ -33,6 +33,30 @@ function bfoOppNameOf(r) {
   return BFO_BLANK_SENTINELS.has(v.toLowerCase()) ? '' : v;
 }
 
+// Best-effort "opened" timestamp for an Opps row (ms, or NaN when it can't be
+// placed on the calendar). Age fields go stale between paste-imports, so we
+// prefer, in order:
+//   1. The opp's Start Date column when it parses as a real date.
+//   2. Otherwise Age interpreted at import time (ageRef − Age days); closed
+//      opps (Sold / Not Sold) count back from their Close Date instead.
+// Shared by the past-30-days and by-month new-opp tallies.
+function oppOpenTs(r, ageRef) {
+  const startRaw = String(r['Start Date'] || '').trim();
+  if (startRaw) {
+    const ts = Date.parse(startRaw);
+    if (!Number.isNaN(ts)) return ts;
+  }
+  const age = Number(String(r.Age ?? '').replace(/[^0-9.\-]/g, ''));
+  if (!Number.isFinite(age) || age < 0) return NaN;
+  const stage = (r.Stage || '').trim();
+  if (stage === 'Sold' || stage === 'Not Sold') {
+    const closeTs = Date.parse(r['Close Date'] || '');
+    if (Number.isNaN(closeTs)) return NaN;
+    return closeTs - age * 86400000;
+  }
+  return ageRef - age * 86400000;
+}
+
 // Parse "USD 15,000.00" / "$15,000" / "15000" -> 15000.
 function parseMoney(v) {
   if (v === null || v === undefined) return null;
@@ -1008,61 +1032,49 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
     };
   }, [hasBfo, bfo, oppsRecords]);
 
-  // Count of new opps opened in the past 30 days, derived from the
-  // Opps tab. Skips rows without a BFO Link so we don't count drafts /
-  // unlinked records. Open date = Close Date − Age for closed opps
-  // (Sold / Not Sold), or today − Age for active opps.
-  const newOppsPast30 = useMemo(() => {
-    const cutoff = Date.now() - 30 * 86400000;
-    // Age fields go stale between paste-imports — an opp paste-imported
-    // months ago with Age=7 would otherwise look 7 days old today. To
-    // protect against that, we prefer:
-    //   1. The opp's `Start Date` column when it parses as a real date.
-    //   2. Otherwise: fetchedAt − Age days (so Age is interpreted at
-    //      the time the data was pasted, not today).
-    //   3. Last resort: today − Age days.
+  // New opps created in each of the past 6 calendar months, derived from the
+  // Opps tab. Only counts opps that carry a BFO Opportunity Name (drafts /
+  // unlinked records are skipped). "Created" = the opp's open date, resolved by
+  // oppOpenTs (Start Date preferred, else Age at import time). Buckets run
+  // oldest → newest and always include the current month.
+  const newOppsByMonth = useMemo(() => {
     const fetchedAt = opps && opps.fetchedAt ? Date.parse(opps.fetchedAt) : NaN;
     const ageRef = Number.isFinite(fetchedAt) ? fetchedAt : Date.now();
-    const items = [];
-    for (const r of oppsRecords) {
-      const bfoLink = String(r['BFO Link'] ?? '').trim();
-      if (!bfoLink || bfoLink === '-' || bfoLink === '#N/A') continue;
-      const stage = (r.Stage || '').trim();
-      let openTs = NaN;
-      // 1. Prefer Start Date when it's a parseable real date.
-      const startRaw = String(r['Start Date'] || '').trim();
-      if (startRaw) {
-        const ts = Date.parse(startRaw);
-        if (!Number.isNaN(ts)) openTs = ts;
-      }
-      // 2. Fall back to Age-based.
-      if (Number.isNaN(openTs)) {
-        const age = Number(String(r.Age ?? '').replace(/[^0-9.\-]/g, ''));
-        if (!Number.isFinite(age) || age < 0) continue;
-        if (stage === 'Sold' || stage === 'Not Sold') {
-          const closeTs = Date.parse(r['Close Date'] || '');
-          if (Number.isNaN(closeTs)) continue;
-          openTs = closeTs - age * 86400000;
-        } else {
-          openTs = ageRef - age * 86400000;
-        }
-      }
-      if (Number.isNaN(openTs)) continue;
-      if (openTs >= cutoff) {
-        items.push({
-          account: String(r.Account || '').trim() || '(no company)',
-          opp: String(r['Opportunity Name'] || r.Opportunity || r.Name || '').trim() || '(unnamed opp)',
-          bfoName: bfoOppNameOf(r),
-          scope: String(r.Scope || '').trim(),
-          stage,
-          openDate: new Date(openTs).toISOString().slice(0, 10),
-        });
-      }
+    const now = new Date();
+    const buckets = [];
+    const indexByKey = new Map();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      indexByKey.set(key, buckets.length);
+      buckets.push({
+        key,
+        label: d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+        count: 0,
+        items: [],
+      });
     }
-    items.sort((a, b) => a.account.localeCompare(b.account) || a.opp.localeCompare(b.opp));
-    return { count: items.length, items };
+    for (const r of oppsRecords) {
+      if (!bfoOppNameOf(r)) continue;
+      const openTs = oppOpenTs(r, ageRef);
+      if (Number.isNaN(openTs)) continue;
+      const d = new Date(openTs);
+      const bi = indexByKey.get(`${d.getFullYear()}-${d.getMonth()}`);
+      if (bi == null) continue; // outside the 6-month window
+      buckets[bi].count += 1;
+      buckets[bi].items.push({
+        account: String(r.Account || '').trim() || '(no company)',
+        opp: String(r['Opportunity Name'] || r.Opportunity || r.Name || '').trim() || '(unnamed opp)',
+        bfoName: bfoOppNameOf(r),
+        scope: String(r.Scope || '').trim(),
+        openDate: new Date(openTs).toISOString().slice(0, 10),
+      });
+    }
+    for (const b of buckets) {
+      b.items.sort((a, c) => a.account.localeCompare(c.account) || a.opp.localeCompare(c.opp));
+    }
+    return buckets;
   }, [oppsRecords, opps]);
-  const newOppsPast30Count = newOppsPast30.count;
 
   useEffect(() => {
     if (!hydrated) return;
@@ -1670,48 +1682,38 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
 
         </div>
 
-        {/* Goals / Activities */}
+        {/* New Opps by Month — BFO-linked opps created in each of the past 6 months */}
         <div className={styles.section} style={{ maxWidth: 480 }}>
           <table className={styles.grid}>
-            <thead><tr><th>Goals</th><th>Opportunities</th></tr></thead>
+            <thead><tr><th className={styles.headerLeft}>Month</th><th>New Opps</th></tr></thead>
             <tbody>
-              <tr>
-                <td className={styles.label}>{state.newOppsGoal} New Opps Past 30 Days</td>
-                <td className={compareClass(newOppsPast30Count, state.newOppsGoal, 'higher-better')}>
-                  <LiveValue
-                    id="new-opps-30"
-                    className={styles.liveCell}
-                    breakdown={{
-                      title: 'New Opps — Past 30 Days',
-                      value: String(newOppsPast30Count),
-                      formula: 'COUNT of Opps with a BFO Link opened in the last 30 days. Open date prefers Start Date, else fetchedAt − Age.',
-                      inputs: [{ label: 'New opps', value: newOppsPast30Count }],
-                      rows: {
-                        head: 'New opps (by account)',
-                        columns: ['Account', 'Opportunity', 'Opened'],
-                        aligns: ['', '', ''],
-                        ...mapRows(newOppsPast30.items, it => [it.account, it.opp, it.openDate], {
-                          exportColumns: ['Account', 'Opportunity', 'BFO Opportunity Name', 'Scope', 'Opened'],
-                          exportMapFn: it => [it.account, it.opp, it.bfoName || '', it.scope || '', it.openDate],
-                        }),
-                      },
-                      note: 'Auto-fed from the Opps tab. Re-paste the Opps tab to refresh.',
-                    }}
-                  >{newOppsPast30Count}</LiveValue>
-                </td>
-              </tr>
-              <tr>
-                <td className={styles.label}>{state.activitiesGoal} activities this week (projected {state.activitiesProjected})</td>
-                <td className={compareClass(state.activitiesThisWeek, state.activitiesGoal, 'higher-better')}>
-                  <NumCell value={state.activitiesThisWeek} onCommit={(v) => setField('activitiesThisWeek', v)} />
-                </td>
-              </tr>
-              <tr>
-                <td className={styles.label}>{state.activitiesGoal} activities last week</td>
-                <td className={compareClass(state.activitiesLastWeek, state.activitiesGoal, 'higher-better')}>
-                  <NumCell value={state.activitiesLastWeek} onCommit={(v) => setField('activitiesLastWeek', v)} />
-                </td>
-              </tr>
+              {newOppsByMonth.map(m => (
+                <tr key={m.key}>
+                  <td className={styles.label}>{m.label}</td>
+                  <td className={styles.numCell}>
+                    <LiveValue
+                      id={`new-opps-${m.key}`}
+                      className={styles.liveCell}
+                      breakdown={{
+                        title: `New Opps — ${m.label}`,
+                        value: String(m.count),
+                        formula: 'COUNT of Opps with a BFO Opportunity Name created in this month. Open date prefers Start Date, else fetchedAt − Age.',
+                        inputs: [{ label: 'New opps', value: m.count }],
+                        rows: {
+                          head: 'New opps (by account)',
+                          columns: ['Account', 'Opportunity', 'Opened'],
+                          aligns: ['', '', ''],
+                          ...mapRows(m.items, it => [it.account, it.opp, it.openDate], {
+                            exportColumns: ['Account', 'Opportunity', 'BFO Opportunity Name', 'Scope', 'Opened'],
+                            exportMapFn: it => [it.account, it.opp, it.bfoName || '', it.scope || '', it.openDate],
+                          }),
+                        },
+                        note: 'Auto-fed from the Opps tab. Re-paste the Opps tab to refresh.',
+                      }}
+                    >{m.count}</LiveValue>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
