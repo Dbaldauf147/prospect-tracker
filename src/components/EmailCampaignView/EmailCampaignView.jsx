@@ -72,19 +72,77 @@ export function EmailCampaignView() {
     return json;
   }
 
+  // A contact has actually been emailed once HubSpot reports a send for it
+  // (they carry a sentDate). Roster members added to a campaign but not yet
+  // emailed have an empty sentDate — they stay in the list as "Not Sent".
+  function wasSent(c) { return !!(c && c.sentDate); }
+
+  // Derive the summary counts from the campaign's own roster so the numbers
+  // reflect everyone in the campaign, not just whoever the live search
+  // returned. Response rate is measured against the contacts actually emailed.
+  function deriveCounts(contacts) {
+    const list = contacts || [];
+    const totalContacts = list.length;
+    const sent = list.filter(wasSent).length;
+    const replies = list.filter(c => c.replied).length;
+    const responseRate = sent > 0 ? parseFloat(((replies / sent) * 100).toFixed(1)) : 0;
+    return { totalContacts, sent, replies, uniqueRecipients: sent, uniqueRepliers: replies, responseRate };
+  }
+
+  const normEmail = (e) => String(e || '').toLowerCase().trim();
+
+  // Layer freshly-fetched HubSpot activity onto a campaign's own roster,
+  // matched by email. Roster members who haven't been emailed yet stay in the
+  // list; recipients found in HubSpot that aren't already in the roster get
+  // appended; and anyone the user manually removed (tombstoned in
+  // removedEmails) stays out. This is what makes contacts "stick" to a
+  // campaign instead of the list being replaced by each live search.
+  function mergeContacts(savedContacts, fetchedContacts, removedEmails) {
+    const removed = new Set((removedEmails || []).map(normEmail).filter(Boolean));
+    // Index fetched activity by each individual recipient email.
+    const activityByEmail = new Map();
+    for (const fc of (fetchedContacts || [])) {
+      for (const e of String(fc.email || '').split(';').map(normEmail).filter(Boolean)) {
+        if (!activityByEmail.has(e)) activityByEmail.set(e, fc);
+      }
+    }
+    const rosterEmails = new Set();
+    const merged = [];
+    for (const rc of (savedContacts || [])) {
+      const key = normEmail(rc.email);
+      if (key && removed.has(key)) continue; // manually removed — stay gone
+      if (key) rosterEmails.add(key);
+      const act = activityByEmail.get(key);
+      if (act) {
+        // Keep the roster entry's identity + event status; refresh send/reply.
+        merged.push({ ...rc, sentDate: act.sentDate, replied: !!act.replied, replyDate: act.replyDate, repliedBy: act.repliedBy, recipientCount: act.recipientCount || 1 });
+      } else {
+        merged.push({ ...rc });
+      }
+    }
+    // Append recipients HubSpot returned that aren't already in the roster
+    // and weren't manually removed.
+    for (const fc of (fetchedContacts || [])) {
+      const emails = String(fc.email || '').split(';').map(normEmail).filter(Boolean);
+      if (emails.length === 0) continue;
+      if (emails.some(e => rosterEmails.has(e) || removed.has(e))) continue;
+      merged.push({ ...fc, eventStatus: fc.eventStatus || '' });
+      emails.forEach(e => rosterEmails.add(e));
+    }
+    return merged;
+  }
+
   // Fold freshly-fetched activity into a saved campaign, preserving its own
-  // identity/edits (title, subject, savedAt) and stamping when it refreshed.
+  // identity/edits (title, subject, savedAt), its roster, its event statuses,
+  // and its manual removals, and stamping when it refreshed.
   function mergeActivity(c, json) {
+    const contacts = mergeContacts(c.contacts, json.contacts, c.removedEmails);
     return {
       ...c,
-      uniqueRecipients: json.uniqueRecipients,
-      uniqueRepliers: json.uniqueRepliers,
-      responseRate: json.responseRate,
+      ...deriveCounts(contacts),
       totalEmails: json.totalEmails,
-      sent: json.sent,
-      replies: json.replies,
       autoRepliesSuppressed: json.autoRepliesSuppressed || 0,
-      contacts: json.contacts,
+      contacts,
       refreshedAt: new Date().toISOString(),
     };
   }
@@ -145,13 +203,10 @@ export function EmailCampaignView() {
       title: results.title || results.subject,
       subject: results.subject,
       savedAt: new Date().toISOString(),
-      uniqueRecipients: results.uniqueRecipients,
-      uniqueRepliers: results.uniqueRepliers,
-      responseRate: results.responseRate,
+      ...deriveCounts(results.contacts),
       totalEmails: results.totalEmails,
-      sent: results.sent,
-      replies: results.replies,
       autoRepliesSuppressed: results.autoRepliesSuppressed || 0,
+      removedEmails: results.removedEmails || [],
       contacts: results.contacts,
     };
     // Replace if same subject exists, otherwise add
@@ -163,21 +218,36 @@ export function EmailCampaignView() {
     setSaving(false);
   }
 
+  // Remove a contact from the campaign. The removal is recorded as a tombstone
+  // (removedEmails) so a later refresh won't re-add them from the live search —
+  // "sticks unless I manually remove them." Persisted for saved campaigns.
   function removeContact(index) {
     if (!results) return;
+    const removedContact = results.contacts[index];
     const updated = results.contacts.filter((_, i) => i !== index);
-    const totalSends = updated.length;
-    const totalReplied = updated.filter(c => c.replied).length;
-    const responseRate = totalSends > 0 ? parseFloat(((totalReplied / totalSends) * 100).toFixed(1)) : 0;
-    setResults({
-      ...results,
-      contacts: updated,
-      sent: totalSends,
-      replies: totalReplied,
-      uniqueRecipients: totalSends,
-      uniqueRepliers: totalReplied,
-      responseRate,
-    });
+    const removedEmails = Array.from(new Set([
+      ...(results.removedEmails || []),
+      ...String(removedContact?.email || '').split(';').map(normEmail).filter(Boolean),
+    ]));
+    const counts = deriveCounts(updated);
+    setResults({ ...results, contacts: updated, removedEmails, ...counts });
+    if (viewingSaved != null) {
+      saveCampaigns(savedCampaigns.map((c, i) => (i === viewingSaved
+        ? { ...c, contacts: updated, removedEmails, ...counts }
+        : c)));
+    }
+  }
+
+  // Mark a contact's RSVP for the campaign's event (going / not going / maybe).
+  // Stored on the contact and preserved across refreshes; persisted for saved
+  // campaigns.
+  function setEventStatus(index, value) {
+    if (!results) return;
+    const updated = results.contacts.map((c, i) => (i === index ? { ...c, eventStatus: value } : c));
+    setResults({ ...results, contacts: updated });
+    if (viewingSaved != null) {
+      saveCampaigns(savedCampaigns.map((c, i) => (i === viewingSaved ? { ...c, contacts: updated } : c)));
+    }
   }
 
   function deleteCampaign(index) {
@@ -192,7 +262,9 @@ export function EmailCampaignView() {
     if (!c) return;
     // Show the saved snapshot immediately for instant feedback, then pull the
     // latest activity in the background so the user never has to hit a refresh.
-    setResults(c);
+    // Re-derive counts from the roster so the numbers reflect everyone in the
+    // campaign right away, even before the background refresh lands.
+    setResults({ ...c, ...deriveCounts(c.contacts) });
     setSubject(c.subject);
     setViewingSaved(index);
     setError('');
@@ -203,18 +275,19 @@ export function EmailCampaignView() {
       const json = await fetchCampaignActivity(c.subject);
       // Drop the result if the user has since opened a different campaign.
       if (viewTokenRef.current !== token) return;
-      // Keep the campaign's own title/subject; refresh only the activity.
-      setResults({ ...json, title: c.title || c.subject, subject: c.subject });
+      // Merge the live activity into the campaign's roster (keep the
+      // campaign's own title/subject) rather than replacing the contact list —
+      // so unsent roster members and event statuses survive the refresh.
+      const merged = mergeActivity(c, json);
+      setResults({ ...merged, title: c.title || c.subject, subject: c.subject });
       // Persist the fresher numbers so the saved list reflects them too, but
       // only when something actually changed — no needless Firestore writes.
       const changed =
-        c.sent !== json.sent ||
-        c.uniqueRecipients !== json.uniqueRecipients ||
-        c.uniqueRepliers !== json.uniqueRepliers ||
-        c.responseRate !== json.responseRate ||
-        c.replies !== json.replies;
+        JSON.stringify(c.contacts || []) !== JSON.stringify(merged.contacts) ||
+        c.sent !== merged.sent ||
+        c.uniqueRepliers !== merged.uniqueRepliers ||
+        c.responseRate !== merged.responseRate;
       if (changed) {
-        const merged = mergeActivity(c, json);
         saveCampaigns(savedCampaigns.map((x, i) => (i === index ? merged : x)));
       }
     } catch (err) {
@@ -333,8 +406,8 @@ export function EmailCampaignView() {
               <div style={{ fontSize: '1.4rem', fontWeight: 700, color: displayResults.responseRate >= 20 ? '#10B981' : displayResults.responseRate >= 10 ? '#F59E0B' : '#DC2626' }}>{displayResults.responseRate}%</div>
             </div>
             <div style={{ padding: '0.75rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', borderLeft: '3px solid #94A3B8' }}>
-              <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Total Emails</div>
-              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--color-text)' }}>{displayResults.totalEmails}</div>
+              <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Total Contacts</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--color-text)' }}>{displayResults.totalContacts ?? displayResults.contacts?.length ?? displayResults.totalEmails}</div>
             </div>
           </div>
 
@@ -380,6 +453,7 @@ export function EmailCampaignView() {
                     <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)' }}>Status</th>
                     <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)' }}>Replied By</th>
                     <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)' }}>Reply Date</th>
+                    <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)' }}>Event Status</th>
                     <th style={{ padding: '0.45rem 0.6rem', textAlign: 'center', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', borderBottom: '1px solid var(--color-border)', width: '36px' }}></th>
                   </tr>
                 </thead>
@@ -394,11 +468,35 @@ export function EmailCampaignView() {
                       <td style={{ padding: '0.4rem 0.6rem' }}>
                         {c.replied
                           ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#DCFCE7', color: '#166534' }}>Replied</span>
-                          : <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#F3F4F6', color: '#6B7280' }}>No Reply</span>
+                          : c.sentDate
+                            ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#F3F4F6', color: '#6B7280' }}>No Reply</span>
+                            : <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#FEF3C7', color: '#92400E' }} title="In this campaign but not yet sent the email">Not Sent</span>
                         }
                       </td>
                       <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)', fontWeight: c.replied ? 600 : 400 }}>{c.repliedBy || '—'}</td>
                       <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)' }}>{c.replied ? fmtDate(c.replyDate) : '—'}</td>
+                      <td style={{ padding: '0.4rem 0.6rem' }}>
+                        {(() => {
+                          const EVENT_STATUS_STYLES = {
+                            going: { background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC' },
+                            'not-going': { background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' },
+                            maybe: { background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A' },
+                          };
+                          const s = EVENT_STATUS_STYLES[c.eventStatus] || { background: 'var(--color-surface)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' };
+                          return (
+                            <select
+                              value={c.eventStatus || ''}
+                              onChange={e => setEventStatus(i, e.target.value)}
+                              style={{ padding: '2px 4px', borderRadius: '6px', fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', ...s }}
+                            >
+                              <option value="">—</option>
+                              <option value="going">Going</option>
+                              <option value="not-going">Not going</option>
+                              <option value="maybe">Maybe</option>
+                            </select>
+                          );
+                        })()}
+                      </td>
                       <td style={{ padding: '0.4rem 0.3rem', textAlign: 'center' }}>
                         <button
                           onClick={() => removeContact(i)}
@@ -493,7 +591,7 @@ export function EmailCampaignView() {
                     </>
                   )}
                   <div style={{ fontSize: '0.65rem', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
-                    Saved {fmtDate(c.savedAt)} — {c.uniqueRecipients} sent, {c.uniqueRepliers} replies
+                    Saved {fmtDate(c.savedAt)} — {c.uniqueRecipients} of {c.totalContacts ?? c.contacts?.length ?? c.uniqueRecipients} sent, {c.uniqueRepliers} replies
                     {c.refreshedAt && <span style={{ color: 'var(--color-text-muted)' }}> · updated {fmtDate(c.refreshedAt)}</span>}
                   </div>
                 </div>
