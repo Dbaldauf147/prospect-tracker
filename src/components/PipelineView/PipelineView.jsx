@@ -13,6 +13,7 @@ import { loadDealClientMap } from '../../utils/dealClientMap';
 import { loadClientManagerMap, loadClientUntrackedMap, loadClientStatusMap } from '../../utils/clientManagerStore';
 import { computeExpiringClients, normClientName } from '../../utils/clientIssues';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
+import { downloadPipelineWorkbook } from '../../utils/pipelineWorkbook';
 
 // Contracts expiring within this many days feed the Pipeline "Client
 // Renewals" table — mirrors the Clients tab's renewal-warning threshold.
@@ -783,6 +784,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
   const [opps, setOpps] = useState(null);
   const [clientStores, setClientStores] = useState(readClientStores);
   const [hubspotContacts, setHubspotContacts] = useState([]);
+  const [exporting, setExporting] = useState(false); // Excel report build in flight
   // Hover/pin "what goes into this number" breakdown panels.
   const { ctx: calcCtx, popover: calcPopover, pinned: calcPinned, unpin: calcUnpin } = useCalc();
 
@@ -1259,6 +1261,102 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
   const lifeActualAvg = stageTotals.lifeActualWeight > 0
     ? Math.round(stageTotals.lifeActualProduct / stageTotals.lifeActualWeight) : null;
 
+  // Resolve a fixed label to its user override (state.labels) or code default —
+  // the same lookup <EL> does — so the export mirrors any renamed headers.
+  const lbl = (id, def) => (state.labels && state.labels[id] != null ? state.labels[id] : def);
+
+  // Gather every table's currently-displayed values into a plain payload for
+  // the Schneider-formatted Excel builder. Mirrors the render logic: live BFO /
+  // Opps actuals when loaded, manual state fallbacks otherwise.
+  function buildExportPayload() {
+    const stages = renderStages.map((st) => {
+      const n = Number(String(st.key).replace(/[^0-9]/g, ''));
+      const m = bfoMetrics[n];
+      const live = (v) => hasBfo && v !== null && v !== undefined;
+      const activeActual = live(m?.count) ? m.count : st.activeActual;
+      const dealSizeActual = live(m?.avg) ? m.avg : st.dealSizeActual;
+      const pipelineActual = live(m?.total) ? m.total : st.pipelineActual;
+      const lifeActual = live(m?.avgAge) ? m.avgAge : st.lifeActual;
+      const liveRate = oppsCloseRateByStage[n]?.rate;
+      const closeActual = liveRate != null ? liveRate : st.closeActual;
+      const killFlag = STAGE_KILL_FLAG[n];
+      const flaggedCount = killFlag
+        ? (m?.rows || []).filter(r => r.age != null && st.lifeGoal != null && r.age > st.lifeGoal).length
+        : 0;
+      return {
+        label: st.label,
+        activeGoal: st.activeGoal, activeActual,
+        dealSizeGoal: st.dealSizeGoal, dealSizeActual,
+        pipelineGoal: st.pipelineGoal, pipelineActual,
+        closeGoal: st.closeGoal, closeActual,
+        targetProjGoal: (Number(st.activeGoal) || 0) * (Number(st.dealSizeGoal) || 0) * (Number(st.closeGoal) || 0),
+        lifeGoal: st.lifeGoal, lifeActual,
+        flaggedLabel: killFlag || '', flaggedCount,
+      };
+    });
+    const cg = clientGreenfieldFromBfo;
+    const coverageActual = hasBfo && state.target > 0 ? stageTotals.pipelineActual / state.target : null;
+    return {
+      lbl,
+      generatedAt: new Date(),
+      cdmName,
+      hasBfo,
+      quota: { target: state.target, closedYTD: effectiveClosedYTD, pctOfQuota: closedPctOfQuota },
+      stages,
+      totals: {
+        activeGoal: stageTotals.activeGoal, activeActual: stageTotals.activeActual,
+        dealSizeGoal: dealSizeAvgGoal, dealSizeActual: dealSizeAvgActual,
+        pipelineGoal: stageTotals.pipelineGoal, pipelineActual: stageTotals.pipelineActual,
+        closeRate: oppsCloseRateActual ? oppsCloseRateActual.rate : null,
+        targetProjGoal: stageTotals.targetProjGoal,
+        lifeGoal: lifeGoalAvg, lifeActual: lifeActualAvg,
+      },
+      clientGreenfield: {
+        clientCount: cg ? cg.clientCount : state.currentClientCount,
+        greenfieldCount: cg ? cg.greenfieldCount : state.greenfieldCount,
+        clientAmt: cg ? cg.clientAmt : state.currentClientAmt,
+        greenfieldAmt: cg ? cg.greenfieldAmt : state.greenfieldAmt,
+        clientGoalPct: state.clientGoalPct,
+        clientActualPct: cg && cg.clientActualPct != null ? cg.clientActualPct : state.clientActualPct,
+      },
+      coverage: { goal: state.coverageGoal, actual: coverageActual },
+      notQuoted: { goal: state.notQuotedGoal, year: state.notQuotedYear, month: state.notQuotedMonth },
+      newOppsByMonth: newOppsByMonth.map(m => ({ label: m.label, count: m.count })),
+      renewals: {
+        windowDays: RENEWAL_WINDOW_DAYS,
+        rows: expiringClients.map((c) => {
+          const dms = dmsByCompany.get(normClientName(c.company)) || [];
+          return {
+            company: c.company,
+            renewalStatus: c.renewalStatus,
+            clientManager: c.clientManager,
+            decisionMaker: dms.map(d => d.name).join(', '),
+            invited: dms.length ? dms.map(d => (d.invited ? 'Yes' : 'No')).join(', ') : '',
+            daysUntil: c.daysUntil,
+          };
+        }),
+      },
+      notes: [
+        { title: lbl('notes-distractions-title', 'Eliminating Distractions'), text: state.notesDistractions },
+        { title: lbl('notes-prospecting-title', 'Prospecting Approach'), text: [state.notesProspectingLeft, state.notesProspectingRight].filter(Boolean).join('\n') },
+        { title: lbl('notes-efficient-title', 'Efficient Time Utilization'), text: state.notesEfficientTime },
+        { title: lbl('notes-updates-title', 'Updates'), text: state.notesUpdates },
+      ],
+    };
+  }
+
+  async function handleExportExcel() {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      await downloadPipelineWorkbook(buildExportPayload());
+    } catch (err) {
+      alert('Failed to build the Excel report: ' + (err?.message || err));
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <CalcContext.Provider value={calcCtx}>
     <LabelCtx.Provider value={labelCtx}>
@@ -1267,9 +1365,26 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       onClick={() => { if (calcPinned) calcUnpin(); }}
     >
       {calcPopover}
-      <div className={styles.header}>
-        <h1 className={styles.title}>Pipeline</h1>
-        <div className={styles.subtitle}>Pipeline metrics dashboard. Every cell is editable; values save to your browser. Hover a <span className={styles.liveCell} style={{ cursor: 'default' }}>live value</span> to see what feeds it; click to pin the panel, then <strong>⬇ Excel</strong> to export the full breakdown.</div>
+      <div className={styles.header} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem' }}>
+        <div>
+          <h1 className={styles.title}>Pipeline</h1>
+          <div className={styles.subtitle}>Pipeline metrics dashboard. Every cell is editable; values save to your browser. Hover a <span className={styles.liveCell} style={{ cursor: 'default' }}>live value</span> to see what feeds it; click to pin the panel, then <strong>⬇ Excel</strong> to export the full breakdown.</div>
+        </div>
+        <button
+          type="button"
+          onClick={handleExportExcel}
+          disabled={exporting}
+          title="Download the whole Pipeline tab as a Schneider-formatted Excel report"
+          style={{
+            flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
+            padding: '0.4rem 0.8rem', border: 'none', borderRadius: 6,
+            background: exporting ? '#94A3B8' : '#3DCD58', color: '#fff',
+            fontSize: '0.8rem', fontWeight: 700, fontFamily: 'inherit',
+            cursor: exporting ? 'wait' : 'pointer', whiteSpace: 'nowrap',
+          }}
+        >
+          <span>⬇</span>{exporting ? 'Exporting…' : 'Export Excel report'}
+        </button>
       </div>
       <div className={styles.body}>
         {/* Quota header — sits directly above the Pipeline Metrics
