@@ -1880,8 +1880,12 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
               {expiringClients.length > 0 ? (
                 expiringClients.map((c) => {
                   const dms = dmsByCompany.get(normClientName(c.company)) || [];
+                  // Grey out clients who've told us they're cancelling for
+                  // sure — they're effectively lost, so they recede from the
+                  // renewals still worth chasing.
+                  const isCancelling = String(c.renewalStatus || '').trim().toLowerCase() === 'cancelling for sure';
                   return (
-                  <tr key={c.id}>
+                  <tr key={c.id} className={isCancelling ? styles.cancelledRow : undefined}>
                     <td>
                       {onSelectProspect ? (
                         <span className={styles.linkCell} onClick={() => openClientModal(c)}>{c.company}</span>
