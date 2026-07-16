@@ -88,6 +88,17 @@ const STAGE_LABEL = {
 // size (template default placeholder).
 const STAGE_6_DEAL_SIZE_EXCLUDE = 80000;
 
+// The "next move" an opp trips when it sits in a stage past its max target
+// age (the Avg Opp Life "Goal (less than)" for that stage). Mirrors the
+// STAGE_AGE_GUIDANCE next-move copy so a stalled Stage 4 reads "Quote or kill"
+// and a stalled Stage 5 reads "Contract or kill". Stage 6 has no kill move.
+const STAGE_KILL_FLAG = {
+  3: 'Qualify or kill',
+  4: 'Quote or kill',
+  5: 'Contract or kill',
+  6: null,
+};
+
 function matchStage(stageVal) {
   const s = String(stageVal ?? '');
   for (const n of [3, 4, 5, 6]) {
@@ -1234,7 +1245,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           </div>
           <MetricsTableBoundary>
           <div style={{ overflowX: 'auto' }}>
-          <table className={styles.grid} style={{ width: 1295, tableLayout: 'fixed' }}>
+          <table className={styles.grid} style={{ width: 1515, tableLayout: 'fixed' }}>
             <colgroup>
               <col style={{ width: 140 }} /> {/* Stage label */}
               <col style={{ width: 105 }} /><col style={{ width: 105 }} /> {/* Active Opps */}
@@ -1243,6 +1254,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
               <col style={{ width: 105 }} /><col style={{ width: 105 }} /> {/* Close Rate */}
               <col style={{ width: 105 }} /> {/* Target Projection */}
               <col style={{ width: 105 }} /><col style={{ width: 105 }} /> {/* Avg Opp Life */}
+              <col style={{ width: 220 }} /> {/* Flagged Opps */}
             </colgroup>
             <thead>
               <tr>
@@ -1253,6 +1265,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                 <th colSpan={2}>Close Rate (Rolling 365 days)</th>
                 <th>Target Projection</th>
                 <th colSpan={2}>Avg Opp Life</th>
+                <th>Flagged Opps</th>
               </tr>
               <tr>
                 <th>Goal (above)</th><th>Actual</th>
@@ -1261,6 +1274,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                 <th>Goal (above)</th><th>Actual</th>
                 <th>Goal</th>
                 <th>Goal (less than)</th><th>Actual</th>
+                <th>Quote / Contract or Kill</th>
               </tr>
             </thead>
             <tbody>
@@ -1440,6 +1454,33 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                           >{lifeActual}</LiveValue>
                         : <NumCell value={st.lifeActual} onCommit={(v) => setStage(i, { lifeActual: v })} />}
                     </td>
+                    {/* Flagged opps — active opps past this stage's max target
+                        age (the "Goal (less than)" days), tagged with the
+                        stage's kill move. Names truncate rather than wrap;
+                        hover for the full list with ages. */}
+                    {(() => {
+                      const killFlag = STAGE_KILL_FLAG[stageNum];
+                      const flaggedOpps = killFlag
+                        ? (m?.rows || []).filter(r => r.age != null && st.lifeGoal != null && r.age > st.lifeGoal)
+                        : [];
+                      const label = (r) => r.account || r.oppName || '(no account)';
+                      return (
+                        <td
+                          style={{ textAlign: 'left', padding: '0.3rem 0.5rem', fontSize: '0.72rem' }}
+                          title={killFlag && flaggedOpps.length
+                            ? `${killFlag} — age > ${st.lifeGoal}d:\n` + flaggedOpps.map(r => `• ${label(r)} — ${r.age}d`).join('\n')
+                            : killFlag
+                              ? `No ${st.label} opps past their ${st.lifeGoal ?? '—'}-day target.`
+                              : 'No kill move for this stage.'}
+                        >
+                          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {killFlag && flaggedOpps.length
+                              ? <span style={{ color: '#B45309', fontWeight: 600 }}>{killFlag}: {flaggedOpps.map(label).join(', ')}</span>
+                              : <span style={{ color: '#94A3B8' }}>—</span>}
+                          </div>
+                        </td>
+                      );
+                    })()}
                   </tr>
                 );
               })}
@@ -1480,6 +1521,19 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                 <td className={styles.numCell} title="Sum of stage Target Projection Goals (Active Goal × Deal Size Goal × Close Rate Goal).">{fmtMoney(Math.round(stageTotals.targetProjGoal))}</td>
                 <td className={styles.numCell} title="Stage goals weighted by Active Opp Goal — SUMPRODUCT(lifeGoal, activeGoal) ÷ SUM(activeGoal). Less is better.">{lifeGoalAvg ?? ''}</td>
                 <td className={`${styles.numCell} ${compareClass(lifeActualAvg, lifeGoalAvg, 'lower-better')}`.trim()} title="Stage actuals weighted by Active Opp Actual (live BFO count when loaded). SUMPRODUCT(lifeActual, activeActual) ÷ SUM(activeActual).">{lifeActualAvg ?? ''}</td>
+                <td style={{ textAlign: 'left', padding: '0.3rem 0.5rem', fontSize: '0.72rem' }} title="Total active opps past their stage's max target age (flagged Qualify / Quote / Contract or kill).">
+                  {(() => {
+                    const total = renderStages.reduce((sum, s) => {
+                      const n = Number(String(s.key).replace(/[^0-9]/g, ''));
+                      if (!STAGE_KILL_FLAG[n]) return sum;
+                      const rows = bfoMetrics[n]?.rows || [];
+                      return sum + rows.filter(r => r.age != null && s.lifeGoal != null && r.age > s.lifeGoal).length;
+                    }, 0);
+                    return total > 0
+                      ? <span style={{ color: '#B45309', fontWeight: 700 }}>{total} flagged</span>
+                      : <span style={{ color: '#94A3B8' }}>—</span>;
+                  })()}
+                </td>
               </tr>
             </tbody>
           </table>
