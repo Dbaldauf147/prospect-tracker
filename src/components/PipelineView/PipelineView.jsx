@@ -1602,19 +1602,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                 <td className={styles.numCell} title="Sum of stage Target Projection Goals (Active Goal × Deal Size Goal × Close Rate Goal).">{fmtMoney(Math.round(stageTotals.targetProjGoal))}</td>
                 <td className={styles.numCell} title="Stage goals weighted by Active Opp Goal — SUMPRODUCT(lifeGoal, activeGoal) ÷ SUM(activeGoal). Less is better.">{lifeGoalAvg ?? ''}</td>
                 <td className={`${styles.numCell} ${compareClass(lifeActualAvg, lifeGoalAvg, 'lower-better')}`.trim()} title="Stage actuals weighted by Active Opp Actual (live BFO count when loaded). SUMPRODUCT(lifeActual, activeActual) ÷ SUM(activeActual).">{lifeActualAvg ?? ''}</td>
-                <td style={{ textAlign: 'left', padding: '0.3rem 0.5rem', fontSize: '0.72rem' }} title="Total active opps past their stage's max target age (flagged Qualify / Quote / Contract or kill).">
-                  {(() => {
-                    const total = renderStages.reduce((sum, s) => {
-                      const n = Number(String(s.key).replace(/[^0-9]/g, ''));
-                      if (!STAGE_KILL_FLAG[n]) return sum;
-                      const rows = bfoMetrics[n]?.rows || [];
-                      return sum + rows.filter(r => r.age != null && s.lifeGoal != null && r.age > s.lifeGoal).length;
-                    }, 0);
-                    return total > 0
-                      ? <span style={{ color: '#B45309', fontWeight: 700 }}>{total} flagged</span>
-                      : <span style={{ color: '#94A3B8' }}>—</span>;
-                  })()}
-                </td>
+                <td />
               </tr>
             </tbody>
           </table>
