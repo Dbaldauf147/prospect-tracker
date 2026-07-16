@@ -855,15 +855,23 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         keyNames.push(kc.name);
       }
 
-      // Case study presence — Yes when the PE firm itself OR any of its
-      // portfolio companies has the caseStudyCreated flag set.
-      const caseStudyFirm = !!pe.caseStudyCreated;
-      const caseStudyPcs = portfolio.filter(p => !!p.caseStudyCreated);
-      const caseStudyYes = caseStudyFirm || caseStudyPcs.length > 0;
-      const caseStudyTipNames = [
-        ...(caseStudyFirm ? [pe.company] : []),
-        ...caseStudyPcs.map(p => p.company),
+      // Case study state across the PE firm + its portfolio companies. Each
+      // record's caseStudyCreated is tri-state: true (Yes), 'in-progress', or
+      // false (No). The row shows the strongest state present — Yes wins over
+      // In Progress wins over No — with tooltips listing which companies.
+      const isCaseStudyYes = (v) => v === true;
+      const isCaseStudyInProgress = (v) => v === 'in-progress';
+      const caseStudyYesNames = [
+        ...(isCaseStudyYes(pe.caseStudyCreated) ? [pe.company] : []),
+        ...portfolio.filter(p => isCaseStudyYes(p.caseStudyCreated)).map(p => p.company),
       ];
+      const caseStudyInProgressNames = [
+        ...(isCaseStudyInProgress(pe.caseStudyCreated) ? [pe.company] : []),
+        ...portfolio.filter(p => isCaseStudyInProgress(p.caseStudyCreated)).map(p => p.company),
+      ];
+      const caseStudyState = caseStudyYesNames.length > 0
+        ? 'yes'
+        : (caseStudyInProgressNames.length > 0 ? 'in-progress' : 'no');
 
       out.set(pe.id, {
         decisionMakerNames: dmNames,
@@ -882,8 +890,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         pcClientCount,
         keyContactCount: keyNames.length,
         keyContactNames: keyNames,
-        caseStudyYes,
-        caseStudyTipNames,
+        caseStudyState,
+        caseStudyYesNames,
+        caseStudyInProgressNames,
       });
     }
     return out;
@@ -925,9 +934,11 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         case 'keyContacts':
           cmp = (sa.keyContactCount || 0) - (sb.keyContactCount || 0);
           break;
-        case 'caseStudy':
-          cmp = (sa.caseStudyYes ? 1 : 0) - (sb.caseStudyYes ? 1 : 0);
+        case 'caseStudy': {
+          const rank = (s) => s.caseStudyState === 'yes' ? 2 : s.caseStudyState === 'in-progress' ? 1 : 0;
+          cmp = rank(sa) - rank(sb);
           break;
+        }
         case 'discovery':
           cmp = (a.peStage === 'Discovery' ? 1 : 0) - (b.peStage === 'Discovery' ? 1 : 0);
           break;
@@ -1187,7 +1198,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
             { key: 'ratio',   label: 'PE Opps', align: 'center', tip: 'Active / total opps aggregated across the PE firm plus every portfolio company' },
             { key: 'clients', label: 'PC Clients', align: 'center',  tip: 'Portfolio companies currently set to status = Client' },
             { key: 'keyContacts', label: 'Key Contacts', align: 'center', tip: 'Count of HubSpot contacts tagged "Dan Key Target" across the PE firm plus its portfolio companies' },
-            { key: 'caseStudy', label: 'Case Study', align: 'center', tip: 'Yes when the PE firm or any of its portfolio companies has "Case Study Created?" set to Yes on its company page' },
+            { key: 'caseStudy', label: 'Case Study', align: 'center', tip: 'Yes when the PE firm or any of its portfolio companies has "Case Study Created?" set to Yes on its company page; In Progress when one is marked In Progress (and none are Yes)' },
             { key: 'discovery', label: 'Discovery', align: 'center', tip: 'Checked when this PE firm\'s PE Stage (set in its company popup) is Discovery' },
             { key: 'piloting', label: 'Piloting', align: 'center', tip: 'Checked when this PE firm\'s PE Stage (set in its company popup) is Piloting' },
             { key: 'existingPartnership', label: 'Existing Partnership', align: 'center', tip: 'Checked when this PE firm\'s PE Stage (set in its company popup) is Existing Partnership' },
@@ -1439,13 +1450,17 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
 
                       {visibleCols.has('caseStudy') && (
                       <div
-                        title={stats.caseStudyYes
-                          ? `Case study marked on:\n${(stats.caseStudyTipNames || []).join('\n')}`
-                          : 'No PE firm or portfolio company on this row has "Case Study Created?" set to Yes'}
+                        title={stats.caseStudyState === 'yes'
+                          ? `Case study created on:\n${(stats.caseStudyYesNames || []).join('\n')}`
+                          : stats.caseStudyState === 'in-progress'
+                            ? `Case study in progress on:\n${(stats.caseStudyInProgressNames || []).join('\n')}`
+                            : 'No PE firm or portfolio company on this row has "Case Study Created?" set to Yes or In Progress'}
                         style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.72rem', fontWeight: 700 }}
                       >
-                        {stats.caseStudyYes ? (
+                        {stats.caseStudyState === 'yes' ? (
                           <span style={{ padding: '1px 8px', borderRadius: 999, background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534' }}>Yes</span>
+                        ) : stats.caseStudyState === 'in-progress' ? (
+                          <span style={{ padding: '1px 8px', borderRadius: 999, background: '#FEF3C7', border: '1px solid #FDE68A', color: '#92400E' }}>In Progress</span>
                         ) : (
                           <span style={{ padding: '1px 8px', borderRadius: 999, background: '#F1F5F9', border: '1px solid #CBD5E1', color: '#64748B' }}>No</span>
                         )}
