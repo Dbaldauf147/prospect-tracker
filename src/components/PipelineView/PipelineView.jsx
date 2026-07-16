@@ -852,16 +852,25 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
   // Per-stage Close Rate Actual on a rolling 365-day window. Each
   // stage uses a different "did it actually reach this stage?" signal
   // on the Opps tab:
+  //   Stage 3 (Qualify Opportunity)    — has a BFO opportunity value, i.e.
+  //                                      a non-empty BFO Link (every opp
+  //                                      that made it into BFO).
   //   Stage 5 (Prepare & Bid / Quoted) — non-empty Quoted On date.
   //   Stage 6 (Negotiate to Win)       — non-empty Entity Outside the US
   //                                      Approval value (blank or "-"
   //                                      means it never made it to 6).
-  // Other stages return null until we get a comparable signal column.
+  // Stage 4 returns null until we get a comparable signal column.
   const oppsCloseRateByStage = useMemo(() => {
     const out = { 3: null, 4: null, 5: null, 6: null };
     if (oppsRecords.length === 0) return out;
     const cutoff = Date.now() - 365 * 86400000;
     const PULL_THROUGH = /pull[\s-]?through/i;
+    const hasBfoOpportunity = (r) => {
+      const v = String(r['BFO Link'] ?? '').trim();
+      if (!v) return false;
+      if (v === '-' || v === '—' || v === 'N/A' || v === '#N/A') return false;
+      return true;
+    };
     const hasQuotedOn = (r) => {
       const v = r['Quoted On'] || r['Quoted Date'] || '';
       if (!v) return false;
@@ -875,10 +884,12 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       return true;
     };
     const stagePredicates = {
+      3: hasBfoOpportunity,
       5: hasQuotedOn,
       6: hasEntityApproval,
     };
     const tallies = {
+      3: { sold: 0, notSold: 0, included: [] },
       5: { sold: 0, notSold: 0, included: [] },
       6: { sold: 0, notSold: 0, included: [] },
     };
@@ -905,7 +916,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
         tallies[stageNum].included.push(entry);
       }
     }
-    for (const stageNum of [5, 6]) {
+    for (const stageNum of [3, 5, 6]) {
       const { sold, notSold, included } = tallies[stageNum];
       const total = sold + notSold;
       if (total > 0) {
@@ -1327,7 +1338,9 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                       const actualForCmp = liveRate !== null ? liveRate : st.closeActual;
                       const cls = compareClass(actualForCmp, st.closeGoal, 'higher-better');
                       if (liveRate !== null) {
-                        const signal = stageNum === 5
+                        const signal = stageNum === 3
+                          ? 'a BFO opportunity value (non-empty BFO Link)'
+                          : stageNum === 5
                           ? 'a Quoted On date'
                           : stageNum === 6
                           ? 'a non-empty Entity Outside the US Approval value'
