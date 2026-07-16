@@ -14,6 +14,12 @@ import { loadClientManagerMap, loadClientUntrackedMap, loadClientStatusMap } fro
 import { computeExpiringClients, normClientName } from '../../utils/clientIssues';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { downloadPipelineWorkbook } from '../../utils/pipelineWorkbook';
+import { loadList as loadUploadedList } from '../../utils/uploadedListStore';
+import { normalizeCompany, pickNameKey } from '../../utils/companyNorm';
+import { userLsGet } from '../../utils/userLs';
+
+// Uploaded Strategic Accounts list — same storageKey the Lists tab uses.
+const STRATEGIC_STORAGE_KEY = 'strategic-accounts-override';
 
 // Contracts expiring within this many days feed the Pipeline "Client
 // Renewals" table — mirrors the Clients tab's renewal-warning threshold.
@@ -785,6 +791,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
   const [clientStores, setClientStores] = useState(readClientStores);
   const [hubspotContacts, setHubspotContacts] = useState([]);
   const [exporting, setExporting] = useState(''); // '' | 'multi' | 'single' — which Excel export is building
+  const [strategicRows, setStrategicRows] = useState([]);
   // Hover/pin "what goes into this number" breakdown panels.
   const { ctx: calcCtx, popover: calcPopover, pinned: calcPinned, unpin: calcUnpin } = useCalc();
 
@@ -808,6 +815,8 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
         if (!cancelled && oppsSaved) setOpps(oppsSaved);
         const contacts = await getHubspotContacts();
         if (!cancelled && contacts) setHubspotContacts(contacts);
+        const stratRows = await loadUploadedList(STRATEGIC_STORAGE_KEY);
+        if (!cancelled && Array.isArray(stratRows)) setStrategicRows(stratRows);
       } catch (e) {
         console.warn('Pipeline hydrate failed', e);
       } finally {
@@ -822,6 +831,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       dbGet(BFO_STORE, BFO_KEY).then(b => setBfo(b || null)).catch(() => setBfo(null));
       loadOppsFromCache().then(o => setOpps(o || null)).catch(() => setOpps(null));
       getHubspotContacts().then(c => setHubspotContacts(c || [])).catch(() => {});
+      loadUploadedList(STRATEGIC_STORAGE_KEY).then(r => setStrategicRows(Array.isArray(r) ? r : [])).catch(() => {});
       setClientStores(readClientStores());
     }
     window.addEventListener('focus', onFocus);
@@ -887,6 +897,59 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
     }
     return map;
   }, [hubspotContacts, settings.contactInvitedToLouisville, settings.contactLocalFields]);
+
+  // My Accounts that are mapped to a row on the uploaded Strategic Accounts
+  // list, each with that row's Account Owner + Type. Reads the same per-user
+  // My-Accounts mapping the Lists tab writes (Firestore-synced copy first,
+  // then the local cache), keyed the exact way UploadedListView builds it —
+  // pickNameKey over the union of headers + normalizeCompany of the raw name —
+  // so our lookups line up with the stored mapping.
+  const strategicMyAccounts = useMemo(() => {
+    if (!strategicRows.length) return [];
+    const remote = settings?.listMappings?.[STRATEGIC_STORAGE_KEY];
+    let mapping = remote && remote.myAccountMapping && typeof remote.myAccountMapping === 'object'
+      ? remote.myAccountMapping
+      : null;
+    if (!mapping) {
+      try {
+        const raw = userLsGet(`${STRATEGIC_STORAGE_KEY}:my-accounts-mapping`);
+        mapping = raw ? (JSON.parse(raw) || {}) : {};
+      } catch { mapping = {}; }
+    }
+    const headers = [];
+    const seen = new Set();
+    for (const row of strategicRows) for (const k of Object.keys(row)) {
+      if (!seen.has(k)) { seen.add(k); headers.push(k); }
+    }
+    const nameKey = pickNameKey(headers);
+    const ownerKey = headers.find(h => /owner/i.test(h));
+    const typeKey = headers.find(h => /^type$/i.test(h)) || headers.find(h => /type/i.test(h));
+    const out = [];
+    const dedupe = new Set();
+    for (const row of strategicRows) {
+      const rawName = nameKey ? String(row[nameKey] || '').trim() : '';
+      if (!rawName) continue;
+      const norm = normalizeCompany(rawName);
+      if (!norm) continue;
+      const confirmed = mapping[`name::${norm}`];
+      if (typeof confirmed !== 'string' || !confirmed) continue;
+      const owner = ownerKey ? String(row[ownerKey] || '').trim() : '';
+      const type = typeKey ? String(row[typeKey] || '').trim() : '';
+      const key = `${confirmed.toLowerCase()}|${owner.toLowerCase()}|${type.toLowerCase()}`;
+      if (dedupe.has(key)) continue;
+      dedupe.add(key);
+      out.push({ account: confirmed, owner, type });
+    }
+    out.sort((a, b) => a.account.localeCompare(b.account) || a.owner.localeCompare(b.owner));
+    return out;
+  }, [strategicRows, settings.listMappings]);
+
+  // Deep-link a Strategic Accounts row to its account modal by company name.
+  function openStrategicAccount(company) {
+    if (!onSelectProspect) return;
+    const p = prospects.find(pp => normClientName(pp.company) === normClientName(company));
+    if (p) onSelectProspect(p);
+  }
 
   // Open the account modal for a renewals row (by matching prospect id, then
   // company name as a fallback). Optionally deep-links straight into a
@@ -2059,6 +2122,37 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
             </tbody>
           </table>
         </div>
+
+        {/* My Accounts mapped to the uploaded Strategic Accounts list, with
+            each mapped row's Account Owner + Type. Hidden when nothing is
+            mapped so the section doesn't show an empty shell. */}
+        {strategicMyAccounts.length > 0 && (
+          <div className={styles.section}>
+            <div className={styles.sectionTitle}><EL id="strat-title">Strategic Accounts — My Accounts</EL></div>
+            <table className={styles.tinyTable} title="Your accounts mapped to the uploaded Strategic Accounts list (from the Lists tab), with each mapped row's Account Owner and Type.">
+              <thead>
+                <tr>
+                  <th><EL id="strat-account">Account</EL></th>
+                  <th><EL id="strat-owner">Account Owner</EL></th>
+                  <th><EL id="strat-type">Type</EL></th>
+                </tr>
+              </thead>
+              <tbody>
+                {strategicMyAccounts.map((s, i) => (
+                  <tr key={i}>
+                    <td>
+                      {onSelectProspect ? (
+                        <span className={styles.linkCell} onClick={() => openStrategicAccount(s.account)}>{s.account}</span>
+                      ) : s.account}
+                    </td>
+                    <td>{s.owner || '—'}</td>
+                    <td>{s.type || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {/* Strategy notes — free-text, editable, saved to the browser. */}
         <div className={styles.section}>
