@@ -10,7 +10,7 @@ import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { loadDealsList } from '../../utils/dealsStore';
 import { loadDealClientMap } from '../../utils/dealClientMap';
-import { loadClientManagerMap, loadClientUntrackedMap } from '../../utils/clientManagerStore';
+import { loadClientManagerMap, loadClientUntrackedMap, loadClientStatusMap } from '../../utils/clientManagerStore';
 import { computeExpiringClients, normClientName } from '../../utils/clientIssues';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 
@@ -684,6 +684,7 @@ function readClientStores() {
     clientMap: loadDealClientMap(),
     managerMap: loadClientManagerMap(),
     untrackedMap: loadClientUntrackedMap(),
+    statusMap: loadClientStatusMap(),
   };
 }
 
@@ -748,6 +749,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       clientMap: clientStores.clientMap,
       managerMap: clientStores.managerMap,
       untrackedMap: clientStores.untrackedMap,
+      statusMap: clientStores.statusMap,
       withinDays: RENEWAL_WINDOW_DAYS,
     }),
     [prospects, cdmName, clientStores],
@@ -1724,7 +1726,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
             <thead>
               <tr>
                 <th>Client</th>
-                <th>Status</th>
+                <th>Renewal Status</th>
                 <th>Client Manager</th>
                 <th>Decision Maker</th>
                 <th>Invited to Louisville</th>
@@ -1742,7 +1744,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                         <span className={styles.linkCell} onClick={() => openClientModal(c)}>{c.company}</span>
                       ) : c.company}
                     </td>
-                    <td>{c.contractStatus || '—'}</td>
+                    <td>{c.renewalStatus || '—'}</td>
                     <td>{c.clientManager || '—'}</td>
                     <td>
                       {dms.length > 0 ? dms.map((dm, i) => (
