@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
@@ -16,6 +16,11 @@ export function EmailCampaignView() {
   const [editingIndex, setEditingIndex] = useState(null); // index of saved campaign being edited
   const [editTitle, setEditTitle] = useState('');
   const [editSubject, setEditSubject] = useState('');
+  const [refreshing, setRefreshing] = useState(false); // auto-refresh of an opened saved campaign in flight
+  // Identifies the most recent "open a saved campaign" request so a slow
+  // refresh for a campaign the user has since navigated away from can't stomp
+  // the currently-shown one.
+  const viewTokenRef = useRef(0);
 
   // Load saved campaigns from Firestore
   useEffect(() => {
@@ -52,6 +57,20 @@ export function EmailCampaignView() {
     }
   }
 
+  // Pull the current activity for a subject line from the live source. Shared
+  // by the manual Search and the automatic refresh that runs when a saved
+  // campaign is opened.
+  async function fetchCampaignActivity(subjectLine) {
+    const res = await apiFetch('/api/email-campaign', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subject: subjectLine.trim() }),
+    });
+    const json = await res.json();
+    if (json.error) throw new Error(json.error);
+    return json;
+  }
+
   async function handleSearch() {
     if (!subject.trim()) return;
     setLoading(true);
@@ -59,14 +78,7 @@ export function EmailCampaignView() {
     setResults(null);
     setViewingSaved(null);
     try {
-      const res = await apiFetch('/api/email-campaign', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subject: subject.trim() }),
-      });
-      const json = await res.json();
-      if (json.error) throw new Error(json.error);
-      setResults(json);
+      setResults(await fetchCampaignActivity(subject));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -127,11 +139,55 @@ export function EmailCampaignView() {
     else if (viewingSaved > index) setViewingSaved(viewingSaved - 1);
   }
 
-  function viewCampaign(index) {
+  async function viewCampaign(index) {
     const c = savedCampaigns[index];
+    if (!c) return;
+    // Show the saved snapshot immediately for instant feedback, then pull the
+    // latest activity in the background so the user never has to hit a refresh.
     setResults(c);
     setSubject(c.subject);
     setViewingSaved(index);
+    setError('');
+    if (!c.subject) return;
+    const token = ++viewTokenRef.current;
+    setRefreshing(true);
+    try {
+      const json = await fetchCampaignActivity(c.subject);
+      // Drop the result if the user has since opened a different campaign.
+      if (viewTokenRef.current !== token) return;
+      // Keep the campaign's own title/subject; refresh only the activity.
+      setResults({ ...json, title: c.title || c.subject, subject: c.subject });
+      // Persist the fresher numbers so the saved list reflects them too, but
+      // only when something actually changed — no needless Firestore writes.
+      const changed =
+        c.sent !== json.sent ||
+        c.uniqueRecipients !== json.uniqueRecipients ||
+        c.uniqueRepliers !== json.uniqueRepliers ||
+        c.responseRate !== json.responseRate ||
+        c.replies !== json.replies;
+      if (changed) {
+        const merged = {
+          ...c,
+          uniqueRecipients: json.uniqueRecipients,
+          uniqueRepliers: json.uniqueRepliers,
+          responseRate: json.responseRate,
+          totalEmails: json.totalEmails,
+          sent: json.sent,
+          replies: json.replies,
+          autoRepliesSuppressed: json.autoRepliesSuppressed || 0,
+          contacts: json.contacts,
+          refreshedAt: new Date().toISOString(),
+        };
+        saveCampaigns(savedCampaigns.map((x, i) => (i === index ? merged : x)));
+      }
+    } catch (err) {
+      // Keep the saved snapshot on screen; just note the refresh didn't land.
+      if (viewTokenRef.current === token) {
+        setError('Couldn’t refresh the latest activity (' + (err.message || 'unknown error') + ') — showing the last saved numbers.');
+      }
+    } finally {
+      if (viewTokenRef.current === token) setRefreshing(false);
+    }
   }
 
   function startEdit(index, e) {
@@ -253,6 +309,7 @@ export function EmailCampaignView() {
               )}
               Matching subject: <strong>"{displayResults.subject}"</strong>
               {viewingSaved !== null && <span style={{ marginLeft: '0.5rem', padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 600, background: '#DBEAFE', color: '#1E40AF' }}>Saved</span>}
+              {refreshing && <span style={{ marginLeft: '0.5rem', fontSize: '0.6rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>↻ Refreshing…</span>}
               {displayResults.autoRepliesSuppressed > 0 && (
                 <span
                   title="Out-of-office, vacation, and delivery-failure replies are excluded from the response count."
@@ -383,6 +440,7 @@ export function EmailCampaignView() {
                   )}
                   <div style={{ fontSize: '0.65rem', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
                     Saved {fmtDate(c.savedAt)} — {c.uniqueRecipients} sent, {c.uniqueRepliers} replies
+                    {c.refreshedAt && <span style={{ color: 'var(--color-text-muted)' }}> · updated {fmtDate(c.refreshedAt)}</span>}
                   </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0, marginLeft: '0.5rem' }}>
