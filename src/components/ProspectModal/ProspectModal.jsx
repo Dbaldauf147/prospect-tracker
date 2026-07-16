@@ -4783,6 +4783,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   <input
                     type="radio"
                     name={`caseStudyCreated-${fields.id || 'new'}`}
+                    checked={fields.caseStudyCreated === 'in-progress'}
+                    onChange={() => set('caseStudyCreated', 'in-progress')}
+                    style={{ accentColor: '#F59E0B' }}
+                  />
+                  In Progress
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', color: '#1E293B', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name={`caseStudyCreated-${fields.id || 'new'}`}
                     checked={!fields.caseStudyCreated}
                     onChange={() => set('caseStudyCreated', false)}
                     style={{ accentColor: '#94A3B8' }}
