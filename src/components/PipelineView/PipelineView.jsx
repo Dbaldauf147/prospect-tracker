@@ -1808,6 +1808,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
             months, laid out horizontally (months across). Each count is green
             when it's 5 or more, red when it's below 5. */}
         <div className={styles.section} style={{ maxWidth: 760, overflowX: 'auto' }}>
+          <div className={styles.sectionTitle}><EL id="nom-title">New Opps by Month</EL></div>
           <table className={styles.grid}>
             <thead>
               <tr>
