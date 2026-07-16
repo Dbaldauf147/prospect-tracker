@@ -22,6 +22,16 @@ const KEY = 'current';
 const BFO_STORE = 'bfo-activity';
 const BFO_KEY = 'current';
 
+// The Opps tab's BFO Opportunity Name lives in the column whose data key is
+// still "BFO Link" (the visible label was renamed). New opps are seeded with a
+// dash placeholder and sheet imports leave #N/A — neither is a real name, so
+// treat them as empty. Mirrors bfoOppName in BFOActivityView.
+const BFO_BLANK_SENTINELS = new Set(['', '-', '#n/a', 'n/a']);
+function bfoOppNameOf(r) {
+  const v = String(r?.['BFO Link'] || '').trim();
+  return BFO_BLANK_SENTINELS.has(v.toLowerCase()) ? '' : v;
+}
+
 // Parse "USD 15,000.00" / "$15,000" / "15000" -> 15000.
 function parseMoney(v) {
   if (v === null || v === undefined) return null;
@@ -462,10 +472,11 @@ function closeRateRows(included, head) {
       fmtShortDate(o.closeDate),
       o.amount > 0 ? fmtMoney(Math.round(o.amount)) : '—',
     ], {
-      exportColumns: ['Result', 'Account', 'Scope', 'Close', 'Amount'],
+      exportColumns: ['Result', 'Account', 'BFO Opportunity Name', 'Scope', 'Close', 'Amount'],
       exportMapFn: o => [
         o.stage,
         o.account || '(no account)',
+        o.bfoName || '',
         o.scope || '',
         fmtShortDate(o.closeDate),
         o.amount > 0 ? fmtMoney(Math.round(o.amount)) : '—',
@@ -761,6 +772,7 @@ function PipelineViewInner({ prospects = [], cdmName = '' }) {
         total += amt;
         deals.push({
           account: String(r.Account || '').trim() || '(no account)',
+          bfoName: bfoOppNameOf(r),
           scope: String(r.Scope || '').trim(),
           closeDate: cd,
           ts,
@@ -798,6 +810,7 @@ function PipelineViewInner({ prospects = [], cdmName = '' }) {
       else notSold += 1;
       included.push({
         account: String(r.Account || '').trim(),
+        bfoName: bfoOppNameOf(r),
         scope: String(r.Scope || '').trim(),
         stage,
         closeDate: cd,
@@ -854,6 +867,7 @@ function PipelineViewInner({ prospects = [], cdmName = '' }) {
       if (PULL_THROUGH.test(String(r.Scope || ''))) continue;
       const entry = {
         account: String(r.Account || '').trim(),
+        bfoName: bfoOppNameOf(r),
         scope: String(r.Scope || '').trim(),
         stage,
         closeDate: cd,
@@ -989,6 +1003,7 @@ function PipelineViewInner({ prospects = [], cdmName = '' }) {
         items.push({
           account: String(r.Account || '').trim() || '(no company)',
           opp: String(r['Opportunity Name'] || r.Opportunity || r.Name || '').trim() || '(unnamed opp)',
+          bfoName: bfoOppNameOf(r),
           scope: String(r.Scope || '').trim(),
           stage,
           openDate: new Date(openTs).toISOString().slice(0, 10),
@@ -1124,8 +1139,8 @@ function PipelineViewInner({ prospects = [], cdmName = '' }) {
                                 columns: ['Account', 'Close', 'Amount'],
                                 aligns: ['', '', 'num'],
                                 ...mapRows(oppsClosedYTD.deals, d => [d.account, fmtShortDate(d.closeDate), fmtMoney(d.amount)], {
-                                  exportColumns: ['Account', 'Scope', 'Close', 'Amount'],
-                                  exportMapFn: d => [d.account, d.scope || '', fmtShortDate(d.closeDate), fmtMoney(d.amount)],
+                                  exportColumns: ['Account', 'BFO Opportunity Name', 'Scope', 'Close', 'Amount'],
+                                  exportMapFn: d => [d.account, d.bfoName || '', d.scope || '', fmtShortDate(d.closeDate), fmtMoney(d.amount)],
                                 }),
                               },
                               note: 'Auto-fed from the Opps tab. Re-paste the Opps tab to refresh.',
@@ -1625,8 +1640,8 @@ function PipelineViewInner({ prospects = [], cdmName = '' }) {
                         columns: ['Account', 'Opportunity', 'Opened'],
                         aligns: ['', '', ''],
                         ...mapRows(newOppsPast30.items, it => [it.account, it.opp, it.openDate], {
-                          exportColumns: ['Account', 'Opportunity', 'Scope', 'Opened'],
-                          exportMapFn: it => [it.account, it.opp, it.scope || '', it.openDate],
+                          exportColumns: ['Account', 'Opportunity', 'BFO Opportunity Name', 'Scope', 'Opened'],
+                          exportMapFn: it => [it.account, it.opp, it.bfoName || '', it.scope || '', it.openDate],
                         }),
                       },
                       note: 'Auto-fed from the Opps tab. Re-paste the Opps tab to refresh.',
