@@ -173,6 +173,10 @@ function bfoStageMetrics(bfo) {
 }
 
 const DEFAULT_STATE = {
+  // User overrides for the fixed table titles / headers / row labels, keyed by
+  // the <EL id="…">. Empty means every label shows its code default.
+  labels: {},
+
   // Pipeline metrics by stage. Each stage row is a dict of values.
   stages: [
     { key: 's6', label: 'Stage 6',                       activeGoal: 3,  activeActual: 4,  dealSizeGoal: 125000, dealSizeActual: 58952,  pipelineGoal: 375000,  pipelineActual: 235806,  closeGoal: 0.75, closeActual: 0.50, targetProj: 281250, lifeGoal: 200, lifeActual: 212 },
@@ -451,6 +455,55 @@ function TextCell({ value, onCommit }) {
         if (e.key === 'Escape') { setDraft(value ?? ''); e.currentTarget.blur(); }
       }}
     />
+  );
+}
+
+// Carries the fixed-label overrides (state.labels) + setter down to every
+// <EL> without threading props through the whole render tree.
+const LabelCtx = createContext(null);
+
+// Inline-editable fixed label — the table titles, column headers and static
+// row labels the user asked to be able to rename. Renders plain text until
+// double-clicked, then swaps in a content-sized input. Committing stores an
+// override in state.labels[id] (persisted to the browser like every other
+// cell); clearing it, or typing the original text back, drops the override so
+// later code-side default changes still show through. `children` is the
+// default text and MUST be a plain string.
+function EL({ id, children }) {
+  const ctx = useContext(LabelCtx);
+  const fallback = String(children ?? '');
+  const value = (ctx && ctx.labels && ctx.labels[id] != null) ? ctx.labels[id] : fallback;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  if (editing) {
+    return (
+      <input
+        className={styles.editInput}
+        size={Math.max(6, draft.length + 1)}
+        style={{ maxWidth: '100%' }}
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onFocus={(e) => e.target.select()}
+        onClick={(e) => e.stopPropagation()}
+        onBlur={() => {
+          setEditing(false);
+          const text = draft.trim();
+          if (ctx) ctx.setLabel(id, (text === '' || text === fallback) ? null : text);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          if (e.key === 'Escape') { setDraft(value); setEditing(false); }
+        }}
+      />
+    );
+  }
+  return (
+    <span
+      className={styles.editLabel}
+      title="Double-click to edit"
+      onDoubleClick={(e) => { e.stopPropagation(); setDraft(value); setEditing(true); }}
+    >{value}</span>
   );
 }
 
@@ -743,6 +796,9 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           ...DEFAULT_STATE,
           ...saved,
           stages: sanitizeStages(saved.stages),
+          // Label overrides must be a plain object; anything else falls back to
+          // "no overrides" so a corrupt value can't crash the header render.
+          labels: (saved.labels && typeof saved.labels === 'object' && !Array.isArray(saved.labels)) ? saved.labels : {},
         }));
         const bfoSaved = await dbGet(BFO_STORE, BFO_KEY);
         if (!cancelled && bfoSaved) setBfo(bfoSaved);
@@ -1111,6 +1167,19 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
   function setField(key, value) {
     setState(s => ({ ...s, [key]: value }));
   }
+  // Set (or, with a null value, clear) a fixed-label override.
+  function setLabel(id, value) {
+    setState(s => {
+      const labels = { ...(s.labels || {}) };
+      if (value == null) delete labels[id];
+      else labels[id] = value;
+      return { ...s, labels };
+    });
+  }
+  // setLabel only calls setState (stable), so a fresh closure each render is
+  // fine — memoize on the labels map so <EL> consumers re-render only when a
+  // label actually changes, not on every unrelated Pipeline re-render.
+  const labelCtx = useMemo(() => ({ labels: state.labels || {}, setLabel }), [state.labels]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Always have a usable stages array to render — sanitizeStages merges
   // each row with its DEFAULT_STATE counterpart and replaces any wrong-
@@ -1186,6 +1255,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
 
   return (
     <CalcContext.Provider value={calcCtx}>
+    <LabelCtx.Provider value={labelCtx}>
     <div
       className={styles.wrapper}
       onClick={() => { if (calcPinned) calcUnpin(); }}
@@ -1201,7 +1271,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
             you read any of the per-stage rows. */}
         <div className={styles.section} style={{ maxWidth: 480 }}>
           <table className={styles.grid}>
-            <thead><tr><th>Target</th><th>Closed YTD</th><th>% of Quota</th></tr></thead>
+            <thead><tr><th><EL id="q-target">Target</EL></th><th><EL id="q-closed-ytd">Closed YTD</EL></th><th><EL id="q-pct-quota">% of Quota</EL></th></tr></thead>
             <tbody>
               <tr>
                 <td><NumCell value={state.target} kind="money" onCommit={(v) => setField('target', v)} /></td>
@@ -1243,7 +1313,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
         {/* Pipeline metrics */}
         <div className={styles.section}>
           <div className={styles.sectionTitle} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span>PIPELINE METRICS</span>
+            <span><EL id="t-pipeline-metrics">PIPELINE METRICS</EL></span>
             <button
               type="button"
               onClick={() => {
@@ -1269,23 +1339,23 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
             </colgroup>
             <thead>
               <tr>
-                <th rowSpan={2} className={styles.headerLeft}>Stage</th>
-                <th colSpan={2}>Active Opportunities</th>
-                <th colSpan={2}>Deal Size</th>
-                <th colSpan={2}>Pipeline</th>
-                <th colSpan={2}>Close Rate (Rolling 365 days)</th>
-                <th>Target Projection</th>
-                <th colSpan={2}>Avg Opp Life</th>
-                <th>Flagged Opps</th>
+                <th rowSpan={2} className={styles.headerLeft}><EL id="m-stage">Stage</EL></th>
+                <th colSpan={2}><EL id="m-active-opps">Active Opportunities</EL></th>
+                <th colSpan={2}><EL id="m-deal-size">Deal Size</EL></th>
+                <th colSpan={2}><EL id="m-pipeline">Pipeline</EL></th>
+                <th colSpan={2}><EL id="m-close-rate">Close Rate (Rolling 365 days)</EL></th>
+                <th><EL id="m-target-proj">Target Projection</EL></th>
+                <th colSpan={2}><EL id="m-opp-life">Avg Opp Life</EL></th>
+                <th><EL id="m-flagged-opps">Flagged Opps</EL></th>
               </tr>
               <tr>
-                <th>Goal (above)</th><th>Actual</th>
-                <th>Goal (above)</th><th>Actual</th>
-                <th>Goal (above)</th><th>Actual</th>
-                <th>Goal (above)</th><th>Actual</th>
-                <th>Goal</th>
-                <th>Goal (less than)</th><th>Actual</th>
-                <th>Quote / Contract or Kill</th>
+                <th><EL id="m-active-goal">Goal (above)</EL></th><th><EL id="m-active-actual">Actual</EL></th>
+                <th><EL id="m-dealsize-goal">Goal (above)</EL></th><th><EL id="m-dealsize-actual">Actual</EL></th>
+                <th><EL id="m-pipeline-goal">Goal (above)</EL></th><th><EL id="m-pipeline-actual">Actual</EL></th>
+                <th><EL id="m-closerate-goal">Goal (above)</EL></th><th><EL id="m-closerate-actual">Actual</EL></th>
+                <th><EL id="m-targetproj-goal">Goal</EL></th>
+                <th><EL id="m-opplife-goal">Goal (less than)</EL></th><th><EL id="m-opplife-actual">Actual</EL></th>
+                <th><EL id="m-flagged-kill">Quote / Contract or Kill</EL></th>
               </tr>
             </thead>
             <tbody>
@@ -1496,7 +1566,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                 );
               })}
               <tr>
-                <td className={styles.label}>Total</td>
+                <td className={styles.label}><EL id="m-total">Total</EL></td>
                 <td className={styles.numCell}>{stageTotals.activeGoal}</td>
                 <td className={styles.numCell}>{stageTotals.activeActual}</td>
                 <td className={styles.numCell}>{fmtMoney(dealSizeAvgGoal)}</td>
@@ -1562,7 +1632,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           <div className={styles.section} style={{ flex: '0 0 544px' }}>
             <table className={styles.grid} style={{ width: '100%' }}>
               <thead>
-                <tr><th /><th>Count / $</th><th>Goal - Client</th><th>Actual - Client</th></tr>
+                <tr><th /><th><EL id="cg-count">Count / $</EL></th><th><EL id="cg-goal-client">Goal - Client</EL></th><th><EL id="cg-actual-client">Actual - Client</EL></th></tr>
               </thead>
               <tbody>
                 {(() => {
@@ -1589,7 +1659,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                   return (
                     <>
                       <tr>
-                        <td className={styles.label}>Current client opps</td>
+                        <td className={styles.label}><EL id="cg-row-client-opps">Current client opps</EL></td>
                         <td>{live
                           ? liveCell(cg.clientCount, 'cg-client-count', {
                               title: 'Current client opps',
@@ -1623,7 +1693,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                         </td>
                       </tr>
                       <tr>
-                        <td className={styles.label}>Greenfield opps</td>
+                        <td className={styles.label}><EL id="cg-row-green-opps">Greenfield opps</EL></td>
                         <td>{live
                           ? liveCell(cg.greenfieldCount, 'cg-green-count', {
                               title: 'Greenfield opps',
@@ -1640,7 +1710,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                         </td>
                       </tr>
                       <tr>
-                        <td className={styles.label}>Current client $</td>
+                        <td className={styles.label}><EL id="cg-row-client-amt">Current client $</EL></td>
                         <td>{live
                           ? liveCell(fmtMoney(cg.clientAmt), 'cg-client-amt', {
                               title: 'Current client $',
@@ -1658,7 +1728,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                         <td colSpan={2} />
                       </tr>
                       <tr>
-                        <td className={styles.label}>Greenfield $</td>
+                        <td className={styles.label}><EL id="cg-row-green-amt">Greenfield $</EL></td>
                         <td>{live
                           ? liveCell(fmtMoney(cg.greenfieldAmt), 'cg-green-amt', {
                               title: 'Greenfield $',
@@ -1685,8 +1755,8 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           <div className={styles.section} style={{ flex: '0 0 210px' }}>
             <table className={styles.grid} style={{ width: '100%' }}>
               <thead>
-                <tr><th colSpan={2}>Coverage Ratio</th></tr>
-                <tr><th>Goal</th><th>Actual</th></tr>
+                <tr><th colSpan={2}><EL id="cov-title">Coverage Ratio</EL></th></tr>
+                <tr><th><EL id="cov-goal">Goal</EL></th><th><EL id="cov-actual">Actual</EL></th></tr>
               </thead>
               <tbody>
                 <tr>
@@ -1730,8 +1800,8 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           <div className={styles.section} style={{ flex: '0 0 315px' }}>
             <table className={styles.grid} style={{ width: '100%' }}>
               <thead>
-                <tr><th colSpan={3}>% of deals not Quoted</th></tr>
-                <tr><th>Goal</th><th>Actual Year</th><th>Actual Month</th></tr>
+                <tr><th colSpan={3}><EL id="nq-title">% of deals not Quoted</EL></th></tr>
+                <tr><th><EL id="nq-goal">Goal</EL></th><th><EL id="nq-actual-year">Actual Year</EL></th><th><EL id="nq-actual-month">Actual Month</EL></th></tr>
               </thead>
               <tbody>
                 <tr>
@@ -1756,13 +1826,13 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           <table className={styles.grid}>
             <thead>
               <tr>
-                <th className={styles.headerLeft}>Month</th>
+                <th className={styles.headerLeft}><EL id="nom-month">Month</EL></th>
                 {newOppsByMonth.map(m => <th key={m.key}>{m.label}</th>)}
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td className={styles.label}>New Opps</td>
+                <td className={styles.label}><EL id="nom-new-opps">New Opps</EL></td>
                 {newOppsByMonth.map(m => {
                   const color = m.count >= 5 ? '#16a34a' : '#dc2626';
                   return (
@@ -1799,16 +1869,16 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
         {/* Client renewals — active clients whose soonest contract End Date
             is within the renewal window. Pulled from the Clients tab. */}
         <div className={styles.section}>
-          <div className={styles.sectionTitle}>Client Renewals — Contracts Expiring Within {RENEWAL_WINDOW_DAYS} Days</div>
+          <div className={styles.sectionTitle}><EL id="ren-title">{`Client Renewals — Contracts Expiring Within ${RENEWAL_WINDOW_DAYS} Days`}</EL></div>
           <table className={styles.tinyTable} title={`Auto-fed from the Clients tab — active clients (CDM = ${cdmName || 'your CDM'} and Status = Client) whose soonest contract End Date is within ${RENEWAL_WINDOW_DAYS} days. Sorted soonest first; negative = already overdue.`}>
             <thead>
               <tr>
-                <th>Client</th>
-                <th>Renewal Status</th>
-                <th>Client Manager</th>
-                <th>Decision Maker</th>
-                <th>Invited to Louisville</th>
-                <th>Days Until Expiration</th>
+                <th><EL id="ren-client">Client</EL></th>
+                <th><EL id="ren-status">Renewal Status</EL></th>
+                <th><EL id="ren-client-manager">Client Manager</EL></th>
+                <th><EL id="ren-decision-maker">Decision Maker</EL></th>
+                <th><EL id="ren-invited">Invited to Louisville</EL></th>
+                <th><EL id="ren-days-until">Days Until Expiration</EL></th>
               </tr>
             </thead>
             <tbody>
@@ -1859,14 +1929,14 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
 
         {/* Strategy notes — free-text, editable, saved to the browser. */}
         <div className={styles.section}>
-          <div className={styles.sectionTitle}>Eliminating Distractions</div>
+          <div className={styles.sectionTitle}><EL id="notes-distractions-title">Eliminating Distractions</EL></div>
           <div className={styles.notesBody}>
             <NotesBox value={state.notesDistractions} onCommit={(v) => setField('notesDistractions', v)} minRows={6} />
           </div>
         </div>
 
         <div className={styles.section}>
-          <div className={styles.sectionTitle}>Prospecting Approach</div>
+          <div className={styles.sectionTitle}><EL id="notes-prospecting-title">Prospecting Approach</EL></div>
           <div className={`${styles.notesBody} ${styles.notesTwoCol}`}>
             <NotesBox value={state.notesProspectingLeft} onCommit={(v) => setField('notesProspectingLeft', v)} minRows={5} />
             <NotesBox value={state.notesProspectingRight} onCommit={(v) => setField('notesProspectingRight', v)} minRows={5} />
@@ -1874,20 +1944,21 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
         </div>
 
         <div className={styles.section}>
-          <div className={styles.sectionTitle}>Efficient Time Utilization</div>
+          <div className={styles.sectionTitle}><EL id="notes-efficient-title">Efficient Time Utilization</EL></div>
           <div className={styles.notesBody}>
             <NotesBox value={state.notesEfficientTime} onCommit={(v) => setField('notesEfficientTime', v)} minRows={6} />
           </div>
         </div>
 
         <div className={styles.section}>
-          <div className={styles.sectionTitle}>Updates</div>
+          <div className={styles.sectionTitle}><EL id="notes-updates-title">Updates</EL></div>
           <div className={styles.notesBody}>
             <NotesBox value={state.notesUpdates} onCommit={(v) => setField('notesUpdates', v)} minRows={6} />
           </div>
         </div>
       </div>
     </div>
+    </LabelCtx.Provider>
     </CalcContext.Provider>
   );
 }
