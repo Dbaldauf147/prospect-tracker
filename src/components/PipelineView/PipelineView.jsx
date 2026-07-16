@@ -780,7 +780,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
   );
 
   // Decision-maker contacts grouped by normalized company name, so each
-  // renewals row can show every DM at that account and whether they've been
+  // renewals row can show the DM(s) at that account and whether they've been
   // invited to Louisville. Mirrors the HubSpot-contact source + "Decision
   // Maker" tag test the Progress and contact views use. The Louisville flag
   // is a local-only setting keyed by the contact's HubSpot id.
@@ -796,8 +796,19 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       const cid = c.id || c.vid;
       const name = [c.firstname, c.lastname].filter(Boolean).join(' ').trim()
         || c.name || c.email || '—';
+      const isPrimary = tags.includes('primary point of contact');
       if (!map.has(key)) map.set(key, []);
-      map.get(key).push({ contact: c, name, invited: cid != null ? !!invitedMap[cid] : false });
+      map.get(key).push({ contact: c, name, invited: cid != null ? !!invitedMap[cid] : false, isPrimary });
+    }
+    // When an account has more than one decision maker, narrow to the one(s)
+    // also tagged "Primary Point of Contact" so the renewals row shows the
+    // single primary DM. If none of that account's DMs carry the Primary tag,
+    // keep them all rather than hiding everyone.
+    for (const [key, list] of map) {
+      if (list.length > 1) {
+        const primaries = list.filter(d => d.isPrimary);
+        if (primaries.length > 0) map.set(key, primaries);
+      }
     }
     return map;
   }, [hubspotContacts, settings.contactInvitedToLouisville]);
