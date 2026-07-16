@@ -27,11 +27,12 @@ export function normClientName(s) {
 // Cancelled / Expired agreements are skipped; everything else counts
 // regardless of whether the date is in the future.
 export function soonestExpiration(deals) {
-  if (!deals || deals.length === 0) return { date: null, days: null };
+  if (!deals || deals.length === 0) return { date: null, days: null, deal: null };
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const todayMs = today.getTime();
   let bestMs = null;
+  let bestDeal = null;
   for (const d of deals) {
     if (isInactiveAgreement(d)) continue;
     const parsed = asDate(d['End Date']);
@@ -39,10 +40,10 @@ export function soonestExpiration(deals) {
     const dayStart = new Date(parsed);
     dayStart.setHours(0, 0, 0, 0);
     const ms = dayStart.getTime();
-    if (bestMs == null || ms < bestMs) bestMs = ms;
+    if (bestMs == null || ms < bestMs) { bestMs = ms; bestDeal = d; }
   }
-  if (bestMs == null) return { date: null, days: null };
-  return { date: new Date(bestMs), days: Math.round((bestMs - todayMs) / MS_PER_DAY) };
+  if (bestMs == null) return { date: null, days: null, deal: null };
+  return { date: new Date(bestMs), days: Math.round((bestMs - todayMs) / MS_PER_DAY), deal: bestDeal };
 }
 
 // Group deals by client, applying the user's source-name → client-name
@@ -318,6 +319,10 @@ export function computeExpiringClients({ prospects = [], cdmName, dealsList = []
       clientManager: managerMap?.[ck] || '',
       daysUntil: next.days,
       expiration: next.date,
+      // Paperwork status of the soonest active contract (blank when the
+      // deal row has no Paperwork value). Cancelled/Expired agreements are
+      // already excluded by soonestExpiration, so this reflects the live one.
+      contractStatus: (next.deal && String(next.deal['Paperwork completed'] || '').trim()) || '',
     });
   }
   out.sort((a, b) => a.daysUntil - b.daysUntil);

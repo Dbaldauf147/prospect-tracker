@@ -225,8 +225,8 @@ function App() {
     setModal({ prospect: null, isNew: true });
   }
 
-  function handleSelect(prospect) {
-    setModal({ prospect, isNew: false });
+  function handleSelect(prospect, editContact) {
+    setModal({ prospect, isNew: false, editContact: editContact || null });
   }
 
   return (
@@ -273,7 +273,7 @@ function App() {
           ) : view === 'drafts' || view === 'campaigns' ? (
             <DraftEmailsPage prospects={prospects} settings={settings} updateSettings={updateSettings} initialTab={view === 'campaigns' ? 'campaigns' : 'drafts'} />
           ) : view === 'charts' ? (
-            <ChartsView prospects={prospects} settings={settings} cdmName={cdmName} />
+            <ChartsView prospects={prospects} settings={settings} cdmName={cdmName} onSelectProspect={handleSelect} />
           ) : view === 'vibe' ? (
             <VibeProspecting prospects={prospects} onUpdate={updateProspect} cdmName={cdmName} />
           ) : view === 'pricing' ? (
@@ -359,6 +359,7 @@ function App() {
           prospect={modal.prospect}
           prospects={prospects}
           isNew={modal.isNew}
+          initialEditContact={modal.editContact}
           onSave={handleModalSave}
           onClose={handleModalClose}
           onDeleteProspect={deleteProspect}

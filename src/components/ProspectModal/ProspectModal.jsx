@@ -2171,7 +2171,7 @@ function SustainabilityResearchPanel({ state, onClear, onUseTargets, onMergeFram
   );
 }
 
-export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, onDeleteProspect, onUpdateProspect, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, updateSettingsPath = () => {}, targetAccountsData = null, cdmName = '' }) {
+export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, onDeleteProspect, onUpdateProspect, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, updateSettingsPath = () => {}, targetAccountsData = null, cdmName = '', initialEditContact = null }) {
   const { isAdmin, user } = useAuth();
   const [fields, setFields] = useState(() => {
     if (prospect) return { ...EMPTY, ...prospect };
@@ -2508,7 +2508,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     }
     return n;
   }, [hubspotContacts, fields.company, fields.emailDomain, fields.website]);
-  const [editingContact, setEditingContact] = useState(null);
+  // Seed the contact editor when the modal was opened by clicking a specific
+  // contact (e.g. a Decision Maker on the Pipeline renewals table).
+  const [editingContact, setEditingContact] = useState(initialEditContact);
   const [addingContact, setAddingContact] = useState(false);
   const [showSaved, setShowSaved] = useState(false);
   const [deletingContact, setDeletingContact] = useState(null);
