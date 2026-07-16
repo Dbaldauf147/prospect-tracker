@@ -170,7 +170,13 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
   r += 2;
 
   const metricRow = (s, opts) => {
-    const flagged = s.flaggedLabel && s.flaggedCount ? `${s.flaggedLabel}: ${s.flaggedCount}` : (s.flaggedCount ? String(s.flaggedCount) : '—');
+    // Show the flagged opps by name (comma-separated, single line) rather than
+    // a bare count. The Flagged Opps column is the last one, so a long list
+    // overflows cleanly to the right instead of wrapping.
+    const flaggedNames = (s.flaggedNames || []).join(', ');
+    const flagged = s.flaggedCount
+      ? (s.flaggedLabel ? `${s.flaggedLabel}: ${flaggedNames}` : flaggedNames)
+      : '—';
     const cells = [
       [s.label, 'left', null, null],
       [num(s.activeGoal), 'right', INT, null],
@@ -217,20 +223,20 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
   // ── Current Client vs Greenfield ──
   gap();
   title('Current Client vs Greenfield');
-  put(r, 1, r, 4, 'Segment', HEAD);
-  put(r, 5, r, 7, 'Opps', { ...HEAD, align: 'right' });
-  put(r, 8, r, 10, 'Amount', { ...HEAD, align: 'right' });
-  put(r, 11, r, 13, 'Client Mix', HEAD);
+  put(r, 1, r, 4, 'Segment', { ...HEAD, align: 'left' });
+  put(r, 5, r, 7, 'Opps', { ...HEAD, align: 'left' });
+  put(r, 8, r, 10, 'Amount', { ...HEAD, align: 'left' });
+  put(r, 11, r, 13, 'Client Mix', { ...HEAD, align: 'left' });
   r++;
   put(r, 1, r, 4, 'Current client', { bold: true });
-  put(r, 5, r, 7, num(cg.clientCount), { align: 'right', numFmt: INT });
-  put(r, 8, r, 10, num(cg.clientAmt), { align: 'right', numFmt: MONEY });
-  put(r, 11, r, 13, cg.clientGoalPct != null ? `Goal ${Math.round(cg.clientGoalPct * 100)}%` : '—', { align: 'center' });
+  put(r, 5, r, 7, num(cg.clientCount), { align: 'left', numFmt: INT });
+  put(r, 8, r, 10, num(cg.clientAmt), { align: 'left', numFmt: MONEY });
+  put(r, 11, r, 13, cg.clientGoalPct != null ? `Goal ${Math.round(cg.clientGoalPct * 100)}%` : '—', { align: 'left' });
   r++;
   put(r, 1, r, 4, 'Greenfield', { bold: true });
-  put(r, 5, r, 7, num(cg.greenfieldCount), { align: 'right', numFmt: INT });
-  put(r, 8, r, 10, num(cg.greenfieldAmt), { align: 'right', numFmt: MONEY });
-  put(r, 11, r, 13, cg.clientActualPct != null ? `Actual ${Math.round(cg.clientActualPct * 100)}%` : '—', { align: 'center', ...(cmpTint(cg.clientActualPct, cg.clientGoalPct, 'lower') || {}) });
+  put(r, 5, r, 7, num(cg.greenfieldCount), { align: 'left', numFmt: INT });
+  put(r, 8, r, 10, num(cg.greenfieldAmt), { align: 'left', numFmt: MONEY });
+  put(r, 11, r, 13, cg.clientActualPct != null ? `Actual ${Math.round(cg.clientActualPct * 100)}%` : '—', { align: 'left', ...(cmpTint(cg.clientActualPct, cg.clientGoalPct, 'lower') || {}) });
   r++;
 
   // ── New Opps by Month (horizontal) ──
@@ -252,7 +258,7 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
   title(lbl('ren-title', `Client Renewals — Contracts Expiring Within ${p.renewals.windowDays} Days`));
   const renCols = [[1, 2], [3, 4], [5, 6], [7, 9], [10, 11], [12, 13]];
   const renHdr = [lbl('ren-client', 'Client'), lbl('ren-status', 'Renewal Status'), lbl('ren-client-manager', 'Client Manager'), lbl('ren-decision-maker', 'Decision Maker'), lbl('ren-invited', 'Invited to Louisville'), lbl('ren-days-until', 'Days Until Expiration')];
-  renHdr.forEach((h, i) => put(r, renCols[i][0], r, renCols[i][1], h, { ...HEAD, align: i === 5 ? 'right' : 'left' }));
+  renHdr.forEach((h, i) => put(r, renCols[i][0], r, renCols[i][1], h, { ...HEAD, align: 'left' }));
   r++;
   const renRows = p.renewals.rows || [];
   if (!renRows.length) {
@@ -266,7 +272,7 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
       vals.forEach((v, i) => {
         const isDays = i === 5;
         put(r, renCols[i][0], r, renCols[i][1], v === '' || v == null ? null : v, {
-          align: isDays ? 'right' : 'left', numFmt: isDays ? INT : undefined, wrap: i === 3,
+          align: 'left', numFmt: isDays ? INT : undefined, wrap: i === 3,
           ...(isDays && overdue ? { fill: BAD_FILL, fg: BAD_FG } : (zebra ? { zebra: true } : {})),
         });
       });
