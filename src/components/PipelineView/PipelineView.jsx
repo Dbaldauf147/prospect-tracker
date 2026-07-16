@@ -1682,38 +1682,49 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
 
         </div>
 
-        {/* New Opps by Month — BFO-linked opps created in each of the past 6 months */}
-        <div className={styles.section} style={{ maxWidth: 480 }}>
+        {/* New Opps by Month — BFO-linked opps created in each of the past 6
+            months, laid out horizontally (months across). Each count is green
+            when it's 5 or more, red when it's below 5. */}
+        <div className={styles.section} style={{ maxWidth: 760, overflowX: 'auto' }}>
           <table className={styles.grid}>
-            <thead><tr><th className={styles.headerLeft}>Month</th><th>New Opps</th></tr></thead>
+            <thead>
+              <tr>
+                <th className={styles.headerLeft}>Month</th>
+                {newOppsByMonth.map(m => <th key={m.key}>{m.label}</th>)}
+              </tr>
+            </thead>
             <tbody>
-              {newOppsByMonth.map(m => (
-                <tr key={m.key}>
-                  <td className={styles.label}>{m.label}</td>
-                  <td className={styles.numCell}>
-                    <LiveValue
-                      id={`new-opps-${m.key}`}
-                      className={styles.liveCell}
-                      breakdown={{
-                        title: `New Opps — ${m.label}`,
-                        value: String(m.count),
-                        formula: 'COUNT of Opps with a BFO Opportunity Name created in this month. Open date prefers Start Date, else fetchedAt − Age.',
-                        inputs: [{ label: 'New opps', value: m.count }],
-                        rows: {
-                          head: 'New opps (by account)',
-                          columns: ['Account', 'Opportunity', 'Opened'],
-                          aligns: ['', '', ''],
-                          ...mapRows(m.items, it => [it.account, it.opp, it.openDate], {
-                            exportColumns: ['Account', 'Opportunity', 'BFO Opportunity Name', 'Scope', 'Opened'],
-                            exportMapFn: it => [it.account, it.opp, it.bfoName || '', it.scope || '', it.openDate],
-                          }),
-                        },
-                        note: 'Auto-fed from the Opps tab. Re-paste the Opps tab to refresh.',
-                      }}
-                    >{m.count}</LiveValue>
-                  </td>
-                </tr>
-              ))}
+              <tr>
+                <td className={styles.label}>New Opps</td>
+                {newOppsByMonth.map(m => {
+                  const color = m.count >= 5 ? '#16a34a' : '#dc2626';
+                  return (
+                    <td key={m.key} className={styles.numCell} style={{ textAlign: 'center' }}>
+                      <LiveValue
+                        id={`new-opps-${m.key}`}
+                        className={styles.liveCell}
+                        style={{ color, borderBottomColor: color, fontWeight: 700 }}
+                        breakdown={{
+                          title: `New Opps — ${m.label}`,
+                          value: String(m.count),
+                          formula: 'COUNT of Opps with a BFO Opportunity Name created in this month. Open date prefers Start Date, else fetchedAt − Age.',
+                          inputs: [{ label: 'New opps', value: m.count }],
+                          rows: {
+                            head: 'New opps (by account)',
+                            columns: ['Account', 'Opportunity', 'Opened'],
+                            aligns: ['', '', ''],
+                            ...mapRows(m.items, it => [it.account, it.opp, it.openDate], {
+                              exportColumns: ['Account', 'Opportunity', 'BFO Opportunity Name', 'Scope', 'Opened'],
+                              exportMapFn: it => [it.account, it.opp, it.bfoName || '', it.scope || '', it.openDate],
+                            }),
+                          },
+                          note: 'Auto-fed from the Opps tab. Re-paste the Opps tab to refresh.',
+                        }}
+                      >{m.count}</LiveValue>
+                    </td>
+                  );
+                })}
+              </tr>
             </tbody>
           </table>
         </div>
