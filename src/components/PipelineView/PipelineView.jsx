@@ -1948,8 +1948,9 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
         {/* New Opps by Month — BFO-linked opps created in each of the past 6
             months, laid out horizontally (months across). Each count is green
             when it's 5 or more, red when it's below 5. */}
-        <div className={styles.section} style={{ maxWidth: 760, overflowX: 'auto' }}>
+        <div className={styles.section} style={{ maxWidth: 760 }}>
           <div className={styles.sectionTitle}><EL id="nom-title">New Opps by Month</EL></div>
+          <div className={styles.scrollX}>
           <table className={styles.grid}>
             <thead>
               <tr>
@@ -1991,6 +1992,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
               </tr>
             </tbody>
           </table>
+          </div>
         </div>
 
         {/* Client renewals — active clients whose soonest contract End Date
