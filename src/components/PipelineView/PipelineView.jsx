@@ -1280,9 +1280,11 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       const liveRate = oppsCloseRateByStage[n]?.rate;
       const closeActual = liveRate != null ? liveRate : st.closeActual;
       const killFlag = STAGE_KILL_FLAG[n];
-      const flaggedCount = killFlag
-        ? (m?.rows || []).filter(r => r.age != null && st.lifeGoal != null && r.age > st.lifeGoal).length
-        : 0;
+      const flaggedRows = killFlag
+        ? (m?.rows || []).filter(r => r.age != null && st.lifeGoal != null && r.age > st.lifeGoal)
+        : [];
+      // Same naming the on-screen flagged cell uses (account, else opp name).
+      const flaggedNames = flaggedRows.map(r => r.account || r.oppName || '(no account)');
       return {
         label: st.label,
         activeGoal: st.activeGoal, activeActual,
@@ -1291,7 +1293,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
         closeGoal: st.closeGoal, closeActual,
         targetProjGoal: (Number(st.activeGoal) || 0) * (Number(st.dealSizeGoal) || 0) * (Number(st.closeGoal) || 0),
         lifeGoal: st.lifeGoal, lifeActual,
-        flaggedLabel: killFlag || '', flaggedCount,
+        flaggedLabel: killFlag || '', flaggedCount: flaggedRows.length, flaggedNames,
       };
     });
     const cg = clientGreenfieldFromBfo;
