@@ -32,11 +32,6 @@ function parseMoney(v) {
 }
 
 // Pull the leading stage digit from values like "6 - Negotiate to..."
-function stageNumber(v) {
-  const m = String(v ?? '').match(/(\d)/);
-  return m ? Number(m[1]) : null;
-}
-
 // Match BFO rows to the same Sales Stage labels the Excel formulas
 // hard-code, so the website's totals line up with the spreadsheet.
 //
@@ -744,19 +739,6 @@ function PipelineViewInner({ prospects = [], cdmName = '' }) {
 
   // Lists derived from the Opps tab.
   const oppsRecords = opps && Array.isArray(opps.records) ? opps.records : [];
-  const notSoldFromOpps = useMemo(() => {
-    return oppsRecords
-      .filter(r => (r.Stage || '').trim() === 'Not Sold')
-      .map(r => ({
-        account: r.Account || '',
-        scope: r.Scope || '',
-        age: Number(r.Age) || null,
-        finalMargin: r['Final Margin'] || r['Margin'] || '',
-        quoted: parseMoney(r['Quoted Amount']),
-      }))
-      .filter(r => typeof r.quoted === 'number' && r.quoted > 0)
-      .sort((a, b) => (a.age ?? 0) - (b.age ?? 0));
-  }, [oppsRecords]);
 
   // Sum of Quoted Amount for Opps tab records with Stage === 'Sold' and
   // a Close Date in the current calendar year. Drives the Closed YTD
@@ -1017,39 +999,6 @@ function PipelineViewInner({ prospects = [], cdmName = '' }) {
     return { count: items.length, items };
   }, [oppsRecords, opps]);
   const newOppsPast30Count = newOppsPast30.count;
-
-  const notQuotedFromOpps = useMemo(() => {
-    const NOT_QUOTED_STAGES = new Set(['Lead', 'Not Started', 'Qualifying']);
-    return oppsRecords
-      .filter(r => NOT_QUOTED_STAGES.has((r.Stage || '').trim()))
-      .map(r => ({
-        account: r.Account || '',
-        scope: r.Scope || '',
-        closeDate: r['Close Date'] || '',
-        age: Number(r.Age) || null,
-      }))
-      .sort((a, b) => (b.age ?? 0) - (a.age ?? 0));
-  }, [oppsRecords]);
-
-  // Smallest stage-5 and stage-6 deals from BFO, sorted by amount asc.
-  const bfoSmallestDeals = useMemo(() => {
-    if (!hasBfo) return null;
-    const findCol = (re) => bfo.headers.find(h => re.test(h));
-    const stageCol = findCol(/sales\s*stage|^stage$/i);
-    const amountCol = findCol(/^amount$/i);
-    const accountCol = findCol(/^account\s*name$/i) || findCol(/^account$/i);
-    const oppCol = findCol(/opportunity\s*name|^opportunity$/i);
-    if (!stageCol || !amountCol) return null;
-    return bfo.rows
-      .map(r => ({
-        account: accountCol ? r[accountCol] : '',
-        oppName: oppCol ? r[oppCol] : '',
-        amount: parseMoney(r[amountCol]),
-        stage: stageNumber(r[stageCol]),
-      }))
-      .filter(r => (r.stage === 5 || r.stage === 6) && typeof r.amount === 'number')
-      .sort((a, b) => a.amount - b.amount);
-  }, [bfo, hasBfo]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -1699,105 +1648,6 @@ function PipelineViewInner({ prospects = [], cdmName = '' }) {
               </tr>
             </tbody>
           </table>
-        </div>
-
-        {/* Bottom three tables */}
-        <div className={styles.bottomRow}>
-          <div className={styles.section}>
-            <div className={styles.sectionTitle}>Smallest 5 &amp; 6 Deals</div>
-            <table className={styles.tinyTable} title="Auto-fed from BFO Activity. Paste BFO rows on the BFO Activity tab to populate.">
-              <thead>
-                <tr>
-                  <th>Account Name</th>
-                  <th>Opportunity Name</th>
-                  <th>Amount USD</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(bfoSmallestDeals && bfoSmallestDeals.length > 0) ? (
-                  bfoSmallestDeals.map((r, i) => (
-                    <tr key={i}>
-                      <td>{r.account}</td>
-                      <td>{r.oppName}</td>
-                      <td>{fmtMoney(r.amount)}</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={3} style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '0.6rem' }}>
-                      No BFO data — paste an export on the BFO Activity tab.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          <div className={styles.section}>
-            <div className={styles.sectionTitle}>Not Sold Quoted Deals</div>
-            <table className={styles.tinyTable} title="Auto-fed from Opps tab — opportunities with Stage = 'Not Sold' and a Quoted Amount.">
-              <thead>
-                <tr>
-                  <th>Account</th>
-                  <th>Scope</th>
-                  <th>Age</th>
-                  <th>Final Margin</th>
-                  <th>Quoted Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                {notSoldFromOpps.length > 0 ? (
-                  notSoldFromOpps.map((r, i) => (
-                    <tr key={i}>
-                      <td>{r.account}</td>
-                      <td>{r.scope}</td>
-                      <td>{r.age ?? ''}</td>
-                      <td>{r.finalMargin}</td>
-                      <td>{fmtMoney(r.quoted)}</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={5} style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '0.6rem' }}>
-                      No "Not Sold" quoted opps found in the Opps tab.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          <div className={styles.section}>
-            <div className={styles.sectionTitle}>Not Quoted Opps</div>
-            <table className={styles.tinyTable} title="Auto-fed from Opps tab — active opportunities (Lead / Not Started / Qualifying) that haven't been quoted yet.">
-              <thead>
-                <tr>
-                  <th>Account</th>
-                  <th>Scope</th>
-                  <th>Close Date</th>
-                  <th>Age</th>
-                </tr>
-              </thead>
-              <tbody>
-                {notQuotedFromOpps.length > 0 ? (
-                  notQuotedFromOpps.map((r, i) => (
-                    <tr key={i}>
-                      <td>{r.account}</td>
-                      <td>{r.scope}</td>
-                      <td>{r.closeDate}</td>
-                      <td>{r.age ?? ''}</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={4} style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '0.6rem' }}>
-                      No un-quoted active opps found in the Opps tab.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
         </div>
 
         {/* Client renewals — active clients whose soonest contract End Date
