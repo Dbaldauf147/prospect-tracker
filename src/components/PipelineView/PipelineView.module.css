@@ -51,6 +51,40 @@
   letter-spacing: 0.04em;
 }
 
+/* Fixed labels (titles / headers / row labels) turned editable via <EL>.
+   Plain text until hovered; a dashed underline + tint hints it's editable. */
+.editLabel {
+  cursor: text;
+  border-radius: 3px;
+  padding: 0 2px;
+  border-bottom: 1px dashed transparent;
+}
+
+.editLabel:hover {
+  background: rgba(148, 163, 184, 0.22);
+  border-bottom-color: currentColor;
+}
+
+/* The input shown while editing a label. Inherits font weight / size / align
+   from the surrounding cell but pins readable dark-on-white colors so it stays
+   legible even inside the dark section-title bars. */
+.editInput {
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  text-align: inherit;
+  color: #0f172a;
+  background: #fff;
+  border: 1px solid #2563eb;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+.editInput:focus {
+  outline: none;
+}
+
 .grid {
   width: 100%;
   border-collapse: collapse;
