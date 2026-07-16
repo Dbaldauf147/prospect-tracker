@@ -449,3 +449,13 @@
 .actionBtn:hover {
   border-color: #2563eb;
 }
+
+/* Clickable client / contact names in the renewals table. */
+.linkCell {
+  color: #2563eb;
+  cursor: pointer;
+}
+
+.linkCell:hover {
+  text-decoration: underline;
+}

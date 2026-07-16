@@ -11,7 +11,8 @@ import { loadOppsFromCache } from '../../utils/oppsCache';
 import { loadDealsList } from '../../utils/dealsStore';
 import { loadDealClientMap } from '../../utils/dealClientMap';
 import { loadClientManagerMap, loadClientUntrackedMap } from '../../utils/clientManagerStore';
-import { computeExpiringClients } from '../../utils/clientIssues';
+import { computeExpiringClients, normClientName } from '../../utils/clientIssues';
+import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 
 // Contracts expiring within this many days feed the Pipeline "Client
 // Renewals" table — mirrors the Clients tab's renewal-warning threshold.
@@ -655,10 +656,10 @@ function useCalc() {
   return { ctx, popover, pinned, unpin: () => setPinned(null) };
 }
 
-export function PipelineView({ prospects = [], cdmName = '' }) {
+export function PipelineView({ prospects = [], cdmName = '', settings = {}, onSelectProspect }) {
   return (
     <PipelineRootBoundary>
-      <PipelineViewInner prospects={prospects} cdmName={cdmName} />
+      <PipelineViewInner prospects={prospects} cdmName={cdmName} settings={settings} onSelectProspect={onSelectProspect} />
     </PipelineRootBoundary>
   );
 }
@@ -675,12 +676,13 @@ function readClientStores() {
   };
 }
 
-function PipelineViewInner({ prospects = [], cdmName = '' }) {
+function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSelectProspect }) {
   const [state, setState] = useState(DEFAULT_STATE);
   const [hydrated, setHydrated] = useState(false);
   const [bfo, setBfo] = useState(null);
   const [opps, setOpps] = useState(null);
   const [clientStores, setClientStores] = useState(readClientStores);
+  const [hubspotContacts, setHubspotContacts] = useState([]);
   // Hover/pin "what goes into this number" breakdown panels.
   const { ctx: calcCtx, popover: calcPopover, pinned: calcPinned, unpin: calcUnpin } = useCalc();
 
@@ -699,6 +701,8 @@ function PipelineViewInner({ prospects = [], cdmName = '' }) {
         if (!cancelled && bfoSaved) setBfo(bfoSaved);
         const oppsSaved = await loadOppsFromCache();
         if (!cancelled && oppsSaved) setOpps(oppsSaved);
+        const contacts = await getHubspotContacts();
+        if (!cancelled && contacts) setHubspotContacts(contacts);
       } catch (e) {
         console.warn('Pipeline hydrate failed', e);
       } finally {
@@ -712,6 +716,7 @@ function PipelineViewInner({ prospects = [], cdmName = '' }) {
       // fallback, deletions wouldn't propagate to this view.
       dbGet(BFO_STORE, BFO_KEY).then(b => setBfo(b || null)).catch(() => setBfo(null));
       loadOppsFromCache().then(o => setOpps(o || null)).catch(() => setOpps(null));
+      getHubspotContacts().then(c => setHubspotContacts(c || [])).catch(() => {});
       setClientStores(readClientStores());
     }
     window.addEventListener('focus', onFocus);
@@ -736,6 +741,39 @@ function PipelineViewInner({ prospects = [], cdmName = '' }) {
     }),
     [prospects, cdmName, clientStores],
   );
+
+  // Decision-maker contacts grouped by normalized company name, so each
+  // renewals row can show every DM at that account and whether they've been
+  // invited to Louisville. Mirrors the HubSpot-contact source + "Decision
+  // Maker" tag test the Progress and contact views use. The Louisville flag
+  // is a local-only setting keyed by the contact's HubSpot id.
+  const dmsByCompany = useMemo(() => {
+    const invitedMap = settings.contactInvitedToLouisville || {};
+    const map = new Map();
+    for (const c of hubspotContacts) {
+      const tags = String(c.dans_tags || c.dan_s_tags || c.dans_tag || '')
+        .split(';').map(t => t.trim().toLowerCase());
+      if (!tags.includes('decision maker')) continue;
+      const key = normClientName(c.company);
+      if (!key) continue;
+      const cid = c.id || c.vid;
+      const name = [c.firstname, c.lastname].filter(Boolean).join(' ').trim()
+        || c.name || c.email || '—';
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push({ contact: c, name, invited: cid != null ? !!invitedMap[cid] : false });
+    }
+    return map;
+  }, [hubspotContacts, settings.contactInvitedToLouisville]);
+
+  // Open the account modal for a renewals row (by matching prospect id, then
+  // company name as a fallback). Optionally deep-links straight into a
+  // contact's editor.
+  function openClientModal(row, editContact) {
+    if (!onSelectProspect) return;
+    const p = prospects.find(pp => pp.id === row.id)
+      || prospects.find(pp => normClientName(pp.company) === normClientName(row.company));
+    if (p) onSelectProspect(p, editContact);
+  }
 
   // Lists derived from the Opps tab.
   const oppsRecords = opps && Array.isArray(opps.records) ? opps.records : [];
@@ -1658,24 +1696,51 @@ function PipelineViewInner({ prospects = [], cdmName = '' }) {
             <thead>
               <tr>
                 <th>Client</th>
+                <th>Status</th>
                 <th>Client Manager</th>
+                <th>Decision Maker</th>
+                <th>Invited to Louisville</th>
                 <th>Days Until Expiration</th>
               </tr>
             </thead>
             <tbody>
               {expiringClients.length > 0 ? (
-                expiringClients.map((c) => (
+                expiringClients.map((c) => {
+                  const dms = dmsByCompany.get(normClientName(c.company)) || [];
+                  return (
                   <tr key={c.id}>
-                    <td>{c.company}</td>
+                    <td>
+                      {onSelectProspect ? (
+                        <span className={styles.linkCell} onClick={() => openClientModal(c)}>{c.company}</span>
+                      ) : c.company}
+                    </td>
+                    <td>{c.contractStatus || '—'}</td>
                     <td>{c.clientManager || '—'}</td>
+                    <td>
+                      {dms.length > 0 ? dms.map((dm, i) => (
+                        <div key={i}>
+                          {onSelectProspect ? (
+                            <span className={styles.linkCell} onClick={() => openClientModal(c, dm.contact)}>{dm.name}</span>
+                          ) : dm.name}
+                        </div>
+                      )) : '—'}
+                    </td>
+                    <td>
+                      {dms.length > 0 ? dms.map((dm, i) => (
+                        <div key={i} style={{ color: dm.invited ? '#16a34a' : '#94a3b8' }}>
+                          {dm.invited ? 'Yes' : 'No'}
+                        </div>
+                      )) : '—'}
+                    </td>
                     <td style={{ fontVariantNumeric: 'tabular-nums', color: c.daysUntil < 0 ? '#dc2626' : undefined }}>
                       {c.daysUntil < 0 ? `${c.daysUntil} (overdue)` : c.daysUntil}
                     </td>
                   </tr>
-                ))
+                  );
+                })
               ) : (
                 <tr>
-                  <td colSpan={3} style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '0.6rem' }}>
+                  <td colSpan={6} style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '0.6rem' }}>
                     No clients with contracts expiring in the next {RENEWAL_WINDOW_DAYS} days.
                   </td>
                 </tr>
