@@ -14,8 +14,6 @@ import { loadClientManagerMap, loadClientUntrackedMap, loadClientStatusMap } fro
 import { computeExpiringClients, normClientName } from '../../utils/clientIssues';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { downloadPipelineWorkbook } from '../../utils/pipelineWorkbook';
-import { matchesCdm } from '../../utils/cdmMatch';
-import { resolveMyTier } from '../../utils/myAccountsTiers';
 import { loadList as loadUploadedList } from '../../utils/uploadedListStore';
 import { normalizeCompany, pickNameKey } from '../../utils/companyNorm';
 import { userLsGet } from '../../utils/userLs';
@@ -1363,23 +1361,6 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
     });
     const cg = clientGreenfieldFromBfo;
     const coverageActual = hasBfo && state.target > 0 ? stageTotals.pipelineActual / state.target : null;
-
-    // Strategic Accounts — my (CDM) accounts that resolve to Tier 1 or Tier 2,
-    // matching the "My Accounts" view's strategic definition. Tier 1 first,
-    // then alphabetical.
-    const TIER_RANK = { 'Tier 1': 0, 'Tier 2': 1 };
-    const strategicRows = prospects
-      .map((pp) => ({ pp, tier: resolveMyTier(pp) }))
-      .filter(({ pp, tier }) => (tier === 'Tier 1' || tier === 'Tier 2') && matchesCdm(pp.cdm, cdmName))
-      .map(({ pp, tier }) => ({
-        company: pp.company || '(no name)',
-        tier,
-        status: pp.status || '',
-        type: pp.type || '',
-        cdm: pp.cdm || '',
-      }))
-      .sort((a, b) => (TIER_RANK[a.tier] - TIER_RANK[b.tier]) || String(a.company).localeCompare(String(b.company)));
-
     return {
       lbl,
       generatedAt: new Date(),
@@ -1420,7 +1401,6 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           };
         }),
       },
-      strategicAccounts: { rows: strategicRows },
       notes: [
         { title: lbl('notes-distractions-title', 'Eliminating Distractions'), text: state.notesDistractions },
         { title: lbl('notes-prospecting-title', 'Prospecting Approach'), text: [state.notesProspectingLeft, state.notesProspectingRight].filter(Boolean).join('\n') },
