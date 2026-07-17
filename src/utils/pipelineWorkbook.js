@@ -253,6 +253,30 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
   ws.getRow(r).height = 16; ws.getRow(r + 1).height = 18;
   r += 2;
 
+  // ── Service Exploration Coverage ──
+  // Only rendered when the user tracks at least one service on the Pipeline
+  // page — otherwise the section is omitted entirely (no empty shell).
+  {
+    const sc = p.serviceCoverage || {};
+    const scRows = sc.rows || [];
+    if (scRows.length) {
+      gap();
+      title(sc.title || 'Service Exploration Coverage');
+      const scCols = [[1, 7], [8, 9], [10, 11], [12, 13]]; // Service | Explored | Clients | Coverage
+      const scHdr = sc.headers || ['Service', 'Explored', 'Clients', 'Coverage'];
+      scHdr.forEach((h, i) => put(r, scCols[i][0], r, scCols[i][1], h, { ...HEAD, align: 'left' }));
+      r++;
+      scRows.forEach((row, idx) => {
+        const zebra = idx % 2 === 1 ? { zebra: true } : {};
+        put(r, scCols[0][0], r, scCols[0][1], row.service || '—', { align: 'left', wrap: true, ...zebra });
+        put(r, scCols[1][0], r, scCols[1][1], num(row.explored), { align: 'right', numFmt: INT, ...zebra });
+        put(r, scCols[2][0], r, scCols[2][1], num(row.total), { align: 'right', numFmt: INT, ...zebra });
+        put(r, scCols[3][0], r, scCols[3][1], num(row.pct), { align: 'right', numFmt: PCT, bold: true, ...zebra });
+        r++;
+      });
+    }
+  }
+
   // ── Client Renewals ──
   gap();
   title(lbl('ren-title', `Client Renewals — Contracts Expiring Within ${p.renewals.windowDays} Days`));

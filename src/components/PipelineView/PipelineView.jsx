@@ -778,6 +778,44 @@ function isServiceExplored(prospect, serviceKey) {
   return !!v && v !== '-';
 }
 
+// Service catalogue for the coverage picker/table — the user's custom
+// categories when set, otherwise the code defaults; hidden services dropped,
+// renames applied for display. Options stay keyed by the canonical service
+// name so lookups into each prospect's servicesExplored map line up. Shared by
+// the on-screen section and the Excel export so both agree on names + which
+// services are eligible.
+function buildServiceCatalog(settings = {}) {
+  const hidden = new Set(settings.hiddenServices || []);
+  const renames = settings.serviceRenames || {};
+  const cats = Array.isArray(settings.customServiceCategories) && settings.customServiceCategories.length
+    ? settings.customServiceCategories
+    : SERVICE_CATEGORIES;
+  return cats
+    .map(cat => ({
+      name: cat.name,
+      items: (cat.items || [])
+        .filter(it => !hidden.has(it))
+        .map(it => ({ key: it, label: renames[it] || it })),
+    }))
+    .filter(cat => cat.items.length > 0);
+}
+
+// Canonical service key -> display label (honoring renames), from a catalogue.
+function serviceLabelMap(catalog) {
+  const m = new Map();
+  for (const cat of catalog) for (const it of cat.items) m.set(it.key, it.label);
+  return m;
+}
+
+// Active clients for coverage: Status = Client and matching the configured CDM
+// (or every client when no CDM is set). Mirrors the renewals table's client set.
+function coverageClientsOf(prospects, cdmName) {
+  return prospects.filter(p => {
+    if (String(p?.status || '').trim().toLowerCase() !== 'client') return false;
+    return cdmName ? matchesCdm(p.cdm, cdmName) : true;
+  });
+}
+
 // Coverage of one service across a client list: who's explored it (with each
 // client's status) and who hasn't, plus the rolled-up count / percentage.
 function computeServiceCoverage(clients, serviceKey) {
@@ -806,42 +844,21 @@ function computeServiceCoverage(clients, serviceKey) {
 // configured CDM (or all clients when no CDM is set). The tracked-service list
 // is passed in from persisted Pipeline state via `services` / `onChangeServices`.
 function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, onSelectProspect, services = [], onChangeServices }) {
-  // Service catalogue for the picker — the user's custom categories when set,
-  // otherwise the code defaults; hidden services dropped, renames applied for
-  // display. Options stay keyed by the canonical service name so the lookup
-  // into each prospect's servicesExplored map lines up.
-  const catalog = useMemo(() => {
-    const hidden = new Set(settings.hiddenServices || []);
-    const renames = settings.serviceRenames || {};
-    const cats = Array.isArray(settings.customServiceCategories) && settings.customServiceCategories.length
-      ? settings.customServiceCategories
-      : SERVICE_CATEGORIES;
-    return cats
-      .map(cat => ({
-        name: cat.name,
-        items: (cat.items || [])
-          .filter(it => !hidden.has(it))
-          .map(it => ({ key: it, label: renames[it] || it })),
-      }))
-      .filter(cat => cat.items.length > 0);
-  }, [settings.hiddenServices, settings.serviceRenames, settings.customServiceCategories]);
+  const catalog = useMemo(
+    () => buildServiceCatalog(settings),
+    [settings.hiddenServices, settings.serviceRenames, settings.customServiceCategories],
+  );
 
   // Canonical key -> display label, honoring renames. Falls back to the raw
   // key so a tracked service that's since been hidden still shows a name.
   const labelOf = useMemo(() => {
-    const m = new Map();
-    for (const cat of catalog) for (const it of cat.items) m.set(it.key, it.label);
+    const m = serviceLabelMap(catalog);
     return (key) => m.get(key) || key;
   }, [catalog]);
 
   // Active clients: Status = Client, and matching the configured CDM. When no
   // CDM is configured, include every client so the table still works.
-  const clients = useMemo(() => {
-    return prospects.filter(p => {
-      if (String(p?.status || '').trim().toLowerCase() !== 'client') return false;
-      return cdmName ? matchesCdm(p.cdm, cdmName) : true;
-    });
-  }, [prospects, cdmName]);
+  const clients = useMemo(() => coverageClientsOf(prospects, cdmName), [prospects, cdmName]);
 
   // Coverage for every tracked service, computed once per client/service change.
   const coverageByService = useMemo(() => {
@@ -1656,6 +1673,33 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           };
         }),
       },
+      // Service Exploration Coverage: one summary row per tracked service —
+      // explored count, client total and coverage %. Mirrors the on-screen
+      // table (client set and "explored" rule identical). Omitted downstream
+      // when the user tracks no services.
+      serviceCoverage: (() => {
+        const services = state.coverageServices || [];
+        const clients = coverageClientsOf(prospects, cdmName);
+        const labels = serviceLabelMap(buildServiceCatalog(settings));
+        return {
+          title: lbl('svc-cov-title', 'Service Exploration Coverage'),
+          headers: [
+            lbl('svc-cov-col-service', 'Service'),
+            lbl('svc-cov-col-explored', 'Explored'),
+            'Clients',
+            lbl('svc-cov-col-coverage', 'Coverage'),
+          ],
+          rows: services.map((key) => {
+            const cov = computeServiceCoverage(clients, key);
+            return {
+              service: labels.get(key) || key,
+              explored: cov.explored.length,
+              total: cov.total,
+              pct: cov.total ? cov.explored.length / cov.total : 0,
+            };
+          }),
+        };
+      })(),
       // Strategic Accounts — My Accounts: the same on-screen table
       // (My Accounts mapped to the uploaded Strategic Accounts list), verbatim.
       strategicAccounts: {
