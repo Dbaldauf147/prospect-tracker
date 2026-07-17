@@ -1315,11 +1315,14 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
   //   Stage 3 (Qualify Opportunity)    — has a BFO opportunity value, i.e.
   //                                      a non-empty BFO Link (every opp
   //                                      that made it into BFO).
+  //   Stage 4 (Influence and Develop)  — same signal as Stage 3 (a BFO
+  //                                      opportunity value), but excluding
+  //                                      opps whose Scope is "AEM" or whose
+  //                                      Status is "Never connected".
   //   Stage 5 (Prepare & Bid / Quoted) — non-empty Quoted On date.
   //   Stage 6 (Negotiate to Win)       — non-empty Entity Outside the US
   //                                      Approval value (blank or "-"
   //                                      means it never made it to 6).
-  // Stage 4 returns null until we get a comparable signal column.
   const oppsCloseRateByStage = useMemo(() => {
     const out = { 3: null, 4: null, 5: null, 6: null };
     if (oppsRecords.length === 0) return out;
@@ -1331,6 +1334,10 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       if (v === '-' || v === '—' || v === 'N/A' || v === '#N/A') return false;
       return true;
     };
+    // Stage 4 exclusions: AEM scope and "Never connected" status.
+    const isAemScope = (r) => /\baem\b/i.test(String(r.Scope || ''));
+    const isNeverConnected = (r) => String(r['Status'] || '').trim().toLowerCase() === 'never connected';
+    const stage4Signal = (r) => hasBfoOpportunity(r) && !isAemScope(r) && !isNeverConnected(r);
     const hasQuotedOn = (r) => {
       const v = r['Quoted On'] || r['Quoted Date'] || '';
       if (!v) return false;
@@ -1345,11 +1352,13 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
     };
     const stagePredicates = {
       3: hasBfoOpportunity,
+      4: stage4Signal,
       5: hasQuotedOn,
       6: hasEntityApproval,
     };
     const tallies = {
       3: { sold: 0, notSold: 0, included: [] },
+      4: { sold: 0, notSold: 0, included: [] },
       5: { sold: 0, notSold: 0, included: [] },
       6: { sold: 0, notSold: 0, included: [] },
     };
@@ -1377,7 +1386,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
         tallies[stageNum].included.push(entry);
       }
     }
-    for (const stageNum of [3, 5, 6]) {
+    for (const stageNum of [3, 4, 5, 6]) {
       const { sold, notSold, included } = tallies[stageNum];
       const total = sold + notSold;
       if (total > 0) {
@@ -1973,6 +1982,8 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                       if (liveRate !== null) {
                         const signal = stageNum === 3
                           ? 'a BFO opportunity value (non-empty BFO Link)'
+                          : stageNum === 4
+                          ? 'a BFO opportunity value (non-empty BFO Link), excluding AEM scope and "Never connected" status'
                           : stageNum === 5
                           ? 'a Quoted On date'
                           : stageNum === 6
