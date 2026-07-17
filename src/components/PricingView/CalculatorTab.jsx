@@ -28,6 +28,18 @@ export function CalculatorTab() {
   const [op, setOp] = useState(null);
   const [waiting, setWaiting] = useState(false);
 
+  // Standalone "multiply one item by another" helper shown beside the
+  // calculator. Kept independent of the main calculator's state so the two
+  // don't interfere. Inputs stay as free text so partial entries (e.g. a
+  // lone "-" or trailing ".") don't get clobbered mid-typing.
+  const [mulA, setMulA] = useState('');
+  const [mulB, setMulB] = useState('');
+  const mulValA = parseFloat(mulA);
+  const mulValB = parseFloat(mulB);
+  const mulProduct = Number.isFinite(mulValA) && Number.isFinite(mulValB)
+    ? mulValA * mulValB
+    : null;
+
   const clearAll = useCallback(() => {
     setDisplay('0');
     setAccumulator(null);
@@ -96,6 +108,10 @@ export function CalculatorTab() {
   // on-screen keys to the number row and operators.
   useEffect(() => {
     const onKey = (e) => {
+      // Don't hijack typing in the Multiply inputs (or any other field).
+      const t = e.target;
+      const tag = t?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || t?.isContentEditable) return;
       const k = e.key;
       if (k >= '0' && k <= '9') { inputDigit(k); }
       else if (k === '.') { inputDot(); }
@@ -141,6 +157,35 @@ export function CalculatorTab() {
           <button type="button" className={`${styles.key} ${styles.eqKey}`} onClick={equals}>=</button>
         </div>
         <div className={styles.hint}>Tip: your keyboard's number and operator keys work here too.</div>
+      </div>
+
+      <div className={styles.multiply}>
+        <div className={styles.multiplyTitle}>Multiply</div>
+        <div className={styles.multiplyBody}>
+          <input
+            type="text"
+            inputMode="decimal"
+            className={styles.multiplyInput}
+            placeholder="0"
+            value={mulA}
+            onChange={(e) => setMulA(e.target.value)}
+            aria-label="First value"
+          />
+          <span className={styles.multiplySign}>×</span>
+          <input
+            type="text"
+            inputMode="decimal"
+            className={styles.multiplyInput}
+            placeholder="0"
+            value={mulB}
+            onChange={(e) => setMulB(e.target.value)}
+            aria-label="Second value"
+          />
+          <div className={styles.multiplyResult}>
+            <span className={styles.multiplyResultLabel}>=</span>
+            <span className={styles.multiplyResultValue}>{mulProduct == null ? '—' : fmt(mulProduct)}</span>
+          </div>
+        </div>
       </div>
     </div>
   );
