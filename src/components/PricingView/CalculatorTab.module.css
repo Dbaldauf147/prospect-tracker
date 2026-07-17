@@ -2,6 +2,9 @@
   padding: 1.25rem;
   display: flex;
   justify-content: center;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
 }
 
 .calc {
@@ -103,4 +106,88 @@
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
   text-align: center;
+}
+
+/* "Multiply one item by another" helper, sitting beside the calculator. */
+.multiply {
+  width: 100%;
+  max-width: 220px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+  overflow: hidden;
+  align-self: stretch;
+}
+
+.multiplyTitle {
+  background: #f1f5f9;
+  padding: 0.55rem 0.85rem;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.multiplyBody {
+  padding: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.multiplyInput {
+  width: 100%;
+  box-sizing: border-box;
+  height: 44px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #fdf6e3;
+  padding: 0 0.7rem;
+  font-family: inherit;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #0f172a;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+}
+
+.multiplyInput:focus {
+  border-color: var(--color-accent, #2563eb);
+  background: #fff;
+}
+
+.multiplySign {
+  text-align: center;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #4338ca;
+  line-height: 1;
+}
+
+.multiplyResult {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.2rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.multiplyResultLabel {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--color-text-muted);
+}
+
+.multiplyResultValue {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
