@@ -246,6 +246,8 @@ function App() {
         onToggleDailyLog={() => updateSettings({ dailyLogEnabled: !dailyLogEnabled })}
         onToggleWhatToDoToday={() => updateSettings({ whatToDoTodayEnabled: !whatToDoTodayEnabled })}
         issuesCount={openIssuesCount}
+        prospects={prospects}
+        onSelectProspect={handleSelect}
       />
       <div className="main">
         {(view === 'table' || view === 'kanban') && (

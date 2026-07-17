@@ -1,7 +1,114 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import styles from './Sidebar.module.css';
 
-export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, onOpenCdmName, onOpenDailyLog, isAdmin = false, dailyLogEnabled = true, whatToDoTodayEnabled = true, onToggleDailyLog, onToggleWhatToDoToday, issuesCount = 0 }) {
+// Predictive company search shown in the sidebar header (replaces the old
+// "Sales Pipeline" subtitle). Type a company name and pick a match to open its
+// account popup via onSelectProspect — the same handler the rest of the app
+// uses. Matches prefer names that start with the query, then names that contain
+// it; capped so the dropdown stays short.
+function CompanySearch({ prospects = [], onSelectProspect }) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const wrapRef = useRef(null);
+
+  // One entry per company (deduped by lowercased name, first prospect wins).
+  const companies = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const p of prospects) {
+      const name = String(p?.company || '').trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(p);
+    }
+    return out;
+  }, [prospects]);
+
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const starts = [];
+    const includes = [];
+    for (const p of companies) {
+      const name = String(p.company).toLowerCase();
+      if (name.startsWith(q)) starts.push(p);
+      else if (name.includes(q)) includes.push(p);
+    }
+    const byName = (a, b) => String(a.company).localeCompare(String(b.company));
+    starts.sort(byName);
+    includes.sort(byName);
+    return [...starts, ...includes].slice(0, 8);
+  }, [companies, query]);
+
+  useEffect(() => { setActive(0); }, [query]);
+
+  // Close the dropdown when clicking outside the search.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => { if (!wrapRef.current?.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  function choose(p) {
+    if (!p) return;
+    onSelectProspect?.(p);
+    setQuery('');
+    setOpen(false);
+  }
+
+  function onKeyDown(e) {
+    if (!open && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) { setOpen(true); return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, Math.max(matches.length - 1, 0))); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a - 1, 0)); }
+    else if (e.key === 'Enter') { if (matches[active]) { e.preventDefault(); choose(matches[active]); } }
+    else if (e.key === 'Escape') { setOpen(false); }
+  }
+
+  const showDropdown = open && query.trim().length > 0;
+
+  return (
+    <div className={styles.searchWrap} ref={wrapRef}>
+      <input
+        className={styles.searchInput}
+        type="text"
+        placeholder="Search companies…"
+        value={query}
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+        onFocus={() => { if (query.trim()) setOpen(true); }}
+        onKeyDown={onKeyDown}
+        aria-label="Search companies"
+        autoComplete="off"
+      />
+      {showDropdown && (
+        <div className={styles.searchDropdown} role="listbox">
+          {matches.length > 0 ? matches.map((p, i) => (
+            <button
+              key={p.id ?? p.company}
+              type="button"
+              role="option"
+              aria-selected={i === active}
+              className={i === active ? `${styles.searchItem} ${styles.searchItemActive}` : styles.searchItem}
+              onMouseEnter={() => setActive(i)}
+              onClick={() => choose(p)}
+              title={p.company}
+            >
+              {p.company}
+              {p.status ? <span className={styles.searchItemSub}>{p.status}</span> : null}
+            </button>
+          )) : (
+            <div className={styles.searchEmpty}>No companies match &ldquo;{query.trim()}&rdquo;.</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, onOpenCdmName, onOpenDailyLog, isAdmin = false, dailyLogEnabled = true, whatToDoTodayEnabled = true, onToggleDailyLog, onToggleWhatToDoToday, issuesCount = 0, prospects = [], onSelectProspect }) {
   const initials = user?.displayName
     ? user.displayName.split(' ').map(n => n[0]).join('').toUpperCase()
     : user?.email?.[0]?.toUpperCase() || '?';
@@ -52,7 +159,7 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
     <div className={styles.sidebar}>
       <div className={styles.logo}>
         <div className={styles.logoText}>Prospect Tracker</div>
-        <div className={styles.logoSub}>Sales Pipeline</div>
+        <CompanySearch prospects={prospects} onSelectProspect={onSelectProspect} />
       </div>
 
       <nav className={styles.nav}>
