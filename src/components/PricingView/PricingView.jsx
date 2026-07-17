@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
+import { sanitizeExcelWorkbook, sanitizeSheetJsWorkbook } from '../../utils/exportSanitize.js';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer } from 'recharts';
 import styles from './PricingView.module.css';
 import { useAuth } from '../../contexts/AuthContext';
@@ -2883,6 +2884,7 @@ export function PricingView({ settings } = {}) {
     const stateWs = XLSX.utils.aoa_to_sheet(stateRows);
     XLSX.utils.book_append_sheet(wb, stateWs, STATE_SHEET_NAME);
 
+    sanitizeSheetJsWorkbook(wb);
     XLSX.writeFile(wb, `pricing-markup-${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
@@ -2984,6 +2986,7 @@ export function PricingView({ settings } = {}) {
     const sheetName = (`Monthly Costs ${opt.sheetName || `Option ${opt.optionNumber}`}`).slice(0, 31);
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
     const slug = (opt.sheetName || `Option-${opt.optionNumber}`).replace(/[^a-zA-Z0-9-]+/g, '-');
+    sanitizeSheetJsWorkbook(wb);
     XLSX.writeFile(wb, `Monthly-Costs-${slug}-${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
@@ -3208,6 +3211,7 @@ export function PricingView({ settings } = {}) {
       row += 3;
     });
 
+    sanitizeExcelWorkbook(wb);
     const buf = await wb.xlsx.writeBuffer();
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);

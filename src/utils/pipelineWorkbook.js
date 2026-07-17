@@ -339,6 +339,8 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
   });
 }
 
+import { sanitizeExcelWorkbook, stripDashes } from './exportSanitize.js';
+
 export async function downloadPipelineWorkbook(p) {
   const exceljs = await import('exceljs');
   const Workbook = exceljs.Workbook || (exceljs.default && exceljs.default.Workbook);
@@ -580,13 +582,16 @@ export async function downloadPipelineWorkbook(p) {
   } // end multi-sheet layout
 
   // ── Download (repo-standard blob-anchor idiom) ────────────────────────
+  // Strip em dashes from every cell so the exported report reads with plain
+  // hyphens (titles, banners, "—" placeholders, etc.).
+  sanitizeExcelWorkbook(wb);
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   const stamp = (p.generatedAt || new Date()).toISOString().slice(0, 10);
   a.href = url;
-  a.download = `Pipeline Report${p.layout === 'single' ? ' (1 page)' : ''} — ${stamp}.xlsx`;
+  a.download = stripDashes(`Pipeline Report${p.layout === 'single' ? ' (1 page)' : ''} — ${stamp}.xlsx`);
   document.body.appendChild(a);
   a.click();
   a.remove();

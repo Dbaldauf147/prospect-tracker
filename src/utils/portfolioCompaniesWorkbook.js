@@ -9,6 +9,8 @@
 // The sector-scoring helpers below are exported too, since ProspectModal
 // reuses them elsewhere (Fit Tier rendering, ranking previews).
 
+import { sanitizeExcelWorkbook } from './exportSanitize.js';
+
 export const SECTOR_SCORES = {
   'Industrial / Manufacturing': 9.5,
   'Data Centers': 9.3,
@@ -614,6 +616,7 @@ export async function downloadPortfolioCompaniesWorkbook({
                     addKV('Industry keywords', 'Matching is substring-based and may mis-classify broad terms. Review the Fit Tier column and correct the Industry text if needed.');
                     addKV('Missing values', 'Blank energy / sites / year cells contribute 0 to their component, never negative.');
 
+                    sanitizeExcelWorkbook(wb);
                     const buf = await wb.xlsx.writeBuffer();
                     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
                     const url = URL.createObjectURL(blob);

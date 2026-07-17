@@ -8,6 +8,7 @@ import { createPortal } from 'react-dom';
 import styles from './PipelineView.module.css';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
+import { sanitizeSheetJsWorkbook } from '../../utils/exportSanitize.js';
 import { loadDealsList } from '../../utils/dealsStore';
 import { loadDealClientMap } from '../../utils/dealClientMap';
 import { loadClientManagerMap, loadClientUntrackedMap, loadClientStatusMap } from '../../utils/clientManagerStore';
@@ -613,6 +614,7 @@ async function exportBreakdown(data) {
   const slug = String(data.title || 'live-value')
     .replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 40).toLowerCase() || 'live-value';
   const stamp = new Date().toISOString().slice(0, 10);
+  sanitizeSheetJsWorkbook(wb);
   XLSX.writeFile(wb, `pipeline-${slug}-${stamp}.xlsx`);
   } catch (err) {
     console.error('Pipeline breakdown export failed', err);
