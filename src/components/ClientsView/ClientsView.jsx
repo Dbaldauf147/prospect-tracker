@@ -329,11 +329,128 @@ function ContractTable({ deals }) {
   );
 }
 
+// A deal needs a post-sale follow-up when its "Follow Up On Sale" cell is
+// blank (or a placeholder dash / N/A). Mirrors how the Deals subtab stores
+// that date column so the two agree on what counts as "no value".
+function isBlankFollowUp(row) {
+  const v = String(row?.['Follow Up On Sale'] ?? '').trim();
+  if (!v) return true;
+  return ['-', '—', 'n/a', '#n/a'].includes(v.toLowerCase());
+}
+
+// Columns shown on the Post-Sale Follow-Up subtab.
+const POST_SALE_COLUMNS = [
+  { key: 'Client Name',       label: 'Client', minWidth: 200 },
+  { key: 'Agreement Name',    label: 'Agreement Name', minWidth: 360 },
+  { key: 'End Date',          label: 'End Date', minWidth: 120 },
+  { key: '__daysToEnd',       label: 'Days to End', minWidth: 110 },
+  { key: 'Closed Won',        label: 'Closed Won', minWidth: 110 },
+  { key: 'Follow Up On Sale', label: 'Follow Up On Sale', minWidth: 170 },
+];
+
+// "Post-Sale Follow-Up" subtab: every uploaded deal missing a Follow Up On
+// Sale value, flagged for attention. Sourced from the same uploaded deals
+// list the Deals subtab shows (so it stays in sync with that data).
+function PostSaleFollowUpView({ deals }) {
+  const [query, setQuery] = useState('');
+
+  const flagged = useMemo(() => {
+    const out = [];
+    for (const d of (deals || [])) {
+      const client = String(d['Client Name'] ?? d['Client Name '] ?? '').trim();
+      const agreement = String(d['Agreement Name'] ?? '').trim();
+      if (!client && !agreement) continue;  // skip blank spacer rows
+      if (!isBlankFollowUp(d)) continue;     // only deals still needing follow-up
+      out.push(d);
+    }
+    // Soonest End Date first; rows with no End Date sink to the bottom.
+    out.sort((a, b) => {
+      const da = asDate(a['End Date']);
+      const db = asDate(b['End Date']);
+      if (!da && !db) return 0;
+      if (!da) return 1;
+      if (!db) return -1;
+      return da.getTime() - db.getTime();
+    });
+    return out;
+  }, [deals]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return flagged;
+    return flagged.filter(d =>
+      String(d['Client Name'] ?? d['Client Name '] ?? '').toLowerCase().includes(q)
+      || String(d['Agreement Name'] ?? '').toLowerCase().includes(q));
+  }, [flagged, query]);
+
+  return (
+    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '1rem 1.25rem 1.5rem' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+        <div>
+          <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>Post-Sale Follow-Up</h2>
+          <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
+            Deals from the Deals subtab with no <strong>Follow Up On Sale</strong> value — these still need a post-sale follow-up.
+          </div>
+        </div>
+        <input
+          type="text"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="Filter by client or agreement…"
+          style={{ flex: '0 1 320px', padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
+        />
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: '#64748B', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+        <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 3, background: '#FEE2E2', border: '1px solid #FCA5A5', flexShrink: 0 }} />
+        <span><strong style={{ color: '#B91C1C' }}>{filtered.length}</strong> deal{filtered.length === 1 ? '' : 's'} flagged — missing a Follow Up On Sale value.</span>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div style={{ padding: '0.75rem 0', color: '#64748B', fontSize: '0.8rem', fontStyle: 'italic' }}>
+          {deals && deals.length
+            ? 'Every uploaded deal has a Follow Up On Sale value — nothing to follow up on.'
+            : 'No deals uploaded yet. Upload contract data on the Deals subtab.'}
+        </div>
+      ) : (
+        <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: 8 }}>
+          <table style={{ borderCollapse: 'collapse', fontSize: '0.72rem', width: 'max-content', minWidth: '100%' }}>
+            <thead>
+              <tr style={{ background: '#F1F5F9' }}>
+                {POST_SALE_COLUMNS.map(col => (
+                  <th key={col.key} style={{ padding: '0.4rem 0.6rem', textAlign: 'left', color: '#475569', fontWeight: 700, fontSize: '0.66rem', whiteSpace: 'nowrap', borderBottom: '1px solid #CBD5E1', minWidth: col.minWidth }}>
+                    {col.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((d, i) => (
+                <tr key={i} style={{ background: '#FEF2F2', borderBottom: '1px solid #FEE2E2' }}>
+                  {POST_SALE_COLUMNS.map(col => (
+                    <td key={col.key} style={{ padding: '0.35rem 0.6rem', whiteSpace: 'nowrap', minWidth: col.minWidth }}>
+                      {col.key === '__daysToEnd'
+                        ? renderDaysToEnd(d['End Date'], isInactiveAgreement(d))
+                        : col.key === 'Follow Up On Sale'
+                          ? <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: '#FEE2E2', color: '#B91C1C' }}>Missing</span>
+                          : renderContractCell(col.key, d[col.key] ?? d[`${col.key} `])}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const SUBTAB_STORAGE_KEY = 'clients-view:active-subtab';
 function readSavedSubtab() {
   try {
     const s = localStorage.getItem(SUBTAB_STORAGE_KEY);
-    if (s === 'clients' || s === 'oldclients' || s === 'deals' || s === 'commissions') return s;
+    if (s === 'clients' || s === 'oldclients' || s === 'deals' || s === 'commissions' || s === 'postsale') return s;
   } catch {}
   return 'clients';
 }
@@ -430,7 +547,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
   // subtab — same-window upload / mapping changes on the Deals subtab
   // don't fire storage.
   useEffect(() => {
-    if (subtab === 'clients' || subtab === 'oldclients') {
+    if (subtab === 'clients' || subtab === 'oldclients' || subtab === 'postsale') {
       setDealsList(loadDealsList().data);
       setClientMap(loadDealClientMap());
       setManagerMap(loadClientManagerMap());
@@ -859,6 +976,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
         { key: 'oldclients', label: 'Old Clients' },
         { key: 'deals', label: 'Deals' },
         { key: 'commissions', label: 'Commissions' },
+        { key: 'postsale', label: 'Post-Sale Follow-Up' },
       ].map(t => {
         const active = subtab === t.key;
         return (
@@ -900,6 +1018,15 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
         {subtabBar}
         <CommissionsView settings={settings} updateSettings={updateSettings} prospects={prospects} />
+      </div>
+    );
+  }
+
+  if (subtab === 'postsale') {
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+        {subtabBar}
+        <PostSaleFollowUpView deals={dealsList} />
       </div>
     );
   }
