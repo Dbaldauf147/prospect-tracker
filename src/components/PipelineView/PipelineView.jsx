@@ -661,10 +661,11 @@ function notQuotedRows(deals, head) {
       fmtShortDate(o.closeDate),
       o.quoted ? `${o.quotedDays}d` : '—',
     ], {
-      // Excel export drops deals with no BFO Opportunity Name and adds a
-      // Reason Not Sold column; the on-screen panel keeps every row.
+      // Excel export drops deals with no BFO Opportunity Name and adds
+      // Quoted Amount / Quoted Date and a Reason Not Sold column; the
+      // on-screen panel keeps every row and its compact columns.
       exportSource: deals.filter(o => (o.bfoName || '').trim() !== ''),
-      exportColumns: ['Account', 'BFO Opportunity Name', 'Scope', 'Result', 'Close', 'Quoted days', 'Not quoted', 'Reason Not Sold'],
+      exportColumns: ['Account', 'BFO Opportunity Name', 'Scope', 'Result', 'Close', 'Quoted days', 'Quoted Amount', 'Quoted Date', 'Not quoted', 'Reason Not Sold'],
       exportMapFn: o => [
         o.account,
         o.bfoName || '',
@@ -672,6 +673,8 @@ function notQuotedRows(deals, head) {
         o.stage,
         fmtShortDate(o.closeDate),
         o.quoted ? o.quotedDays : 0,
+        Number.isFinite(o.quotedAmount) ? fmtMoney(Math.round(o.quotedAmount)) : '',
+        o.quotedDate ? fmtShortDate(o.quotedDate) : '',
         o.quoted ? 'No' : 'Yes',
         o.reasonNotSold || '',
       ],
@@ -1656,6 +1659,8 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
         ts,
         quotedDays,
         quoted: quotedDays > 0,
+        quotedAmount: parseMoney(r['Quoted Amount']),
+        quotedDate: String(r['Quoted On'] || r['Quoted Date'] || '').trim(),
       };
       yearDeals.push(entry);
       if (d.getMonth() === thisMonth) monthDeals.push(entry);
