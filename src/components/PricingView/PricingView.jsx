@@ -11,6 +11,7 @@ import { PricingConversions } from './PricingConversions';
 import { CompareTab } from './CompareTab';
 import { BrokerFeesTab } from './BrokerFeesTab';
 import { S2CTab } from './S2CTab';
+import { CalculatorTab } from './CalculatorTab';
 import { buildPricingOptionSnapshot } from '../../utils/pricingOptionCalc';
 import { setOppPricingSnapshot } from '../../utils/oppsPricingSnapshot';
 import {
@@ -1618,7 +1619,7 @@ export function PricingView({ settings } = {}) {
   const [summaryColVisibility, setSummaryColVisibility] = useState({});
   const [colMenuOpen, setColMenuOpen] = useState(false);
   const [summaryMenuOpen, setSummaryMenuOpen] = useState(false);
-  const [pageSubtab, setPageSubtab] = useState('pricing'); // 'pricing' | 'linkedTo' | 'options' | 'compare' | 'brokerFees' | 's2c'
+  const [pageSubtab, setPageSubtab] = useState('pricing'); // 'pricing' | 'linkedTo' | 'options' | 'compare' | 'brokerFees' | 's2c' | 'calculator'
   const [optionsTabData, setOptionsTabData] = useState(null); // OptionsTab state: array of { name, years, escPct, rows: [...] }
   const [compareTabData, setCompareTabData] = useState(null); // CompareTab state: { currentLabel, nextLabel, current: [...], next: [...] }
   const [brokerFeesData, setBrokerFeesData] = useState(null); // BrokerFeesTab state: array of { company, loadEp, feeEp, rfps, loadNg, feeNg }
@@ -1724,7 +1725,7 @@ export function PricingView({ settings } = {}) {
         if (saved.colVisibility) setColVisibility(saved.colVisibility);
         if (saved.summaryColWidths) setSummaryColWidths(saved.summaryColWidths);
         if (saved.summaryColVisibility) setSummaryColVisibility(saved.summaryColVisibility);
-        if (saved.pageSubtab === 'pricing' || saved.pageSubtab === 'linkedTo' || saved.pageSubtab === 'options' || saved.pageSubtab === 'compare' || saved.pageSubtab === 'brokerFees' || saved.pageSubtab === 's2c') setPageSubtab(saved.pageSubtab);
+        if (saved.pageSubtab === 'pricing' || saved.pageSubtab === 'linkedTo' || saved.pageSubtab === 'options' || saved.pageSubtab === 'compare' || saved.pageSubtab === 'brokerFees' || saved.pageSubtab === 's2c' || saved.pageSubtab === 'calculator') setPageSubtab(saved.pageSubtab);
         if (Array.isArray(saved.s2cTabData)) setS2cTabData(saved.s2cTabData);
         if (Array.isArray(saved.optionsTabData)) setOptionsTabData(saved.optionsTabData);
         if (saved.compareTabData && typeof saved.compareTabData === 'object') setCompareTabData(saved.compareTabData);
@@ -3451,6 +3452,13 @@ export function PricingView({ settings } = {}) {
         >
           S2C
         </button>
+        <button
+          type="button"
+          className={pageSubtab === 'calculator' ? styles.subtabActive : styles.subtab}
+          onClick={() => setPageSubtab('calculator')}
+        >
+          Calculator
+        </button>
       </div>
 
       {pageSubtab === 'linkedTo' && (
@@ -3510,6 +3518,8 @@ export function PricingView({ settings } = {}) {
           setRows={setS2cTabData}
         />
       )}
+
+      {pageSubtab === 'calculator' && <CalculatorTab />}
 
       <div className={styles.body} style={pageSubtab !== 'pricing' ? { display: 'none' } : undefined}>
         {!workbook && (
