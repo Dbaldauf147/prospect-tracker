@@ -3,7 +3,7 @@
 // stored together in a single IndexedDB record keyed `current` so
 // the layout persists across reloads.
 
-import { Component, createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { Component, createContext, Fragment, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import styles from './PipelineView.module.css';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
@@ -193,6 +193,11 @@ const DEFAULT_STATE = {
     { key: 's4', label: 'Stage 4',                       activeGoal: 15, activeActual: 13, dealSizeGoal: 150000, dealSizeActual: 154923, pipelineGoal: 2250000, pipelineActual: 1135000, closeGoal: 0.25, closeActual: 0.04, targetProj: 562500, lifeGoal: 90,  lifeActual: 174 },
     { key: 's3', label: 'Stage 3',                       activeGoal: 3,  activeActual: 7,  dealSizeGoal: 150000, dealSizeActual: 153457, pipelineGoal: 450000,  pipelineActual: 1687244, closeGoal: 0.10, closeActual: 0.04, targetProj: 45000,  lifeGoal: 60,  lifeActual: 273 },
   ],
+
+  // Services tracked in the "Service Exploration Coverage" table (canonical
+  // service keys). Empty by default — the user adds the services they want to
+  // watch, and each row's client breakdown stays collapsed until expanded.
+  coverageServices: [],
 
   currentClientCount: 5,
   currentClientAmt: 320500,
@@ -773,11 +778,34 @@ function isServiceExplored(prospect, serviceKey) {
   return !!v && v !== '-';
 }
 
-// "Service Exploration Coverage" — pick a service and see what share of your
-// active clients have explored it (per their company page's Services Explored
-// section). The client set mirrors the renewals table below: Status = Client
-// and matching the configured CDM (or all clients when no CDM is set).
-function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, onSelectProspect }) {
+// Coverage of one service across a client list: who's explored it (with each
+// client's status) and who hasn't, plus the rolled-up count / percentage.
+function computeServiceCoverage(clients, serviceKey) {
+  const explored = [];
+  const notExplored = [];
+  for (const p of clients) {
+    if (serviceKey && isServiceExplored(p, serviceKey)) {
+      explored.push({ p, status: (p.servicesExplored || {})[serviceKey] });
+    } else {
+      notExplored.push({ p });
+    }
+  }
+  const byName = (a, b) => String(a.p.company || '').localeCompare(String(b.p.company || ''));
+  explored.sort(byName);
+  notExplored.sort(byName);
+  const total = clients.length;
+  const pct = total ? Math.round((explored.length / total) * 100) : 0;
+  return { explored, notExplored, total, pct };
+}
+
+// "Service Exploration Coverage" — a table of services (one row each) showing
+// what share of your active clients have explored each, per their company
+// page's Services Explored section. Add services with the picker below the
+// table; each row's client breakdown stays hidden until the row is expanded.
+// The client set mirrors the renewals table: Status = Client and matching the
+// configured CDM (or all clients when no CDM is set). The tracked-service list
+// is passed in from persisted Pipeline state via `services` / `onChangeServices`.
+function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, onSelectProspect, services = [], onChangeServices }) {
   // Service catalogue for the picker — the user's custom categories when set,
   // otherwise the code defaults; hidden services dropped, renames applied for
   // display. Options stay keyed by the canonical service name so the lookup
@@ -798,19 +826,13 @@ function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, o
       .filter(cat => cat.items.length > 0);
   }, [settings.hiddenServices, settings.serviceRenames, settings.customServiceCategories]);
 
-  const firstServiceKey = catalog[0]?.items[0]?.key || '';
-  const [selected, setSelected] = useState(firstServiceKey);
-  // If the catalogue changes (e.g. the selected service gets hidden/renamed
-  // away) and the current pick is gone, fall back to the first available.
-  const selectedValid = catalog.some(c => c.items.some(it => it.key === selected));
-  const activeKey = selectedValid ? selected : firstServiceKey;
-  const activeLabel = (() => {
-    for (const cat of catalog) {
-      const hit = cat.items.find(it => it.key === activeKey);
-      if (hit) return hit.label;
-    }
-    return activeKey;
-  })();
+  // Canonical key -> display label, honoring renames. Falls back to the raw
+  // key so a tracked service that's since been hidden still shows a name.
+  const labelOf = useMemo(() => {
+    const m = new Map();
+    for (const cat of catalog) for (const it of cat.items) m.set(it.key, it.label);
+    return (key) => m.get(key) || key;
+  }, [catalog]);
 
   // Active clients: Status = Client, and matching the configured CDM. When no
   // CDM is configured, include every client so the table still works.
@@ -821,98 +843,170 @@ function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, o
     });
   }, [prospects, cdmName]);
 
-  const coverage = useMemo(() => {
-    const explored = [];
-    const notExplored = [];
-    for (const p of clients) {
-      if (activeKey && isServiceExplored(p, activeKey)) {
-        explored.push({ p, status: (p.servicesExplored || {})[activeKey] });
-      } else {
-        notExplored.push({ p });
-      }
-    }
-    const byName = (a, b) => String(a.p.company || '').localeCompare(String(b.p.company || ''));
-    explored.sort(byName);
-    notExplored.sort(byName);
-    const total = clients.length;
-    const pct = total ? Math.round((explored.length / total) * 100) : 0;
-    return { explored, notExplored, total, pct };
-  }, [clients, activeKey]);
+  // Coverage for every tracked service, computed once per client/service change.
+  const coverageByService = useMemo(() => {
+    const m = new Map();
+    for (const key of services) m.set(key, computeServiceCoverage(clients, key));
+    return m;
+  }, [clients, services]);
+
+  // Which rows are expanded to show their client breakdown. Local-only (not
+  // persisted) — every row starts collapsed so the breakdown is hidden by
+  // default.
+  const [expanded, setExpanded] = useState(() => new Set());
+  function toggleRow(key) {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
+  function addService(key) {
+    if (!key || services.includes(key) || !onChangeServices) return;
+    onChangeServices([...services, key]);
+  }
+  function removeService(key) {
+    if (!onChangeServices) return;
+    onChangeServices(services.filter(s => s !== key));
+    setExpanded(prev => { const n = new Set(prev); n.delete(key); return n; });
+  }
 
   function openProspect(p) {
     if (onSelectProspect && p) onSelectProspect(p);
   }
 
+  const tracked = new Set(services);
+  // Add-picker options: every catalogue service not already in the table.
+  const addCatalog = catalog
+    .map(cat => ({ name: cat.name, items: cat.items.filter(it => !tracked.has(it.key)) }))
+    .filter(cat => cat.items.length > 0);
+  const noClients = clients.length === 0;
+
   return (
     <div className={styles.section}>
       <div className={styles.sectionTitle}><EL id="svc-cov-title">Service Exploration Coverage</EL></div>
       <div className={styles.svcCovBody}>
-        <div className={styles.svcCovControls}>
-          <label className={styles.svcCovLabel} htmlFor="svc-cov-select">Service</label>
+        {noClients && (
+          <div className={styles.svcCovEmpty}>
+            No active clients found{cdmName ? ` for ${cdmName}` : ''}.
+          </div>
+        )}
+
+        <div className={styles.scrollX}>
+          <table className={styles.svcCovTable}>
+            <thead>
+              <tr>
+                <th className={styles.svcCovThService}><EL id="svc-cov-col-service">Service</EL></th>
+                <th className={styles.svcCovThNum}><EL id="svc-cov-col-explored">Explored</EL></th>
+                <th><EL id="svc-cov-col-coverage">Coverage</EL></th>
+                <th aria-label="Remove" className={styles.svcCovThRemove}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {services.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className={styles.svcCovTableEmpty}>
+                    No services tracked yet — add one below to see how many of your clients have explored it.
+                  </td>
+                </tr>
+              ) : services.map(key => {
+                const cov = coverageByService.get(key) || { explored: [], notExplored: [], total: clients.length, pct: 0 };
+                const isOpen = expanded.has(key);
+                return (
+                  <Fragment key={key}>
+                    <tr
+                      className={styles.svcCovRow}
+                      onClick={() => toggleRow(key)}
+                      title={isOpen ? 'Collapse client breakdown' : 'Expand to see which clients have explored this'}
+                    >
+                      <td className={styles.svcCovServiceCell}>
+                        <span className={`${styles.svcCovChevron} ${isOpen ? styles.svcCovChevronOpen : ''}`}>&#9656;</span>
+                        {labelOf(key)}
+                      </td>
+                      <td className={styles.svcCovNumCell}>{cov.explored.length} / {cov.total}</td>
+                      <td>
+                        <div className={styles.svcCovRowCoverage}>
+                          <div className={styles.svcCovBarTrack}>
+                            <div className={styles.svcCovBarFill} style={{ width: `${cov.pct}%` }} />
+                          </div>
+                          <span className={styles.svcCovRowPct}>{cov.pct}%</span>
+                        </div>
+                      </td>
+                      <td className={styles.svcCovRemoveCell}>
+                        <button
+                          type="button"
+                          className={styles.svcCovRemoveBtn}
+                          title="Remove this service from the table"
+                          onClick={(e) => { e.stopPropagation(); removeService(key); }}
+                        >&times;</button>
+                      </td>
+                    </tr>
+                    {isOpen && (
+                      <tr className={styles.svcCovDetailRow}>
+                        <td colSpan={4}>
+                          <div className={styles.svcCovLists}>
+                            <div className={styles.svcCovCol}>
+                              <div className={styles.svcCovListHead}>Explored ({cov.explored.length})</div>
+                              <div className={styles.svcCovChips}>
+                                {cov.explored.length ? cov.explored.map(({ p, status }) => (
+                                  <span
+                                    key={p.id}
+                                    className={`${styles.svcCovChip} ${styles.svcCovChipYes}`}
+                                    onClick={(e) => { e.stopPropagation(); openProspect(p); }}
+                                    title={`${p.company} — ${status}`}
+                                  >
+                                    {p.company}
+                                    <span className={styles.svcCovChipStatus}>{status}</span>
+                                  </span>
+                                )) : <span className={styles.svcCovNone}>No clients have explored this service yet.</span>}
+                              </div>
+                            </div>
+                            <div className={styles.svcCovCol}>
+                              <div className={styles.svcCovListHead}>Not yet explored ({cov.notExplored.length})</div>
+                              <div className={styles.svcCovChips}>
+                                {cov.notExplored.length ? cov.notExplored.map(({ p }) => (
+                                  <span
+                                    key={p.id}
+                                    className={`${styles.svcCovChip} ${styles.svcCovChipNo}`}
+                                    onClick={(e) => { e.stopPropagation(); openProspect(p); }}
+                                    title={`${p.company} — not explored`}
+                                  >
+                                    {p.company}
+                                  </span>
+                                )) : <span className={styles.svcCovNone}>Every client has explored this service.</span>}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div className={styles.svcCovAddRow}>
+          <label className={styles.svcCovLabel} htmlFor="svc-cov-add">Add service</label>
           <select
-            id="svc-cov-select"
+            id="svc-cov-add"
             className={styles.svcCovSelect}
-            value={activeKey}
-            onChange={(e) => setSelected(e.target.value)}
+            value=""
+            disabled={addCatalog.length === 0}
+            onChange={(e) => { addService(e.target.value); e.target.value = ''; }}
           >
-            {catalog.map(cat => (
+            <option value="" disabled>
+              {addCatalog.length === 0 ? 'All services added' : 'Choose a service…'}
+            </option>
+            {addCatalog.map(cat => (
               <optgroup key={cat.name} label={cat.name}>
                 {cat.items.map(it => <option key={it.key} value={it.key}>{it.label}</option>)}
               </optgroup>
             ))}
           </select>
-          <div className={styles.svcCovStat}>
-            <span className={styles.svcCovPct}>{coverage.pct}%</span>
-            <span className={styles.svcCovCount}>
-              {coverage.explored.length} of {coverage.total} client{coverage.total === 1 ? '' : 's'} explored
-            </span>
-          </div>
         </div>
-
-        {coverage.total === 0 ? (
-          <div className={styles.svcCovEmpty}>
-            No active clients found{cdmName ? ` for ${cdmName}` : ''}.
-          </div>
-        ) : (
-          <>
-            <div className={styles.svcCovBarTrack} title={`${coverage.pct}% of clients have explored ${activeLabel}`}>
-              <div className={styles.svcCovBarFill} style={{ width: `${coverage.pct}%` }} />
-            </div>
-            <div className={styles.svcCovLists}>
-              <div className={styles.svcCovCol}>
-                <div className={styles.svcCovListHead}>Explored ({coverage.explored.length})</div>
-                <div className={styles.svcCovChips}>
-                  {coverage.explored.length ? coverage.explored.map(({ p, status }) => (
-                    <span
-                      key={p.id}
-                      className={`${styles.svcCovChip} ${styles.svcCovChipYes}`}
-                      onClick={() => openProspect(p)}
-                      title={`${p.company} — ${status}`}
-                    >
-                      {p.company}
-                      <span className={styles.svcCovChipStatus}>{status}</span>
-                    </span>
-                  )) : <span className={styles.svcCovNone}>No clients have explored this service yet.</span>}
-                </div>
-              </div>
-              <div className={styles.svcCovCol}>
-                <div className={styles.svcCovListHead}>Not yet explored ({coverage.notExplored.length})</div>
-                <div className={styles.svcCovChips}>
-                  {coverage.notExplored.length ? coverage.notExplored.map(({ p }) => (
-                    <span
-                      key={p.id}
-                      className={`${styles.svcCovChip} ${styles.svcCovChipNo}`}
-                      onClick={() => openProspect(p)}
-                      title={`${p.company} — not explored`}
-                    >
-                      {p.company}
-                    </span>
-                  )) : <span className={styles.svcCovNone}>Every client has explored this service.</span>}
-                </div>
-              </div>
-            </div>
-          </>
-        )}
       </div>
     </div>
   );
@@ -964,6 +1058,11 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           // Label overrides must be a plain object; anything else falls back to
           // "no overrides" so a corrupt value can't crash the header render.
           labels: (saved.labels && typeof saved.labels === 'object' && !Array.isArray(saved.labels)) ? saved.labels : {},
+          // Coverage services must be an array of non-empty strings; a corrupt
+          // value falls back to "none tracked" so the table can't crash.
+          coverageServices: Array.isArray(saved.coverageServices)
+            ? saved.coverageServices.filter(s => typeof s === 'string' && s)
+            : [],
         }));
         const bfoSaved = await dbGet(BFO_STORE, BFO_KEY);
         if (!cancelled && bfoSaved) setBfo(bfoSaved);
@@ -2231,6 +2330,8 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           cdmName={cdmName}
           settings={settings}
           onSelectProspect={onSelectProspect}
+          services={state.coverageServices || []}
+          onChangeServices={(next) => setField('coverageServices', next)}
         />
 
         {/* Client renewals — active clients whose soonest contract End Date
