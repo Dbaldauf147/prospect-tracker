@@ -896,6 +896,21 @@ function oppMissingMarginApproval(row) {
   return bfoFieldMissing(row?.['Margin Email Date - Sales Leader Review Date']);
 }
 
+// "Credit Approval Needed" flag: a larger deal (Deal Size / Quoted Amount
+// above $50,000) that has reached Contracting or Agreement Sent but still has
+// a blank Credit approval cell. Blank sentinels ("-", "#N/A", …) count as
+// missing. Deal Size that doesn't parse to a number (blank, "TBD", …) can't
+// clear the $50k bar, so it never raises this flag.
+const CREDIT_APPROVAL_STAGES_SET = new Set(['Contracting', 'Agreement Sent']);
+const CREDIT_APPROVAL_MIN_DEAL_SIZE = 50000;
+function oppNeedsCreditApproval(row) {
+  const stage = String(row?.['Stage'] || '').trim();
+  if (!CREDIT_APPROVAL_STAGES_SET.has(stage)) return false;
+  const dealSize = Number(String(row?.['Quoted Amount'] ?? '').replace(/[^0-9.-]/g, ''));
+  if (!Number.isFinite(dealSize) || dealSize <= CREDIT_APPROVAL_MIN_DEAL_SIZE) return false;
+  return bfoFieldMissing(row?.['Credit approval']);
+}
+
 // One-shot Call-In ascending sort used during initial hydration. Rows
 // without a resolvable Call In sink to the bottom. A stable tiebreaker
 // (original index) keeps the order deterministic when many rows share
@@ -7690,6 +7705,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       if (oppMissingBfoAddress(row)) parts.push('Missing BFO Address');
       if (oppMissingQuotedAmount(row)) parts.push('Deal Size Missing');
       if (oppMissingMarginApproval(row)) parts.push('Missing Margin Approval');
+      if (oppNeedsCreditApproval(row)) parts.push('Credit Approval Needed');
       const stall = oppStageStall(row);
       if (stall && !row?._ignoreStallFlag) parts.push(`Stalled: ${stall.suggestion}`);
       return parts.join('; ');
@@ -7707,6 +7723,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         if (oppMissingBfoAddress(row)) n += 1;
         if (oppMissingQuotedAmount(row)) n += 1;
         if (oppMissingMarginApproval(row)) n += 1;
+        if (oppNeedsCreditApproval(row)) n += 1;
         if (oppStageStall(row) && !row?._ignoreStallFlag) n += 1;
         return n;
       },
@@ -7718,9 +7735,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         const missingAddr = oppMissingBfoAddress(row);
         const missingQuote = oppMissingQuotedAmount(row);
         const missingMargin = oppMissingMarginApproval(row);
+        const needsCredit = oppNeedsCreditApproval(row);
         const stall = oppStageStall(row);
         const ignored = !!row?._ignoreStallFlag;
-        if (!missingUsd && !missingBudgetTimeline && !missingAddr && !missingQuote && !missingMargin && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+        if (!missingUsd && !missingBudgetTimeline && !missingAddr && !missingQuote && !missingMargin && !needsCredit && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
         return (
           <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
             {missingUsd && (
@@ -7752,6 +7770,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 title={`Opp in "${String(row['Stage'] || '').trim()}" with no Margin Email Date - Sales Leader Review Date — get margin approval.`}
                 style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
               >⚠ Missing Margin Approval</span>
+            )}
+            {needsCredit && (
+              <span
+                title={`Deal Size over $50,000 in "${String(row['Stage'] || '').trim()}" with a blank Credit approval — get credit approval.`}
+                style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
+              >⚠ Credit Approval Needed</span>
             )}
             {stall && !ignored && (
               <>
