@@ -280,6 +280,32 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
     });
   }
 
+  // ── Strategic Accounts — My Accounts (Tier 1 / Tier 2) ──
+  gap();
+  title('Strategic Accounts — My Accounts');
+  const saCols = [[1, 5], [6, 7], [8, 9], [10, 11], [12, 13]];
+  const saHdr = ['Company', 'Tier', 'Status', 'Type', 'CDM'];
+  saHdr.forEach((h, i) => put(r, saCols[i][0], r, saCols[i][1], h, { ...HEAD, align: 'left' }));
+  r++;
+  const saRows = (p.strategicAccounts && p.strategicAccounts.rows) || [];
+  if (!saRows.length) {
+    put(r, 1, r, COLS, `No strategic (Tier 1 / Tier 2) accounts${p.cdmName ? ` for ${p.cdmName}` : ''}.`, { fg: SE_MUTED });
+    r++;
+  } else {
+    saRows.forEach((row, idx) => {
+      const zebra = idx % 2 === 1;
+      const tierTint = row.tier === 'Tier 1' ? { fill: OK_FILL, fg: OK_FG } : { fill: WARN_FILL, fg: WARN_FG };
+      const vals = [row.company || '—', row.tier || '—', row.status || '—', row.type || '—', row.cdm || '—'];
+      vals.forEach((v, i) => {
+        put(r, saCols[i][0], r, saCols[i][1], v === '' || v == null ? null : v, {
+          align: 'left', wrap: i === 0,
+          ...(i === 1 ? { bold: true, ...tierTint } : (zebra ? { zebra: true } : {})),
+        });
+      });
+      r++;
+    });
+  }
+
   // ── Strategy Notes ──
   gap();
   (p.notes || []).forEach(({ title: nt, text }) => {
