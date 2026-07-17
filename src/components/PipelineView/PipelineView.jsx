@@ -76,6 +76,26 @@ function parseMoney(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+// Stages that mean a deal was genuinely quoted. A closed deal that never
+// logged time in either of these counts as "not quoted" for the
+// "% of deals not Quoted" table.
+const QUOTE_STAGES = new Set(['Quoted', 'Agreement Sent']);
+
+// Total days a deal spent in the Quoted / Agreement Sent stages, read from
+// its `_stageHistory`. A closed deal (live Stage = Sold / Not Sold) carries
+// all of its Quoted / Agreement Sent time in history — the stage it left was
+// pushed there with the days it sat in it — so history alone is sufficient.
+// Returns 0 when the deal never logged any time in those stages.
+function quotedStageDays(r) {
+  let total = 0;
+  for (const h of (Array.isArray(r?._stageHistory) ? r._stageHistory : [])) {
+    if (!QUOTE_STAGES.has(String(h?.stage || '').trim())) continue;
+    const d = Number(h?.days);
+    if (Number.isFinite(d) && d > 0) total += d;
+  }
+  return total;
+}
+
 // Pull the leading stage digit from values like "6 - Negotiate to..."
 // Match BFO rows to the same Sales Stage labels the Excel formulas
 // hard-code, so the website's totals line up with the spreadsheet.
@@ -584,6 +604,35 @@ function closeRateRows(included, head) {
         o.scope || '',
         fmtShortDate(o.closeDate),
         o.amount > 0 ? fmtMoney(Math.round(o.amount)) : '—',
+      ],
+    }),
+  };
+}
+
+// Build a breakdown row list from a "% not Quoted" closed-deal array. Each
+// row shows whether the deal was quoted and how many days it logged in the
+// Quoted / Agreement Sent stages, so the popover doubles as an audit of
+// which closed deals fell on each side of the ratio.
+function notQuotedRows(deals, head) {
+  return {
+    head,
+    columns: ['Account', 'Result', 'Close', 'Quoted days'],
+    aligns: ['', '', '', 'num'],
+    ...mapRows(deals, o => [
+      o.account,
+      o.stage,
+      fmtShortDate(o.closeDate),
+      o.quoted ? `${o.quotedDays}d` : '—',
+    ], {
+      exportColumns: ['Account', 'BFO Opportunity Name', 'Scope', 'Result', 'Close', 'Quoted days', 'Not quoted'],
+      exportMapFn: o => [
+        o.account,
+        o.bfoName || '',
+        o.scope || '',
+        o.stage,
+        fmtShortDate(o.closeDate),
+        o.quoted ? o.quotedDays : 0,
+        o.quoted ? 'No' : 'Yes',
       ],
     }),
   };
@@ -1493,6 +1542,58 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
     return out;
   }, [oppsRecords]);
 
+  // % of closed deals that were never quoted. A deal counts as "quoted"
+  // when it logged at least one day in the Quoted or Agreement Sent stage
+  // (from its stage history); a closed deal (Sold / Not Sold) with no time
+  // in either stage is "not quoted". Split into the current calendar year
+  // and the current calendar month to feed the Actual Year / Actual Month
+  // cells. Pull-through opps are excluded, mirroring the Close Rate metrics.
+  // Returns null when the Opps cache has no closed deals this year, so the
+  // manual cells stay in place.
+  const oppsNotQuoted = useMemo(() => {
+    if (oppsRecords.length === 0) return null;
+    const now = new Date();
+    const thisYear = now.getFullYear();
+    const thisMonth = now.getMonth();
+    const PULL_THROUGH = /pull[\s-]?through/i;
+    const yearDeals = [];
+    const monthDeals = [];
+    for (const r of oppsRecords) {
+      const stage = (r.Stage || '').trim();
+      if (stage !== 'Sold' && stage !== 'Not Sold') continue;
+      const cd = r['Close Date'];
+      if (!cd) continue;
+      const ts = Date.parse(cd);
+      if (Number.isNaN(ts)) continue;
+      const d = new Date(ts);
+      if (d.getFullYear() !== thisYear) continue;
+      if (PULL_THROUGH.test(String(r.Scope || ''))) continue;
+      const quotedDays = quotedStageDays(r);
+      const entry = {
+        account: String(r.Account || '').trim() || '(no account)',
+        bfoName: bfoOppNameOf(r),
+        scope: String(r.Scope || '').trim(),
+        stage,
+        closeDate: cd,
+        ts,
+        quotedDays,
+        quoted: quotedDays > 0,
+      };
+      yearDeals.push(entry);
+      if (d.getMonth() === thisMonth) monthDeals.push(entry);
+    }
+    const summarize = (deals) => {
+      const total = deals.length;
+      if (total === 0) return null;
+      const notQuoted = deals.filter(e => !e.quoted).length;
+      const sorted = deals.slice().sort((a, b) => b.ts - a.ts);
+      return { total, notQuoted, pct: notQuoted / total, deals: sorted };
+    };
+    const year = summarize(yearDeals);
+    if (!year) return null;
+    return { year, month: summarize(monthDeals), thisYear };
+  }, [oppsRecords]);
+
   // Live Current Client vs Greenfield stats. Joins BFO Activity rows
   // to the Opps tab's Lead Source / Source via the BFO Opportunity
   // Name → Opps "BFO Link" map, then classifies each BFO opp using
@@ -1693,6 +1794,11 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
   // populated; falls back to the manually entered state.closedYTD.
   const effectiveClosedYTD = oppsClosedYTD !== null ? oppsClosedYTD.total : (Number(state.closedYTD) || 0);
   const closedPctOfQuota = state.target ? effectiveClosedYTD / state.target : 0;
+
+  // Prefer the live Opps-derived "% not Quoted" when closed deals exist;
+  // fall back to the manually entered state values otherwise.
+  const effectiveNotQuotedYear = oppsNotQuoted?.year ? oppsNotQuoted.year.pct : state.notQuotedYear;
+  const effectiveNotQuotedMonth = oppsNotQuoted?.month ? oppsNotQuoted.month.pct : state.notQuotedMonth;
   // Weighted-by-count averages — SUMPRODUCT(life, count) / SUM(count).
   // Goal weights are activeGoal; Actual weights are the live count
   // (BFO when loaded, manual activeActual otherwise).
@@ -1762,7 +1868,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
         clientActualPct: cg && cg.clientActualPct != null ? cg.clientActualPct : state.clientActualPct,
       },
       coverage: { goal: state.coverageGoal, actual: coverageActual },
-      notQuoted: { goal: state.notQuotedGoal, year: state.notQuotedYear, month: state.notQuotedMonth },
+      notQuoted: { goal: state.notQuotedGoal, year: effectiveNotQuotedYear, month: effectiveNotQuotedMonth },
       newOppsByMonth: newOppsByMonth.map(m => ({ label: m.label, count: m.count })),
       renewals: {
         windowDays: RENEWAL_WINDOW_DAYS,
@@ -2409,11 +2515,49 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
               <tbody>
                 <tr>
                   <td><NumCell value={state.notQuotedGoal} kind="pct" onCommit={(v) => setField('notQuotedGoal', v)} /></td>
-                  <td className={compareClass(state.notQuotedYear, state.notQuotedGoal, 'lower-better')}>
-                    <NumCell value={state.notQuotedYear} kind="pct" onCommit={(v) => setField('notQuotedYear', v)} />
+                  <td className={compareClass(effectiveNotQuotedYear, state.notQuotedGoal, 'lower-better')}>
+                    {oppsNotQuoted?.year
+                      ? (
+                          <LiveValue
+                            id="notQuotedYear"
+                            className={styles.liveCell}
+                            breakdown={{
+                              title: `% Not Quoted — Actual Year (${oppsNotQuoted.thisYear})`,
+                              value: `${Math.round(oppsNotQuoted.year.pct * 100)}%  (${oppsNotQuoted.year.notQuoted}/${oppsNotQuoted.year.total})`,
+                              formula: "Closed deals (Sold or Not Sold) that closed this calendar year with no days logged in the Quoted or Agreement Sent stages, ÷ all closed deals this year.",
+                              inputs: [
+                                { label: 'Not quoted', value: oppsNotQuoted.year.notQuoted },
+                                { label: 'Closed deals', value: oppsNotQuoted.year.total },
+                                { label: '% not quoted', value: `${Math.round(oppsNotQuoted.year.pct * 100)}%` },
+                              ],
+                              rows: notQuotedRows(oppsNotQuoted.year.deals, 'Closed deals this year (newest close first)'),
+                              note: 'Auto-fed from the Opps tab stage history. Pull-through opps are excluded. Re-paste the Opps tab to refresh.',
+                            }}
+                          >{`${Math.round(oppsNotQuoted.year.pct * 100)}%`}</LiveValue>
+                        )
+                      : <NumCell value={state.notQuotedYear} kind="pct" onCommit={(v) => setField('notQuotedYear', v)} />}
                   </td>
-                  <td className={compareClass(state.notQuotedMonth, state.notQuotedGoal, 'lower-better')}>
-                    <NumCell value={state.notQuotedMonth} kind="pct" onCommit={(v) => setField('notQuotedMonth', v)} />
+                  <td className={compareClass(effectiveNotQuotedMonth, state.notQuotedGoal, 'lower-better')}>
+                    {oppsNotQuoted?.month
+                      ? (
+                          <LiveValue
+                            id="notQuotedMonth"
+                            className={styles.liveCell}
+                            breakdown={{
+                              title: '% Not Quoted — Actual Month',
+                              value: `${Math.round(oppsNotQuoted.month.pct * 100)}%  (${oppsNotQuoted.month.notQuoted}/${oppsNotQuoted.month.total})`,
+                              formula: "Closed deals (Sold or Not Sold) that closed this calendar month with no days logged in the Quoted or Agreement Sent stages, ÷ all closed deals this month.",
+                              inputs: [
+                                { label: 'Not quoted', value: oppsNotQuoted.month.notQuoted },
+                                { label: 'Closed deals', value: oppsNotQuoted.month.total },
+                                { label: '% not quoted', value: `${Math.round(oppsNotQuoted.month.pct * 100)}%` },
+                              ],
+                              rows: notQuotedRows(oppsNotQuoted.month.deals, 'Closed deals this month (newest close first)'),
+                              note: 'Auto-fed from the Opps tab stage history. Pull-through opps are excluded. Re-paste the Opps tab to refresh.',
+                            }}
+                          >{`${Math.round(oppsNotQuoted.month.pct * 100)}%`}</LiveValue>
+                        )
+                      : <NumCell value={state.notQuotedMonth} kind="pct" onCommit={(v) => setField('notQuotedMonth', v)} />}
                   </td>
                 </tr>
               </tbody>
