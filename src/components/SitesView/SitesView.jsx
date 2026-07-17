@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { sanitizeExcelWorkbook } from '../../utils/exportSanitize.js';
 import { DataTable } from '../common/DataTable';
 import {
   saveList as saveListToIDB,
@@ -3084,6 +3085,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       row.height = 26;
     });
 
+    sanitizeExcelWorkbook(wb);
     const buf = await wb.xlsx.writeBuffer();
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
@@ -9187,6 +9189,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols.length } };
     }
 
+    sanitizeExcelWorkbook(wb);
     const buf = await wb.xlsx.writeBuffer();
     const fileName = `Utility Mapping Analysis - ${new Date().toISOString().slice(0, 10)}.xlsx`;
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });

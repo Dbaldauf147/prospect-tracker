@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
+import { stripDashes, sanitizeExcelWorkbook } from '../../utils/exportSanitize.js';
 import { createPortal } from 'react-dom';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
@@ -3459,7 +3460,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       .replace(/<li\s+data-list="checked">([^<]+)<\/li>/g, '<p>☑ $1</p>')
       .replace(/<li\s+data-list="unchecked">([^<]+)<\/li>/g, '<p>☐ $1</p>')
       .replace(/<ol>(\s*(?:<p>[☑☐][^<]*<\/p>\s*)+)<\/ol>/g, '$1');
-    const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Opportunity Template</title></head><body><h1>Opportunity Template</h1>${bodyHtml}</body></html>`;
+    const fullHtml = stripDashes(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Opportunity Template</title></head><body><h1>Opportunity Template</h1>${bodyHtml}</body></html>`);
     try {
       const { asBlob: htmlToDocxBlob } = await import('html-docx-js-typescript');
       const result = await htmlToDocxBlob(fullHtml);
@@ -3698,7 +3699,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const htmlContent = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">\n<head>\n<!--[if gte mso 9]><xml><w:WordDocument><w:DontHyphenate/><w:DoNotHyphenateCaps/></w:WordDocument></xml><![endif]-->\n<style>\nul,ol{margin:0;padding-left:1.5em;}\n</style>\n</head>\n<body style="margin:0;padding:0;">\n<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;">\n${body}\n</div>${sigBlock}\n</body>\n</html>`;
 
     const toHeader = recipients.join(', ');
-    const eml = [
+    // De-dash the whole message: strip literal em dashes (subject/body) and
+    // the &mdash; HTML entity so the exported .eml carries only hyphens.
+    const eml = stripDashes([
       'MIME-Version: 1.0',
       `Subject: ${subject}`,
       toHeader ? `To: ${toHeader}` : null,
@@ -3707,7 +3710,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       'Content-Transfer-Encoding: 8bit',
       '',
       htmlContent,
-    ].filter(Boolean).join('\r\n');
+    ].filter(Boolean).join('\r\n')).replace(/&mdash;|&#8212;|&#x2014;/gi, '-');
 
     const safeName = (selectedOpp.title || fields.company || 'follow-up')
       .replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60) || 'follow-up';
@@ -3727,7 +3730,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const safeTitle = (selectedOpp.title || 'opportunity').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80) || 'opportunity';
     const safeCompany = (fields.company || 'company').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60);
     const bodyHtml = oppNoteDraft && oppNoteDraft.trim() ? oppNoteDraft : '<p></p>';
-    const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${safeTitle}</title></head><body><h1>${safeCompany} — ${safeTitle}</h1>${bodyHtml}</body></html>`;
+    const fullHtml = stripDashes(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${safeTitle}</title></head><body><h1>${safeCompany} — ${safeTitle}</h1>${bodyHtml}</body></html>`);
     try {
       const { asBlob: htmlToDocxBlob } = await import('html-docx-js-typescript');
       const result = await htmlToDocxBlob(fullHtml);
@@ -5600,6 +5603,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: headers.length } };
                       colWidths.forEach((w, idx) => { ws.getColumn(idx + 1).width = w; });
 
+                      sanitizeExcelWorkbook(wb);
                       const buf = await wb.xlsx.writeBuffer();
                       const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
                       const url = URL.createObjectURL(blob);
@@ -7340,6 +7344,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: headers.length } };
                       colWidths.forEach((w, idx) => { ws.getColumn(idx + 1).width = w; });
 
+                      sanitizeExcelWorkbook(wb);
                       const buf = await wb.xlsx.writeBuffer();
                       const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
                       const url = URL.createObjectURL(blob);
@@ -7383,6 +7388,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         cell.font = { name: 'Nunito Sans', size: 10, italic: true, color: { argb: 'FF94A3B8' } };
                       });
                       ws.views = [{ state: 'frozen', ySplit: 1 }];
+                      sanitizeExcelWorkbook(wb);
                       const buf = await wb.xlsx.writeBuffer();
                       const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
                       const url = URL.createObjectURL(blob);
