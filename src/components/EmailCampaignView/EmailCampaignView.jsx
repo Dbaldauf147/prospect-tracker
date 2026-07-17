@@ -3,12 +3,15 @@ import { apiFetch } from '../../utils/apiFetch';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
+import { addQueuedRecipients } from '../../utils/draftRecipientsQueue';
 
 export function EmailCampaignView() {
   const { user } = useAuth();
   const [subject, setSubject] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // Transient success line for the "Add unsent to Draft" action.
+  const [notice, setNotice] = useState('');
   const [results, setResults] = useState(null);
   const [savedCampaigns, setSavedCampaigns] = useState([]);
   const [viewingSaved, setViewingSaved] = useState(null); // index of saved campaign being viewed
@@ -219,6 +222,44 @@ export function EmailCampaignView() {
       : [campaign, ...savedCampaigns];
     await saveCampaigns(updated);
     setSaving(false);
+  }
+
+  // Push every "Not Sent" contact (in the campaign roster but never emailed)
+  // into the shared Draft Emails recipients queue, so they can be dropped into
+  // the composer's To section on the Draft Emails page. Multi-recipient cells
+  // are split into individual addresses; deduped by email in the queue.
+  function queueUnsentToDraft() {
+    const list = displayResults?.contacts || [];
+    const recipients = [];
+    for (const c of list) {
+      if (c.sentDate) continue; // only the "Not Sent" rows
+      const emails = String(c.email || '').split(';').map(e => e.trim()).filter(Boolean);
+      emails.forEach((email) => {
+        const raw = emails.length === 1 ? String(c.name || '').trim() : '';
+        const name = raw || email.split('@')[0].replace(/[._]+/g, ' ').replace(/\b\w/g, m => m.toUpperCase());
+        const parts = name.split(/\s+/).filter(Boolean);
+        recipients.push({
+          id: `campaign:${email.toLowerCase()}`,
+          email,
+          name,
+          firstName: parts[0] || '',
+          lastName: parts.slice(1).join(' '),
+          company: c.company || '',
+        });
+      });
+    }
+    if (recipients.length === 0) {
+      setNotice('No unsent contacts — everyone in this campaign has already been emailed.');
+      setTimeout(() => setNotice(''), 5000);
+      return;
+    }
+    const added = addQueuedRecipients(recipients);
+    const dupes = recipients.length - added;
+    setNotice(
+      `Queued ${added} recipient${added === 1 ? '' : 's'} for Draft Emails${dupes > 0 ? ` (${dupes} already queued)` : ''}. `
+      + 'Open Draft Emails → "From Email Campaigns" → "Add all to draft" to drop them into the To section.',
+    );
+    setTimeout(() => setNotice(''), 9000);
   }
 
   // Remove a contact from the campaign. The removal is recorded as a tombstone
@@ -545,20 +586,47 @@ export function EmailCampaignView() {
                 >{displayResults.autoRepliesSuppressed} auto-reply{displayResults.autoRepliesSuppressed === 1 ? '' : 's'} suppressed</span>
               )}
             </div>
-            {viewingSaved === null && (
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                style={{
-                  padding: '0.35rem 0.75rem', border: 'none', borderRadius: '6px',
-                  background: saving ? '#10B981' : 'var(--color-accent)', color: '#fff',
-                  fontSize: '0.75rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
-                }}
-              >
-                {saving ? '✓ Saved!' : 'Save Campaign'}
-              </button>
-            )}
+            <div style={{ display: 'inline-flex', gap: '0.5rem', flexShrink: 0 }}>
+              {(() => {
+                const unsent = (displayResults.contacts || []).filter(c => !c.sentDate).length;
+                return (
+                  <button
+                    onClick={queueUnsentToDraft}
+                    disabled={unsent === 0}
+                    title={unsent === 0
+                      ? 'No unsent contacts — everyone has been emailed'
+                      : 'Queue every "Not Sent" contact for the Draft Emails composer'}
+                    style={{
+                      padding: '0.35rem 0.75rem', border: '1px solid #1D4ED8', borderRadius: '6px',
+                      background: unsent === 0 ? '#F1F5F9' : '#fff', color: unsent === 0 ? '#94A3B8' : '#1D4ED8',
+                      fontSize: '0.75rem', fontWeight: 600, fontFamily: 'inherit', cursor: unsent === 0 ? 'default' : 'pointer',
+                    }}
+                  >
+                    Add unsent to Draft{unsent > 0 ? ` (${unsent})` : ''}
+                  </button>
+                );
+              })()}
+              {viewingSaved === null && (
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  style={{
+                    padding: '0.35rem 0.75rem', border: 'none', borderRadius: '6px',
+                    background: saving ? '#10B981' : 'var(--color-accent)', color: '#fff',
+                    fontSize: '0.75rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                  }}
+                >
+                  {saving ? '✓ Saved!' : 'Save Campaign'}
+                </button>
+              )}
+            </div>
           </div>
+
+          {notice && (
+            <div style={{ padding: '0.5rem 0.75rem', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '6px', fontSize: '0.78rem', color: '#065F46', marginBottom: '0.75rem' }}>
+              {notice}
+            </div>
+          )}
 
           {/* Duplicate contacts warning */}
           {dupKeys.size > 0 && (
