@@ -280,6 +280,29 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
     });
   }
 
+  // ── Strategic Accounts — My Accounts ──
+  {
+    const sa = p.strategicAccounts || {};
+    gap();
+    title(sa.title || 'Strategic Accounts — My Accounts');
+    const saCols = [[1, 6], [7, 10], [11, 13]]; // Account | Account Owner | Type
+    const saHdr = sa.headers || ['Account', 'Account Owner', 'Type'];
+    saHdr.forEach((h, i) => put(r, saCols[i][0], r, saCols[i][1], h, { ...HEAD, align: 'left' }));
+    r++;
+    const saRows = sa.rows || [];
+    if (!saRows.length) {
+      put(r, 1, r, COLS, 'No strategic accounts mapped to My Accounts.', { fg: SE_MUTED });
+      r++;
+    } else {
+      saRows.forEach((row, idx) => {
+        const zebra = idx % 2 === 1;
+        const vals = [row.account || '—', row.owner || '—', row.type || '—'];
+        vals.forEach((v, i) => put(r, saCols[i][0], r, saCols[i][1], v, { align: 'left', wrap: i === 0, ...(zebra ? { zebra: true } : {}) }));
+        r++;
+      });
+    }
+  }
+
   // ── Strategy Notes ──
   gap();
   (p.notes || []).forEach(({ title: nt, text }) => {

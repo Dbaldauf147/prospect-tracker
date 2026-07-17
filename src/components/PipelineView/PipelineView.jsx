@@ -1401,6 +1401,13 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           };
         }),
       },
+      // Strategic Accounts — My Accounts: the same on-screen table
+      // (My Accounts mapped to the uploaded Strategic Accounts list), verbatim.
+      strategicAccounts: {
+        title: lbl('strat-title', 'Strategic Accounts — My Accounts'),
+        headers: [lbl('strat-account', 'Account'), lbl('strat-owner', 'Account Owner'), lbl('strat-type', 'Type')],
+        rows: strategicMyAccounts.map(s => ({ account: s.account, owner: s.owner, type: s.type })),
+      },
       notes: [
         { title: lbl('notes-distractions-title', 'Eliminating Distractions'), text: state.notesDistractions },
         { title: lbl('notes-prospecting-title', 'Prospecting Approach'), text: [state.notesProspectingLeft, state.notesProspectingRight].filter(Boolean).join('\n') },
