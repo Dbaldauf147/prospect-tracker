@@ -424,6 +424,167 @@
   word-break: break-word;
 }
 
+/* Service Exploration Coverage — service picker + coverage bar + client
+   chips. Sits above the Client Renewals table. */
+.svcCovBody {
+  padding: 0.7rem 0.85rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.svcCovControls {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.svcCovLabel {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.svcCovSelect {
+  font-family: inherit;
+  font-size: 0.82rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  min-width: 220px;
+  max-width: 100%;
+}
+
+.svcCovSelect:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.svcCovStat {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+
+.svcCovPct {
+  font-size: 1.4rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: #2563eb;
+  line-height: 1;
+}
+
+.svcCovCount {
+  font-size: 0.76rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.svcCovBarTrack {
+  height: 10px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.svcCovBarFill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #22c55e, #16a34a);
+  transition: width 0.25s ease;
+}
+
+.svcCovLists {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .svcCovLists { grid-template-columns: 1fr; }
+}
+
+.svcCovCol {
+  min-width: 0;
+}
+
+.svcCovListHead {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-muted);
+  margin-bottom: 0.35rem;
+}
+
+.svcCovChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.svcCovChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.svcCovChip:hover {
+  filter: brightness(0.97);
+  text-decoration: underline;
+}
+
+.svcCovChipYes {
+  background: #dcfce7;
+  border-color: #86efac;
+  color: #166534;
+}
+
+.svcCovChipNo {
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+  color: #64748b;
+}
+
+.svcCovChipStatus {
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  opacity: 0.8;
+}
+
+.svcCovNone {
+  font-size: 0.74rem;
+  font-style: italic;
+  color: var(--color-text-muted);
+}
+
+.svcCovEmpty {
+  font-size: 0.78rem;
+  font-style: italic;
+  color: var(--color-text-muted);
+  padding: 0.3rem 0;
+}
+
 /* Strategy-notes text areas at the bottom of the page. */
 .notesBody {
   padding: 0.6rem 0.75rem;

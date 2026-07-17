@@ -12,6 +12,8 @@ import { loadDealsList } from '../../utils/dealsStore';
 import { loadDealClientMap } from '../../utils/dealClientMap';
 import { loadClientManagerMap, loadClientUntrackedMap, loadClientStatusMap } from '../../utils/clientManagerStore';
 import { computeExpiringClients, normClientName } from '../../utils/clientIssues';
+import { matchesCdm } from '../../utils/cdmMatch';
+import { SERVICE_CATEGORIES } from '../../data/enums';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { downloadPipelineWorkbook } from '../../utils/pipelineWorkbook';
 import { loadList as loadUploadedList } from '../../utils/uploadedListStore';
@@ -760,6 +762,160 @@ function useCalc() {
     />
   ) : null;
   return { ctx, popover, pinned, unpin: () => setPinned(null) };
+}
+
+// A service on a client's company page counts as "explored" when its
+// Services Explored row carries a real status — anything truthy that isn't
+// the "— (auto)" placeholder dash. Mirrors getServicesCount on the Clients
+// tab so this coverage table agrees with that page.
+function isServiceExplored(prospect, serviceKey) {
+  const v = (prospect?.servicesExplored || {})[serviceKey];
+  return !!v && v !== '-';
+}
+
+// "Service Exploration Coverage" — pick a service and see what share of your
+// active clients have explored it (per their company page's Services Explored
+// section). The client set mirrors the renewals table below: Status = Client
+// and matching the configured CDM (or all clients when no CDM is set).
+function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, onSelectProspect }) {
+  // Service catalogue for the picker — the user's custom categories when set,
+  // otherwise the code defaults; hidden services dropped, renames applied for
+  // display. Options stay keyed by the canonical service name so the lookup
+  // into each prospect's servicesExplored map lines up.
+  const catalog = useMemo(() => {
+    const hidden = new Set(settings.hiddenServices || []);
+    const renames = settings.serviceRenames || {};
+    const cats = Array.isArray(settings.customServiceCategories) && settings.customServiceCategories.length
+      ? settings.customServiceCategories
+      : SERVICE_CATEGORIES;
+    return cats
+      .map(cat => ({
+        name: cat.name,
+        items: (cat.items || [])
+          .filter(it => !hidden.has(it))
+          .map(it => ({ key: it, label: renames[it] || it })),
+      }))
+      .filter(cat => cat.items.length > 0);
+  }, [settings.hiddenServices, settings.serviceRenames, settings.customServiceCategories]);
+
+  const firstServiceKey = catalog[0]?.items[0]?.key || '';
+  const [selected, setSelected] = useState(firstServiceKey);
+  // If the catalogue changes (e.g. the selected service gets hidden/renamed
+  // away) and the current pick is gone, fall back to the first available.
+  const selectedValid = catalog.some(c => c.items.some(it => it.key === selected));
+  const activeKey = selectedValid ? selected : firstServiceKey;
+  const activeLabel = (() => {
+    for (const cat of catalog) {
+      const hit = cat.items.find(it => it.key === activeKey);
+      if (hit) return hit.label;
+    }
+    return activeKey;
+  })();
+
+  // Active clients: Status = Client, and matching the configured CDM. When no
+  // CDM is configured, include every client so the table still works.
+  const clients = useMemo(() => {
+    return prospects.filter(p => {
+      if (String(p?.status || '').trim().toLowerCase() !== 'client') return false;
+      return cdmName ? matchesCdm(p.cdm, cdmName) : true;
+    });
+  }, [prospects, cdmName]);
+
+  const coverage = useMemo(() => {
+    const explored = [];
+    const notExplored = [];
+    for (const p of clients) {
+      if (activeKey && isServiceExplored(p, activeKey)) {
+        explored.push({ p, status: (p.servicesExplored || {})[activeKey] });
+      } else {
+        notExplored.push({ p });
+      }
+    }
+    const byName = (a, b) => String(a.p.company || '').localeCompare(String(b.p.company || ''));
+    explored.sort(byName);
+    notExplored.sort(byName);
+    const total = clients.length;
+    const pct = total ? Math.round((explored.length / total) * 100) : 0;
+    return { explored, notExplored, total, pct };
+  }, [clients, activeKey]);
+
+  function openProspect(p) {
+    if (onSelectProspect && p) onSelectProspect(p);
+  }
+
+  return (
+    <div className={styles.section}>
+      <div className={styles.sectionTitle}><EL id="svc-cov-title">Service Exploration Coverage</EL></div>
+      <div className={styles.svcCovBody}>
+        <div className={styles.svcCovControls}>
+          <label className={styles.svcCovLabel} htmlFor="svc-cov-select">Service</label>
+          <select
+            id="svc-cov-select"
+            className={styles.svcCovSelect}
+            value={activeKey}
+            onChange={(e) => setSelected(e.target.value)}
+          >
+            {catalog.map(cat => (
+              <optgroup key={cat.name} label={cat.name}>
+                {cat.items.map(it => <option key={it.key} value={it.key}>{it.label}</option>)}
+              </optgroup>
+            ))}
+          </select>
+          <div className={styles.svcCovStat}>
+            <span className={styles.svcCovPct}>{coverage.pct}%</span>
+            <span className={styles.svcCovCount}>
+              {coverage.explored.length} of {coverage.total} client{coverage.total === 1 ? '' : 's'} explored
+            </span>
+          </div>
+        </div>
+
+        {coverage.total === 0 ? (
+          <div className={styles.svcCovEmpty}>
+            No active clients found{cdmName ? ` for ${cdmName}` : ''}.
+          </div>
+        ) : (
+          <>
+            <div className={styles.svcCovBarTrack} title={`${coverage.pct}% of clients have explored ${activeLabel}`}>
+              <div className={styles.svcCovBarFill} style={{ width: `${coverage.pct}%` }} />
+            </div>
+            <div className={styles.svcCovLists}>
+              <div className={styles.svcCovCol}>
+                <div className={styles.svcCovListHead}>Explored ({coverage.explored.length})</div>
+                <div className={styles.svcCovChips}>
+                  {coverage.explored.length ? coverage.explored.map(({ p, status }) => (
+                    <span
+                      key={p.id}
+                      className={`${styles.svcCovChip} ${styles.svcCovChipYes}`}
+                      onClick={() => openProspect(p)}
+                      title={`${p.company} — ${status}`}
+                    >
+                      {p.company}
+                      <span className={styles.svcCovChipStatus}>{status}</span>
+                    </span>
+                  )) : <span className={styles.svcCovNone}>No clients have explored this service yet.</span>}
+                </div>
+              </div>
+              <div className={styles.svcCovCol}>
+                <div className={styles.svcCovListHead}>Not yet explored ({coverage.notExplored.length})</div>
+                <div className={styles.svcCovChips}>
+                  {coverage.notExplored.length ? coverage.notExplored.map(({ p }) => (
+                    <span
+                      key={p.id}
+                      className={`${styles.svcCovChip} ${styles.svcCovChipNo}`}
+                      onClick={() => openProspect(p)}
+                      title={`${p.company} — not explored`}
+                    >
+                      {p.company}
+                    </span>
+                  )) : <span className={styles.svcCovNone}>Every client has explored this service.</span>}
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export function PipelineView({ prospects = [], cdmName = '', settings = {}, onSelectProspect }) {
@@ -2066,6 +2222,16 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           </table>
           </div>
         </div>
+
+        {/* Service exploration coverage — pick a service, see what share of
+            active clients have explored it (from each company page's Services
+            Explored section). Sits above the renewals table. */}
+        <ServiceCoverageSection
+          prospects={prospects}
+          cdmName={cdmName}
+          settings={settings}
+          onSelectProspect={onSelectProspect}
+        />
 
         {/* Client renewals — active clients whose soonest contract End Date
             is within the renewal window. Pulled from the Clients tab. */}
