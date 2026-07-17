@@ -769,13 +769,88 @@ function useCalc() {
   return { ctx, popover, pinned, unpin: () => setPinned(null) };
 }
 
-// A service on a client's company page counts as "explored" when its
-// Services Explored row carries a real status — anything truthy that isn't
-// the "— (auto)" placeholder dash. Mirrors getServicesCount on the Clients
-// tab so this coverage table agrees with that page.
-function isServiceExplored(prospect, serviceKey) {
-  const v = (prospect?.servicesExplored || {})[serviceKey];
-  return !!v && v !== '-';
+// Loose company-name match for joining opp Account values to a prospect's
+// company. Mirrors the tolerance used on the company page (ProspectModal's
+// companiesMatch) so this coverage table agrees with what each company page
+// shows: NFKD-flattened equality, whitespace-squished equality, then a
+// contained-substring test for slight name drift.
+function coverageCompaniesMatch(a, b) {
+  const na = String(a || '').toLowerCase().trim();
+  const nb = String(b || '').toLowerCase().trim();
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  const flatten = (s) => String(s || '')
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+  const fa = flatten(na);
+  const fb = flatten(nb);
+  if (fa && fb && fa === fb) return true;
+  const longer = fa.length >= fb.length ? fa : fb;
+  const shorter = fa.length >= fb.length ? fb : fa;
+  if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
+  return false;
+}
+
+// Priority order when an account has several opps naming the same service —
+// keep the strongest signal. Mirrors ProspectModal's scopeMatchedServices so
+// the coverage table and the company page settle on the same status.
+const OPP_STAGE_PRIORITY = { 'Sold': 4, 'Verbal': 3, 'Quoted': 3, 'Quoting': 2, 'Qualifying': 2, 'Lead': 1, 'Not Started': 1, 'Not Sold': 0 };
+
+// For each client, the service statuses implied by that client's opportunities
+// (open OR closed) — an opp whose Scope names a service makes that service
+// "explored", exactly as the company page's Services Explored section treats
+// it. Returns Map<prospect, Map<serviceKey, stage>>. Scope text is split on
+// ; , / and each part is fuzzily matched against the canonical service list,
+// mirroring ProspectModal so the two views can't disagree.
+function buildOppStagesByClient(clients, oppsRecords) {
+  const result = new Map();
+  if (!Array.isArray(oppsRecords) || oppsRecords.length === 0) return result;
+  const opps = [];
+  for (const r of oppsRecords) {
+    const scope = String(r?.Scope || '').trim();
+    if (!scope) continue;
+    opps.push({ account: String(r?.Account || ''), scope, stage: String(r?.Stage || '').trim() });
+  }
+  if (opps.length === 0) return result;
+  for (const p of clients) {
+    const matched = new Map();
+    for (const o of opps) {
+      if (!coverageCompaniesMatch(o.account, p.company)) continue;
+      const parts = o.scope.split(/[;,/]+/).map(s => s.trim()).filter(Boolean);
+      for (const part of parts) {
+        const lower = part.toLowerCase();
+        for (const cat of SERVICE_CATEGORIES) {
+          for (const item of cat.items) {
+            const il = item.toLowerCase();
+            if (il === lower || il.includes(lower) || lower.includes(il)) {
+              const existing = matched.get(item);
+              const existingPri = existing ? (OPP_STAGE_PRIORITY[existing] ?? 1) : -1;
+              const newPri = OPP_STAGE_PRIORITY[o.stage] ?? 1;
+              if (newPri > existingPri) matched.set(item, o.stage);
+            }
+          }
+        }
+      }
+    }
+    if (matched.size) result.set(p, matched);
+  }
+  return result;
+}
+
+// The status a client's company page would show for one service: a real
+// manual value in servicesExplored wins (it's an explicit override), otherwise
+// fall back to the status implied by the client's opportunities. Returns '' when
+// neither applies — i.e. the service is genuinely unexplored. Mirrors the
+// company page's effective-status logic (manual override > opp-derived).
+function effectiveServiceStatus(prospect, serviceKey, oppStagesByClient) {
+  const manual = (prospect?.servicesExplored || {})[serviceKey];
+  if (manual && manual !== '-') return manual;
+  const oppStage = oppStagesByClient?.get(prospect)?.get(serviceKey);
+  return oppStage || '';
 }
 
 // Service catalogue for the coverage picker/table — the user's custom
@@ -817,13 +892,18 @@ function coverageClientsOf(prospects, cdmName) {
 }
 
 // Coverage of one service across a client list: who's explored it (with each
-// client's status) and who hasn't, plus the rolled-up count / percentage.
-function computeServiceCoverage(clients, serviceKey) {
+// client's status) and who hasn't, plus the rolled-up count / percentage. A
+// client counts as "explored" when its company page would show a status for
+// the service — a manual servicesExplored value OR an opportunity naming the
+// service in its Scope (In Progress / Sold / etc.). `oppStagesByClient` carries
+// the opp-derived statuses; pass it so this matches each company page.
+function computeServiceCoverage(clients, serviceKey, oppStagesByClient) {
   const explored = [];
   const notExplored = [];
   for (const p of clients) {
-    if (serviceKey && isServiceExplored(p, serviceKey)) {
-      explored.push({ p, status: (p.servicesExplored || {})[serviceKey] });
+    const status = serviceKey ? effectiveServiceStatus(p, serviceKey, oppStagesByClient) : '';
+    if (status) {
+      explored.push({ p, status });
     } else {
       notExplored.push({ p });
     }
@@ -843,7 +923,7 @@ function computeServiceCoverage(clients, serviceKey) {
 // The client set mirrors the renewals table: Status = Client and matching the
 // configured CDM (or all clients when no CDM is set). The tracked-service list
 // is passed in from persisted Pipeline state via `services` / `onChangeServices`.
-function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, onSelectProspect, services = [], onChangeServices }) {
+function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, onSelectProspect, services = [], onChangeServices, oppsRecords = [] }) {
   const catalog = useMemo(
     () => buildServiceCatalog(settings),
     [settings.hiddenServices, settings.serviceRenames, settings.customServiceCategories],
@@ -860,12 +940,21 @@ function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, o
   // CDM is configured, include every client so the table still works.
   const clients = useMemo(() => coverageClientsOf(prospects, cdmName), [prospects, cdmName]);
 
+  // Opp-derived service statuses per client, so a client with an active (or
+  // closed) opportunity naming a service counts as having explored it — the
+  // same rule the company page uses. Recomputed only when the client set or
+  // the opps cache changes.
+  const oppStagesByClient = useMemo(
+    () => buildOppStagesByClient(clients, oppsRecords),
+    [clients, oppsRecords],
+  );
+
   // Coverage for every tracked service, computed once per client/service change.
   const coverageByService = useMemo(() => {
     const m = new Map();
-    for (const key of services) m.set(key, computeServiceCoverage(clients, key));
+    for (const key of services) m.set(key, computeServiceCoverage(clients, key, oppStagesByClient));
     return m;
-  }, [clients, services]);
+  }, [clients, services, oppStagesByClient]);
 
   // Which rows are expanded to show their client breakdown. Local-only (not
   // persisted) — every row starts collapsed so the breakdown is hidden by
@@ -1680,6 +1769,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       serviceCoverage: (() => {
         const services = state.coverageServices || [];
         const clients = coverageClientsOf(prospects, cdmName);
+        const oppStagesByClient = buildOppStagesByClient(clients, oppsRecords);
         const labels = serviceLabelMap(buildServiceCatalog(settings));
         return {
           title: lbl('svc-cov-title', 'Service Exploration Coverage'),
@@ -1690,7 +1780,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
             lbl('svc-cov-col-coverage', 'Coverage'),
           ],
           rows: services.map((key) => {
-            const cov = computeServiceCoverage(clients, key);
+            const cov = computeServiceCoverage(clients, key, oppStagesByClient);
             return {
               service: labels.get(key) || key,
               explored: cov.explored.length,
@@ -2376,6 +2466,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           onSelectProspect={onSelectProspect}
           services={state.coverageServices || []}
           onChangeServices={(next) => setField('coverageServices', next)}
+          oppsRecords={oppsRecords}
         />
 
         {/* Client renewals — active clients whose soonest contract End Date
