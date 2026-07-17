@@ -10,6 +10,7 @@ import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { sanitizeSheetJsWorkbook } from '../../utils/exportSanitize.js';
 import { loadDealsList } from '../../utils/dealsStore';
+import { asDate, fmtDate } from '../../utils/dealsFormat';
 import { loadDealClientMap } from '../../utils/dealClientMap';
 import { loadClientManagerMap, loadClientUntrackedMap, loadClientStatusMap } from '../../utils/clientManagerStore';
 import { computeExpiringClients, normClientName } from '../../utils/clientIssues';
@@ -65,6 +66,24 @@ function oppOpenTs(r, ageRef) {
     return closeTs - age * 86400000;
   }
   return ageRef - age * 86400000;
+}
+
+// A deal needs a post-sale follow-up when its "Follow Up On Sale" cell is
+// blank (or a placeholder dash / N/A). Mirrors the Clients tab's Post-Sale
+// Follow-Up subtab so the two surfaces agree on what counts as "no value".
+function isBlankFollowUp(row) {
+  const v = String(row?.['Follow Up On Sale'] ?? '').trim();
+  if (!v) return true;
+  return ['-', '—', 'n/a', '#n/a'].includes(v.toLowerCase());
+}
+
+// The date a deal closed/sold, used to sort the Post-Sale Follow-Up table.
+// Deals don't carry an explicit close date, so we use Original Contract Start
+// — the same field the Deals tab treats as the deal's canonical date (its
+// Year column derives from it). Returns a timestamp (ms) or NaN.
+function dealSoldTs(row) {
+  const d = asDate(row?.['Original Contract Start']);
+  return d ? d.getTime() : NaN;
 }
 
 // Parse "USD 15,000.00" / "$15,000" / "15000" -> 15000.
@@ -1282,6 +1301,32 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
     }),
     [prospects, cdmName, clientStores],
   );
+
+  // Post-Sale Follow-Up: every uploaded deal (Deals subtab) with no "Follow
+  // Up On Sale" value — the deals still needing a post-sale follow-up. Mirrors
+  // the Clients tab's Post-Sale Follow-Up subtab, but sorted by date
+  // closed/sold (Original Contract Start), most recent first.
+  const postSaleFollowUps = useMemo(() => {
+    const out = [];
+    for (const d of (clientStores.deals || [])) {
+      const client = String(d['Client Name'] ?? d['Client Name '] ?? '').trim();
+      const agreement = String(d['Agreement Name'] ?? '').trim();
+      if (!client && !agreement) continue;  // skip blank spacer rows
+      if (!isBlankFollowUp(d)) continue;     // only deals still needing follow-up
+      out.push(d);
+    }
+    out.sort((a, b) => {
+      const ta = dealSoldTs(a);
+      const tb = dealSoldTs(b);
+      const aNan = Number.isNaN(ta);
+      const bNan = Number.isNaN(tb);
+      if (aNan && bNan) return 0;
+      if (aNan) return 1;   // undated rows sink to the bottom
+      if (bNan) return -1;
+      return tb - ta;       // most recently closed/sold first
+    });
+    return out;
+  }, [clientStores.deals]);
 
   // Decision-maker contacts grouped by normalized company name, so each
   // renewals row can show the DM(s) at that account and whether they've been
@@ -2697,6 +2742,47 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                 <tr>
                   <td colSpan={6} style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '0.6rem' }}>
                     No clients with contracts expiring in the next {RENEWAL_WINDOW_DAYS} days.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Post-Sale Follow-Up — deals from the Deals subtab with no "Follow
+            Up On Sale" value, sorted by date closed/sold (most recent first).
+            Mirrors the Clients tab's Post-Sale Follow-Up subtab. */}
+        <div className={styles.section}>
+          <div className={styles.sectionTitle}><EL id="postsale-title">Post-Sale Follow-Up — Deals Missing Follow Up On Sale</EL></div>
+          <table className={styles.tinyTable} title="Deals from the Clients → Deals subtab with no Follow Up On Sale value. Sorted by date closed/sold (Original Contract Start), most recent first.">
+            <thead>
+              <tr>
+                <th><EL id="postsale-client">Client</EL></th>
+                <th><EL id="postsale-agreement">Agreement Name</EL></th>
+                <th><EL id="postsale-sold">Date Closed / Sold</EL></th>
+                <th><EL id="postsale-end">End Date</EL></th>
+                <th><EL id="postsale-followup">Follow Up On Sale</EL></th>
+              </tr>
+            </thead>
+            <tbody>
+              {postSaleFollowUps.length > 0 ? (
+                postSaleFollowUps.map((d, i) => (
+                  <tr key={i}>
+                    <td>{String(d['Client Name'] ?? d['Client Name '] ?? '').trim() || '—'}</td>
+                    <td>{String(d['Agreement Name'] ?? '').trim() || '—'}</td>
+                    <td style={{ fontVariantNumeric: 'tabular-nums' }}>{Number.isNaN(dealSoldTs(d)) ? '—' : fmtDate(d['Original Contract Start'])}</td>
+                    <td style={{ fontVariantNumeric: 'tabular-nums' }}>{asDate(d['End Date']) ? fmtDate(d['End Date']) : '—'}</td>
+                    <td>
+                      <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: '#fee2e2', color: '#b91c1c' }}>Missing</span>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={5} style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '0.6rem' }}>
+                    {(clientStores.deals && clientStores.deals.length)
+                      ? 'Every uploaded deal has a Follow Up On Sale value — nothing to follow up on.'
+                      : 'No deals uploaded yet. Upload contract data on the Clients → Deals subtab.'}
                   </td>
                 </tr>
               )}
