@@ -1904,6 +1904,17 @@ function BfoCompanyNameCell({ account, prospects, updateProspect }) {
   );
 }
 
+// A contact carrying a "hidden" tag (Dan's Tags, stored semicolon-separated
+// in `dans_tags`, with legacy `dan_s_tags` / `dans_tag` spellings) should be
+// kept out of the opp Contact-cell add roster. Match on the exact token so a
+// tag like "hidden gem" doesn't accidentally suppress the contact.
+function contactIsHidden(raw) {
+  const tags = String(raw?.dans_tags || raw?.dan_s_tags || raw?.dans_tag || '');
+  return tags
+    .split(/[;,]/)
+    .some(t => t.trim().toLowerCase() === 'hidden');
+}
+
 // `contactEmails` / `onChangeEmails` persist the tagged contacts' emails on
 // the opp row itself (hidden `_contactEmails` map, lowercased name → email),
 // captured at tag time. The HubSpot contacts cache is an IndexedDB cache
@@ -2002,6 +2013,8 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
     const out = [];
     const pushContact = (raw, source, company) => {
       if (!raw) return;
+      // Skip contacts flagged "hidden" so they never surface in the roster.
+      if (contactIsHidden(raw)) return;
       const name = [raw.firstname, raw.lastname].filter(Boolean).join(' ').trim()
         || String(raw.email || '').trim();
       if (!name) return;
