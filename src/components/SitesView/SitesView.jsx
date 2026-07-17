@@ -29,6 +29,7 @@ import {
 } from '../../utils/utilityRates';
 import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripState, isIndicativeSavingsExport } from '../../utils/xlsxParse';
 import { UtilityMappingView } from './UtilityMappingView';
+import { BuildingComplianceScreening } from './BuildingComplianceScreening';
 import { saveIndicativeAnalysis, deleteIndicativeAnalysis } from '../../utils/firestoreSync';
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
@@ -306,7 +307,7 @@ function SupplierAutocomplete({ initialValue, onCommit, onCancel }) {
 export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   // Top-level toggle between the Utility Lookup page and the nested
   // Utility Mapping view (interval-data availability by utility).
-  const [mainTab, setMainTab] = useState('lookup'); // 'lookup' | 'mapping'
+  const [mainTab, setMainTab] = useState('lookup'); // 'lookup' | 'mapping' | 'compliance'
   const [sitesData, setSitesData] = useState([]);
   const [sitesLoaded, setSitesLoaded] = useState(false);
   const [utility, setUtility] = useState(null); // { zipMap, meta }
@@ -9584,8 +9585,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           className={mainTab === 'mapping' ? styles.subtabActive : styles.subtab}
           onClick={() => setMainTab('mapping')}
         >Utility Mapping</button>
+        <button
+          type="button"
+          className={mainTab === 'compliance' ? styles.subtabActive : styles.subtab}
+          onClick={() => setMainTab('compliance')}
+        >Compliance Screening</button>
       </div>
-      {mainTab === 'mapping' ? (
+      {mainTab === 'compliance' ? (
+        <BuildingComplianceScreening />
+      ) : mainTab === 'mapping' ? (
         <UtilityMappingView siteUtilities={siteUtilities} referenceUtilityNames={knownUtilityNames} onExportSiteMapping={exportUtilityMappingAnalysis} />
       ) : (
     <div
