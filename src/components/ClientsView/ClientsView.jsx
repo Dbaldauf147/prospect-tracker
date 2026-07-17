@@ -1,10 +1,11 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { DataTable } from '../common/DataTable';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { buildTargetTierResolver } from '../../utils/targetTier';
 import { DealsView } from '../DealsView/DealsView';
 import { CommissionsView } from './CommissionsView';
-import { loadDealsList } from '../../utils/dealsStore';
+import { loadDealsList, saveDealsOverride } from '../../utils/dealsStore';
 import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../../utils/dealClientMap';
 import {
   loadClientManagerMap, setClientManager, CLIENT_MANAGER_EVENT,
@@ -379,10 +380,81 @@ const POST_SALE_COLUMNS = [
   { key: 'Follow Up On Sale', label: 'Follow Up On Sale', minWidth: 170 },
 ];
 
+// Inline editor for the Follow Up On Sale date on the Post-Sale Follow-Up
+// subtab. That column is a date across the app (DEAL_DATE_KEYS), so recording
+// a follow-up means stamping the date it happened — stored in the same
+// M/D/YYYY shape the Deals subtab uses. Setting a value clears the deal's
+// "missing" flag, so the row drops off this list on the next render. The
+// editor opens in a portal popover anchored to the badge (like the Deals
+// tab's Progress cell) so it can't be clipped by the table's overflow.
+function FollowUpOnSaleCell({ deal, onSave }) {
+  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState(null);
+  const btnRef = useRef(null);
+
+  function openPopover(e) {
+    e.stopPropagation();
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (rect) setAnchor({ left: rect.left, top: rect.bottom + 4 });
+    setOpen(true);
+  }
+
+  function saveMDY(mdY) {
+    onSave(deal, mdY);
+    setOpen(false);
+  }
+  function saveFromISO(iso) {
+    if (!iso) return;
+    const [y, m, d] = iso.split('-').map(Number);
+    if (!y || !m || !d) return;
+    saveMDY(`${m}/${d}/${y}`);
+  }
+  function saveToday() {
+    const t = new Date();
+    saveMDY(`${t.getMonth() + 1}/${t.getDate()}/${t.getFullYear()}`);
+  }
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={openPopover}
+        title="Click to record the date this deal's post-sale follow-up happened"
+        style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: '#FEE2E2', color: '#B91C1C', border: '1px solid #FCA5A5', cursor: 'pointer', fontFamily: 'inherit' }}
+      >
+        Missing
+      </button>
+      {open && createPortal(
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 4999, background: 'transparent' }} />
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ position: 'fixed', left: Math.min(anchor?.left ?? 0, (window.innerWidth || 1200) - 260), top: anchor?.top ?? 0, zIndex: 5000, background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8, boxShadow: '0 10px 30px rgba(15, 23, 42, 0.18)', padding: '0.6rem 0.7rem', width: 244 }}
+          >
+            <div style={{ fontSize: '0.66rem', fontWeight: 700, color: '#475569', marginBottom: '0.4rem' }}>Record follow-up date</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input
+                type="date"
+                autoFocus
+                onChange={e => saveFromISO(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); setOpen(false); } }}
+                style={{ flex: 1, minWidth: 0, padding: '3px 5px', border: '1px solid #3B82F6', borderRadius: 4, fontSize: '0.72rem', fontFamily: 'inherit' }}
+              />
+              <button type="button" onClick={saveToday} title="Set to today" style={{ padding: '3px 8px', borderRadius: 4, border: '1px solid #CBD5E1', background: '#F8FAFC', color: '#334155', fontSize: '0.66rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}>Today</button>
+            </div>
+          </div>
+        </>,
+        document.body,
+      )}
+    </>
+  );
+}
+
 // "Post-Sale Follow-Up" subtab: every uploaded deal missing a Follow Up On
 // Sale value, flagged for attention. Sourced from the same uploaded deals
 // list the Deals subtab shows (so it stays in sync with that data).
-function PostSaleFollowUpView({ deals }) {
+function PostSaleFollowUpView({ deals, onUpdateFollowUp }) {
   const [query, setQuery] = useState('');
 
   const flagged = useMemo(() => {
@@ -466,7 +538,7 @@ function PostSaleFollowUpView({ deals }) {
                         : col.key === '__daysSinceSold'
                         ? renderDaysSinceSold(d['Original Contract Start'])
                         : col.key === 'Follow Up On Sale'
-                          ? <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: '#FEE2E2', color: '#B91C1C' }}>Missing</span>
+                          ? <FollowUpOnSaleCell deal={d} onSave={onUpdateFollowUp} />
                           : renderContractCell(col.key, d[col.key] ?? d[`${col.key} `])}
                     </td>
                   ))}
@@ -593,6 +665,25 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       setLouisvilleMap(loadClientLouisvilleMap());
     }
   }, [subtab]);
+
+  // Record (or clear) a deal's Follow Up On Sale date from the Post-Sale
+  // Follow-Up subtab. Matches the row by reference in the current list, writes
+  // the same M/D/YYYY string the Deals subtab stores, and persists through the
+  // shared deals override so the Deals subtab and Issues badge stay in sync.
+  function updateFollowUpOnSale(targetDeal, value) {
+    setDealsList(prev => {
+      const idx = prev.indexOf(targetDeal);
+      if (idx < 0) return prev;
+      const next = [...prev];
+      const current = { ...next[idx] };
+      const v = String(value ?? '').trim();
+      if (!v) delete current['Follow Up On Sale'];
+      else current['Follow Up On Sale'] = v;
+      next[idx] = current;
+      try { saveDealsOverride(next); } catch (err) { console.warn('Save follow-up failed', err); }
+      return next;
+    });
+  }
 
   // One-time migration for the Tier / Target Tier columns. DataTable
   // permanently hides any column that didn't exist when a user last
@@ -1060,7 +1151,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
         {subtabBar}
-        <PostSaleFollowUpView deals={dealsList} />
+        <PostSaleFollowUpView deals={dealsList} onUpdateFollowUp={updateFollowUpOnSale} />
       </div>
     );
   }
