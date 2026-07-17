@@ -1966,6 +1966,23 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           }),
         };
       })(),
+      // Post-Sale Follow-Up: deals missing a Follow Up On Sale value, sorted
+      // by date closed/sold (most recent first) — same rows as on screen.
+      postSaleFollowUp: {
+        title: lbl('postsale-title', 'Post-Sale Follow-Up — Deals Missing Follow Up On Sale'),
+        headers: [
+          lbl('postsale-client', 'Client'),
+          lbl('postsale-agreement', 'Agreement Name'),
+          lbl('postsale-sold', 'Date Closed / Sold'),
+          lbl('postsale-end', 'End Date'),
+        ],
+        rows: postSaleFollowUps.map((d) => ({
+          client: String(d['Client Name'] ?? d['Client Name '] ?? '').trim() || '—',
+          agreement: String(d['Agreement Name'] ?? '').trim() || '—',
+          soldDate: Number.isNaN(dealSoldTs(d)) ? '' : fmtDate(d['Original Contract Start']),
+          endDate: asDate(d['End Date']) ? fmtDate(d['End Date']) : '',
+        })),
+      },
       // Strategic Accounts — My Accounts: the same on-screen table
       // (My Accounts mapped to the uploaded Strategic Accounts list), verbatim.
       strategicAccounts: {

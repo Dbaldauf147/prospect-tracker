@@ -304,6 +304,31 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
     });
   }
 
+  // ── Post-Sale Follow-Up ──
+  // Deals with no Follow Up On Sale value, sorted by date closed/sold. Mirrors
+  // the on-screen section; sits under Client Renewals like it does on the page.
+  {
+    const ps = p.postSaleFollowUp || {};
+    gap();
+    title(ps.title || 'Post-Sale Follow-Up — Deals Missing Follow Up On Sale');
+    const psCols = [[1, 3], [4, 8], [9, 11], [12, 13]]; // Client | Agreement | Date Closed/Sold | End Date
+    const psHdr = ps.headers || ['Client', 'Agreement Name', 'Date Closed / Sold', 'End Date'];
+    psHdr.forEach((h, i) => put(r, psCols[i][0], r, psCols[i][1], h, { ...HEAD, align: 'left' }));
+    r++;
+    const psRows = ps.rows || [];
+    if (!psRows.length) {
+      put(r, 1, r, COLS, 'No deals are missing a Follow Up On Sale value.', { fg: SE_MUTED });
+      r++;
+    } else {
+      psRows.forEach((row, idx) => {
+        const zebra = idx % 2 === 1 ? { zebra: true } : {};
+        const vals = [row.client || '—', row.agreement || '—', row.soldDate || '—', row.endDate || '—'];
+        vals.forEach((v, i) => put(r, psCols[i][0], r, psCols[i][1], v, { align: 'left', wrap: i === 1, ...zebra }));
+        r++;
+      });
+    }
+  }
+
   // ── Strategic Accounts — My Accounts ──
   {
     const sa = p.strategicAccounts || {};
