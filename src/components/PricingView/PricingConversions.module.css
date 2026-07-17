@@ -124,6 +124,21 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Muted value used for the derived "+4% cost" helper lines so the
+   assumption is visible without competing with the real outputs. */
+.hintValue {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.caption {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  padding: 0 0.3rem;
+  margin: -0.1rem 0 0.1rem;
+}
+
 .outputStrong {
   font-weight: 700;
   color: #0f172a;
