@@ -1,10 +1,11 @@
 import { useMemo, useState, useEffect } from 'react';
 import { DataTable } from '../common/DataTable';
+import { FollowUpOnSaleCell } from '../common/FollowUpOnSaleCell';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { buildTargetTierResolver } from '../../utils/targetTier';
 import { DealsView } from '../DealsView/DealsView';
 import { CommissionsView } from './CommissionsView';
-import { loadDealsList } from '../../utils/dealsStore';
+import { loadDealsList, saveDealsOverride } from '../../utils/dealsStore';
 import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../../utils/dealClientMap';
 import {
   loadClientManagerMap, setClientManager, CLIENT_MANAGER_EVENT,
@@ -382,7 +383,7 @@ const POST_SALE_COLUMNS = [
 // "Post-Sale Follow-Up" subtab: every uploaded deal missing a Follow Up On
 // Sale value, flagged for attention. Sourced from the same uploaded deals
 // list the Deals subtab shows (so it stays in sync with that data).
-function PostSaleFollowUpView({ deals }) {
+function PostSaleFollowUpView({ deals, onUpdateFollowUp }) {
   const [query, setQuery] = useState('');
 
   const flagged = useMemo(() => {
@@ -466,7 +467,7 @@ function PostSaleFollowUpView({ deals }) {
                         : col.key === '__daysSinceSold'
                         ? renderDaysSinceSold(d['Original Contract Start'])
                         : col.key === 'Follow Up On Sale'
-                          ? <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: '#FEE2E2', color: '#B91C1C' }}>Missing</span>
+                          ? <FollowUpOnSaleCell deal={d} onSave={onUpdateFollowUp} />
                           : renderContractCell(col.key, d[col.key] ?? d[`${col.key} `])}
                     </td>
                   ))}
@@ -593,6 +594,25 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       setLouisvilleMap(loadClientLouisvilleMap());
     }
   }, [subtab]);
+
+  // Record (or clear) a deal's Follow Up On Sale date from the Post-Sale
+  // Follow-Up subtab. Matches the row by reference in the current list, writes
+  // the same M/D/YYYY string the Deals subtab stores, and persists through the
+  // shared deals override so the Deals subtab and Issues badge stay in sync.
+  function updateFollowUpOnSale(targetDeal, value) {
+    setDealsList(prev => {
+      const idx = prev.indexOf(targetDeal);
+      if (idx < 0) return prev;
+      const next = [...prev];
+      const current = { ...next[idx] };
+      const v = String(value ?? '').trim();
+      if (!v) delete current['Follow Up On Sale'];
+      else current['Follow Up On Sale'] = v;
+      next[idx] = current;
+      try { saveDealsOverride(next); } catch (err) { console.warn('Save follow-up failed', err); }
+      return next;
+    });
+  }
 
   // One-time migration for the Tier / Target Tier columns. DataTable
   // permanently hides any column that didn't exist when a user last
@@ -1060,7 +1080,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
         {subtabBar}
-        <PostSaleFollowUpView deals={dealsList} />
+        <PostSaleFollowUpView deals={dealsList} onUpdateFollowUp={updateFollowUpOnSale} />
       </div>
     );
   }

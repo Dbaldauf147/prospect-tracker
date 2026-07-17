@@ -9,8 +9,9 @@ import styles from './PipelineView.module.css';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { sanitizeSheetJsWorkbook } from '../../utils/exportSanitize.js';
-import { loadDealsList } from '../../utils/dealsStore';
+import { loadDealsList, saveDealsOverride } from '../../utils/dealsStore';
 import { asDate, fmtDate } from '../../utils/dealsFormat';
+import { FollowUpOnSaleCell } from '../common/FollowUpOnSaleCell';
 import { loadDealClientMap } from '../../utils/dealClientMap';
 import { loadClientManagerMap, loadClientUntrackedMap, loadClientStatusMap } from '../../utils/clientManagerStore';
 import { computeExpiringClients, normClientName } from '../../utils/clientIssues';
@@ -1354,6 +1355,28 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
     });
     return out;
   }, [clientStores.deals]);
+
+  // Record (or clear) a deal's Follow Up On Sale date straight from this
+  // dashboard mirror. Matches the row by reference in the current deals
+  // snapshot, writes the same M/D/YYYY string the Deals subtab stores, and
+  // persists through the shared deals override so the Clients subtab and the
+  // Issues badge stay in sync. Updating local state drops the row off this
+  // list once it has a value.
+  function updateFollowUpOnSale(targetDeal, value) {
+    setClientStores(prev => {
+      const deals = prev.deals || [];
+      const idx = deals.indexOf(targetDeal);
+      if (idx < 0) return prev;
+      const next = [...deals];
+      const current = { ...next[idx] };
+      const v = String(value ?? '').trim();
+      if (!v) delete current['Follow Up On Sale'];
+      else current['Follow Up On Sale'] = v;
+      next[idx] = current;
+      try { saveDealsOverride(next); } catch (err) { console.warn('Save follow-up failed', err); }
+      return { ...prev, deals: next };
+    });
+  }
 
   // Decision-maker contacts grouped by normalized company name, so each
   // renewals row can show the DM(s) at that account and whether they've been
@@ -2819,7 +2842,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                     <td style={{ fontVariantNumeric: 'tabular-nums' }}>{Number.isNaN(dealSoldTs(d)) ? '—' : fmtDate(d['Original Contract Start'])}</td>
                     <td>{renderDaysSinceSold(d['Original Contract Start'])}</td>
                     <td>
-                      <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: '#fee2e2', color: '#b91c1c' }}>Missing</span>
+                      <FollowUpOnSaleCell deal={d} onSave={updateFollowUpOnSale} />
                     </td>
                   </tr>
                 ))
