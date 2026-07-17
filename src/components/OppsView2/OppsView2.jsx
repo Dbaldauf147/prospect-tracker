@@ -33,6 +33,7 @@ import { OPPS_PRICING_SNAPSHOT_EVENT } from '../../utils/oppsPricingSnapshot';
 import { fmtMoneyWhole, toNum, unitCountOrOne, rowYearRevenue } from '../../utils/pricingOptionCalc';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
+import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { computeListFlags } from '../../utils/listFlags';
 import { isActiveOppStage } from '../../utils/targetAccountOpps';
@@ -3792,7 +3793,7 @@ function AgreementSentFollowUpModal({
 // Prompt shown whenever an opp's Follow Up date changes, asking the user
 // to pick the new Status (Who is waiting) for that opp so it stays
 // current with each follow-up. Cleared on Save or Skip.
-function FollowUpStatusModal({ opp, statusOptions, onSave, onClose, onCancel }) {
+function FollowUpStatusModal({ opp, statusOptions, clientManager, onSave, onClose, onCancel }) {
   const curStatus = opp?.['Status'] ?? '';
   const [status, setStatus] = useState(String(curStatus ?? ''));
   const [salesPartner, setSalesPartner] = useState(String(opp?.['Sales Partner'] ?? ''));
@@ -3888,6 +3889,16 @@ function FollowUpStatusModal({ opp, statusOptions, onSave, onClose, onCancel }) 
             </select>
             {textHint(curStatus)}
           </div>
+          {clientManager ? (
+            <div>
+              <label style={labelStyle}>Client Manager</label>
+              <div style={{
+                padding: '0.45rem 0.55rem',
+                border: '1px solid var(--color-border)', borderRadius: 4,
+                fontSize: '0.85rem', background: 'var(--color-bg)', color: 'var(--color-text)',
+              }}>{clientManager}</div>
+            </div>
+          ) : null}
           <div>
             <label style={labelStyle}>Sales Partner</label>
             <input
@@ -5294,7 +5305,7 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onCommi
   );
 }
 
-function NextStepsEditor({ opp, onClose, updateOppField }) {
+function NextStepsEditor({ opp, clientManager, onClose, updateOppField }) {
   const noteLines = useMemo(() => textToBulletItems(opp?.['Next Steps']), [opp]);
   const storedWaiting = Array.isArray(opp?._nextStepsWaiting) ? opp._nextStepsWaiting : [];
   const initialRows = useMemo(() => {
@@ -5411,6 +5422,12 @@ function NextStepsEditor({ opp, onClose, updateOppField }) {
                 style={{ padding: '2px 6px', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.78rem', fontFamily: 'inherit', color: '#334155', minWidth: 170 }}
               />
             </label>
+            {clientManager ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: '0.72rem', color: '#64748B' }}>
+                Client Manager
+                <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#334155' }}>{clientManager}</span>
+              </div>
+            ) : null}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
             {markBtn('_calledOn', '📞', 'Called')}
@@ -5645,6 +5662,38 @@ function TodoBox() {
 
 export function OppsView2({ settings, updateSettings, prospects = [], updateProspect, addProspect, onSelectProspect } = {}) {
   const { user, isAdmin } = useAuth();
+
+  // Client Manager lookup for the status / notes popups. Managers are
+  // typed on the Clients tab and stored per-company (keyed by the
+  // lowercased/trimmed name). We only surface one for an opp whose
+  // account is a *current* client (prospect status "client"), matching
+  // what the user sees on the Clients tab.
+  const [clientManagerMap, setClientManagerMap] = useState(() => loadClientManagerMap());
+  useEffect(() => {
+    const refresh = () => setClientManagerMap(loadClientManagerMap());
+    window.addEventListener(CLIENT_MANAGER_EVENT, refresh);
+    const onStorage = (e) => { if (e.key === 'clients-manager-map') refresh(); };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(CLIENT_MANAGER_EVENT, refresh);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+  const currentClientKeys = useMemo(() => {
+    const set = new Set();
+    for (const p of prospects) {
+      if (String(p?.status || '').trim().toLowerCase() === 'client') {
+        set.add(String(p?.company || '').trim().toLowerCase());
+      }
+    }
+    return set;
+  }, [prospects]);
+  const clientManagerForAccount = useCallback((account) => {
+    const key = String(account || '').trim().toLowerCase();
+    if (!key || !currentClientKeys.has(key)) return '';
+    return String(clientManagerMap[key] || '').trim();
+  }, [currentClientKeys, clientManagerMap]);
+
   // Seeded with DEFAULT_HEADERS so the table renders columns immediately;
   // the hydration effect below replaces this with the user's saved
   // headers + records once Firestore / IndexedDB returns.
@@ -8758,6 +8807,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           <FollowUpStatusModal
             opp={opp}
             statusOptions={statusOpts}
+            clientManager={clientManagerForAccount(opp?.['Account'])}
             onSave={({ status, nextSteps, nextStepsWaiting, salesPartner }) => {
               if (status !== String(opp['Status'] ?? '')) {
                 updateOppField(opp._id, 'Status', status);
@@ -8883,6 +8933,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           <NextStepsEditor
             key={opp._id}
             opp={opp}
+            clientManager={clientManagerForAccount(opp?.['Account'])}
             onClose={() => setNextStepsPopupId(null)}
             updateOppField={updateOppField}
           />
