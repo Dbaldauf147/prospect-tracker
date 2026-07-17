@@ -132,6 +132,173 @@
   font-size: 0.85rem;
 }
 
+.modeToggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: #f1f5f9;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  width: fit-content;
+}
+
+.mode, .modeActive {
+  border: none;
+  background: transparent;
+  padding: 0.35rem 0.9rem;
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.modeActive {
+  background: #fff;
+  color: var(--color-text);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.linkBtn {
+  border: none;
+  background: none;
+  color: var(--color-accent, #2563eb);
+  font: inherit;
+  cursor: pointer;
+  padding: 0 0.25rem;
+  text-decoration: underline;
+}
+
+.siteToolbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.searchInput {
+  flex: 0 1 280px;
+  height: 34px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 0 0.7rem;
+  font-family: inherit;
+  font-size: 0.85rem;
+  color: var(--color-text);
+  background: #fff;
+  outline: none;
+}
+
+.searchInput:focus {
+  border-color: var(--color-accent, #2563eb);
+}
+
+.checkLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.siteStat {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  margin-left: auto;
+}
+
+.tableScroll {
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+}
+
+.siteTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.siteTable th {
+  text-align: left;
+  background: #f1f5f9;
+  color: var(--color-text-muted);
+  font-weight: 600;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+}
+
+.siteTable td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--color-border-light, #eef2f6);
+  vertical-align: top;
+}
+
+.siteTable tr:last-child td {
+  border-bottom: none;
+}
+
+.siteCell {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.dash {
+  color: var(--color-text-muted);
+}
+
+.pillYes {
+  display: inline-block;
+  background: #DCFCE7;
+  border: 1px solid #86EFAC;
+  color: #166534;
+  font-weight: 700;
+  font-size: 0.68rem;
+  padding: 1px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.pillNo {
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+}
+
+.reqList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 240px;
+}
+
+.reqItem {
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.reqCol {
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.reqItem a {
+  color: var(--color-accent, #2563eb);
+}
+
+.emptyRow {
+  text-align: center;
+  color: var(--color-text-muted);
+  padding: 1.5rem !important;
+}
+
 .noMatch {
   max-width: 560px;
   border: 1px solid #FCD34D;
