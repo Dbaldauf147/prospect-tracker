@@ -347,7 +347,7 @@ export async function downloadPipelineWorkbook(p) {
   wb.created = new Date();
   const lbl = p.lbl || ((_id, def) => def);
   const dateStr = (p.generatedAt || new Date()).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-  const sub = `Pipeline Report${p.cdmName ? ` — ${p.cdmName}` : ''}  ·  ${dateStr}`;
+  const sub = `Pipeline Report${p.cdmName ? `  ·  ${p.cdmName}` : ''}  ·  ${dateStr}`;
   if (!p.hasBfo) {
     // Not fatal — the report still exports the manually-entered numbers.
     wb.description = 'BFO Activity not loaded; live actuals reflect manually entered values.';
