@@ -770,13 +770,13 @@ function useCalc() {
 }
 
 // Loose company-name match for joining opp Account values to a prospect's
-// company. Mirrors the tolerance used on the company page (ProspectModal's
-// companiesMatch) so this coverage table agrees with what each company page
-// shows: NFKD-flattened equality, whitespace-squished equality, then a
-// contained-substring test for slight name drift.
+// company. This is a verbatim copy of ProspectModal's companiesMatch so the
+// coverage table joins opps to clients EXACTLY as each company page does —
+// any looser or stricter and the two views could disagree on which opps
+// belong to a client (e.g. "Blackstone" vs "The Blackstone Group L.P.").
 function coverageCompaniesMatch(a, b) {
-  const na = String(a || '').toLowerCase().trim();
-  const nb = String(b || '').toLowerCase().trim();
+  const na = (a || '').toLowerCase().trim();
+  const nb = (b || '').toLowerCase().trim();
   if (!na || !nb) return false;
   if (na === nb) return true;
   const flatten = (s) => String(s || '')
@@ -789,9 +789,23 @@ function coverageCompaniesMatch(a, b) {
   const fa = flatten(na);
   const fb = flatten(nb);
   if (fa && fb && fa === fb) return true;
-  const longer = fa.length >= fb.length ? fa : fb;
-  const shorter = fa.length >= fb.length ? fb : fa;
+  const squish = (s) => s.replace(/\s+/g, ' ').trim();
+  if (squish(na) === squish(nb)) return true;
+  const longer = na.length >= nb.length ? na : nb;
+  const shorter = na.length >= nb.length ? nb : na;
   if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
+  const strip = s => s.replace(/\b(inc|llc|ltd|corp|co|lp)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').trim();
+  const sa = strip(na);
+  const sb = strip(nb);
+  if (sa === sb) return true;
+  const sLonger = sa.length >= sb.length ? sa : sb;
+  const sShorter = sa.length >= sb.length ? sb : sa;
+  if (sShorter.length >= 4 && sShorter.length >= sLonger.length * 0.6 && sLonger.includes(sShorter)) return true;
+  const tokensOf = (s) => s.replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+  const sTokens = tokensOf(shorter);
+  if (sTokens.length === 1 && sTokens[0].length >= 3) {
+    if (tokensOf(longer).includes(sTokens[0])) return true;
+  }
   return false;
 }
 
