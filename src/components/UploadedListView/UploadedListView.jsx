@@ -680,8 +680,25 @@ export function UploadedListView({
   // to every currently selected row in the given scope.
   const [bulkPicker, setBulkPicker] = useState(null); // { scope, query }
   const [selectedKeys, setSelectedKeys] = useState(() => new Set());
+  // Manual "Add row" modal — { [header]: draftValue }, or null when closed.
+  const [addRowDraft, setAddRowDraft] = useState(null);
   const fileInputRef = useRef(null);
   const { data, source } = store;
+
+  // Column names offered in the Add-row form: the union of headers across
+  // the current list (document order). When the list is still empty there
+  // are no headers yet, so seed a single company-name field the matching
+  // logic understands.
+  const manualHeaders = useMemo(() => {
+    const hs = [];
+    const seen = new Set();
+    for (const row of data) {
+      for (const k of Object.keys(row)) {
+        if (!seen.has(k)) { seen.add(k); hs.push(k); }
+      }
+    }
+    return hs.length ? hs : ['Company Name'];
+  }, [data]);
 
   // Load list from IDB whenever the tab (storageKey) changes.
   useEffect(() => {
@@ -1513,6 +1530,29 @@ export function UploadedListView({
     setStore({ data: [], source: 'empty' });
   }
 
+  // Append a manually entered row to the list and persist it. The new row
+  // carries every current header (blank where unspecified) so it lines up
+  // with the rest of the table; existing name-keyed mappings re-attach to
+  // it automatically via the shared `rows` memo.
+  async function handleAddRow() {
+    const fields = manualHeaders;
+    const nameKey = pickNameKey(fields);
+    const newRow = {};
+    for (const h of fields) newRow[h] = String(addRowDraft?.[h] ?? '').trim();
+    if (!String(newRow[nameKey] || '').trim()) return;
+    const next = [...data, newRow];
+    try {
+      await saveListToIDB(storageKey, next);
+      setStore({ data: next, source: 'override' });
+      setUploadError(null);
+      setAddRowDraft(null);
+    } catch (err) {
+      setUploadError(err?.name === 'QuotaExceededError'
+        ? 'Adding the row exceeded the browser storage quota.'
+        : (err?.message || 'Failed to add the row'));
+    }
+  }
+
   const matchStats = useMemo(() => {
     // Only count mappings whose row is actually in the current list —
     // an older mapping for a company that's no longer uploaded should
@@ -1791,6 +1831,14 @@ export function UploadedListView({
             style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
           >
             Upload Excel
+          </button>
+          <button
+            type="button"
+            onClick={() => setAddRowDraft({})}
+            title={`Manually add one ${singular} to the ${title} list`}
+            style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
+          >
+            + Add row
           </button>
           {source === 'override' && (
             <button
@@ -2323,6 +2371,64 @@ export function UploadedListView({
               style={{ marginTop: '0.4rem', padding: '0.35rem 0.5rem', background: 'none', border: '1px solid var(--color-border)', borderRadius: 4, cursor: 'pointer', fontSize: '0.72rem', fontFamily: 'inherit' }}
             >Cancel</button>
           </div>
+        </div>,
+        document.body
+      )}
+      {addRowDraft && createPortal(
+        <div
+          onClick={() => setAddRowDraft(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.35)', zIndex: 9998, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: '10vh' }}
+        >
+          {(() => {
+            const nameKey = pickNameKey(manualHeaders);
+            const canAdd = String(addRowDraft[nameKey] || '').trim().length > 0;
+            return (
+              <div
+                onClick={e => e.stopPropagation()}
+                style={{ width: 420, maxWidth: '92vw', background: '#fff', border: '1px solid #e2e8f0', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.18)', padding: '0.9rem', display: 'flex', flexDirection: 'column', maxHeight: '80vh' }}
+              >
+                <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B', marginBottom: '0.2rem' }}>
+                  Add {singular} to {title}
+                </div>
+                <div style={{ fontSize: '0.72rem', color: '#64748B', marginBottom: '0.6rem' }}>
+                  Fill in the fields below. The <strong>{nameKey}</strong> is required; other columns are optional.
+                </div>
+                <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {manualHeaders.map((h, i) => (
+                    <label key={h} style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                      <span style={{ fontSize: '0.68rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#64748B' }}>
+                        {h}{h === nameKey ? ' *' : ''}
+                      </span>
+                      <input
+                        autoFocus={i === 0}
+                        type="text"
+                        value={addRowDraft[h] || ''}
+                        onChange={e => setAddRowDraft(d => ({ ...d, [h]: e.target.value }))}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && canAdd) handleAddRow();
+                          if (e.key === 'Escape') setAddRowDraft(null);
+                        }}
+                        style={{ width: '100%', padding: '0.4rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.8rem', fontFamily: 'inherit', boxSizing: 'border-box' }}
+                      />
+                    </label>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.8rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => setAddRowDraft(null)}
+                    style={{ padding: '0.4rem 0.8rem', background: 'none', border: '1px solid var(--color-border)', borderRadius: 6, cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit' }}
+                  >Cancel</button>
+                  <button
+                    type="button"
+                    onClick={handleAddRow}
+                    disabled={!canAdd}
+                    style={{ padding: '0.4rem 0.9rem', background: canAdd ? 'var(--color-accent, #2563eb)' : '#CBD5E1', color: '#fff', border: 'none', borderRadius: 6, cursor: canAdd ? 'pointer' : 'default', fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit' }}
+                  >Add row</button>
+                </div>
+              </div>
+            );
+          })()}
         </div>,
         document.body
       )}
