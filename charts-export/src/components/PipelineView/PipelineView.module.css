@@ -1,0 +1,758 @@
+.wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.header {
+  padding: 1rem 1.25rem 0.5rem;
+}
+
+.title {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  margin: 0;
+  color: var(--color-text);
+}
+
+.subtitle {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  margin-top: 0.15rem;
+}
+
+.body {
+  flex: 1;
+  overflow: auto;
+  padding: 0.5rem 1.25rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.section {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+}
+
+.scrollX {
+  overflow-x: auto;
+}
+
+.sectionTitle {
+  background: #475569;
+  color: #fff;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: 0.04em;
+}
+
+/* Fixed labels (titles / headers / row labels) turned editable via <EL>.
+   Plain text until hovered; a dashed underline + tint hints it's editable. */
+.editLabel {
+  cursor: text;
+  border-radius: 3px;
+  padding: 0 2px;
+  border-bottom: 1px dashed transparent;
+}
+
+.editLabel:hover {
+  background: rgba(148, 163, 184, 0.22);
+  border-bottom-color: currentColor;
+}
+
+/* The input shown while editing a label. Inherits font weight / size / align
+   from the surrounding cell but pins readable dark-on-white colors so it stays
+   legible even inside the dark section-title bars. */
+.editInput {
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  text-align: inherit;
+  color: #0f172a;
+  background: #fff;
+  border: 1px solid #2563eb;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+.editInput:focus {
+  outline: none;
+}
+
+.grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.72rem;
+}
+
+.grid th,
+.grid td {
+  border: 1px solid var(--color-border);
+  padding: 0.25rem 0.3rem;
+  vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.grid th {
+  background: #f8fafc;
+  font-weight: 700;
+  text-align: center;
+  font-size: 0.7rem;
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.grid td {
+  white-space: nowrap;
+}
+
+.grid th.headerLeft {
+  text-align: left;
+  background: #fff;
+}
+
+.grid td.label {
+  font-weight: 600;
+  background: #fff;
+}
+
+.cell {
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  font-family: inherit;
+  font-size: 0.72rem;
+  padding: 0.15rem 0.3rem;
+  border-radius: 4px;
+  color: var(--color-text);
+  text-align: left;
+}
+
+.cell:hover {
+  border-color: var(--color-border);
+}
+
+.cell:focus {
+  outline: none;
+  border-color: #2563eb;
+  background: #fff;
+}
+
+.cellLeft {
+  composes: cell;
+  text-align: left;
+}
+
+.cellGreen {
+  background: #d1fae5;
+}
+
+.cellRed {
+  background: #fecaca;
+}
+
+.liveCell {
+  display: inline-block;
+  padding: 0.15rem 0.3rem;
+  font-size: 0.72rem;
+  border-bottom: 1px dotted #2563eb;
+  cursor: help;
+}
+
+/* Interactive live value — hover pops a breakdown, click pins it. */
+.liveValue {
+  cursor: pointer;
+}
+
+.liveValue:hover {
+  background: rgba(37, 99, 235, 0.08);
+  border-radius: 3px;
+}
+
+.liveValuePinned {
+  background: rgba(37, 99, 235, 0.14);
+  border-bottom-color: #1d4ed8;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.35);
+}
+
+/* Floating "what goes into this number" panel (portaled to <body>). */
+.calcPanel {
+  position: fixed;
+  z-index: 1000;
+  max-width: calc(100vw - 16px);
+  overflow-y: auto;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.22);
+  padding: 0.6rem 0.7rem;
+  font-size: 0.74rem;
+  color: var(--color-text);
+  line-height: 1.4;
+}
+
+.calcHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.3rem;
+}
+
+.calcTitle {
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+
+.calcBadge {
+  font-size: 0.56rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #15803d;
+  background: rgba(34, 197, 94, 0.14);
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+  white-space: nowrap;
+}
+
+.calcPinBtn {
+  font-size: 0.56rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #1d4ed8;
+  background: rgba(37, 99, 235, 0.12);
+  border: 1px solid #1d4ed8;
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+  white-space: nowrap;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.calcPinBtn:hover { filter: brightness(0.97); }
+
+.calcHeadActions {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+.calcExportBtn {
+  font-size: 0.56rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #047857;
+  background: rgba(5, 150, 105, 0.1);
+  border: 1px solid #047857;
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+  white-space: nowrap;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.calcExportBtn:hover { filter: brightness(0.97); }
+
+.calcValue {
+  font-size: 1.05rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 0.25rem;
+}
+
+.calcFormula {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  background: #f8fafc;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 0.25rem 0.4rem;
+  margin-bottom: 0.35rem;
+  white-space: normal;
+}
+
+.calcInputs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  margin-bottom: 0.35rem;
+}
+
+.calcInputRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.calcInputLabel { color: var(--color-text-muted); }
+
+.calcInputVal {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.calcRows {
+  margin-top: 0.3rem;
+  border-top: 1px dashed var(--color-border);
+  padding-top: 0.3rem;
+}
+
+.calcRowsHead {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted);
+  margin-bottom: 0.2rem;
+}
+
+.calcTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.68rem;
+}
+
+.calcTable th,
+.calcTable td {
+  border-bottom: 1px solid var(--color-border);
+  padding: 0.15rem 0.3rem;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 150px;
+}
+
+.calcTable th {
+  color: var(--color-text-muted);
+  font-weight: 700;
+  position: sticky;
+  top: 0;
+  background: var(--color-bg);
+}
+
+.calcNum {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.calcMore {
+  font-size: 0.64rem;
+  color: var(--color-text-muted);
+  padding: 0.2rem 0.3rem;
+  font-style: italic;
+}
+
+.calcSource {
+  font-size: 0.64rem;
+  font-style: italic;
+  color: var(--color-text-muted);
+  margin-top: 0.25rem;
+}
+
+.noBfoCell {
+  color: #cbd5e1;
+  font-size: 0.85rem;
+}
+
+.cellAmber {
+  background: #fef3c7;
+}
+
+.numCell {
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+
+.midRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.midRow > .section {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.bottomRow {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+.tinyTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.tinyTable th,
+.tinyTable td {
+  border: 1px solid var(--color-border);
+  padding: 0.3rem 0.45rem;
+  vertical-align: top;
+}
+
+.tinyTable th {
+  background: #f8fafc;
+  font-weight: 700;
+  font-size: 0.74rem;
+  white-space: nowrap;
+}
+
+.tinyTable td {
+  white-space: normal;
+  word-break: break-word;
+}
+
+/* Service Exploration Coverage — service picker + coverage bar + client
+   chips. Sits above the Client Renewals table. */
+.svcCovBody {
+  padding: 0.7rem 0.85rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.svcCovLabel {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.svcCovSelect {
+  font-family: inherit;
+  font-size: 0.82rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  min-width: 220px;
+  max-width: 100%;
+}
+
+.svcCovSelect:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.svcCovSelect:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* Services table — one row per tracked service. */
+.svcCovTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.svcCovTable th,
+.svcCovTable td {
+  border: 1px solid var(--color-border);
+  padding: 0.35rem 0.5rem;
+  vertical-align: middle;
+}
+
+.svcCovTable th {
+  background: #f8fafc;
+  font-weight: 700;
+  font-size: 0.72rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.svcCovThNum { width: 90px; text-align: right; }
+.svcCovThRemove { width: 34px; }
+
+.svcCovRow {
+  cursor: pointer;
+}
+
+.svcCovRow:hover {
+  background: rgba(37, 99, 235, 0.05);
+}
+
+.svcCovServiceCell {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.svcCovChevron {
+  display: inline-block;
+  margin-right: 0.4rem;
+  color: #94a3b8;
+  font-size: 0.7rem;
+  transition: transform 0.15s ease;
+}
+
+.svcCovChevronOpen {
+  transform: rotate(90deg);
+}
+
+.svcCovNumCell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--color-text-muted);
+}
+
+.svcCovRowCoverage {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.svcCovRowCoverage .svcCovBarTrack {
+  flex: 1;
+  min-width: 80px;
+}
+
+.svcCovRowPct {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: #2563eb;
+  min-width: 34px;
+  text-align: right;
+}
+
+.svcCovRemoveCell {
+  text-align: center;
+}
+
+.svcCovRemoveBtn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 0.25rem;
+  font-family: inherit;
+}
+
+.svcCovRemoveBtn:hover {
+  color: #ef4444;
+}
+
+.svcCovTableEmpty {
+  color: var(--color-text-muted);
+  font-style: italic;
+  text-align: center;
+  padding: 0.7rem !important;
+}
+
+.svcCovDetailRow > td {
+  background: #f8fafc;
+  padding: 0.6rem 0.75rem;
+}
+
+.svcCovAddRow {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.svcCovBarTrack {
+  height: 10px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.svcCovBarFill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #22c55e, #16a34a);
+  transition: width 0.25s ease;
+}
+
+.svcCovLists {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .svcCovLists { grid-template-columns: 1fr; }
+}
+
+.svcCovCol {
+  min-width: 0;
+}
+
+.svcCovListHead {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-muted);
+  margin-bottom: 0.35rem;
+}
+
+.svcCovChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.svcCovChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.svcCovChip:hover {
+  filter: brightness(0.97);
+  text-decoration: underline;
+}
+
+.svcCovChipYes {
+  background: #dcfce7;
+  border-color: #86efac;
+  color: #166534;
+}
+
+.svcCovChipNo {
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+  color: #64748b;
+}
+
+.svcCovChipStatus {
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  opacity: 0.8;
+}
+
+.svcCovNone {
+  font-size: 0.74rem;
+  font-style: italic;
+  color: var(--color-text-muted);
+}
+
+.svcCovEmpty {
+  font-size: 0.78rem;
+  font-style: italic;
+  color: var(--color-text-muted);
+  padding: 0.3rem 0;
+}
+
+/* Strategy-notes text areas at the bottom of the page. */
+.notesBody {
+  padding: 0.6rem 0.75rem;
+}
+
+.notesTwoCol {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+.notesArea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  padding: 0.5rem 0.65rem;
+}
+
+.notesArea:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.delBtn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 0 0.3rem;
+}
+
+.delBtn:hover {
+  color: #ef4444;
+}
+
+.actionBtn {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 0.78rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.actionBtn:hover {
+  border-color: #2563eb;
+}
+
+/* Clickable client / contact names in the renewals table. */
+.linkCell {
+  color: #2563eb;
+  cursor: pointer;
+}
+
+.linkCell:hover {
+  text-decoration: underline;
+}
+
+/* Renewals rows for clients cancelling for sure — muted grey so lost
+   accounts visually recede from the ones still in play. */
+.cancelledRow td {
+  color: #94a3b8;
+  background: #f8fafc;
+}
+
+.cancelledRow .linkCell {
+  color: #94a3b8;
+}
