@@ -573,13 +573,14 @@ function fmtShortDate(s) {
 // of <tr>) plus the full uncapped set (`allData`) so the "Export to Excel"
 // button can write every contributing row, not just the ~50 shown.
 function mapRows(source, mapFn, opts = {}) {
-  const { max = 50, exportMapFn = null, exportColumns = null } = opts;
+  const { max = 50, exportMapFn = null, exportColumns = null, exportSource = null } = opts;
   const arr = source || [];
   const all = arr.map(mapFn);
   const out = { data: all.slice(0, max), more: Math.max(0, all.length - max), allData: all };
   // The Excel export can carry extra columns (e.g. Scope) the compact
-  // on-screen panel omits — supplied here so the two stay decoupled.
-  if (exportMapFn) out.exportData = arr.map(exportMapFn);
+  // on-screen panel omits, and can draw from a separately filtered row set
+  // (via exportSource) — supplied here so the two stay decoupled.
+  if (exportMapFn) out.exportData = (exportSource || arr).map(exportMapFn);
   if (exportColumns) out.exportColumns = exportColumns;
   return out;
 }
@@ -624,7 +625,10 @@ function notQuotedRows(deals, head) {
       fmtShortDate(o.closeDate),
       o.quoted ? `${o.quotedDays}d` : '—',
     ], {
-      exportColumns: ['Account', 'BFO Opportunity Name', 'Scope', 'Result', 'Close', 'Quoted days', 'Not quoted'],
+      // Excel export drops deals with no BFO Opportunity Name and adds a
+      // Reason Not Sold column; the on-screen panel keeps every row.
+      exportSource: deals.filter(o => (o.bfoName || '').trim() !== ''),
+      exportColumns: ['Account', 'BFO Opportunity Name', 'Scope', 'Result', 'Close', 'Quoted days', 'Not quoted', 'Reason Not Sold'],
       exportMapFn: o => [
         o.account,
         o.bfoName || '',
@@ -633,6 +637,7 @@ function notQuotedRows(deals, head) {
         fmtShortDate(o.closeDate),
         o.quoted ? o.quotedDays : 0,
         o.quoted ? 'No' : 'Yes',
+        o.reasonNotSold || '',
       ],
     }),
   };
@@ -1582,6 +1587,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
         account: String(r.Account || '').trim() || '(no account)',
         bfoName: bfoOppNameOf(r),
         scope: String(r.Scope || '').trim(),
+        reasonNotSold: String(r['Reason Not Sold'] || '').trim(),
         stage,
         closeDate: cd,
         ts,
