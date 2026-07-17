@@ -1295,6 +1295,10 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
   // current. `targetCampaign` is the chosen campaign's subject.
   const [existingCampaigns, setExistingCampaigns] = useState([]);
   const [targetCampaign, setTargetCampaign] = useState('');
+  // Preview shown before merging into an existing campaign: which selected
+  // contacts are new (will be added) and which are already on that campaign's
+  // roster (will be skipped), so duplicates can't be added blind.
+  const [campaignPreview, setCampaignPreview] = useState(null);
 
   // Open the campaign panel and pull the current campaign list so the user
   // can either name a new campaign or add to one that already exists.
@@ -1337,10 +1341,54 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     return { totalContacts: list.length, sent, replies, uniqueRecipients: sent, uniqueRepliers: replies, responseRate };
   }
 
-  // Add the current selection to an already-saved campaign, deduped by email
-  // against its existing roster. Preserves the campaign's tracking data.
-  async function addToExistingCampaign() {
+  // Split the current selection against a target campaign's roster (deduped by
+  // lowercased email): which contacts are new (toAdd), which are already on the
+  // roster or repeated within the selection (duplicates), and which can't be
+  // added because they have no email (noEmail). Drives the confirmation popup.
+  function splitSelectionForCampaign(target) {
+    const rosterEmails = new Set(
+      (Array.isArray(target?.contacts) ? target.contacts : [])
+        .map(c => String(c.email || '').trim().toLowerCase())
+        .filter(Boolean),
+    );
+    const seen = new Set();
+    const toAdd = [];
+    const duplicates = [];
+    const noEmail = [];
+    for (const c of selectedContacts) {
+      const email = String(c.email || '').trim();
+      const key = email.toLowerCase();
+      if (!email) { noEmail.push(c); continue; }
+      if (rosterEmails.has(key) || seen.has(key)) { duplicates.push(c); continue; }
+      seen.add(key);
+      toAdd.push(c);
+    }
+    return { toAdd, duplicates, noEmail };
+  }
+
+  // Build the "which will be added / skipped" preview for the chosen campaign
+  // and open the confirmation popup, rather than merging blind. Uses the
+  // campaign list already loaded into the panel.
+  function previewAddToExistingCampaign() {
     const name = targetCampaign.trim();
+    if (!name) return;
+    if (selectedContacts.length === 0) {
+      setResult({ type: 'error', message: 'Add at least one contact before adding to a campaign' });
+      return;
+    }
+    const target = existingCampaigns.find(c => String(c.subject || '').trim().toLowerCase() === name.toLowerCase());
+    if (!target) {
+      setResult({ type: 'error', message: `Campaign "${name}" no longer exists — refresh and try again.` });
+      return;
+    }
+    setCampaignPreview({ name, ...splitSelectionForCampaign(target) });
+  }
+
+  // Commit the preview: add the current selection to the already-saved
+  // campaign, deduped by email against a FRESH copy of its roster (so a
+  // concurrent edit can't reintroduce a duplicate). Preserves tracking data.
+  async function confirmAddToExistingCampaign() {
+    const name = (campaignPreview?.name || targetCampaign).trim();
     if (!name) return;
     if (selectedContacts.length === 0) {
       setResult({ type: 'error', message: 'Add at least one contact before adding to a campaign' });
@@ -1358,6 +1406,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       const idx = existing.findIndex(c => String(c.subject || '').trim().toLowerCase() === name.toLowerCase());
       if (idx === -1) {
         setResult({ type: 'error', message: `Campaign "${name}" no longer exists — refresh and try again.` });
+        setCampaignPreview(null);
         setSavingCampaign(false);
         return;
       }
@@ -1366,6 +1415,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       const added = buildCampaignContacts(currentContacts.map(c => c.email));
       if (added.length === 0) {
         setResult({ type: 'error', message: 'Every selected contact with an email is already in that campaign.' });
+        setCampaignPreview(null);
         setSavingCampaign(false);
         return;
       }
@@ -1374,7 +1424,11 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       const updated = { ...target, contacts: mergedContacts, ...deriveCampaignCounts(mergedContacts) };
       const nextCampaigns = existing.map((c, i) => (i === idx ? updated : c));
       await setDoc(ref, { campaigns: nextCampaigns, updatedAt: nowISO });
+      // Keep the in-panel campaign list current so the dropdown count and any
+      // follow-up preview reflect the just-added contacts.
+      setExistingCampaigns(nextCampaigns);
       setResult({ type: 'success', message: `Added ${added.length} contact${added.length === 1 ? '' : 's'} to Email Campaign "${name}".` });
+      setCampaignPreview(null);
       setNamingCampaign(false);
       setTargetCampaign('');
       setTimeout(() => setResult(null), 5000);
@@ -2129,10 +2183,10 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                         </select>
                         <button
                           type="button"
-                          onClick={addToExistingCampaign}
+                          onClick={previewAddToExistingCampaign}
                           disabled={savingCampaign || !targetCampaign}
                           style={{ padding: '0.25rem 0.7rem', border: 'none', background: (savingCampaign || !targetCampaign) ? '#93C5FD' : '#1D4ED8', color: '#fff', borderRadius: 4, fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit', cursor: (savingCampaign || !targetCampaign) ? 'default' : 'pointer', whiteSpace: 'nowrap' }}
-                        >{savingCampaign ? 'Adding…' : 'Add'}</button>
+                        >{savingCampaign ? 'Adding…' : 'Review & add'}</button>
                       </div>
                       <div style={{ textAlign: 'center', fontSize: '0.66rem', fontWeight: 700, color: '#93A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', margin: '0.55rem 0 0.2rem' }}>or create new</div>
                     </div>
@@ -2277,6 +2331,78 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
           </div>
         </div>
       </div>
+      {campaignPreview && createPortal(
+        (() => {
+          const { name, toAdd = [], duplicates = [], noEmail = [] } = campaignPreview;
+          const label = (c) => `${c.name || c.email || '—'}${c.company ? ` · ${c.company}` : ''}`;
+          const listBox = { maxHeight: 200, overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: 6, padding: '0.35rem 0.5rem', background: '#fff' };
+          const rowStyle = { fontSize: '0.74rem', padding: '0.12rem 0', color: '#1E293B', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
+          const headStyle = { fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', margin: '0 0 0.3rem' };
+          return (
+            <div
+              onClick={() => { if (!savingCampaign) setCampaignPreview(null); }}
+              style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}
+            >
+              <div
+                onClick={e => e.stopPropagation()}
+                style={{ width: 'min(560px, 100%)', maxHeight: '85vh', overflowY: 'auto', background: '#fff', borderRadius: 10, boxShadow: '0 20px 50px rgba(15,23,42,0.3)', padding: '1.1rem 1.25rem' }}
+              >
+                <h3 style={{ margin: '0 0 0.2rem', fontSize: '1rem', fontWeight: 700, color: '#0F172A' }}>
+                  Add contacts to “{name}”
+                </h3>
+                <p style={{ margin: '0 0 0.85rem', fontSize: '0.76rem', color: '#475569' }}>
+                  <strong style={{ color: '#166534' }}>{toAdd.length} new</strong> will be added
+                  {duplicates.length > 0 && <> · <strong style={{ color: '#92400E' }}>{duplicates.length} already in the campaign</strong> (skipped)</>}
+                  {noEmail.length > 0 && <> · <strong style={{ color: '#991B1B' }}>{noEmail.length} without an email</strong> (skipped)</>}
+                </p>
+
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <div style={{ ...headStyle, color: '#166534' }}>Will be added ({toAdd.length})</div>
+                  <div style={listBox}>
+                    {toAdd.length ? toAdd.map((c, i) => <div key={c.id ?? c.email ?? i} style={rowStyle}>{label(c)}</div>)
+                      : <div style={{ ...rowStyle, color: '#94A3B8', fontStyle: 'italic' }}>Nothing new — every selected contact is already in this campaign.</div>}
+                  </div>
+                </div>
+
+                {duplicates.length > 0 && (
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <div style={{ ...headStyle, color: '#92400E' }}>Already in campaign — skipped ({duplicates.length})</div>
+                    <div style={{ ...listBox, background: '#FFFBEB' }}>
+                      {duplicates.map((c, i) => <div key={c.id ?? c.email ?? i} style={{ ...rowStyle, color: '#78716C' }}>{label(c)}</div>)}
+                    </div>
+                  </div>
+                )}
+
+                {noEmail.length > 0 && (
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <div style={{ ...headStyle, color: '#991B1B' }}>No email — can’t be added ({noEmail.length})</div>
+                    <div style={{ ...listBox, background: '#FEF2F2' }}>
+                      {noEmail.map((c, i) => <div key={c.id ?? i} style={{ ...rowStyle, color: '#B91C1C' }}>{label(c)}</div>)}
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => setCampaignPreview(null)}
+                    disabled={savingCampaign}
+                    style={{ padding: '0.4rem 0.85rem', border: '1px solid #CBD5E1', background: '#fff', color: '#475569', borderRadius: 6, fontSize: '0.76rem', fontWeight: 600, fontFamily: 'inherit', cursor: savingCampaign ? 'default' : 'pointer' }}
+                  >Cancel</button>
+                  <button
+                    type="button"
+                    onClick={confirmAddToExistingCampaign}
+                    disabled={savingCampaign || toAdd.length === 0}
+                    style={{ padding: '0.4rem 0.95rem', border: 'none', background: (savingCampaign || toAdd.length === 0) ? '#93C5FD' : '#1D4ED8', color: '#fff', borderRadius: 6, fontSize: '0.76rem', fontWeight: 700, fontFamily: 'inherit', cursor: (savingCampaign || toAdd.length === 0) ? 'default' : 'pointer' }}
+                  >{savingCampaign ? 'Adding…' : `Add ${toAdd.length} contact${toAdd.length === 1 ? '' : 's'}`}</button>
+                </div>
+              </div>
+            </div>
+          );
+        })(),
+        document.body,
+      )}
+
       {editingContact && createPortal(
         <ContactEditModal
           contact={editingContact}

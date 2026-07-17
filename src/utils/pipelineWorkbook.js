@@ -269,9 +269,9 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
       scRows.forEach((row, idx) => {
         const zebra = idx % 2 === 1 ? { zebra: true } : {};
         put(r, scCols[0][0], r, scCols[0][1], row.service || '—', { align: 'left', wrap: true, ...zebra });
-        put(r, scCols[1][0], r, scCols[1][1], num(row.explored), { align: 'right', numFmt: INT, ...zebra });
-        put(r, scCols[2][0], r, scCols[2][1], num(row.total), { align: 'right', numFmt: INT, ...zebra });
-        put(r, scCols[3][0], r, scCols[3][1], num(row.pct), { align: 'right', numFmt: PCT, bold: true, ...zebra });
+        put(r, scCols[1][0], r, scCols[1][1], num(row.explored), { align: 'left', numFmt: INT, ...zebra });
+        put(r, scCols[2][0], r, scCols[2][1], num(row.total), { align: 'left', numFmt: INT, ...zebra });
+        put(r, scCols[3][0], r, scCols[3][1], num(row.pct), { align: 'left', numFmt: PCT, bold: true, ...zebra });
         r++;
       });
     }
