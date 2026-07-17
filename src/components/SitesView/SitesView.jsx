@@ -1079,6 +1079,20 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
   const siteHeaders = useMemo(() => sitesData.length ? Object.keys(sitesData[0]) : [], [sitesData]);
 
+  // Compact { siteName, city, state } list fed to the Building Compliance
+  // Screening subtab so it can screen every uploaded site. City/State come
+  // from the resolved (detected or overridden) columns of the site list.
+  const complianceSites = useMemo(() => {
+    const cityCol = cityOverride;
+    const stateCol = stateColumnOverride;
+    return cleanSitesData.map((r, i) => ({
+      id: i,
+      siteName: siteNameColumn ? String(r[siteNameColumn] ?? '').trim() : '',
+      city: cityCol ? String(r[cityCol] ?? '').trim() : '',
+      state: stateCol ? String(r[stateCol] ?? '').trim() : '',
+    }));
+  }, [cleanSitesData, siteNameColumn, cityOverride, stateColumnOverride]);
+
   // Pick the FIRST candidate column (in document order) that has a
   // valid value for this row. Earlier we took the per-row minimum,
   // but that lets a stray "1" in a later column beat the real
@@ -9592,7 +9606,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         >Compliance Screening</button>
       </div>
       {mainTab === 'compliance' ? (
-        <BuildingComplianceScreening />
+        <BuildingComplianceScreening sites={complianceSites} />
       ) : mainTab === 'mapping' ? (
         <UtilityMappingView siteUtilities={siteUtilities} referenceUtilityNames={knownUtilityNames} onExportSiteMapping={exportUtilityMappingAnalysis} />
       ) : (
