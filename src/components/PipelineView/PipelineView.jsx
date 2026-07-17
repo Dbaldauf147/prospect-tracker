@@ -288,12 +288,6 @@ const DEFAULT_STATE = {
  - Leverage fee floating tools
  - SCLP partnership where possible on company/prospect research
  - Afternoons for calls/mornings for focused work and outreach`,
-  notesUpdates: `1.  Screen opps with Keith each week for Stage 3 - avoiding smaller opps coming into the pipeline before Dan works on them
-2.  Take PE prospects out for lunch in NYC 1 on 1
-3.  Leverage Keith and Gabe on sourcing calls vs. Beth
-4.  Figure out how to accelerate sourcing pilots w/PCs faster and at a larger deal size
-5.
-6.`,
 };
 
 // Per-stage numeric fields. Anything not in this list is left to the
@@ -1938,7 +1932,6 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
         { title: lbl('notes-distractions-title', 'Eliminating Distractions'), text: state.notesDistractions },
         { title: lbl('notes-prospecting-title', 'Prospecting Approach'), text: [state.notesProspectingLeft, state.notesProspectingRight].filter(Boolean).join('\n') },
         { title: lbl('notes-efficient-title', 'Efficient Time Utilization'), text: state.notesEfficientTime },
-        { title: lbl('notes-updates-title', 'Updates'), text: state.notesUpdates },
       ],
     };
   }
@@ -2762,13 +2755,6 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           <div className={styles.sectionTitle}><EL id="notes-efficient-title">Efficient Time Utilization</EL></div>
           <div className={styles.notesBody}>
             <NotesBox value={state.notesEfficientTime} onCommit={(v) => setField('notesEfficientTime', v)} minRows={6} />
-          </div>
-        </div>
-
-        <div className={styles.section}>
-          <div className={styles.sectionTitle}><EL id="notes-updates-title">Updates</EL></div>
-          <div className={styles.notesBody}>
-            <NotesBox value={state.notesUpdates} onCommit={(v) => setField('notesUpdates', v)} minRows={6} />
           </div>
         </div>
       </div>
