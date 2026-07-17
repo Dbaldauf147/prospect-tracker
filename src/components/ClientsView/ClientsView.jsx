@@ -338,12 +338,43 @@ function isBlankFollowUp(row) {
   return ['-', '—', 'n/a', '#n/a'].includes(v.toLowerCase());
 }
 
-// Columns shown on the Post-Sale Follow-Up subtab.
+// The date a deal closed/sold. Deals don't carry an explicit close date, so
+// we use Original Contract Start — the same field the Deals tab treats as the
+// deal's canonical date. Returns a Date or null.
+function dealSoldDate(row) {
+  return asDate(row?.['Original Contract Start']);
+}
+
+// Whole-day delta between when a deal was sold and today, rendered as a
+// colored cell. A post-sale follow-up should land soon after the sale, so the
+// longer a deal has gone without one the more overdue it is: rows past 30 days
+// run red, rows past a week run amber. Undated rows render an em dash.
+function renderDaysSinceSold(soldRaw) {
+  const d = asDate(soldRaw);
+  if (!d) return <span style={{ color: '#94A3B8' }}>—</span>;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const start = new Date(d);
+  start.setHours(0, 0, 0, 0);
+  const days = Math.round((today.getTime() - start.getTime()) / MS_PER_DAY);
+  const color = days > 30 ? '#B91C1C'
+    : days > 7 ? '#92400E'
+    : '#334155';
+  const label = days === 0
+    ? 'Today'
+    : days > 0 ? `${days}d ago`
+    : `in ${Math.abs(days)}d`;
+  return <span style={{ color, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{label}</span>;
+}
+
+// Columns shown on the Post-Sale Follow-Up subtab. A post-sale follow-up is
+// driven by how long it's been since the deal was sold (not when the contract
+// expires), so this leads with Date Sold / Days Since Sold.
 const POST_SALE_COLUMNS = [
   { key: 'Client Name',       label: 'Client', minWidth: 200 },
   { key: 'Agreement Name',    label: 'Agreement Name', minWidth: 360 },
-  { key: 'End Date',          label: 'End Date', minWidth: 120 },
-  { key: '__daysToEnd',       label: 'Days to End', minWidth: 110 },
+  { key: '__dateSold',        label: 'Date Sold', minWidth: 120 },
+  { key: '__daysSinceSold',   label: 'Days Since Sold', minWidth: 130 },
   { key: 'Closed Won',        label: 'Closed Won', minWidth: 110 },
   { key: 'Follow Up On Sale', label: 'Follow Up On Sale', minWidth: 170 },
 ];
@@ -363,10 +394,11 @@ function PostSaleFollowUpView({ deals }) {
       if (!isBlankFollowUp(d)) continue;     // only deals still needing follow-up
       out.push(d);
     }
-    // Soonest End Date first; rows with no End Date sink to the bottom.
+    // Longest since sold first — the deals sold furthest back with still no
+    // follow-up are the most overdue. Rows with no sold date sink to the bottom.
     out.sort((a, b) => {
-      const da = asDate(a['End Date']);
-      const db = asDate(b['End Date']);
+      const da = dealSoldDate(a);
+      const db = dealSoldDate(b);
       if (!da && !db) return 0;
       if (!da) return 1;
       if (!db) return -1;
@@ -429,8 +461,10 @@ function PostSaleFollowUpView({ deals }) {
                 <tr key={i} style={{ background: '#FEF2F2', borderBottom: '1px solid #FEE2E2' }}>
                   {POST_SALE_COLUMNS.map(col => (
                     <td key={col.key} style={{ padding: '0.35rem 0.6rem', whiteSpace: 'nowrap', minWidth: col.minWidth }}>
-                      {col.key === '__daysToEnd'
-                        ? renderDaysToEnd(d['End Date'], isInactiveAgreement(d))
+                      {col.key === '__dateSold'
+                        ? (dealSoldDate(d) ? <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtDate(d['Original Contract Start'])}</span> : <span style={{ color: '#94A3B8' }}>—</span>)
+                        : col.key === '__daysSinceSold'
+                        ? renderDaysSinceSold(d['Original Contract Start'])
                         : col.key === 'Follow Up On Sale'
                           ? <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: '#FEE2E2', color: '#B91C1C' }}>Missing</span>
                           : renderContractCell(col.key, d[col.key] ?? d[`${col.key} `])}

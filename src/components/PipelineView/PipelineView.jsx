@@ -86,6 +86,29 @@ function dealSoldTs(row) {
   return d ? d.getTime() : NaN;
 }
 
+// Whole-day delta between when a deal was sold and today, rendered as a
+// colored cell. A post-sale follow-up should land soon after the sale, so the
+// longer a deal has gone without one the more overdue it is: rows past 30 days
+// run red, rows past a week run amber. Undated rows render an em dash. Mirrors
+// the Clients tab's Post-Sale Follow-Up subtab.
+function renderDaysSinceSold(soldRaw) {
+  const d = asDate(soldRaw);
+  if (!d) return <span style={{ color: '#94a3b8' }}>—</span>;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const start = new Date(d);
+  start.setHours(0, 0, 0, 0);
+  const days = Math.round((today.getTime() - start.getTime()) / 86400000);
+  const color = days > 30 ? '#b91c1c'
+    : days > 7 ? '#92400e'
+    : '#334155';
+  const label = days === 0
+    ? 'Today'
+    : days > 0 ? `${days}d ago`
+    : `in ${Math.abs(days)}d`;
+  return <span style={{ color, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{label}</span>;
+}
+
 // Parse "USD 15,000.00" / "$15,000" / "15000" -> 15000.
 function parseMoney(v) {
   if (v === null || v === undefined) return null;
@@ -1304,8 +1327,9 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
 
   // Post-Sale Follow-Up: every uploaded deal (Deals subtab) with no "Follow
   // Up On Sale" value — the deals still needing a post-sale follow-up. Mirrors
-  // the Clients tab's Post-Sale Follow-Up subtab, but sorted by date
-  // closed/sold (Original Contract Start), most recent first.
+  // the Clients tab's Post-Sale Follow-Up subtab, sorted by how long it's been
+  // since the deal was sold (Original Contract Start) — longest since sold
+  // first, since those are the most overdue for a follow-up.
   const postSaleFollowUps = useMemo(() => {
     const out = [];
     for (const d of (clientStores.deals || [])) {
@@ -1323,7 +1347,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       if (aNan && bNan) return 0;
       if (aNan) return 1;   // undated rows sink to the bottom
       if (bNan) return -1;
-      return tb - ta;       // most recently closed/sold first
+      return ta - tb;       // oldest sold (most overdue) first
     });
     return out;
   }, [clientStores.deals]);
@@ -2771,13 +2795,13 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
             Mirrors the Clients tab's Post-Sale Follow-Up subtab. */}
         <div className={styles.section}>
           <div className={styles.sectionTitle}><EL id="postsale-title">Post-Sale Follow-Up — Deals Missing Follow Up On Sale</EL></div>
-          <table className={styles.tinyTable} title="Deals from the Clients → Deals subtab with no Follow Up On Sale value. Sorted by date closed/sold (Original Contract Start), most recent first.">
+          <table className={styles.tinyTable} title="Deals from the Clients → Deals subtab with no Follow Up On Sale value. Sorted by how long it's been since the deal was sold (Original Contract Start) — longest since sold first.">
             <thead>
               <tr>
                 <th><EL id="postsale-client">Client</EL></th>
                 <th><EL id="postsale-agreement">Agreement Name</EL></th>
                 <th><EL id="postsale-sold">Date Closed / Sold</EL></th>
-                <th><EL id="postsale-end">End Date</EL></th>
+                <th><EL id="postsale-since">Days Since Sold</EL></th>
                 <th><EL id="postsale-followup">Follow Up On Sale</EL></th>
               </tr>
             </thead>
@@ -2788,7 +2812,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                     <td>{String(d['Client Name'] ?? d['Client Name '] ?? '').trim() || '—'}</td>
                     <td>{String(d['Agreement Name'] ?? '').trim() || '—'}</td>
                     <td style={{ fontVariantNumeric: 'tabular-nums' }}>{Number.isNaN(dealSoldTs(d)) ? '—' : fmtDate(d['Original Contract Start'])}</td>
-                    <td style={{ fontVariantNumeric: 'tabular-nums' }}>{asDate(d['End Date']) ? fmtDate(d['End Date']) : '—'}</td>
+                    <td>{renderDaysSinceSold(d['Original Contract Start'])}</td>
                     <td>
                       <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: '#fee2e2', color: '#b91c1c' }}>Missing</span>
                     </td>
