@@ -280,8 +280,8 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
   // ── Client Renewals ──
   gap();
   title(lbl('ren-title', `Client Renewals — Contracts Expiring Within ${p.renewals.windowDays} Days`));
-  const renCols = [[1, 2], [3, 4], [5, 6], [7, 9], [10, 11], [12, 13]];
-  const renHdr = [lbl('ren-client', 'Client'), lbl('ren-status', 'Renewal Status'), lbl('ren-client-manager', 'Client Manager'), lbl('ren-decision-maker', 'Decision Maker'), lbl('ren-invited', 'Invited to Louisville'), lbl('ren-days-until', 'Days Until Expiration')];
+  const renCols = [[1, 2], [3, 4], [5, 6], [7, 9], [10, 13]];
+  const renHdr = [lbl('ren-client', 'Client'), lbl('ren-status', 'Renewal Status'), lbl('ren-client-manager', 'Client Manager'), lbl('ren-decision-maker', 'Decision Maker'), lbl('ren-days-until', 'Days Until Expiration')];
   renHdr.forEach((h, i) => put(r, renCols[i][0], r, renCols[i][1], h, { ...HEAD, align: 'left' }));
   r++;
   const renRows = p.renewals.rows || [];
@@ -292,9 +292,9 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
     renRows.forEach((row, idx) => {
       const zebra = idx % 2 === 1;
       const overdue = num(row.daysUntil) != null && row.daysUntil < 0;
-      const vals = [row.company || '—', row.renewalStatus || '—', row.clientManager || '—', row.decisionMaker || '—', row.invited || '—', num(row.daysUntil)];
+      const vals = [row.company || '—', row.renewalStatus || '—', row.clientManager || '—', row.decisionMaker || '—', num(row.daysUntil)];
       vals.forEach((v, i) => {
-        const isDays = i === 5;
+        const isDays = i === 4;
         put(r, renCols[i][0], r, renCols[i][1], v === '' || v == null ? null : v, {
           align: 'left', numFmt: isDays ? INT : undefined, wrap: i === 3,
           ...(isDays && overdue ? { fill: BAD_FILL, fg: BAD_FG } : (zebra ? { zebra: true } : {})),
@@ -540,17 +540,16 @@ export async function downloadPipelineWorkbook(p) {
       lbl('ren-status', 'Renewal Status'),
       lbl('ren-client-manager', 'Client Manager'),
       lbl('ren-decision-maker', 'Decision Maker'),
-      lbl('ren-invited', 'Invited to Louisville'),
       lbl('ren-days-until', 'Days Until Expiration'),
     ];
-    const widths = [30, 20, 20, 24, 18, 18];
+    const widths = [30, 20, 20, 24, 18];
     const ws = wb.addWorksheet('Client Renewals', {
       properties: { tabColor: { argb: SE_GREEN } },
       views: [{ state: 'frozen', ySplit: 3, xSplit: 1 }],
     });
     ws.columns = widths.map(w => ({ width: w }));
     const hdrRow = brandBand(ws, headers.length, lbl('ren-title', `Client Renewals — Contracts Expiring Within ${p.renewals.windowDays} Days`));
-    headerRow(ws, hdrRow, headers, ['left', 'left', 'left', 'left', 'left', 'right']);
+    headerRow(ws, hdrRow, headers, ['left', 'left', 'left', 'left', 'right']);
     let r = hdrRow + 1;
     (p.renewals.rows || []).forEach((row, idx) => {
       const zebra = idx % 2 === 1;
@@ -560,7 +559,6 @@ export async function downloadPipelineWorkbook(p) {
         [row.renewalStatus || '—', 'left', null],
         [row.clientManager || '—', 'left', null],
         [row.decisionMaker || '—', 'left', null],
-        [row.invited || '—', 'left', null],
         [num(row.daysUntil), 'right', INT, overdue ? { fill: BAD_FILL, fg: BAD_FG } : null],
       ];
       vals.forEach(([v, align, numFmt, tint], i) => {
