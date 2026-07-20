@@ -380,11 +380,64 @@ const POST_SALE_COLUMNS = [
   { key: 'Follow Up On Sale', label: 'Follow Up On Sale', minWidth: 170 },
 ];
 
+// Persisted, user-adjustable column widths for the Post-Sale Follow-Up
+// table. Mirrors the DataTable convention (prospect-col-widths-<tableId>)
+// so the storage layout stays consistent across the app, but this bespoke
+// table isn't a DataTable so it manages its own widths here. Widths below
+// this floor are clamped so a column can't be dragged shut.
+const POST_SALE_WIDTHS_KEY = 'prospect-col-widths-postsale';
+const POST_SALE_MIN_WIDTH = 60;
+
+function loadPostSaleWidths() {
+  try { return JSON.parse(localStorage.getItem(POST_SALE_WIDTHS_KEY)) || {}; } catch { return {}; }
+}
+function savePostSaleWidths(w) {
+  try { localStorage.setItem(POST_SALE_WIDTHS_KEY, JSON.stringify(w)); } catch {}
+}
+
 // "Post-Sale Follow-Up" subtab: every uploaded deal missing a Follow Up On
 // Sale value, flagged for attention. Sourced from the same uploaded deals
 // list the Deals subtab shows (so it stays in sync with that data).
 function PostSaleFollowUpView({ deals, onUpdateFollowUp }) {
   const [query, setQuery] = useState('');
+  const [colWidths, setColWidths] = useState(loadPostSaleWidths);
+
+  const getWidth = (col) => colWidths[col.key] || col.minWidth;
+
+  // Drag-to-resize a column from its right edge. Tracks the pointer on
+  // document (not the handle) so the drag keeps working past the header,
+  // persisting the new width to localStorage as it goes.
+  function handleResizeStart(e, colKey) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const col = POST_SALE_COLUMNS.find(c => c.key === colKey);
+    const startWidth = colWidths[colKey] || col.minWidth;
+
+    function onMouseMove(ev) {
+      const next = Math.max(POST_SALE_MIN_WIDTH, startWidth + (ev.clientX - startX));
+      setColWidths(prev => {
+        const updated = { ...prev, [colKey]: next };
+        savePostSaleWidths(updated);
+        return updated;
+      });
+    }
+    function onMouseUp() {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
+
+  function resetWidths() {
+    setColWidths({});
+    savePostSaleWidths({});
+  }
 
   const flagged = useMemo(() => {
     const out = [];
@@ -437,6 +490,16 @@ function PostSaleFollowUpView({ deals, onUpdateFollowUp }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: '#64748B', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
         <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 3, background: '#FEE2E2', border: '1px solid #FCA5A5', flexShrink: 0 }} />
         <span><strong style={{ color: '#B91C1C' }}>{filtered.length}</strong> deal{filtered.length === 1 ? '' : 's'} flagged — missing a Follow Up On Sale value.</span>
+        <span style={{ color: '#CBD5E1' }}>·</span>
+        <span style={{ color: '#94A3B8' }}>Drag a column edge to resize.</span>
+        {Object.keys(colWidths).length > 0 && (
+          <button
+            type="button"
+            onClick={resetWidths}
+            style={{ background: 'transparent', border: '1px solid #E2E8F0', borderRadius: 4, fontSize: '0.68rem', color: '#64748B', cursor: 'pointer', padding: '1px 6px', fontFamily: 'inherit' }}
+            title="Restore the default column widths"
+          >Reset widths</button>
+        )}
       </div>
 
       {filtered.length === 0 ? (
@@ -447,12 +510,22 @@ function PostSaleFollowUpView({ deals, onUpdateFollowUp }) {
         </div>
       ) : (
         <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: 8 }}>
-          <table style={{ borderCollapse: 'collapse', fontSize: '0.72rem', width: 'max-content', minWidth: '100%' }}>
+          <table style={{ borderCollapse: 'collapse', fontSize: '0.72rem', tableLayout: 'fixed', width: POST_SALE_COLUMNS.reduce((s, c) => s + getWidth(c), 0), minWidth: '100%' }}>
+            <colgroup>
+              {POST_SALE_COLUMNS.map(col => (
+                <col key={col.key} style={{ width: getWidth(col) }} />
+              ))}
+            </colgroup>
             <thead>
               <tr style={{ background: '#F1F5F9' }}>
                 {POST_SALE_COLUMNS.map(col => (
-                  <th key={col.key} style={{ padding: '0.4rem 0.6rem', textAlign: 'left', color: '#475569', fontWeight: 700, fontSize: '0.66rem', whiteSpace: 'nowrap', borderBottom: '1px solid #CBD5E1', minWidth: col.minWidth }}>
+                  <th key={col.key} style={{ position: 'relative', padding: '0.4rem 0.6rem', textAlign: 'left', color: '#475569', fontWeight: 700, fontSize: '0.66rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', borderBottom: '1px solid #CBD5E1' }} title={col.label}>
                     {col.label}
+                    <span
+                      onMouseDown={e => handleResizeStart(e, col.key)}
+                      title="Drag to resize"
+                      style={{ position: 'absolute', top: 0, right: 0, height: '100%', width: 8, cursor: 'col-resize', userSelect: 'none' }}
+                    />
                   </th>
                 ))}
               </tr>
@@ -461,7 +534,7 @@ function PostSaleFollowUpView({ deals, onUpdateFollowUp }) {
               {filtered.map((d, i) => (
                 <tr key={i} style={{ background: '#FEF2F2', borderBottom: '1px solid #FEE2E2' }}>
                   {POST_SALE_COLUMNS.map(col => (
-                    <td key={col.key} style={{ padding: '0.35rem 0.6rem', whiteSpace: 'nowrap', minWidth: col.minWidth }}>
+                    <td key={col.key} style={{ padding: '0.35rem 0.6rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {col.key === '__dateSold'
                         ? (dealSoldDate(d) ? <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtDate(d['Original Contract Start'])}</span> : <span style={{ color: '#94A3B8' }}>—</span>)
                         : col.key === '__daysSinceSold'
