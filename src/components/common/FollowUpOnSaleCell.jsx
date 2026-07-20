@@ -5,13 +5,15 @@ import { createPortal } from 'react-dom';
 // Follow-Up surfaces (the Clients subtab and the Pipeline dashboard mirror).
 // That column is a date across the app (DEAL_DATE_KEYS), so recording a
 // follow-up means stamping the date it happened — stored in the same M/D/YYYY
-// shape the Deals subtab uses. Setting a value clears the deal's "missing"
-// flag, so the row drops off the follow-up list on the next render. The editor
-// opens in a portal popover anchored to the badge (like the Deals tab's
-// Progress cell) so it can't be clipped by the table's overflow.
+// shape the Deals subtab uses. A deal that never needs a post-sale follow-up
+// can instead be marked "N/A". Either way the deal's "missing" flag clears and
+// the row drops off the follow-up list on the next render. The editor opens in
+// a portal popover anchored to the badge (like the Deals tab's Progress cell)
+// so it can't be clipped by the table's overflow.
 //
-// onSave(deal, mdY) receives the deal row and the new M/D/YYYY string (empty
-// string to clear); the caller persists it through the shared deals override.
+// onSave(deal, value) receives the deal row and the new value — an M/D/YYYY
+// date string, the literal 'N/A', or an empty string to clear; the caller
+// persists it through the shared deals override.
 export function FollowUpOnSaleCell({ deal, onSave }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState(null);
@@ -37,6 +39,9 @@ export function FollowUpOnSaleCell({ deal, onSave }) {
   function saveToday() {
     const t = new Date();
     saveMDY(`${t.getMonth() + 1}/${t.getDate()}/${t.getFullYear()}`);
+  }
+  function saveNA() {
+    saveMDY('N/A');
   }
 
   return (
@@ -67,6 +72,10 @@ export function FollowUpOnSaleCell({ deal, onSave }) {
                 style={{ flex: 1, minWidth: 0, padding: '3px 5px', border: '1px solid #3B82F6', borderRadius: 4, fontSize: '0.72rem', fontFamily: 'inherit' }}
               />
               <button type="button" onClick={saveToday} title="Set to today" style={{ padding: '3px 8px', borderRadius: 4, border: '1px solid #CBD5E1', background: '#F8FAFC', color: '#334155', fontSize: '0.66rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}>Today</button>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: '0.45rem', paddingTop: '0.45rem', borderTop: '1px solid #E2E8F0' }}>
+              <span style={{ flex: 1, fontSize: '0.62rem', color: '#64748B' }}>No follow-up needed?</span>
+              <button type="button" onClick={saveNA} title="Mark this deal as not applicable — no post-sale follow-up needed" style={{ padding: '3px 10px', borderRadius: 4, border: '1px solid #CBD5E1', background: '#F8FAFC', color: '#334155', fontSize: '0.66rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}>N/A</button>
             </div>
           </div>
         </>,
