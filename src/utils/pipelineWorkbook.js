@@ -139,6 +139,7 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
     { label: lbl('q-closed-ytd', 'Closed YTD'), value: num(p.quota.closedYTD), fmt: MONEY },
     { label: lbl('q-pct-quota', '% of Quota'), value: num(p.quota.pctOfQuota), fmt: PCT1 },
     { label: 'Coverage Ratio', value: num(p.coverage.actual), fmt: '0.00', tint: cmpTint(p.coverage.actual, p.coverage.goal, 'higher') },
+    { label: 'Coverage Ratio Goal', value: num(p.coverage.goal), fmt: '0.00' },
   ];
   kpis.forEach((k, i) => {
     // Distribute the cards evenly across the full 13-column grid regardless of
