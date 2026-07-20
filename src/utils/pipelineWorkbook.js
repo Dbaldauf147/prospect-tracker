@@ -177,19 +177,23 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
     const flagged = s.flaggedCount
       ? (s.flaggedLabel ? `${s.flaggedLabel}: ${flaggedNames}` : flaggedNames)
       : '—';
+    // Numeric metric values are centered so they line up under their
+    // centered group headers. The Stage row-label and the Flagged Opps
+    // list stay left — the latter is variable-length overflow text that
+    // reads better flush-left.
     const cells = [
       [s.label, 'left', null, null],
-      [num(s.activeGoal), 'right', INT, null],
-      [num(s.activeActual), 'right', INT, cmpTint(s.activeActual, s.activeGoal, 'higher')],
-      [num(s.dealSizeGoal), 'right', MONEY, null],
-      [num(s.dealSizeActual), 'right', MONEY, cmpTint(s.dealSizeActual, s.dealSizeGoal, 'higher')],
-      [num(s.pipelineGoal), 'right', MONEY, null],
-      [num(s.pipelineActual), 'right', MONEY, cmpTint(s.pipelineActual, s.pipelineGoal, 'higher')],
-      [num(s.closeGoal), 'right', PCT, null],
-      [num(s.closeActual), 'right', PCT, cmpTint(s.closeActual, s.closeGoal, 'higher')],
-      [num(s.targetProjGoal), 'right', MONEY, null],
-      [num(s.lifeGoal), 'right', INT, null],
-      [num(s.lifeActual), 'right', INT, cmpTint(s.lifeActual, s.lifeGoal, 'lower')],
+      [num(s.activeGoal), 'center', INT, null],
+      [num(s.activeActual), 'center', INT, cmpTint(s.activeActual, s.activeGoal, 'higher')],
+      [num(s.dealSizeGoal), 'center', MONEY, null],
+      [num(s.dealSizeActual), 'center', MONEY, cmpTint(s.dealSizeActual, s.dealSizeGoal, 'higher')],
+      [num(s.pipelineGoal), 'center', MONEY, null],
+      [num(s.pipelineActual), 'center', MONEY, cmpTint(s.pipelineActual, s.pipelineGoal, 'higher')],
+      [num(s.closeGoal), 'center', PCT, null],
+      [num(s.closeActual), 'center', PCT, cmpTint(s.closeActual, s.closeGoal, 'higher')],
+      [num(s.targetProjGoal), 'center', MONEY, null],
+      [num(s.lifeGoal), 'center', INT, null],
+      [num(s.lifeActual), 'center', INT, cmpTint(s.lifeActual, s.lifeGoal, 'lower')],
       [flagged, 'left', null, s.flaggedCount ? { fill: WARN_FILL, fg: WARN_FG } : null],
     ];
     cells.forEach(([v, align, numFmt, tint], i) => {
@@ -205,12 +209,12 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
   const t = p.totals;
   const totCells = [
     [lbl('m-total', 'Total'), 'left', null],
-    [num(t.activeGoal), 'right', INT], [num(t.activeActual), 'right', INT],
-    [num(t.dealSizeGoal), 'right', MONEY], [num(t.dealSizeActual), 'right', MONEY],
-    [num(t.pipelineGoal), 'right', MONEY], [num(t.pipelineActual), 'right', MONEY],
-    ['', 'right', null], [num(t.closeRate), 'right', PCT],
-    [num(t.targetProjGoal), 'right', MONEY],
-    [num(t.lifeGoal), 'right', INT], [num(t.lifeActual), 'right', INT],
+    [num(t.activeGoal), 'center', INT], [num(t.activeActual), 'center', INT],
+    [num(t.dealSizeGoal), 'center', MONEY], [num(t.dealSizeActual), 'center', MONEY],
+    [num(t.pipelineGoal), 'center', MONEY], [num(t.pipelineActual), 'center', MONEY],
+    ['', 'center', null], [num(t.closeRate), 'center', PCT],
+    [num(t.targetProjGoal), 'center', MONEY],
+    [num(t.lifeGoal), 'center', INT], [num(t.lifeActual), 'center', INT],
     ['', 'left', null],
   ];
   totCells.forEach(([v, align, numFmt], i) => {
