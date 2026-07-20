@@ -3797,6 +3797,9 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, onSave, onClos
   const curStatus = opp?.['Status'] ?? '';
   const [status, setStatus] = useState(String(curStatus ?? ''));
   const [salesPartner, setSalesPartner] = useState(String(opp?.['Sales Partner'] ?? ''));
+  // Timeline? is a user-added column, so read it tolerant to casing/whitespace
+  // drift the same way the flags do.
+  const [timeline, setTimeline] = useState(String(rowValueByHeader(opp, 'timeline?') ?? ''));
 
   // Seed the Next Steps rows from the same source the standalone
   // NextStepsEditor uses so this popup edits them in the identical
@@ -3819,7 +3822,7 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, onSave, onClos
     const kept = rows.filter(r => (r.note || '').trim() || (r.waitingOn || '').trim());
     const nextSteps = kept.map(r => encodeNoteLine(r.note)).join('\n');
     const nextStepsWaiting = kept.map(r => (r.waitingOn || '').trim());
-    onSave({ status, nextSteps, nextStepsWaiting, salesPartner: salesPartner.trim() });
+    onSave({ status, nextSteps, nextStepsWaiting, salesPartner: salesPartner.trim(), timeline: timeline.trim() });
   }
 
   const hintStyle = { fontSize: '0.68rem', color: 'var(--color-text-muted)', marginTop: 3 };
@@ -3905,6 +3908,16 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, onSave, onClos
               type="text"
               value={salesPartner}
               onChange={(e) => setSalesPartner(e.target.value)}
+              placeholder="—"
+              style={inputStyle}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Timeline</label>
+            <input
+              type="text"
+              value={timeline}
+              onChange={(e) => setTimeline(e.target.value)}
               placeholder="—"
               style={inputStyle}
             />
@@ -8849,7 +8862,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             opp={opp}
             statusOptions={statusOpts}
             clientManager={clientManagerForAccount(opp?.['Account'])}
-            onSave={({ status, nextSteps, nextStepsWaiting, salesPartner }) => {
+            onSave={({ status, nextSteps, nextStepsWaiting, salesPartner, timeline }) => {
               if (status !== String(opp['Status'] ?? '')) {
                 updateOppField(opp._id, 'Status', status);
               }
@@ -8858,6 +8871,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               }
               if (salesPartner !== String(opp['Sales Partner'] ?? '').trim()) {
                 updateOppField(opp._id, 'Sales Partner', salesPartner);
+              }
+              if (timeline !== String(rowValueByHeader(opp, 'timeline?') ?? '').trim()) {
+                // Write back to the existing Timeline? key (whatever its casing)
+                // so we don't spawn a duplicate column.
+                const timelineKey = Object.keys(opp).find(k => normCell(k) === 'timeline?') || 'Timeline?';
+                updateOppField(opp._id, timelineKey, timeline);
               }
               const curWaiting = Array.isArray(opp._nextStepsWaiting) ? opp._nextStepsWaiting : [];
               if (JSON.stringify(nextStepsWaiting) !== JSON.stringify(curWaiting)) {
