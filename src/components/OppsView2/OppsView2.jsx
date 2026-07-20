@@ -5346,6 +5346,18 @@ function NextStepsEditor({ opp, clientManager, onClose, updateOppField }) {
 
   const account = String(opp?.['Account'] || '').trim() || '(no account)';
 
+  // The "Timeline?" column is user-added, so its stored key can carry odd
+  // casing / zero-width drift (hence the tolerant read). Write back to
+  // whatever key already exists on the record, falling back to the
+  // canonical "Timeline?" when the opp doesn't have one yet.
+  const timelineKey = useMemo(() => {
+    for (const k in (opp || {})) {
+      if (normCell(k) === 'timeline?') return k;
+    }
+    return 'Timeline?';
+  }, [opp]);
+  const timelineValue = String(rowValueByHeader(opp, 'timeline?') ?? '');
+
   // One-click activity marks. Stamps today's date on `_calledOn` /
   // `_metOn` (clicking again the same day clears it). The Agents page
   // reads these stamps so a marked call or meeting shows up in its
@@ -5418,6 +5430,24 @@ function NextStepsEditor({ opp, clientManager, onClose, updateOppField }) {
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
                   else if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.value = String(opp?.['Sales Partner'] ?? ''); e.currentTarget.blur(); }
+                }}
+                style={{ padding: '2px 6px', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.78rem', fontFamily: 'inherit', color: '#334155', minWidth: 170 }}
+              />
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: '0.72rem', color: '#64748B' }}>
+              Timeline
+              <input
+                key={timelineValue}
+                type="text"
+                defaultValue={timelineValue}
+                placeholder="—"
+                onBlur={(e) => {
+                  const v = e.currentTarget.value.trim();
+                  if (v !== timelineValue.trim()) updateOppField(opp._id, timelineKey, v);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+                  else if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.value = timelineValue; e.currentTarget.blur(); }
                 }}
                 style={{ padding: '2px 6px', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.78rem', fontFamily: 'inherit', color: '#334155', minWidth: 170 }}
               />
