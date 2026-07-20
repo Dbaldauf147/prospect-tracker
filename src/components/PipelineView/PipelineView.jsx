@@ -9,9 +9,8 @@ import styles from './PipelineView.module.css';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { sanitizeSheetJsWorkbook } from '../../utils/exportSanitize.js';
-import { loadDealsList, saveDealsOverride } from '../../utils/dealsStore';
+import { loadDealsList } from '../../utils/dealsStore';
 import { asDate, fmtDate } from '../../utils/dealsFormat';
-import { FollowUpOnSaleCell } from '../common/FollowUpOnSaleCell';
 import { loadDealClientMap } from '../../utils/dealClientMap';
 import { loadClientManagerMap, loadClientUntrackedMap, loadClientStatusMap } from '../../utils/clientManagerStore';
 import { computeExpiringClients, normClientName } from '../../utils/clientIssues';
@@ -1358,28 +1357,6 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
     });
     return out;
   }, [clientStores.deals]);
-
-  // Record (or clear) a deal's Follow Up On Sale date straight from this
-  // dashboard mirror. Matches the row by reference in the current deals
-  // snapshot, writes the same M/D/YYYY string the Deals subtab stores, and
-  // persists through the shared deals override so the Clients subtab and the
-  // Issues badge stay in sync. Updating local state drops the row off this
-  // list once it has a value.
-  function updateFollowUpOnSale(targetDeal, value) {
-    setClientStores(prev => {
-      const deals = prev.deals || [];
-      const idx = deals.indexOf(targetDeal);
-      if (idx < 0) return prev;
-      const next = [...deals];
-      const current = { ...next[idx] };
-      const v = String(value ?? '').trim();
-      if (!v) delete current['Follow Up On Sale'];
-      else current['Follow Up On Sale'] = v;
-      next[idx] = current;
-      try { saveDealsOverride(next); } catch (err) { console.warn('Save follow-up failed', err); }
-      return { ...prev, deals: next };
-    });
-  }
 
   // Decision-maker contacts grouped by normalized company name, so each
   // renewals row can show the DM(s) at that account and whether they've been
@@ -2833,7 +2810,6 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                 <th><EL id="postsale-agreement">Agreement Name</EL></th>
                 <th><EL id="postsale-sold">Date Closed / Sold</EL></th>
                 <th><EL id="postsale-since">Days Since Sold</EL></th>
-                <th><EL id="postsale-followup">Follow Up On Sale</EL></th>
               </tr>
             </thead>
             <tbody>
@@ -2844,14 +2820,11 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                     <td>{String(d['Agreement Name'] ?? '').trim() || '—'}</td>
                     <td style={{ fontVariantNumeric: 'tabular-nums' }}>{Number.isNaN(dealSoldTs(d)) ? '—' : fmtDate(d['Original Contract Start'])}</td>
                     <td>{renderDaysSinceSold(d['Original Contract Start'])}</td>
-                    <td>
-                      <FollowUpOnSaleCell deal={d} onSave={updateFollowUpOnSale} />
-                    </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={5} style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '0.6rem' }}>
+                  <td colSpan={4} style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '0.6rem' }}>
                     {(clientStores.deals && clientStores.deals.length)
                       ? 'Every uploaded deal has a Follow Up On Sale value — nothing to follow up on.'
                       : 'No deals uploaded yet. Upload contract data on the Clients → Deals subtab.'}
