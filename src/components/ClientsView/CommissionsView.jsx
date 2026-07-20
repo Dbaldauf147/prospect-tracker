@@ -594,9 +594,26 @@ function buildColumns(oppsCache, selectCol) {
   return [selectCol, ...front, ...canonical, fyCommissionCol, paymentStatusCol, updatedAtCol, ignoreCol, deleteCol];
 }
 
+// A project row needs an Account Name tied to it. Flag it for the
+// warning banner when it's a real project row (has a Project Name or a
+// pasted Name), its Account Name cell is blank, and it hasn't been
+// explicitly marked ignored — ignored rows are intentionally parked, so
+// they never warn.
+function isMissingAccountName(row) {
+  if (!row || row.__ignored) return false;
+  const project = String(row['Project Name'] ?? row['Name'] ?? '').trim();
+  if (!project) return false;
+  const account = String(row[ACCOUNT_NAME_KEY] ?? '').trim();
+  return account === '';
+}
+
 export function CommissionsView({ settings, updateSettings, prospects = [] }) {
   const [{ data, source }, setStore] = useState(() => loadCommissions());
   const [search, setSearch] = useState('');
+  // When on, the table narrows to just the rows the warning banner is
+  // flagging (missing Account Name, not ignored) so the user can fix
+  // them in one pass.
+  const [showOnlyMissing, setShowOnlyMissing] = useState(false);
   const [showPaste, setShowPaste] = useState(false);
   const [initialPaste, setInitialPaste] = useState('');
   // Cached Opps records, used by the Scope lookup column. Refreshes on
@@ -815,11 +832,29 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     [data, selectedIds]
   );
 
+  // Count of project rows missing an Account Name (and not ignored) —
+  // drives the warning banner. Computed off the raw data so it reflects
+  // the whole roster, not just the rows passing the current search /
+  // filter.
+  const missingAccountCount = useMemo(
+    () => data.reduce((n, r) => n + (isMissingAccountName(r) ? 1 : 0), 0),
+    [data],
+  );
+
+  // Once everything's been mapped (or ignored), drop out of the
+  // "only missing" view so the table doesn't strand the user on an
+  // empty list.
+  useEffect(() => {
+    if (missingAccountCount === 0 && showOnlyMissing) setShowOnlyMissing(false);
+  }, [missingAccountCount, showOnlyMissing]);
+
   const filtered = useMemo(() => {
-    if (!search.trim()) return rows;
+    let base = rows;
+    if (showOnlyMissing) base = base.filter(isMissingAccountName);
+    if (!search.trim()) return base;
     const term = search.toLowerCase();
-    return rows.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(term)));
-  }, [rows, search]);
+    return base.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(term)));
+  }, [rows, search, showOnlyMissing]);
 
   // Bulk mutations operate on the full underlying data array; row ids
   // are indices into that array, so we just rebuild it once. After
@@ -934,6 +969,31 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           {filtered.length} of {rows.length}
         </span>
       </div>
+
+      {missingAccountCount > 0 && (
+        <div
+          role="alert"
+          style={{
+            margin: '0 1.25rem 0.5rem', padding: '0.5rem 0.75rem',
+            background: '#FEF3C7', border: '1px solid #FCD34D', borderRadius: 6,
+            display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap',
+            fontSize: '0.75rem', color: '#92400E',
+          }}
+        >
+          <span aria-hidden="true" style={{ fontSize: '0.9rem' }}>⚠️</span>
+          <span>
+            <strong>{missingAccountCount}</strong> project{missingAccountCount === 1 ? '' : 's'} {missingAccountCount === 1 ? 'has' : 'have'} no <strong>Account Name</strong> tied to {missingAccountCount === 1 ? 'it' : 'them'} and {missingAccountCount === 1 ? "isn't" : "aren't"} marked ignored.
+          </span>
+          <span style={{ color: '#B45309' }}>Add an Account Name, or mark the row ignored, to clear this.</span>
+          <span style={{ flex: 1 }} />
+          <button
+            type="button"
+            onClick={() => setShowOnlyMissing(v => !v)}
+            title={showOnlyMissing ? 'Show every commission row again' : 'Filter the table down to just the flagged rows'}
+            style={{ padding: '0.3rem 0.7rem', border: '1px solid #D97706', borderRadius: 4, background: showOnlyMissing ? '#D97706' : '#fff', color: showOnlyMissing ? '#fff' : '#92400E', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+          >{showOnlyMissing ? 'Show all rows' : 'Show only these'}</button>
+        </div>
+      )}
 
       {selectedIds.size > 0 && (
         <BulkEditBar
