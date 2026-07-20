@@ -1651,6 +1651,12 @@ function KeyContactsViewInner({
     return () => { cancelled = true; };
   }, [user, storagePrefix]);
 
+  // Campaign membership filter (All Contacts only): pick a saved email
+  // campaign to see which contacts are already in it vs. still missing.
+  // campaignFilterId '' = no campaign picked; mode is 'all' | 'in' | 'out'.
+  const [campaignFilterId, setCampaignFilterId] = useState('');
+  const [campaignFilterMode, setCampaignFilterMode] = useState('all');
+
   // Tag options for the inline Tags column. Union of (a) the canonical
   // Dan-curated list plus (b) every distinct dans_tags value already
   // in the loaded HubSpot cache, so a tag the user has typed
@@ -1818,6 +1824,45 @@ function KeyContactsViewInner({
     return map;
   }, [savedCampaigns]);
   const campaignForContact = (c) => contactCampaign.get(String(c?.email || '').toLowerCase().trim());
+
+  // One option per saved campaign, each carrying the full set of its
+  // recipient emails (lowercased). Unlike contactCampaign (which keeps
+  // only the newest campaign per email) this lets us answer "is this
+  // contact in THIS campaign?" for any campaign, which the membership
+  // filter needs. Keyed by index so two campaigns with the same subject
+  // stay distinct.
+  const campaignRecipientOptions = useMemo(() => {
+    return (savedCampaigns || []).map((camp, idx) => {
+      const recipients = new Set();
+      for (const ct of (camp.contacts || [])) {
+        for (const part of String(ct.email || '').split(/[;,]/)) {
+          const em = part.trim().toLowerCase();
+          if (em) recipients.add(em);
+        }
+      }
+      const dateLabel = camp.savedAt
+        ? new Date(camp.savedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+        : '';
+      return {
+        id: String(idx),
+        subject: String(camp.subject || '(untitled campaign)'),
+        dateLabel,
+        count: recipients.size,
+        recipients,
+      };
+    });
+  }, [savedCampaigns]);
+  const selectedCampaign = campaignFilterId
+    ? (campaignRecipientOptions.find(o => o.id === campaignFilterId) || null)
+    : null;
+  // If the picked campaign disappears (e.g. the Firestore doc reloads),
+  // drop the filter so the table doesn't silently keep an invisible gate.
+  useEffect(() => {
+    if (campaignFilterId && !campaignRecipientOptions.some(o => o.id === campaignFilterId)) {
+      setCampaignFilterId('');
+      setCampaignFilterMode('all');
+    }
+  }, [campaignRecipientOptions, campaignFilterId]);
 
   const DEFAULT_COL_WIDTHS = { company: 260, aum: 100, type: 120, status: 130, keyContacts: 130, dm: 150, met: 130, ratio: 110 };
   const [colWidths, setColWidths] = useState(() => {
@@ -2380,7 +2425,7 @@ function KeyContactsViewInner({
   // Page-level gates (category pills, travel, location flag, search box)
   // that every column's filter dropdown should respect when listing the
   // values available to pick from.
-  const passesNonColumnFilters = (c) => {
+  const passesNonColumnFilters = (c, opts) => {
     if (categoryFilter && categorizeContact) {
       const cats = categorizeContact(c.raw || c) || [];
       if (!cats.includes(categoryFilter)) return false;
@@ -2390,6 +2435,15 @@ function KeyContactsViewInner({
       if (travelCity && String(c.city || '').trim().toLowerCase() !== travelCity.trim().toLowerCase()) return false;
     }
     if (onlyLocationFlagged && !checkCity(c.city) && !checkState(c.state)) return false;
+    // Campaign membership gate — 'in' keeps contacts already emailed in
+    // the picked campaign, 'out' keeps everyone else. skipCampaign lets
+    // the In/Not-in counts measure against the pre-gate roster.
+    if (!opts?.skipCampaign && selectedCampaign && campaignFilterMode !== 'all') {
+      const em = String(c.email || '').toLowerCase().trim();
+      const inCampaign = !!em && selectedCampaign.recipients.has(em);
+      if (campaignFilterMode === 'in' && !inCampaign) return false;
+      if (campaignFilterMode === 'out' && inCampaign) return false;
+    }
     if (q) {
       const blob = (c.name || '') + ' ' + (c.companyName || '') + ' '
         + (c.email || '') + ' ' + (c.jobtitle || '');
@@ -2426,6 +2480,21 @@ function KeyContactsViewInner({
     });
   };
   const filteredContacts = sortedContacts.filter(c => passesNonColumnFilters(c) && passesColumnFilters(c, null));
+
+  // In / Not-in tallies for the campaign membership pills, measured over
+  // the roster the OTHER filters (category, search, columns) leave — so
+  // the numbers reflect "within what I'm looking at, X are already in the
+  // campaign and Y still aren't."
+  const campaignCounts = selectedCampaign ? (() => {
+    let inC = 0, outC = 0;
+    for (const c of sortedContacts) {
+      if (!passesNonColumnFilters(c, { skipCampaign: true })) continue;
+      if (!passesColumnFilters(c, null)) continue;
+      const em = String(c.email || '').toLowerCase().trim();
+      if (em && selectedCampaign.recipients.has(em)) inC += 1; else outC += 1;
+    }
+    return { inC, outC, total: inC + outC };
+  })() : null;
 
   // Geography rollup for the By Location view — contacts grouped by State,
   // then City within each state. Built from filteredContacts so the search
@@ -2900,6 +2969,62 @@ function KeyContactsViewInner({
               minWidth: 18, textAlign: 'center',
             }}>{locationFlaggedCount}</span>
           </label>
+        )}
+        {storagePrefix === 'all-contacts' && isContactList && campaignRecipientOptions.length > 0 && (
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span
+              title="Pick a saved email campaign (from Draft Emails → Email Campaigns) to see which of these contacts are already in it vs. still missing."
+              style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1E293B' }}
+            >Campaign:</span>
+            <select
+              value={campaignFilterId}
+              onChange={e => { setCampaignFilterId(e.target.value); setCampaignFilterMode(e.target.value ? 'in' : 'all'); }}
+              style={{ padding: '0.35rem 0.5rem', fontSize: '0.72rem', border: '1px solid #CBD5E1', borderRadius: 6, fontFamily: 'inherit', background: '#fff', color: '#334155', maxWidth: 280 }}
+            >
+              <option value="">— filter by campaign —</option>
+              {campaignRecipientOptions.map(o => (
+                <option key={o.id} value={o.id}>
+                  {o.subject}{o.dateLabel ? ` (${o.dateLabel})` : ''} · {o.count} sent
+                </option>
+              ))}
+            </select>
+            {selectedCampaign && campaignCounts && (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                {[
+                  { mode: 'all', label: `Show all ${campaignCounts.total}`, bg: '#F1F5F9', border: '#CBD5E1', color: '#334155' },
+                  { mode: 'in', label: `In campaign ${campaignCounts.inC}`, bg: '#DCFCE7', border: '#86EFAC', color: '#166534' },
+                  { mode: 'out', label: `Not in campaign ${campaignCounts.outC}`, bg: '#FEF3C7', border: '#FCD34D', color: '#92400E' },
+                ].map(({ mode, label, bg, border, color }) => {
+                  const active = campaignFilterMode === mode;
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setCampaignFilterMode(mode)}
+                      title={mode === 'in'
+                        ? 'Show only contacts already emailed in this campaign'
+                        : mode === 'out'
+                          ? 'Show only contacts NOT yet in this campaign — the ones left to add'
+                          : 'Show all contacts (both in and not in the campaign)'}
+                      style={{
+                        padding: '1px 8px', borderRadius: 999,
+                        background: active ? color : bg,
+                        border: `1px solid ${active ? color : border}`,
+                        color: active ? '#fff' : color,
+                        fontSize: '0.68rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+                      }}
+                    >{label}</button>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={() => { setCampaignFilterId(''); setCampaignFilterMode('all'); }}
+                  title="Clear the campaign filter"
+                  style={{ padding: '1px 6px', borderRadius: 999, background: '#fff', border: '1px solid #CBD5E1', color: '#64748B', fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}
+                >×</button>
+              </div>
+            )}
+          </div>
         )}
         {/* Surface inline-edit save status here so failures are
             visible whether or not Mass Edit mode is on. */}
