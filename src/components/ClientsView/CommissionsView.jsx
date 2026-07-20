@@ -5,7 +5,7 @@ import {
   loadCommissions, saveCommissionsOverride, clearCommissionsOverride,
   COMMISSION_MONTH_NAMES,
 } from '../../utils/commissionsStore';
-import { CommissionsPasteImportModal, COMMISSIONS_CANONICAL } from './CommissionsPasteImportModal';
+import { CommissionsPasteImportModal, COMMISSIONS_CANONICAL, normProjectName } from './CommissionsPasteImportModal';
 import { loadOppsFromCache, findOppByBfoLink } from '../../utils/oppsCache';
 
 // Lookup columns the user adds at the front of the table. Account Name
@@ -168,13 +168,9 @@ function plainTextRender(v) {
   return <span>{String(v)}</span>;
 }
 
-// Normalize a Project Name for dedup matching — strips surrounding
-// whitespace, collapses internal whitespace, and lowercases so trivial
-// typing differences ("Acme — Phase 1" vs "ACME — Phase 1 ") don't
-// produce two duplicate rows that fall through the merge.
-function normProjectName(v) {
-  return String(v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
-}
+// normProjectName (the dedup key) lives in CommissionsPasteImportModal so
+// the paste preview and this merge classify duplicates identically — see
+// the import there.
 
 // How many "real" cells on this row carry a value. Used to pick the
 // surviving row when two rows share a project name — whichever copy has
@@ -939,6 +935,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           onClose={() => { setShowPaste(false); setInitialPaste(''); }}
           onImport={(records) => { handleImport(records); setInitialPaste(''); }}
           initialPaste={initialPaste}
+          existingRows={data}
         />
       )}
     </div>
