@@ -89,27 +89,46 @@ function dealSoldTs(row) {
   return d ? d.getTime() : NaN;
 }
 
-// Whole-day delta between when a deal was sold and today, rendered as a
-// colored cell. A post-sale follow-up should land soon after the sale, so the
-// longer a deal has gone without one the more overdue it is: rows past 30 days
-// run red, rows past a week run amber. Undated rows render an em dash. Mirrors
-// the Clients tab's Post-Sale Follow-Up subtab.
-function renderDaysSinceSold(soldRaw) {
+// A post-sale follow-up should land within 60 days of the sale, so the
+// Post-Sale Follow-Up table tracks each deal against that goal.
+const POST_SALE_GOAL_DAYS = 60;
+
+// Days remaining until the 60-day post-sale follow-up deadline. Positive
+// means days left, 0 means it's due today, negative means it's overdue.
+// Returns null when the deal has no sold date to count from.
+function daysToFollowUpGoal(soldRaw) {
   const d = asDate(soldRaw);
-  if (!d) return <span style={{ color: '#94a3b8' }}>—</span>;
+  if (!d) return null;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const start = new Date(d);
   start.setHours(0, 0, 0, 0);
-  const days = Math.round((today.getTime() - start.getTime()) / 86400000);
-  const color = days > 30 ? '#b91c1c'
-    : days > 7 ? '#92400e'
-    : '#334155';
-  const label = days === 0
-    ? 'Today'
-    : days > 0 ? `${days}d ago`
-    : `in ${Math.abs(days)}d`;
-  return <span style={{ color, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{label}</span>;
+  const daysSince = Math.round((today.getTime() - start.getTime()) / 86400000);
+  return POST_SALE_GOAL_DAYS - daysSince;
+}
+
+// Plain-text label for the 60-day goal countdown — shared by the on-screen
+// cell and the Excel export so both read the same. '' for an undated deal.
+function followUpGoalLabel(left) {
+  if (left == null) return '';
+  if (left === 0) return 'Today';
+  return left > 0 ? `${left}d left` : `${Math.abs(left)}d overdue`;
+}
+
+// Colored countdown cell for the "Days Since Sold — 60 Day Goal" column:
+// green while there's a week+ of runway, amber in the final week, red once
+// the 60-day deadline has passed. Undated rows render an em dash.
+function renderDaysToGoal(soldRaw) {
+  const left = daysToFollowUpGoal(soldRaw);
+  if (left == null) return <span style={{ color: '#94a3b8' }}>—</span>;
+  const color = left < 0 ? '#b91c1c'
+    : left <= 7 ? '#92400e'
+    : '#166534';
+  const title = left < 0
+    ? `${Math.abs(left)} days past the 60-day follow-up goal`
+    : left === 0 ? 'Follow-up is due today (60-day goal)'
+    : `${left} days left to hit the 60-day follow-up goal`;
+  return <span style={{ color, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }} title={title}>{followUpGoalLabel(left)}</span>;
 }
 
 // Parse "USD 15,000.00" / "$15,000" / "15000" -> 15000.
@@ -2006,12 +2025,14 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           lbl('postsale-client', 'Client'),
           lbl('postsale-agreement', 'Agreement Name'),
           lbl('postsale-sold', 'Date Closed / Sold'),
+          lbl('postsale-goal', 'Days Since Sold — 60 Day Goal'),
           lbl('postsale-end', 'End Date'),
         ],
         rows: postSaleFollowUps.map((d) => ({
           client: String(d['Client Name'] ?? d['Client Name '] ?? '').trim() || '—',
           agreement: String(d['Agreement Name'] ?? '').trim() || '—',
           soldDate: Number.isNaN(dealSoldTs(d)) ? '' : fmtDate(d['Original Contract Start']),
+          goal: followUpGoalLabel(daysToFollowUpGoal(d['Original Contract Start'])),
           endDate: asDate(d['End Date']) ? fmtDate(d['End Date']) : '',
         })),
       },
@@ -2149,7 +2170,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           </div>
           <MetricsTableBoundary>
           <div style={{ overflowX: 'auto' }}>
-          <table className={styles.grid} style={{ width: 1515, tableLayout: 'fixed' }}>
+          <table className={`${styles.grid} ${styles.metricsGrid}`} style={{ width: 1515, tableLayout: 'fixed' }}>
             <colgroup>
               <col style={{ width: 140 }} /> {/* Stage label */}
               <col style={{ width: 105 }} /><col style={{ width: 105 }} /> {/* Active Opps */}
@@ -2809,7 +2830,8 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                 <th><EL id="postsale-client">Client</EL></th>
                 <th><EL id="postsale-agreement">Agreement Name</EL></th>
                 <th><EL id="postsale-sold">Date Closed / Sold</EL></th>
-                <th><EL id="postsale-since">Days Since Sold</EL></th>
+                <th><EL id="postsale-goal">Days Since Sold — 60 Day Goal</EL></th>
+                <th><EL id="postsale-end">End Date</EL></th>
               </tr>
             </thead>
             <tbody>
@@ -2819,12 +2841,13 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                     <td>{String(d['Client Name'] ?? d['Client Name '] ?? '').trim() || '—'}</td>
                     <td>{String(d['Agreement Name'] ?? '').trim() || '—'}</td>
                     <td style={{ fontVariantNumeric: 'tabular-nums' }}>{Number.isNaN(dealSoldTs(d)) ? '—' : fmtDate(d['Original Contract Start'])}</td>
-                    <td>{renderDaysSinceSold(d['Original Contract Start'])}</td>
+                    <td>{renderDaysToGoal(d['Original Contract Start'])}</td>
+                    <td style={{ fontVariantNumeric: 'tabular-nums' }}>{asDate(d['End Date']) ? fmtDate(d['End Date']) : '—'}</td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={4} style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '0.6rem' }}>
+                  <td colSpan={5} style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '0.6rem' }}>
                     {(clientStores.deals && clientStores.deals.length)
                       ? 'Every uploaded deal has a Follow Up On Sale value — nothing to follow up on.'
                       : 'No deals uploaded yet. Upload contract data on the Clients → Deals subtab.'}

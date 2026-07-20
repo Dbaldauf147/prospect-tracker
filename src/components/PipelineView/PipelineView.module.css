@@ -124,6 +124,22 @@
   background: #fff;
 }
 
+/* Pipeline Metrics table: center every value cell (goal / actual numbers,
+   live values, target projection) while keeping the Stage label column and
+   the free-text Flagged Opps input left-aligned so they stay readable. */
+.metricsGrid td {
+  text-align: center;
+}
+.metricsGrid td.label {
+  text-align: left;
+}
+.metricsGrid .cell {
+  text-align: center;
+}
+.metricsGrid .cellLeft {
+  text-align: left;
+}
+
 .cell {
   width: 100%;
   border: 1px solid transparent;
