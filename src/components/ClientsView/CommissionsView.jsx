@@ -87,6 +87,14 @@ function isFYRevenueKey(k) { return String(k || '').trim() === 'FY Revenue'; }
 
 const FY_COMMISSION_KEY = 'FY Commission';
 const PAYMENT_STATUS_KEY = 'Payment Status';
+// Per-row "last updated" timestamp. Stored under a __-prefixed key so it
+// rides along on the row without counting as a data cell (countFilledCells
+// and the paste-dedup scoring both skip __-keys) and without ever showing
+// up as a pasteable/bulk-editable canonical column. Written as an ISO
+// string — asDate parses that directly, whereas a bare epoch number would
+// be misread as an Excel serial date.
+const UPDATED_AT_KEY = '__updatedAt';
+function nowStamp() { return new Date().toISOString(); }
 
 const CURRENCY_KEYS = new Set();
 const DATE_KEYS = new Set(['Comm Start Date', 'Comm End Date']);
@@ -98,6 +106,7 @@ function defaultWidth(k) {
   if (k === SCOPE_KEY) return 180;
   if (k === FY_COMMISSION_KEY) return 130;
   if (k === PAYMENT_STATUS_KEY) return 110;
+  if (k === UPDATED_AT_KEY) return 130;
   if (k === 'Name') return 170;
   if (k === 'Project Name') return 280;
   if (DATE_KEYS.has(k)) return 120;
@@ -507,6 +516,24 @@ function buildColumns(oppsCache, selectCol) {
     },
     exportValue: (row) => paymentStatusFor(row).label,
   };
+  // Read-only "Last Updated" column. Stamped whenever a row is edited
+  // (single cell, bulk set, ignore toggle) or added / refreshed through a
+  // paste import. Rows imported before this column existed have no stamp,
+  // so they read as a muted dash until the next edit touches them. Sorts
+  // on the raw timestamp; the tooltip shows the full local date + time.
+  const updatedAtCol = {
+    key: UPDATED_AT_KEY,
+    label: 'Last Updated',
+    defaultWidth: defaultWidth(UPDATED_AT_KEY),
+    getSortValue: (row) => { const d = asDate(row[UPDATED_AT_KEY]); return d ? d.getTime() : null; },
+    render: (row) => {
+      const raw = row[UPDATED_AT_KEY];
+      const d = asDate(raw);
+      if (!d) return <span style={{ color: 'var(--color-text-muted)' }} title="No edits recorded yet — this row hasn't been changed since the Last Updated column was added">—</span>;
+      return <span style={{ color: '#334155' }} title={`Last updated ${d.toLocaleString('en-US')}`}>{fmtDate(d)}</span>;
+    },
+    exportValue: (row) => { const d = asDate(row[UPDATED_AT_KEY]); return d ? fmtDate(d) : ''; },
+  };
   // Trailing per-row delete cell. Lives in its own column so the user
   // can wipe a stale project without clearing every other row through
   // the Clear button.
@@ -564,7 +591,7 @@ function buildColumns(oppsCache, selectCol) {
     },
     exportValue: (row) => (row.__ignored ? 'Ignored' : ''),
   };
-  return [selectCol, ...front, ...canonical, fyCommissionCol, paymentStatusCol, ignoreCol, deleteCol];
+  return [selectCol, ...front, ...canonical, fyCommissionCol, paymentStatusCol, updatedAtCol, ignoreCol, deleteCol];
 }
 
 export function CommissionsView({ settings, updateSettings, prospects = [] }) {
@@ -716,6 +743,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
       const current = { ...(next[idx] || {}) };
       if (current.__ignored) delete current.__ignored;
       else current.__ignored = true;
+      current[UPDATED_AT_KEY] = nowStamp();
       next[idx] = current;
       try { saveCommissionsOverride(next); } catch (err) { console.warn('Save commissions failed', err); }
       return { data: next, source: 'override' };
@@ -731,6 +759,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
         const out = { ...row };
         if (flag) out.__ignored = true;
         else delete out.__ignored;
+        out[UPDATED_AT_KEY] = nowStamp();
         return out;
       });
       try { saveCommissionsOverride(next); } catch (err) { console.warn('Save commissions failed', err); }
@@ -750,6 +779,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
       const current = { ...(next[idx] || {}) };
       if (value === '' || value == null) delete current[key];
       else current[key] = value;
+      current[UPDATED_AT_KEY] = nowStamp();
       next[idx] = current;
       try { saveCommissionsOverride(next); } catch (err) { console.warn('Save commissions failed', err); }
       return { data: next, source: 'override' };
@@ -805,6 +835,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
         const out = { ...row };
         if (rawValue === '' || rawValue == null) delete out[key];
         else out[key] = rawValue;
+        out[UPDATED_AT_KEY] = nowStamp();
         return out;
       });
       try { saveCommissionsOverride(next); } catch (err) { console.warn('Save commissions failed', err); }
@@ -827,13 +858,21 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
 
   function handleImport(records) {
     setStore(prev => {
+      // Stamp every incoming row with "now" as its Last Updated time.
+      // Because the merge keeps each surviving row's own object, a row
+      // that's actually added or refreshed by this paste carries the
+      // fresh stamp, while an existing row that either wins the dedup or
+      // isn't touched at all keeps its prior stamp — so an unrelated row
+      // never looks freshly-updated just because a different row pasted.
+      const stamp = nowStamp();
+      const stamped = (records || []).map(r => ({ ...r, [UPDATED_AT_KEY]: stamp }));
       // Merge the freshly-pasted records into whatever's already on
       // file, then dedup by Project Name so re-pasting a refreshed
       // commission roster doesn't pile duplicate rows on top of the
       // existing data. When two rows share a project name, the one
       // with more filled cells (months / columns) wins — the user's
       // expectation is that the more complete snapshot survives.
-      const merged = mergeAndDedupCommissions(prev.data || [], records);
+      const merged = mergeAndDedupCommissions(prev.data || [], stamped);
       try { saveCommissionsOverride(merged); } catch (err) { console.warn('Save commissions failed', err); }
       return { data: merged, source: 'override' };
     });
