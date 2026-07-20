@@ -9,6 +9,7 @@ import {
   loadScreeningSource,
   clearScreeningSource,
 } from '../../utils/screeningSourceStore';
+import { downloadComplianceScreeningWorkbook } from '../../utils/buildingComplianceWorkbook';
 import styles from './BuildingComplianceScreening.module.css';
 
 const isUrl = (v) => /^https?:\/\//i.test(String(v).trim());
@@ -143,6 +144,15 @@ export function BuildingComplianceScreening({ sites = [] }) {
     await loadDefault();
   }
 
+  // Export the currently-shown site results as a Schneider-branded workbook.
+  function handleExport() {
+    downloadComplianceScreeningWorkbook({
+      sourceName,
+      compCols: dataset?.compCols || [],
+      results: filteredSiteResults,
+    });
+  }
+
   return (
     <div className={styles.wrapper}>
       <div className={styles.header}>
@@ -238,6 +248,15 @@ export function BuildingComplianceScreening({ sites = [] }) {
                 <strong>{siteMatchedCount}</strong> of {siteResults.length} sites have requirements
                 {' · '}{filteredSiteResults.length} shown
               </span>
+              <button
+                type="button"
+                className={styles.btn}
+                onClick={handleExport}
+                disabled={filteredSiteResults.length === 0}
+                title="Export the shown site results to a Schneider-formatted Excel file"
+              >
+                Export to Excel
+              </button>
             </div>
             <div className={styles.tableScroll}>
               <table className={styles.siteTable}>
