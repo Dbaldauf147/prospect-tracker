@@ -311,8 +311,8 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
     const ps = p.postSaleFollowUp || {};
     gap();
     title(ps.title || 'Post-Sale Follow-Up — Deals Missing Follow Up On Sale');
-    const psCols = [[1, 3], [4, 7], [8, 9], [10, 11], [12, 13]]; // Client | Agreement | Date Closed/Sold | 60 Day Goal | End Date
-    const psHdr = ps.headers || ['Client', 'Agreement Name', 'Date Closed / Sold', 'Days Since Sold — 60 Day Goal', 'End Date'];
+    const psCols = [[1, 3], [4, 8], [9, 11], [12, 13]]; // Client | Agreement | Date Closed/Sold | 60 Day Goal
+    const psHdr = ps.headers || ['Client', 'Agreement Name', 'Date Closed / Sold', 'Days Since Sold — 60 Day Goal'];
     psHdr.forEach((h, i) => put(r, psCols[i][0], r, psCols[i][1], h, { ...HEAD, align: 'left' }));
     r++;
     const psRows = ps.rows || [];
@@ -322,7 +322,7 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
     } else {
       psRows.forEach((row, idx) => {
         const zebra = idx % 2 === 1 ? { zebra: true } : {};
-        const vals = [row.client || '—', row.agreement || '—', row.soldDate || '—', row.goal || '—', row.endDate || '—'];
+        const vals = [row.client || '—', row.agreement || '—', row.soldDate || '—', row.goal || '—'];
         vals.forEach((v, i) => put(r, psCols[i][0], r, psCols[i][1], v, { align: 'left', wrap: i === 1, ...zebra }));
         r++;
       });
