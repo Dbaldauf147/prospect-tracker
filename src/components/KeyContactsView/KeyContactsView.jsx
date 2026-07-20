@@ -1449,7 +1449,7 @@ function KeyContactsViewInner({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 150, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, tags: 200, lastOutreach: 160, emailCampaigns: 240,
+    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 150, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, toCc: 280, tags: 200, lastOutreach: 160, emailCampaigns: 240,
   };
   // Column visibility — every contact column except Name (always
   // shown; it's the primary identifier). Stored per-page so the Key,
@@ -1457,7 +1457,7 @@ function KeyContactsViewInner({
   // State sit alongside Location so a user who wants the combined
   // "City, State" string keeps it, while the separate columns are
   // available for filtering / sorting on either field independently.
-  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(storagePrefix === 'all-contacts' ? ['custom'] : []), 'tags', 'lastOutreach', ...(storagePrefix === 'all-contacts' ? ['emailCampaigns'] : [])];
+  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(storagePrefix === 'all-contacts' ? ['custom', 'toCc'] : []), 'tags', 'lastOutreach', ...(storagePrefix === 'all-contacts' ? ['emailCampaigns'] : [])];
   const [visibleCols, setVisibleCols] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('visible-cols')));
@@ -2397,6 +2397,38 @@ function KeyContactsViewInner({
     return arr;
   }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactEvents, categorizeContact, contactCampaign]);
 
+  // Combined "To Also" + "CC" recipients edited in the contact popup,
+  // keyed by lowercased primary email so the All Contacts "To / CC"
+  // column can surface every linked recipient at a glance. `toAlsoMap`
+  // feeds the To line, `ccMap` the CC line — both live on settings and
+  // are keyed by the contact's primary email.
+  const toCcByEmail = useMemo(() => {
+    const map = new Map();
+    const add = (src, kind) => {
+      for (const [email, list] of Object.entries(src || {})) {
+        if (!Array.isArray(list) || list.length === 0) continue;
+        const k = String(email).toLowerCase().trim();
+        if (!k) continue;
+        const entry = map.get(k) || { to: [], cc: [] };
+        for (const addr of list) {
+          const a = String(addr).trim();
+          if (a && !entry[kind].includes(a)) entry[kind].push(a);
+        }
+        map.set(k, entry);
+      }
+    };
+    add(settings?.toAlsoMap, 'to');
+    add(settings?.ccMap, 'cc');
+    return map;
+  }, [settings?.toAlsoMap, settings?.ccMap]);
+  const toCcEntryFor = useCallback(
+    (c) => {
+      const e = String(c?.email || '').toLowerCase().trim();
+      return (e && toCcByEmail.get(e)) || null;
+    },
+    [toCcByEmail]
+  );
+
   const contactFieldGetters = {
     name:     c => c.name || '',
     category: c => (categorizeContact ? (categorizeContact(c.raw || c) || []) : []).join(' '),
@@ -2418,6 +2450,11 @@ function KeyContactsViewInner({
     events:   c => contactEvents[String(c.id || '')] || '',
     lastOutreach: c => fmtLastOutreach(contactLastOutreach.get(String(c.id || ''))),
     emailCampaigns: c => campaignForContact(c)?.subject || '',
+    toCc:     c => {
+      const entry = toCcEntryFor(c);
+      if (!entry) return '';
+      return [...entry.to, ...entry.cc].join(', ');
+    },
   };
   const activeValueFilters = Object.entries(contactColValueFilters)
     .filter(([, v]) => Array.isArray(v) && v.length > 0)
@@ -2662,6 +2699,7 @@ function KeyContactsViewInner({
                     { key: 'salesNav', label: 'LinkedIn Search' },
                     { key: 'met', label: 'Met' },
                     { key: 'events', label: 'Events' },
+                    ...(storagePrefix === 'all-contacts' ? [{ key: 'toCc', label: 'To / CC' }] : []),
                     { key: 'lastOutreach', label: 'Last Outreach' },
                     ...(storagePrefix === 'all-contacts' ? [{ key: 'emailCampaigns', label: 'Email Campaigns' }] : []),
                   ].map(opt => (
@@ -3085,6 +3123,8 @@ function KeyContactsViewInner({
               // Reads/writes the same per-contact `settings.customField`
               // value used by the {custom} email variable.
               ...(storagePrefix === 'all-contacts' ? [{ key: 'custom', label: 'Custom', sortable: false }] : []),
+              // Combined To / CC recipients from the contact popup — All Contacts only.
+              ...(storagePrefix === 'all-contacts' ? [{ key: 'toCc', label: 'To / CC', sortable: false }] : []),
               { key: 'tags',     label: 'Tags', sortable: false },
               { key: 'lastOutreach', label: 'Last Outreach' },
               ...(storagePrefix === 'all-contacts' ? [{ key: 'emailCampaigns', label: 'Email Campaigns' }] : []),
@@ -3579,6 +3619,46 @@ function KeyContactsViewInner({
                       textColor="#475569"
                     />
                     )}
+                    {storagePrefix === 'all-contacts' && visibleSet.has('toCc') && (() => {
+                      const entry = toCcEntryFor(c);
+                      if (!entry || (entry.to.length === 0 && entry.cc.length === 0)) {
+                        return (
+                          <div
+                            style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1' }}
+                            title="No To / CC recipients set. Open the contact and use the To Also / CC Emails fields to link recipients."
+                          >—</div>
+                        );
+                      }
+                      const tip = [
+                        entry.to.length ? `To: ${entry.to.join(', ')}` : '',
+                        entry.cc.length ? `CC: ${entry.cc.join(', ')}` : '',
+                      ].filter(Boolean).join('\n');
+                      return (
+                        <div
+                          style={{ padding: '0.4rem 0.6rem', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', overflow: 'hidden' }}
+                          title={tip}
+                        >
+                          {entry.to.map(email => (
+                            <span
+                              key={`to|${email}`}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 3, maxWidth: '100%', padding: '1px 7px', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 999, fontSize: '0.66rem', color: '#92400E', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                            >
+                              <span style={{ fontWeight: 800, fontSize: '0.58rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>To</span>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{email}</span>
+                            </span>
+                          ))}
+                          {entry.cc.map(email => (
+                            <span
+                              key={`cc|${email}`}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 3, maxWidth: '100%', padding: '1px 7px', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 999, fontSize: '0.66rem', color: '#1E40AF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                            >
+                              <span style={{ fontWeight: 800, fontSize: '0.58rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>CC</span>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{email}</span>
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })()}
                     {visibleSet.has('tags') && (
                     <TagsInlineCell
                       value={c.dans_tags || c.dan_s_tags || c.dans_tag || ''}
