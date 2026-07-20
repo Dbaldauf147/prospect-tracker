@@ -600,6 +600,11 @@ export function DataTable({
   // so a parent can sync its own "select all visible" / "rows on
   // screen" UI against the same set the user sees.
   onFilteredRowsChange,
+  // Fires with the rows in the exact order they're displayed (after
+  // column filters AND the active sort). Same membership as
+  // onFilteredRowsChange, but ordered — a parent that needs the visible
+  // order (e.g. shift-click range selection) reads this instead.
+  onDisplayedRowsChange,
   // Opt out of fixed-rowHeight virtualization. Consumers whose rows
   // can grow taller than a single line (Opps 2's Alt+Enter Next Steps,
   // Notes, etc.) set this so the table renders every row instead — the
@@ -927,6 +932,12 @@ export function DataTable({
     });
     return sorted;
   }, [filteredRows, internalSort, externalSortConfig, colByKey, sortSnapshot]);
+
+  // Report the rows in their on-screen order (post-filter, post-sort) so a
+  // parent can do order-aware work like shift-click range selection.
+  useEffect(() => {
+    if (onDisplayedRowsChange) onDisplayedRowsChange(sortedRows);
+  }, [sortedRows, onDisplayedRowsChange]);
 
   const headerRef = useRef(null);
   const bodyRef = useRef(null);
