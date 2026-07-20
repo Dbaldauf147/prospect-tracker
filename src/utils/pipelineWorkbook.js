@@ -131,7 +131,7 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
   const gap = (h = 6) => { ws.getRow(r).height = h; r++; };
   const title = (text) => { sectionTitle(ws, r, COLS, text); r++; };
 
-  // ── KPI card strip (6 cards × 2 cols) ──
+  // ── KPI card strip ──
   gap();
   const cg = p.clientGreenfield;
   const kpis = [
@@ -139,12 +139,13 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
     { label: lbl('q-closed-ytd', 'Closed YTD'), value: num(p.quota.closedYTD), fmt: MONEY },
     { label: lbl('q-pct-quota', '% of Quota'), value: num(p.quota.pctOfQuota), fmt: PCT1 },
     { label: 'Coverage Ratio', value: num(p.coverage.actual), fmt: '0.00', tint: cmpTint(p.coverage.actual, p.coverage.goal, 'higher') },
-    { label: '% Not Quoted (Yr)', value: num(p.notQuoted.year), fmt: PCT, tint: cmpTint(p.notQuoted.year, p.notQuoted.goal, 'lower') },
-    { label: 'Current Client %', value: num(cg.clientActualPct), fmt: PCT, tint: cmpTint(cg.clientActualPct, cg.clientGoalPct, 'lower') },
   ];
   kpis.forEach((k, i) => {
-    const c0 = i * 2 + 1;
-    const c1 = i === kpis.length - 1 ? COLS : c0 + 1; // last card fills to the right edge
+    // Distribute the cards evenly across the full 13-column grid regardless of
+    // how many there are, so they always span edge to edge without one card
+    // stretching to fill the slack.
+    const c0 = Math.floor((i * COLS) / kpis.length) + 1;
+    const c1 = Math.floor(((i + 1) * COLS) / kpis.length);
     put(r, c0, r, c1, k.label.toUpperCase(), { align: 'center', bold: true, size: 8, fg: SE_MUTED, fill: 'FFEFF7F0' });
     put(r + 1, c0, r + 1, c1, k.value, { align: 'center', bold: true, size: 15, numFmt: k.fmt, fill: k.tint ? k.tint.fill : 'FFFFFFFF', fg: k.tint ? k.tint.fg : SE_TEXT_DARK });
   });
