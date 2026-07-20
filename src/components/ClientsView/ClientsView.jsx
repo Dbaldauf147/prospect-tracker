@@ -331,12 +331,15 @@ function ContractTable({ deals }) {
 }
 
 // A deal needs a post-sale follow-up when its "Follow Up On Sale" cell is
-// blank (or a placeholder dash / N/A). Mirrors how the Deals subtab stores
-// that date column so the two agree on what counts as "no value".
+// blank (or a placeholder dash / Excel #N/A error). Mirrors how the Deals
+// subtab stores that date column so the two agree on what counts as "no
+// value". A deliberate "N/A" (marked from the follow-up editor to say a deal
+// never needs a follow-up) counts as resolved and drops the row off the list;
+// only Excel's #N/A error placeholder still reads as missing.
 function isBlankFollowUp(row) {
   const v = String(row?.['Follow Up On Sale'] ?? '').trim();
   if (!v) return true;
-  return ['-', '—', 'n/a', '#n/a'].includes(v.toLowerCase());
+  return ['-', '—', '#n/a'].includes(v.toLowerCase());
 }
 
 // The date a deal closed/sold. Deals don't carry an explicit close date, so
