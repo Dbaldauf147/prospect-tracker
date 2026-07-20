@@ -5999,6 +5999,17 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       return next;
     });
   }, []);
+  // Row _id's in the exact order the table shows them (after column
+  // filters AND the active sort), kept in a ref so a shift-click can
+  // compute the range between two checkboxes without re-rendering on
+  // every scroll/sort. Fed by DataTable's onDisplayedRowsChange.
+  const displayedRowOrderRef = useRef([]);
+  const handleDisplayedRowsChange = useCallback((rows) => {
+    displayedRowOrderRef.current = (rows || []).map(r => r?._id).filter(id => id != null);
+  }, []);
+  // The last row toggled without Shift — the anchor a Shift-click ranges
+  // from. Reset when the selection is cleared / mass-edit is exited.
+  const selectionAnchorRef = useRef(null);
   // The HubSpot contact currently open in the rich ContactEditModal,
   // launched when the user clicks a tagged-contact name on the
   // Contact cell's popover. Null when no modal is open.
@@ -7692,7 +7703,36 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         <input
           type="checkbox"
           checked={selectedIds.has(row._id)}
-          onClick={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            // Shift-click selects the whole range between the anchor
+            // (last row toggled without Shift) and this row, in the
+            // order the table is currently showing. We manage the state
+            // ourselves and preventDefault so the native toggle + the
+            // onChange single-toggle below don't also fire.
+            if (!e.shiftKey) return;
+            e.preventDefault();
+            const order = displayedRowOrderRef.current;
+            const anchor = selectionAnchorRef.current;
+            const to = order.indexOf(row._id);
+            const from = anchor == null ? -1 : order.indexOf(anchor);
+            // The range takes the state this checkbox is about to move
+            // to (its opposite of currently-selected), matching how file
+            // explorers / spreadsheets behave.
+            const makeSelected = !selectedIds.has(row._id);
+            const ids = (from !== -1 && to !== -1)
+              ? order.slice(Math.min(from, to), Math.max(from, to) + 1)
+              : [row._id];
+            setSelectedIds(prev => {
+              const next = new Set(prev);
+              for (const id of ids) {
+                if (makeSelected) next.add(id);
+                else next.delete(id);
+              }
+              return next;
+            });
+            selectionAnchorRef.current = row._id;
+          }}
           onChange={(e) => {
             const checked = e.target.checked;
             setSelectedIds(prev => {
@@ -7701,9 +7741,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               else next.delete(row._id);
               return next;
             });
+            selectionAnchorRef.current = row._id;
           }}
           style={{ margin: 0, cursor: 'pointer' }}
-          title="Select for mass edit"
+          title="Select for mass edit — hold Shift and click another row to select the range"
         />
       ),
     };
@@ -9085,7 +9126,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                   // Leaving mass-edit mode clears any in-flight selection
                   // so the bulk toolbar disappears and the next time the
                   // user re-enters they start fresh.
-                  if (on) setSelectedIds(new Set());
+                  if (on) { setSelectedIds(new Set()); selectionAnchorRef.current = null; }
                   return !on;
                 });
               }}
@@ -9140,7 +9181,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               listRegistry={listRegistry}
               onApply={(field, value) => updateManyOppFields(selectedIds, field, value)}
               onDelete={() => deleteManyOpps(selectedIds)}
-              onClear={() => setSelectedIds(new Set())}
+              onClear={() => { setSelectedIds(new Set()); selectionAnchorRef.current = null; }}
               onEmailTable={handleEmailTable}
             />
           )}
@@ -9161,6 +9202,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               // actually wants to triage by urgency.
               enableColumnFilters
               onFilteredRowsChange={handleFilteredRowsChange}
+              onDisplayedRowsChange={handleDisplayedRowsChange}
               emptyMessage="No opps yet — click + New Opp to create one."
               settings={settings}
               updateSettings={updateSettings}
