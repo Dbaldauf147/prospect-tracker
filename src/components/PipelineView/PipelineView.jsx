@@ -2026,14 +2026,12 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           lbl('postsale-agreement', 'Agreement Name'),
           lbl('postsale-sold', 'Date Closed / Sold'),
           lbl('postsale-goal', 'Days Since Sold — 60 Day Goal'),
-          lbl('postsale-end', 'End Date'),
         ],
         rows: postSaleFollowUps.map((d) => ({
           client: String(d['Client Name'] ?? d['Client Name '] ?? '').trim() || '—',
           agreement: String(d['Agreement Name'] ?? '').trim() || '—',
           soldDate: Number.isNaN(dealSoldTs(d)) ? '' : fmtDate(d['Original Contract Start']),
           goal: followUpGoalLabel(daysToFollowUpGoal(d['Original Contract Start'])),
-          endDate: asDate(d['End Date']) ? fmtDate(d['End Date']) : '',
         })),
       },
       // Strategic Accounts — My Accounts: the same on-screen table
@@ -2831,7 +2829,6 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                 <th><EL id="postsale-agreement">Agreement Name</EL></th>
                 <th><EL id="postsale-sold">Date Closed / Sold</EL></th>
                 <th><EL id="postsale-goal">Days Since Sold — 60 Day Goal</EL></th>
-                <th><EL id="postsale-end">End Date</EL></th>
               </tr>
             </thead>
             <tbody>
@@ -2842,12 +2839,11 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                     <td>{String(d['Agreement Name'] ?? '').trim() || '—'}</td>
                     <td style={{ fontVariantNumeric: 'tabular-nums' }}>{Number.isNaN(dealSoldTs(d)) ? '—' : fmtDate(d['Original Contract Start'])}</td>
                     <td>{renderDaysToGoal(d['Original Contract Start'])}</td>
-                    <td style={{ fontVariantNumeric: 'tabular-nums' }}>{asDate(d['End Date']) ? fmtDate(d['End Date']) : '—'}</td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={5} style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '0.6rem' }}>
+                  <td colSpan={4} style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '0.6rem' }}>
                     {(clientStores.deals && clientStores.deals.length)
                       ? 'Every uploaded deal has a Follow Up On Sale value — nothing to follow up on.'
                       : 'No deals uploaded yet. Upload contract data on the Clients → Deals subtab.'}
