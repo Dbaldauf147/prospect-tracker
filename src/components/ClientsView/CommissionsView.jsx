@@ -616,6 +616,8 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
   const [showOnlyMissing, setShowOnlyMissing] = useState(false);
   const [showPaste, setShowPaste] = useState(false);
   const [initialPaste, setInitialPaste] = useState('');
+  // Transient result banner for the "Fill Account Names from BFO" action.
+  const [fillStatus, setFillStatus] = useState('');
   // Cached Opps records, used by the Scope lookup column. Refreshes on
   // mount and when the window regains focus so pasting on the Opps tab
   // and switching back here reflects new entries without a reload.
@@ -920,6 +922,37 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     setStore({ data: [], source: 'empty' });
   }
 
+  // Populate the Account Name column from each row's BFO Name by resolving
+  // it against the cached Opps records — the same BFO → Opp lookup the
+  // Scope column uses, reading the matched Opp's Account. Only fills rows
+  // whose Account Name is still blank so a manually-entered account is
+  // never overwritten. Reports a short summary of what happened.
+  function fillAccountNamesFromBfo() {
+    if (!oppsCache?.records?.length) {
+      setFillStatus('Opps data isn’t loaded yet — open the Opps tab once so the BFO → Account lookup has data, then try again.');
+      return;
+    }
+    let filled = 0, alreadySet = 0, noMatch = 0;
+    const next = data.map(row => {
+      const bfo = String(row[BFO_NAME_KEY] || '').trim();
+      if (!bfo) return row;
+      const opp = findOppByBfoLink(oppsCache, bfo);
+      const account = opp ? String(opp['Account'] || '').trim() : '';
+      if (!account) { noMatch++; return row; }
+      if (String(row[ACCOUNT_NAME_KEY] || '').trim()) { alreadySet++; return row; }
+      filled++;
+      return { ...row, [ACCOUNT_NAME_KEY]: account };
+    });
+    if (filled > 0) {
+      try { saveCommissionsOverride(next); } catch (err) { console.warn('Save commissions failed', err); }
+      setStore({ data: next, source: 'override' });
+    }
+    const parts = [`Filled ${filled} account name${filled === 1 ? '' : 's'} from BFO matches`];
+    if (alreadySet > 0) parts.push(`${alreadySet} row${alreadySet === 1 ? '' : 's'} already had an account`);
+    if (noMatch > 0) parts.push(`${noMatch} BFO name${noMatch === 1 ? '' : 's'} had no Opps match`);
+    setFillStatus(parts.join(' · ') + '.');
+  }
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
       {/* Predictive-text source for every Account Name cell. Rendered
@@ -946,6 +979,14 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
             title="Paste tab-separated rows copied from Excel. The next step lets you confirm which pasted column maps to each commission field."
             style={{ padding: '0.4rem 0.8rem', border: '1px solid #16A34A', background: '#16A34A', color: '#fff', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
           >Paste from Excel</button>
+          {rows.length > 0 && (
+            <button
+              type="button"
+              onClick={fillAccountNamesFromBfo}
+              title="Look up each row's BFO Name against the cached Opps records and fill in the matching Opp's Account for any row whose Account Name is still blank."
+              style={{ padding: '0.4rem 0.8rem', border: '1px solid #3B82F6', background: 'white', color: '#2563EB', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+            >Fill Account Names from BFO</button>
+          )}
           {source === 'override' && (
             <button
               type="button"
@@ -956,6 +997,14 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           )}
         </div>
       </div>
+      {fillStatus && (
+        <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 0.6rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 6, color: '#1E3A8A', fontSize: '0.75rem' }}>
+            <span style={{ flex: 1 }}>{fillStatus}</span>
+            <button type="button" onClick={() => setFillStatus('')} aria-label="Dismiss" style={{ background: 'transparent', border: 'none', color: '#1E3A8A', cursor: 'pointer', fontSize: '0.9rem', lineHeight: 1, padding: '0 4px' }}>×</button>
+          </div>
+        </div>
+      )}
 
       <div style={{ padding: '0 1.25rem 0.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', flexShrink: 0 }}>
         <input
