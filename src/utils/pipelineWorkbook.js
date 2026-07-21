@@ -207,22 +207,31 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
     r++;
   };
   p.stages.forEach((s, i) => metricRow(s, { zebra: i % 2 === 1 }));
-  // Total row
+  // Total row — each Actual cell tints green when it beats its goal and red
+  // when it misses (same compareClass convention as the per-stage rows above).
+  // Goal-only and no-goal cells (Close Rate has no total goal, Target
+  // Projection is goal-only) stay plain; bold keeps the row reading as a
+  // summary without the old blanket green fill.
   const t = p.totals;
   const totCells = [
-    [lbl('m-total', 'Total'), 'left', null],
-    [num(t.activeGoal), 'center', INT], [num(t.activeActual), 'center', INT],
-    [num(t.dealSizeGoal), 'center', MONEY], [num(t.dealSizeActual), 'center', MONEY],
-    [num(t.pipelineGoal), 'center', MONEY], [num(t.pipelineActual), 'center', MONEY],
-    ['', 'center', null], [num(t.closeRate), 'center', PCT],
-    [num(t.targetProjGoal), 'center', MONEY],
-    [num(t.lifeGoal), 'center', INT], [num(t.lifeActual), 'center', INT],
-    ['', 'left', null],
+    [lbl('m-total', 'Total'), 'left', null, null],
+    [num(t.activeGoal), 'center', INT, null],
+    [num(t.activeActual), 'center', INT, cmpTint(t.activeActual, t.activeGoal, 'higher')],
+    [num(t.dealSizeGoal), 'center', MONEY, null],
+    [num(t.dealSizeActual), 'center', MONEY, cmpTint(t.dealSizeActual, t.dealSizeGoal, 'higher')],
+    [num(t.pipelineGoal), 'center', MONEY, null],
+    [num(t.pipelineActual), 'center', MONEY, cmpTint(t.pipelineActual, t.pipelineGoal, 'higher')],
+    ['', 'center', null, null],
+    [num(t.closeRate), 'center', PCT, null],
+    [num(t.targetProjGoal), 'center', MONEY, null],
+    [num(t.lifeGoal), 'center', INT, null],
+    [num(t.lifeActual), 'center', INT, cmpTint(t.lifeActual, t.lifeGoal, 'lower')],
+    ['', 'left', null, null],
   ];
-  totCells.forEach(([v, align, numFmt], i) => {
+  totCells.forEach(([v, align, numFmt, tint], i) => {
     const cell = ws.getRow(r).getCell(i + 1);
     cell.value = v === '' || v == null ? null : v;
-    styleBody(cell, { align, numFmt, bold: true, fill: OK_FILL });
+    styleBody(cell, { align, numFmt, bold: true, ...(tint || {}) });
   });
   ws.getRow(r).height = 18; r++;
 
