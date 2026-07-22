@@ -352,6 +352,39 @@ function needsBudgetTimelineFlag(row) {
   return timeline === '';
 }
 
+// The set of timeline kinds offered in the "Timelines" dropdown inside the
+// Notes and Follow Up popups. The user logs one date/target per kind and can
+// add as many rows as they need (e.g. one Budget + one Compliance timeline).
+const TIMELINE_TYPE_OPTIONS = ['Budget timeline', 'Compliance timeline'];
+
+// Read the structured timelines off an opp. Newer records store an array of
+// { type, value } rows under `_timelines` plus a `_kickoffDeadline` string.
+// Older records only carry the free-text "Timeline?" column — we surface that
+// as a single untyped row so nothing is lost when the popup first opens.
+function readTimelines(opp) {
+  const stored = Array.isArray(opp?._timelines) ? opp._timelines : null;
+  let list;
+  if (stored) {
+    list = stored.map(r => ({ type: String(r?.type ?? ''), value: String(r?.value ?? '') }));
+  } else {
+    const legacy = String(rowValueByHeader(opp, 'timeline?') ?? '').trim();
+    list = legacy ? [{ type: '', value: legacy }] : [];
+  }
+  return { list, kickoff: String(opp?._kickoffDeadline ?? '') };
+}
+
+// Collapse the structured timeline rows into the single human-readable string
+// stored in the legacy "Timeline?" column. Keeps table cells and the budget
+// timeline flag working off the same value they always have. Empty rows are
+// dropped; each kept row reads "Type: value" (or just the value when untyped).
+function summarizeTimelines(list) {
+  return (Array.isArray(list) ? list : [])
+    .map(r => ({ type: String(r?.type ?? '').trim(), value: String(r?.value ?? '').trim() }))
+    .filter(r => r.value)
+    .map(r => (r.type ? `${r.type}: ${r.value}` : r.value))
+    .join(' · ');
+}
+
 // Record-level merge lives in opps2Store as `mergeOpps2Datasets` so the
 // real-time listener, hydration reconcile, and the guarded flush all
 // resolve conflicts identically (field-level by `_fieldUpdatedAt`).
@@ -3797,9 +3830,12 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, onSave, onClos
   const curStatus = opp?.['Status'] ?? '';
   const [status, setStatus] = useState(String(curStatus ?? ''));
   const [salesPartner, setSalesPartner] = useState(String(opp?.['Sales Partner'] ?? ''));
-  // Timeline? is a user-added column, so read it tolerant to casing/whitespace
-  // drift the same way the flags do.
-  const [timeline, setTimeline] = useState(String(rowValueByHeader(opp, 'timeline?') ?? ''));
+  // Structured timelines: a list of { type, value } rows plus a kickoff
+  // deadline, seeded from the opp (falling back to the legacy free-text
+  // Timeline? column). Flattened back to a readable summary on Save.
+  const initialTimelines = useMemo(() => readTimelines(opp), [opp]);
+  const [timelineList, setTimelineList] = useState(initialTimelines.list);
+  const [kickoff, setKickoff] = useState(initialTimelines.kickoff);
 
   // Seed the Next Steps rows from the same source the standalone
   // NextStepsEditor uses so this popup edits them in the identical
@@ -3822,7 +3858,7 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, onSave, onClos
     const kept = rows.filter(r => (r.note || '').trim() || (r.waitingOn || '').trim());
     const nextSteps = kept.map(r => encodeNoteLine(r.note)).join('\n');
     const nextStepsWaiting = kept.map(r => (r.waitingOn || '').trim());
-    onSave({ status, nextSteps, nextStepsWaiting, salesPartner: salesPartner.trim(), timeline: timeline.trim() });
+    onSave({ status, nextSteps, nextStepsWaiting, salesPartner: salesPartner.trim(), timelines: timelineList, kickoff });
   }
 
   const hintStyle = { fontSize: '0.68rem', color: 'var(--color-text-muted)', marginTop: 3 };
@@ -3913,13 +3949,12 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, onSave, onClos
             />
           </div>
           <div>
-            <label style={labelStyle}>Timeline</label>
-            <input
-              type="text"
-              value={timeline}
-              onChange={(e) => setTimeline(e.target.value)}
-              placeholder="—"
-              style={inputStyle}
+            <label style={labelStyle}>Timelines</label>
+            <TimelinesEditor
+              list={timelineList}
+              kickoff={kickoff}
+              onChangeList={setTimelineList}
+              onChangeKickoff={setKickoff}
             />
           </div>
           <div>
@@ -5318,6 +5353,95 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onCommi
   );
 }
 
+// Shared "Timelines" editor used inside both the Notes and Follow Up popups.
+// Presentational only — the parent owns the `list` (array of { type, value })
+// and `kickoff` string and passes change handlers. Each row picks a timeline
+// kind from the dropdown (Budget / Compliance / …) and logs a date or note;
+// the Kickoff Deadline sits next to the list as a single date field.
+function TimelinesEditor({ list, kickoff, onChangeList, onChangeKickoff }) {
+  const rows = Array.isArray(list) ? list : [];
+  const updateRow = (idx, key, value) =>
+    onChangeList(rows.map((r, i) => (i === idx ? { ...r, [key]: value } : r)));
+  const addRow = () => onChangeList([...rows, { type: '', value: '' }]);
+  const deleteRow = (idx) => onChangeList(rows.filter((_, i) => i !== idx));
+
+  const selectStyle = {
+    padding: '0.35rem 0.45rem', border: '1px solid #CBD5E1', borderRadius: 4,
+    fontSize: '0.8rem', fontFamily: 'inherit', background: '#fff', color: '#334155',
+    minWidth: 150,
+  };
+  const inputStyle = {
+    flex: 1, minWidth: 120, padding: '0.35rem 0.45rem', border: '1px solid #CBD5E1',
+    borderRadius: 4, fontSize: '0.8rem', fontFamily: 'inherit', background: '#fff', color: '#334155',
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+      {rows.length === 0 ? (
+        <div style={{ fontSize: '0.72rem', color: '#94A3B8' }}>No timelines yet.</div>
+      ) : (
+        rows.map((row, idx) => (
+          <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+            <select
+              value={row.type || ''}
+              onChange={(e) => updateRow(idx, 'type', e.target.value)}
+              style={selectStyle}
+            >
+              <option value="">— Timeline type —</option>
+              {TIMELINE_TYPE_OPTIONS.map(o => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+              {row.type && !TIMELINE_TYPE_OPTIONS.includes(row.type) ? (
+                <option value={row.type}>{row.type}</option>
+              ) : null}
+            </select>
+            <input
+              type="text"
+              value={row.value || ''}
+              onChange={(e) => updateRow(idx, 'value', e.target.value)}
+              placeholder="Date or note (e.g. 2026-08-01, Q3)"
+              style={inputStyle}
+            />
+            <button
+              type="button"
+              onClick={() => deleteRow(idx)}
+              aria-label="Delete timeline"
+              title="Delete timeline"
+              style={{
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                color: '#94A3B8', fontSize: '1rem', padding: '0 4px', lineHeight: 1, flexShrink: 0,
+              }}
+            >×</button>
+          </div>
+        ))
+      )}
+      <div>
+        <button
+          type="button"
+          onClick={addRow}
+          style={{
+            padding: '0.3rem 0.65rem', border: '1px solid #BFDBFE', borderRadius: 4,
+            background: '#EFF6FF', color: '#1E40AF', fontSize: '0.72rem', fontWeight: 600,
+            cursor: 'pointer', fontFamily: 'inherit',
+          }}
+        >+ Add timeline</button>
+      </div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2, fontSize: '0.72rem', fontWeight: 600, color: '#475569' }}>
+        Kickoff Deadline
+        <input
+          type="date"
+          value={kickoff || ''}
+          onChange={(e) => onChangeKickoff(e.target.value)}
+          style={{
+            padding: '0.3rem 0.45rem', border: '1px solid #CBD5E1', borderRadius: 4,
+            fontSize: '0.8rem', fontFamily: 'inherit', background: '#fff', color: '#334155',
+          }}
+        />
+      </label>
+    </div>
+  );
+}
+
 function NextStepsEditor({ opp, clientManager, onClose, updateOppField }) {
   const noteLines = useMemo(() => textToBulletItems(opp?.['Next Steps']), [opp]);
   const storedWaiting = Array.isArray(opp?._nextStepsWaiting) ? opp._nextStepsWaiting : [];
@@ -5369,7 +5493,28 @@ function NextStepsEditor({ opp, clientManager, onClose, updateOppField }) {
     }
     return 'Timeline?';
   }, [opp]);
-  const timelineValue = String(rowValueByHeader(opp, 'timeline?') ?? '');
+
+  // Structured timelines: a list of { type, value } rows plus a kickoff
+  // deadline. Seeded from the opp (falling back to the legacy free-text
+  // Timeline? column) and persisted on every change — the list also writes a
+  // readable summary back into Timeline? so table cells / flags keep working.
+  const initialTimelines = useMemo(() => readTimelines(opp), [opp]);
+  const [timelineList, setTimelineList] = useState(initialTimelines.list);
+  const [kickoff, setKickoff] = useState(initialTimelines.kickoff);
+
+  function persistTimelines(nextList, nextKickoff) {
+    updateOppField(opp._id, '_timelines', nextList);
+    updateOppField(opp._id, '_kickoffDeadline', nextKickoff);
+    updateOppField(opp._id, timelineKey, summarizeTimelines(nextList));
+  }
+  function changeTimelineList(nextList) {
+    setTimelineList(nextList);
+    persistTimelines(nextList, kickoff);
+  }
+  function changeKickoff(nextKickoff) {
+    setKickoff(nextKickoff);
+    persistTimelines(timelineList, nextKickoff);
+  }
 
   // One-click activity marks. Stamps today's date on `_calledOn` /
   // `_metOn` (clicking again the same day clears it). The Agents page
@@ -5447,24 +5592,6 @@ function NextStepsEditor({ opp, clientManager, onClose, updateOppField }) {
                 style={{ padding: '2px 6px', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.78rem', fontFamily: 'inherit', color: '#334155', minWidth: 170 }}
               />
             </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: '0.72rem', color: '#64748B' }}>
-              Timeline
-              <input
-                key={timelineValue}
-                type="text"
-                defaultValue={timelineValue}
-                placeholder="—"
-                onBlur={(e) => {
-                  const v = e.currentTarget.value.trim();
-                  if (v !== timelineValue.trim()) updateOppField(opp._id, timelineKey, v);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
-                  else if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.value = timelineValue; e.currentTarget.blur(); }
-                }}
-                style={{ padding: '2px 6px', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.78rem', fontFamily: 'inherit', color: '#334155', minWidth: 170 }}
-              />
-            </label>
             {clientManager ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: '0.72rem', color: '#64748B' }}>
                 Client Manager
@@ -5485,6 +5612,15 @@ function NextStepsEditor({ opp, clientManager, onClose, updateOppField }) {
               }}
             >×</button>
           </div>
+        </div>
+        <div style={{ marginBottom: '0.85rem', paddingBottom: '0.85rem', borderBottom: '1px solid #E2E8F0' }}>
+          <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#334155', marginBottom: '0.4rem' }}>Timelines</div>
+          <TimelinesEditor
+            list={timelineList}
+            kickoff={kickoff}
+            onChangeList={changeTimelineList}
+            onChangeKickoff={changeKickoff}
+          />
         </div>
         <NextStepsRowsEditor
           rows={rows}
@@ -8892,7 +9028,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             opp={opp}
             statusOptions={statusOpts}
             clientManager={clientManagerForAccount(opp?.['Account'])}
-            onSave={({ status, nextSteps, nextStepsWaiting, salesPartner, timeline }) => {
+            onSave={({ status, nextSteps, nextStepsWaiting, salesPartner, timelines, kickoff }) => {
               if (status !== String(opp['Status'] ?? '')) {
                 updateOppField(opp._id, 'Status', status);
               }
@@ -8902,11 +9038,17 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               if (salesPartner !== String(opp['Sales Partner'] ?? '').trim()) {
                 updateOppField(opp._id, 'Sales Partner', salesPartner);
               }
-              if (timeline !== String(rowValueByHeader(opp, 'timeline?') ?? '').trim()) {
-                // Write back to the existing Timeline? key (whatever its casing)
-                // so we don't spawn a duplicate column.
+              // Persist the structured timelines, and mirror a readable summary
+              // back into the existing Timeline? column (whatever its casing) so
+              // table cells and the budget-timeline flag keep working.
+              const prevTimelines = readTimelines(opp);
+              if (JSON.stringify(timelines) !== JSON.stringify(prevTimelines.list)) {
+                updateOppField(opp._id, '_timelines', timelines);
                 const timelineKey = Object.keys(opp).find(k => normCell(k) === 'timeline?') || 'Timeline?';
-                updateOppField(opp._id, timelineKey, timeline);
+                updateOppField(opp._id, timelineKey, summarizeTimelines(timelines));
+              }
+              if ((kickoff || '') !== (prevTimelines.kickoff || '')) {
+                updateOppField(opp._id, '_kickoffDeadline', kickoff || '');
               }
               const curWaiting = Array.isArray(opp._nextStepsWaiting) ? opp._nextStepsWaiting : [];
               if (JSON.stringify(nextStepsWaiting) !== JSON.stringify(curWaiting)) {
