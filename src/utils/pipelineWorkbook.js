@@ -254,6 +254,34 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
   put(r, 11, r, 13, cg.clientActualPct != null ? `Actual ${Math.round(cg.clientActualPct * 100)}%` : '—', { align: 'left', ...(cmpTint(cg.clientActualPct, cg.clientGoalPct, 'lower') || {}) });
   r++;
 
+  // ── Largest Stage 5 & 6 Deals (above $100k) ──
+  // The biggest late-stage opportunities, pulled from live BFO rows and sorted
+  // by amount descending. Sits directly above New Opps by Month.
+  {
+    const bd = p.largeDeals || {};
+    const minAmt = bd.minAmount || 100000;
+    gap();
+    title(bd.title || 'Largest Stage 5 & 6 Deals — Above $100k');
+    const bdCols = [[1, 6], [7, 9], [10, 11], [12, 13]]; // Account | Opportunity | Stage | Amount
+    const bdHdr = bd.headers || ['Account', 'Opportunity', 'Stage', 'Amount'];
+    bdHdr.forEach((h, i) => put(r, bdCols[i][0], r, bdCols[i][1], h, { ...HEAD, align: i === 3 ? 'center' : 'left' }));
+    r++;
+    const bdRows = bd.rows || [];
+    if (!bdRows.length) {
+      put(r, 1, r, COLS, `No Stage 5 or 6 deals above $${minAmt.toLocaleString('en-US')}.`, { fg: SE_MUTED });
+      r++;
+    } else {
+      bdRows.forEach((row, idx) => {
+        const zebra = idx % 2 === 1 ? { zebra: true } : {};
+        put(r, bdCols[0][0], r, bdCols[0][1], row.account || '—', { align: 'left', wrap: true, ...zebra });
+        put(r, bdCols[1][0], r, bdCols[1][1], row.oppName || '—', { align: 'left', wrap: true, ...zebra });
+        put(r, bdCols[2][0], r, bdCols[2][1], row.stage || '—', { align: 'left', ...zebra });
+        put(r, bdCols[3][0], r, bdCols[3][1], num(row.amount), { align: 'center', numFmt: MONEY, bold: true, ...zebra });
+        r++;
+      });
+    }
+  }
+
   // ── New Opps by Month (horizontal) ──
   gap();
   title(`${lbl('nom-month', 'Month')} · ${lbl('nom-new-opps', 'New Opps')}`);

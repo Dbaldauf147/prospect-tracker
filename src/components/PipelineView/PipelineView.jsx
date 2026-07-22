@@ -1974,6 +1974,32 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       },
       coverage: { goal: state.coverageGoal, actual: coverageActual },
       notQuoted: { goal: state.notQuotedGoal, year: effectiveNotQuotedYear, month: effectiveNotQuotedMonth },
+      // Largest Stage 5 & 6 deals above $100k, sorted by amount (biggest
+      // first). Pulled from the live BFO rows for those stages; empty when
+      // BFO isn't loaded or nothing clears the threshold.
+      largeDeals: (() => {
+        const MIN_AMOUNT = 100000;
+        const collect = (n) => (hasBfo && bfoMetrics[n]?.rows ? bfoMetrics[n].rows : [])
+          .filter(row => Number(row.amount) > MIN_AMOUNT)
+          .map(row => ({
+            account: String(row.account || '').trim() || row.oppName || '(no account)',
+            oppName: String(row.oppName || '').trim() || '—',
+            stage: `Stage ${n}`,
+            amount: Number(row.amount),
+          }));
+        const rows = [...collect(6), ...collect(5)].sort((a, b) => b.amount - a.amount);
+        return {
+          title: lbl('bigdeals-title', 'Largest Stage 5 & 6 Deals — Above $100k'),
+          headers: [
+            lbl('bigdeals-account', 'Account'),
+            lbl('bigdeals-opp', 'Opportunity'),
+            lbl('bigdeals-stage', 'Stage'),
+            lbl('bigdeals-amount', 'Amount'),
+          ],
+          rows,
+          minAmount: MIN_AMOUNT,
+        };
+      })(),
       newOppsByMonth: newOppsByMonth.map(m => ({ label: m.label, count: m.count })),
       renewals: {
         windowDays: RENEWAL_WINDOW_DAYS,
