@@ -1810,6 +1810,22 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
     return buckets;
   }, [oppsRecords, opps]);
 
+  // Largest Stage 5 & 6 deals above $100k, biggest first — from the live BFO
+  // rows for those stages. Shared by the on-screen section and the one-page
+  // export so both stay in sync. Empty when BFO isn't loaded.
+  const LARGE_DEAL_MIN = 100000;
+  const largeStage56Deals = useMemo(() => {
+    const collect = (n) => (hasBfo && bfoMetrics[n]?.rows ? bfoMetrics[n].rows : [])
+      .filter(row => Number(row.amount) > LARGE_DEAL_MIN)
+      .map(row => ({
+        account: String(row.account || '').trim() || row.oppName || '(no account)',
+        oppName: String(row.oppName || '').trim() || '—',
+        stage: `Stage ${n}`,
+        amount: Number(row.amount),
+      }));
+    return [...collect(6), ...collect(5)].sort((a, b) => b.amount - a.amount);
+  }, [hasBfo, bfoMetrics]);
+
   useEffect(() => {
     if (!hydrated) return;
     dbPut(STORE, state, KEY).catch(err => console.warn('Pipeline save failed', err));
@@ -1975,31 +1991,19 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       coverage: { goal: state.coverageGoal, actual: coverageActual },
       notQuoted: { goal: state.notQuotedGoal, year: effectiveNotQuotedYear, month: effectiveNotQuotedMonth },
       // Largest Stage 5 & 6 deals above $100k, sorted by amount (biggest
-      // first). Pulled from the live BFO rows for those stages; empty when
+      // first). Same rows shown on-screen (largeStage56Deals); empty when
       // BFO isn't loaded or nothing clears the threshold.
-      largeDeals: (() => {
-        const MIN_AMOUNT = 100000;
-        const collect = (n) => (hasBfo && bfoMetrics[n]?.rows ? bfoMetrics[n].rows : [])
-          .filter(row => Number(row.amount) > MIN_AMOUNT)
-          .map(row => ({
-            account: String(row.account || '').trim() || row.oppName || '(no account)',
-            oppName: String(row.oppName || '').trim() || '—',
-            stage: `Stage ${n}`,
-            amount: Number(row.amount),
-          }));
-        const rows = [...collect(6), ...collect(5)].sort((a, b) => b.amount - a.amount);
-        return {
-          title: lbl('bigdeals-title', 'Largest Stage 5 & 6 Deals — Above $100k'),
-          headers: [
-            lbl('bigdeals-account', 'Account'),
-            lbl('bigdeals-opp', 'Opportunity'),
-            lbl('bigdeals-stage', 'Stage'),
-            lbl('bigdeals-amount', 'Amount'),
-          ],
-          rows,
-          minAmount: MIN_AMOUNT,
-        };
-      })(),
+      largeDeals: {
+        title: lbl('bigdeals-title', 'Largest Stage 5 & 6 Deals — Above $100k'),
+        headers: [
+          lbl('bigdeals-account', 'Account'),
+          lbl('bigdeals-opp', 'Opportunity'),
+          lbl('bigdeals-stage', 'Stage'),
+          lbl('bigdeals-amount', 'Amount'),
+        ],
+        rows: largeStage56Deals,
+        minAmount: LARGE_DEAL_MIN,
+      },
       newOppsByMonth: newOppsByMonth.map(m => ({ label: m.label, count: m.count })),
       renewals: {
         windowDays: RENEWAL_WINDOW_DAYS,
@@ -2713,6 +2717,45 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
             </table>
           </div>
 
+        </div>
+
+        {/* Largest Stage 5 & 6 Deals — late-stage opps above $100k, biggest
+            first. Mirrors the section in the one-page export; sits directly
+            above New Opps by Month. */}
+        <div className={styles.section}>
+          <div className={styles.sectionTitle}>
+            <EL id="bigdeals-title">Largest Stage 5 &amp; 6 Deals — Above $100k</EL>
+          </div>
+          <div className={styles.scrollX}>
+          <table className={styles.grid}>
+            <thead>
+              <tr>
+                <th className={styles.headerLeft}><EL id="bigdeals-account">Account</EL></th>
+                <th className={styles.headerLeft}><EL id="bigdeals-opp">Opportunity</EL></th>
+                <th className={styles.headerLeft}><EL id="bigdeals-stage">Stage</EL></th>
+                <th><EL id="bigdeals-amount">Amount</EL></th>
+              </tr>
+            </thead>
+            <tbody>
+              {largeStage56Deals.length === 0 ? (
+                <tr>
+                  <td className={styles.label} colSpan={4} style={{ color: '#64748b', fontWeight: 500 }}>
+                    {hasBfo
+                      ? `No Stage 5 or 6 deals above $${LARGE_DEAL_MIN.toLocaleString('en-US')}.`
+                      : `Load BFO Activity to list Stage 5 & 6 deals above $${LARGE_DEAL_MIN.toLocaleString('en-US')}.`}
+                  </td>
+                </tr>
+              ) : largeStage56Deals.map((d, i) => (
+                <tr key={i}>
+                  <td style={{ textAlign: 'left', whiteSpace: 'normal' }}>{d.account}</td>
+                  <td style={{ textAlign: 'left', whiteSpace: 'normal' }}>{d.oppName}</td>
+                  <td style={{ textAlign: 'left' }}>{d.stage}</td>
+                  <td className={styles.numCell} style={{ textAlign: 'right', fontWeight: 700 }}>{fmtMoney(d.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          </div>
         </div>
 
         {/* New Opps by Month — BFO-linked opps created in each of the past 6
