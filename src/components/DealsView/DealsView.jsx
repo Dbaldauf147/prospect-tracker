@@ -32,6 +32,7 @@ import {
   DEALS_CLIENT_MAP_EVENT,
 } from '../../utils/dealClientMap';
 import { PasteImportModal } from './PasteImportModal';
+import { DealCommissionBreakdownModal } from './DealCommissionBreakdownModal';
 
 const MAPPED_COL_KEY = '__mappedToClient__';
 const MAPPED_COL_LABEL = 'Mapped to Client';
@@ -837,7 +838,7 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
       return isRevenueRecorded ? hit.revenue : hit.commission;
     }
 
-    function renderCompound(row, v) {
+    function renderCompound(row, v, linked = false) {
       const ignoreKey = isRevenueRecorded ? '__revenueRecordedIgnored' : '__paidToDateIgnored';
       const ignored = isFilled(row[ignoreKey]);
       // Prefer the live Commissions roll-up over whatever was pasted /
@@ -880,12 +881,21 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
 
       const primary = commNumerator != null ? fmtCurrency(commNumerator) : currencyOrZero(v);
       const denomText = fmtCurrency(denominator);
+      // Only the auto-populated (linked) cells have Commissions rows to break
+      // down, so only those get the double-click affordance.
+      const metricKey = isRevenueRecorded ? 'revenue' : 'paid';
+      const openBreakdown = linked
+        ? (e) => { e.stopPropagation(); row.__onShowCommissionBreakdown?.(row.id, metricKey); }
+        : undefined;
       const fullTitle = commNumerator != null
-        ? `Auto-populated from Commissions for "${String(row?.[DEAL_BFO_KEY] || '').trim()}" — ${stateTitle}`
+        ? `Auto-populated from Commissions for "${String(row?.[DEAL_BFO_KEY] || '').trim()}" — ${stateTitle}. Double-click for the mapped breakdown.`
         : stateTitle;
       return (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, width: '100%' }} title={fullTitle}>
-          <span style={{ flex: 1, padding: '1px 8px', borderRadius: 4, background: bg, color: fg, fontVariantNumeric: 'tabular-nums', fontWeight: 600, textAlign: 'left', textDecoration: ignored ? 'line-through' : 'none' }}>
+          <span
+            onDoubleClick={openBreakdown}
+            style={{ flex: 1, padding: '1px 8px', borderRadius: 4, background: bg, color: fg, fontVariantNumeric: 'tabular-nums', fontWeight: 600, textAlign: 'left', textDecoration: ignored ? 'line-through' : 'none', cursor: linked ? 'zoom-in' : 'default' }}
+          >
             {primary}/{denomText}
           </span>
           <button
@@ -998,7 +1008,7 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
         // wouldn't display anyway. Source-of-truth edits happen on
         // the Commissions tab.
         if ((isRevenueRecorded || isPaidToDate) && lookupCommissionNumerator(row) != null) {
-          return renderCompound(row, row[k]);
+          return renderCompound(row, row[k], true);
         }
         const cellRender = (isRevenueRecorded || isPaidToDate)
           ? (v) => renderCompound(row, v)
@@ -1053,6 +1063,11 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
   const [search, setSearch] = useState('');
   const [uploadError, setUploadError] = useState(null);
   const [showPaste, setShowPaste] = useState(false);
+  // Which deal cell's commission breakdown popup is open: { rowId, metric }
+  // where metric is 'revenue' (Revenue Recorded) or 'paid' (Paid to Date).
+  // Opened by double-clicking an auto-populated Revenue Recorded / Paid to
+  // Date cell.
+  const [breakdown, setBreakdown] = useState(null);
   const [clientMap, setClientMap] = useState(() => loadDealClientMap());
   const [ignoreSet, setIgnoreSet] = useState(() => loadDealClientIgnore());
   const [onlyUnmapped, setOnlyUnmapped] = useState(false);
@@ -1317,13 +1332,22 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     });
   }
 
+  // Open the commission breakdown popup for a deal's Revenue Recorded /
+  // Paid to Date cell. Wired to a double-click on the auto-populated pill;
+  // stores the raw row index + metric so the modal reads the live deal.
+  function showCommissionBreakdown(rowId, metric) {
+    const idx = Number(rowId);
+    if (!Number.isFinite(idx)) return;
+    setBreakdown({ rowId: idx, metric });
+  }
+
   const rows = useMemo(
     // A row counts as the freshly-added "new" row (and gets autofocused
     // on its Client Name cell) as long as the top row hasn't been given
     // a Client Name yet. Anchoring this to Client Name rather than the
     // raw key count lets addNewDeal seed defaults like Due Date without
     // disabling the autofocus behavior.
-    () => data.map((r, i) => ({ ...r, id: i, __onUpdate: updateCell, __newRow: i === 0 && !isFilled(r['Client Name']) })),
+    () => data.map((r, i) => ({ ...r, id: i, __onUpdate: updateCell, __onShowCommissionBreakdown: showCommissionBreakdown, __newRow: i === 0 && !isFilled(r['Client Name']) })),
     [data]
   );
   // Sold Opps 2 opps that don't line up with any deal here. The link
@@ -2118,6 +2142,14 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
           availableLists={availableLists}
           onChange={updateColumnLinks}
           onClose={() => setLinkModalOpen(false)}
+        />
+      )}
+      {breakdown && data[breakdown.rowId] && (
+        <DealCommissionBreakdownModal
+          deal={data[breakdown.rowId]}
+          metric={breakdown.metric}
+          commissionsRows={commissionsData}
+          onClose={() => setBreakdown(null)}
         />
       )}
     </div>
