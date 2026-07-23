@@ -75,6 +75,11 @@ import {
   TOPO_NAME_TO_DEREG_KEY,
 } from '../../data/worldGeo';
 import {
+  ISO_REGIONS,
+  ISO_FILL,
+  isoForState,
+} from '../../data/isoRegions';
+import {
   countryElectricRate,
   countryGasRatePerTherm,
   normalizeCountryRateName,
@@ -4977,6 +4982,345 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           }
           rr.height = 20;
         });
+      }
+    }
+
+    // ---- ISO / RTO Overview sheet ------------------------------
+    // Parallels the NAM View, but the geographic unit is the wholesale
+    // electricity market (ISO / RTO) region rather than the state. Every
+    // US state is shaded by the ISO / RTO region it predominantly sits in
+    // (see src/data/isoRegions.js — a whole-state approximation, since ISO
+    // footprints split states), darkened by portfolio site count so the
+    // map reads like the standard ISO breakdown with the portfolio layered
+    // on top. Single panel: ISOs are electricity markets, so there's no
+    // Natural Gas / Electric Power split. The bottom table rolls the
+    // portfolio up per ISO region.
+    {
+      const ws = wb.addWorksheet('ISO', {
+        properties: { tabColor: { argb: SE_GREEN_DARK } },
+        views: [{ showGridLines: false }],
+      });
+      const COLS = 12;
+      ws.columns = [
+        { width: 22 }, // Region
+        { width: 12 }, // Sites
+        { width: 10 }, // Sites %
+        { width: 16 }, // Load (kWh)
+        { width: 16 }, // Load (Dth)
+        { width: 18 }, // Annual Cost
+        { width: 6 }, { width: 6 }, { width: 6 },
+        { width: 6 }, { width: 6 }, { width: 6 },
+      ];
+
+      // Aggregate US sites by state (for the choropleth density) and by
+      // ISO region (for the summary table). ISO / RTO markets are US-only,
+      // so non-US rows are skipped — they're already covered on the
+      // Portfolio Overview and NAM sheets.
+      const stateCounts = new Map();     // stateCode -> site count (map shading)
+      const isoAggs = new Map();         // regionKey -> { sites, kwh, therms, cost }
+      let usSiteCount = 0;
+      let unmappedCount = 0;             // US sites whose state has no ISO region (AK/HI/blank)
+      for (const r of rows) {
+        const rawCountry = String(r.__country__ || '').trim();
+        const country = normalizeCountryName(rawCountry) || rawCountry;
+        const isUS = /^(united states|usa|us)$/i.test(country);
+        if (!isUS) continue;
+        usSiteCount++;
+        const stateCode = String(r.__state__ || '').trim().toUpperCase();
+        const region = isoForState(stateCode);
+        if (!region) { unmappedCount++; continue; }
+        stateCounts.set(stateCode, (stateCounts.get(stateCode) || 0) + 1);
+        const kwh = (typeof r.__kwh__ === 'number' && Number.isFinite(r.__kwh__)) ? r.__kwh__ : 0;
+        const therms = (typeof r.__therms__ === 'number' && Number.isFinite(r.__therms__)) ? r.__therms__ : 0;
+        const eCost = (typeof r.__electricCostActual__ === 'number' && Number.isFinite(r.__electricCostActual__))
+          ? r.__electricCostActual__
+          : (typeof r.__electricCostEstimated__ === 'number' && Number.isFinite(r.__electricCostEstimated__) ? r.__electricCostEstimated__ : 0);
+        const gCost = (typeof r.__gasCostActual__ === 'number' && Number.isFinite(r.__gasCostActual__))
+          ? r.__gasCostActual__
+          : (typeof r.__gasCostEstimated__ === 'number' && Number.isFinite(r.__gasCostEstimated__) ? r.__gasCostEstimated__ : 0);
+        let agg = isoAggs.get(region);
+        if (!agg) { agg = { sites: 0, kwh: 0, therms: 0, cost: 0 }; isoAggs.set(region, agg); }
+        agg.sites++;
+        agg.kwh += kwh;
+        agg.therms += therms;
+        agg.cost += eCost + gCost;
+      }
+
+      const NO_REGION_FILL   = '#E5E7EB'; // unmapped US states (AK/HI) + non-US
+      const NO_REGION_STROKE = '#9CA3AF';
+      const maxSiteCount = Math.max(1, ...Array.from(stateCounts.values()));
+      const argbToRgb = (hex) => {
+        const h = String(hex).replace(/^#/, '').replace(/^FF/i, '');
+        return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+      };
+      const rgbToHex = (rgb) => '#' + rgb.map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+      // Region hue, always applied (so every region reads on the map like
+      // the reference breakdown), with a sqrt density darken keyed to the
+      // state's portfolio site count. Zero-site states stay a light tint of
+      // their region hue rather than fading to grey.
+      const shadeForRegion = (regionKey, count) => {
+        const [r, g, b] = argbToRgb(ISO_FILL[regionKey] || '#9CA3AF');
+        if (count <= 0) {
+          const sat = 0.38;
+          const blend = (c) => c * sat + 255 * (1 - sat);
+          return rgbToHex([blend(r), blend(g), blend(b)]);
+        }
+        const t = Math.sqrt(count / maxSiteCount);
+        const sat = 0.60 + 0.40 * t;
+        const dark = 0.16 * t;
+        const blend = (c) => (c * sat + 255 * (1 - sat)) * (1 - dark);
+        return rgbToHex([blend(r), blend(g), blend(b)]);
+      };
+
+      // Single-panel canvas, framed to the continental US (the reference
+      // ISO map excludes AK/HI). Same equirectangular projection helper as
+      // the NAM sheet, just bounded tighter.
+      const MAP_W = 900;
+      const MAP_H = 580;
+      const PAD = 16;
+      const TITLE_H = 34;
+      const LEGEND_H = 96;
+      const W = MAP_W + PAD * 2;
+      const H = TITLE_H + MAP_H + LEGEND_H + PAD * 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = H;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, W, H);
+
+      const US_LNG_MIN = -125;
+      const US_LNG_MAX = -66;
+      const US_LAT_MIN = 24;
+      const US_LAT_MAX = 50;
+      const project = (lng, lat) => [
+        PAD + ((lng - US_LNG_MIN) / (US_LNG_MAX - US_LNG_MIN)) * MAP_W,
+        TITLE_H + ((US_LAT_MAX - lat) / (US_LAT_MAX - US_LAT_MIN)) * MAP_H,
+      ];
+      const drawFeature = (rings) => {
+        for (const ring of rings) {
+          const subRings = [];
+          let cur = [];
+          let prevLng = null;
+          for (const pt of ring) {
+            if (prevLng !== null && Math.abs(pt[0] - prevLng) > 180) {
+              if (cur.length > 2) subRings.push(cur);
+              cur = [];
+            }
+            cur.push(pt);
+            prevLng = pt[0];
+          }
+          if (cur.length > 2) subRings.push(cur);
+          for (const sr of subRings) {
+            ctx.beginPath();
+            for (let i = 0; i < sr.length; i++) {
+              const [px, py] = project(sr[i][0], sr[i][1]);
+              if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+          }
+        }
+      };
+
+      const naFeatures = getNAAdmin1Features();
+
+      // Panel title.
+      ctx.fillStyle = '#0F172A';
+      ctx.font = 'bold 18px Nunito Sans, Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText('ISO / RTO Regions', PAD + MAP_W / 2, TITLE_H - 10);
+
+      // Clip the map layers to the panel rectangle.
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(PAD, TITLE_H, MAP_W, MAP_H);
+      ctx.clip();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(PAD, TITLE_H, MAP_W, MAP_H);
+
+      // Draw only US states; skip AK/HI (off the CONUS frame and unmapped).
+      ctx.lineWidth = 0.6;
+      for (const feat of naFeatures) {
+        if (feat.admin !== 'US') continue;
+        const code = String(feat.postal || '').toUpperCase();
+        if (code === 'AK' || code === 'HI') continue;
+        const region = isoForState(code);
+        if (region) {
+          ctx.fillStyle = shadeForRegion(region, stateCounts.get(code) || 0);
+          ctx.strokeStyle = '#FFFFFF';
+        } else {
+          ctx.fillStyle = NO_REGION_FILL;
+          ctx.strokeStyle = NO_REGION_STROKE;
+        }
+        drawFeature(feat.rings);
+      }
+      ctx.restore();
+
+      // Thin frame around the map, echoing the reference image's border.
+      ctx.strokeStyle = '#0F172A';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(PAD, TITLE_H, MAP_W, MAP_H);
+
+      // Wrapping horizontal legend — one chip per ISO region.
+      const SWATCH = 20;
+      const GAP_SWATCH_LABEL = 7;
+      const GAP_ITEMS = 20;
+      const ROW_H = 28;
+      ctx.font = '14px Nunito Sans, Arial, sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      const legendItems = [
+        ...ISO_REGIONS.map(r => ({ color: r.fill, label: r.label })),
+        { color: NO_REGION_FILL, label: 'No mapped region' },
+      ];
+      const itemW = (label) => SWATCH + GAP_SWATCH_LABEL + ctx.measureText(label).width;
+      // Greedy row packing centred within the map width.
+      const legendRows = [];
+      let curRow = [];
+      let curW = 0;
+      for (const it of legendItems) {
+        const w = itemW(it.label);
+        const add = curRow.length ? GAP_ITEMS + w : w;
+        if (curRow.length && curW + add > MAP_W) { legendRows.push({ items: curRow, width: curW }); curRow = []; curW = 0; }
+        curRow.push(it);
+        curW += curRow.length === 1 ? w : GAP_ITEMS + w;
+      }
+      if (curRow.length) legendRows.push({ items: curRow, width: curW });
+      let legendY = TITLE_H + MAP_H + PAD + SWATCH / 2;
+      for (const lr of legendRows) {
+        let cursorX = PAD + (MAP_W - lr.width) / 2;
+        for (const it of lr.items) {
+          ctx.fillStyle = it.color;
+          ctx.fillRect(cursorX, legendY - SWATCH / 2, SWATCH, SWATCH);
+          ctx.strokeStyle = NO_REGION_STROKE;
+          ctx.lineWidth = 0.8;
+          ctx.strokeRect(cursorX, legendY - SWATCH / 2, SWATCH, SWATCH);
+          ctx.fillStyle = '#0F172A';
+          ctx.fillText(it.label, cursorX + SWATCH + GAP_SWATCH_LABEL, legendY);
+          cursorX += itemW(it.label) + GAP_ITEMS;
+        }
+        legendY += ROW_H;
+      }
+
+      const dataUrl = canvas.toDataURL('image/png');
+      const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
+
+      ws.mergeCells(1, 1, 1, COLS);
+      const title = ws.getCell(1, 1);
+      title.value = 'ISO View — US Site Distribution by Wholesale Market Region';
+      title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(1).height = 30;
+
+      ws.mergeCells(2, 1, 2, COLS);
+      const sub = ws.getCell(2, 1);
+      const unmappedNote = unmappedCount > 0
+        ? ` (${unmappedCount} US site${unmappedCount === 1 ? '' : 's'} in a state with no mapped ISO region — e.g. AK / HI — are excluded)`
+        : '';
+      sub.value = `${usSiteCount} US site${usSiteCount === 1 ? '' : 's'} across ${isoAggs.size} ISO / RTO region${isoAggs.size === 1 ? '' : 's'}. Each state is shaded by its dominant ISO / RTO region (hue) and portfolio site count (darker = more sites). Region boundaries are approximated to whole states.${unmappedNote}`;
+      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+      sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      ws.getRow(2).height = 36;
+
+      ws.addImage(imageId, {
+        tl: { col: 0, row: 3 },
+        ext: { width: W, height: H },
+      });
+
+      // ISO Overview table — one row per region that has portfolio sites,
+      // ranked by annual cost descending. Anchored clear of the map image.
+      const SUMMARY_START = 40;
+      ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
+      const sumHdr = ws.getCell(SUMMARY_START, 1);
+      sumHdr.value = 'ISO / RTO Overview';
+      sumHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      sumHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      sumHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(SUMMARY_START).height = 22;
+
+      const tableHeaderRow = SUMMARY_START + 1;
+      const overviewHeaders = ['ISO / RTO Region', 'Sites', 'Sites %', 'Load (kWh)', 'Load (Dth)', 'Annual Cost ($)'];
+      const hdr = ws.getRow(tableHeaderRow);
+      overviewHeaders.forEach((label, i) => {
+        const cell = hdr.getCell(i + 1);
+        cell.value = label;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        cell.border = {
+          top:    { style: 'thin', color: { argb: SE_BORDER } },
+          bottom: { style: 'thin', color: { argb: SE_BORDER } },
+          left:   { style: 'thin', color: { argb: SE_BORDER } },
+          right:  { style: 'thin', color: { argb: SE_BORDER } },
+        };
+      });
+      hdr.height = 22;
+
+      const totalSites = Array.from(isoAggs.values()).reduce((a, x) => a + x.sites, 0);
+      const regionRows = ISO_REGIONS
+        .map(r => ({ region: r, agg: isoAggs.get(r.key) }))
+        .filter(x => x.agg && x.agg.sites > 0)
+        .sort((a, b) => (b.agg.cost - a.agg.cost) || String(a.region.label).localeCompare(String(b.region.label)));
+
+      regionRows.forEach((x, i) => {
+        const rr = ws.getRow(tableHeaderRow + 1 + i);
+        const { region, agg } = x;
+        rr.getCell(1).value = region.label;
+        rr.getCell(2).value = agg.sites;
+        rr.getCell(3).value = totalSites > 0 ? agg.sites / totalSites : 0;
+        rr.getCell(4).value = Math.round(agg.kwh);
+        rr.getCell(5).value = Math.round(agg.therms / 10);
+        rr.getCell(6).value = Math.round(agg.cost);
+        rr.getCell(3).numFmt = '0.0%';
+        rr.getCell(4).numFmt = '#,##0';
+        rr.getCell(5).numFmt = '#,##0';
+        rr.getCell(6).numFmt = '"$"#,##0';
+        for (let ci = 1; ci <= overviewHeaders.length; ci++) {
+          rr.getCell(ci).font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          rr.getCell(ci).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          rr.getCell(ci).border = {
+            bottom: { style: 'hair', color: { argb: SE_BORDER } },
+            right:  { style: 'hair', color: { argb: SE_BORDER } },
+          };
+        }
+        // Tint the region cell with its map hue so the table reads like
+        // the map legend.
+        const fillHex = 'FF' + String(region.fill).replace(/^#/, '').toUpperCase();
+        // ERCOT's near-black hue needs white text; everything else is light
+        // enough for dark text.
+        const [rr0, gg0, bb0] = argbToRgb(region.fill);
+        const luminance = 0.299 * rr0 + 0.587 * gg0 + 0.114 * bb0;
+        rr.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillHex } };
+        rr.getCell(1).font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: luminance < 140 ? 'FFFFFFFF' : 'FF1E293B' } };
+        rr.height = 20;
+      });
+
+      // Total row.
+      if (regionRows.length > 0) {
+        const totalRow = ws.getRow(tableHeaderRow + 1 + regionRows.length);
+        const totKwh = regionRows.reduce((a, x) => a + x.agg.kwh, 0);
+        const totTherms = regionRows.reduce((a, x) => a + x.agg.therms, 0);
+        const totCost = regionRows.reduce((a, x) => a + x.agg.cost, 0);
+        totalRow.getCell(1).value = 'Total';
+        totalRow.getCell(2).value = totalSites;
+        totalRow.getCell(3).value = 1;
+        totalRow.getCell(4).value = Math.round(totKwh);
+        totalRow.getCell(5).value = Math.round(totTherms / 10);
+        totalRow.getCell(6).value = Math.round(totCost);
+        totalRow.getCell(3).numFmt = '0.0%';
+        totalRow.getCell(4).numFmt = '#,##0';
+        totalRow.getCell(5).numFmt = '#,##0';
+        totalRow.getCell(6).numFmt = '"$"#,##0';
+        for (let ci = 1; ci <= overviewHeaders.length; ci++) {
+          totalRow.getCell(ci).font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: SE_TEXT_DARK } };
+          totalRow.getCell(ci).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          totalRow.getCell(ci).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+          totalRow.getCell(ci).border = { top: { style: 'thin', color: { argb: SE_BORDER } } };
+        }
+        totalRow.height = 20;
       }
     }
 
