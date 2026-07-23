@@ -385,6 +385,44 @@ function summarizeTimelines(list) {
     .join(' · ');
 }
 
+// The Kickoff Deadline enters its Flags-column warning window when it's fewer
+// than this many days out (overdue deadlines are always in the window).
+const KICKOFF_WARN_DAYS = 10;
+
+// Whole days from today until an ISO yyyy-mm-dd date. Negative when the date
+// is in the past, 0 for today, null when blank/unparseable. Both ends are
+// snapped to local midnight so the count is a clean day difference.
+function daysUntilDateISO(iso) {
+  const raw = String(iso ?? '').trim();
+  if (!raw) return null;
+  const t = Date.parse(`${raw}T00:00:00`);
+  if (Number.isNaN(t)) return null;
+  const now = new Date();
+  const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return Math.round((t - todayMid) / 86400000);
+}
+
+// Days until the opp's Kickoff Deadline (`_kickoffDeadline`), or null when unset.
+function kickoffDaysUntil(opp) {
+  return daysUntilDateISO(opp?._kickoffDeadline);
+}
+
+// Human countdown for a days-until value: "in 4 days", "due today",
+// "3 days overdue". Empty string when null.
+function kickoffCountdownLabel(days) {
+  if (days == null) return '';
+  if (days < 0) { const n = Math.abs(days); return `${n} day${n === 1 ? '' : 's'} overdue`; }
+  if (days === 0) return 'due today';
+  return `in ${days} day${days === 1 ? '' : 's'}`;
+}
+
+// Days-until value when the opp's Kickoff Deadline is inside the warning
+// window (under KICKOFF_WARN_DAYS out, including overdue); null otherwise.
+function kickoffDeadlineFlag(opp) {
+  const d = kickoffDaysUntil(opp);
+  return d != null && d < KICKOFF_WARN_DAYS ? d : null;
+}
+
 // Record-level merge lives in opps2Store as `mergeOpps2Datasets` so the
 // real-time listener, hydration reconcile, and the guarded flush all
 // resolve conflicts identically (field-level by `_fieldUpdatedAt`).
@@ -5380,13 +5418,27 @@ function TimelinesEditor({ list, kickoff, onChangeList, onChangeKickoff }) {
 
   // A single per-opp Kickoff Deadline field, rendered once in the right-hand
   // column and (when there are multiple timelines) spanning the whole table.
+  // A live "days until" countdown sits beside it, turning amber inside the
+  // warning window and red once the deadline is overdue.
+  const kickoffDays = daysUntilDateISO(kickoff);
+  const countdownColor = kickoffDays == null ? '#64748B'
+    : kickoffDays < 0 ? '#991B1B'
+    : kickoffDays < KICKOFF_WARN_DAYS ? '#92400E'
+    : '#64748B';
   const kickoffField = (
-    <input
-      type="date"
-      value={kickoff || ''}
-      onChange={(e) => onChangeKickoff(e.target.value)}
-      style={{ ...cellInput, width: 'auto' }}
-    />
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap' }}>
+      <input
+        type="date"
+        value={kickoff || ''}
+        onChange={(e) => onChangeKickoff(e.target.value)}
+        style={{ ...cellInput, width: 'auto' }}
+      />
+      {kickoffDays != null ? (
+        <span style={{ fontSize: '0.7rem', fontWeight: 700, color: countdownColor }}>
+          {kickoffCountdownLabel(kickoffDays)}
+        </span>
+      ) : null}
+    </div>
   );
 
   return (
@@ -8002,6 +8054,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       if (oppMissingQuotedAmount(row)) parts.push('Deal Size Missing');
       if (oppMissingMarginApproval(row)) parts.push('Missing Margin Approval');
       if (oppNeedsCreditApproval(row)) parts.push('Credit Approval Needed');
+      const kickoffDays = kickoffDeadlineFlag(row);
+      if (kickoffDays != null) parts.push(`Kickoff ${kickoffCountdownLabel(kickoffDays)}`);
       const stall = oppStageStall(row);
       if (stall && !row?._ignoreStallFlag) parts.push(`Stalled: ${stall.suggestion}`);
       return parts.join('; ');
@@ -8020,6 +8074,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         if (oppMissingQuotedAmount(row)) n += 1;
         if (oppMissingMarginApproval(row)) n += 1;
         if (oppNeedsCreditApproval(row)) n += 1;
+        if (kickoffDeadlineFlag(row) != null) n += 1;
         if (oppStageStall(row) && !row?._ignoreStallFlag) n += 1;
         return n;
       },
@@ -8032,9 +8087,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         const missingQuote = oppMissingQuotedAmount(row);
         const missingMargin = oppMissingMarginApproval(row);
         const needsCredit = oppNeedsCreditApproval(row);
+        const kickoffDays = kickoffDeadlineFlag(row);
         const stall = oppStageStall(row);
         const ignored = !!row?._ignoreStallFlag;
-        if (!missingUsd && !missingBudgetTimeline && !missingAddr && !missingQuote && !missingMargin && !needsCredit && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+        if (!missingUsd && !missingBudgetTimeline && !missingAddr && !missingQuote && !missingMargin && !needsCredit && kickoffDays == null && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
         return (
           <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
             {missingUsd && (
@@ -8072,6 +8128,14 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 title={`Deal Size over $50,000 in "${String(row['Stage'] || '').trim()}" with a blank Credit approval — get credit approval.`}
                 style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
               >⚠ Credit Approval Needed</span>
+            )}
+            {kickoffDays != null && (
+              <span
+                title={`Kickoff Deadline is ${kickoffCountdownLabel(kickoffDays)} (warns under ${KICKOFF_WARN_DAYS} days out).`}
+                style={{ ...chipBase, ...(kickoffDays < 0
+                  ? { background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }
+                  : { background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }) }}
+              >⚠ Kickoff {kickoffCountdownLabel(kickoffDays)}</span>
             )}
             {stall && !ignored && (
               <>
