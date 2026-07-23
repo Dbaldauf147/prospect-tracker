@@ -103,7 +103,14 @@ function writeFilterValue(picks, draft) {
 // nudges the user to type to narrow.
 const FILTER_DROPDOWN_CAP = 500;
 
-function ColumnFilterCell({ value, onChange, suggestions }) {
+// Synthetic column-filter option (like Excel's) for matching a column's
+// empty cells. Picking it filters the column down to rows whose value is
+// blank. Compared case-insensitively; a cell counts as blank when it trims
+// to the empty string.
+const BLANKS_TOKEN = '(Blanks)';
+const isBlanksToken = (p) => String(p ?? '').trim().toLowerCase() === BLANKS_TOKEN.toLowerCase();
+
+function ColumnFilterCell({ value, onChange, suggestions, hasBlanks = false }) {
   const { picks, draft: incomingDraft } = readFilterValue(value);
   // We mirror the parent-controlled draft so typing feels instant
   // even when the parent re-render is async (e.g. inside a useMemo
@@ -148,6 +155,14 @@ function ColumnFilterCell({ value, onChange, suggestions }) {
     const seen = new Set(picks.map(p => p.toLowerCase()));
     const out = [];
     let totalAvailable = 0;
+    // Offer the "(Blanks)" option first — only when the column actually has
+    // empty cells and it isn't already picked. It matches an empty query or
+    // anything the user types toward "(blanks)" / "blank".
+    if (hasBlanks && !seen.has(BLANKS_TOKEN.toLowerCase())
+        && (!q || BLANKS_TOKEN.toLowerCase().includes(q) || 'blanks'.includes(q))) {
+      out.push(BLANKS_TOKEN);
+      totalAvailable += 1;
+    }
     for (const s of suggestions) {
       const sl = s.toLowerCase();
       if (seen.has(sl)) continue;
@@ -156,7 +171,7 @@ function ColumnFilterCell({ value, onChange, suggestions }) {
       if (out.length < FILTER_DROPDOWN_CAP) out.push(s);
     }
     return { matches: out, totalAvailable };
-  }, [suggestions, draft, picks]);
+  }, [suggestions, draft, picks, hasBlanks]);
 
   function pushDraft(next) {
     setDraft(next);
@@ -842,10 +857,11 @@ export function DataTable({
         const hay = String(raw ?? '').toLowerCase();
         // Combine committed picks (OR) with the live-typed draft (also OR).
         // The row passes the column's filter if any pick matches as a
-        // substring OR the draft matches as a substring.
+        // substring OR the draft matches as a substring. The "(Blanks)"
+        // token is special: it matches only rows whose value is empty.
         const candidates = [...picks];
         if (draft) candidates.push(draft);
-        if (!candidates.some(p => hay.includes(p.toLowerCase()))) return false;
+        if (!candidates.some(p => isBlanksToken(p) ? hay.trim() === '' : hay.includes(p.toLowerCase()))) return false;
       }
       return true;
     });
@@ -881,6 +897,25 @@ export function DataTable({
       out.sort((a, b) => a.localeCompare(b));
       cache.set(key, out);
       return out;
+    };
+  }, [rows, colByKey]);
+
+  // Whether a column has any blank cell in the current row pool — gates the
+  // "(Blanks)" filter option so it only shows on columns that actually have
+  // empties. Uses the same getFilterValue/row[key] source as the filter.
+  const columnHasBlanks = useMemo(() => {
+    const cache = new Map();
+    return (key) => {
+      if (cache.has(key)) return cache.get(key);
+      const col = colByKey.get(key);
+      const getter = col?.getFilterValue;
+      let has = false;
+      for (const row of rows) {
+        const raw = getter ? getter(row) : row[key];
+        if (String(raw ?? '').trim() === '') { has = true; break; }
+      }
+      cache.set(key, has);
+      return has;
     };
   }, [rows, colByKey]);
 
@@ -1214,6 +1249,7 @@ export function DataTable({
                                 return out;
                               })}
                               suggestions={filterSuggestions(col.key)}
+                              hasBlanks={columnHasBlanks(col.key)}
                             />
                           ) : null}
                         </th>
