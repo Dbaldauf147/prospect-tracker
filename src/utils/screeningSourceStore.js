@@ -4,6 +4,9 @@
 // this keeps a single compact object — { compCols, index, profiles } —
 // so we don't have to re-parse a 60k-row workbook on every visit.
 //
+// Alongside the compact dataset we also stash the original uploaded bytes
+// (name, type, buffer) so the source can be downloaded back out verbatim.
+//
 // A bundled default dataset always ships with the app, so if this store
 // is empty (or gets wiped by clear-site-data) the screening still works;
 // the upload just overrides the default locally.

@@ -10,6 +10,10 @@ import {
   clearScreeningSource,
 } from '../../utils/screeningSourceStore';
 import { downloadComplianceScreeningWorkbook } from '../../utils/buildingComplianceWorkbook';
+import {
+  downloadSourceBytes,
+  downloadComplianceSourceWorkbook,
+} from '../../utils/buildingComplianceSourceWorkbook';
 import styles from './BuildingComplianceScreening.module.css';
 
 const isUrl = (v) => /^https?:\/\//i.test(String(v).trim());
@@ -39,6 +43,7 @@ function RequirementList({ applied }) {
 export function BuildingComplianceScreening({ sites = [] }) {
   const [dataset, setDataset] = useState(null);
   const [sourceName, setSourceName] = useState('');
+  const [sourceFile, setSourceFile] = useState(null); // { name, type, buffer } for uploaded sources
   const [isCustom, setIsCustom] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [mode, setMode] = useState('sites'); // 'sites' | 'manual'
@@ -54,6 +59,7 @@ export function BuildingComplianceScreening({ sites = [] }) {
     const d = mod.default || mod;
     setDataset({ compCols: d.compCols, profiles: d.profiles, index: d.index });
     setSourceName('Built-in compliance list');
+    setSourceFile(null);
     setIsCustom(false);
   }
 
@@ -65,6 +71,7 @@ export function BuildingComplianceScreening({ sites = [] }) {
       if (custom?.dataset?.index) {
         setDataset(custom.dataset);
         setSourceName(custom.name || 'Uploaded workbook');
+        setSourceFile(custom.file?.buffer ? custom.file : null);
         setIsCustom(true);
       } else {
         await loadDefault();
@@ -125,9 +132,11 @@ export function BuildingComplianceScreening({ sites = [] }) {
       if (Object.keys(built.index).length === 0) {
         throw new Error('No usable rows found. Column A should hold the city + state identifier, with requirement columns alongside it.');
       }
-      await saveScreeningSource({ name: file.name, dataset: built, rowCount: rows.length });
+      const fileMeta = { name: file.name, type: file.type, buffer: buf };
+      await saveScreeningSource({ name: file.name, dataset: built, rowCount: rows.length, file: fileMeta });
       setDataset(built);
       setSourceName(file.name);
+      setSourceFile(fileMeta);
       setIsCustom(true);
     } catch (err) {
       const msg = err?.name === 'QuotaExceededError'
@@ -142,6 +151,17 @@ export function BuildingComplianceScreening({ sites = [] }) {
     setUploadError('');
     await clearScreeningSource();
     await loadDefault();
+  }
+
+  // Download the source list currently powering the screening. For an
+  // uploaded workbook we hand back the exact bytes; the built-in list (which
+  // has no original file) is reconstructed into a re-uploadable workbook.
+  function handleDownloadSource() {
+    if (sourceFile?.buffer) {
+      downloadSourceBytes(sourceFile);
+    } else {
+      downloadComplianceSourceWorkbook({ sourceName, dataset });
+    }
   }
 
   // Export the currently-shown site results as a Schneider-branded workbook.
@@ -175,6 +195,17 @@ export function BuildingComplianceScreening({ sites = [] }) {
             onChange={handleUpload}
             style={{ display: 'none' }}
           />
+          <button
+            type="button"
+            className={styles.btn}
+            onClick={handleDownloadSource}
+            disabled={!dataset}
+            title={sourceFile?.buffer
+              ? 'Download the uploaded source workbook'
+              : 'Download the built-in compliance source list as an Excel file'}
+          >
+            Download source file
+          </button>
           <button
             type="button"
             className={styles.btn}
