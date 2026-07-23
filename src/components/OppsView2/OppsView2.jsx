@@ -1991,15 +1991,20 @@ function BfoCompanyNameCell({ account, prospects, updateProspect }) {
   );
 }
 
-// A contact carrying a "hidden" tag (Dan's Tags, stored semicolon-separated
-// in `dans_tags`, with legacy `dan_s_tags` / `dans_tag` spellings) should be
-// kept out of the opp Contact-cell add roster. Match on the exact token so a
-// tag like "hidden gem" doesn't accidentally suppress the contact.
+// A contact carrying a "Hide" tag (Dan's Tags, stored semicolon-separated in
+// `dans_tags`, with legacy `dan_s_tags` / `dans_tag` spellings) should be kept
+// out of the opp Contact-cell roster. "Hide" is the exact token the Key
+// Contacts hide action writes; the legacy "hidden" token is still honored.
+// Match on whole tokens so a tag like "hidden gem" doesn't accidentally
+// suppress the contact.
 function contactIsHidden(raw) {
   const tags = String(raw?.dans_tags || raw?.dan_s_tags || raw?.dans_tag || '');
   return tags
     .split(/[;,]/)
-    .some(t => t.trim().toLowerCase() === 'hidden');
+    .some(t => {
+      const s = t.trim().toLowerCase();
+      return s === 'hide' || s === 'hidden';
+    });
 }
 
 // `contactEmails` / `onChangeEmails` persist the tagged contacts' emails on
