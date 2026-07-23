@@ -59,8 +59,21 @@ export function DealCommissionBreakdownModal({ deal, metric: metricKey, commissi
       : [];
     const projects = matches.map((r) => {
       const months = monthlyValues(r, metric);
+      // Label each row by the Commissions tab's "Project Name" column.
+      // Use || (not ??) so a present-but-blank Project Name still falls
+      // through to the pasted opportunity Name instead of rendering as
+      // "(unnamed project)".
+      const projectName = String(r?.['Project Name'] ?? '').trim();
+      const recordName = String(r?.['Name'] ?? '').trim();
+      const name = projectName || recordName || '(unnamed project)';
+      // Keep the opportunity Name as a secondary line whenever it differs
+      // from the shown label, so two commission rows that share the same
+      // Project Name stay split out and individually identifiable rather
+      // than reading as one collapsed row.
+      const sub = recordName && recordName !== name ? recordName : '';
       return {
-        name: String(r?.['Project Name'] ?? r?.['Name'] ?? '(unnamed project)').trim() || '(unnamed project)',
+        name,
+        sub,
         months,
         total: months.reduce((s, n) => s + n, 0),
       };
@@ -179,7 +192,10 @@ export function DealCommissionBreakdownModal({ deal, metric: metricKey, commissi
                 <tbody>
                   {projects.map((p, r) => (
                     <tr key={r}>
-                      <td style={{ padding: '0.35rem 0.5rem', borderBottom: '1px solid #F1F5F9', position: 'sticky', left: 0, background: '#fff', color: '#334155' }}>{p.name}</td>
+                      <td style={{ padding: '0.35rem 0.5rem', borderBottom: '1px solid #F1F5F9', position: 'sticky', left: 0, background: '#fff', color: '#334155' }}>
+                        <div>{p.name}</div>
+                        {p.sub && <div style={{ fontSize: '0.66rem', color: '#94A3B8', marginTop: '0.1rem' }}>{p.sub}</div>}
+                      </td>
                       {activeMonthIdx.map((i) => (
                         <td key={i} style={{ textAlign: 'right', padding: '0.35rem 0.5rem', borderBottom: '1px solid #F1F5F9', fontVariantNumeric: 'tabular-nums', color: p.months[i] ? '#0F172A' : '#CBD5E1' }}>
                           {p.months[i] ? fmtCurrency(p.months[i]) : '—'}
