@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from 'react';
+import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { DataTable } from '../common/DataTable';
 import { asNumber, asDate, fmtCurrency, fmtPercent, fmtDate } from '../../utils/dealsFormat';
 import {
@@ -679,8 +679,17 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
   // checkbox grabs only what the user can see.
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [visibleIds, setVisibleIds] = useState([]);
+  // The select-all handler and header checkbox live inside the memoized
+  // `columns` (rebuilt only on oppsCache / selectedIds changes), so a plain
+  // closure over `visibleIds` goes stale the moment a filter narrows the
+  // table without touching those deps — select-all would then act on the
+  // pre-filter row set (and bulk-ignore every row). Mirror the visible ids
+  // into a ref so those handlers always read the current filtered set.
+  const visibleIdsRef = useRef([]);
   const onTableFilteredRowsChange = useCallback((tableRows) => {
-    setVisibleIds(tableRows.map(r => r.id));
+    const ids = tableRows.map(r => r.id);
+    visibleIdsRef.current = ids;
+    setVisibleIds(ids);
   }, []);
 
   const toggleSelect = (rowId) => {
@@ -693,7 +702,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
 
   const selectAllVisible = () => {
     setSelectedIds(prev => {
-      const visible = visibleIds;
+      const visible = visibleIdsRef.current;
       const allSelected = visible.length > 0 && visible.every(id => prev.has(id));
       if (allSelected) {
         // Toggle off — clear just the visible ones, leave any
@@ -713,7 +722,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
   // live selection state without forcing the column list to rebuild on
   // every toggle.
   const selectColHeader = () => {
-    const visible = visibleIds;
+    const visible = visibleIdsRef.current;
     const allSelected = visible.length > 0 && visible.every(id => selectedIds.has(id));
     const someSelected = !allSelected && visible.some(id => selectedIds.has(id));
     return (
