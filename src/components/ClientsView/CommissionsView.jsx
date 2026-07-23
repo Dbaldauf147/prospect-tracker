@@ -1362,6 +1362,10 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
             tableId={tableId}
             columns={columns}
             rows={filtered}
+            // Lead with the rows that were paid most recently — lowest "Days
+            // Since Last Payment" first. Rows with no datable payment sort to
+            // the bottom (the comparator parks nulls there either direction).
+            defaultSort={{ key: DAYS_SINCE_PAYMENT_KEY, direction: 'asc' }}
             emptyMessage={search ? `No rows match "${search}"` : 'No commissions to display'}
             enableColumnFilters
             rowStyle={(row) => row.__ignored ? { opacity: 0.45, background: '#F8FAFC', color: '#64748B' } : undefined}
