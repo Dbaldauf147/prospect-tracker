@@ -5355,9 +5355,10 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onCommi
 
 // Shared "Timelines" editor used inside both the Notes and Follow Up popups.
 // Presentational only — the parent owns the `list` (array of { type, value })
-// and `kickoff` string and passes change handlers. Each row picks a timeline
-// kind from the dropdown (Budget / Compliance / …) and logs a date or note;
-// the Kickoff Deadline sits next to the list as a single date field.
+// and `kickoff` string and passes change handlers. Rows are laid out as a
+// table: each row types a timeline kind (the two presets are offered via a
+// datalist, but any custom type can be typed) and logs a date or note. The
+// Kickoff Deadline sits in a right-hand column, aligned beside the timelines.
 function TimelinesEditor({ list, kickoff, onChangeList, onChangeKickoff }) {
   const rows = Array.isArray(list) ? list : [];
   const updateRow = (idx, key, value) =>
@@ -5365,56 +5366,94 @@ function TimelinesEditor({ list, kickoff, onChangeList, onChangeKickoff }) {
   const addRow = () => onChangeList([...rows, { type: '', value: '' }]);
   const deleteRow = (idx) => onChangeList(rows.filter((_, i) => i !== idx));
 
-  const selectStyle = {
-    padding: '0.35rem 0.45rem', border: '1px solid #CBD5E1', borderRadius: 4,
-    fontSize: '0.8rem', fontFamily: 'inherit', background: '#fff', color: '#334155',
-    minWidth: 150,
+  const typeListId = 'timeline-type-options';
+  const cellInput = {
+    width: '100%', boxSizing: 'border-box', padding: '0.35rem 0.45rem',
+    border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.8rem',
+    fontFamily: 'inherit', background: '#fff', color: '#334155',
   };
-  const inputStyle = {
-    flex: 1, minWidth: 120, padding: '0.35rem 0.45rem', border: '1px solid #CBD5E1',
-    borderRadius: 4, fontSize: '0.8rem', fontFamily: 'inherit', background: '#fff', color: '#334155',
+  const th = {
+    textAlign: 'left', fontSize: '0.66rem', fontWeight: 700, textTransform: 'uppercase',
+    letterSpacing: '0.03em', color: '#64748B', padding: '0 0.4rem 0.3rem 0', whiteSpace: 'nowrap',
   };
+  const td = { padding: '0 0.4rem 0.4rem 0', verticalAlign: 'top' };
+
+  // A single per-opp Kickoff Deadline field, rendered once in the right-hand
+  // column and (when there are multiple timelines) spanning the whole table.
+  const kickoffField = (
+    <input
+      type="date"
+      value={kickoff || ''}
+      onChange={(e) => onChangeKickoff(e.target.value)}
+      style={{ ...cellInput, width: 'auto' }}
+    />
+  );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
-      {rows.length === 0 ? (
-        <div style={{ fontSize: '0.72rem', color: '#94A3B8' }}>No timelines yet.</div>
-      ) : (
-        rows.map((row, idx) => (
-          <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-            <select
-              value={row.type || ''}
-              onChange={(e) => updateRow(idx, 'type', e.target.value)}
-              style={selectStyle}
-            >
-              <option value="">— Timeline type —</option>
-              {TIMELINE_TYPE_OPTIONS.map(o => (
-                <option key={o} value={o}>{o}</option>
-              ))}
-              {row.type && !TIMELINE_TYPE_OPTIONS.includes(row.type) ? (
-                <option value={row.type}>{row.type}</option>
-              ) : null}
-            </select>
-            <input
-              type="text"
-              value={row.value || ''}
-              onChange={(e) => updateRow(idx, 'value', e.target.value)}
-              placeholder="Date or note (e.g. 2026-08-01, Q3)"
-              style={inputStyle}
-            />
-            <button
-              type="button"
-              onClick={() => deleteRow(idx)}
-              aria-label="Delete timeline"
-              title="Delete timeline"
-              style={{
-                background: 'transparent', border: 'none', cursor: 'pointer',
-                color: '#94A3B8', fontSize: '1rem', padding: '0 4px', lineHeight: 1, flexShrink: 0,
-              }}
-            >×</button>
-          </div>
-        ))
-      )}
+      <datalist id={typeListId}>
+        {TIMELINE_TYPE_OPTIONS.map(o => <option key={o} value={o} />)}
+      </datalist>
+      <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+        <thead>
+          <tr>
+            <th style={{ ...th, width: '32%' }}>Timeline Type</th>
+            <th style={th}>Details</th>
+            <th style={{ ...th, whiteSpace: 'nowrap' }}>Kickoff Deadline</th>
+            <th style={{ ...th, width: 1 }} aria-hidden="true" />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 ? (
+            <tr>
+              <td style={td} colSpan={2}>
+                <div style={{ fontSize: '0.72rem', color: '#94A3B8', padding: '0.2rem 0' }}>No timelines yet.</div>
+              </td>
+              <td style={{ ...td, whiteSpace: 'nowrap' }}>{kickoffField}</td>
+              <td style={td} />
+            </tr>
+          ) : (
+            rows.map((row, idx) => (
+              <tr key={idx}>
+                <td style={td}>
+                  <input
+                    type="text"
+                    list={typeListId}
+                    value={row.type || ''}
+                    onChange={(e) => updateRow(idx, 'type', e.target.value)}
+                    placeholder="— Timeline type —"
+                    style={cellInput}
+                  />
+                </td>
+                <td style={td}>
+                  <input
+                    type="text"
+                    value={row.value || ''}
+                    onChange={(e) => updateRow(idx, 'value', e.target.value)}
+                    placeholder="Date or note (e.g. 2026-08-01, Q3)"
+                    style={cellInput}
+                  />
+                </td>
+                {idx === 0 ? (
+                  <td style={{ ...td, whiteSpace: 'nowrap' }} rowSpan={rows.length}>{kickoffField}</td>
+                ) : null}
+                <td style={{ ...td, textAlign: 'center' }}>
+                  <button
+                    type="button"
+                    onClick={() => deleteRow(idx)}
+                    aria-label="Delete timeline"
+                    title="Delete timeline"
+                    style={{
+                      background: 'transparent', border: 'none', cursor: 'pointer',
+                      color: '#94A3B8', fontSize: '1rem', padding: '0 4px', lineHeight: 1,
+                    }}
+                  >×</button>
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
       <div>
         <button
           type="button"
@@ -5426,18 +5465,6 @@ function TimelinesEditor({ list, kickoff, onChangeList, onChangeKickoff }) {
           }}
         >+ Add timeline</button>
       </div>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2, fontSize: '0.72rem', fontWeight: 600, color: '#475569' }}>
-        Kickoff Deadline
-        <input
-          type="date"
-          value={kickoff || ''}
-          onChange={(e) => onChangeKickoff(e.target.value)}
-          style={{
-            padding: '0.3rem 0.45rem', border: '1px solid #CBD5E1', borderRadius: 4,
-            fontSize: '0.8rem', fontFamily: 'inherit', background: '#fff', color: '#334155',
-          }}
-        />
-      </label>
     </div>
   );
 }
