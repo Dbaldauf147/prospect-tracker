@@ -420,10 +420,11 @@ export function EmailCampaignView() {
   }
 
   // Edit a saved campaign's two fields: the Title (display name) and the
-  // Subject line (the email subject matched against sent mail). Subject stays
-  // the campaign's identity, so it must be non-empty and can't collide with
-  // another campaign's subject. Persists to Firestore and keeps the open
-  // campaign + the search box in sync when the edited one is being viewed.
+  // Subject line (the email subject matched against sent mail). Subject must be
+  // non-empty, but it need not be unique: two campaigns can share a subject to
+  // track different contact segments of the same email. Persists to Firestore
+  // and keeps the open campaign + the search box in sync when the edited one is
+  // being viewed.
   async function commitEdit() {
     const idx = editingIndex;
     if (idx == null) return;
@@ -433,10 +434,6 @@ export function EmailCampaignView() {
     const title = editTitle.trim() || subject;
     if (!subject) {
       setError('Subject line can’t be empty.');
-      return;
-    }
-    if (savedCampaigns.some((c, i) => i !== idx && String(c.subject || '').trim().toLowerCase() === subject.toLowerCase())) {
-      setError(`Another campaign already uses the subject "${subject}" — choose a different one.`);
       return;
     }
     if (subject === current.subject && title === (current.title || current.subject)) { cancelEdit(); return; }
@@ -453,9 +450,9 @@ export function EmailCampaignView() {
   }
 
   // Inline subject editing from the results header, for the currently open saved
-  // campaign. Mirrors commitEdit's validation (non-empty, no subject collision),
-  // and — since the subject is what sent mail is matched against — re-pulls the
-  // latest activity once the new subject is saved.
+  // campaign. Mirrors commitEdit's validation (non-empty; duplicates across
+  // campaigns are allowed), and — since the subject is what sent mail is matched
+  // against — re-pulls the latest activity once the new subject is saved.
   function startSubjectEdit() {
     if (viewingSaved == null) return;
     setError('');
@@ -476,10 +473,6 @@ export function EmailCampaignView() {
     const nextSubject = subjectDraft.trim();
     if (!nextSubject) {
       setError('Subject line can’t be empty.');
-      return;
-    }
-    if (savedCampaigns.some((c, i) => i !== idx && String(c.subject || '').trim().toLowerCase() === nextSubject.toLowerCase())) {
-      setError(`Another campaign already uses the subject "${nextSubject}" — choose a different one.`);
       return;
     }
     if (nextSubject === current.subject) { cancelSubjectEdit(); return; }
