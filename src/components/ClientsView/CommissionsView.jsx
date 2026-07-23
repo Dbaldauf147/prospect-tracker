@@ -299,6 +299,19 @@ function buildFrontColumns(oppsCache) {
         const opp = findOppByBfoLink(oppsCache, row[BFO_NAME_KEY]);
         return opp ? String(opp[SCOPE_KEY] || '') : '';
       },
+      // The Scope column renders nothing to the row object (it's a live
+      // lookup), so the in-table column filter has to resolve the same
+      // displayed string here — otherwise the filter dropdown sees only
+      // blanks. Mirrors the render branches: '' when there's no BFO Name,
+      // 'no match' when the BFO Name resolves to no Opps row, else the
+      // matched Scope. Lets the user filter the column down to "no match".
+      getFilterValue: (row) => {
+        const bfo = String(row[BFO_NAME_KEY] || '').trim();
+        if (!bfo) return '';
+        const opp = findOppByBfoLink(oppsCache, bfo);
+        if (!opp) return 'no match';
+        return String(opp[SCOPE_KEY] || '').trim();
+      },
       render: (row) => {
         const bfo = String(row[BFO_NAME_KEY] || '').trim();
         if (!bfo) return <span style={{ color: 'var(--color-text-muted)' }} title="Paste a BFO Opportunity Name in the previous column to look up its Scope">—</span>;
@@ -612,6 +625,19 @@ function isMissingAccountName(row) {
   return account === '';
 }
 
+// A row that already carries an Account Name should also have the BFO
+// (Opportunity) Name that ties it to a BFO opp — without it, Scope and the
+// BFO → Account fill can't resolve. Flag it for the warning banner when
+// it's not ignored, has an Account Name filled in, and its BFO Name cell
+// is blank.
+function isMissingBfoName(row) {
+  if (!row || row.__ignored) return false;
+  const account = String(row[ACCOUNT_NAME_KEY] ?? '').trim();
+  if (account === '') return false;
+  const bfo = String(row[BFO_NAME_KEY] ?? '').trim();
+  return bfo === '';
+}
+
 export function CommissionsView({ settings, updateSettings, prospects = [] }) {
   const [{ data, source }, setStore] = useState(() => loadCommissions());
   const [search, setSearch] = useState('');
@@ -619,6 +645,10 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
   // flagging (missing Account Name, not ignored) so the user can fix
   // them in one pass.
   const [showOnlyMissing, setShowOnlyMissing] = useState(false);
+  // Same idea, for the "has an Account Name but no BFO Name" warning — the
+  // two "show only" filters are mutually exclusive (a row can't be in both
+  // sets), so turning one on clears the other.
+  const [showOnlyMissingBfo, setShowOnlyMissingBfo] = useState(false);
   // "Active only" filter: keep just the rows whose Payment Status is still
   // Active (commissions currently paying out), hiding Stopped / unknown rows.
   const [showActiveOnly, setShowActiveOnly] = useState(false);
@@ -887,6 +917,18 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     if (missingAccountCount === 0 && showOnlyMissing) setShowOnlyMissing(false);
   }, [missingAccountCount, showOnlyMissing]);
 
+  // Count of rows that have an Account Name but no BFO Name (and aren't
+  // ignored) — drives the second warning banner. Off the raw data so it
+  // reflects the whole roster, not just the filtered view.
+  const missingBfoCount = useMemo(
+    () => data.reduce((n, r) => n + (isMissingBfoName(r) ? 1 : 0), 0),
+    [data],
+  );
+
+  useEffect(() => {
+    if (missingBfoCount === 0 && showOnlyMissingBfo) setShowOnlyMissingBfo(false);
+  }, [missingBfoCount, showOnlyMissingBfo]);
+
   const activeCount = useMemo(
     () => rows.reduce((n, r) => n + (paymentStatusFor(r).state === 'active' ? 1 : 0), 0),
     [rows],
@@ -895,11 +937,12 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
   const filtered = useMemo(() => {
     let base = rows;
     if (showOnlyMissing) base = base.filter(isMissingAccountName);
+    else if (showOnlyMissingBfo) base = base.filter(isMissingBfoName);
     if (showActiveOnly) base = base.filter(r => paymentStatusFor(r).state === 'active');
     if (!search.trim()) return base;
     const term = search.toLowerCase();
     return base.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(term)));
-  }, [rows, search, showOnlyMissing, showActiveOnly]);
+  }, [rows, search, showOnlyMissing, showOnlyMissingBfo, showActiveOnly]);
 
   // Bulk mutations operate on the full underlying data array; row ids
   // are indices into that array, so we just rebuild it once. After
@@ -1102,10 +1145,35 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           <span style={{ flex: 1 }} />
           <button
             type="button"
-            onClick={() => setShowOnlyMissing(v => !v)}
+            onClick={() => { setShowOnlyMissing(v => !v); setShowOnlyMissingBfo(false); }}
             title={showOnlyMissing ? 'Show every commission row again' : 'Filter the table down to just the flagged rows'}
             style={{ padding: '0.3rem 0.7rem', border: '1px solid #D97706', borderRadius: 4, background: showOnlyMissing ? '#D97706' : '#fff', color: showOnlyMissing ? '#fff' : '#92400E', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
           >{showOnlyMissing ? 'Show all rows' : 'Show only these'}</button>
+        </div>
+      )}
+
+      {missingBfoCount > 0 && (
+        <div
+          role="alert"
+          style={{
+            margin: '0 1.25rem 0.5rem', padding: '0.5rem 0.75rem',
+            background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 6,
+            display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap',
+            fontSize: '0.75rem', color: '#9A3412',
+          }}
+        >
+          <span aria-hidden="true" style={{ fontSize: '0.9rem' }}>⚠️</span>
+          <span>
+            <strong>{missingBfoCount}</strong> row{missingBfoCount === 1 ? '' : 's'} with an <strong>Account Name</strong> {missingBfoCount === 1 ? 'has' : 'have'} no <strong>BFO Name</strong> {missingBfoCount === 1 ? "and isn't" : "and aren't"} marked ignored.
+          </span>
+          <span style={{ color: '#C2410C' }}>Add a BFO Name, or mark the row ignored, to clear this.</span>
+          <span style={{ flex: 1 }} />
+          <button
+            type="button"
+            onClick={() => { setShowOnlyMissingBfo(v => !v); setShowOnlyMissing(false); }}
+            title={showOnlyMissingBfo ? 'Show every commission row again' : 'Filter the table down to just the flagged rows'}
+            style={{ padding: '0.3rem 0.7rem', border: '1px solid #EA580C', borderRadius: 4, background: showOnlyMissingBfo ? '#EA580C' : '#fff', color: showOnlyMissingBfo ? '#fff' : '#9A3412', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+          >{showOnlyMissingBfo ? 'Show all rows' : 'Show only these'}</button>
         </div>
       )}
 
