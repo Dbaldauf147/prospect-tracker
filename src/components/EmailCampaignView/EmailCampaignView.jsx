@@ -19,6 +19,8 @@ export function EmailCampaignView() {
   const [editingIndex, setEditingIndex] = useState(null); // index of saved campaign being edited
   const [editTitle, setEditTitle] = useState('');
   const [editSubject, setEditSubject] = useState('');
+  const [editingSubjectInline, setEditingSubjectInline] = useState(false); // editing the open campaign's subject from the results header
+  const [subjectDraft, setSubjectDraft] = useState('');
   const [refreshing, setRefreshing] = useState(false); // auto-refresh of an opened saved campaign in flight
   const [refreshingAll, setRefreshingAll] = useState(false); // "Refresh all" sweep in flight
   // Which column the contact table is sorted by, and the direction. key === null
@@ -189,6 +191,8 @@ export function EmailCampaignView() {
     setError('');
     setResults(null);
     setViewingSaved(null);
+    setEditingSubjectInline(false);
+    setSubjectDraft('');
     try {
       setResults(await fetchCampaignActivity(subject));
     } catch (err) {
@@ -364,6 +368,8 @@ export function EmailCampaignView() {
     setResults({ ...c, ...deriveCounts(c.contacts) });
     setSubject(c.subject);
     setViewingSaved(index);
+    setEditingSubjectInline(false);
+    setSubjectDraft('');
     setError('');
     if (!c.subject) return;
     const token = ++viewTokenRef.current;
@@ -444,6 +450,65 @@ export function EmailCampaignView() {
     setEditingIndex(null);
     setEditTitle('');
     setEditSubject('');
+  }
+
+  // Inline subject editing from the results header, for the currently open saved
+  // campaign. Mirrors commitEdit's validation (non-empty, no subject collision),
+  // and — since the subject is what sent mail is matched against — re-pulls the
+  // latest activity once the new subject is saved.
+  function startSubjectEdit() {
+    if (viewingSaved == null) return;
+    setError('');
+    setSubjectDraft(displayResults?.subject || '');
+    setEditingSubjectInline(true);
+  }
+
+  function cancelSubjectEdit() {
+    setEditingSubjectInline(false);
+    setSubjectDraft('');
+  }
+
+  async function commitSubjectEdit() {
+    const idx = viewingSaved;
+    if (idx == null) { cancelSubjectEdit(); return; }
+    const current = savedCampaigns[idx];
+    if (!current) { cancelSubjectEdit(); return; }
+    const nextSubject = subjectDraft.trim();
+    if (!nextSubject) {
+      setError('Subject line can’t be empty.');
+      return;
+    }
+    if (savedCampaigns.some((c, i) => i !== idx && String(c.subject || '').trim().toLowerCase() === nextSubject.toLowerCase())) {
+      setError(`Another campaign already uses the subject "${nextSubject}" — choose a different one.`);
+      return;
+    }
+    if (nextSubject === current.subject) { cancelSubjectEdit(); return; }
+    setError('');
+    // Keep a distinct custom title; if the title was just mirroring the old
+    // subject, let it follow the new subject.
+    const title = (current.title && current.title !== current.subject) ? current.title : nextSubject;
+    const updated = savedCampaigns.map((c, i) => (i === idx ? { ...c, subject: nextSubject, title } : c));
+    await saveCampaigns(updated);
+    setEditingSubjectInline(false);
+    setSubjectDraft('');
+    setSubject(nextSubject);
+    setResults(r => (r ? { ...r, subject: nextSubject, title } : r));
+    // The subject drives which sent mail matches, so pull fresh activity for it.
+    const token = ++viewTokenRef.current;
+    setRefreshing(true);
+    try {
+      const json = await fetchCampaignActivity(nextSubject);
+      if (viewTokenRef.current !== token) return;
+      const merged = mergeActivity(updated[idx], json);
+      setResults({ ...merged, title, subject: nextSubject });
+      saveCampaigns(updated.map((x, i) => (i === idx ? { ...merged, title, subject: nextSubject } : x)));
+    } catch (err) {
+      if (viewTokenRef.current === token) {
+        setError('Couldn’t refresh activity for the new subject (' + (err.message || 'unknown error') + ') — showing the last saved numbers.');
+      }
+    } finally {
+      if (viewTokenRef.current === token) setRefreshing(false);
+    }
   }
 
   function fmtDate(d) {
@@ -576,7 +641,57 @@ export function EmailCampaignView() {
               {(displayResults.title && displayResults.title !== displayResults.subject) && (
                 <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--color-text)', marginBottom: '2px' }}>{displayResults.title}</div>
               )}
-              Matching subject: <strong>"{displayResults.subject}"</strong>
+              {editingSubjectInline ? (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+                  Matching subject:
+                  <input
+                    type="text"
+                    value={subjectDraft}
+                    autoFocus
+                    onChange={(e) => setSubjectDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); commitSubjectEdit(); }
+                      else if (e.key === 'Escape') { e.preventDefault(); cancelSubjectEdit(); }
+                    }}
+                    style={{
+                      minWidth: '260px', padding: '0.2rem 0.4rem', border: '1px solid var(--color-accent)',
+                      borderRadius: '4px', fontSize: '0.8rem', fontFamily: 'inherit', color: 'var(--color-text)',
+                      background: 'var(--color-surface)',
+                    }}
+                  />
+                  <button
+                    onClick={commitSubjectEdit}
+                    style={{
+                      padding: '0.2rem 0.55rem', border: 'none', borderRadius: '4px',
+                      background: 'var(--color-accent)', color: '#fff', fontSize: '0.7rem', fontWeight: 600,
+                      fontFamily: 'inherit', cursor: 'pointer',
+                    }}
+                  >Save</button>
+                  <button
+                    onClick={cancelSubjectEdit}
+                    style={{
+                      padding: '0.2rem 0.55rem', border: '1px solid var(--color-border)', borderRadius: '4px',
+                      background: 'var(--color-surface)', color: 'var(--color-text-secondary)', fontSize: '0.7rem',
+                      fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                    }}
+                  >Cancel</button>
+                </span>
+              ) : (
+                <>
+                  Matching subject: <strong>"{displayResults.subject}"</strong>
+                  {viewingSaved !== null && (
+                    <button
+                      onClick={startSubjectEdit}
+                      title="Edit this campaign's subject line"
+                      style={{
+                        marginLeft: '0.4rem', padding: '1px 6px', border: '1px solid var(--color-border)',
+                        borderRadius: '4px', background: 'var(--color-surface)', color: 'var(--color-accent)',
+                        fontSize: '0.6rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                      }}
+                    >Edit</button>
+                  )}
+                </>
+              )}
               {viewingSaved !== null && <span style={{ marginLeft: '0.5rem', padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 600, background: '#DBEAFE', color: '#1E40AF' }}>Saved</span>}
               {refreshing && <span style={{ marginLeft: '0.5rem', fontSize: '0.6rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>↻ Refreshing…</span>}
               {displayResults.autoRepliesSuppressed > 0 && (
