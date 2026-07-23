@@ -614,6 +614,9 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
   // flagging (missing Account Name, not ignored) so the user can fix
   // them in one pass.
   const [showOnlyMissing, setShowOnlyMissing] = useState(false);
+  // "Active only" filter: keep just the rows whose Payment Status is still
+  // Active (commissions currently paying out), hiding Stopped / unknown rows.
+  const [showActiveOnly, setShowActiveOnly] = useState(false);
   const [showPaste, setShowPaste] = useState(false);
   const [initialPaste, setInitialPaste] = useState('');
   // Transient result banner for the "Fill Account Names from BFO" action.
@@ -850,13 +853,19 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     if (missingAccountCount === 0 && showOnlyMissing) setShowOnlyMissing(false);
   }, [missingAccountCount, showOnlyMissing]);
 
+  const activeCount = useMemo(
+    () => rows.reduce((n, r) => n + (paymentStatusFor(r).state === 'active' ? 1 : 0), 0),
+    [rows],
+  );
+
   const filtered = useMemo(() => {
     let base = rows;
     if (showOnlyMissing) base = base.filter(isMissingAccountName);
+    if (showActiveOnly) base = base.filter(r => paymentStatusFor(r).state === 'active');
     if (!search.trim()) return base;
     const term = search.toLowerCase();
     return base.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(term)));
-  }, [rows, search, showOnlyMissing]);
+  }, [rows, search, showOnlyMissing, showActiveOnly]);
 
   // Bulk mutations operate on the full underlying data array; row ids
   // are indices into that array, so we just rebuild it once. After
@@ -1014,6 +1023,21 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           placeholder="Filter commissions…"
           style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
+        <button
+          type="button"
+          onClick={() => setShowActiveOnly(v => !v)}
+          aria-pressed={showActiveOnly}
+          title={showActiveOnly
+            ? 'Showing only commissions still paying out — click to show all rows'
+            : 'Show only commissions still paying out (Payment Status: Active), hiding stopped ones'}
+          style={{
+            padding: '0.35rem 0.7rem', border: '1px solid #16A34A', borderRadius: 6,
+            background: showActiveOnly ? '#16A34A' : '#fff',
+            color: showActiveOnly ? '#fff' : '#166534',
+            fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer',
+            fontFamily: 'inherit', whiteSpace: 'nowrap',
+          }}
+        >Active only{activeCount ? ` (${activeCount})` : ''}</button>
         <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
           {filtered.length} of {rows.length}
         </span>
