@@ -3956,40 +3956,42 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, onSave, onClos
         </div>
 
         <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem', overflow: 'auto' }}>
-          <div>
-            <label style={labelStyle}>Status</label>
-            <select
-              autoFocus
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
-              style={inputStyle}
-            >
-              <option value="">— Select —</option>
-              {statusOptions.map(o => (
-                <option key={o} value={o}>{o}</option>
-              ))}
-            </select>
-            {textHint(curStatus)}
-          </div>
-          {clientManager ? (
-            <div>
-              <label style={labelStyle}>Client Manager</label>
-              <div style={{
-                padding: '0.45rem 0.55rem',
-                border: '1px solid var(--color-border)', borderRadius: 4,
-                fontSize: '0.85rem', background: 'var(--color-bg)', color: 'var(--color-text)',
-              }}>{clientManager}</div>
+          <div style={{ display: 'flex', gap: '0.7rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+              <label style={labelStyle}>Status</label>
+              <select
+                autoFocus
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+                style={inputStyle}
+              >
+                <option value="">— Select —</option>
+                {statusOptions.map(o => (
+                  <option key={o} value={o}>{o}</option>
+                ))}
+              </select>
+              {textHint(curStatus)}
             </div>
-          ) : null}
-          <div>
-            <label style={labelStyle}>Sales Partner</label>
-            <input
-              type="text"
-              value={salesPartner}
-              onChange={(e) => setSalesPartner(e.target.value)}
-              placeholder="—"
-              style={inputStyle}
-            />
+            {clientManager ? (
+              <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+                <label style={labelStyle}>Client Manager</label>
+                <div style={{
+                  padding: '0.45rem 0.55rem',
+                  border: '1px solid var(--color-border)', borderRadius: 4,
+                  fontSize: '0.85rem', background: 'var(--color-bg)', color: 'var(--color-text)',
+                }}>{clientManager}</div>
+              </div>
+            ) : null}
+            <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+              <label style={labelStyle}>Sales Partner</label>
+              <input
+                type="text"
+                value={salesPartner}
+                onChange={(e) => setSalesPartner(e.target.value)}
+                placeholder="—"
+                style={inputStyle}
+              />
+            </div>
           </div>
           <div>
             <label style={labelStyle}>Timelines</label>
