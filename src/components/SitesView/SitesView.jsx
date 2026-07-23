@@ -4410,8 +4410,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // skipped — they're already covered on the Portfolio Overview
       // sheet, so dropping them here keeps this view focused.
       const buckets = new Map();
-      let skippedCount = 0;
-      let naSiteCount = 0;
       for (const r of rows) {
         const rawCountry = String(r.__country__ || '').trim();
         const country = normalizeCountryName(rawCountry) || rawCountry;
@@ -4419,7 +4417,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const isUS = /^(united states|usa|us)$/i.test(country);
         const isCA = /^(canada|ca)$/i.test(country);
         if (!isUS && !isCA) continue;
-        naSiteCount++;
         let key, location, elecTier, gasTier, label;
         if (isUS && US_STATE_CENTERS[stateCode]) {
           key = `US/${stateCode}`;
@@ -4439,7 +4436,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           // NA row whose state code we don't have a centroid for
           // (rare — usually a malformed state). Counts towards the
           // total but doesn't get a dot.
-          skippedCount++;
           continue;
         }
         if (!buckets.has(key)) {
@@ -4806,23 +4802,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
       ws.getRow(1).height = 30;
 
-      ws.mergeCells(2, 1, 2, COLS);
-      const sub = ws.getCell(2, 1);
-      const skippedNote = skippedCount > 0 ? ` (${skippedCount} site${skippedCount === 1 ? '' : 's'} skipped — state / province code not in the geographic reference)` : '';
-      sub.value = `${naSiteCount} North America site${naSiteCount === 1 ? '' : 's'} across ${buckets.size} state/province bucket${buckets.size === 1 ? '' : 's'}. Each portfolio state / province is shaded by its market status (hue) and portfolio site count (darker = more sites); states / provinces with no sites stay light grey.${skippedNote}`;
-      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
-      sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
-      ws.getRow(2).height = 36;
-
       ws.addImage(imageId, {
-        tl: { col: 0, row: 3 },
+        tl: { col: 0, row: 1 },
         ext: { width: W, height: H },
       });
 
       // Overview table — same tier rollup as Portfolio Overview but
-      // scoped to NA sites only. Anchored at row 39 so the table
+      // scoped to NA sites only. Anchored at row 37 so the table
       // clears the bottom edge of the 638-px map image above.
-      const SUMMARY_START = 39;
+      const SUMMARY_START = 37;
       ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
       const sumHdr = ws.getCell(SUMMARY_START, 1);
       sumHdr.value = 'NA Overview';
