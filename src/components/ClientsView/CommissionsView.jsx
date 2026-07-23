@@ -164,6 +164,27 @@ function paymentStatusFor(row) {
   return { state: 'stopped', label: 'Stopped', title: `Most recent commission: ${COMMISSION_MONTH_NAMES[lastIdx]} — no payments since` };
 }
 
+// "Actively paid" for the subtab: has the row actually had money move in the
+// recent past? True when it carries a non-zero commission OR revenue entry in
+// any of the last `months` calendar months (the current month and the ones
+// just before it). The monthly columns are year-agnostic month names, so this
+// checks the relevant month columns regardless of year — wrapping across the
+// year boundary (e.g. in February, "past 3 months" is December/January/February).
+const ACTIVELY_PAID_MONTHS = 3;
+function paidWithinLastMonths(row, months = ACTIVELY_PAID_MONTHS) {
+  if (!row) return false;
+  const nowIdx = new Date().getMonth(); // 0 = January … 11 = December
+  for (let back = 0; back < months; back++) {
+    const idx = ((nowIdx - back) % 12 + 12) % 12;
+    const month = COMMISSION_MONTH_NAMES[idx];
+    const commission = asNumber(row[month]);
+    if (commission != null && commission !== 0) return true;
+    const revenue = asNumber(row[`${month} Revenue`]);
+    if (revenue != null && revenue !== 0) return true;
+  }
+  return false;
+}
+
 function PaymentStatusBadge({ state, label, title }) {
   const palette = state === 'active' ? { bg: '#DCFCE7', fg: '#166534' }
     : state === 'stopped' ? { bg: '#FEE2E2', fg: '#991B1B' }
@@ -641,6 +662,9 @@ function isMissingBfoName(row) {
 export function CommissionsView({ settings, updateSettings, prospects = [] }) {
   const [{ data, source }, setStore] = useState(() => loadCommissions());
   const [search, setSearch] = useState('');
+  // Which subtab is active: 'all' shows the full roster; 'activelyPaid'
+  // narrows to deals that had commission or revenue paid in the last 3 months.
+  const [subtab, setSubtab] = useState('all');
   // When on, the table narrows to just the rows the warning banner is
   // flagging (missing Account Name, not ignored) so the user can fix
   // them in one pass.
@@ -934,15 +958,24 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     [rows],
   );
 
+  // How many deals have had commission or revenue paid in the last 3 months —
+  // drives the "Actively Paid" subtab count. Off the raw rows so it reflects
+  // the whole roster, not the current search / filter view.
+  const activelyPaidCount = useMemo(
+    () => rows.reduce((n, r) => n + (paidWithinLastMonths(r) ? 1 : 0), 0),
+    [rows],
+  );
+
   const filtered = useMemo(() => {
     let base = rows;
+    if (subtab === 'activelyPaid') base = base.filter(r => paidWithinLastMonths(r));
     if (showOnlyMissing) base = base.filter(isMissingAccountName);
     else if (showOnlyMissingBfo) base = base.filter(isMissingBfoName);
     if (showActiveOnly) base = base.filter(r => paymentStatusFor(r).state === 'active');
     if (!search.trim()) return base;
     const term = search.toLowerCase();
     return base.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(term)));
-  }, [rows, search, showOnlyMissing, showOnlyMissingBfo, showActiveOnly]);
+  }, [rows, search, subtab, showOnlyMissing, showOnlyMissingBfo, showActiveOnly]);
 
   // Bulk mutations operate on the full underlying data array; row ids
   // are indices into that array, so we just rebuild it once. After
@@ -1098,6 +1131,54 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           </div>
         </div>
       )}
+
+      {/* Subtab bar — same look as the Activity page subtabs. "Actively Paid"
+          narrows the table to deals with commission or revenue paid in the
+          last 3 months. */}
+      <div style={{ padding: '0 1.25rem', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--color-border)', marginBottom: '0.6rem' }}>
+          {[
+            { key: 'all', label: 'All', count: rows.length },
+            { key: 'activelyPaid', label: 'Actively Paid', count: activelyPaidCount },
+          ].map(t => {
+            const isActive = subtab === t.key;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setSubtab(t.key)}
+                title={t.key === 'activelyPaid'
+                  ? 'Deals with commission or revenue paid in the last 3 months'
+                  : 'Every commission row on file'}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  borderBottom: isActive ? '2px solid var(--color-accent)' : '2px solid transparent',
+                  color: isActive ? 'var(--color-accent)' : 'var(--color-text-secondary)',
+                  fontSize: '0.78rem',
+                  fontWeight: 700,
+                  padding: '0.5rem 0.75rem',
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+              >
+                {t.label}
+                <span style={{
+                  fontSize: '0.65rem',
+                  fontWeight: 700,
+                  padding: '1px 6px',
+                  borderRadius: 999,
+                  background: isActive ? 'var(--color-accent)' : '#E2E8F0',
+                  color: isActive ? '#fff' : '#475569',
+                }}>{t.count}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       <div style={{ padding: '0 1.25rem 0.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', flexShrink: 0 }}>
         <input
