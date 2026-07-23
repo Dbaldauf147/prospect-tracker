@@ -21,6 +21,9 @@ export function EmailCampaignView() {
   const [editSubject, setEditSubject] = useState('');
   const [editingSubjectInline, setEditingSubjectInline] = useState(false); // editing the open campaign's subject from the results header
   const [subjectDraft, setSubjectDraft] = useState('');
+  // Draft for the "add an email to this campaign" input. Manually-added
+  // addresses are the only way contacts enter a campaign's fixed list.
+  const [addEmail, setAddEmail] = useState('');
   const [refreshing, setRefreshing] = useState(false); // auto-refresh of an opened saved campaign in flight
   const [refreshingAll, setRefreshingAll] = useState(false); // "Refresh all" sweep in flight
   // Which column the contact table is sorted by, and the direction. key === null
@@ -100,11 +103,14 @@ export function EmailCampaignView() {
   const normEmail = (e) => String(e || '').toLowerCase().trim();
 
   // Layer freshly-fetched HubSpot activity onto a campaign's own roster,
-  // matched by email. Roster members who haven't been emailed yet stay in the
-  // list; recipients found in HubSpot that aren't already in the roster get
-  // appended; and anyone the user manually removed (tombstoned in
-  // removedEmails) stays out. This is what makes contacts "stick" to a
-  // campaign instead of the list being replaced by each live search.
+  // matched by email. The roster is a FIXED, manually-curated list: every
+  // contact in the campaign is one the user put there. Fetched activity for
+  // the campaign's subject line is used ONLY to update the send/reply status
+  // of contacts already in the roster — recipients HubSpot returns that
+  // aren't in the roster are deliberately NOT pulled in. The campaign tracks
+  // the emails the user added, not everyone who happened to receive that
+  // subject line. Contacts the user manually removed (tombstoned in
+  // removedEmails) stay out.
   function mergeContacts(savedContacts, fetchedContacts, removedEmails) {
     const removed = new Set((removedEmails || []).map(normEmail).filter(Boolean));
     // Index fetched activity by each individual recipient email.
@@ -114,28 +120,19 @@ export function EmailCampaignView() {
         if (!activityByEmail.has(e)) activityByEmail.set(e, fc);
       }
     }
-    const rosterEmails = new Set();
     const merged = [];
     for (const rc of (savedContacts || [])) {
       const key = normEmail(rc.email);
       if (key && removed.has(key)) continue; // manually removed — stay gone
-      if (key) rosterEmails.add(key);
       const act = activityByEmail.get(key);
       if (act) {
         // Keep the roster entry's identity + event status; refresh send/reply.
         merged.push({ ...rc, sentDate: act.sentDate, replied: !!act.replied, replyDate: act.replyDate, repliedBy: act.repliedBy, recipientCount: act.recipientCount || 1 });
       } else {
+        // No matching send for this subject → the contact stays in the fixed
+        // list as "Not Sent". Nothing new is appended from the search.
         merged.push({ ...rc });
       }
-    }
-    // Append recipients HubSpot returned that aren't already in the roster
-    // and weren't manually removed.
-    for (const fc of (fetchedContacts || [])) {
-      const emails = String(fc.email || '').split(';').map(normEmail).filter(Boolean);
-      if (emails.length === 0) continue;
-      if (emails.some(e => rosterEmails.has(e) || removed.has(e))) continue;
-      merged.push({ ...fc, eventStatus: fc.eventStatus || '' });
-      emails.forEach(e => rosterEmails.add(e));
     }
     return merged;
   }
@@ -264,6 +261,66 @@ export function EmailCampaignView() {
       + 'Open Draft Emails → "From Email Campaigns" → "Add all to draft" to drop them into the To section.',
     );
     setTimeout(() => setNotice(''), 9000);
+  }
+
+  // Manually add one or more emails to the campaign's fixed roster. This is
+  // how the user builds the list the campaign tracks — the subject search
+  // never adds contacts on its own (see mergeContacts). Accepts a string of
+  // one or more addresses separated by ; , or whitespace. Each new address is
+  // appended as a "Not Sent" roster member (deduped against the current
+  // roster) and un-tombstoned so a later refresh keeps it. Then the latest
+  // activity for the campaign's subject is pulled so any added email that was
+  // in fact sent this subject immediately shows its Sent / Replied status.
+  async function addContacts(raw) {
+    if (!results) return;
+    const wanted = String(raw || '')
+      .split(/[;,\s]+/)
+      .map(e => e.trim())
+      .filter(e => /.+@.+\..+/.test(e));
+    if (wanted.length === 0) { setError('Enter a valid email address to add.'); return; }
+    const existing = new Set((results.contacts || [])
+      .flatMap(c => String(c.email || '').split(';').map(normEmail).filter(Boolean)));
+    const additions = [];
+    const seen = new Set();
+    for (const e of wanted) {
+      const key = normEmail(e);
+      if (!key || existing.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      additions.push({ email: e, name: '', sentDate: '', replied: false, eventStatus: '', recipientCount: 1 });
+    }
+    if (additions.length === 0) {
+      setError(wanted.length === 1 ? 'That email is already in the campaign.' : 'Those emails are already in the campaign.');
+      return;
+    }
+    setError('');
+    const nextContacts = [...(results.contacts || []), ...additions];
+    // Un-tombstone any re-added emails so a refresh doesn't drop them again.
+    const addedKeys = new Set(additions.map(c => normEmail(c.email)).filter(Boolean));
+    const removedEmails = (results.removedEmails || []).filter(e => !addedKeys.has(normEmail(e)));
+    const counts = deriveCounts(nextContacts);
+    setResults({ ...results, contacts: nextContacts, removedEmails, ...counts });
+    if (viewingSaved != null) {
+      saveCampaigns(savedCampaigns.map((c, i) => (i === viewingSaved
+        ? { ...c, contacts: nextContacts, removedEmails, ...counts }
+        : c)));
+    }
+    // Pull the subject's activity so a freshly-added email that really was
+    // sent this subject lights up as Sent / Replied right away. Best-effort:
+    // if the fetch fails the contact simply stays "Not Sent" until the next
+    // refresh.
+    const subj = results.subject;
+    if (!subj) return;
+    try {
+      const json = await fetchCampaignActivity(subj);
+      const mergedContacts = mergeContacts(nextContacts, json.contacts, removedEmails);
+      const c2 = deriveCounts(mergedContacts);
+      setResults(r => (r ? { ...r, contacts: mergedContacts, ...c2 } : r));
+      if (viewingSaved != null) {
+        saveCampaigns(savedCampaigns.map((c, i) => (i === viewingSaved
+          ? { ...c, contacts: mergedContacts, ...c2 }
+          : c)));
+      }
+    } catch { /* leave the added contacts as Not Sent */ }
   }
 
   // Remove a contact from the campaign. The removal is recorded as a tombstone
@@ -750,6 +807,32 @@ export function EmailCampaignView() {
               >Remove duplicates</button>
             </div>
           )}
+
+          {/* Manually add an email to the campaign's fixed list. The campaign
+              only tracks the emails added here; the subject line is used to
+              look up their send/reply status, never to pull in new addresses. */}
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
+            <input
+              type="text"
+              value={addEmail}
+              onChange={e => setAddEmail(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addContacts(addEmail); setAddEmail(''); } }}
+              placeholder="Add an email to this campaign…"
+              style={{ flex: 1, maxWidth: 340, padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.78rem', fontFamily: 'inherit' }}
+            />
+            <button
+              onClick={() => { addContacts(addEmail); setAddEmail(''); }}
+              disabled={!addEmail.trim()}
+              title="Add this email to the campaign's fixed list. The subject line is only used to look up whether this address was sent or replied — it never pulls in addresses on its own."
+              style={{
+                padding: '0.4rem 0.85rem', border: '1px solid var(--color-accent)', borderRadius: '6px',
+                background: addEmail.trim() ? 'var(--color-accent)' : 'var(--color-surface)',
+                color: addEmail.trim() ? '#fff' : 'var(--color-text-muted)',
+                fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+                cursor: addEmail.trim() ? 'pointer' : 'default', opacity: addEmail.trim() ? 1 : 0.6,
+              }}
+            >Add email</button>
+          </div>
 
           {/* Contact table */}
           {displayResults.contacts && displayResults.contacts.length > 0 && (
