@@ -5096,7 +5096,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         PAD + ((lng - US_LNG_MIN) / (US_LNG_MAX - US_LNG_MIN)) * MAP_W,
         TITLE_H + ((US_LAT_MAX - lat) / (US_LAT_MAX - US_LAT_MIN)) * MAP_H,
       ];
-      const drawFeature = (rings) => {
+      const traceFeature = (rings, { fill = false, stroke = false } = {}) => {
         for (const ring of rings) {
           const subRings = [];
           let cur = [];
@@ -5117,11 +5117,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
               if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
             }
             ctx.closePath();
-            ctx.fill();
-            ctx.stroke();
+            if (fill) ctx.fill();
+            if (stroke) ctx.stroke();
           }
         }
       };
+      const drawFeature = (rings) => traceFeature(rings, { fill: true, stroke: true });
+      const strokeFeature = (rings) => traceFeature(rings, { stroke: true });
 
       const naFeatures = getNAAdmin1Features();
 
@@ -5140,22 +5142,49 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       ctx.fillStyle = '#FFFFFF';
       ctx.fillRect(PAD, TITLE_H, MAP_W, MAP_H);
 
-      // Draw only US states; skip AK/HI (off the CONUS frame and unmapped).
+      // Which ISO / RTO regions actually hold portfolio sites. Regions with
+      // no sites are greyed out on the map (neutral fill) but still traced
+      // with a strong, region-coloured border in a second pass, so the ISO
+      // breakdown stays legible even where the portfolio has no presence.
+      const activeRegions = new Set(isoAggs.keys());
+
+      // Pass 1 — fills. States in a region that has portfolio sites keep
+      // their region hue, darkened by that state's site count. States in an
+      // empty region (and AK/HI/non-US) are greyed out.
       ctx.lineWidth = 0.6;
       for (const feat of naFeatures) {
         if (feat.admin !== 'US') continue;
         const code = String(feat.postal || '').toUpperCase();
         if (code === 'AK' || code === 'HI') continue;
         const region = isoForState(code);
-        if (region) {
+        if (region && activeRegions.has(region)) {
           ctx.fillStyle = shadeForRegion(region, stateCounts.get(code) || 0);
           ctx.strokeStyle = '#FFFFFF';
         } else {
+          // Greyed out: unmapped state, or a mapped state whose ISO region
+          // holds no portfolio sites.
           ctx.fillStyle = NO_REGION_FILL;
           ctx.strokeStyle = NO_REGION_STROKE;
         }
         drawFeature(feat.rings);
       }
+
+      // Pass 2 — strong bold borders for the greyed-out ISO regions, drawn
+      // on top of the fills so the ISO / RTO breakdown reads through the
+      // grey. Each empty region's states are outlined in that region's hue.
+      const prevJoin = ctx.lineJoin;
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 2.4;
+      for (const feat of naFeatures) {
+        if (feat.admin !== 'US') continue;
+        const code = String(feat.postal || '').toUpperCase();
+        if (code === 'AK' || code === 'HI') continue;
+        const region = isoForState(code);
+        if (!region || activeRegions.has(region)) continue;
+        ctx.strokeStyle = ISO_FILL[region] || NO_REGION_STROKE;
+        strokeFeature(feat.rings);
+      }
+      ctx.lineJoin = prevJoin;
       ctx.restore();
 
       // Thin frame around the map, echoing the reference image's border.
@@ -5171,8 +5200,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       ctx.font = '14px Nunito Sans, Arial, sans-serif';
       ctx.textBaseline = 'middle';
       ctx.textAlign = 'left';
+      const hasEmptyRegion = ISO_REGIONS.some(r => !isoAggs.has(r.key));
       const legendItems = [
         ...ISO_REGIONS.map(r => ({ color: r.fill, label: r.label })),
+        ...(hasEmptyRegion
+          ? [{ color: NO_REGION_FILL, label: 'ISO region — no sites', boldBorder: true }]
+          : []),
         { color: NO_REGION_FILL, label: 'No mapped region' },
       ];
       const itemW = (label) => SWATCH + GAP_SWATCH_LABEL + ctx.measureText(label).width;
@@ -5194,8 +5227,14 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         for (const it of lr.items) {
           ctx.fillStyle = it.color;
           ctx.fillRect(cursorX, legendY - SWATCH / 2, SWATCH, SWATCH);
-          ctx.strokeStyle = NO_REGION_STROKE;
-          ctx.lineWidth = 0.8;
+          if (it.boldBorder) {
+            // Mirror the map: greyed empty ISO regions carry a strong border.
+            ctx.strokeStyle = '#0F172A';
+            ctx.lineWidth = 2.4;
+          } else {
+            ctx.strokeStyle = NO_REGION_STROKE;
+            ctx.lineWidth = 0.8;
+          }
           ctx.strokeRect(cursorX, legendY - SWATCH / 2, SWATCH, SWATCH);
           ctx.fillStyle = '#0F172A';
           ctx.fillText(it.label, cursorX + SWATCH + GAP_SWATCH_LABEL, legendY);
@@ -5220,7 +5259,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const unmappedNote = unmappedCount > 0
         ? ` (${unmappedCount} US site${unmappedCount === 1 ? '' : 's'} in a state with no mapped ISO region — e.g. AK / HI — are excluded)`
         : '';
-      sub.value = `${usSiteCount} US site${usSiteCount === 1 ? '' : 's'} across ${isoAggs.size} ISO / RTO region${isoAggs.size === 1 ? '' : 's'}. Each state is shaded by its dominant ISO / RTO region (hue) and portfolio site count (darker = more sites). Region boundaries are approximated to whole states.${unmappedNote}`;
+      sub.value = `${usSiteCount} US site${usSiteCount === 1 ? '' : 's'} across ${isoAggs.size} ISO / RTO region${isoAggs.size === 1 ? '' : 's'}. States in a region with portfolio sites are shaded by its region hue and site count (darker = more sites); ISO / RTO regions with no sites are greyed out and traced with a strong region-coloured border so the breakdown stays visible. Region boundaries are approximated to whole states.${unmappedNote}`;
       sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
       sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
       ws.getRow(2).height = 36;
