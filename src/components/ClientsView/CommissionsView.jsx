@@ -92,6 +92,7 @@ function isFYRevenueKey(k) { return String(k || '').trim() === 'FY Revenue'; }
 const FY_COMMISSION_KEY = 'FY Commission';
 const PAYMENT_STATUS_KEY = 'Payment Status';
 const DAYS_SINCE_PAYMENT_KEY = 'Days Since Last Payment';
+const LAST_PAYMENT_DATE_KEY = 'Last Payment Date';
 // Per-row "last updated" timestamp. Stored under a __-prefixed key so it
 // rides along on the row without counting as a data cell (countFilledCells
 // and the paste-dedup scoring both skip __-keys) and without ever showing
@@ -112,6 +113,7 @@ function defaultWidth(k) {
   if (k === FY_COMMISSION_KEY) return 130;
   if (k === PAYMENT_STATUS_KEY) return 110;
   if (k === DAYS_SINCE_PAYMENT_KEY) return 150;
+  if (k === LAST_PAYMENT_DATE_KEY) return 140;
   if (k === UPDATED_AT_KEY) return 130;
   if (k === 'Name') return 170;
   if (k === 'Project Name') return 280;
@@ -166,33 +168,54 @@ function paymentStatusFor(row) {
   return { state: 'stopped', label: 'Stopped', title: `Most recent commission: ${COMMISSION_MONTH_NAMES[lastIdx]} — no payments since` };
 }
 
-// Date the last commission payment on a row. Monthly commission columns
-// are year-agnostic month names, so the latest non-zero month is resolved
-// to its most-recent occurrence — this calendar year if that month hasn't
-// passed yet, otherwise last year — dated to the end of that month (the
-// close of the period the payment covers). Falls back to a past Comm End
-// Date when a row carries no monthly commission cells. Returns null when
-// neither signal is available. Mirrors the "last payment" reasoning the
-// Payment Status column already uses.
+// Date the last commission payment on a row, from every dated signal it
+// carries: the year-agnostic monthly commission cells plus the Comm Start
+// Date / Comm End Date. The latest month with a value gives the *month* of
+// the last payment; the commission window gives the *year*.
+//
+//  - Ended commission (Comm End Date in the past): anchor the last-paid
+//    month to the end date's year and never let it land after the end date
+//    itself. This keeps an old row (e.g. a 2023 Comm End Date) from
+//    resolving its month into the current year and reading as a payment
+//    that just happened.
+//  - Open commission (end date in the future, or none): the month resolves
+//    to its most-recent occurrence relative to today.
+//  - No monthly cells at all: fall back to a past Comm End Date, then a
+//    past Comm Start Date.
+//
+// Returns null when nothing datable is on the row. Each result's `date` is
+// a JS Date at local midnight; `label` describes where it came from.
 function lastPaymentDate(row) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const midnight = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+  const start = asDate(row?.['Comm Start Date']);
+  const end = asDate(row?.['Comm End Date']);
+  const startMid = start ? midnight(start) : null;
+  const endMid = end ? midnight(end) : null;
+  const endPast = endMid && endMid.getTime() <= today.getTime();
+
   let lastIdx = -1;
   for (let i = 0; i < COMMISSION_MONTH_NAMES.length; i++) {
     const n = asNumber(row?.[COMMISSION_MONTH_NAMES[i]]);
     if (n != null && n !== 0) lastIdx = i;
   }
+
   if (lastIdx !== -1) {
-    const today = new Date();
-    const year = lastIdx <= today.getMonth() ? today.getFullYear() : today.getFullYear() - 1;
     // Day 0 of the following month is the last calendar day of this one.
-    return { date: new Date(year, lastIdx + 1, 0), label: COMMISSION_MONTH_NAMES[lastIdx], source: 'month' };
-  }
-  const end = asDate(row?.['Comm End Date']);
-  if (end) {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const e = new Date(end); e.setHours(0, 0, 0, 0);
-    if (e.getTime() <= today.getTime()) {
-      return { date: e, label: `Comm End Date ${fmtDate(end)}`, source: 'end' };
+    const endOfMonth = (year) => midnight(new Date(year, lastIdx + 1, 0));
+    if (endPast) {
+      let d = endOfMonth(endMid.getFullYear());
+      if (d.getTime() > endMid.getTime()) d = endMid;                 // never past the close
+      if (startMid && d.getTime() < startMid.getTime()) d = endMid;   // month predates the window → use the close
+      return { date: d, label: `${COMMISSION_MONTH_NAMES[lastIdx]} ${d.getFullYear()}`, source: 'ended' };
     }
+    const year = lastIdx <= today.getMonth() ? today.getFullYear() : today.getFullYear() - 1;
+    return { date: endOfMonth(year), label: COMMISSION_MONTH_NAMES[lastIdx], source: 'month' };
+  }
+
+  if (endPast) return { date: endMid, label: `Comm End Date ${fmtDate(end)}`, source: 'end' };
+  if (startMid && startMid.getTime() <= today.getTime()) {
+    return { date: startMid, label: `Comm Start Date ${fmtDate(start)}`, source: 'start' };
   }
   return null;
 }
@@ -608,6 +631,23 @@ function buildColumns(oppsCache, selectCol) {
     },
     exportValue: (row) => paymentStatusFor(row).label,
   };
+  // Derived "Last Payment Date" column — the calendar date of the row's
+  // most recent commission, resolved from the monthly cells together with
+  // the Comm Start / Comm End dates (see lastPaymentDate). Muted dash when
+  // nothing on the row can date it. Sorts on the raw timestamp; exports the
+  // formatted date.
+  const lastPaymentDateCol = {
+    key: LAST_PAYMENT_DATE_KEY,
+    label: LAST_PAYMENT_DATE_KEY,
+    defaultWidth: defaultWidth(LAST_PAYMENT_DATE_KEY),
+    getSortValue: (row) => { const r = lastPaymentDate(row); return r ? r.date.getTime() : null; },
+    render: (row) => {
+      const r = lastPaymentDate(row);
+      if (!r) return <span style={{ color: 'var(--color-text-muted)' }} title="No monthly commission entries or commission dates to derive a last payment date from">—</span>;
+      return <span style={{ color: '#334155' }} title={`Derived from ${r.label}`}>{fmtDate(r.date)}</span>;
+    },
+    exportValue: (row) => { const r = lastPaymentDate(row); return r ? fmtDate(r.date) : ''; },
+  };
   // Derived "Days Since Last Payment" column — how long it's been since the
   // most recent commission on the row. Muted dash when there's nothing to
   // date it from; the count shifts to amber past 30 days and red past 60 so
@@ -619,9 +659,9 @@ function buildColumns(oppsCache, selectCol) {
     getSortValue: (row) => { const r = daysSinceLastPayment(row); return r ? r.days : null; },
     render: (row) => {
       const r = daysSinceLastPayment(row);
-      if (!r) return <span style={{ color: 'var(--color-text-muted)' }} title="No monthly commission entries — and no past Comm End Date — to date the last payment from">—</span>;
+      if (!r) return <span style={{ color: 'var(--color-text-muted)' }} title="No monthly commission entries or commission dates to date the last payment from">—</span>;
       const color = r.days > 60 ? '#B91C1C' : r.days > 30 ? '#B45309' : '#0F172A';
-      const dateStr = r.info.source === 'month'
+      const dateStr = (r.info.source === 'month' || r.info.source === 'ended')
         ? `Last commission in ${r.info.label} (${fmtDate(r.info.date)})`
         : `Last payment on ${fmtDate(r.info.date)}`;
       return (
@@ -710,7 +750,7 @@ function buildColumns(oppsCache, selectCol) {
     },
     exportValue: (row) => (row.__ignored ? 'Ignored' : ''),
   };
-  return [selectCol, ...front, ...canonical, fyCommissionCol, paymentStatusCol, daysSincePaymentCol, updatedAtCol, ignoreCol, deleteCol];
+  return [selectCol, ...front, ...canonical, fyCommissionCol, paymentStatusCol, lastPaymentDateCol, daysSincePaymentCol, updatedAtCol, ignoreCol, deleteCol];
 }
 
 // A project row needs an Account Name tied to it. Flag it for the
