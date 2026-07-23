@@ -166,15 +166,27 @@ function paymentStatusFor(row) {
   return { state: 'stopped', label: 'Stopped', title: `Most recent commission: ${COMMISSION_MONTH_NAMES[lastIdx]} — no payments since` };
 }
 
-// Date the last commission payment on a row. Monthly commission columns
-// are year-agnostic month names, so the latest non-zero month is resolved
-// to its most-recent occurrence — this calendar year if that month hasn't
-// passed yet, otherwise last year — dated to the end of that month (the
-// close of the period the payment covers). Falls back to a past Comm End
-// Date when a row carries no monthly commission cells. Returns null when
-// neither signal is available. Mirrors the "last payment" reasoning the
-// Payment Status column already uses.
+// Date the last commission payment on a row. A Comm End Date that's
+// already in the past is authoritative: it pins when payments actually
+// stopped (e.g. a 2023 end date), so it's used ahead of the monthly cells
+// — which, being year-agnostic month names, would otherwise resolve an old
+// row's month into the current year and wrongly read as ~0 days since.
+// When there's no end date (or it's still in the future, i.e. payments are
+// ongoing), the latest non-zero monthly commission is resolved to its
+// most-recent occurrence — this calendar year if that month hasn't passed
+// yet, otherwise last year — dated to the end of that month (the close of
+// the period the payment covers). Returns null when neither signal exists.
+// Priority mirrors the Payment Status column, which also leads with Comm
+// End Date.
 function lastPaymentDate(row) {
+  const end = asDate(row?.['Comm End Date']);
+  if (end) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const e = new Date(end); e.setHours(0, 0, 0, 0);
+    if (e.getTime() <= today.getTime()) {
+      return { date: e, label: `Comm End Date ${fmtDate(end)}`, source: 'end' };
+    }
+  }
   let lastIdx = -1;
   for (let i = 0; i < COMMISSION_MONTH_NAMES.length; i++) {
     const n = asNumber(row?.[COMMISSION_MONTH_NAMES[i]]);
@@ -185,14 +197,6 @@ function lastPaymentDate(row) {
     const year = lastIdx <= today.getMonth() ? today.getFullYear() : today.getFullYear() - 1;
     // Day 0 of the following month is the last calendar day of this one.
     return { date: new Date(year, lastIdx + 1, 0), label: COMMISSION_MONTH_NAMES[lastIdx], source: 'month' };
-  }
-  const end = asDate(row?.['Comm End Date']);
-  if (end) {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const e = new Date(end); e.setHours(0, 0, 0, 0);
-    if (e.getTime() <= today.getTime()) {
-      return { date: e, label: `Comm End Date ${fmtDate(end)}`, source: 'end' };
-    }
   }
   return null;
 }
