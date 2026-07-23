@@ -20,6 +20,10 @@ const SCOPE_KEY = 'Scope';
 // Shared <datalist> id for the Account Name autocomplete — every cell
 // editor on the column points at this list via `list="..."`.
 const ACCOUNT_NAME_LIST_ID = 'commissions-account-name-suggestions';
+// Same idea for BFO Name: the editor points at this list, which is
+// populated with every BFO Opportunity Name ("BFO Link") from the Opps
+// tab so the user gets predictive matches instead of retyping the name.
+const BFO_NAME_LIST_ID = 'commissions-bfo-name-suggestions';
 
 // Inline cell editor: shows the formatted value, swaps to a text input on
 // double-click, commits on Enter / blur, cancels on Escape. `listId`
@@ -280,6 +284,7 @@ function buildFrontColumns(oppsCache) {
           value={row[BFO_NAME_KEY]}
           render={plainTextRender}
           onSave={(v) => row.__onUpdate?.(row.id, BFO_NAME_KEY, v)}
+          listId={BFO_NAME_LIST_ID}
         />
       ),
       exportValue: (row) => row[BFO_NAME_KEY] ?? '',
@@ -750,6 +755,26 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     return out;
   }, [prospects]);
 
+  // Predictive-text pool for the BFO Name column — every BFO Opportunity
+  // Name ("BFO Link") on the cached Opps records. Deduped case-insensitively
+  // and sorted; placeholder values ("-", blank, "#N/A") are dropped so the
+  // list only offers real opp names to match Scope against.
+  const bfoNameSuggestions = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const r of (oppsCache?.records || [])) {
+      const name = String(r?.['BFO Link'] ?? '').trim();
+      if (!name || name === '-') continue;
+      if (name.toUpperCase().startsWith('#N/A')) continue;
+      const k = name.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(name);
+    }
+    out.sort((a, b) => a.localeCompare(b));
+    return out;
+  }, [oppsCache]);
+
   // Flip the __ignored flag on a row. A truthy flag greys the row out
   // everywhere it's rendered (and excludes it from the YOY commission
   // totals). Persisted via the same override store as every other
@@ -960,6 +985,13 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           at it via list="..." — matches the Deals tab pattern. */}
       <datalist id={ACCOUNT_NAME_LIST_ID}>
         {accountNameSuggestions.map(name => (
+          <option key={name} value={name} />
+        ))}
+      </datalist>
+      {/* Predictive-text source for every BFO Name cell — the BFO
+          Opportunity Names ("BFO Link") pulled from the Opps tab. */}
+      <datalist id={BFO_NAME_LIST_ID}>
+        {bfoNameSuggestions.map(name => (
           <option key={name} value={name} />
         ))}
       </datalist>
