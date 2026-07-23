@@ -220,10 +220,24 @@ function lastPaymentDate(row) {
   return null;
 }
 
+// Sentinel "days since last payment" for rows with no commission window on
+// file (both Comm Start Date and Comm End Date blank). A large fixed count
+// sinks them to the bottom of the default ascending sort instead of mixing
+// them in with genuinely-dated rows.
+const NO_COMM_DATES_DAYS = 1000;
+
 // Whole days between the last payment and today, or null when the row has
 // no datable payment. Clamped at 0 so a payment dated to the current
 // (not-yet-closed) month reads as "0" rather than a negative count.
 function daysSinceLastPayment(row) {
+  // No commission dates at all → treat as NO_COMM_DATES_DAYS so the row
+  // parks at the bottom of the list. This wins over any monthly-cell date
+  // so a row without a commission window never reads as recently paid.
+  const hasStart = !!asDate(row?.['Comm Start Date']);
+  const hasEnd = !!asDate(row?.['Comm End Date']);
+  if (!hasStart && !hasEnd) {
+    return { days: NO_COMM_DATES_DAYS, info: { source: 'none', label: 'No Comm Start or End Date' } };
+  }
   const info = lastPaymentDate(row);
   if (!info) return null;
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -660,6 +674,19 @@ function buildColumns(oppsCache, selectCol) {
     render: (row) => {
       const r = daysSinceLastPayment(row);
       if (!r) return <span style={{ color: 'var(--color-text-muted)' }} title="No monthly commission entries or commission dates to date the last payment from">—</span>;
+      // Rows with no commission window carry the fixed sentinel — render it
+      // muted (not the red "overdue" scale) and explain the placeholder, so
+      // it doesn't read as a genuine 1000-day-old payment.
+      if (r.info.source === 'none') {
+        return (
+          <span
+            title={`No Comm Start or End Date on file — treated as ${r.days.toLocaleString('en-US')} days so it sorts to the bottom`}
+            style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-muted)' }}
+          >
+            {r.days.toLocaleString('en-US')}
+          </span>
+        );
+      }
       const color = r.days > 60 ? '#B91C1C' : r.days > 30 ? '#B45309' : '#0F172A';
       const dateStr = (r.info.source === 'month' || r.info.source === 'ended')
         ? `Last commission in ${r.info.label} (${fmtDate(r.info.date)})`
