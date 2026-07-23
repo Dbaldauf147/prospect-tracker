@@ -1881,22 +1881,35 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     saveDraft();
   }
 
-  // An auto-CC recipient (settings.ccMap) who is ALSO a primary To recipient in
-  // this draft would get two copies of the email — once on the To line, once
-  // via the CC. Flag the contact whose CC causes that so the duplicate is easy
-  // to spot. The flag stays hidden until both people are actually in the To
-  // line, so it only ever points at a real double-send.
-  const ccMapForFlags = settings?.ccMap || {};
-  const toEmailSet = new Set(
-    selectedContacts.map(x => (x.email || '').trim().toLowerCase()).filter(Boolean)
-  );
-  const duplicateCcFor = (c) => {
-    const self = (c.email || '').trim().toLowerCase();
-    return (ccMapForFlags[c.email] || []).filter(addr => {
+  // Duplicate detection for the To section. An address that would actually be
+  // delivered more than once from THIS section is a double-send, so we tally
+  // every address the section sends to — each primary recipient plus each
+  // contact's folded-in "To Also" and "CC" extras — and flag any address whose
+  // total count is 2+. Only real duplicates within this section are flagged: a
+  // contact's own address isn't counted against itself, and the separate
+  // draft-level CC field is intentionally left out of the tally.
+  const sectionEmailCounts = (() => {
+    const counts = new Map();
+    const bump = (addr) => {
       const a = (addr || '').trim().toLowerCase();
-      return a && a !== self && toEmailSet.has(a);
-    });
-  };
+      if (!a) return;
+      counts.set(a, (counts.get(a) || 0) + 1);
+    };
+    for (const c of selectedContacts) {
+      const self = (c.email || '').trim().toLowerCase();
+      bump(self);
+      for (const addr of ((settings?.toAlsoMap || {})[c.email] || [])) {
+        const a = (addr || '').trim().toLowerCase();
+        if (a && a !== self) bump(a);
+      }
+      for (const addr of ((settings?.ccMap || {})[c.email] || [])) {
+        const a = (addr || '').trim().toLowerCase();
+        if (a && a !== self) bump(a);
+      }
+    }
+    return counts;
+  })();
+  const isSectionDuplicate = (addr) => (sectionEmailCounts.get((addr || '').trim().toLowerCase()) || 0) >= 2;
 
   return (
     <div className={styles.page}>
@@ -1923,7 +1936,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                 // this draft would double-send, so it's flagged red.
                 const toAlso = (settings?.toAlsoMap || {})[c.email] || [];
                 const contactCc = (settings?.ccMap || {})[c.email] || [];
-                const dupSet = new Set(duplicateCcFor(c).map(a => (a || '').trim().toLowerCase()));
+                const selfDup = isSectionDuplicate(c.email);
                 const hasExtras = toAlso.length > 0 || contactCc.length > 0;
                 const extraPill = {
                   display: 'inline-flex', alignItems: 'center', gap: 3,
@@ -1936,7 +1949,11 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                   <span
                     key={c.id}
                     className={styles.contactTag}
-                    style={hasExtras ? { flexDirection: 'column', alignItems: 'flex-start', whiteSpace: 'normal', gap: '0.2rem' } : undefined}
+                    title={selfDup ? 'Duplicate recipient — this address also appears elsewhere in the To section (double-send)' : undefined}
+                    style={{
+                      ...(hasExtras ? { flexDirection: 'column', alignItems: 'flex-start', whiteSpace: 'normal', gap: '0.2rem' } : {}),
+                      ...(selfDup ? { background: '#FEE2E2', borderColor: '#FCA5A5', color: '#991B1B' } : {}),
+                    }}
                   >
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', maxWidth: '100%' }}>
                       <span
@@ -1947,26 +1964,33 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                         title={`Open ${c.name}`}
                         style={{ cursor: 'pointer', textDecoration: 'underline' }}
                       >{c.name}</span> <span className={styles.contactEmail}>({c.email})</span>
+                      {selfDup && <span title="Double-send — this address appears more than once in the To section" style={{ fontWeight: 800, color: '#991B1B' }}>⚑</span>}
                       <button className={styles.removeTag} onClick={() => removeContact(c.id)}>&times;</button>
                     </span>
                     {hasExtras && (
                       <span style={{ display: 'flex', flexWrap: 'wrap', gap: '0.2rem', maxWidth: '100%' }}>
-                        {toAlso.map(email => (
+                        {toAlso.map(email => {
+                          const dup = isSectionDuplicate(email);
+                          return (
                           <span
                             key={`to|${email}`}
-                            title={`Added to the To line alongside ${c.name}`}
-                            style={{ ...extraPill, background: '#FEF3C7', border: '1px solid #FDE68A', color: '#92400E' }}
+                            title={dup ? `Appears more than once in the To section — would receive two copies` : `Added to the To line alongside ${c.name}`}
+                            style={{ ...extraPill, ...(dup
+                              ? { background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B' }
+                              : { background: '#FEF3C7', border: '1px solid #FDE68A', color: '#92400E' }) }}
                           >
                             <span style={pillLabel}>To</span>
                             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{email}</span>
+                            {dup && <span title="Double-send" style={{ fontWeight: 800 }}>⚑</span>}
                           </span>
-                        ))}
+                          );
+                        })}
                         {contactCc.map(email => {
-                          const dup = dupSet.has((email || '').trim().toLowerCase());
+                          const dup = isSectionDuplicate(email);
                           return (
                             <span
                               key={`cc|${email}`}
-                              title={dup ? `Also a primary recipient — would receive two copies (once on To, once on CC)` : `CC'd on the email to ${c.name}`}
+                              title={dup ? `Appears more than once in the To section — would receive two copies (once on To, once on CC)` : `CC'd on the email to ${c.name}`}
                               style={{ ...extraPill, ...(dup
                                 ? { background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B' }
                                 : { background: '#EFF6FF', border: '1px solid #BFDBFE', color: '#1E40AF' }) }}
