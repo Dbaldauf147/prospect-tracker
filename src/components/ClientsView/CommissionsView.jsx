@@ -483,7 +483,15 @@ function buildSelectCol(renderHeader) {
 
 function buildColumns(oppsCache, selectCol) {
   const front = buildFrontColumns(oppsCache);
-  const canonical = COMMISSIONS_CANONICAL.map((k) => {
+  // Account Name and BFO Name live in COMMISSIONS_CANONICAL too (they're
+  // pasteable destinations), but the front lookup columns already render them
+  // as the interactive, autocompleted versions. Drop the canonical duplicates
+  // so each key produces exactly one column. Without this the table shows a
+  // second "BFO Name" column whenever the saved column order predates the
+  // front one — orderColumns only collapses a duplicate key when the saved
+  // order already lists it.
+  const frontKeys = new Set(front.map(c => c.key));
+  const canonical = COMMISSIONS_CANONICAL.filter(k => !frontKeys.has(k)).map((k) => {
     const isCurrency = CURRENCY_KEYS.has(k) || isMonthRevenueKey(k) || isFYRevenueKey(k) || isMonthCommissionKey(k);
     const isDate = DATE_KEYS.has(k);
     const isPercent = PERCENT_KEYS.has(k);
