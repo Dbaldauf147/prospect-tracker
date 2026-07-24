@@ -181,6 +181,42 @@ function sumFiscalMonths(row, revenue) {
   return any ? total : null;
 }
 
+// Calendar-month index (0 = January … 11 = December) behind a month column
+// key — "March" → 2, "March Revenue" → 2. Returns -1 for non-month keys.
+function monthIndexForKey(k) {
+  const s = String(k || '').trim();
+  const base = isMonthRevenueKey(k) ? s.slice(0, s.length - ' Revenue'.length) : s;
+  return COMMISSION_MONTH_NAMES.indexOf(base);
+}
+
+// Is this an upcoming month that simply hasn't happened yet? True only when
+// the current calendar year is genuinely relevant to the row's commission —
+// i.e. the deal has a commission window, hasn't already ended, and doesn't
+// start in a later year — AND the month is (a) later in the year than the
+// current month and (b) inside the deal's fiscal window. Those cells render
+// a greyed "-" so an unpaid future month reads as "not yet" rather than a
+// real $0 or missing data. A commission that already ended, hasn't started,
+// or has no dates at all has no pending months and is left untouched.
+function isPendingFutureMonth(row, monthIdx) {
+  if (monthIdx < 0) return false;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  // Only months strictly after the current one count as "not happened yet".
+  if (monthIdx <= today.getMonth()) return false;
+  const start = asDate(row?.['Comm Start Date']);
+  const end = asDate(row?.['Comm End Date']);
+  // Need a commission window to assert the current year applies to this row.
+  if (!start && !end) return false;
+  // Commission already ended → nothing more is coming.
+  if (end) { const e = new Date(end); e.setHours(0, 0, 0, 0); if (e.getTime() < today.getTime()) return false; }
+  // Commission starts in a future year → the current year isn't relevant yet.
+  if (start && start.getFullYear() > today.getFullYear()) return false;
+  // Respect the deal's fiscal window: a future month outside the window
+  // isn't a pending payment month for this deal.
+  const window = fiscalWindowMonths(row);
+  if (window && !window.has(monthIdx)) return false;
+  return true;
+}
+
 // "Are payments still rolling in or have they stopped?" — used by the
 // Payment Status column. Prefers the explicit Comm End Date when set; if
 // the row doesn't have one, falls back to the most recent non-zero
@@ -655,6 +691,22 @@ function buildColumns(oppsCache, selectCol) {
       ...(isCurrency || isPercent ? { getSortValue: (row) => asNumber(row[k]) } : {}),
       render: (row) => {
         const v = row[k];
+        // Upcoming months of the current year, on deals whose commission
+        // runs through it, read as a greyed "-" (distinct from the "—" used
+        // for genuinely empty cells) so they're clearly "not paid yet"
+        // rather than a real $0 or missing data. Only overrides an empty or
+        // zero cell — a real value is never hidden.
+        if (isMonthCommissionKey(k) || isMonthRevenueKey(k)) {
+          const n0 = asNumber(v);
+          if ((v == null || v === '' || n0 === 0) && isPendingFutureMonth(row, monthIndexForKey(k))) {
+            return (
+              <span
+                title="Hasn’t happened yet — upcoming month for this commission year"
+                style={{ display: 'block', textAlign: 'left', color: '#94A3B8', background: '#F1F5F9', borderRadius: 3, fontVariantNumeric: 'tabular-nums' }}
+              >-</span>
+            );
+          }
+        }
         if (v == null || v === '') return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
         if (isCurrency) return <span style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>{fmtCurrency(v)}</span>;
         if (isPercent) return <span style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>{fmtPercent(v)}</span>;
