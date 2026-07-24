@@ -260,10 +260,24 @@ function paymentStatusFor(row) {
     }
     return { state: 'active', label: 'Active', title: `Comm End Date ${fmtDate(end)}` };
   }
+  // No Comm End Date. If there's no Comm Start Date either, the commission has
+  // no date window on file — so we never infer Active from monthly cells. An
+  // undated commission reads as unknown ("—", not Active and not asserted
+  // Stopped) until a Comm Start and/or End Date is entered.
+  const start = asDate(row?.['Comm Start Date']);
   let lastIdx = -1;
   for (let i = 0; i < COMMISSION_MONTH_NAMES.length; i++) {
     const n = asNumber(row?.[COMMISSION_MONTH_NAMES[i]]);
     if (n != null && n !== 0) lastIdx = i;
+  }
+  if (!start) {
+    return {
+      state: 'unknown',
+      label: '—',
+      title: lastIdx === -1
+        ? 'No Comm Start or End Date and no commission entries on file'
+        : `No Comm Start or End Date on file — not marked Active (most recent commission ${COMMISSION_MONTH_NAMES[lastIdx]})`,
+    };
   }
   if (lastIdx === -1) return { state: 'unknown', label: '—', title: 'No Comm End Date and no commission entries on file' };
   const todayMonthIdx = new Date().getMonth();
