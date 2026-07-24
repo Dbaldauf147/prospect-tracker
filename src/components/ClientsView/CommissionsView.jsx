@@ -299,24 +299,39 @@ function lastPaymentDate(row) {
   const endMid = end ? midnight(end) : null;
   const endPast = endMid && endMid.getTime() <= today.getTime();
 
-  let lastIdx = -1;
-  for (let i = 0; i < COMMISSION_MONTH_NAMES.length; i++) {
-    const n = asNumber(row?.[COMMISSION_MONTH_NAMES[i]]);
-    if (n != null && n !== 0) lastIdx = i;
-  }
+  // Day 0 of the following month is the last calendar day of this one.
+  const endOfMonth = (idx, year) => midnight(new Date(year, idx + 1, 0));
 
-  if (lastIdx !== -1) {
-    // Day 0 of the following month is the last calendar day of this one.
-    const endOfMonth = (year) => midnight(new Date(year, lastIdx + 1, 0));
+  // Resolve a single year-agnostic month cell to the actual calendar date it
+  // most likely represents. Kept per-month so the *most recent real date* can
+  // win below, rather than the highest month index: a contract that straddles
+  // a year boundary parks its recent months (Jan–Jun) at low indices and its
+  // older months (Oct–Dec) at high indices, so picking by index alone
+  // back-dates the result by a year.
+  const resolveMonth = (idx) => {
     if (endPast) {
-      let d = endOfMonth(endMid.getFullYear());
+      let d = endOfMonth(idx, endMid.getFullYear());
       if (d.getTime() > endMid.getTime()) d = endMid;                 // never past the close
       if (startMid && d.getTime() < startMid.getTime()) d = endMid;   // month predates the window → use the close
-      return { date: d, label: `${COMMISSION_MONTH_NAMES[lastIdx]} ${d.getFullYear()}`, source: 'ended' };
+      return { date: d, label: `${COMMISSION_MONTH_NAMES[idx]} ${d.getFullYear()}`, source: 'ended' };
     }
-    const year = lastIdx <= today.getMonth() ? today.getFullYear() : today.getFullYear() - 1;
-    return { date: endOfMonth(year), label: COMMISSION_MONTH_NAMES[lastIdx], source: 'month' };
+    // Open window: resolve to the month's most-recent occurrence at or before
+    // the current month (this year if it has already come round, else last).
+    const year = idx <= today.getMonth() ? today.getFullYear() : today.getFullYear() - 1;
+    return { date: endOfMonth(idx, year), label: COMMISSION_MONTH_NAMES[idx], source: 'month' };
+  };
+
+  // Among every non-zero month cell, keep the one whose resolved date is the
+  // most recent. Ties (e.g. several months clamped to a past Comm End Date)
+  // fall to the highest index via >=, matching the old "last cell wins" pick.
+  let best = null;
+  for (let i = 0; i < COMMISSION_MONTH_NAMES.length; i++) {
+    const n = asNumber(row?.[COMMISSION_MONTH_NAMES[i]]);
+    if (n == null || n === 0) continue;
+    const cand = resolveMonth(i);
+    if (!best || cand.date.getTime() >= best.date.getTime()) best = cand;
   }
+  if (best) return best;
 
   if (endPast) return { date: endMid, label: `Comm End Date ${fmtDate(end)}`, source: 'end' };
   if (startMid && startMid.getTime() <= today.getTime()) {
