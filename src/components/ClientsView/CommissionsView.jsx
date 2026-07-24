@@ -1434,6 +1434,12 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
             // the bottom (the comparator parks nulls there either direction).
             defaultSort={{ key: DAYS_SINCE_PAYMENT_KEY, direction: 'asc' }}
             emptyMessage={search ? `No rows match "${search}"` : 'No commissions to display'}
+            // Clean, human-readable name for the built-in Export Excel
+            // button. Without these the file falls back to the internal
+            // tableId ("commissions:Account Name|BFO Name|…"), which the
+            // filename sanitizer turns into a mangled dash-joined string.
+            exportFileName="Commissions"
+            exportPrimarySheetName="Commissions"
             enableColumnFilters
             rowStyle={(row) => row.__ignored ? { opacity: 0.45, background: '#F8FAFC', color: '#64748B' } : undefined}
             onFilteredRowsChange={onTableFilteredRowsChange}
