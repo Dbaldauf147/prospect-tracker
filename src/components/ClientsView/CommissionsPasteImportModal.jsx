@@ -269,7 +269,7 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.15rem 0.5rem' }}>
                 <span><strong style={{ color: importPreview.added.length > 0 ? '#166534' : '#64748B' }}>{importPreview.added.length}</strong> new {importPreview.added.length === 1 ? 'row' : 'rows'} will be added</span>
                 {importPreview.duplicates.length > 0 && (
-                  <span>· <strong style={{ color: '#92400E' }}>{importPreview.duplicates.length}</strong> duplicate {importPreview.duplicates.length === 1 ? 'row' : 'rows'} will merge into existing (not added again)</span>
+                  <span>· <strong style={{ color: '#92400E' }}>{importPreview.duplicates.length}</strong> duplicate {importPreview.duplicates.length === 1 ? 'row' : 'rows'} will merge into existing — new values update it, months it doesn’t include are kept (not added again)</span>
                 )}
                 {importPreview.skipped.length > 0 && (
                   <span>· <strong style={{ color: '#991B1B' }}>{importPreview.skipped.length} skipped</strong></span>
@@ -350,7 +350,7 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
               <button onClick={() => setStage('paste')} style={{ padding: '0.4rem 0.8rem', border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit' }}>← Back</button>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button onClick={onClose} style={{ padding: '0.4rem 0.8rem', border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
-                <button onClick={handleImport} disabled={mappedCount === 0 || importPreview.accepted.length === 0} title="New rows are added; duplicates are screened out by Project Name and merged into the existing row — the copy with more data filled in survives." style={{ padding: '0.4rem 0.9rem', border: 'none', borderRadius: 6, background: (mappedCount === 0 || importPreview.accepted.length === 0) ? '#94A3B8' : '#16A34A', color: '#fff', fontSize: '0.78rem', cursor: (mappedCount === 0 || importPreview.accepted.length === 0) ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>
+                <button onClick={handleImport} disabled={mappedCount === 0 || importPreview.accepted.length === 0} title="New rows are added; duplicates are screened out by Project Name and merged into the existing row cell by cell — each pasted value updates the row, and any months this paste doesn't include are kept." style={{ padding: '0.4rem 0.9rem', border: 'none', borderRadius: 6, background: (mappedCount === 0 || importPreview.accepted.length === 0) ? '#94A3B8' : '#16A34A', color: '#fff', fontSize: '0.78rem', cursor: (mappedCount === 0 || importPreview.accepted.length === 0) ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>
                   {importPreview.duplicates.length > 0
                     ? `Add ${importPreview.added.length} · merge ${importPreview.duplicates.length} →`
                     : `Import ${importPreview.added.length} row${importPreview.added.length === 1 ? '' : 's'} →`}

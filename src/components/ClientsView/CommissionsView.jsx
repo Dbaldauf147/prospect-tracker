@@ -94,11 +94,10 @@ const PAYMENT_STATUS_KEY = 'Payment Status';
 const DAYS_SINCE_PAYMENT_KEY = 'Days Since Last Payment';
 const LAST_PAYMENT_DATE_KEY = 'Last Payment Date';
 // Per-row "last updated" timestamp. Stored under a __-prefixed key so it
-// rides along on the row without counting as a data cell (countFilledCells
-// and the paste-dedup scoring both skip __-keys) and without ever showing
-// up as a pasteable/bulk-editable canonical column. Written as an ISO
-// string — asDate parses that directly, whereas a bare epoch number would
-// be misread as an Excel serial date.
+// rides along on the row (the paste merge carries __-keys over like any
+// other cell) without ever showing up as a pasteable/bulk-editable
+// canonical column. Written as an ISO string — asDate parses that directly,
+// whereas a bare epoch number would be misread as an Excel serial date.
 const UPDATED_AT_KEY = '__updatedAt';
 function nowStamp() { return new Date().toISOString(); }
 
@@ -124,16 +123,49 @@ function defaultWidth(k) {
   return 130;
 }
 
-// Sum every column on the row whose key matches `match`. Returns null
-// when the row has no matching cells at all — the renderer falls back
-// to a muted dash for that case so an empty roster row still reads as
-// "no data" instead of "$0.00".
-function sumMatchingCells(row, match) {
+// Fiscal-year awareness. The 12 month columns are plain calendar months
+// (January…December), but a commission runs on its own fiscal window —
+// Griffis, for instance, is 7/1/2025 → 6/30/2026, a July-through-June year
+// that straddles two calendar years. These helpers key off the row's Comm
+// Start / Comm End dates so the FY roll-ups reflect that window instead of
+// blindly summing whichever calendar cells happen to be populated.
+
+// The set of calendar-month indices (0 = January … 11 = December) that fall
+// inside a row's commission window. A window spanning 12+ months (the usual
+// full-year deal) covers every month, so we return null and let the caller
+// count them all. A shorter window (e.g. a single-month non-recurring deal)
+// returns just the months from the start month forward, wrapping across the
+// year boundary. Returns null when either date is missing or unparseable so
+// the FY total falls back to summing every populated month.
+function fiscalWindowMonths(row) {
+  const start = asDate(row?.['Comm Start Date']);
+  const end = asDate(row?.['Comm End Date']);
+  if (!start || !end) return null;
+  const s = new Date(start);
+  const e = new Date(end);
+  if (e.getTime() < s.getTime()) return null;
+  // Whole months spanned, inclusive of both endpoints' months.
+  const monthSpan = (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth()) + 1;
+  if (monthSpan >= 12) return null; // full fiscal year (or longer) → all months
+  const set = new Set();
+  for (let i = 0; i < monthSpan; i++) set.add((s.getMonth() + i) % 12);
+  return set;
+}
+
+// Fiscal-year roll-up: sum the monthly cells that fall inside the row's
+// commission window. `revenue` picks the "<Month> Revenue" columns; false
+// picks the "<Month>" commission columns. When the window can't be pinned
+// down (no / bad Comm dates) or spans a full year, every month counts —
+// matching the previous "sum all 12" behavior. Returns null when no
+// in-window month carries a value so the cell renders a muted dash.
+function sumFiscalMonths(row, revenue) {
+  const window = fiscalWindowMonths(row);
   let total = 0;
   let any = false;
-  for (const k of Object.keys(row || {})) {
-    if (!match(k)) continue;
-    const n = asNumber(row[k]);
+  for (let i = 0; i < COMMISSION_MONTH_NAMES.length; i++) {
+    if (window && !window.has(i)) continue;
+    const key = revenue ? `${COMMISSION_MONTH_NAMES[i]} Revenue` : COMMISSION_MONTH_NAMES[i];
+    const n = asNumber(row?.[key]);
     if (n == null) continue;
     total += n;
     any = true;
@@ -288,72 +320,57 @@ function plainTextRender(v) {
 // the paste preview and this merge classify duplicates identically — see
 // the import there.
 
-// How many "real" cells on this row carry a value. Used to pick the
-// surviving row when two rows share a project name — whichever copy has
-// more months / columns filled in beats the stale one.
-function countFilledCells(row) {
-  let n = 0;
-  for (const k of Object.keys(row || {})) {
-    if (k === 'id' || k.startsWith('__')) continue;
-    const v = row[k];
-    if (v == null) continue;
-    const s = String(v).trim();
-    if (s === '') continue;
-    n++;
-  }
-  return n;
-}
-
-// Columns the user fills in by hand on top of the pasted roster, or
-// that they can now paste in directly. The merge keeps a prior value
-// whenever the incoming paste leaves the cell blank — so re-pasting
-// refreshed commission data without an Account Name / BFO Name column
-// doesn't wipe out the mapping the user already built up. When the
-// incoming paste does provide a value, it wins.
-const USER_MAPPED_KEYS = [ACCOUNT_NAME_KEY, BFO_NAME_KEY, SCOPE_KEY];
-
 // Concatenate existing + newly-pasted commission rows and dedup by
 // normalized Project Name. Rows without a project name pass through
-// untouched (we have no key to group them by); for rows with one, the
-// copy with more filled cells survives. Newer (incoming) rows win ties
-// so a re-paste of an equally-filled row picks up any edits. The
-// user-mapped lookup columns (Account Name, BFO Name, Scope) are
-// always carried over from the existing row when there is one, since
-// the paste source never includes them.
+// untouched (we have no key to group them by).
+//
+// Rows that share a project name are merged CELL BY CELL rather than
+// picking one whole row and discarding the other. This matters because a
+// commission's fiscal year straddles two calendar years (Griffis runs
+// 7/1/2025 → 6/30/2026, so its revenue lands in July–December one paste and
+// January–June the next), and the 12 columns here are plain calendar
+// months. Under the old "whichever copy has more filled cells wins" rule,
+// re-pasting the second half either clobbered the first half's months or —
+// because the on-file row also carries the hand-added Account Name / BFO
+// Name / Scope — lost to the existing row and dropped the fresh figures
+// entirely. Unioning fills each month into its own calendar slot so the
+// full fiscal year assembles across successive snapshot pastes.
+//
+// Merge rule per cell: a non-blank incoming value wins (so a corrected
+// month or a freshly-pasted one updates in place); a blank incoming value
+// leaves the existing value alone (so months this snapshot didn't include —
+// and the user-mapped Account Name / BFO Name / Scope the paste never
+// carries — are preserved). The existing row seeds the base, so its
+// __ignored flag and any earlier months ride along untouched.
 export function mergeAndDedupCommissions(existing, incoming) {
+  const isBlank = (v) => v == null || String(v).trim() === '';
+  // Overlay `addition`'s non-blank cells onto `base`, returning a new row.
+  const unionInto = (base, addition) => {
+    const merged = { ...base };
+    for (const [k, v] of Object.entries(addition)) {
+      if (isBlank(v)) continue;
+      merged[k] = v;
+    }
+    return merged;
+  };
+
   const out = [];
-  const winnerByKey = new Map();
-  const existingByKey = new Map();
-  function consider(row, isIncoming) {
+  const order = [];               // keyed projects, in first-seen order
+  const mergedByKey = new Map();
+
+  const consider = (row) => {
     const key = normProjectName(row['Project Name']);
-    if (!key) { out.push(row); return; }
-    if (!isIncoming) existingByKey.set(key, row);
-    const score = countFilledCells(row);
-    const prev = winnerByKey.get(key);
-    if (!prev || score > prev.score || (score === prev.score && isIncoming)) {
-      winnerByKey.set(key, { row, score });
-    }
-  }
-  for (const r of (existing || [])) consider(r, false);
-  for (const r of (incoming || [])) consider(r, true);
-  for (const [key, { row }] of winnerByKey.entries()) {
-    const prior = existingByKey.get(key);
-    if (prior && prior !== row) {
-      const merged = { ...row };
-      for (const k of USER_MAPPED_KEYS) {
-        const incomingVal = row[k];
-        const incomingHas = incomingVal != null && String(incomingVal).trim() !== '';
-        if (incomingHas) continue;
-        const priorVal = prior[k];
-        if (priorVal != null && String(priorVal).trim() !== '') {
-          merged[k] = priorVal;
-        }
-      }
-      out.push(merged);
-    } else {
-      out.push(row);
-    }
-  }
+    if (!key) { out.push(row); return; }   // no key to group by → keep as-is
+    if (!mergedByKey.has(key)) { order.push(key); mergedByKey.set(key, {}); }
+    mergedByKey.set(key, unionInto(mergedByKey.get(key), row));
+  };
+
+  // Existing rows first so they seed the base (and their order leads the
+  // output); incoming rows overlay on top, brand-new projects appended.
+  for (const r of (existing || [])) consider(r);
+  for (const r of (incoming || [])) consider(r);
+
+  for (const key of order) out.push(mergedByKey.get(key));
   return out;
 }
 
@@ -577,21 +594,22 @@ function buildColumns(oppsCache, selectCol) {
     const isCurrency = CURRENCY_KEYS.has(k) || isMonthRevenueKey(k) || isFYRevenueKey(k) || isMonthCommissionKey(k);
     const isDate = DATE_KEYS.has(k);
     const isPercent = PERCENT_KEYS.has(k);
-    // FY Revenue is computed at render time from the 12 monthly revenue
-    // cells to its left — the user wants a live total, not whatever was
-    // pasted. Sort / export both follow the same computed number.
+    // FY Revenue is computed at render time from the monthly revenue cells
+    // that fall inside the row's commission window — the user wants a live
+    // total for the deal's fiscal year, not whatever was pasted. Sort /
+    // export both follow the same computed number.
     if (isFYRevenueKey(k)) {
       return {
         key: k,
         label: k,
         defaultWidth: defaultWidth(k),
-        getSortValue: (row) => sumMatchingCells(row, isMonthRevenueKey),
+        getSortValue: (row) => sumFiscalMonths(row, true),
         render: (row) => renderSumCell(
-          sumMatchingCells(row, isMonthRevenueKey),
+          sumFiscalMonths(row, true),
           'No monthly revenue entries on this row',
-          `Sum of the 12 monthly revenue cells across the year`,
+          `Sum of the monthly revenue cells across the commission's fiscal year`,
         ),
-        exportValue: (row) => sumMatchingCells(row, isMonthRevenueKey) ?? '',
+        exportValue: (row) => sumFiscalMonths(row, true) ?? '',
       };
     }
     return {
@@ -619,20 +637,21 @@ function buildColumns(oppsCache, selectCol) {
       },
     };
   });
-  // Mirror of the FY Revenue column, but summing the 12 monthly
-  // commission cells — sits at the tail of the table where the user
-  // wanted it. Followed by the derived Payment Status pill.
+  // Mirror of the FY Revenue column, but summing the monthly commission
+  // cells inside the commission's fiscal window — sits at the tail of the
+  // table where the user wanted it. Followed by the derived Payment Status
+  // pill.
   const fyCommissionCol = {
     key: FY_COMMISSION_KEY,
     label: FY_COMMISSION_KEY,
     defaultWidth: defaultWidth(FY_COMMISSION_KEY),
-    getSortValue: (row) => sumMatchingCells(row, isMonthCommissionKey),
+    getSortValue: (row) => sumFiscalMonths(row, false),
     render: (row) => renderSumCell(
-      sumMatchingCells(row, isMonthCommissionKey),
+      sumFiscalMonths(row, false),
       'No monthly commission entries on this row',
-      `Sum of the 12 monthly commission cells across the year`,
+      `Sum of the monthly commission cells across the commission's fiscal year`,
     ),
-    exportValue: (row) => sumMatchingCells(row, isMonthCommissionKey) ?? '',
+    exportValue: (row) => sumFiscalMonths(row, false) ?? '',
   };
   const paymentStatusCol = {
     key: PAYMENT_STATUS_KEY,
@@ -1161,20 +1180,20 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
 
   function handleImport(records) {
     setStore(prev => {
-      // Stamp every incoming row with "now" as its Last Updated time.
-      // Because the merge keeps each surviving row's own object, a row
-      // that's actually added or refreshed by this paste carries the
-      // fresh stamp, while an existing row that either wins the dedup or
-      // isn't touched at all keeps its prior stamp — so an unrelated row
-      // never looks freshly-updated just because a different row pasted.
+      // Stamp every incoming row with "now" as its Last Updated time. The
+      // merge overlays each incoming row's non-blank cells (including this
+      // stamp) onto the matching project, so a project the paste touches
+      // carries the fresh stamp while an existing project the paste doesn't
+      // mention keeps its prior stamp — an unrelated row never looks
+      // freshly-updated just because a different row pasted.
       const stamp = nowStamp();
       const stamped = (records || []).map(r => ({ ...r, [UPDATED_AT_KEY]: stamp }));
-      // Merge the freshly-pasted records into whatever's already on
-      // file, then dedup by Project Name so re-pasting a refreshed
-      // commission roster doesn't pile duplicate rows on top of the
-      // existing data. When two rows share a project name, the one
-      // with more filled cells (months / columns) wins — the user's
-      // expectation is that the more complete snapshot survives.
+      // Merge the freshly-pasted records into whatever's already on file,
+      // deduping by Project Name so re-pasting a refreshed roster doesn't
+      // pile duplicate rows on top of the existing data. Rows sharing a
+      // project name are unioned cell by cell (see mergeAndDedupCommissions)
+      // so a snapshot covering one half of the fiscal year fills its months
+      // without dropping the months an earlier snapshot already recorded.
       const merged = mergeAndDedupCommissions(prev.data || [], stamped);
       try { saveCommissionsOverride(merged); } catch (err) { console.warn('Save commissions failed', err); }
       return { data: merged, source: 'override' };
