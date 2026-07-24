@@ -689,29 +689,46 @@ function buildColumns(oppsCache, selectCol) {
       defaultWidth: defaultWidth(k),
       ...(isDate ? { getSortValue: (row) => { const d = asDate(row[k]); return d ? d.getTime() : null; } } : {}),
       ...(isCurrency || isPercent ? { getSortValue: (row) => asNumber(row[k]) } : {}),
+      // Every canonical column here is user-entered data (Name, Project
+      // Name, Comm dates, %, monthly revenue / commission), so make each
+      // one editable inline — double-click swaps to a text input that
+      // commits on Enter / blur, saving through the same updateCell path
+      // as the Account Name / BFO Name front columns. The derived columns
+      // (FY Revenue / Commission, Payment Status, etc.) are built
+      // separately and stay read-only. The display (non-editing) formatter
+      // closes over `row` so the "pending future month" greying below still
+      // works — it needs the row's commission window, not just the value.
       render: (row) => {
-        const v = row[k];
-        // Upcoming months of the current year, on deals whose commission
-        // runs through it, read as a greyed "-" (distinct from the "—" used
-        // for genuinely empty cells) so they're clearly "not paid yet"
-        // rather than a real $0 or missing data. Only overrides an empty or
-        // zero cell — a real value is never hidden.
-        if (isMonthCommissionKey(k) || isMonthRevenueKey(k)) {
-          const n0 = asNumber(v);
-          if ((v == null || v === '' || n0 === 0) && isPendingFutureMonth(row, monthIndexForKey(k))) {
-            return (
-              <span
-                title="Hasn’t happened yet — upcoming month for this commission year"
-                style={{ display: 'block', textAlign: 'left', color: '#94A3B8', background: '#F1F5F9', borderRadius: 3, fontVariantNumeric: 'tabular-nums' }}
-              >-</span>
-            );
+        const renderValue = (v) => {
+          // Upcoming months of the current year, on deals whose commission
+          // runs through it, read as a greyed "-" (distinct from the "—" used
+          // for genuinely empty cells) so they're clearly "not paid yet"
+          // rather than a real $0 or missing data. Only overrides an empty or
+          // zero cell — a real value is never hidden.
+          if (isMonthCommissionKey(k) || isMonthRevenueKey(k)) {
+            const n0 = asNumber(v);
+            if ((v == null || v === '' || n0 === 0) && isPendingFutureMonth(row, monthIndexForKey(k))) {
+              return (
+                <span
+                  title="Hasn’t happened yet — upcoming month for this commission year"
+                  style={{ display: 'block', textAlign: 'left', color: '#94A3B8', background: '#F1F5F9', borderRadius: 3, fontVariantNumeric: 'tabular-nums' }}
+                >-</span>
+              );
+            }
           }
-        }
-        if (v == null || v === '') return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
-        if (isCurrency) return <span style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>{fmtCurrency(v)}</span>;
-        if (isPercent) return <span style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>{fmtPercent(v)}</span>;
-        if (isDate) return <span style={{ color: '#334155' }}>{fmtDate(v)}</span>;
-        return <span>{String(v)}</span>;
+          if (v == null || v === '') return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+          if (isCurrency) return <span style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>{fmtCurrency(v)}</span>;
+          if (isPercent) return <span style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>{fmtPercent(v)}</span>;
+          if (isDate) return <span style={{ color: '#334155' }}>{fmtDate(v)}</span>;
+          return <span>{String(v)}</span>;
+        };
+        return (
+          <EditableCell
+            value={row[k]}
+            render={renderValue}
+            onSave={(v) => row.__onUpdate?.(row.id, k, v)}
+          />
+        );
       },
       exportValue: (row) => {
         const v = row[k];
