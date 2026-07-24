@@ -116,9 +116,14 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
   });
 
   const NCOLS = 8;
+  // Widened from the original tight set (26/14/16/14…) so the KPI tiles,
+  // tables and charts spread across the sheet instead of crowding into the
+  // left third. Chart images below anchor to whole columns (see the *_COLS
+  // arrays) and are sized to the resulting gaps, so they stay non-overlapping
+  // against these widths.
   ws.columns = [
-    { width: 26 }, { width: 14 }, { width: 16 }, { width: 14 },
-    { width: 14 }, { width: 14 }, { width: 14 }, { width: 14 },
+    { width: 30 }, { width: 24 }, { width: 24 }, { width: 24 },
+    { width: 24 }, { width: 24 }, { width: 24 }, { width: 24 },
   ];
 
   const matched = results.filter(r => r.matched);
@@ -142,7 +147,7 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
   try {
     const logo = schneiderLogoPngDataUrl({ onDark: true, width: 190 });
     const id = wb.addImage({ base64: logo.dataUrl, extension: 'png' });
-    ws.addImage(id, { tl: { col: NCOLS - 2.02, row: r - 1 + 0.16 }, ext: { width: logo.width, height: logo.height } });
+    ws.addImage(id, { tl: { col: 6, row: r - 1 + 0.16 }, ext: { width: logo.width, height: logo.height } });
   } catch { /* canvas unavailable — skip logo */ }
   r += 1;
 
@@ -223,12 +228,15 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
   sectionTitle('Total Eligible Sites by Requirement');
   const imgTopRow = r - 1; // 0-indexed anchor
   let maxRows = 0;
+  // Spread the three category charts across the full width — anchored at
+  // columns A, D and G so the row fills the sheet instead of the left third.
+  const EL_COLS = [0, 3, 6];
   CATEGORIES.forEach((c, i) => {
     const png = drawHBarsPng(
       eligibilityByOrdinance(results, c).map(x => ({ label: x.government, value: x.count })),
-      { color: CATEGORY_COLOR[c], title: `${CATEGORY_LABEL[c]} — ${totalEligible(results, c)} eligible`, width: 300, labelW: 118 }
+      { color: CATEGORY_COLOR[c], title: `${CATEGORY_LABEL[c]} — ${totalEligible(results, c)} eligible`, width: 330, labelW: 132 }
     );
-    const used = placeImage(ws, wb, png, { col: i * 2.66, row: imgTopRow, maxW: 300 });
+    const used = placeImage(ws, wb, png, { col: EL_COLS[i] ?? i * 3, row: imgTopRow, maxW: 330 });
     maxRows = Math.max(maxRows, used);
   });
   r += maxRows + 1;
@@ -280,10 +288,11 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
   // --- Section: Utility feeds (images) ---
   sectionTitle('Eligibility per Data Stream for Utility Feeds');
   const feedTop = r - 1;
-  const epPng = drawHBarsPng(utilityFeedEligibility(results, 'electric').rows.map(x => ({ label: x.utility, value: x.count })), { color: '#F2B705', title: 'Electric Power (EP)', width: 400, labelW: 150 });
-  const ngPng = drawHBarsPng(utilityFeedEligibility(results, 'gas').rows.map(x => ({ label: x.utility, value: x.count })), { color: '#B5179E', title: 'Natural Gas (NG)', width: 400, labelW: 150 });
-  const u1 = placeImage(ws, wb, epPng, { col: 0, row: feedTop, maxW: 400 });
-  const u2 = placeImage(ws, wb, ngPng, { col: 4, row: feedTop, maxW: 400 });
+  // Two feed charts, each ~half the sheet: anchored at columns A and E.
+  const epPng = drawHBarsPng(utilityFeedEligibility(results, 'electric').rows.map(x => ({ label: x.utility, value: x.count })), { color: '#F2B705', title: 'Electric Power (EP)', width: 660, labelW: 200 });
+  const ngPng = drawHBarsPng(utilityFeedEligibility(results, 'gas').rows.map(x => ({ label: x.utility, value: x.count })), { color: '#B5179E', title: 'Natural Gas (NG)', width: 660, labelW: 200 });
+  const u1 = placeImage(ws, wb, epPng, { col: 0, row: feedTop, maxW: 660 });
+  const u2 = placeImage(ws, wb, ngPng, { col: 4, row: feedTop, maxW: 660 });
   r += Math.max(u1, u2) + 1;
 
   // Footer.
