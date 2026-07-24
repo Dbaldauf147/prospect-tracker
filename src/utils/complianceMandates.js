@@ -36,15 +36,32 @@ function ordIndex(ordinances) {
   return m;
 }
 
+// Common member-city / alias → the jurisdiction city named in the ordinances,
+// so a site whose city is a borough (or a covered municipality) still resolves
+// to the governing jurisdiction. This is a curated stopgap for the derived
+// City Lookup — the real City Lookup tab would carry these mappings directly.
+export const CITY_ALIASES = {
+  // New York City boroughs all fall under the NYC ordinances.
+  brooklyn: 'New York', bronx: 'New York', queens: 'New York',
+  statenisland: 'New York', manhattan: 'New York',
+  newyorkcity: 'New York', nyc: 'New York',
+};
+
 // Resolve a city + state to a Government ID. Tries city+state (state may be an
-// abbreviation or full name — the lookup carries both) then city-only.
+// abbreviation or full name — the lookup carries both) then city-only, then
+// the same via a known alias (e.g. Brooklyn → New York).
 export function lookupGovId(city, state, cityLookup = CITY_LOOKUP) {
   const c = String(city || '').trim();
   const s = String(state || '').trim();
   if (!c) return null;
-  const candidates = [normKey(c + s), normKey(c)];
-  for (const k of candidates) if (cityLookup[k] != null) return cityLookup[k];
-  return null;
+  const tryCity = (name) => {
+    for (const k of [normKey(name + s), normKey(name)]) if (cityLookup[k] != null) return cityLookup[k];
+    return null;
+  };
+  const direct = tryCity(c);
+  if (direct != null) return direct;
+  const alias = CITY_ALIASES[normKey(c)];
+  return alias ? tryCity(alias) : null;
 }
 
 export function getMandates(govId, ordinances = MASTER_ORDINANCES) {
@@ -94,15 +111,17 @@ function evalCategory(category, mandate, site) {
   const ptClass = classifyPropertyType(site.propertyType);
   const threshold = thresholdFor(category, mandate, ptClass);
   const sqft = Number.isFinite(site.sqft) ? site.sqft : null;
-  let eligible;
-  if (sqft == null || threshold == null) eligible = null;      // can't decide
-  else eligible = sqft >= threshold;                            // threshold 0 => any size
+  // Applicability follows the active ordinance ONLY — the ft² threshold is
+  // reported as a requirement but does not gate applicability. `meetsThreshold`
+  // is kept purely as informational context (true/false/null-unknown).
+  const meetsThreshold = (sqft == null || threshold == null) ? null : sqft >= threshold;
   return {
     category,
     applicable: true,
     active: true,
-    eligible,
+    eligible: true,          // active ordinance => applicable, regardless of size
     threshold,
+    meetsThreshold,
     ptClass,
     deadline: cat.deadline || null,
     deadlineRaw: cat.deadlineRaw || null,

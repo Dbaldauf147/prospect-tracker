@@ -37,15 +37,20 @@ function HBars({ items, color, fmt = String }) {
 // with the deadline + penalty in a tooltip.
 function CatCell({ res }) {
   if (!res || !res.active) return <span className={styles.dash}>—</span>;
+  // Applicability follows the active ordinance; the ft² threshold is shown as
+  // a listed requirement (with whether the building meets it), not a gate.
+  const thr = res.threshold != null
+    ? `Size requirement ${res.threshold.toLocaleString()} ft²`
+      + (res.meetsThreshold === true ? ' — building meets it'
+        : res.meetsThreshold === false ? ' — building below (still applicable)' : '')
+    : null;
   const tip = [
     res.policyName,
     res.deadline ? `Deadline ${mdY(res.deadline)}` : (res.deadlineRaw ? `Deadline ${res.deadlineRaw}` : null),
-    res.threshold != null ? `Threshold ${res.threshold.toLocaleString()} ft²` : null,
+    thr,
     res.penalty != null ? `Max penalty ${usd(res.penalty)}/yr` : null,
   ].filter(Boolean).join(' · ');
-  if (res.eligible === true) return <span className={styles.pillEligible} title={tip}>Eligible</span>;
-  if (res.eligible === false) return <span className={styles.pillBelow} title={tip}>Below threshold</span>;
-  return <span className={styles.pillUnknown} title={tip}>Active — size?</span>;
+  return <span className={styles.pillEligible} title={tip}>Applicable</span>;
 }
 
 // Screens the Utility Lookup site list against the two-tab compliance
@@ -99,30 +104,56 @@ export function BuildingComplianceScreening({ sites = [] }) {
     XLSX.utils.book_append_sheet(wb, ws, 'Master Ordinances Database');
     XLSX.writeFile(wb, 'Master-Ordinances-Database.xlsx');
   }
-  // Branded applicability report (opens in a new tab; print / Save as PDF).
-  function exportReport() {
-    const html = buildComplianceReportHtml(results, { generatedAt: new Date().toLocaleString(), siteCount: results.length });
-    const w = window.open('', '_blank');
-    if (!w) { alert('Please allow pop-ups to open the report, then try again.'); return; }
-    w.document.open(); w.document.write(html); w.document.close();
-  }
-  // Per-site results as a flat Excel.
-  function exportSiteData() {
-    const data = filtered.map(r => {
-      const row = { Site: r.siteName, City: r.city, State: r.state, 'Government': r.government || '', 'Government ID': r.govId || '', 'Sq Ft': r.sqft ?? '' };
+  // Raw-data workbook that accompanies the PDF: a per-site screening sheet
+  // (with the ft² threshold listed as a requirement, plus whether the building
+  // meets it — informational, not a gate) and the full raw rows for every
+  // matched jurisdiction.
+  function writeRawWorkbook(rowsToExport, filename) {
+    const siteRows = rowsToExport.map(r => {
+      const row = {
+        Site: r.siteName, City: r.city, State: r.state,
+        Jurisdiction: r.government || '', 'Government ID': r.govId || '',
+        'Sq Ft': r.sqft ?? '', 'Property Type': r.propertyType || '',
+      };
       for (const c of CATEGORIES) {
         const e = r[c];
-        row[`${CATEGORY_LABEL[c]} Eligible`] = !e?.active ? '' : e.eligible === true ? 'Yes' : e.eligible === false ? 'No' : 'Unknown';
-        row[`${CATEGORY_LABEL[c]} Deadline`] = e?.deadline ? mdY(e.deadline) : '';
-        row[`${CATEGORY_LABEL[c]} Max Penalty`] = e?.penalty ?? '';
+        row[`${CATEGORY_LABEL[c]} Applicable`] = e?.active ? 'Yes' : 'No';
+        row[`${CATEGORY_LABEL[c]} Policy`] = e?.policyName || '';
+        row[`${CATEGORY_LABEL[c]} Deadline`] = e?.deadline ? mdY(e.deadline) : (e?.deadlineRaw || '');
+        row[`${CATEGORY_LABEL[c]} Size Requirement (ft²)`] = e?.threshold ?? '';
+        row[`${CATEGORY_LABEL[c]} Meets Requirement`] = !e?.active ? '' : e.meetsThreshold === true ? 'Yes' : e.meetsThreshold === false ? 'No' : 'Unknown';
+        row[`${CATEGORY_LABEL[c]} Max Yearly Penalty`] = e?.penalty ?? '';
       }
       return row;
     });
-    if (!data.length) { alert('No site results to export.'); return; }
-    const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Site Compliance');
-    XLSX.writeFile(wb, 'Building-Compliance-Screening.xlsx');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(siteRows), 'Site Screening');
+    // Matched-jurisdiction raw rows (one per Government ID).
+    const seen = new Set();
+    const ordRows = [];
+    for (const r of rowsToExport) {
+      if (!r.matched || seen.has(r.govId)) continue;
+      seen.add(r.govId);
+      const g = getMandates(r.govId);
+      if (g?.raw) ordRows.push(g.raw);
+    }
+    if (ordRows.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ordRows), 'Matched Ordinances');
+    XLSX.writeFile(wb, filename);
+  }
+
+  // Export the deliverable: the branded PDF-ready report (new tab; print /
+  // Save as PDF) AND the accompanying raw-data Excel.
+  function exportReport() {
+    const html = buildComplianceReportHtml(results, { generatedAt: new Date().toLocaleString(), siteCount: results.length });
+    const w = window.open('', '_blank');
+    if (w) { w.document.open(); w.document.write(html); w.document.close(); }
+    else alert('Allow pop-ups to open the printable report. The raw-data Excel will still download.');
+    writeRawWorkbook(results, 'Building-Compliance-Screening-Data.xlsx');
+  }
+  // The filtered on-page view as an Excel (no report).
+  function exportSiteData() {
+    if (!filtered.length) { alert('No site results to export.'); return; }
+    writeRawWorkbook(filtered, 'Building-Compliance-Screening.xlsx');
   }
 
   return (
@@ -139,7 +170,7 @@ export function BuildingComplianceScreening({ sites = [] }) {
         <div className={styles.actions}>
           <button type="button" className={styles.btn} onClick={downloadCityLookup} title="Download the City Lookup table (city + state → Government ID)">City Lookup</button>
           <button type="button" className={styles.btn} onClick={downloadMasterOrdinances} title="Download the Master Ordinances Database (Government ID → BBS/Audits/BPS)">Master Ordinances</button>
-          <button type="button" className={styles.btnPrimary} onClick={exportReport} title="Open the branded applicability report — print or Save as PDF">Export report</button>
+          <button type="button" className={styles.btnPrimary} onClick={exportReport} title="Open the branded report (print / Save as PDF) and download the accompanying raw-data Excel">Export report + data</button>
         </div>
       </div>
 
@@ -165,7 +196,7 @@ export function BuildingComplianceScreening({ sites = [] }) {
                 <div key={c} className={styles.dashCard}>
                   <div className={styles.dashHead} style={{ background: CATEGORY_COLOR[c] }}>{CATEGORY_LABEL[c]} Eligibility</div>
                   <div className={styles.dashKpis}>
-                    <div><div className={styles.kpiNum} style={{ color: CATEGORY_COLOR[c] }}>{totalEligible(results, c)}</div><div className={styles.kpiLbl}>eligible sites</div></div>
+                    <div><div className={styles.kpiNum} style={{ color: CATEGORY_COLOR[c] }}>{totalEligible(results, c)}</div><div className={styles.kpiLbl}>applicable sites</div></div>
                     <div><div className={styles.kpiNum} style={{ color: CATEGORY_COLOR[c] }}>{usd(totalPenalty(results, c))}</div><div className={styles.kpiLbl}>max yearly penalty</div></div>
                   </div>
                   <HBars items={eligibilityByOrdinance(results, c).slice(0, 8).map(x => ({ label: x.government, value: x.count }))} color={CATEGORY_COLOR[c]} />
@@ -177,10 +208,10 @@ export function BuildingComplianceScreening({ sites = [] }) {
               <input className={styles.searchInput} type="text" placeholder="Search sites, cities, jurisdictions…" value={siteSearch} onChange={e => setSiteSearch(e.target.value)} />
               <label className={styles.checkLabel}>
                 <input type="checkbox" checked={onlyEligible} onChange={e => setOnlyEligible(e.target.checked)} />
-                Only eligible sites
+                Only sites with a mandate
               </label>
               <span className={styles.siteStat}>
-                <strong>{anyEligibleCount}</strong> eligible · {matchedCount} matched a jurisdiction · {results.length} total
+                <strong>{anyEligibleCount}</strong> with a mandate · {matchedCount} matched a jurisdiction · {results.length} total
               </span>
               <button type="button" className={styles.btn} onClick={exportSiteData} disabled={!filtered.length}>Export site data</button>
             </div>
@@ -189,7 +220,7 @@ export function BuildingComplianceScreening({ sites = [] }) {
               <table className={styles.siteTable}>
                 <thead>
                   <tr>
-                    <th>Site</th><th>City</th><th>State</th><th>Jurisdiction</th><th>Sq Ft</th>
+                    <th>Site</th><th>City</th><th>State</th><th>Jurisdiction</th><th>Gov ID</th><th>Sq Ft</th>
                     <th>BBS</th><th>Energy Audits</th><th>BPS</th>
                   </tr>
                 </thead>
@@ -200,6 +231,7 @@ export function BuildingComplianceScreening({ sites = [] }) {
                       <td>{r.city || <span className={styles.dash}>—</span>}</td>
                       <td>{r.state || <span className={styles.dash}>—</span>}</td>
                       <td>{r.matched ? r.government : <span className={styles.dash}>no match</span>}</td>
+                      <td>{r.govId ? <span className={styles.govIdCell}>{r.govId}</span> : <span className={styles.dash}>—</span>}</td>
                       <td>{r.sqft != null ? r.sqft.toLocaleString() : <span className={styles.dash}>—</span>}</td>
                       <td><CatCell res={r.bbs} /></td>
                       <td><CatCell res={r.audits} /></td>
@@ -207,7 +239,7 @@ export function BuildingComplianceScreening({ sites = [] }) {
                     </tr>
                   ))}
                   {filtered.length === 0 && (
-                    <tr><td colSpan={8} className={styles.emptyRow}>No sites match the current filters.</td></tr>
+                    <tr><td colSpan={9} className={styles.emptyRow}>No sites match the current filters.</td></tr>
                   )}
                 </tbody>
               </table>
