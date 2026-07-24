@@ -108,6 +108,13 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
   const [rawRows, setRawRows] = useState([]);
   const [mapping, setMapping] = useState({});
   const [parseError, setParseError] = useState('');
+  // How to reconcile a pasted project that already exists on file:
+  //  - 'merge' (default): union months cell by cell, keeping months this
+  //    paste doesn't include.
+  //  - 'replace': clear the existing row's months first, so only this
+  //    paste's months survive (a clean per-project reset that still keeps
+  //    the row's Account Name / BFO Name / Scope).
+  const [dupeMode, setDupeMode] = useState('merge');
 
   function handleNext() {
     setParseError('');
@@ -198,7 +205,7 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
       setParseError('Nothing to import — every pasted row was either blank or missing a Project Name.');
       return;
     }
-    onImport(accepted);
+    onImport(accepted, { replaceMonths: dupeMode === 'replace' });
   }
 
   const mappedCount = useMemo(
@@ -269,7 +276,9 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.15rem 0.5rem' }}>
                 <span><strong style={{ color: importPreview.added.length > 0 ? '#166534' : '#64748B' }}>{importPreview.added.length}</strong> new {importPreview.added.length === 1 ? 'row' : 'rows'} will be added</span>
                 {importPreview.duplicates.length > 0 && (
-                  <span>· <strong style={{ color: '#92400E' }}>{importPreview.duplicates.length}</strong> duplicate {importPreview.duplicates.length === 1 ? 'row' : 'rows'} will merge into existing — new values update it, months it doesn’t include are kept (not added again)</span>
+                  <span>· <strong style={{ color: '#92400E' }}>{importPreview.duplicates.length}</strong> duplicate {importPreview.duplicates.length === 1 ? 'row' : 'rows'} {dupeMode === 'replace'
+                    ? 'will replace the existing row’s months — months not in this paste are cleared (Account Name / BFO Name / Scope kept)'
+                    : 'will merge into existing — new values update it, months it doesn’t include are kept'} (not added again)</span>
                 )}
                 {importPreview.skipped.length > 0 && (
                   <span>· <strong style={{ color: '#991B1B' }}>{importPreview.skipped.length} skipped</strong></span>
@@ -303,6 +312,22 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
                 </ul>
               )}
             </div>
+            {/* How to reconcile projects that already exist on file. Only
+                relevant when the paste actually hits a duplicate, so it's
+                hidden otherwise to keep the common "all new rows" case clean. */}
+            {importPreview.duplicates.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '0.25rem 1rem', padding: '0.4rem 0.6rem', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.72rem', color: '#334155' }}>
+                <span style={{ fontWeight: 600, alignSelf: 'center' }}>When a project already exists:</span>
+                <label style={{ display: 'inline-flex', alignItems: 'flex-start', gap: '0.3rem', cursor: 'pointer', maxWidth: 340 }} title="Fill in the months from this paste and keep any months an earlier paste already recorded (best for pasting one half of the fiscal year at a time).">
+                  <input type="radio" name="commissions-dupe-mode" checked={dupeMode === 'merge'} onChange={() => setDupeMode('merge')} style={{ marginTop: 2, cursor: 'pointer' }} />
+                  <span><strong>Merge months</strong> — keep months this paste doesn’t include</span>
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'flex-start', gap: '0.3rem', cursor: 'pointer', maxWidth: 360 }} title="Clear the existing row's months first, then fill in only the months from this paste. Account Name / BFO Name / Scope are kept. Use this to reset a project whose earlier months were wrong.">
+                  <input type="radio" name="commissions-dupe-mode" checked={dupeMode === 'replace'} onChange={() => setDupeMode('replace')} style={{ marginTop: 2, cursor: 'pointer' }} />
+                  <span><strong>Replace months</strong> — clear existing months, use only this paste</span>
+                </label>
+              </div>
+            )}
             <div style={{ overflow: 'auto', border: '1px solid #E2E8F0', borderRadius: 6, flex: 1, minHeight: 0 }}>
               <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.72rem' }}>
                 <thead style={{ background: '#F1F5F9', position: 'sticky', top: 0, zIndex: 1 }}>
@@ -350,9 +375,11 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
               <button onClick={() => setStage('paste')} style={{ padding: '0.4rem 0.8rem', border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit' }}>← Back</button>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button onClick={onClose} style={{ padding: '0.4rem 0.8rem', border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
-                <button onClick={handleImport} disabled={mappedCount === 0 || importPreview.accepted.length === 0} title="New rows are added; duplicates are screened out by Project Name and merged into the existing row cell by cell — each pasted value updates the row, and any months this paste doesn't include are kept." style={{ padding: '0.4rem 0.9rem', border: 'none', borderRadius: 6, background: (mappedCount === 0 || importPreview.accepted.length === 0) ? '#94A3B8' : '#16A34A', color: '#fff', fontSize: '0.78rem', cursor: (mappedCount === 0 || importPreview.accepted.length === 0) ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>
+                <button onClick={handleImport} disabled={mappedCount === 0 || importPreview.accepted.length === 0} title={dupeMode === 'replace'
+                  ? "New rows are added; duplicates are matched by Project Name and their existing months are cleared, then repopulated from only this paste (Account Name / BFO Name / Scope kept)."
+                  : "New rows are added; duplicates are matched by Project Name and merged into the existing row cell by cell — each pasted value updates the row, and any months this paste doesn't include are kept."} style={{ padding: '0.4rem 0.9rem', border: 'none', borderRadius: 6, background: (mappedCount === 0 || importPreview.accepted.length === 0) ? '#94A3B8' : '#16A34A', color: '#fff', fontSize: '0.78rem', cursor: (mappedCount === 0 || importPreview.accepted.length === 0) ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>
                   {importPreview.duplicates.length > 0
-                    ? `Add ${importPreview.added.length} · merge ${importPreview.duplicates.length} →`
+                    ? `Add ${importPreview.added.length} · ${dupeMode === 'replace' ? 'replace' : 'merge'} ${importPreview.duplicates.length} →`
                     : `Import ${importPreview.added.length} row${importPreview.added.length === 1 ? '' : 's'} →`}
                 </button>
               </div>
