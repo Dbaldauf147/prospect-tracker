@@ -411,6 +411,13 @@ export function mergeAndDedupCommissions(existing, incoming, { replaceMonths = f
   const existingByKey = new Map();
   const incomingByKey = new Map();
   const noteKey = (key) => { if (!existingByKey.has(key) && !incomingByKey.has(key)) order.push(key); };
+  // Rows that repeat a Project Name *within this single paste*. The first
+  // copy of a project merges/updates the on-file row as usual; a genuine
+  // second copy in the same paste is two distinct deals that happen to share
+  // a name, so it's kept as its own row (appended below) instead of being
+  // unioned away. The table flags these live so they read differently — see
+  // duplicateIdsFrom / rowStyle in CommissionsView.
+  const pasteDuplicates = [];
 
   // Existing rows seed the base (and lead the output order); incoming rows
   // are gathered separately so a "replace months" import can wipe the base's
@@ -424,8 +431,14 @@ export function mergeAndDedupCommissions(existing, incoming, { replaceMonths = f
   for (const row of (incoming || [])) {
     const key = normProjectName(row['Project Name']);
     if (!key) { out.push(row); continue; }
+    if (incomingByKey.has(key)) {
+      // Second (or later) occurrence of this project in the same paste →
+      // preserve it as a separate row rather than collapsing the two.
+      pasteDuplicates.push({ ...row });
+      continue;
+    }
     noteKey(key);
-    incomingByKey.set(key, unionInto(incomingByKey.get(key) || {}, row));
+    incomingByKey.set(key, unionInto({}, row));
   }
 
   for (const key of order) {
@@ -442,7 +455,27 @@ export function mergeAndDedupCommissions(existing, incoming, { replaceMonths = f
     }
     out.push(unionInto(seed, add));
   }
+  // Append the genuine within-paste duplicates last so they land right after
+  // the roster they duplicate.
+  out.push(...pasteDuplicates);
   return out;
+}
+
+// Indices of rows that duplicate an earlier row's Project Name, computed off
+// the underlying data order so the flag is stable regardless of how the table
+// is sorted. The first occurrence of a name is the "original" (never flagged);
+// every later row that repeats it is the duplicate. Blank Project Names are
+// never flagged — there's no name to collide on.
+function duplicateIdsFrom(data) {
+  const seen = new Set();
+  const dupes = new Set();
+  for (let i = 0; i < (data?.length || 0); i++) {
+    const key = normProjectName(data[i]?.['Project Name']);
+    if (!key) continue;
+    if (seen.has(key)) dupes.add(i);
+    else seen.add(key);
+  }
+  return dupes;
 }
 
 // Build the three lookup columns the user adds in front of the imported
@@ -943,6 +976,9 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
   // two "show only" filters are mutually exclusive (a row can't be in both
   // sets), so turning one on clears the other.
   const [showOnlyMissingBfo, setShowOnlyMissingBfo] = useState(false);
+  // Same idea, for the "duplicate Project Name" flag. Mutually exclusive with
+  // the other two "show only" filters.
+  const [showOnlyDuplicates, setShowOnlyDuplicates] = useState(false);
   // "Active only" filter: keep just the rows whose Payment Status is still
   // Active (commissions currently paying out), hiding Stopped / unknown rows.
   const [showActiveOnly, setShowActiveOnly] = useState(false);
@@ -1182,6 +1218,11 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     });
   }
 
+  // Rows that repeat an earlier row's Project Name. Recomputed live off the
+  // data so it self-heals: rename one of the pair (or delete it) and the
+  // flag clears on its own. Drives the duplicate banner and the row styling.
+  const duplicateIds = useMemo(() => duplicateIdsFrom(data), [data]);
+
   const rows = useMemo(
     () => data.map((r, i) => ({
       ...r,
@@ -1191,8 +1232,9 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
       __onToggleIgnore: toggleIgnored,
       __isSelected: selectedIds.has(i),
       __onToggleSelect: toggleSelect,
+      __isDuplicate: duplicateIds.has(i),
     })),
-    [data, selectedIds]
+    [data, selectedIds, duplicateIds]
   );
 
   // Count of project rows missing an Account Name (and not ignored) —
@@ -1223,6 +1265,14 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     if (missingBfoCount === 0 && showOnlyMissingBfo) setShowOnlyMissingBfo(false);
   }, [missingBfoCount, showOnlyMissingBfo]);
 
+  // How many rows duplicate an earlier row's Project Name — drives the
+  // duplicate banner. Straight off duplicateIds so it tracks the live flag.
+  const duplicateCount = duplicateIds.size;
+
+  useEffect(() => {
+    if (duplicateCount === 0 && showOnlyDuplicates) setShowOnlyDuplicates(false);
+  }, [duplicateCount, showOnlyDuplicates]);
+
   const activeCount = useMemo(
     () => rows.reduce((n, r) => n + (paymentStatusFor(r).state === 'active' ? 1 : 0), 0),
     [rows],
@@ -1241,11 +1291,12 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     if (subtab === 'activelyPaid') base = base.filter(r => paidWithinLastMonths(r));
     if (showOnlyMissing) base = base.filter(isMissingAccountName);
     else if (showOnlyMissingBfo) base = base.filter(isMissingBfoName);
+    else if (showOnlyDuplicates) base = base.filter(r => r.__isDuplicate);
     if (showActiveOnly) base = base.filter(r => paymentStatusFor(r).state === 'active');
     if (!search.trim()) return base;
     const term = search.toLowerCase();
     return base.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(term)));
-  }, [rows, search, subtab, showOnlyMissing, showOnlyMissingBfo, showActiveOnly]);
+  }, [rows, search, subtab, showOnlyMissing, showOnlyMissingBfo, showOnlyDuplicates, showActiveOnly]);
 
   // Bulk mutations operate on the full underlying data array; row ids
   // are indices into that array, so we just rebuild it once. After
@@ -1498,7 +1549,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           <span style={{ flex: 1 }} />
           <button
             type="button"
-            onClick={() => { setShowOnlyMissing(v => !v); setShowOnlyMissingBfo(false); }}
+            onClick={() => { setShowOnlyMissing(v => !v); setShowOnlyMissingBfo(false); setShowOnlyDuplicates(false); }}
             title={showOnlyMissing ? 'Show every commission row again' : 'Filter the table down to just the flagged rows'}
             style={{ padding: '0.3rem 0.7rem', border: '1px solid #D97706', borderRadius: 4, background: showOnlyMissing ? '#D97706' : '#fff', color: showOnlyMissing ? '#fff' : '#92400E', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
           >{showOnlyMissing ? 'Show all rows' : 'Show only these'}</button>
@@ -1523,10 +1574,35 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           <span style={{ flex: 1 }} />
           <button
             type="button"
-            onClick={() => { setShowOnlyMissingBfo(v => !v); setShowOnlyMissing(false); }}
+            onClick={() => { setShowOnlyMissingBfo(v => !v); setShowOnlyMissing(false); setShowOnlyDuplicates(false); }}
             title={showOnlyMissingBfo ? 'Show every commission row again' : 'Filter the table down to just the flagged rows'}
             style={{ padding: '0.3rem 0.7rem', border: '1px solid #EA580C', borderRadius: 4, background: showOnlyMissingBfo ? '#EA580C' : '#fff', color: showOnlyMissingBfo ? '#fff' : '#9A3412', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
           >{showOnlyMissingBfo ? 'Show all rows' : 'Show only these'}</button>
+        </div>
+      )}
+
+      {duplicateCount > 0 && (
+        <div
+          role="alert"
+          style={{
+            margin: '0 1.25rem 0.5rem', padding: '0.5rem 0.75rem',
+            background: '#FDF4FF', border: '1px solid #E9A5F1', borderRadius: 6,
+            display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap',
+            fontSize: '0.75rem', color: '#86198F',
+          }}
+        >
+          <span aria-hidden="true" style={{ fontSize: '0.9rem' }}>⧉</span>
+          <span>
+            <strong>{duplicateCount}</strong> row{duplicateCount === 1 ? '' : 's'} {duplicateCount === 1 ? 'shares' : 'share'} a <strong>Project Name</strong> with another row — imported and kept as {duplicateCount === 1 ? 'a separate row' : 'separate rows'}, not merged.
+          </span>
+          <span style={{ color: '#A21CAF' }}>Edit the Project Name, or delete the row, if it isn’t really a distinct deal.</span>
+          <span style={{ flex: 1 }} />
+          <button
+            type="button"
+            onClick={() => { setShowOnlyDuplicates(v => !v); setShowOnlyMissing(false); setShowOnlyMissingBfo(false); }}
+            title={showOnlyDuplicates ? 'Show every commission row again' : 'Filter the table down to just the duplicate rows'}
+            style={{ padding: '0.3rem 0.7rem', border: '1px solid #C026D3', borderRadius: 4, background: showOnlyDuplicates ? '#C026D3' : '#fff', color: showOnlyDuplicates ? '#fff' : '#86198F', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+          >{showOnlyDuplicates ? 'Show all rows' : 'Show only these'}</button>
         </div>
       )}
 
@@ -1566,7 +1642,14 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
             exportFileName="Commissions"
             exportPrimarySheetName="Commissions"
             enableColumnFilters
-            rowStyle={(row) => row.__ignored ? { opacity: 0.45, background: '#F8FAFC', color: '#64748B' } : undefined}
+            // Ignored rows grey out (wins if a row is both). A duplicate
+            // Project Name gets a fuchsia tint + left accent so it reads as
+            // "flagged, still here" rather than an error.
+            rowStyle={(row) => row.__ignored
+              ? { opacity: 0.45, background: '#F8FAFC', color: '#64748B' }
+              : row.__isDuplicate
+                ? { background: '#FDF4FF', boxShadow: 'inset 3px 0 0 #C026D3' }
+                : undefined}
             onFilteredRowsChange={onTableFilteredRowsChange}
             settings={settings}
             updateSettings={updateSettings}

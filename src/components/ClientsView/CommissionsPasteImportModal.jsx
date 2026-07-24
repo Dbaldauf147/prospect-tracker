@@ -132,8 +132,8 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
   }
 
   // Normalized Project Names already on file. A pasted row whose project
-  // matches one of these is a duplicate — the import merges it into the
-  // existing row rather than adding a new one, so we flag it up front.
+  // matches one of these merges into the existing row rather than adding a
+  // new one, so we flag it up front.
   const existingKeys = useMemo(() => {
     const set = new Set();
     for (const row of existingRows || []) {
@@ -144,19 +144,25 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
   }, [existingRows]);
 
   // Live import preview — re-runs whenever the mapping, pasted data, or
-  // on-file roster changes so the user sees in real time which rows are
-  // brand-new (will be added), which are duplicates (already on file, so
-  // they merge into the existing row instead of adding a second one), and
-  // which get dropped (and why). handleImport consumes the same accepted
-  // list so the button never disagrees with the on-screen counts.
+  // on-file roster changes so the user sees in real time what each pasted
+  // row becomes:
+  //   - added:             brand-new project → a new row.
+  //   - existingDuplicates: matches a project already on file → merges into
+  //                         that row (fiscal-year assembly across pastes).
+  //   - pasteDuplicates:   the SAME project appears more than once *in this
+  //                         paste* → each extra copy is imported as its own
+  //                         row and flagged, not collapsed into the first.
+  //   - skipped:           blank / no Project Name (with reasons).
+  // handleImport consumes the same accepted list so the button never
+  // disagrees with the on-screen counts.
   const importPreview = useMemo(() => {
     const accepted = [];
     const added = [];
-    const duplicates = [];
+    const existingDuplicates = [];
+    const pasteDuplicates = [];
     const skipped = [];
-    // Tracks project names already seen within this paste so a roster
-    // that lists the same project twice reports the second copy as a
-    // duplicate too (only one survives the merge).
+    // Tracks project names already seen within this paste so the second (and
+    // later) copy of a project is reported as a within-paste duplicate.
     const seenInPaste = new Set();
     for (let r = 0; r < rawRows.length; r++) {
       const cells = rawRows[r];
@@ -182,10 +188,12 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
       }
       accepted.push(obj);
       const key = normProjectName(projectName);
-      if (existingKeys.has(key)) {
-        duplicates.push({ rowNumber, projectName, dupOf: 'existing' });
-      } else if (seenInPaste.has(key)) {
-        duplicates.push({ rowNumber, projectName, dupOf: 'paste' });
+      // Repeat within this paste wins the classification — it's imported as a
+      // distinct flagged row regardless of whether the name is also on file.
+      if (seenInPaste.has(key)) {
+        pasteDuplicates.push({ rowNumber, projectName });
+      } else if (existingKeys.has(key)) {
+        existingDuplicates.push({ rowNumber, projectName });
       } else {
         added.push({ rowNumber, projectName });
       }
@@ -196,7 +204,7 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
       if (!byReason.has(s.reason)) byReason.set(s.reason, []);
       byReason.get(s.reason).push(s.rowNumber);
     }
-    return { accepted, added, duplicates, skipped, byReason };
+    return { accepted, added, existingDuplicates, pasteDuplicates, skipped, byReason };
   }, [rawRows, headers, mapping, existingKeys]);
 
   function handleImport() {
@@ -266,17 +274,21 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
               {unmappedSourceNames.length > 0 && <> · <span style={{ color: '#92400E' }}>{unmappedSourceNames.length} pasted column{unmappedSourceNames.length === 1 ? '' : 's'} will be skipped</span></>}
               {duplicateDestinations.length > 0 && <> · <span style={{ color: '#991B1B' }}>Multiple sources point at: {duplicateDestinations.join(', ')}</span></>}
             </div>
-            {/* Per-row outcome summary. Splits the pasted rows three ways:
-                brand-new rows that will be ADDED, duplicates already on
-                file that will MERGE into the existing row (not added a
-                second time), and rows dropped entirely (with reasons).
-                The user pastes expecting a clean picture of what lands and
-                what's redundant, so each bucket is called out explicitly. */}
+            {/* Per-row outcome summary. Splits the pasted rows: brand-new
+                rows that will be ADDED, within-paste duplicates (same Project
+                Name repeated in this paste) that are IMPORTED as their own
+                flagged rows, projects already on file that MERGE into the
+                existing row, and rows dropped entirely (with reasons). The
+                user pastes expecting a clean picture of what lands and what's
+                redundant, so each bucket is called out explicitly. */}
             <div style={{ padding: '0.5rem 0.7rem', borderRadius: 6, border: `1px solid ${importPreview.skipped.length > 0 ? '#FCA5A5' : '#A7F3D0'}`, background: importPreview.skipped.length > 0 ? '#FEF2F2' : '#F0FDF4', fontSize: '0.72rem', color: '#1E293B', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.15rem 0.5rem' }}>
                 <span><strong style={{ color: importPreview.added.length > 0 ? '#166534' : '#64748B' }}>{importPreview.added.length}</strong> new {importPreview.added.length === 1 ? 'row' : 'rows'} will be added</span>
-                {importPreview.duplicates.length > 0 && (
-                  <span>· <strong style={{ color: '#92400E' }}>{importPreview.duplicates.length}</strong> duplicate {importPreview.duplicates.length === 1 ? 'row' : 'rows'} {dupeMode === 'replace'
+                {importPreview.pasteDuplicates.length > 0 && (
+                  <span>· <strong style={{ color: '#86198F' }}>{importPreview.pasteDuplicates.length}</strong> duplicate {importPreview.pasteDuplicates.length === 1 ? 'row' : 'rows'} (same Project Name repeated in this paste) will be imported as {importPreview.pasteDuplicates.length === 1 ? 'a separate flagged row' : 'separate flagged rows'}</span>
+                )}
+                {importPreview.existingDuplicates.length > 0 && (
+                  <span>· <strong style={{ color: '#92400E' }}>{importPreview.existingDuplicates.length}</strong> {importPreview.existingDuplicates.length === 1 ? 'row' : 'rows'} already on file {dupeMode === 'replace'
                     ? 'will replace the existing row’s months — months not in this paste are cleared (Account Name / BFO Name / Scope kept)'
                     : 'will merge into existing — new values update it, months it doesn’t include are kept'} (not added again)</span>
                 )}
@@ -285,18 +297,32 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
                 )}
                 <span style={{ color: '#94A3B8' }}>· {rawRows.length} pasted {rawRows.length === 1 ? 'row' : 'rows'}</span>
               </div>
-              {importPreview.duplicates.length > 0 && (
-                <div style={{ color: '#78350F' }}>
-                  <span style={{ fontWeight: 600 }}>Already on file (won't be added as new):</span>{' '}
-                  {importPreview.duplicates.slice(0, 12).map((d, i) => (
+              {importPreview.pasteDuplicates.length > 0 && (
+                <div style={{ color: '#86198F' }}>
+                  <span style={{ fontWeight: 600 }}>Repeated in this paste (kept as separate flagged rows):</span>{' '}
+                  {importPreview.pasteDuplicates.slice(0, 12).map((d, i) => (
                     <span key={d.rowNumber}>
                       {i > 0 && ', '}
-                      <span title={`Row ${d.rowNumber}${d.dupOf === 'paste' ? ' — repeated within this paste' : ' — matches a project already on file'}`}>
+                      <span title={`Row ${d.rowNumber} — same Project Name as an earlier row in this paste`}>
                         {d.projectName || `row ${d.rowNumber}`}
                       </span>
                     </span>
                   ))}
-                  {importPreview.duplicates.length > 12 && <span style={{ color: '#94A3B8' }}>, +{importPreview.duplicates.length - 12} more</span>}
+                  {importPreview.pasteDuplicates.length > 12 && <span style={{ color: '#94A3B8' }}>, +{importPreview.pasteDuplicates.length - 12} more</span>}
+                </div>
+              )}
+              {importPreview.existingDuplicates.length > 0 && (
+                <div style={{ color: '#78350F' }}>
+                  <span style={{ fontWeight: 600 }}>Already on file (won't be added as new):</span>{' '}
+                  {importPreview.existingDuplicates.slice(0, 12).map((d, i) => (
+                    <span key={d.rowNumber}>
+                      {i > 0 && ', '}
+                      <span title={`Row ${d.rowNumber} — matches a project already on file`}>
+                        {d.projectName || `row ${d.rowNumber}`}
+                      </span>
+                    </span>
+                  ))}
+                  {importPreview.existingDuplicates.length > 12 && <span style={{ color: '#94A3B8' }}>, +{importPreview.existingDuplicates.length - 12} more</span>}
                 </div>
               )}
               {importPreview.byReason.size > 0 && (
@@ -313,9 +339,10 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
               )}
             </div>
             {/* How to reconcile projects that already exist on file. Only
-                relevant when the paste actually hits a duplicate, so it's
-                hidden otherwise to keep the common "all new rows" case clean. */}
-            {importPreview.duplicates.length > 0 && (
+                relevant when the paste hits a project already on file, so it's
+                hidden otherwise to keep the common "all new rows" case clean.
+                Within-paste duplicates never merge, so they don't gate this. */}
+            {importPreview.existingDuplicates.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '0.25rem 1rem', padding: '0.4rem 0.6rem', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.72rem', color: '#334155' }}>
                 <span style={{ fontWeight: 600, alignSelf: 'center' }}>When a project already exists:</span>
                 <label style={{ display: 'inline-flex', alignItems: 'flex-start', gap: '0.3rem', cursor: 'pointer', maxWidth: 340 }} title="Fill in the months from this paste and keep any months an earlier paste already recorded (best for pasting one half of the fiscal year at a time).">
@@ -376,11 +403,11 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button onClick={onClose} style={{ padding: '0.4rem 0.8rem', border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
                 <button onClick={handleImport} disabled={mappedCount === 0 || importPreview.accepted.length === 0} title={dupeMode === 'replace'
-                  ? "New rows are added; duplicates are matched by Project Name and their existing months are cleared, then repopulated from only this paste (Account Name / BFO Name / Scope kept)."
-                  : "New rows are added; duplicates are matched by Project Name and merged into the existing row cell by cell — each pasted value updates the row, and any months this paste doesn't include are kept."} style={{ padding: '0.4rem 0.9rem', border: 'none', borderRadius: 6, background: (mappedCount === 0 || importPreview.accepted.length === 0) ? '#94A3B8' : '#16A34A', color: '#fff', fontSize: '0.78rem', cursor: (mappedCount === 0 || importPreview.accepted.length === 0) ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>
-                  {importPreview.duplicates.length > 0
-                    ? `Add ${importPreview.added.length} · ${dupeMode === 'replace' ? 'replace' : 'merge'} ${importPreview.duplicates.length} →`
-                    : `Import ${importPreview.added.length} row${importPreview.added.length === 1 ? '' : 's'} →`}
+                  ? "New rows are added; a project name repeated within this paste is imported as its own flagged row; a project already on file has its existing months cleared, then repopulated from only this paste (Account Name / BFO Name / Scope kept)."
+                  : "New rows are added; a project name repeated within this paste is imported as its own flagged row; a project already on file is merged into cell by cell — each pasted value updates the row, and any months this paste doesn't include are kept."} style={{ padding: '0.4rem 0.9rem', border: 'none', borderRadius: 6, background: (mappedCount === 0 || importPreview.accepted.length === 0) ? '#94A3B8' : '#16A34A', color: '#fff', fontSize: '0.78rem', cursor: (mappedCount === 0 || importPreview.accepted.length === 0) ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>
+                  {importPreview.existingDuplicates.length > 0
+                    ? `Add ${importPreview.added.length + importPreview.pasteDuplicates.length} · ${dupeMode === 'replace' ? 'replace' : 'merge'} ${importPreview.existingDuplicates.length} →`
+                    : `Import ${importPreview.added.length + importPreview.pasteDuplicates.length} row${(importPreview.added.length + importPreview.pasteDuplicates.length) === 1 ? '' : 's'} →`}
                 </button>
               </div>
             </div>
