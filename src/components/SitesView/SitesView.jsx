@@ -81,6 +81,7 @@ import {
   isoForProvince,
   resolveSiteIso,
 } from '../../data/isoRegions';
+import { lookupIsoForZip } from '../../utils/isoLookup';
 import {
   countryElectricRate,
   countryGasRatePerTherm,
@@ -1390,6 +1391,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ...r,
         id: i,
         __zipNorm__: zip,
+        __iso__: lookupIsoForZip(zip),
         __zipEstimated__: zipEstimated,
         __zipEstimateCount__: zipEstimate?.candidateCount || 0,
         __zipEstimateSource__: zipEstimate?.source || null,
@@ -1598,6 +1600,45 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         );
       },
       exportValue: (row) => row.__companyName__ || '',
+    };
+    // ISO / RTO — the site's wholesale electricity market, resolved from its
+    // zip via EPA eGRID subregions (see utils/isoLookup). A small chip flags
+    // when the zip straddles two markets (seam) or the subregion is ambiguous
+    // (verify). "None …" markets show muted; unresolved zips show a dash.
+    const isoCol = {
+      key: 'iso',
+      label: 'ISO / RTO',
+      defaultWidth: 150,
+      render: (row) => {
+        const info = row.__iso__ || { iso: null, iso_confidence: 'unknown' };
+        if (!info.iso) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
+        const isNone = info.iso.startsWith('None');
+        const conf = info.iso_confidence;
+        const chip = conf === 'seam'
+          ? { bg: '#FEF3C7', border: '#FCD34D', text: '#92400E', label: 'seam' }
+          : conf === 'verify'
+            ? { bg: '#EDE9FE', border: '#C4B5FD', text: '#5B21B6', label: 'verify' }
+            : null;
+        const tip = [
+          isNone ? info.iso : `ISO / RTO: ${info.iso}`,
+          info.egrid_subregion ? `eGRID ${info.egrid_subregion}` : null,
+          conf === 'seam' ? 'ZIP straddles two markets — primary market shown' : null,
+          conf === 'verify' ? 'Subregion is ambiguous — verify' : null,
+        ].filter(Boolean).join(' · ');
+        return (
+          <span title={tip} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%' }}>
+            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: isNone ? 'var(--color-text-muted)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {isNone ? 'None' : info.iso}
+            </span>
+            {chip && (
+              <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '0 5px', borderRadius: 999, background: chip.bg, border: `1px solid ${chip.border}`, color: chip.text }}>
+                {chip.label}
+              </span>
+            )}
+          </span>
+        );
+      },
+      exportValue: (row) => row.__iso__?.iso || '',
     };
     const makeUtilityCol = (key, label, color) => ({
       key,
@@ -2065,6 +2106,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       ...base,
       companyNameCol,
       makeStateCol(),
+      isoCol,
       makeUtilityCol('electric', 'Electric Utility', { bg: '#FEF3C7', border: '#FCD34D', text: '#92400E' }),
       makeSupplierCol('electric', 'Electric Supplier'),
       makeMarketCol('electric', 'Electric Market'),

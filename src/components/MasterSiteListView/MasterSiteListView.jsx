@@ -4,6 +4,8 @@ import { saveList, loadList, clearList } from '../../utils/uploadedListStore';
 import { loadUtilityRates } from '../../utils/utilityRatesStore';
 import { parseBestSheet } from '../../utils/xlsxParse';
 import { lookupUtilityForZip } from '../../utils/utilityClassify';
+import { lookupIsoForZip, backfillIso } from '../../utils/isoLookup';
+import { Badge } from '../common/Badge';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import {
   MASTER_FIELDS,
@@ -32,6 +34,7 @@ const ALL = '__all__';
 // row-number and delete columns are fixed and not part of this list.
 const COLUMNS = [
   ...MASTER_FIELDS.map(f => ({ key: f.key, label: f.label, kind: 'field' })),
+  { key: 'iso', label: 'ISO / RTO', kind: 'iso', title: 'Wholesale electricity market (ISO/RTO) resolved from the ZIP via EPA eGRID subregions. A badge flags when the ZIP straddles markets (seam) or the subregion is ambiguous (verify).' },
   { key: '__utility__', label: 'Indicative Utility', kind: 'utility', title: 'Indicative electric utility pulled from the Utility Lookup zip table' },
   { key: '__status__', label: 'Status', kind: 'status', title: 'Regulated vs Deregulated, derived from the indicative utility' },
 ];
@@ -40,8 +43,17 @@ const COLUMNS = [
 const DEFAULT_WIDTHS = {
   company: 180, propertyName: 180, subsector: 130, country: 120,
   address: 220, city: 130, state: 90, zip: 90,
-  __utility__: 200, __status__: 120,
+  iso: 130, __utility__: 200, __status__: 120,
 };
+
+// Badge colours for the low-confidence ISO cases.
+const ISO_BADGE_COLOR = { seam: '#D97706', verify: '#7C3AED' };
+
+// Stamp the stored ISO fields onto a row from its zip. Kept here so every
+// create / edit / import path assigns ISO consistently (and idempotently).
+function withIso(row) {
+  return { ...row, ...lookupIsoForZip(row?.zip) };
+}
 const MIN_COL_WIDTH = 60;
 
 function colWidthOf(widths, key) {
@@ -247,7 +259,10 @@ export function MasterSiteListView() {
   const updateCell = useCallback((index, key, value) => {
     setRows(prev => {
       const next = prev.slice();
-      next[index] = { ...next[index], [key]: value };
+      let row = { ...next[index], [key]: value };
+      // Re-derive the stored ISO fields whenever the zip changes.
+      if (key === 'zip') row = { ...row, ...lookupIsoForZip(value) };
+      next[index] = row;
       return next;
     });
   }, []);
@@ -259,7 +274,7 @@ export function MasterSiteListView() {
   function addRow() {
     const seed = emptyRow();
     if (companyFilter !== ALL) seed.company = companyFilter;
-    setRows(prev => [...prev, seed]);
+    setRows(prev => [...prev, withIso(seed)]);
   }
 
   // Append rows, dropping any that duplicate an existing row by
@@ -274,7 +289,7 @@ export function MasterSiteListView() {
         const k = rowKey(r);
         if (seen.has(k)) continue;
         seen.add(k);
-        toAdd.push(r);
+        toAdd.push(withIso(r));
       }
       added = toAdd.length;
       return toAdd.length ? [...prev, ...toAdd] : prev;
@@ -423,6 +438,10 @@ export function MasterSiteListView() {
     const data = scopeRows.filter(r => !isRowEmpty(r)).map(r => {
       const o = {};
       MASTER_FIELDS.forEach((f, i) => { o[CANONICAL_HEADERS[i]] = r[f.key] || ''; });
+      const iso = r.iso_confidence ? { iso: r.iso ?? null, egrid_subregion: r.egrid_subregion ?? null, iso_confidence: r.iso_confidence } : lookupIsoForZip(r.zip);
+      o['ISO / RTO'] = iso.iso || '';
+      o['eGRID Subregion'] = iso.egrid_subregion || '';
+      o['ISO Confidence'] = iso.iso_confidence || '';
       const look = lookupUtilityForZip(zipMap, r.zip);
       o['Indicative Utility'] = look.utility || '';
       o['Regulated/Deregulated'] = look.status || '';
@@ -440,6 +459,20 @@ export function MasterSiteListView() {
     setRows([]);
     clearList(MASTER_STORAGE_KEY).catch(() => {});
     setBusy('Cleared.');
+  }
+
+  // Bulk (re)assign ISO to every row from its zip. Idempotent — running it
+  // again when nothing's changed is a no-op. Logs a full summary to the
+  // console and a short recap to the toolbar status line.
+  function backfillAllIso() {
+    if (rows.length === 0) { setBusy('No rows to backfill.'); return; }
+    const { rows: next, summary } = backfillIso(rows);
+    if (summary.updated > 0) setRows(next);
+    console.log('[Master Site List] ISO backfill summary:', summary);
+    setBusy(
+      `ISO backfill: ${summary.updated} updated, ${summary.unchanged} unchanged of ${summary.total} · ` +
+      `${summary.seam} seam / ${summary.verify} verify / ${summary.unknown} unknown.`
+    );
   }
 
   if (!loaded) return <div className={styles.empty}>Loading…</div>;
@@ -493,6 +526,7 @@ export function MasterSiteListView() {
         <span className={styles.spacer} />
 
         <span className={styles.count}>{visible.length} shown</span>
+        <button className={styles.btn} onClick={backfillAllIso} title="Assign ISO / RTO to every row from its zip (via EPA eGRID). Safe to re-run.">Backfill ISO</button>
         <button className={styles.btn} onClick={exportExcel}>Export Excel</button>
         <button className={styles.btnDanger} onClick={clearAll}>Clear</button>
       </div>
@@ -544,6 +578,33 @@ export function MasterSiteListView() {
                             value={r[c.key] || ''}
                             onChange={e => updateCell(i, c.key, e.target.value)}
                           />
+                        </td>
+                      );
+                    }
+                    if (c.kind === 'iso') {
+                      // Prefer the stored fields; fall back to a live lookup so
+                      // a row that predates the stamp still shows something.
+                      const info = r.iso_confidence
+                        ? { iso: r.iso ?? null, egrid_subregion: r.egrid_subregion ?? null, iso_confidence: r.iso_confidence }
+                        : lookupIsoForZip(r.zip);
+                      if (!info.iso) {
+                        return <td key={c.key} className={styles.derived}><span style={{ color: 'var(--color-text-muted)' }}>—</span></td>;
+                      }
+                      const isNone = info.iso.startsWith('None');
+                      const cellTitle = [
+                        isNone ? info.iso : `ISO / RTO: ${info.iso}`,
+                        info.egrid_subregion ? `eGRID subregion ${info.egrid_subregion}` : null,
+                        info.iso_confidence === 'seam' ? 'ZIP straddles two markets — primary market shown' : null,
+                        info.iso_confidence === 'verify' ? 'Subregion is ambiguous — verify' : null,
+                      ].filter(Boolean).join(' · ');
+                      return (
+                        <td key={c.key} className={styles.derived} title={cellTitle}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                            <span style={isNone ? { color: 'var(--color-text-muted)' } : undefined}>{isNone ? 'None' : info.iso}</span>
+                            {(info.iso_confidence === 'seam' || info.iso_confidence === 'verify') && (
+                              <Badge label={info.iso_confidence} color={ISO_BADGE_COLOR[info.iso_confidence]} />
+                            )}
+                          </span>
                         </td>
                       );
                     }
