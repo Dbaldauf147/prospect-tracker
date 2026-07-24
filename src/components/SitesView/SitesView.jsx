@@ -31,6 +31,7 @@ import {
 import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripState, isIndicativeSavingsExport } from '../../utils/xlsxParse';
 import { UtilityMappingView } from './UtilityMappingView';
 import { BuildingComplianceScreening } from './BuildingComplianceScreening';
+import { ComplianceRoadmap } from './ComplianceRoadmap';
 import { saveIndicativeAnalysis, deleteIndicativeAnalysis } from '../../utils/firestoreSync';
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
@@ -10196,8 +10197,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           className={mainTab === 'compliance' ? styles.subtabActive : styles.subtab}
           onClick={() => setMainTab('compliance')}
         >Compliance Screening</button>
+        <button
+          type="button"
+          className={mainTab === 'roadmap' ? styles.subtabActive : styles.subtab}
+          onClick={() => setMainTab('roadmap')}
+        >Compliance Roadmap</button>
       </div>
-      {mainTab === 'compliance' ? (
+      {mainTab === 'roadmap' ? (
+        <ComplianceRoadmap sites={complianceSites} />
+      ) : mainTab === 'compliance' ? (
         <BuildingComplianceScreening sites={complianceSites} />
       ) : mainTab === 'mapping' ? (
         <UtilityMappingView siteUtilities={siteUtilities} referenceUtilityNames={knownUtilityNames} onExportSiteMapping={exportUtilityMappingAnalysis} />
