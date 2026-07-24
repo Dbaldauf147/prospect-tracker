@@ -80,6 +80,8 @@ import {
   isoForState,
   isoForProvince,
   resolveSiteIso,
+  STATE_ISO_SPLIT,
+  STATE_ISO_SUBAREAS,
 } from '../../data/isoRegions';
 import { lookupIsoForZip } from '../../utils/isoLookup';
 import {
@@ -5192,6 +5194,115 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const drawFeature = (rings) => traceFeature(rings, { fill: true, stroke: true });
       const strokeFeature = (rings) => traceFeature(rings, { stroke: true });
 
+      // Build a single clip path from all of a feature's rings (splitting at
+      // the antimeridian like traceFeature) and set it as the canvas clip, so
+      // subsequent fills only paint inside the state / province outline.
+      const clipToFeature = (rings) => {
+        ctx.beginPath();
+        for (const ring of rings) {
+          const subRings = [];
+          let cur = [];
+          let prevLng = null;
+          for (const pt of ring) {
+            if (prevLng !== null && Math.abs(pt[0] - prevLng) > 180) {
+              if (cur.length > 2) subRings.push(cur);
+              cur = [];
+            }
+            cur.push(pt);
+            prevLng = pt[0];
+          }
+          if (cur.length > 2) subRings.push(cur);
+          for (const sr of subRings) {
+            for (let i = 0; i < sr.length; i++) {
+              const [px, py] = project(sr[i][0], sr[i][1]);
+              if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+          }
+        }
+        ctx.clip();
+      };
+
+      // Screen-space bounding box of a feature (projected). Used to size the
+      // diagonal stripe field that fills a hybrid state.
+      const featureScreenBBox = (rings) => {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const ring of rings) {
+          for (const pt of ring) {
+            const [px, py] = project(pt[0], pt[1]);
+            if (px < minX) minX = px;
+            if (px > maxX) maxX = px;
+            if (py < minY) minY = py;
+            if (py > maxY) maxY = py;
+          }
+        }
+        return { minX, minY, maxX, maxY };
+      };
+
+      // Turn ordered ISO shares into an evenly-interleaved stripe assignment
+      // via largest-remainder apportionment: band i goes to whichever market
+      // is most "owed" so far (share × bands − assigned). Weights of 0.85 /
+      // 0.15 yield ~6 dominant bands per minority band, spread out rather than
+      // clumped, so the dominant market visibly out-stripes the minority.
+      const buildStripePattern = (weights, len) => {
+        const assigned = weights.map(() => 0);
+        const pat = [];
+        for (let i = 0; i < len; i++) {
+          let best = 0, bestScore = -Infinity;
+          for (let k = 0; k < weights.length; k++) {
+            const score = weights[k].weight * (i + 1) - assigned[k];
+            if (score > bestScore) { bestScore = score; best = k; }
+          }
+          assigned[best] += 1;
+          pat.push(weights[best].iso);
+        }
+        return pat;
+      };
+
+      const STRIPE_W = 9; // px, diagonal stripe thickness on the map
+
+      // Fill a split state as a hybrid: diagonal stripes proportioned to the
+      // ISO shares (denser = dominant market), plus a solid block over each
+      // minority market's geographic corner. All clipped to the state outline;
+      // `count` drives the same site-density darkening as the solid fills.
+      const fillHybridFeature = (feat, split, count) => {
+        const bbox = featureScreenBBox(feat.rings);
+        const cx = (bbox.minX + bbox.maxX) / 2;
+        const cy = (bbox.minY + bbox.maxY) / 2;
+        const reach = Math.hypot(bbox.maxX - bbox.minX, bbox.maxY - bbox.minY) + STRIPE_W;
+        ctx.save();
+        clipToFeature(feat.rings);
+        // Diagonal stripes (45°). Rotate about the state's centre, lay down
+        // horizontal bands across the reach, let the clip trim them.
+        const pattern = buildStripePattern(split, 120);
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(-Math.PI / 4);
+        let bi = 0;
+        for (let y = -reach; y < reach; y += STRIPE_W, bi += 1) {
+          ctx.fillStyle = shadeForRegion(pattern[bi % pattern.length], count);
+          ctx.fillRect(-reach, y, reach * 2, STRIPE_W + 0.5);
+        }
+        ctx.restore();
+        // Shaded minority sub-areas (e.g. the SPP Panhandle of Texas). Solid
+        // block of the minority hue over its lat/lng box, clipped to the state.
+        const subs = STATE_ISO_SUBAREAS[`${feat.admin}:${String(feat.postal || '').toUpperCase()}`];
+        if (subs) {
+          for (const s of subs) {
+            const [aLng, aLat, bLng, bLat] = s.bbox;
+            const [x0, y0] = project(aLng, bLat);
+            const [x1, y1] = project(bLng, aLat);
+            ctx.fillStyle = shadeForRegion(s.iso, count);
+            ctx.fillRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
+          }
+        }
+        ctx.restore();
+        // White hairline border, matching the solid states.
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 0.6;
+        strokeFeature(feat.rings);
+      };
+
       const naFeatures = getNAAdmin1Features();
 
       // Panel title.
@@ -5219,15 +5330,30 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // filled with the ISO those sites actually favour (utility/ZIP-resolved
       // majority), darkened by site count; an empty state in an active market
       // keeps a light tint of that market's hue so the footprint still reads.
+      // A state that genuinely straddles two markets (STATE_ISO_SPLIT) is
+      // instead drawn HYBRID — diagonal stripes proportioned to each market's
+      // share, plus a shaded block over the minority market's corner.
       // Everything else — empty markets, and anything outside the IRC map
       // (the non-ISO West / Southeast, most of Canada, AK/HI) — is greyed out.
+      let anyHybrid = false;
       ctx.lineWidth = 0.6;
       for (const feat of naFeatures) {
         const code = String(feat.postal || '').toUpperCase();
         if (feat.admin === 'US' && (code === 'AK' || code === 'HI')) continue;
+        const stateKey = `${feat.admin}:${code}`;
         const region = displayRegionForFeature(feat);
         if (region && activeRegions.has(region)) {
-          ctx.fillStyle = shadeForRegion(region, stateCounts.get(`${feat.admin}:${code}`) || 0);
+          const split = STATE_ISO_SPLIT[stateKey];
+          // Only stripe when at least one of the split's markets actually
+          // holds portfolio sites — otherwise a whole empty market would show
+          // stripes it hasn't earned. The dominant band still reflects the
+          // footprint even when the portfolio favours the minority side.
+          if (split && split.length > 1 && split.some(s => activeRegions.has(s.iso))) {
+            fillHybridFeature(feat, split, stateCounts.get(stateKey) || 0);
+            anyHybrid = true;
+            continue;
+          }
+          ctx.fillStyle = shadeForRegion(region, stateCounts.get(stateKey) || 0);
           ctx.strokeStyle = '#FFFFFF';
         } else {
           // Greyed out: outside the IRC map, or in a market that holds no
@@ -5274,6 +5400,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ...(hasEmptyRegion
           ? [{ color: NO_REGION_FILL, label: 'ISO / RTO market — no sites', boldBorder: true }]
           : []),
+        // Striped example chip — only when a split state was actually drawn
+        // hybrid. MISO:PJM at 2:1 mirrors the map's "denser = dominant" stripes.
+        ...(anyHybrid
+          ? [{ striped: true, stripeColors: [ISO_FILL.MISO, ISO_FILL.MISO, ISO_FILL.PJM], label: 'Split state — striped by ISO share (denser = dominant)' }]
+          : []),
         { color: NO_REGION_FILL, label: 'Outside ISO / RTO market' },
       ];
       const itemW = (label) => SWATCH + GAP_SWATCH_LABEL + ctx.measureText(label).width;
@@ -5293,8 +5424,28 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       for (const lr of legendRows) {
         let cursorX = PAD + (MAP_W - lr.width) / 2;
         for (const it of lr.items) {
-          ctx.fillStyle = it.color;
-          ctx.fillRect(cursorX, legendY - SWATCH / 2, SWATCH, SWATCH);
+          const swX = cursorX;
+          const swY = legendY - SWATCH / 2;
+          if (it.striped) {
+            // Diagonal striped swatch, mirroring the map's hybrid fill.
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(swX, swY, SWATCH, SWATCH);
+            ctx.clip();
+            ctx.translate(swX + SWATCH / 2, swY + SWATCH / 2);
+            ctx.rotate(-Math.PI / 4);
+            const cols = it.stripeColors;
+            const sw = 4;
+            let k = 0;
+            for (let y = -SWATCH; y < SWATCH; y += sw, k += 1) {
+              ctx.fillStyle = cols[k % cols.length];
+              ctx.fillRect(-SWATCH, y, SWATCH * 2, sw + 0.5);
+            }
+            ctx.restore();
+          } else {
+            ctx.fillStyle = it.color;
+            ctx.fillRect(swX, swY, SWATCH, SWATCH);
+          }
           if (it.boldBorder) {
             // Mirror the map: greyed empty ISO regions carry a strong border.
             ctx.strokeStyle = '#0F172A';
@@ -5303,7 +5454,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             ctx.strokeStyle = NO_REGION_STROKE;
             ctx.lineWidth = 0.8;
           }
-          ctx.strokeRect(cursorX, legendY - SWATCH / 2, SWATCH, SWATCH);
+          ctx.strokeRect(swX, swY, SWATCH, SWATCH);
           ctx.fillStyle = '#0F172A';
           ctx.fillText(it.label, cursorX + SWATCH + GAP_SWATCH_LABEL, legendY);
           cursorX += itemW(it.label) + GAP_ITEMS;
@@ -5327,7 +5478,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const unmappedNote = unmappedCount > 0
         ? ` (${unmappedCount} site${unmappedCount === 1 ? '' : 's'} outside any ISO / RTO market — the non-ISO West / Southeast, most of Canada, AK / HI — are excluded)`
         : '';
-      sub.value = `${naSiteCount} North America site${naSiteCount === 1 ? '' : 's'} across ${isoAggs.size} ISO / RTO market${isoAggs.size === 1 ? '' : 's'}, aligned to the ISO/RTO Council map (US markets plus Alberta, Ontario, and New Brunswick). Each site is placed in its market by electric utility, then ZIP, then state / province, so split-state sites land in the right ISO. States / provinces with portfolio sites are shaded by that market's hue and site count (darker = more sites); markets with no sites are greyed and traced with a strong region-coloured border; areas outside every ISO / RTO market stay grey. The choropleth colours whole states / provinces, so the drawn boundaries are approximate.${unmappedNote}`;
+      sub.value = `${naSiteCount} North America site${naSiteCount === 1 ? '' : 's'} across ${isoAggs.size} ISO / RTO market${isoAggs.size === 1 ? '' : 's'}, aligned to the ISO/RTO Council map (US markets plus Alberta, Ontario, and New Brunswick). Each site is placed in its market by electric utility, then ZIP, then state / province, so split-state sites land in the right ISO. States / provinces with portfolio sites are shaded by that market's hue and site count (darker = more sites); markets with no sites are greyed and traced with a strong region-coloured border; areas outside every ISO / RTO market stay grey. States that straddle two markets are drawn hybrid — diagonal stripes proportioned to each market's share (denser stripes = the dominant ISO, e.g. Texas reads mostly ERCOT with a Southwest Power Pool minority; Illinois and Indiana mostly MISO with PJM to the northeast), plus a shaded block over the minority market's corner (e.g. the SPP Panhandle of northwest Texas). The choropleth colours whole states / provinces, so the drawn boundaries are indicative, not authoritative seams.${unmappedNote}`;
       sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
       sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
       ws.getRow(2).height = 36;
