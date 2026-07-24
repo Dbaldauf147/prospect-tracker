@@ -31,13 +31,22 @@ import { zipToState } from '../utils/utilityRates';
 // reference-map reading order. `fill` hues are validated for adjacent-pair
 // separation (see the dataviz palette check); ERCOT's deep magenta keeps it
 // clear of SPP red where the two markets meet at the Texas border.
+//
+// The three markets that used to crowd the yellow/orange band — NYISO
+// (amber), AESO (orange), NB SO (yellow) — were nearly indistinguishable
+// (NYISO↔AESO measured ΔE 4.9 for normal vision). NYISO now takes a rose
+// hue, well clear of both, so the trio reads as three plainly different
+// colours (rose / orange / yellow). NYISO's map neighbours are all cool
+// (Ontario cyan, ISO-NE indigo, PJM blue), so a warm rose stands out
+// against them; its only near hue is SPP red, a market on the far side of
+// the country that it never abuts.
 export const ISO_REGIONS = [
   { key: 'CAISO', label: 'CAISO',  fill: '#7E57C2' }, // California ISO
   { key: 'ERCOT', label: 'ERCOT',  fill: '#880E4F' }, // Texas (islanded grid)
   { key: 'SPP',   label: 'SPP',    fill: '#E53935' }, // Southwest Power Pool
   { key: 'MISO',  label: 'MISO',   fill: '#2E9E4F' }, // Midcontinent ISO
   { key: 'PJM',   label: 'PJM',    fill: '#1E6FBF' }, // PJM Interconnection
-  { key: 'NYISO', label: 'NYISO',  fill: '#F2A100' }, // New York ISO
+  { key: 'NYISO', label: 'NYISO',  fill: '#EC407A' }, // New York ISO — rose (was amber; split from the AESO/NB SO warm band)
   { key: 'ISONE', label: 'ISO-NE', fill: '#3F51B5' }, // ISO New England
   { key: 'AESO',  label: 'AESO',   fill: '#FB8C00' }, // Alberta ESO
   { key: 'IESO',  label: 'IESO',   fill: '#00ACC1' }, // Ontario IESO
