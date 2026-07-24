@@ -237,6 +237,42 @@ export function buildComplianceReportHtml(results, meta = {}) {
     <div class="wbudc">The Whole Building Utility Data Collection (WBUDC) service supports BPS and BBS offerings via whole-building data collection; applicability depends on whether the site's utilities provide this option.</div>
     <div class="grid2">${feedPanel(utilityEP, '#F2B705', 'Electric Power (EP)')}${feedPanel(utilityNG, '#B5179E', 'Natural Gas (NG)')}</div>`);
 
+  // Page 4 — site-by-site mandate detail. One row per screened site with the
+  // specific BBS / Energy Audits / BPS mandates that apply, each with its
+  // deadline + estimated max yearly penalty. Ordered by how many mandates
+  // apply (busiest sites first), then jurisdiction, then name.
+  const siteCell = (r, c) => {
+    const e = r[c];
+    if (!e || !e.active || e.eligible !== true) return '<span class="rmZero">—</span>';
+    const dl = e.deadline ? mdY(e.deadline) : (e.deadlineRaw || '');
+    const pen = e.penalty != null ? usd(e.penalty) + '/yr' : '';
+    return `<span class="sdChip" style="background:${CATEGORY_COLOR[c]}1A;color:${CATEGORY_COLOR[c]};border-color:${CATEGORY_COLOR[c]}66">Applicable</span>`
+      + (dl ? `<div class="sdMeta">Due ${esc(dl)}</div>` : '')
+      + (pen ? `<div class="sdMeta">${esc(pen)}</div>` : '');
+  };
+  const appCount = (r) => CATEGORIES.filter(c => r[c]?.eligible === true).length;
+  const siteRows = [...results].sort((a, b) =>
+    appCount(b) - appCount(a)
+    || String(a.government || '~').localeCompare(String(b.government || '~'))
+    || String(a.siteName || '').localeCompare(String(b.siteName || '')));
+  const siteTable = siteRows.length ? `<table class="sdTable">
+    <thead><tr><th>Site</th><th>City / State</th><th>Jurisdiction</th><th class="sdNumH">Sq Ft</th><th>BBS</th><th>Energy Audits</th><th>BPS</th></tr></thead>
+    <tbody>${siteRows.map(r => `<tr>
+      <td class="sdName">${esc(r.siteName || '—')}</td>
+      <td>${esc([r.city, r.state].filter(Boolean).join(', ') || '—')}</td>
+      <td>${r.matched ? esc(r.government || '') + (r.govId ? ` <span class="sdGov">${esc(r.govId)}</span>` : '') : '<span class="rmZero">no match</span>'}</td>
+      <td class="sdNum">${r.sqft != null && Number.isFinite(Number(r.sqft)) ? Number(r.sqft).toLocaleString('en-US') : '—'}</td>
+      <td>${siteCell(r, 'bbs')}</td>
+      <td>${siteCell(r, 'audits')}</td>
+      <td>${siteCell(r, 'bps')}</td>
+    </tr>`).join('')}</tbody>
+  </table>` : '<div class="empty">No sites screened.</div>';
+  const page4 = page(
+    `<div class="sectionTitle">Site-by-Site Mandate Detail</div>
+     <div class="sdIntro">Every screened site and the specific BBS / Energy Audits / BPS mandates that apply to it — each with its compliance deadline and estimated max yearly penalty. Sites are ordered by how many mandates apply.</div>
+     <div class="rmWrap wide">${siteTable}</div>`
+  );
+
   return `<!doctype html><html><head><meta charset="utf-8"><title>Building Compliance — Screening &amp; Roadmap</title>
 <style>
   * { box-sizing: border-box; }
@@ -304,6 +340,22 @@ export function buildComplianceReportHtml(results, meta = {}) {
   .rmWrap.wide { margin-top: 2px; }
 
   .wbudc { font-size: 10.5px; color: ${SE_SLATE}; margin: 2px 0 14px; line-height: 1.5; }
+
+  /* Site-by-site mandate detail table */
+  .sdIntro { font-size: 11px; color: ${SE_SLATE}; margin: 2px 0 12px; line-height: 1.5; }
+  .sdTable { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .sdTable thead th { background: ${SE_GREEN_DARK}; color: #fff; font-weight: 800; text-align: left; padding: 8px 10px; font-size: 10.5px; letter-spacing: .3px; }
+  .sdTable thead th:nth-child(n+5) { text-align: center; }
+  .sdTable thead th.sdNumH { text-align: right; }
+  .sdTable tbody td { padding: 7px 10px; border-bottom: 1px solid #F1F5F9; color: ${SE_SLATE}; vertical-align: top; }
+  .sdTable tbody td:nth-child(n+5) { text-align: center; }
+  .sdTable tbody tr:nth-child(even) td { background: #FAFCFB; }
+  .sdName { font-weight: 800; color: ${SE_INK}; }
+  .sdNum { text-align: right; font-variant-numeric: tabular-nums; color: ${SE_INK}; font-weight: 700; }
+  .sdGov { font-family: ui-monospace, Menlo, monospace; font-size: 9.5px; color: ${SE_MUTE}; }
+  .sdChip { display: inline-block; padding: 1px 8px; border-radius: 999px; border: 1px solid; font-weight: 800; font-size: 10.5px; }
+  .sdMeta { font-size: 9.5px; color: ${SE_SLATE}; margin-top: 2px; white-space: nowrap; }
+
   .footer { text-align: center; font-size: 10px; color: ${SE_MUTE}; margin: 6px auto 22px; }
   .footer .fbrand { color: ${SE_GREEN_DARK}; font-weight: 800; }
 
@@ -314,7 +366,7 @@ export function buildComplianceReportHtml(results, meta = {}) {
   }
 </style></head>
 <body>
-  ${page1}${page2}${page3}
+  ${page1}${page2}${page3}${page4}
   <div class="footer"><span class="fbrand">Schneider Electric</span> · Generated ${esc(generatedAt)} · ${matched.length} of ${esc(String(siteCount))} sites matched a jurisdiction · Public</div>
 </body></html>`;
 }
