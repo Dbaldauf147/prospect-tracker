@@ -30,151 +30,6 @@ const matchCityNames = (query) => matchCities(query, CITY_OPTIONS).slice(0, 12);
 // is delegated to `onCommit(nextValue)` so the parent can call the
 // HubSpot endpoint and update the cache.
 
-// Inline editor for the dans_tags HubSpot field. Renders each tag as
-// a removable pill (× drops it) with a "+" button that opens a small
-// dropdown of every tag option NOT already on this contact. onCommit
-// receives the new ;-joined string so the parent's existing
-// inlineUpdateField('dans_tags', …) path keeps working.
-function TagsInlineCell({ value, options, onCommit }) {
-  const tags = useMemo(() => String(value || '').split(';').map(s => s.trim()).filter(Boolean), [value]);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [draft, setDraft] = useState('');
-  const wrapRef = useRef(null);
-  useEffect(() => {
-    if (!pickerOpen) return;
-    function onDown(e) { if (!wrapRef.current?.contains(e.target)) { setPickerOpen(false); setDraft(''); } }
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [pickerOpen]);
-
-  function commit(nextTags) {
-    const out = [...new Set(nextTags.map(t => String(t || '').trim()).filter(Boolean))];
-    onCommit(out.join(';'));
-  }
-  function removeTag(tag) {
-    commit(tags.filter(t => t.toLowerCase() !== String(tag).toLowerCase()));
-  }
-  function addTag(tag) {
-    const v = String(tag || '').trim();
-    if (!v) return;
-    if (tags.some(t => t.toLowerCase() === v.toLowerCase())) { setPickerOpen(false); setDraft(''); return; }
-    commit([...tags, v]);
-    setPickerOpen(false);
-    setDraft('');
-  }
-
-  const lowerTagSet = new Set(tags.map(t => t.toLowerCase()));
-  const filteredOpts = (options || [])
-    .filter(o => !lowerTagSet.has(String(o).toLowerCase()))
-    .filter(o => !draft.trim() || String(o).toLowerCase().includes(draft.trim().toLowerCase()))
-    .slice(0, 30);
-  const draftIsNewTag = draft.trim()
-    && !lowerTagSet.has(draft.trim().toLowerCase())
-    && !filteredOpts.some(o => o.toLowerCase() === draft.trim().toLowerCase());
-
-  return (
-    <div ref={wrapRef} style={{ position: 'relative', display: 'flex', flexWrap: 'wrap', gap: 3, alignItems: 'center', padding: '0.15rem 0.2rem', minHeight: '1.4rem' }}>
-      {tags.map(tag => (
-        <span
-          key={tag}
-          title={`Click × to remove "${tag}"`}
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 2,
-            background: '#EFF6FF', border: '1px solid #BFDBFE', color: '#1E40AF',
-            padding: '0 5px', borderRadius: 999,
-            fontSize: '0.62rem', fontWeight: 600, lineHeight: '1.4',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {tag}
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); removeTag(tag); }}
-            style={{ background: 'none', border: 'none', color: '#93C5FD', fontSize: '0.7rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
-            aria-label={`Remove ${tag}`}
-          >×</button>
-        </span>
-      ))}
-      <button
-        type="button"
-        onClick={() => setPickerOpen(o => !o)}
-        title="Add a tag"
-        style={{
-          background: pickerOpen ? '#1E40AF' : 'transparent',
-          color: pickerOpen ? '#fff' : '#475569',
-          border: '1px dashed #94A3B8',
-          fontSize: '0.6rem', fontWeight: 700,
-          cursor: 'pointer', padding: '1px 5px',
-          borderRadius: 999, lineHeight: 1.2,
-        }}
-      >+</button>
-      {pickerOpen && (
-        <div
-          style={{
-            position: 'absolute', top: '100%', left: 0, marginTop: 2, zIndex: 30,
-            background: '#fff', border: '1px solid var(--color-border)', borderRadius: 6,
-            boxShadow: '0 8px 20px rgba(15,23,42,0.12)',
-            minWidth: 200, maxHeight: 240, overflowY: 'auto',
-            padding: '0.2rem 0',
-            fontSize: '0.72rem',
-          }}
-        >
-          <div style={{ padding: '0.25rem 0.4rem', borderBottom: '1px solid #F1F5F9' }}>
-            <input
-              type="text"
-              autoFocus
-              value={draft}
-              onChange={e => setDraft(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  if (filteredOpts[0]) addTag(filteredOpts[0]);
-                  else if (draftIsNewTag) addTag(draft.trim());
-                } else if (e.key === 'Escape') {
-                  setPickerOpen(false); setDraft('');
-                }
-              }}
-              placeholder="Filter tags or type a new one…"
-              style={{ width: '100%', padding: '3px 6px', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.7rem', fontFamily: 'inherit', boxSizing: 'border-box' }}
-            />
-          </div>
-          {filteredOpts.length === 0 && !draftIsNewTag && (
-            <div style={{ padding: '0.4rem 0.6rem', color: '#94A3B8', fontStyle: 'italic' }}>No matching tags.</div>
-          )}
-          {filteredOpts.map(o => (
-            <button
-              key={o}
-              type="button"
-              onClick={() => addTag(o)}
-              style={{
-                display: 'block', width: '100%', textAlign: 'left',
-                padding: '0.3rem 0.6rem', border: 'none', background: 'transparent',
-                cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.72rem',
-                color: '#1E293B',
-              }}
-              onMouseEnter={e => (e.currentTarget.style.background = '#EFF6FF')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-            >{o}</button>
-          ))}
-          {draftIsNewTag && (
-            <button
-              type="button"
-              onClick={() => addTag(draft.trim())}
-              style={{
-                display: 'block', width: '100%', textAlign: 'left',
-                padding: '0.3rem 0.6rem', border: 'none', background: '#F0FDF4',
-                cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.72rem',
-                color: '#166534', fontWeight: 600,
-                borderTop: filteredOpts.length > 0 ? '1px solid #DCFCE7' : 'none',
-              }}
-            >+ Add new tag: "{draft.trim()}"</button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function InlineCell({
   value,
   onCommit,
@@ -1656,35 +1511,6 @@ function KeyContactsViewInner({
   // campaignFilterId '' = no campaign picked; mode is 'all' | 'in' | 'out'.
   const [campaignFilterId, setCampaignFilterId] = useState('');
   const [campaignFilterMode, setCampaignFilterMode] = useState('all');
-
-  // Tag options for the inline Tags column. Union of (a) the canonical
-  // Dan-curated list plus (b) every distinct dans_tags value already
-  // in the loaded HubSpot cache, so a tag the user has typed
-  // ad-hoc on a prior contact still shows up in the dropdown the
-  // next time they open it.
-  const tagOptionsList = useMemo(() => {
-    // "Met In Person" is edited via a dedicated checkbox in the contact
-    // editor, not as a curated tag — but it can still surface here (from
-    // existing contact data) so the tag filter keeps working.
-    const CURATED = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Efficiency / Renewables', 'Dan Key Target', 'Decision Maker', 'Primary Point of Contact', 'EU', 'Hide', 'Left'];
-    const seen = new Set();
-    const out = [];
-    const push = (t) => {
-      const v = String(t || '').trim();
-      if (!v) return;
-      const k = v.toLowerCase();
-      if (seen.has(k)) return;
-      seen.add(k);
-      out.push(v);
-    };
-    for (const t of CURATED) push(t);
-    for (const c of (hubspotCache?.contacts || [])) {
-      const raw = c?.dans_tags || c?.dan_s_tags || c?.dans_tag || '';
-      if (!raw) continue;
-      for (const t of String(raw).split(';')) push(t);
-    }
-    return out.sort((a, b) => a.localeCompare(b));
-  }, [hubspotCache]);
 
   // contactId → latest call/email activity. The HubSpot API only
   // attaches associated contact IDs to meetings, so we match emails
@@ -3734,13 +3560,32 @@ function KeyContactsViewInner({
                         </div>
                       );
                     })()}
-                    {visibleSet.has('tags') && (
-                    <TagsInlineCell
-                      value={c.dans_tags || c.dan_s_tags || c.dans_tag || ''}
-                      options={tagOptionsList}
-                      onCommit={v => inlineUpdateField(c.raw || c, 'dans_tags', v)}
-                    />
-                    )}
+                    {visibleSet.has('tags') && (() => {
+                      // Read-only, comma-separated tag list. The HubSpot
+                      // tags live on the un-normalized `raw` contact
+                      // (dans_tags), so read from there first — the
+                      // top-level normalized object doesn't carry them.
+                      // Kept on a single line and clipped with an ellipsis
+                      // so long tag lists don't wrap the row; full text is
+                      // available on hover.
+                      const raw = c.raw || c;
+                      const tagStr = String(raw.dans_tags || raw.dan_s_tags || raw.dans_tag || '')
+                        .split(';').map(s => s.trim()).filter(Boolean).join(', ');
+                      return (
+                        <div
+                          title={tagStr}
+                          style={{
+                            padding: '0.45rem 0.6rem',
+                            fontSize: '0.7rem',
+                            color: tagStr ? '#1E293B' : '#CBD5E1',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            minWidth: 0,
+                          }}
+                        >{tagStr || '—'}</div>
+                      );
+                    })()}
                     {visibleSet.has('lastOutreach') && (() => {
                       const entry = contactLastOutreach.get(String(c.id || ''));
                       if (!entry) {
