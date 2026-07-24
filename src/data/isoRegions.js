@@ -12,7 +12,10 @@
 //    (US states + DC, Canadian provinces), so each is coloured by the ONE
 //    ISO that covers most of it (STATE_TO_ISO / PROVINCE_TO_ISO). Real ISO
 //    seams cut through states; this is a deliberate whole-state
-//    approximation, indicative not authoritative.
+//    approximation, indicative not authoritative. States that genuinely
+//    straddle two markets are drawn HYBRID rather than solid — diagonal
+//    stripes whose band frequency tracks each market's share (STATE_ISO_SPLIT)
+//    plus a shaded block over the minority market's corner (STATE_ISO_SUBAREAS).
 //
 //  • PER-SITE — a site is assigned to its ISO the finer way: by its electric
 //    UTILITY first (utilities belong to one market), then by ZIP, then by
@@ -85,6 +88,43 @@ export const PROVINCE_TO_ISO = {
   AB: 'AESO',
   ON: 'IESO',
   NB: 'NBSO',
+};
+
+// Split-state ISO SHARES for the hybrid MAP FOOTPRINT. STATE_TO_ISO paints a
+// split state with a single dominant hue; this table lets the map instead
+// draw it as HYBRID diagonal stripes whose band frequency tracks each
+// market's share of the state — more bands of the dominant ISO, fewer of the
+// minority. Entries are ordered dominant-first and are indicative geographic
+// shares (roughly land + load), not authoritative seams. The dominant ISO
+// here always matches the state's STATE_TO_ISO footprint so the two agree.
+// Only states with a meaningful two-market split are listed; every other
+// state stays a solid single-ISO fill.
+export const STATE_ISO_SPLIT = {
+  // Texas is overwhelmingly its own islanded grid (ERCOT); the Panhandle and
+  // a slice of east/northeast Texas (SWEPCO) sit in SPP.
+  'US:TX': [{ iso: 'ERCOT', weight: 0.85 }, { iso: 'SPP', weight: 0.15 }],
+  // Illinois: downstate Ameren is MISO, the Chicago-area ComEd footprint in
+  // the north is PJM. More MISO by area, but PJM carries the metro load.
+  'US:IL': [{ iso: 'MISO', weight: 0.60 }, { iso: 'PJM', weight: 0.40 }],
+  // Indiana: mostly MISO (NIPSCO, Duke Indiana, AES/IPL), with AEP Indiana
+  // Michigan Power (PJM) across the northeast and a pocket of the east.
+  'US:IN': [{ iso: 'MISO', weight: 0.72 }, { iso: 'PJM', weight: 0.28 }],
+  // Missouri: eastern Ameren Missouri is MISO; western Evergy / KCP&L around
+  // Kansas City is SPP.
+  'US:MO': [{ iso: 'MISO', weight: 0.66 }, { iso: 'SPP', weight: 0.34 }],
+};
+
+// Shaded HYBRID SUB-AREAS: a minority market's geographic corner of a split
+// state, drawn as a solid block of that market's hue clipped to the state so
+// the split reads where it actually sits (e.g. the SPP Panhandle of northwest
+// Texas), on top of the state's hybrid stripes. Each bbox is
+// [minLng, minLat, maxLng, maxLat] and is an indicative rectangle, not a real
+// service-territory boundary — enough to place the corner, no more.
+export const STATE_ISO_SUBAREAS = {
+  'US:TX': [{ iso: 'SPP', label: 'Panhandle (SPP)', bbox: [-103.05, 34.30, -99.90, 36.55] }],
+  'US:IL': [{ iso: 'PJM', label: 'Northern IL — ComEd (PJM)', bbox: [-89.30, 41.10, -87.40, 42.55] }],
+  'US:IN': [{ iso: 'PJM', label: 'Northeast IN — AEP I&M (PJM)', bbox: [-85.95, 40.00, -84.78, 41.30] }],
+  'US:MO': [{ iso: 'SPP', label: 'Western MO — Evergy (SPP)', bbox: [-95.80, 38.30, -93.90, 40.60] }],
 };
 
 // ZIP3 (first three ZIP digits) -> ISO overrides for the clearest split
