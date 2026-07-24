@@ -78,6 +78,8 @@ import {
   ISO_REGIONS,
   ISO_FILL,
   isoForState,
+  isoForProvince,
+  resolveSiteIso,
 } from '../../data/isoRegions';
 import {
   countryElectricRate,
@@ -4975,14 +4977,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
     // ---- ISO / RTO Overview sheet ------------------------------
     // Parallels the NAM View, but the geographic unit is the wholesale
-    // electricity market (ISO / RTO) region rather than the state. Every
-    // US state is shaded by the ISO / RTO region it predominantly sits in
-    // (see src/data/isoRegions.js — a whole-state approximation, since ISO
-    // footprints split states), darkened by portfolio site count so the
-    // map reads like the standard ISO breakdown with the portfolio layered
-    // on top. Single panel: ISOs are electricity markets, so there's no
-    // Natural Gas / Electric Power split. The bottom table rolls the
-    // portfolio up per ISO region.
+    // electricity market (ISO / RTO) rather than the state. Aligned to the
+    // ISO/RTO Council reference map: the seven US markets plus the three
+    // Canadian markets (Alberta AESO, Ontario IESO, New Brunswick), with
+    // everything outside those footprints (the non-ISO West / Southeast,
+    // most of Canada) drawn grey. Sites are placed in a market the fine
+    // way — by electric utility, then ZIP, then state / province (see
+    // src/data/isoRegions.js) — so split-state sites land in the right ISO
+    // even though the choropleth itself colours whole states / provinces.
+    // Single panel: ISOs are electricity markets, so there's no Natural Gas
+    // / Electric Power split. The bottom table rolls the portfolio up per
+    // ISO / RTO market.
     {
       const ws = wb.addWorksheet('ISO', {
         properties: { tabColor: { argb: SE_GREEN_DARK } },
@@ -5000,24 +5005,37 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         { width: 6 }, { width: 6 }, { width: 6 },
       ];
 
-      // Aggregate US sites by state (for the choropleth density) and by
-      // ISO region (for the summary table). ISO / RTO markets are US-only,
-      // so non-US rows are skipped — they're already covered on the
-      // Portfolio Overview and NAM sheets.
-      const stateCounts = new Map();     // stateCode -> site count (map shading)
-      const isoAggs = new Map();         // regionKey -> { sites, kwh, therms, cost }
-      let usSiteCount = 0;
-      let unmappedCount = 0;             // US sites whose state has no ISO region (AK/HI/blank)
+      // Aggregate North America sites (US + Canada) into ISO regions. Each
+      // site is resolved to its market the fine way — by electric utility
+      // first, then ZIP, then state / province — so split-state sites land
+      // in the right ISO (a Chicago ComEd site → PJM even though Illinois'
+      // footprint polygon is MISO). Sites outside any IRC-mapped market
+      // (the non-ISO West / Southeast, most of Canada) resolve to null and
+      // are excluded from the rollup. Two tallies feed the map: per
+      // state / province site counts (density) and, within each, how the
+      // portfolio splits across ISOs (so a split state is coloured by the
+      // market its sites actually sit in).
+      const stateCounts = new Map();        // "US:IL" / "CA:ON" -> site count
+      const stateRegionCounts = new Map();  // stateKey -> Map(regionKey -> count)
+      const isoAggs = new Map();            // regionKey -> { sites, kwh, therms, cost }
+      let naSiteCount = 0;
+      let unmappedCount = 0;                // NA sites that resolve to no ISO market
       for (const r of rows) {
         const rawCountry = String(r.__country__ || '').trim();
         const country = normalizeCountryName(rawCountry) || rawCountry;
         const isUS = /^(united states|usa|us)$/i.test(country);
-        if (!isUS) continue;
-        usSiteCount++;
-        const stateCode = String(r.__state__ || '').trim().toUpperCase();
-        const region = isoForState(stateCode);
+        const isCA = /^(canada|ca)$/i.test(country);
+        if (!isUS && !isCA) continue;
+        const admin = isUS ? 'US' : 'CA';
+        naSiteCount++;
+        const code = String(r.__state__ || '').trim().toUpperCase();
+        const region = resolveSiteIso({ admin, code, zip: r.__zipNorm__, utility: r.__electric__ });
         if (!region) { unmappedCount++; continue; }
-        stateCounts.set(stateCode, (stateCounts.get(stateCode) || 0) + 1);
+        const stateKey = `${admin}:${code}`;
+        stateCounts.set(stateKey, (stateCounts.get(stateKey) || 0) + 1);
+        let rc = stateRegionCounts.get(stateKey);
+        if (!rc) { rc = new Map(); stateRegionCounts.set(stateKey, rc); }
+        rc.set(region, (rc.get(region) || 0) + 1);
         const kwh = (typeof r.__kwh__ === 'number' && Number.isFinite(r.__kwh__)) ? r.__kwh__ : 0;
         const therms = (typeof r.__therms__ === 'number' && Number.isFinite(r.__therms__)) ? r.__therms__ : 0;
         const eCost = (typeof r.__electricCostActual__ === 'number' && Number.isFinite(r.__electricCostActual__))
@@ -5033,6 +5051,24 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         agg.therms += therms;
         agg.cost += eCost + gCost;
       }
+
+      // Per-feature helpers: the whole-polygon footprint ISO (dominant
+      // market for that state / province) and the display region — the ISO
+      // the portfolio actually favours in that state when it has sites
+      // there, else the footprint so empty markets still read on the map.
+      const footprintForFeature = (feat) => (
+        feat.admin === 'CA' ? isoForProvince(feat.postal) : isoForState(feat.postal)
+      );
+      const displayRegionForFeature = (feat) => {
+        const key = `${feat.admin}:${String(feat.postal || '').toUpperCase()}`;
+        const rc = stateRegionCounts.get(key);
+        if (rc && rc.size) {
+          let best = null, bestN = -1;
+          for (const [k, n] of rc) if (n > bestN) { bestN = n; best = k; }
+          return best;
+        }
+        return footprintForFeature(feat);
+      };
 
       const NO_REGION_FILL   = '#E5E7EB'; // unmapped US states (AK/HI) + non-US
       const NO_REGION_STROKE = '#9CA3AF';
@@ -5060,9 +5096,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         return rgbToHex([blend(r), blend(g), blend(b)]);
       };
 
-      // Single-panel canvas, framed to the continental US (the reference
-      // ISO map excludes AK/HI). Same equirectangular projection helper as
-      // the NAM sheet, just bounded tighter.
+      // Single-panel canvas, framed to North America south of ~60°N so the
+      // three Canadian ISO markets (Alberta, Ontario, New Brunswick) sit
+      // above the US band, mirroring the IRC reference map. Same
+      // equirectangular projection helper as the NAM sheet.
       const MAP_W = 900;
       const MAP_H = 580;
       const PAD = 16;
@@ -5076,13 +5113,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       ctx.fillStyle = '#FFFFFF';
       ctx.fillRect(0, 0, W, H);
 
-      const US_LNG_MIN = -125;
-      const US_LNG_MAX = -66;
-      const US_LAT_MIN = 24;
-      const US_LAT_MAX = 50;
+      const NA_LNG_MIN = -125;
+      const NA_LNG_MAX = -63;
+      const NA_LAT_MIN = 24;
+      const NA_LAT_MAX = 60;
       const project = (lng, lat) => [
-        PAD + ((lng - US_LNG_MIN) / (US_LNG_MAX - US_LNG_MIN)) * MAP_W,
-        TITLE_H + ((US_LAT_MAX - lat) / (US_LAT_MAX - US_LAT_MIN)) * MAP_H,
+        PAD + ((lng - NA_LNG_MIN) / (NA_LNG_MAX - NA_LNG_MIN)) * MAP_W,
+        TITLE_H + ((NA_LAT_MAX - lat) / (NA_LAT_MAX - NA_LAT_MIN)) * MAP_H,
       ];
       const traceFeature = (rings, { fill = false, stroke = false } = {}) => {
         for (const ring of rings) {
@@ -5136,38 +5173,39 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // breakdown stays legible even where the portfolio has no presence.
       const activeRegions = new Set(isoAggs.keys());
 
-      // Pass 1 — fills. States in a region that has portfolio sites keep
-      // their region hue, darkened by that state's site count. States in an
-      // empty region (and AK/HI/non-US) are greyed out.
+      // Pass 1 — fills. A state / province where the portfolio has sites is
+      // filled with the ISO those sites actually favour (utility/ZIP-resolved
+      // majority), darkened by site count; an empty state in an active market
+      // keeps a light tint of that market's hue so the footprint still reads.
+      // Everything else — empty markets, and anything outside the IRC map
+      // (the non-ISO West / Southeast, most of Canada, AK/HI) — is greyed out.
       ctx.lineWidth = 0.6;
       for (const feat of naFeatures) {
-        if (feat.admin !== 'US') continue;
         const code = String(feat.postal || '').toUpperCase();
-        if (code === 'AK' || code === 'HI') continue;
-        const region = isoForState(code);
+        if (feat.admin === 'US' && (code === 'AK' || code === 'HI')) continue;
+        const region = displayRegionForFeature(feat);
         if (region && activeRegions.has(region)) {
-          ctx.fillStyle = shadeForRegion(region, stateCounts.get(code) || 0);
+          ctx.fillStyle = shadeForRegion(region, stateCounts.get(`${feat.admin}:${code}`) || 0);
           ctx.strokeStyle = '#FFFFFF';
         } else {
-          // Greyed out: unmapped state, or a mapped state whose ISO region
-          // holds no portfolio sites.
+          // Greyed out: outside the IRC map, or in a market that holds no
+          // portfolio sites (gets a bold region-coloured border in pass 2).
           ctx.fillStyle = NO_REGION_FILL;
           ctx.strokeStyle = NO_REGION_STROKE;
         }
         drawFeature(feat.rings);
       }
 
-      // Pass 2 — strong bold borders for the greyed-out ISO regions, drawn
+      // Pass 2 — strong bold borders for the greyed-out ISO markets, drawn
       // on top of the fills so the ISO / RTO breakdown reads through the
-      // grey. Each empty region's states are outlined in that region's hue.
+      // grey. Each empty market's footprint states are outlined in its hue.
       const prevJoin = ctx.lineJoin;
       ctx.lineJoin = 'round';
       ctx.lineWidth = 2.4;
       for (const feat of naFeatures) {
-        if (feat.admin !== 'US') continue;
         const code = String(feat.postal || '').toUpperCase();
-        if (code === 'AK' || code === 'HI') continue;
-        const region = isoForState(code);
+        if (feat.admin === 'US' && (code === 'AK' || code === 'HI')) continue;
+        const region = footprintForFeature(feat);
         if (!region || activeRegions.has(region)) continue;
         ctx.strokeStyle = ISO_FILL[region] || NO_REGION_STROKE;
         strokeFeature(feat.rings);
@@ -5192,9 +5230,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const legendItems = [
         ...ISO_REGIONS.map(r => ({ color: r.fill, label: r.label })),
         ...(hasEmptyRegion
-          ? [{ color: NO_REGION_FILL, label: 'ISO region — no sites', boldBorder: true }]
+          ? [{ color: NO_REGION_FILL, label: 'ISO / RTO market — no sites', boldBorder: true }]
           : []),
-        { color: NO_REGION_FILL, label: 'No mapped region' },
+        { color: NO_REGION_FILL, label: 'Outside ISO / RTO market' },
       ];
       const itemW = (label) => SWATCH + GAP_SWATCH_LABEL + ctx.measureText(label).width;
       // Greedy row packing centred within the map width.
@@ -5236,7 +5274,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       ws.mergeCells(1, 1, 1, COLS);
       const title = ws.getCell(1, 1);
-      title.value = 'ISO View — US Site Distribution by Wholesale Market Region';
+      title.value = 'ISO View — North America Site Distribution by Wholesale Market Region';
       title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
       title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
       title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -5245,9 +5283,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       ws.mergeCells(2, 1, 2, COLS);
       const sub = ws.getCell(2, 1);
       const unmappedNote = unmappedCount > 0
-        ? ` (${unmappedCount} US site${unmappedCount === 1 ? '' : 's'} in a state with no mapped ISO region — e.g. AK / HI — are excluded)`
+        ? ` (${unmappedCount} site${unmappedCount === 1 ? '' : 's'} outside any ISO / RTO market — the non-ISO West / Southeast, most of Canada, AK / HI — are excluded)`
         : '';
-      sub.value = `${usSiteCount} US site${usSiteCount === 1 ? '' : 's'} across ${isoAggs.size} ISO / RTO region${isoAggs.size === 1 ? '' : 's'}. States in a region with portfolio sites are shaded by its region hue and site count (darker = more sites); ISO / RTO regions with no sites are greyed out and traced with a strong region-coloured border so the breakdown stays visible. Region boundaries are approximated to whole states.${unmappedNote}`;
+      sub.value = `${naSiteCount} North America site${naSiteCount === 1 ? '' : 's'} across ${isoAggs.size} ISO / RTO market${isoAggs.size === 1 ? '' : 's'}, aligned to the ISO/RTO Council map (US markets plus Alberta, Ontario, and New Brunswick). Each site is placed in its market by electric utility, then ZIP, then state / province, so split-state sites land in the right ISO. States / provinces with portfolio sites are shaded by that market's hue and site count (darker = more sites); markets with no sites are greyed and traced with a strong region-coloured border; areas outside every ISO / RTO market stay grey. The choropleth colours whole states / provinces, so the drawn boundaries are approximate.${unmappedNote}`;
       sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
       sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
       ws.getRow(2).height = 36;
