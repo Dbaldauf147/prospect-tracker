@@ -2255,6 +2255,19 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
     }
   }
 
+  // Star a contact as the primary point of contact. The top of the tag
+  // list *is* the primary — we don't persist a separate flag, we just move
+  // the starred name to the front of the comma-separated `value` so the
+  // ordering survives the same round-trip as everything else. The first
+  // row then renders a filled star; the rest render clickable outlines.
+  function makePrimary(name) {
+    const key = String(name || '').toLowerCase();
+    const promoted = selected.find(s => s.toLowerCase() === key);
+    if (!promoted) return;
+    const rest = selected.filter(s => s.toLowerCase() !== key);
+    onChange([promoted, ...rest].join(', '));
+  }
+
   // Custom tag — used by the "not from this company" path. Just adds
   // the typed name to this opp's tag list without touching the
   // prospect roster, so a one-off contact (consultant, broker,
@@ -2419,6 +2432,7 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
               <div style={{ maxHeight: 240, overflowY: 'auto' }}>
                 {taggedDetails.map((t, idx) => {
                   const key = `row-${idx}`;
+                  const isPrimary = idx === 0;
                   return (
                     <div
                       key={`${t.name}-${idx}`}
@@ -2428,6 +2442,23 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
                         borderBottom: '1px solid var(--color-border-light)',
                       }}
                     >
+                      <button
+                        type="button"
+                        onClick={() => { if (!isPrimary) makePrimary(t.name); }}
+                        title={isPrimary
+                          ? 'Primary point of contact'
+                          : `Make ${t.name} the primary point of contact`}
+                        aria-label={isPrimary ? 'Primary point of contact' : 'Set as primary point of contact'}
+                        aria-pressed={isPrimary}
+                        style={{
+                          flex: '0 0 auto',
+                          width: 22, height: 22, padding: 0, marginTop: 1,
+                          fontSize: '1rem', lineHeight: 1,
+                          color: isPrimary ? '#F59E0B' : '#CBD5E1',
+                          background: 'transparent', border: 'none',
+                          cursor: isPrimary ? 'default' : 'pointer',
+                        }}
+                      >{isPrimary ? '★' : '☆'}</button>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         {onOpenContact ? (
                           <button
@@ -9779,3 +9810,4 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     </div>
   );
 }
+
