@@ -2429,6 +2429,59 @@ function KeyContactsViewInner({
     [toCcByEmail]
   );
 
+  // Friendly display name for any email that belongs to a loaded contact —
+  // lets the "also a To / CC for …" note name the owning contact instead of
+  // showing a bare address.
+  const contactNameByEmail = useMemo(() => {
+    const m = new Map();
+    for (const c of flatContacts) {
+      const e = String(c?.email || '').toLowerCase().trim();
+      if (e && !m.has(e)) m.set(e, c.name || e);
+    }
+    return m;
+  }, [flatContacts]);
+
+  // Reverse of toCcByEmail: for each recipient address, which *other* contacts
+  // list it on their To Also / CC lines. Keyed by lowercased recipient email
+  // so the All Contacts "To / CC" column can flag a contact that is itself a
+  // recipient on someone else's outreach. `owner` is the contact whose popup
+  // added the recipient (their primary email).
+  const referencedAsRecipient = useMemo(() => {
+    const map = new Map();
+    const add = (src, kind) => {
+      for (const [owner, list] of Object.entries(src || {})) {
+        if (!Array.isArray(list) || list.length === 0) continue;
+        const ownerK = String(owner).toLowerCase().trim();
+        if (!ownerK) continue;
+        for (const addr of list) {
+          const a = String(addr).toLowerCase().trim();
+          if (!a) continue;
+          const entry = map.get(a) || { to: new Set(), cc: new Set() };
+          entry[kind].add(ownerK);
+          map.set(a, entry);
+        }
+      }
+    };
+    add(settings?.toAlsoMap, 'to');
+    add(settings?.ccMap, 'cc');
+    return map;
+  }, [settings?.toAlsoMap, settings?.ccMap]);
+  // The other contacts that reference contact `c` as a To / CC recipient,
+  // excluding `c` itself. Returns { to: string[], cc: string[] } of owner
+  // emails, or null when nobody references this contact.
+  const inboundRefsFor = useCallback(
+    (c) => {
+      const e = String(c?.email || '').toLowerCase().trim();
+      if (!e) return null;
+      const entry = referencedAsRecipient.get(e);
+      if (!entry) return null;
+      const to = [...entry.to].filter(o => o !== e);
+      const cc = [...entry.cc].filter(o => o !== e);
+      return (to.length || cc.length) ? { to, cc } : null;
+    },
+    [referencedAsRecipient]
+  );
+
   const contactFieldGetters = {
     name:     c => c.name || '',
     category: c => (categorizeContact ? (categorizeContact(c.raw || c) || []) : []).join(' '),
@@ -3621,7 +3674,13 @@ function KeyContactsViewInner({
                     )}
                     {storagePrefix === 'all-contacts' && visibleSet.has('toCc') && (() => {
                       const entry = toCcEntryFor(c);
-                      if (!entry || (entry.to.length === 0 && entry.cc.length === 0)) {
+                      const hasOwn = !!entry && (entry.to.length > 0 || entry.cc.length > 0);
+                      // Other contacts that list THIS contact on their own
+                      // To Also / CC lines — surfaced in italics so it reads
+                      // as "referenced elsewhere", not a recipient of its own.
+                      const inbound = inboundRefsFor(c);
+                      const ownerNames = (owners) => owners.map(o => contactNameByEmail.get(o) || o);
+                      if (!hasOwn && !inbound) {
                         return (
                           <div
                             style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1' }}
@@ -3630,32 +3689,48 @@ function KeyContactsViewInner({
                         );
                       }
                       const tip = [
-                        entry.to.length ? `To: ${entry.to.join(', ')}` : '',
-                        entry.cc.length ? `CC: ${entry.cc.join(', ')}` : '',
+                        entry?.to?.length ? `To: ${entry.to.join(', ')}` : '',
+                        entry?.cc?.length ? `CC: ${entry.cc.join(', ')}` : '',
+                        inbound?.to?.length ? `Also a To for: ${ownerNames(inbound.to).join(', ')}` : '',
+                        inbound?.cc?.length ? `Also a CC for: ${ownerNames(inbound.cc).join(', ')}` : '',
                       ].filter(Boolean).join('\n');
                       return (
                         <div
-                          style={{ padding: '0.4rem 0.6rem', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', overflow: 'hidden' }}
+                          style={{ padding: '0.4rem 0.6rem', display: 'flex', flexDirection: 'column', gap: 4, overflow: 'hidden' }}
                           title={tip}
                         >
-                          {entry.to.map(email => (
-                            <span
-                              key={`to|${email}`}
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: 3, maxWidth: '100%', padding: '1px 7px', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 999, fontSize: '0.66rem', color: '#92400E', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                            >
-                              <span style={{ fontWeight: 800, fontSize: '0.58rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>To</span>
-                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{email}</span>
-                            </span>
-                          ))}
-                          {entry.cc.map(email => (
-                            <span
-                              key={`cc|${email}`}
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: 3, maxWidth: '100%', padding: '1px 7px', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 999, fontSize: '0.66rem', color: '#1E40AF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                            >
-                              <span style={{ fontWeight: 800, fontSize: '0.58rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>CC</span>
-                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{email}</span>
-                            </span>
-                          ))}
+                          {hasOwn && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', overflow: 'hidden' }}>
+                              {entry.to.map(email => (
+                                <span
+                                  key={`to|${email}`}
+                                  style={{ display: 'inline-flex', alignItems: 'center', gap: 3, maxWidth: '100%', padding: '1px 7px', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 999, fontSize: '0.66rem', color: '#92400E', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                                >
+                                  <span style={{ fontWeight: 800, fontSize: '0.58rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>To</span>
+                                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{email}</span>
+                                </span>
+                              ))}
+                              {entry.cc.map(email => (
+                                <span
+                                  key={`cc|${email}`}
+                                  style={{ display: 'inline-flex', alignItems: 'center', gap: 3, maxWidth: '100%', padding: '1px 7px', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 999, fontSize: '0.66rem', color: '#1E40AF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                                >
+                                  <span style={{ fontWeight: 800, fontSize: '0.58rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>CC</span>
+                                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{email}</span>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {inbound && (
+                            <div style={{ fontStyle: 'italic', fontSize: '0.63rem', color: '#64748B', lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {inbound.to.length > 0 && (
+                                <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Also a To for: {ownerNames(inbound.to).join(', ')}</div>
+                              )}
+                              {inbound.cc.length > 0 && (
+                                <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Also a CC for: {ownerNames(inbound.cc).join(', ')}</div>
+                              )}
+                            </div>
+                          )}
                         </div>
                       );
                     })()}
