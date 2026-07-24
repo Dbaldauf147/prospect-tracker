@@ -962,7 +962,44 @@ function buildColumns(oppsCache, selectCol) {
     },
     exportValue: (row) => (row.__ignored ? 'Ignored' : ''),
   };
-  return [selectCol, ...front, ...canonical, fyCommissionCol, paymentStatusCol, lastPaymentDateCol, daysSincePaymentCol, updatedAtCol, ignoreCol, deleteCol];
+  // Per-row "keep" toggle for the duplicate Project Name warning. Only
+  // meaningful on rows that share a Project Name with an earlier row, so the
+  // cell is blank everywhere else. Marking a row "Kept" acknowledges it as a
+  // genuinely distinct deal: the row stays fully active (unlike Ignore, which
+  // greys it out and drops it from totals) but stops counting toward the
+  // duplicate banner and loses its fuchsia flag. Self-heals — rename or delete
+  // the collision and the toggle disappears on its own.
+  const dupeOkCol = {
+    key: '__dupeOk',
+    label: '',
+    defaultWidth: 76,
+    render: (row) => {
+      if (!row.__isDupeCandidate) return null;
+      const on = !!row.__dupeOk;
+      return (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            row.__onToggleDupeOk?.(row.id);
+          }}
+          title={on
+            ? 'Duplicate warning dismissed — this row is kept as a distinct deal. Click to flag it again.'
+            : 'Keep this row as a distinct deal and dismiss the duplicate Project Name warning.'}
+          style={{
+            background: on ? '#F5D0FE' : 'transparent',
+            border: '1px solid #E9A5F1',
+            color: '#86198F',
+            borderRadius: 4, padding: '0 6px',
+            fontSize: '0.72rem', fontFamily: 'inherit', cursor: 'pointer', lineHeight: 1.4,
+            fontWeight: 600, whiteSpace: 'nowrap',
+          }}
+        >{on ? 'Kept' : 'Keep'}</button>
+      );
+    },
+    exportValue: (row) => (row.__dupeOk ? 'Kept (duplicate acknowledged)' : ''),
+  };
+  return [selectCol, ...front, ...canonical, fyCommissionCol, paymentStatusCol, lastPaymentDateCol, daysSincePaymentCol, updatedAtCol, ignoreCol, dupeOkCol, deleteCol];
 }
 
 // A project row needs an Account Name tied to it. Flag it for the
@@ -1213,6 +1250,25 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     setSelectedIds(new Set());
   }
 
+  // Flip the __dupeOk flag on a row — acknowledges a duplicate Project Name
+  // as a genuinely distinct deal so it stops counting toward the duplicate
+  // banner. Unlike __ignored the row stays fully active; this only silences
+  // the warning. Persisted via the same override store as every cell edit.
+  function toggleDupeOk(rowId) {
+    const idx = Number(rowId);
+    if (!Number.isFinite(idx)) return;
+    setStore(prev => {
+      const next = [...prev.data];
+      const current = { ...(next[idx] || {}) };
+      if (current.__dupeOk) delete current.__dupeOk;
+      else current.__dupeOk = true;
+      current[UPDATED_AT_KEY] = nowStamp();
+      next[idx] = current;
+      try { saveCommissionsOverride(next); } catch (err) { console.warn('Save commissions failed', err); }
+      return { data: next, source: 'override' };
+    });
+  }
+
   // Save a single cell back to localStorage / the in-memory data array.
   // Empty values delete the key entirely so empty cells render the muted
   // "—" placeholder. Mirrors the DealsView updateCell pattern.
@@ -1249,8 +1305,36 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
 
   // Rows that repeat an earlier row's Project Name. Recomputed live off the
   // data so it self-heals: rename one of the pair (or delete it) and the
-  // flag clears on its own. Drives the duplicate banner and the row styling.
+  // flag clears on its own. These are the "duplicate candidates" — the rows
+  // that get the inline Keep toggle.
   const duplicateIds = useMemo(() => duplicateIdsFrom(data), [data]);
+
+  // Candidates the user hasn't acknowledged with "Keep" (__dupeOk). This is
+  // the set that actually drives the banner, the count, the row tint and the
+  // "show only" filter — a kept row is a distinct deal, not a warning.
+  const flaggedDuplicateIds = useMemo(() => {
+    const out = new Set();
+    duplicateIds.forEach(i => { if (!data[i]?.__dupeOk) out.add(i); });
+    return out;
+  }, [duplicateIds, data]);
+
+  // Mark every still-flagged duplicate row as kept in one pass — clears the
+  // banner while leaving the rows fully active.
+  function dismissAllDuplicates() {
+    setStore(prev => {
+      const dupes = duplicateIdsFrom(prev.data);
+      let changed = false;
+      const next = prev.data.map((row, i) => {
+        if (!dupes.has(i) || row.__dupeOk) return row;
+        changed = true;
+        return { ...row, __dupeOk: true, [UPDATED_AT_KEY]: nowStamp() };
+      });
+      if (!changed) return prev;
+      try { saveCommissionsOverride(next); } catch (err) { console.warn('Save commissions failed', err); }
+      return { data: next, source: 'override' };
+    });
+    setShowOnlyDuplicates(false);
+  }
 
   const rows = useMemo(
     () => data.map((r, i) => ({
@@ -1259,11 +1343,13 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
       __onUpdate: updateCell,
       __onDelete: deleteRow,
       __onToggleIgnore: toggleIgnored,
+      __onToggleDupeOk: toggleDupeOk,
       __isSelected: selectedIds.has(i),
       __onToggleSelect: toggleSelect,
-      __isDuplicate: duplicateIds.has(i),
+      __isDupeCandidate: duplicateIds.has(i),
+      __isDuplicate: flaggedDuplicateIds.has(i),
     })),
-    [data, selectedIds, duplicateIds]
+    [data, selectedIds, duplicateIds, flaggedDuplicateIds]
   );
 
   // Count of project rows missing an Account Name (and not ignored) —
@@ -1294,9 +1380,10 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     if (missingBfoCount === 0 && showOnlyMissingBfo) setShowOnlyMissingBfo(false);
   }, [missingBfoCount, showOnlyMissingBfo]);
 
-  // How many rows duplicate an earlier row's Project Name — drives the
-  // duplicate banner. Straight off duplicateIds so it tracks the live flag.
-  const duplicateCount = duplicateIds.size;
+  // How many rows duplicate an earlier row's Project Name and haven't been
+  // acknowledged with "Keep" — drives the duplicate banner. Off the flagged
+  // set so kept rows drop out and the banner clears once all are dismissed.
+  const duplicateCount = flaggedDuplicateIds.size;
 
   useEffect(() => {
     if (duplicateCount === 0 && showOnlyDuplicates) setShowOnlyDuplicates(false);
@@ -1624,7 +1711,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           <span>
             <strong>{duplicateCount}</strong> row{duplicateCount === 1 ? '' : 's'} {duplicateCount === 1 ? 'shares' : 'share'} a <strong>Project Name</strong> with another row — imported and kept as {duplicateCount === 1 ? 'a separate row' : 'separate rows'}, not merged.
           </span>
-          <span style={{ color: '#A21CAF' }}>Edit the Project Name, or delete the row, if it isn’t really a distinct deal.</span>
+          <span style={{ color: '#A21CAF' }}>Edit the Project Name, or delete the row, if it isn’t really a distinct deal. Or hit <strong>Keep</strong> to dismiss the warning for a genuine deal.</span>
           <span style={{ flex: 1 }} />
           <button
             type="button"
@@ -1632,6 +1719,12 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
             title={showOnlyDuplicates ? 'Show every commission row again' : 'Filter the table down to just the duplicate rows'}
             style={{ padding: '0.3rem 0.7rem', border: '1px solid #C026D3', borderRadius: 4, background: showOnlyDuplicates ? '#C026D3' : '#fff', color: showOnlyDuplicates ? '#fff' : '#86198F', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
           >{showOnlyDuplicates ? 'Show all rows' : 'Show only these'}</button>
+          <button
+            type="button"
+            onClick={dismissAllDuplicates}
+            title="Keep all flagged rows as distinct deals and dismiss this warning. Each stays fully active; re-flag one anytime with its Kept toggle."
+            style={{ padding: '0.3rem 0.7rem', border: '1px solid #C026D3', borderRadius: 4, background: '#fff', color: '#86198F', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+          >Keep all</button>
         </div>
       )}
 
