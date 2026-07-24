@@ -293,6 +293,9 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
   foot.font = { name: FONT, size: 9, color: { argb: 'FF94A3B8' } };
   foot.alignment = { horizontal: 'center' };
 
+  // === Sheet 2 — Site-by-Site Mandate Detail =============================
+  buildSiteDetailSheet(wb, results, { generatedAt, siteCount, matched });
+
   const buf = await wb.xlsx.writeBuffer();
   if (meta.returnBuffer) return buf;
   const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -305,4 +308,107 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
   a.remove();
   URL.revokeObjectURL(url);
   return buf;
+}
+
+// Second sheet: one row per screened site with its applicable BBS / Energy
+// Audits / BPS mandates, each mandate's deadline and estimated max yearly
+// penalty. Green branded header, frozen header + Site column, autofilter,
+// zebra rows; "Applicable" cells are coloured in each category's hue.
+function buildSiteDetailSheet(wb, results, meta) {
+  const ws = wb.addWorksheet('Site Detail', {
+    properties: { tabColor: { argb: SE_DARK } },
+    views: [{ showGridLines: false, state: 'frozen', ySplit: 4, xSplit: 1 }],
+  });
+  const NC = 15;
+  ws.columns = [
+    { width: 26 }, { width: 14 }, { width: 7 }, { width: 20 }, { width: 14 }, { width: 10 },
+    { width: 11 }, { width: 13 }, { width: 14 },
+    { width: 11 }, { width: 13 }, { width: 14 },
+    { width: 11 }, { width: 13 }, { width: 14 },
+  ];
+
+  // Branded title band + logo.
+  ws.mergeCells(1, 1, 1, NC);
+  const t = ws.getCell(1, 1);
+  t.value = 'Site-by-Site Mandate Detail';
+  t.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_DARK } };
+  t.font = { name: FONT, bold: true, size: 15, color: { argb: 'FFFFFFFF' } };
+  t.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  ws.getRow(1).height = 34;
+  try {
+    const logo = schneiderLogoPngDataUrl({ onDark: true, width: 170 });
+    const id = wb.addImage({ base64: logo.dataUrl, extension: 'png' });
+    ws.addImage(id, { tl: { col: NC - 1.9, row: 0.14 }, ext: { width: logo.width, height: logo.height } });
+  } catch { /* canvas unavailable — skip logo */ }
+
+  ws.mergeCells(2, 1, 2, NC);
+  const s = ws.getCell(2, 1);
+  s.value = `Each screened site with its applicable BBS / Energy Audits / BPS mandates, deadlines, and estimated max yearly penalties.  Generated ${meta.generatedAt}`;
+  s.font = { name: FONT, italic: true, size: 10, color: { argb: SLATE } };
+  s.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  ws.getRow(2).height = 18;
+  ws.getRow(3).height = 6;
+
+  const headers = ['Site', 'City', 'State', 'Jurisdiction', 'Gov ID', 'Sq Ft',
+    'BBS', 'BBS Deadline', 'BBS Penalty/yr',
+    'Energy Audits', 'Audits Deadline', 'Audits Penalty/yr',
+    'BPS', 'BPS Deadline', 'BPS Penalty/yr'];
+  const hr = ws.getRow(4);
+  headers.forEach((label, i) => {
+    const c = hr.getCell(i + 1);
+    c.value = label;
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_DARK } };
+    c.font = { name: FONT, bold: true, size: 9.5, color: { argb: 'FFFFFFFF' } };
+    c.alignment = { vertical: 'middle', horizontal: i === 0 ? 'left' : 'center', indent: i === 0 ? 1 : 0, wrapText: true };
+    c.border = { bottom: { style: 'thin', color: { argb: LINE } } };
+  });
+  hr.height = 26;
+
+  const appCount = (r) => CATEGORIES.filter(c => r[c]?.eligible === true).length;
+  const rows = [...results].sort((a, b) =>
+    appCount(b) - appCount(a)
+    || String(a.government || '~').localeCompare(String(b.government || '~'))
+    || String(a.siteName || '').localeCompare(String(b.siteName || '')));
+
+  let rr = 5;
+  rows.forEach((r, idx) => {
+    const zebra = idx % 2 === 1;
+    const row = ws.getRow(rr);
+    const sqft = (r.sqft != null && Number.isFinite(Number(r.sqft))) ? Number(r.sqft) : null;
+    const base = [r.siteName || '', r.city || '', r.state || '', r.matched ? (r.government || '') : 'no match', r.govId || '', sqft];
+    base.forEach((v, i) => {
+      const c = row.getCell(i + 1);
+      c.value = (v === '' || v == null) ? null : v;
+      if (i === 5 && typeof v === 'number') c.numFmt = '#,##0';
+      c.font = { name: FONT, size: 9.5, bold: i === 0, color: { argb: i === 0 ? INK : SLATE } };
+      c.alignment = { vertical: 'middle', horizontal: i === 5 ? 'right' : 'left', indent: 1 };
+    });
+    CATEGORIES.forEach((cat, ci) => {
+      const e = r[cat];
+      const applicable = !!(e && e.active && e.eligible === true);
+      const c0 = 7 + ci * 3;
+      const appCell = row.getCell(c0);
+      appCell.value = applicable ? 'Yes' : (r.matched ? 'No' : '—');
+      appCell.font = { name: FONT, size: 9.5, bold: applicable, color: { argb: applicable ? argb(CATEGORY_COLOR[cat]) : 'FF94A3B8' } };
+      appCell.alignment = { vertical: 'middle', horizontal: 'center' };
+      const dlCell = row.getCell(c0 + 1);
+      dlCell.value = applicable ? (e.deadline ? mdY(e.deadline) : (e.deadlineRaw || '')) : null;
+      dlCell.font = { name: FONT, size: 9.5, color: { argb: SLATE } };
+      dlCell.alignment = { vertical: 'middle', horizontal: 'center' };
+      const penCell = row.getCell(c0 + 2);
+      if (applicable && e.penalty != null) { penCell.value = e.penalty; penCell.numFmt = '"$"#,##0'; }
+      else penCell.value = null;
+      penCell.font = { name: FONT, size: 9.5, color: { argb: SLATE } };
+      penCell.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
+    });
+    for (let ci = 1; ci <= NC; ci++) {
+      const c = row.getCell(ci);
+      if (zebra && !c.fill) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
+      c.border = { bottom: { style: 'hair', color: { argb: LINE } } };
+    }
+    row.height = 16;
+    rr += 1;
+  });
+
+  ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: NC } };
 }
