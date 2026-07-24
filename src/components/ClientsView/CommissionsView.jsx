@@ -105,6 +105,14 @@ const CURRENCY_KEYS = new Set();
 const DATE_KEYS = new Set(['Comm Start Date', 'Comm End Date']);
 const PERCENT_KEYS = new Set(['%']);
 
+// Month/period cells a "replace months" import clears before overlaying the
+// paste — the 12 revenue columns, the 12 commission columns, and the stored
+// FY Revenue (recomputed from the months at render time anyway). Identity
+// and user-mapped columns (Comm dates, %, Account/BFO/Scope, Name) are not
+// period cells, so they survive a replace.
+const PERIOD_KEYS = new Set(['FY Revenue']);
+for (const m of COMMISSION_MONTH_NAMES) { PERIOD_KEYS.add(`${m} Revenue`); PERIOD_KEYS.add(m); }
+
 function defaultWidth(k) {
   if (k === ACCOUNT_NAME_KEY) return 200;
   if (k === BFO_NAME_KEY) return 200;
@@ -342,7 +350,15 @@ function plainTextRender(v) {
 // and the user-mapped Account Name / BFO Name / Scope the paste never
 // carries — are preserved). The existing row seeds the base, so its
 // __ignored flag and any earlier months ride along untouched.
-export function mergeAndDedupCommissions(existing, incoming) {
+//
+// `replaceMonths` flips the month-handling for projects the paste touches:
+// the existing row's month/period cells (PERIOD_KEYS) are cleared first, so
+// only the months in this paste survive — a clean per-project reset without
+// deleting the row and losing its Account Name / BFO Name / Scope. Identity
+// columns (Comm dates, %, Name) and the user-mapped lookups are never period
+// cells, so they still ride along. Projects the paste doesn't mention are
+// untouched either way.
+export function mergeAndDedupCommissions(existing, incoming, { replaceMonths = false } = {}) {
   const isBlank = (v) => v == null || String(v).trim() === '';
   // Overlay `addition`'s non-blank cells onto `base`, returning a new row.
   const unionInto = (base, addition) => {
@@ -356,21 +372,40 @@ export function mergeAndDedupCommissions(existing, incoming) {
 
   const out = [];
   const order = [];               // keyed projects, in first-seen order
-  const mergedByKey = new Map();
+  const existingByKey = new Map();
+  const incomingByKey = new Map();
+  const noteKey = (key) => { if (!existingByKey.has(key) && !incomingByKey.has(key)) order.push(key); };
 
-  const consider = (row) => {
+  // Existing rows seed the base (and lead the output order); incoming rows
+  // are gathered separately so a "replace months" import can wipe the base's
+  // months before overlaying only what this paste carries.
+  for (const row of (existing || [])) {
     const key = normProjectName(row['Project Name']);
-    if (!key) { out.push(row); return; }   // no key to group by → keep as-is
-    if (!mergedByKey.has(key)) { order.push(key); mergedByKey.set(key, {}); }
-    mergedByKey.set(key, unionInto(mergedByKey.get(key), row));
-  };
+    if (!key) { out.push(row); continue; }   // no key to group by → keep as-is
+    noteKey(key);
+    existingByKey.set(key, unionInto(existingByKey.get(key) || {}, row));
+  }
+  for (const row of (incoming || [])) {
+    const key = normProjectName(row['Project Name']);
+    if (!key) { out.push(row); continue; }
+    noteKey(key);
+    incomingByKey.set(key, unionInto(incomingByKey.get(key) || {}, row));
+  }
 
-  // Existing rows first so they seed the base (and their order leads the
-  // output); incoming rows overlay on top, brand-new projects appended.
-  for (const r of (existing || [])) consider(r);
-  for (const r of (incoming || [])) consider(r);
-
-  for (const key of order) out.push(mergedByKey.get(key));
+  for (const key of order) {
+    const base = existingByKey.get(key) || {};
+    const add = incomingByKey.get(key);
+    if (!add) { out.push(base); continue; }   // project not in this paste → untouched
+    let seed = base;
+    if (replaceMonths) {
+      seed = {};
+      for (const [k, v] of Object.entries(base)) {
+        if (PERIOD_KEYS.has(k)) continue;     // drop existing months; paste repopulates
+        seed[k] = v;
+      }
+    }
+    out.push(unionInto(seed, add));
+  }
   return out;
 }
 
@@ -1178,7 +1213,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     setSelectedIds(new Set());
   }
 
-  function handleImport(records) {
+  function handleImport(records, { replaceMonths = false } = {}) {
     setStore(prev => {
       // Stamp every incoming row with "now" as its Last Updated time. The
       // merge overlays each incoming row's non-blank cells (including this
@@ -1193,8 +1228,10 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
       // pile duplicate rows on top of the existing data. Rows sharing a
       // project name are unioned cell by cell (see mergeAndDedupCommissions)
       // so a snapshot covering one half of the fiscal year fills its months
-      // without dropping the months an earlier snapshot already recorded.
-      const merged = mergeAndDedupCommissions(prev.data || [], stamped);
+      // without dropping the months an earlier snapshot already recorded —
+      // unless the user asked to replace months, in which case each touched
+      // project's existing months are cleared and repopulated from the paste.
+      const merged = mergeAndDedupCommissions(prev.data || [], stamped, { replaceMonths });
       try { saveCommissionsOverride(merged); } catch (err) { console.warn('Save commissions failed', err); }
       return { data: merged, source: 'override' };
     });
@@ -1471,7 +1508,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
       {showPaste && (
         <CommissionsPasteImportModal
           onClose={() => { setShowPaste(false); setInitialPaste(''); }}
-          onImport={(records) => { handleImport(records); setInitialPaste(''); }}
+          onImport={(records, opts) => { handleImport(records, opts); setInitialPaste(''); }}
           initialPaste={initialPaste}
           existingRows={data}
         />
