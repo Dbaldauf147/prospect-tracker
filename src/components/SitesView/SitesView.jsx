@@ -1093,16 +1093,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   // Compact { siteName, city, state } list fed to the Building Compliance
   // Screening subtab so it can screen every uploaded site. City/State come
   // from the resolved (detected or overridden) columns of the site list.
-  const complianceSites = useMemo(() => {
-    const cityCol = cityOverride;
-    const stateCol = stateColumnOverride;
-    return cleanSitesData.map((r, i) => ({
-      id: i,
-      siteName: siteNameColumn ? String(r[siteNameColumn] ?? '').trim() : '',
-      city: cityCol ? String(r[cityCol] ?? '').trim() : '',
-      state: stateCol ? String(r[stateCol] ?? '').trim() : '',
-    }));
-  }, [cleanSitesData, siteNameColumn, cityOverride, stateColumnOverride]);
+  // complianceSites is built from the fully-processed `rows` (defined below)
+  // so it carries square footage, property type, and the electric/gas utility
+  // the Building Compliance Screening subtab needs — see just after the `rows`
+  // memo.
 
   // Pick the FIRST candidate column (in document order) that has a
   // valid value for this row. Earlier we took the per-row minimum,
@@ -1473,6 +1467,24 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       };
     });
   }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, companyNameOverride, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, segmentOverride, siteDescriptionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
+
+  // Sites fed to the Building Compliance Screening subtab. Built from the
+  // processed rows so each site carries the derived square footage, property
+  // type, and electric/gas utility — the screening uses square footage vs each
+  // ordinance's threshold for eligibility, and the utilities for the
+  // whole-building-data-collection (utility feed) breakdown.
+  const complianceSites = useMemo(() => {
+    return rows.map((r, i) => ({
+      id: r.id ?? i,
+      siteName: siteNameColumn ? String(r[siteNameColumn] ?? '').trim() : (r.__siteName__ || ''),
+      city: String(r.__city__ || (cityOverride ? r[cityOverride] : '') || '').trim(),
+      state: String(r.__state__ || (stateColumnOverride ? r[stateColumnOverride] : '') || '').trim(),
+      sqft: (typeof r.__propertySizeFt2__ === 'number' && Number.isFinite(r.__propertySizeFt2__)) ? r.__propertySizeFt2__ : null,
+      propertyType: r.__propertyType__ || r.__propertyTypeRaw__ || '',
+      electricUtility: r.__electric__ || '',
+      gasUtility: r.__gas__ || '',
+    }));
+  }, [rows, siteNameColumn, cityOverride, stateColumnOverride]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;

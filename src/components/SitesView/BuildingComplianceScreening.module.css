@@ -385,3 +385,62 @@
     gap: 0.2rem;
   }
 }
+
+/* ---- ISO/RTO two-tab compliance rework: dashboard + report ---- */
+.btnPrimary {
+  padding: 0.4rem 0.8rem;
+  border: none;
+  border-radius: 6px;
+  background: #009530;
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}
+.btnPrimary:hover { background: #007a27; }
+
+.dashGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+  margin: 0.5rem 0 1rem;
+}
+.dashCard {
+  border: 1px solid var(--color-border, #E2E8F0);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--color-surface, #fff);
+}
+.dashHead {
+  color: #fff;
+  font-weight: 800;
+  font-size: 0.78rem;
+  text-align: center;
+  padding: 0.4rem 0.5rem;
+}
+.dashKpis {
+  display: flex;
+  gap: 1rem;
+  padding: 0.6rem 0.75rem 0.3rem;
+}
+.kpiNum { font-size: 1.25rem; font-weight: 800; line-height: 1.1; }
+.kpiLbl { font-size: 0.62rem; color: var(--color-text-muted, #64748B); text-transform: uppercase; letter-spacing: 0.03em; }
+
+.hbars { display: flex; flex-direction: column; gap: 0.3rem; padding: 0.4rem 0.75rem 0.75rem; }
+.hbarRow { display: grid; grid-template-columns: 90px 1fr 42px; align-items: center; gap: 6px; }
+.hbarLabel { font-size: 0.68rem; color: #334155; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+.hbarTrack { background: #F1F5F9; border-radius: 3px; height: 14px; overflow: hidden; }
+.hbarFill { display: block; height: 100%; border-radius: 3px; }
+.hbarVal { font-size: 0.68rem; font-weight: 700; color: #0F172A; }
+.miniEmpty { font-size: 0.7rem; color: var(--color-text-muted, #94A3B8); padding: 0.5rem 0.75rem; }
+
+.pillEligible { display: inline-block; padding: 1px 8px; border-radius: 999px; background: #DCFCE7; color: #166534; font-size: 0.68rem; font-weight: 700; }
+.pillBelow { display: inline-block; padding: 1px 8px; border-radius: 999px; background: #F1F5F9; color: #64748B; font-size: 0.68rem; font-weight: 600; }
+.pillUnknown { display: inline-block; padding: 1px 8px; border-radius: 999px; background: #FEF3C7; color: #92400E; font-size: 0.68rem; font-weight: 600; }
+
+.manualResult { margin-top: 0.5rem; }
+.manualHead { font-size: 1rem; font-weight: 800; color: #1E293B; margin-bottom: 0.5rem; }
+.govId { font-size: 0.72rem; font-weight: 700; color: #64748B; background: #F1F5F9; border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
+.manualBody { padding: 0.6rem 0.75rem; font-size: 0.76rem; display: flex; flex-direction: column; gap: 0.25rem; }
+.manualMeta { color: #475569; font-size: 0.72rem; }
