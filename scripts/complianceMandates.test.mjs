@@ -4,6 +4,7 @@ import {
   lookupGovId, getMandates, screenSite, screenSites,
   classifyPropertyType, eligibilityByOrdinance, totalEligible,
   deadlinesByDate, penaltyByOrdinance, utilityFeedEligibility,
+  buildComplianceRoadmap,
 } from '../src/utils/complianceMandates.js';
 
 let pass = 0, fail = 0;
@@ -59,6 +60,29 @@ eq(classifyPropertyType('Office'), 'nonresidential', 'classify nonresidential');
   ok(penaltyByOrdinance(res, 'bbs').some(x => x.government === 'Seattle' && x.penalty === 8000), 'penalty Seattle 2x4000=8000');
   const feeds = utilityFeedEligibility(res, 'electric');
   ok(feeds.rows.some(x => x.state === 'Washington' && /Puget/.test(x.utility) && x.count === 2), 'utility feed PSE=2');
+}
+
+// --- roadmap: cumulative sites + fines over time ---------------------------
+{
+  // Two Seattle sites (BBS 2026-06-01 $4000; Audits 2025-10-01 $20000; BPS
+  // 2027-05-01 $15000 each). Cumulative fines/sites must be monotonic and the
+  // final cumulative must equal the totals.
+  const res = screenSites([
+    { id: 1, city: 'Seattle', state: 'WA', sqft: 90000, propertyType: 'Office' },
+    { id: 2, city: 'Seattle', state: 'WA', sqft: 90000, propertyType: 'Office' },
+  ]);
+  const rm = buildComplianceRoadmap(res);
+  ok(rm.periods.length >= 2, 'roadmap: multiple quarters');
+  ok(rm.totals.sites === 2, 'roadmap: 2 distinct sites in scope');
+  ok(rm.totals.obligations === 6, 'roadmap: 6 obligations (2 sites × 3 active)');
+  const last = rm.periods[rm.periods.length - 1];
+  ok(last.cumSites === 2, 'roadmap: final cumulative sites = 2');
+  ok(last.cumObligations === rm.totals.obligations, 'roadmap: final cum obligations = total');
+  ok(last.cumFines === rm.totals.fines, 'roadmap: final cum fines = total');
+  const monotonic = rm.periods.every((p, i) => i === 0 || (p.cumFines >= rm.periods[i - 1].cumFines && p.cumSites >= rm.periods[i - 1].cumSites));
+  ok(monotonic, 'roadmap: cumulative sites & fines are non-decreasing');
+  // Earliest obligation is the 2025-10-01 Audits deadline → first period Q4 2025.
+  ok(rm.periods[0].label === 'Q4 2025', `roadmap: first period Q4 2025 (got ${rm.periods[0].label})`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

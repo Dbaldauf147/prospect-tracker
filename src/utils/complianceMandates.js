@@ -217,3 +217,82 @@ export function utilityFeedEligibility(results, commodity) {
   rows.sort((a, b) => a.state.localeCompare(b.state) || b.count - a.count);
   return { total, rows };
 }
+
+// ---- Compliance Roadmap: obligations, sites, and fine exposure over time --
+// Turns the screened sites into a quarter-by-quarter timeline: how many new
+// compliance deadlines land each quarter (by category), how the count of
+// distinct sites carrying an obligation grows, and how the cumulative max
+// yearly fine exposure ramps up. Powers the Compliance Roadmap subtab.
+
+function quarterOf(iso) {
+  const [y, m] = String(iso).split('-').map(Number);
+  const q = Math.floor((m - 1) / 3) + 1;
+  return { sort: y * 4 + (q - 1), label: `Q${q} ${y}` };
+}
+function labelOfSort(sort) {
+  const y = Math.floor(sort / 4);
+  const q = (sort % 4) + 1;
+  return { key: `${y}-Q${q}`, label: `Q${q} ${y}`, startISO: `${y}-${String((q - 1) * 3 + 1).padStart(2, '0')}-01` };
+}
+
+// results: output of screenSites(). Returns quarterly periods (spanning the
+// first → last dated deadline) plus totals. A site counts toward "sites in
+// scope" from its EARLIEST dated deadline; each (site, category) obligation
+// adds its max yearly penalty at its own deadline. Obligations that are active
+// but have no parseable deadline are tallied under `undated` (not placed on
+// the timeline).
+export function buildComplianceRoadmap(results) {
+  const events = [];
+  const siteEarliestSort = new Map();
+  let undated = 0;
+  for (const r of (results || [])) {
+    if (!r.matched) continue;
+    for (const c of CATEGORIES) {
+      const e = r[c];
+      if (!e || !e.active) continue;
+      if (!e.deadline) { undated++; continue; }
+      const q = quarterOf(e.deadline);
+      events.push({ siteId: r.id, category: c, penalty: e.penalty || 0, sort: q.sort });
+      const prev = siteEarliestSort.get(r.id);
+      if (prev == null || q.sort < prev) siteEarliestSort.set(r.id, q.sort);
+    }
+  }
+  const totals = {
+    sites: siteEarliestSort.size,
+    obligations: events.length,
+    fines: events.reduce((n, e) => n + e.penalty, 0),
+    undated,
+  };
+  if (!events.length) return { periods: [], totals };
+
+  const newSitesBySort = new Map();
+  for (const s of siteEarliestSort.values()) newSitesBySort.set(s, (newSitesBySort.get(s) || 0) + 1);
+  const aggBySort = new Map();
+  for (const ev of events) {
+    let a = aggBySort.get(ev.sort);
+    if (!a) { a = { fines: 0, oblig: 0, byCat: { bbs: 0, audits: 0, bps: 0 } }; aggBySort.set(ev.sort, a); }
+    a.fines += ev.penalty; a.oblig++; a.byCat[ev.category]++;
+  }
+
+  const sorts = events.map(e => e.sort);
+  const minS = Math.min(...sorts), maxS = Math.max(...sorts);
+  const periods = [];
+  let cumSites = 0, cumFines = 0, cumOblig = 0;
+  const cumByCat = { bbs: 0, audits: 0, bps: 0 };
+  for (let s = minS; s <= maxS; s++) {
+    const a = aggBySort.get(s) || { fines: 0, oblig: 0, byCat: { bbs: 0, audits: 0, bps: 0 } };
+    const newSites = newSitesBySort.get(s) || 0;
+    cumSites += newSites; cumFines += a.fines; cumOblig += a.oblig;
+    for (const c of CATEGORIES) cumByCat[c] += a.byCat[c];
+    const meta = labelOfSort(s);
+    periods.push({
+      ...meta,
+      newSites, cumSites,
+      newObligations: a.oblig, cumObligations: cumOblig,
+      newByCategory: { ...a.byCat },
+      cumByCategory: { ...cumByCat },
+      newFines: a.fines, cumFines,
+    });
+  }
+  return { periods, totals };
+}
