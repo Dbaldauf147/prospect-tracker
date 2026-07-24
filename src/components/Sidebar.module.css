@@ -71,6 +71,15 @@
   padding: 4px;
 }
 
+.searchGroup {
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+  padding: 0.35rem 0.5rem 0.2rem;
+}
+
 .searchItem {
   display: block;
   width: 100%;
