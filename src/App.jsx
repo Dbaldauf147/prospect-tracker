@@ -229,6 +229,21 @@ function App() {
     setModal({ prospect, isNew: false, editContact: editContact || null });
   }
 
+  // Open a contact picked from the sidebar search. A contact is edited inside
+  // its company's account popup, so resolve the contact to its prospect by
+  // company name (respecting a pinned _companyOverride) and open that modal
+  // focused on the contact. When the company isn't in the Table View roster,
+  // still open the contact editor against a lightweight company-only record so
+  // the person is always reachable.
+  function handleSelectContact(contact) {
+    if (!contact) return;
+    const companyName = String(contact._companyOverride || contact.company || '').trim().toLowerCase();
+    const prospect = companyName
+      ? prospects.find(p => String(p?.company || '').trim().toLowerCase() === companyName)
+      : null;
+    setModal({ prospect: prospect || { company: contact.company || '' }, isNew: false, editContact: contact });
+  }
+
   return (
     <div className="layout">
       <Sidebar
@@ -247,7 +262,9 @@ function App() {
         onToggleWhatToDoToday={() => updateSettings({ whatToDoTodayEnabled: !whatToDoTodayEnabled })}
         issuesCount={openIssuesCount}
         prospects={prospects}
+        contacts={effectiveHubspotContacts}
         onSelectProspect={handleSelect}
+        onSelectContact={handleSelectContact}
       />
       <div className="main">
         {(view === 'table' || view === 'kanban') && (
