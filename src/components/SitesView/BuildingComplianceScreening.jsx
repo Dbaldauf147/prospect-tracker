@@ -7,6 +7,8 @@ import {
   totalEligible, eligibilityByOrdinance, totalPenalty,
 } from '../../utils/complianceMandates';
 import { buildComplianceReportHtml } from '../../utils/complianceReportHtml';
+import { exportComplianceReportXlsx } from '../../utils/complianceReportXlsx';
+import { schneiderLogoSvg } from '../../utils/schneiderLogo';
 import styles from './BuildingComplianceScreening.module.css';
 
 const usd = (n) => n == null ? '$-' : '$' + Math.round(n).toLocaleString('en-US');
@@ -150,6 +152,18 @@ export function BuildingComplianceScreening({ sites = [] }) {
     else alert('Allow pop-ups to open the printable report. The raw-data Excel will still download.');
     writeRawWorkbook(results, 'Building-Compliance-Screening-Data.xlsx');
   }
+  // Formatted Excel version of the branded report (KPI tiles, roadmap +
+  // penalty tables, and the same charts as images) — a spreadsheet twin of
+  // the printable report, distinct from the raw-data workbook.
+  async function exportExcelReport() {
+    try {
+      await exportComplianceReportXlsx(results, { generatedAt: new Date().toLocaleString(), siteCount: results.length });
+    } catch (err) {
+      console.error('Excel report export failed', err);
+      alert('Could not build the Excel report: ' + (err?.message || 'unknown error'));
+    }
+  }
+
   // The filtered on-page view as an Excel (no report).
   function exportSiteData() {
     if (!filtered.length) { alert('No site results to export.'); return; }
@@ -160,10 +174,9 @@ export function BuildingComplianceScreening({ sites = [] }) {
     <div className={styles.wrapper}>
       <div className={styles.brandBand}>
         <div className={styles.brandBandLeft}>
-          <span className={styles.brandMark}>SE</span>
           <h1 className={styles.title} style={{ color: '#fff' }}>Building Compliance Screening &amp; Roadmap</h1>
         </div>
-        <div className={styles.brandLockup}>Life Is On<span className={styles.sep}>|</span>Schneider Electric</div>
+        <span className={styles.brandLogo} dangerouslySetInnerHTML={{ __html: schneiderLogoSvg({ onDark: true, width: 172 }) }} />
       </div>
       <div className={styles.header}>
         <div>
@@ -176,7 +189,8 @@ export function BuildingComplianceScreening({ sites = [] }) {
         <div className={styles.actions}>
           <button type="button" className={styles.btn} onClick={downloadCityLookup} title="Download the City Lookup table (city + state → Government ID)">City Lookup</button>
           <button type="button" className={styles.btn} onClick={downloadMasterOrdinances} title="Download the Master Ordinances Database (Government ID → BBS/Audits/BPS)">Master Ordinances</button>
-          <button type="button" className={styles.btnPrimary} onClick={exportReport} title="Open the branded report (print / Save as PDF) and download the accompanying raw-data Excel">Export report + data</button>
+          <button type="button" className={styles.btnPrimary} onClick={exportReport} title="Open the branded report (print / Save as PDF) and download the accompanying raw-data Excel">Export report (PDF)</button>
+          <button type="button" className={styles.btnPrimary} onClick={exportExcelReport} disabled={sites.length === 0} title="Download the branded report as a formatted Excel workbook (KPI tiles, roadmap + penalty tables, charts)">Export report (Excel)</button>
         </div>
       </div>
 

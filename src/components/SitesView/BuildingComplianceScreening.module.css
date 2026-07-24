@@ -19,14 +19,8 @@
   box-shadow: 0 2px 8px rgba(0, 149, 48, 0.18);
 }
 .brandBandLeft { display: flex; align-items: center; gap: 0.7rem; min-width: 0; }
-.brandMark {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 34px; height: 34px; flex: 0 0 auto;
-  background: #fff; color: #009530; font-weight: 900; font-size: 0.82rem;
-  border-radius: 8px; letter-spacing: 0.5px;
-}
-.brandLockup { font-weight: 800; font-size: 0.82rem; white-space: nowrap; }
-.brandLockup .sep { opacity: 0.6; margin: 0 0.4rem; }
+.brandLogo { flex: 0 0 auto; display: inline-flex; align-items: center; }
+.brandLogo svg { display: block; }
 
 .header {
   display: flex;

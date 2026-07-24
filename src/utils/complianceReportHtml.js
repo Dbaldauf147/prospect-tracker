@@ -11,6 +11,7 @@ import {
   eligibilityByOrdinance, totalEligible, deadlinesByDate,
   penaltyByOrdinance, totalPenalty, utilityFeedEligibility,
 } from './complianceMandates.js';
+import { schneiderLogoSvg } from './schneiderLogo.js';
 
 // --- Schneider Electric brand tokens ------------------------------------
 const SE_GREEN = '#3DCD58';       // "Life Is On" green
@@ -126,8 +127,8 @@ export function buildComplianceReportHtml(results, meta = {}) {
   })();
 
   const brandbar = `<div class="brandbar">
-    <div class="bbLeft"><span class="bbMark">SE</span><span class="bbTitle">Building Compliance — Applicability Screening &amp; Roadmap</span></div>
-    <div class="bbLockup"><span class="bbTag">Life Is On</span><span class="bbSep">|</span><span class="bbSe">Schneider Electric</span></div>
+    <div class="bbLeft"><span class="bbTitle">Building Compliance — Applicability Screening &amp; Roadmap</span></div>
+    <div class="bbLogo">${schneiderLogoSvg({ onDark: true, width: 176 })}</div>
   </div>`;
 
   const page = (inner, { first = false } = {}) => `<section class="page">
@@ -244,12 +245,11 @@ export function buildComplianceReportHtml(results, meta = {}) {
   .pagebody { padding: 20px 30px 30px; }
 
   /* Brand bar */
-  .brandbar { background: linear-gradient(90deg, ${SE_GREEN_DARK} 0%, ${SE_GREEN} 100%); color: #fff; padding: 13px 30px; display: flex; align-items: center; justify-content: space-between; }
+  .brandbar { background: linear-gradient(90deg, ${SE_GREEN_DARK} 0%, ${SE_GREEN} 100%); color: #fff; padding: 12px 30px; display: flex; align-items: center; justify-content: space-between; }
   .bbLeft { display: flex; align-items: center; gap: 12px; min-width: 0; }
-  .bbMark { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; background: #fff; color: ${SE_GREEN_DARK}; font-weight: 900; font-size: 13px; border-radius: 7px; letter-spacing: .5px; flex: 0 0 auto; }
   .bbTitle { font-size: 16px; font-weight: 800; letter-spacing: .1px; }
-  .bbLockup { font-weight: 800; font-size: 14px; white-space: nowrap; }
-  .bbLockup .bbTag { opacity: .95; } .bbLockup .bbSep { opacity: .6; margin: 0 7px; } .bbLockup .bbSe { }
+  .bbLogo { flex: 0 0 auto; display: flex; align-items: center; }
+  .bbLogo svg { display: block; }
 
   .metarow { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin: 14px 0 10px; }
   .metaLead { font-size: 12.5px; color: ${SE_SLATE}; max-width: 640px; line-height: 1.5; }

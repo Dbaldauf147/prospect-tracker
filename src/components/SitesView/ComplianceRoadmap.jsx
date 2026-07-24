@@ -4,6 +4,7 @@ import {
   screenSites, buildComplianceRoadmap,
   CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
 } from '../../utils/complianceMandates';
+import { schneiderLogoSvg } from '../../utils/schneiderLogo';
 import styles from './ComplianceRoadmap.module.css';
 
 const usd = (n) => n == null ? '$-' : '$' + Math.round(n).toLocaleString('en-US');
@@ -127,9 +128,12 @@ export function ComplianceRoadmap({ sites = [] }) {
 
   return (
     <div className={styles.wrapper}>
+      <div className={styles.brandBand}>
+        <h1 className={styles.title}>Compliance Roadmap</h1>
+        <span className={styles.brandLogo} dangerouslySetInnerHTML={{ __html: schneiderLogoSvg({ onDark: true, width: 172 }) }} />
+      </div>
       <div className={styles.header}>
         <div>
-          <h1 className={styles.title}>Compliance Roadmap</h1>
           <div className={styles.subtitle}>
             When each site's BBS / Audits / BPS deadlines land, how many sites come into scope, and how the
             cumulative estimated fine exposure ramps up over time.
