@@ -900,6 +900,11 @@ function PreviewTabs({ contacts, subject, body, personalizeForContact, draftCc, 
 
 const AUTOSAVE_KEY = 'prospect-draft-autosave';
 
+// The body "Clear all" resets to — a personalized greeting kept as a real
+// {goesBy} token so it still resolves per recipient on send/preview. The
+// signature lives in its own field, so it's untouched by a compose clear.
+const GREETING_BODY = '<p>Hi {goesBy},</p><p><br></p>';
+
 export function DraftEmailView({ prospects, settings, updateSettings }) {
   const { isAdmin, user } = useAuth();
   // Restore auto-saved compose state
@@ -1308,6 +1313,21 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
 
   function removeContact(id) {
     setSelectedContacts(prev => prev.filter(c => c.id !== id));
+  }
+
+  // "Clear all" — reset the composer to a fresh email: drop every recipient
+  // (To + CC), the subject, the attachments, and the message body. The body
+  // resets to the "Hi {goesBy}," greeting rather than going fully blank, and
+  // the saved signature (a separate field) is left untouched.
+  function clearCompose() {
+    const ok = window.confirm('Clear the recipients, subject, message, and attachments? The "Hi {goesBy}," greeting and your signature are kept.');
+    if (!ok) return;
+    setSelectedContacts([]);
+    setDraftCc([]);
+    setSubject('');
+    setBody(GREETING_BODY);
+    setAttachments([]);
+    setCritique(null);
   }
 
   function saveDraft() {
@@ -1921,7 +1941,15 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       <div className={styles.layout}>
         {/* Compose area */}
         <div className={styles.composeCard}>
-          <h3 className={styles.cardTitle}>Compose</h3>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: '1rem' }}>
+            <h3 className={styles.cardTitle} style={{ marginBottom: 0 }}>Compose</h3>
+            <button
+              type="button"
+              onClick={clearCompose}
+              title={'Clear recipients, subject, message, and attachments. Keeps the "Hi {goesBy}," greeting and your signature.'}
+              style={{ padding: '0.25rem 0.6rem', border: '1px solid #FCA5A5', borderRadius: 6, background: '#fff', color: '#B91C1C', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+            >Clear all</button>
+          </div>
 
           {/* Tagged contacts */}
           <div className={styles.field}>
