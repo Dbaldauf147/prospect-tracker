@@ -13,6 +13,8 @@ const eq = (a, b, n) => ok(JSON.stringify(a) === JSON.stringify(b), `${n} (got $
 // --- two-step lookup -------------------------------------------------------
 eq(lookupGovId('Seattle', 'WA'), 'US-WA-Seattl-01', 'Seattle,WA -> govId');
 eq(lookupGovId('Seattle', 'Washington'), 'US-WA-Seattl-01', 'Seattle,Washington -> govId');
+eq(lookupGovId('Brooklyn', 'NY'), 'US--New Yo-01', 'Brooklyn,NY -> NYC govId (borough alias)');
+eq(lookupGovId('Queens', 'NY'), 'US--New Yo-01', 'Queens,NY -> NYC govId (borough alias)');
 eq(lookupGovId('Nowhere', 'ZZ'), null, 'unknown city -> null');
 ok(getMandates('US-WA-Seattl-01')?.government === 'Seattle', 'getMandates(Seattle)');
 
@@ -30,11 +32,13 @@ eq(classifyPropertyType('Office'), 'nonresidential', 'classify nonresidential');
   eq(big.bbs.penalty, 4000, 'Seattle BBS penalty 4000');
 
   const small = screenSite({ id: 2, city: 'Seattle', state: 'WA', sqft: 30000, propertyType: 'Office' });
-  ok(small.bbs.eligible === true, 'Seattle 30k: BBS eligible (>=20k)');
-  ok(small.audits.eligible === false, 'Seattle 30k: Audits NOT eligible (<50k)');
+  ok(small.bbs.eligible === true, 'Seattle 30k: BBS applicable');
+  ok(small.audits.eligible === true, 'Seattle 30k: Audits applicable (ft² threshold ignored)');
+  ok(small.audits.meetsThreshold === false, 'Seattle 30k: below Audits threshold (informational only)');
 
   const noSize = screenSite({ id: 3, city: 'Seattle', state: 'WA', propertyType: 'Office' });
-  ok(noSize.bbs.eligible === null, 'no square footage -> eligible null (unknown)');
+  ok(noSize.bbs.eligible === true, 'no square footage -> still applicable');
+  ok(noSize.bbs.meetsThreshold === null, 'no square footage -> meetsThreshold unknown');
 
   const unmatched = screenSite({ id: 4, city: 'Nowhere', state: 'ZZ', sqft: 99999 });
   ok(unmatched.matched === false, 'unmatched site');

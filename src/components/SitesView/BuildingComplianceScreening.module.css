@@ -444,3 +444,5 @@
 .govId { font-size: 0.72rem; font-weight: 700; color: #64748B; background: #F1F5F9; border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
 .manualBody { padding: 0.6rem 0.75rem; font-size: 0.76rem; display: flex; flex-direction: column; gap: 0.25rem; }
 .manualMeta { color: #475569; font-size: 0.72rem; }
+
+.govIdCell { font-size: 0.72rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #475569; }

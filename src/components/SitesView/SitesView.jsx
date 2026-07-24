@@ -5333,9 +5333,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       ctx.fillRect(PAD, TITLE_H, MAP_W, MAP_H);
 
       // Which ISO / RTO regions actually hold portfolio sites. Regions with
-      // no sites are greyed out on the map (neutral fill) but still traced
-      // with a strong, region-coloured border in a second pass, so the ISO
-      // breakdown stays legible even where the portfolio has no presence.
+      // no sites are drawn as plain grey states (like any non-ISO area) — no
+      // region-coloured outline — so the map only highlights the markets the
+      // portfolio actually touches.
       const activeRegions = new Set(isoAggs.keys());
 
       // Pass 1 — fills. A state / province where the portfolio has sites is
@@ -5368,29 +5368,14 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           ctx.fillStyle = shadeForRegion(region, stateCounts.get(stateKey) || 0);
           ctx.strokeStyle = '#FFFFFF';
         } else {
-          // Greyed out: outside the IRC map, or in a market that holds no
-          // portfolio sites (gets a bold region-coloured border in pass 2).
+          // Greyed out as a plain state: outside the IRC map, or in a market
+          // that holds no portfolio sites. Both read as neutral grey with an
+          // ordinary state boundary — empty markets are no longer outlined.
           ctx.fillStyle = NO_REGION_FILL;
           ctx.strokeStyle = NO_REGION_STROKE;
         }
         drawFeature(feat.rings);
       }
-
-      // Pass 2 — strong bold borders for the greyed-out ISO markets, drawn
-      // on top of the fills so the ISO / RTO breakdown reads through the
-      // grey. Each empty market's footprint states are outlined in its hue.
-      const prevJoin = ctx.lineJoin;
-      ctx.lineJoin = 'round';
-      ctx.lineWidth = 2.4;
-      for (const feat of naFeatures) {
-        const code = String(feat.postal || '').toUpperCase();
-        if (feat.admin === 'US' && (code === 'AK' || code === 'HI')) continue;
-        const region = footprintForFeature(feat);
-        if (!region || activeRegions.has(region)) continue;
-        ctx.strokeStyle = ISO_FILL[region] || NO_REGION_STROKE;
-        strokeFeature(feat.rings);
-      }
-      ctx.lineJoin = prevJoin;
       ctx.restore();
 
       // Thin frame around the map, echoing the reference image's border.
@@ -5406,18 +5391,14 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       ctx.font = '14px Nunito Sans, Arial, sans-serif';
       ctx.textBaseline = 'middle';
       ctx.textAlign = 'left';
-      const hasEmptyRegion = ISO_REGIONS.some(r => !isoAggs.has(r.key));
       const legendItems = [
         ...ISO_REGIONS.map(r => ({ color: r.fill, label: r.label })),
-        ...(hasEmptyRegion
-          ? [{ color: NO_REGION_FILL, label: 'ISO / RTO market — no sites', boldBorder: true }]
-          : []),
         // Striped example chip — only when a split state was actually drawn
         // hybrid. MISO:PJM at 2:1 mirrors the map's "denser = dominant" stripes.
         ...(anyHybrid
           ? [{ striped: true, stripeColors: [ISO_FILL.MISO, ISO_FILL.MISO, ISO_FILL.PJM], label: 'Split state — striped by ISO share (denser = dominant)' }]
           : []),
-        { color: NO_REGION_FILL, label: 'Outside ISO / RTO market' },
+        { color: NO_REGION_FILL, label: 'ISO / RTO market with no sites, or outside any market' },
       ];
       const itemW = (label) => SWATCH + GAP_SWATCH_LABEL + ctx.measureText(label).width;
       // Greedy row packing centred within the map width.
@@ -5458,14 +5439,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             ctx.fillStyle = it.color;
             ctx.fillRect(swX, swY, SWATCH, SWATCH);
           }
-          if (it.boldBorder) {
-            // Mirror the map: greyed empty ISO regions carry a strong border.
-            ctx.strokeStyle = '#0F172A';
-            ctx.lineWidth = 2.4;
-          } else {
-            ctx.strokeStyle = NO_REGION_STROKE;
-            ctx.lineWidth = 0.8;
-          }
+          ctx.strokeStyle = NO_REGION_STROKE;
+          ctx.lineWidth = 0.8;
           ctx.strokeRect(swX, swY, SWATCH, SWATCH);
           ctx.fillStyle = '#0F172A';
           ctx.fillText(it.label, cursorX + SWATCH + GAP_SWATCH_LABEL, legendY);
@@ -5490,7 +5465,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const unmappedNote = unmappedCount > 0
         ? ` (${unmappedCount} site${unmappedCount === 1 ? '' : 's'} outside any ISO / RTO market — the non-ISO West / Southeast, most of Canada, AK / HI — are excluded)`
         : '';
-      sub.value = `${naSiteCount} North America site${naSiteCount === 1 ? '' : 's'} across ${isoAggs.size} ISO / RTO market${isoAggs.size === 1 ? '' : 's'}, aligned to the ISO/RTO Council map (US markets plus Alberta, Ontario, and New Brunswick). Each site is placed in its market by electric utility, then ZIP, then state / province, so split-state sites land in the right ISO. States / provinces with portfolio sites are shaded by that market's hue and site count (darker = more sites); markets with no sites are greyed and traced with a strong region-coloured border; areas outside every ISO / RTO market stay grey. States that straddle two markets are drawn hybrid — diagonal stripes proportioned to each market's share (denser stripes = the dominant ISO, e.g. Texas reads mostly ERCOT with a Southwest Power Pool minority; Illinois and Indiana mostly MISO with PJM to the northeast), plus a shaded block over the minority market's corner (e.g. the SPP Panhandle of northwest Texas). The choropleth colours whole states / provinces, so the drawn boundaries are indicative, not authoritative seams.${unmappedNote}`;
+      sub.value = `${naSiteCount} North America site${naSiteCount === 1 ? '' : 's'} across ${isoAggs.size} ISO / RTO market${isoAggs.size === 1 ? '' : 's'}, aligned to the ISO/RTO Council map (US markets plus Alberta, Ontario, and New Brunswick). Each site is placed in its market by electric utility, then ZIP, then state / province, so split-state sites land in the right ISO. States / provinces with portfolio sites are shaded by that market's hue and site count (darker = more sites); markets with no portfolio sites are shown as plain grey states, the same as areas outside every ISO / RTO market. States that straddle two markets are drawn hybrid — diagonal stripes proportioned to each market's share (denser stripes = the dominant ISO, e.g. Texas reads mostly ERCOT with a Southwest Power Pool minority; Illinois and Indiana mostly MISO with PJM to the northeast), plus a shaded block over the minority market's corner (e.g. the SPP Panhandle of northwest Texas). The choropleth colours whole states / provinces, so the drawn boundaries are indicative, not authoritative seams.${unmappedNote}`;
       sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
       sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
       ws.getRow(2).height = 36;
