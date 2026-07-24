@@ -5,6 +5,29 @@
   gap: 0.9rem;
 }
 
+/* Schneider Electric branded header band */
+.brandBand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  background: linear-gradient(90deg, #009530 0%, #3DCD58 100%);
+  color: #fff;
+  border-radius: 12px;
+  padding: 0.85rem 1.1rem;
+  box-shadow: 0 2px 8px rgba(0, 149, 48, 0.18);
+}
+.brandBandLeft { display: flex; align-items: center; gap: 0.7rem; min-width: 0; }
+.brandMark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; flex: 0 0 auto;
+  background: #fff; color: #009530; font-weight: 900; font-size: 0.82rem;
+  border-radius: 8px; letter-spacing: 0.5px;
+}
+.brandLockup { font-weight: 800; font-size: 0.82rem; white-space: nowrap; }
+.brandLockup .sep { opacity: 0.6; margin: 0 0.4rem; }
+
 .header {
   display: flex;
   align-items: flex-start;
@@ -223,18 +246,22 @@
 
 .siteTable th {
   text-align: left;
-  background: #f1f5f9;
-  color: var(--color-text-muted);
-  font-weight: 600;
+  background: #009530;
+  color: #fff;
+  font-weight: 700;
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  padding: 0.5rem 0.75rem;
+  padding: 0.55rem 0.75rem;
   border-bottom: 1px solid var(--color-border);
   white-space: nowrap;
   position: sticky;
   top: 0;
+  z-index: 1;
 }
+
+.siteTable tbody tr:nth-child(even) td { background: #FAFCFB; }
+.siteTable tbody tr:hover td { background: #E6F7EC; }
 
 .siteTable td {
   padding: 0.5rem 0.75rem;
@@ -399,6 +426,23 @@
   font-family: inherit;
 }
 .btnPrimary:hover { background: #007a27; }
+
+/* KPI summary strip */
+.kpiStrip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.75rem;
+  margin: 0.25rem 0 0.25rem;
+}
+.kpiTile {
+  border: 1px solid var(--color-border, #E2E8F0);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--color-surface, #fff);
+}
+.kpiTileTop { height: 4px; }
+.kpiTileVal { font-size: 1.5rem; font-weight: 900; letter-spacing: -0.5px; color: var(--color-text, #0F172A); padding: 0.5rem 0.75rem 0; }
+.kpiTileLbl { font-size: 0.64rem; font-weight: 700; color: var(--color-text-muted, #64748B); text-transform: uppercase; letter-spacing: 0.04em; padding: 0.1rem 0.75rem 0.6rem; }
 
 .dashGrid {
   display: grid;
