@@ -158,9 +158,15 @@ export function BuildingComplianceScreening({ sites = [] }) {
 
   return (
     <div className={styles.wrapper}>
+      <div className={styles.brandBand}>
+        <div className={styles.brandBandLeft}>
+          <span className={styles.brandMark}>SE</span>
+          <h1 className={styles.title} style={{ color: '#fff' }}>Building Compliance Screening &amp; Roadmap</h1>
+        </div>
+        <div className={styles.brandLockup}>Life Is On<span className={styles.sep}>|</span>Schneider Electric</div>
+      </div>
       <div className={styles.header}>
         <div>
-          <h1 className={styles.title}>Building Compliance Screening</h1>
           <div className={styles.subtitle}>
             Screens each Utility Lookup site: <strong>city + state → Government ID</strong> (City Lookup),
             then <strong>Government ID → BBS / Audits / BPS mandates</strong> (Master Ordinances).
@@ -190,6 +196,30 @@ export function BuildingComplianceScreening({ sites = [] }) {
           </div>
         ) : (
           <>
+            {/* KPI summary strip — portfolio-level headline figures. */}
+            <div className={styles.kpiStrip}>
+              <div className={styles.kpiTile}>
+                <div className={styles.kpiTileTop} style={{ background: '#009530' }} />
+                <div className={styles.kpiTileVal}>{results.length}</div>
+                <div className={styles.kpiTileLbl}>Sites screened</div>
+              </div>
+              <div className={styles.kpiTile}>
+                <div className={styles.kpiTileTop} style={{ background: '#3DCD58' }} />
+                <div className={styles.kpiTileVal}>{anyEligibleCount}</div>
+                <div className={styles.kpiTileLbl}>Sites with a mandate</div>
+              </div>
+              <div className={styles.kpiTile}>
+                <div className={styles.kpiTileTop} style={{ background: '#29ABE2' }} />
+                <div className={styles.kpiTileVal}>{new Set(results.filter(r => r.matched).map(r => r.govId)).size}</div>
+                <div className={styles.kpiTileLbl}>Jurisdictions matched</div>
+              </div>
+              <div className={styles.kpiTile}>
+                <div className={styles.kpiTileTop} style={{ background: '#F7941E' }} />
+                <div className={styles.kpiTileVal}>{usd(CATEGORIES.reduce((s, c) => s + totalPenalty(results, c), 0))}</div>
+                <div className={styles.kpiTileLbl}>Est. max yearly exposure</div>
+              </div>
+            </div>
+
             {/* Summary dashboard — the same figures the exported report charts. */}
             <div className={styles.dashGrid}>
               {CATEGORIES.map(c => (
