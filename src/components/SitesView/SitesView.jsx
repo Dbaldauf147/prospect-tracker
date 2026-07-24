@@ -10273,7 +10273,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             <div style={{ marginTop: 4 }}>
               {missingStats.anyMissing > 0 ? (
                 <span
-                  title={`Missing breakdown:\n  • ${missingStats.noZip} no zip code\n  • ${missingStats.noElectric} no electric consumption (actual or estimate)\n  • ${missingStats.noGas} no gas consumption (actual or estimate)\n\nFirst ${missingStats.samples.length} site${missingStats.samples.length === 1 ? '' : 's'}:\n${missingStats.samples.join('\n')}`}
+                  title={`Missing breakdown:\n${[
+                    missingStats.noZip > 0 ? `  • ${missingStats.noZip} no zip code` : null,
+                    missingStats.noElectric > 0 ? `  • ${missingStats.noElectric} no electric consumption (actual or estimate)` : null,
+                    missingStats.noGas > 0 ? `  • ${missingStats.noGas} no gas consumption (actual or estimate)` : null,
+                  ].filter(Boolean).join('\n')}\n\nFirst ${missingStats.samples.length} site${missingStats.samples.length === 1 ? '' : 's'}:\n${missingStats.samples.join('\n')}`}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0.2rem 0.55rem', borderRadius: 999, background: '#FEF3C7', border: '1px solid #FCD34D', color: '#92400E', fontSize: '0.72rem', fontWeight: 600 }}
                 >
                   <span aria-hidden="true">⚠</span>
@@ -10281,7 +10285,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
                     {missingStats.anyMissing} of {missingStats.total} site{missingStats.total === 1 ? '' : 's'} missing data
                   </span>
                   <span style={{ color: '#78350F', fontWeight: 500 }}>
-                    ({missingStats.noZip} no zip · {missingStats.noElectric} no electric · {missingStats.noGas} no gas)
+                    ({[
+                      missingStats.noZip > 0 ? `${missingStats.noZip} no zip` : null,
+                      missingStats.noElectric > 0 ? `${missingStats.noElectric} no electric consumption` : null,
+                      missingStats.noGas > 0 ? `${missingStats.noGas} no gas consumption` : null,
+                    ].filter(Boolean).join(' · ')})
                   </span>
                 </span>
               ) : (
