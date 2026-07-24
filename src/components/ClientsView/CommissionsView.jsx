@@ -217,6 +217,11 @@ function isPendingFutureMonth(row, monthIdx) {
   return true;
 }
 
+// A commission paid this recently keeps a row Active even after its Comm
+// End Date has passed: a recent payment wins over a closed/stale end date.
+// ~2 months, so a deal that paid last month still reads Active this month.
+const RECENT_PAYMENT_DAYS = 62;
+
 // "Are payments still rolling in or have they stopped?" — used by the
 // Payment Status column. Prefers the explicit Comm End Date when set; if
 // the row doesn't have one, falls back to the most recent non-zero
@@ -227,7 +232,31 @@ function paymentStatusFor(row) {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const e = new Date(end); e.setHours(0, 0, 0, 0);
     if (e.getTime() < today.getTime()) {
-      return { state: 'stopped', label: 'Stopped', title: `Comm End Date ${fmtDate(end)} is in the past` };
+      // End date has passed — but if a commission was actually paid in the
+      // last ~2 months, keep the row Active anyway. lastPaymentDate resolves
+      // the real year of the most recent monthly cell, and sources
+      // 'month'/'ended' mean the date came from an actual paid month (not a
+      // bare date field), so a prior-year row's stale month value can't fake
+      // a recent payment.
+      const last = lastPaymentDate(row);
+      const fromPaidMonth = last && (last.source === 'month' || last.source === 'ended');
+      if (fromPaidMonth) {
+        const diffDays = Math.round((today.getTime() - last.date.getTime()) / 86400000);
+        if (diffDays >= 0 && diffDays <= RECENT_PAYMENT_DAYS) {
+          return {
+            state: 'active',
+            label: 'Active',
+            title: `Last commission ${last.label} (${diffDays} day${diffDays === 1 ? '' : 's'} ago) — recent, so Active even though Comm End Date ${fmtDate(end)} has passed`,
+          };
+        }
+      }
+      return {
+        state: 'stopped',
+        label: 'Stopped',
+        title: fromPaidMonth
+          ? `Comm End Date ${fmtDate(end)} is in the past; last commission ${last.label}`
+          : `Comm End Date ${fmtDate(end)} is in the past`,
+      };
     }
     return { state: 'active', label: 'Active', title: `Comm End Date ${fmtDate(end)}` };
   }
