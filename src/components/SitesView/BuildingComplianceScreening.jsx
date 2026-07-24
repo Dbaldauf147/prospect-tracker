@@ -1,176 +1,128 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
-import { parseBestSheet } from '../../utils/xlsxParse';
+import { useMemo, useState } from 'react';
+import * as XLSX from 'xlsx';
+import MASTER_ORDINANCES from '../../data/masterOrdinances.js';
 import {
-  buildScreeningDataset,
-  screenCityState,
-} from '../../utils/buildingComplianceScreening';
-import {
-  saveScreeningSource,
-  loadScreeningSource,
-  clearScreeningSource,
-} from '../../utils/screeningSourceStore';
-import { downloadComplianceScreeningWorkbook } from '../../utils/buildingComplianceWorkbook';
-import {
-  downloadSourceBytes,
-  downloadComplianceSourceWorkbook,
-} from '../../utils/buildingComplianceSourceWorkbook';
+  screenSites, lookupGovId, getMandates, classifyPropertyType,
+  CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
+  totalEligible, eligibilityByOrdinance, totalPenalty,
+} from '../../utils/complianceMandates';
+import { buildComplianceReportHtml } from '../../utils/complianceReportHtml';
 import styles from './BuildingComplianceScreening.module.css';
 
+const usd = (n) => n == null ? '$-' : '$' + Math.round(n).toLocaleString('en-US');
 const isUrl = (v) => /^https?:\/\//i.test(String(v).trim());
+const mdY = (iso) => { if (!iso) return '—'; const [y, m, d] = String(iso).split('-'); return `${Number(m)}/${Number(d)}/${y}`; };
 
-// Renders the applicable requirement columns for a matched place as
-// "Column: value" lines, linking any URL values.
-function RequirementList({ applied }) {
+// Compact horizontal-bar list used for the on-page eligibility/penalty
+// summaries. items: [{ label, value }].
+function HBars({ items, color, fmt = String }) {
+  if (!items.length) return <div className={styles.miniEmpty}>No eligible sites</div>;
+  const max = Math.max(1, ...items.map(i => i.value));
   return (
-    <div className={styles.reqList}>
-      {applied.map(({ col, value }) => (
-        <div key={col} className={styles.reqItem}>
-          <span className={styles.reqCol}>{col}:</span>{' '}
-          {isUrl(value)
-            ? <a href={value} target="_blank" rel="noopener noreferrer">{value}</a>
-            : <span>{String(value)}</span>}
+    <div className={styles.hbars}>
+      {items.map((it) => (
+        <div key={it.label} className={styles.hbarRow}>
+          <span className={styles.hbarLabel} title={it.label}>{it.label}</span>
+          <span className={styles.hbarTrack}>
+            <span className={styles.hbarFill} style={{ width: `${Math.max(2, (it.value / max) * 100)}%`, background: color }} />
+          </span>
+          <span className={styles.hbarVal}>{fmt(it.value)}</span>
         </div>
       ))}
     </div>
   );
 }
 
-// Screen cities/states against the building-compliance workbook. It matches
-// the "city + state" identifier against column A of the source and surfaces
-// whichever requirement columns carry a value. Two modes: screen every site
-// from the Utility Lookup site list (default), or a single manual lookup.
-// The source workbook can be the bundled default or a user-uploaded replacement.
+// One BBS / Audits / BPS cell for a screened site: eligible ✓ / not / unknown,
+// with the deadline + penalty in a tooltip.
+function CatCell({ res }) {
+  if (!res || !res.active) return <span className={styles.dash}>—</span>;
+  const tip = [
+    res.policyName,
+    res.deadline ? `Deadline ${mdY(res.deadline)}` : (res.deadlineRaw ? `Deadline ${res.deadlineRaw}` : null),
+    res.threshold != null ? `Threshold ${res.threshold.toLocaleString()} ft²` : null,
+    res.penalty != null ? `Max penalty ${usd(res.penalty)}/yr` : null,
+  ].filter(Boolean).join(' · ');
+  if (res.eligible === true) return <span className={styles.pillEligible} title={tip}>Eligible</span>;
+  if (res.eligible === false) return <span className={styles.pillBelow} title={tip}>Below threshold</span>;
+  return <span className={styles.pillUnknown} title={tip}>Active — size?</span>;
+}
+
+// Screens the Utility Lookup site list against the two-tab compliance
+// reference (City Lookup → Government ID → Master Ordinances) and surfaces
+// BBS / Audits / BPS eligibility, a summary dashboard, and the exportable
+// branded report.
 export function BuildingComplianceScreening({ sites = [] }) {
-  const [dataset, setDataset] = useState(null);
-  const [sourceName, setSourceName] = useState('');
-  const [sourceFile, setSourceFile] = useState(null); // { name, type, buffer } for uploaded sources
-  const [isCustom, setIsCustom] = useState(false);
-  const [loaded, setLoaded] = useState(false);
   const [mode, setMode] = useState('sites'); // 'sites' | 'manual'
   const [city, setCity] = useState('');
   const [state, setState] = useState('');
   const [siteSearch, setSiteSearch] = useState('');
-  const [onlyWithReq, setOnlyWithReq] = useState(false);
-  const [uploadError, setUploadError] = useState('');
-  const fileInputRef = useRef(null);
+  const [onlyEligible, setOnlyEligible] = useState(false);
 
-  async function loadDefault() {
-    const mod = await import('../../data/buildingComplianceScreening.json');
-    const d = mod.default || mod;
-    setDataset({ compCols: d.compCols, profiles: d.profiles, index: d.index });
-    setSourceName('Built-in compliance list');
-    setSourceFile(null);
-    setIsCustom(false);
-  }
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const custom = await loadScreeningSource();
-      if (cancelled) return;
-      if (custom?.dataset?.index) {
-        setDataset(custom.dataset);
-        setSourceName(custom.name || 'Uploaded workbook');
-        setSourceFile(custom.file?.buffer ? custom.file : null);
-        setIsCustom(true);
-      } else {
-        await loadDefault();
-      }
-      if (!cancelled) setLoaded(true);
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  const placeCount = useMemo(
-    () => (dataset ? Object.keys(dataset.index).length : 0),
-    [dataset],
+  const results = useMemo(() => screenSites(sites), [sites]);
+  const matchedCount = useMemo(() => results.filter(r => r.matched).length, [results]);
+  const anyEligibleCount = useMemo(
+    () => results.filter(r => CATEGORIES.some(c => r[c]?.eligible === true)).length,
+    [results],
   );
 
-  // Single-lookup result.
-  const trimmedCity = city.trim();
-  const result = useMemo(
-    () => screenCityState(dataset, city, state),
-    [dataset, city, state],
-  );
-  const searched = trimmedCity.length > 0;
-
-  // Bulk site-list results.
-  const siteResults = useMemo(() => {
-    if (!dataset) return [];
-    return sites.map((s, i) => ({
-      id: s.id ?? i,
-      siteName: s.siteName || '',
-      city: s.city || '',
-      state: s.state || '',
-      applied: screenCityState(dataset, s.city, s.state),
-    }));
-  }, [dataset, sites]);
-  const siteMatchedCount = useMemo(
-    () => siteResults.filter(r => r.applied && r.applied.length).length,
-    [siteResults],
-  );
-  const filteredSiteResults = useMemo(() => {
-    let out = siteResults;
-    if (onlyWithReq) out = out.filter(r => r.applied && r.applied.length);
+  const filtered = useMemo(() => {
+    let out = results;
+    if (onlyEligible) out = out.filter(r => CATEGORIES.some(c => r[c]?.eligible === true));
     const q = siteSearch.trim().toLowerCase();
-    if (q) out = out.filter(r => `${r.siteName} ${r.city} ${r.state}`.toLowerCase().includes(q));
+    if (q) out = out.filter(r => `${r.siteName} ${r.city} ${r.state} ${r.government || ''}`.toLowerCase().includes(q));
     return out;
-  }, [siteResults, onlyWithReq, siteSearch]);
+  }, [results, onlyEligible, siteSearch]);
 
-  async function handleUpload(e) {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    setUploadError('');
-    try {
-      const buf = await file.arrayBuffer();
-      const { rows, headers } = parseBestSheet(new Uint8Array(buf));
-      if (!rows?.length || !headers?.length) {
-        throw new Error('No data rows found in that file.');
+  // Manual single lookup.
+  const manual = useMemo(() => {
+    if (!city.trim()) return null;
+    const govId = lookupGovId(city, state);
+    const mandate = getMandates(govId);
+    return { govId, mandate };
+  }, [city, state]);
+
+  // ---- downloads ----------------------------------------------------------
+  // City Lookup: the human-readable city+state → Government ID table.
+  function downloadCityLookup() {
+    const data = MASTER_ORDINANCES.map(g => ({ 'City / Government': g.government, 'State': g.state, 'Government ID': g.govId }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'City Lookup');
+    XLSX.writeFile(wb, 'City-Lookup.xlsx');
+  }
+  // Master Ordinances: the full BBS/Audits/BPS reference, one row per Government ID.
+  function downloadMasterOrdinances() {
+    const data = MASTER_ORDINANCES.map(g => g.raw);
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Master Ordinances Database');
+    XLSX.writeFile(wb, 'Master-Ordinances-Database.xlsx');
+  }
+  // Branded applicability report (opens in a new tab; print / Save as PDF).
+  function exportReport() {
+    const html = buildComplianceReportHtml(results, { generatedAt: new Date().toLocaleString(), siteCount: results.length });
+    const w = window.open('', '_blank');
+    if (!w) { alert('Please allow pop-ups to open the report, then try again.'); return; }
+    w.document.open(); w.document.write(html); w.document.close();
+  }
+  // Per-site results as a flat Excel.
+  function exportSiteData() {
+    const data = filtered.map(r => {
+      const row = { Site: r.siteName, City: r.city, State: r.state, 'Government': r.government || '', 'Government ID': r.govId || '', 'Sq Ft': r.sqft ?? '' };
+      for (const c of CATEGORIES) {
+        const e = r[c];
+        row[`${CATEGORY_LABEL[c]} Eligible`] = !e?.active ? '' : e.eligible === true ? 'Yes' : e.eligible === false ? 'No' : 'Unknown';
+        row[`${CATEGORY_LABEL[c]} Deadline`] = e?.deadline ? mdY(e.deadline) : '';
+        row[`${CATEGORY_LABEL[c]} Max Penalty`] = e?.penalty ?? '';
       }
-      const built = buildScreeningDataset(rows, headers);
-      if (Object.keys(built.index).length === 0) {
-        throw new Error('No usable rows found. Column A should hold the city + state identifier, with requirement columns alongside it.');
-      }
-      const fileMeta = { name: file.name, type: file.type, buffer: buf };
-      await saveScreeningSource({ name: file.name, dataset: built, rowCount: rows.length, file: fileMeta });
-      setDataset(built);
-      setSourceName(file.name);
-      setSourceFile(fileMeta);
-      setIsCustom(true);
-    } catch (err) {
-      const msg = err?.name === 'QuotaExceededError'
-        ? 'Upload exceeded the browser storage quota. Try trimming unused columns.'
-        : (err?.message || 'Failed to read file');
-      setUploadError(msg);
-    }
-  }
-
-  async function handleRevert() {
-    if (!window.confirm('Revert to the built-in compliance list?')) return;
-    setUploadError('');
-    await clearScreeningSource();
-    await loadDefault();
-  }
-
-  // Download the source list currently powering the screening. For an
-  // uploaded workbook we hand back the exact bytes; the built-in list (which
-  // has no original file) is reconstructed into a re-uploadable workbook.
-  function handleDownloadSource() {
-    if (sourceFile?.buffer) {
-      downloadSourceBytes(sourceFile);
-    } else {
-      downloadComplianceSourceWorkbook({ sourceName, dataset });
-    }
-  }
-
-  // Export the currently-shown site results as a Schneider-branded workbook.
-  function handleExport() {
-    downloadComplianceScreeningWorkbook({
-      sourceName,
-      compCols: dataset?.compCols || [],
-      results: filteredSiteResults,
+      return row;
     });
+    if (!data.length) { alert('No site results to export.'); return; }
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Site Compliance');
+    XLSX.writeFile(wb, 'Building-Compliance-Screening.xlsx');
   }
 
   return (
@@ -179,152 +131,83 @@ export function BuildingComplianceScreening({ sites = [] }) {
         <div>
           <h1 className={styles.title}>Building Compliance Screening</h1>
           <div className={styles.subtitle}>
-            Screens a city + state against the compliance list — matching the identifier against
-            column A of the source and showing which requirements apply.
-            {loaded && dataset && (
-              <> {' '}· Source: <strong>{sourceName}</strong>
-                {' '}({placeCount.toLocaleString()} places)</>
-            )}
+            Screens each Utility Lookup site: <strong>city + state → Government ID</strong> (City Lookup),
+            then <strong>Government ID → BBS / Audits / BPS mandates</strong> (Master Ordinances).
+            {' '}· <strong>{MASTER_ORDINANCES.length}</strong> jurisdictions on file.
           </div>
         </div>
         <div className={styles.actions}>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            onChange={handleUpload}
-            style={{ display: 'none' }}
-          />
-          <button
-            type="button"
-            className={styles.btn}
-            onClick={handleDownloadSource}
-            disabled={!dataset}
-            title={sourceFile?.buffer
-              ? 'Download the uploaded source workbook'
-              : 'Download the built-in compliance source list as an Excel file'}
-          >
-            Download source file
-          </button>
-          <button
-            type="button"
-            className={styles.btn}
-            onClick={() => fileInputRef.current?.click()}
-            title="Upload an Excel/CSV whose column A holds the city + state identifier. Stored locally and used only for this screening."
-          >
-            {isCustom ? 'Replace source file' : 'Upload source file'}
-          </button>
-          {isCustom && (
-            <button
-              type="button"
-              className={styles.btnDanger}
-              onClick={handleRevert}
-              title="Remove the uploaded workbook and use the built-in list"
-            >
-              Revert to built-in
-            </button>
-          )}
+          <button type="button" className={styles.btn} onClick={downloadCityLookup} title="Download the City Lookup table (city + state → Government ID)">City Lookup</button>
+          <button type="button" className={styles.btn} onClick={downloadMasterOrdinances} title="Download the Master Ordinances Database (Government ID → BBS/Audits/BPS)">Master Ordinances</button>
+          <button type="button" className={styles.btnPrimary} onClick={exportReport} title="Open the branded applicability report — print or Save as PDF">Export report</button>
         </div>
       </div>
 
-      {uploadError && (
-        <div className={styles.error}>{uploadError}</div>
-      )}
-
       <div className={styles.modeToggle}>
-        <button
-          type="button"
-          className={mode === 'sites' ? styles.modeActive : styles.mode}
-          onClick={() => setMode('sites')}
-        >Site list{sites.length > 0 ? ` (${sites.length})` : ''}</button>
-        <button
-          type="button"
-          className={mode === 'manual' ? styles.modeActive : styles.mode}
-          onClick={() => setMode('manual')}
-        >Single lookup</button>
+        <button type="button" className={mode === 'sites' ? styles.modeActive : styles.mode} onClick={() => setMode('sites')}>Site list{sites.length ? ` (${sites.length})` : ''}</button>
+        <button type="button" className={mode === 'manual' ? styles.modeActive : styles.mode} onClick={() => setMode('manual')}>Single lookup</button>
       </div>
 
-      {!loaded ? (
-        <div className={styles.muted}>Loading compliance list…</div>
-      ) : mode === 'sites' ? (
+      {mode === 'sites' ? (
         sites.length === 0 ? (
           <div className={styles.noMatch}>
             <strong>No site list loaded.</strong>
             <div className={styles.noMatchSub}>
-              Upload a site list on the <strong>Utility Lookup</strong> subtab (it needs a City and
-              State/Province column), and every site will be screened here automatically. Or use
-              <button type="button" className={styles.linkBtn} onClick={() => setMode('manual')}>Single lookup</button>
-              to check one city at a time.
+              Upload a site list on the <strong>Utility Lookup</strong> subtab (with City, State, and — for eligibility — a
+              square-footage / property-type column) and every site is screened here automatically.
             </div>
           </div>
         ) : (
           <>
+            {/* Summary dashboard — the same figures the exported report charts. */}
+            <div className={styles.dashGrid}>
+              {CATEGORIES.map(c => (
+                <div key={c} className={styles.dashCard}>
+                  <div className={styles.dashHead} style={{ background: CATEGORY_COLOR[c] }}>{CATEGORY_LABEL[c]} Eligibility</div>
+                  <div className={styles.dashKpis}>
+                    <div><div className={styles.kpiNum} style={{ color: CATEGORY_COLOR[c] }}>{totalEligible(results, c)}</div><div className={styles.kpiLbl}>eligible sites</div></div>
+                    <div><div className={styles.kpiNum} style={{ color: CATEGORY_COLOR[c] }}>{usd(totalPenalty(results, c))}</div><div className={styles.kpiLbl}>max yearly penalty</div></div>
+                  </div>
+                  <HBars items={eligibilityByOrdinance(results, c).slice(0, 8).map(x => ({ label: x.government, value: x.count }))} color={CATEGORY_COLOR[c]} />
+                </div>
+              ))}
+            </div>
+
             <div className={styles.siteToolbar}>
-              <input
-                className={styles.searchInput}
-                type="text"
-                placeholder="Search sites, cities, states…"
-                value={siteSearch}
-                onChange={e => setSiteSearch(e.target.value)}
-              />
+              <input className={styles.searchInput} type="text" placeholder="Search sites, cities, jurisdictions…" value={siteSearch} onChange={e => setSiteSearch(e.target.value)} />
               <label className={styles.checkLabel}>
-                <input
-                  type="checkbox"
-                  checked={onlyWithReq}
-                  onChange={e => setOnlyWithReq(e.target.checked)}
-                />
-                Only sites with requirements
+                <input type="checkbox" checked={onlyEligible} onChange={e => setOnlyEligible(e.target.checked)} />
+                Only eligible sites
               </label>
               <span className={styles.siteStat}>
-                <strong>{siteMatchedCount}</strong> of {siteResults.length} sites have requirements
-                {' · '}{filteredSiteResults.length} shown
+                <strong>{anyEligibleCount}</strong> eligible · {matchedCount} matched a jurisdiction · {results.length} total
               </span>
-              <button
-                type="button"
-                className={styles.btn}
-                onClick={handleExport}
-                disabled={filteredSiteResults.length === 0}
-                title="Export the shown site results to a Schneider-formatted Excel file"
-              >
-                Export to Excel
-              </button>
+              <button type="button" className={styles.btn} onClick={exportSiteData} disabled={!filtered.length}>Export site data</button>
             </div>
+
             <div className={styles.tableScroll}>
               <table className={styles.siteTable}>
                 <thead>
                   <tr>
-                    <th>Site</th>
-                    <th>City</th>
-                    <th>State</th>
-                    <th>Compliance</th>
-                    <th>Requirements</th>
+                    <th>Site</th><th>City</th><th>State</th><th>Jurisdiction</th><th>Sq Ft</th>
+                    <th>BBS</th><th>Energy Audits</th><th>BPS</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredSiteResults.map(r => {
-                    const has = r.applied && r.applied.length > 0;
-                    return (
-                      <tr key={r.id}>
-                        <td className={styles.siteCell}>{r.siteName || <span className={styles.dash}>—</span>}</td>
-                        <td>{r.city || <span className={styles.dash}>—</span>}</td>
-                        <td>{r.state || <span className={styles.dash}>—</span>}</td>
-                        <td>
-                          {has
-                            ? <span className={styles.pillYes}>✓ Required ({r.applied.length})</span>
-                            : <span className={styles.pillNo}>None</span>}
-                        </td>
-                        <td>
-                          {has
-                            ? <RequirementList applied={r.applied} />
-                            : <span className={styles.dash}>—</span>}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {filteredSiteResults.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className={styles.emptyRow}>No sites match the current filters.</td>
+                  {filtered.map(r => (
+                    <tr key={r.id}>
+                      <td className={styles.siteCell}>{r.siteName || <span className={styles.dash}>—</span>}</td>
+                      <td>{r.city || <span className={styles.dash}>—</span>}</td>
+                      <td>{r.state || <span className={styles.dash}>—</span>}</td>
+                      <td>{r.matched ? r.government : <span className={styles.dash}>no match</span>}</td>
+                      <td>{r.sqft != null ? r.sqft.toLocaleString() : <span className={styles.dash}>—</span>}</td>
+                      <td><CatCell res={r.bbs} /></td>
+                      <td><CatCell res={r.audits} /></td>
+                      <td><CatCell res={r.bps} /></td>
                     </tr>
+                  ))}
+                  {filtered.length === 0 && (
+                    <tr><td colSpan={8} className={styles.emptyRow}>No sites match the current filters.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -335,61 +218,41 @@ export function BuildingComplianceScreening({ sites = [] }) {
         <>
           <div className={styles.lookupCard}>
             <div className={styles.fields}>
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>City</span>
-                <input
-                  className={styles.input}
-                  type="text"
-                  placeholder="e.g. Chicago"
-                  value={city}
-                  onChange={e => setCity(e.target.value)}
-                  autoFocus
-                />
-              </label>
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>State / Province</span>
-                <input
-                  className={styles.input}
-                  type="text"
-                  placeholder="e.g. IL or Illinois"
-                  value={state}
-                  onChange={e => setState(e.target.value)}
-                />
-              </label>
+              <label className={styles.field}><span className={styles.fieldLabel}>City</span>
+                <input className={styles.input} type="text" placeholder="e.g. Seattle" value={city} onChange={e => setCity(e.target.value)} autoFocus /></label>
+              <label className={styles.field}><span className={styles.fieldLabel}>State / Province</span>
+                <input className={styles.input} type="text" placeholder="e.g. WA or Washington" value={state} onChange={e => setState(e.target.value)} /></label>
             </div>
-            <div className={styles.hint}>
-              State can be the abbreviation (IL, AB) or full name. Matching ignores spacing and punctuation.
-            </div>
+            <div className={styles.hint}>Resolves the city + state to a Government ID, then shows that jurisdiction's BBS / Audits / BPS mandates.</div>
           </div>
-
-          {!searched ? (
-            <div className={styles.muted}>Enter a city above to run the screening.</div>
-          ) : result == null ? (
+          {!city.trim() ? (
+            <div className={styles.muted}>Enter a city to run the lookup.</div>
+          ) : !manual?.mandate ? (
             <div className={styles.noMatch}>
-              <strong>No building-compliance requirements found</strong> for{' '}
-              “{trimmedCity}{state.trim() ? `, ${state.trim()}` : ''}”.
-              <div className={styles.noMatchSub}>
-                The city + state identifier isn’t in the current source list, or it carries no
-                requirements. Check the spelling, or try the state abbreviation.
-              </div>
+              <strong>No jurisdiction found</strong> for “{city.trim()}{state.trim() ? `, ${state.trim()}` : ''}”.
+              <div className={styles.noMatchSub}>The city+state isn't in the City Lookup. Member cities of county / state ordinances need the full City Lookup tab.</div>
             </div>
           ) : (
-            <div className={styles.resultCard}>
-              <div className={styles.resultHeading}>
-                Requirements for “{trimmedCity}{state.trim() ? `, ${state.trim()}` : ''}”
-                <span className={styles.resultCount}>{result.length} {result.length === 1 ? 'column' : 'columns'} apply</span>
-              </div>
-              <div className={styles.resultTable}>
-                {result.map(({ col, value }) => (
-                  <div key={col} className={styles.resultRow}>
-                    <div className={styles.resultCol}>{col}</div>
-                    <div className={styles.resultVal}>
-                      {isUrl(value)
-                        ? <a href={value} target="_blank" rel="noopener noreferrer">{value}</a>
-                        : String(value)}
+            <div className={styles.manualResult}>
+              <div className={styles.manualHead}>{manual.mandate.government}, {manual.mandate.state} <span className={styles.govId}>{manual.govId}</span></div>
+              <div className={styles.dashGrid}>
+                {CATEGORIES.map(c => {
+                  const cat = manual.mandate[c];
+                  return (
+                    <div key={c} className={styles.dashCard}>
+                      <div className={styles.dashHead} style={{ background: CATEGORY_COLOR[c] }}>{CATEGORY_LABEL[c]}</div>
+                      <div className={styles.manualBody}>
+                        <div><strong>{cat.policyName || cat.ordinanceName || '—'}</strong></div>
+                        <div className={styles.manualMeta}>Status: {cat.status || '—'}</div>
+                        <div className={styles.manualMeta}>Deadline: {cat.deadline ? mdY(cat.deadline) : (cat.deadlineRaw || '—')}</div>
+                        <div className={styles.manualMeta}>Max penalty: {cat.maxPenalty != null ? `${usd(cat.maxPenalty)}/yr` : '—'}</div>
+                        {(cat.link || cat.url) && isUrl(cat.link || cat.url) && (
+                          <div><a href={cat.link || cat.url} target="_blank" rel="noopener noreferrer">Ordinance link</a></div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
