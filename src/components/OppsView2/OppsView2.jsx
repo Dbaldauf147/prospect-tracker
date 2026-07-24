@@ -34,6 +34,7 @@ import { fmtMoneyWhole, toNum, unitCountOrOne, rowYearRevenue } from '../../util
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
+import { loadTimelineTypeOptions, addTimelineTypeOption, TIMELINE_TYPE_OPTIONS_EVENT } from '../../utils/timelineTypeOptions';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { computeListFlags } from '../../utils/listFlags';
 import { isActiveOppStage } from '../../utils/targetAccountOpps';
@@ -352,10 +353,11 @@ function needsBudgetTimelineFlag(row) {
   return timeline === '';
 }
 
-// The set of timeline kinds offered in the "Timelines" dropdown inside the
-// Notes and Follow Up popups. The user logs one date/target per kind and can
-// add as many rows as they need (e.g. one Budget + one Compliance timeline).
-const TIMELINE_TYPE_OPTIONS = ['Budget timeline', 'Compliance timeline'];
+// The timeline kinds offered in the "Timelines" dropdown inside the Notes and
+// Follow Up popups. Two presets ship by default; anything the user types is
+// remembered and joins the list (see utils/timelineTypeOptions). The user logs
+// one date/target per kind and can add as many rows as they need (e.g. one
+// Budget + one Compliance timeline).
 
 // Read the structured timelines off an opp. Newer records store an array of
 // { type, value } rows under `_timelines` plus a `_kickoffDeadline` string.
@@ -5442,6 +5444,27 @@ function TimelinesEditor({ list, kickoff, onChangeList, onChangeKickoff }) {
   const addRow = () => onChangeList([...rows, { type: '', value: '' }]);
   const deleteRow = (idx) => onChangeList(rows.filter((_, i) => i !== idx));
 
+  // Dropdown options are the presets plus every custom type the user has
+  // typed before. Re-read on the in-tab "added" event and on cross-tab
+  // storage writes so a type added from one open popup shows up in the
+  // others without a reload.
+  const [typeOptions, setTypeOptions] = useState(loadTimelineTypeOptions);
+  useEffect(() => {
+    const refresh = () => setTypeOptions(loadTimelineTypeOptions());
+    window.addEventListener(TIMELINE_TYPE_OPTIONS_EVENT, refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener(TIMELINE_TYPE_OPTIONS_EVENT, refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, []);
+  // Persist a typed Timeline Type so it joins the dropdown. Called on commit
+  // (blur / Enter) rather than on every keystroke, so half-typed values don't
+  // pollute the list; addTimelineTypeOption ignores blanks and duplicates.
+  const commitType = (value) => {
+    if (addTimelineTypeOption(value)) setTypeOptions(loadTimelineTypeOptions());
+  };
+
   const typeListId = 'timeline-type-options';
   const cellInput = {
     width: '100%', boxSizing: 'border-box', padding: '0.35rem 0.45rem',
@@ -5482,7 +5505,7 @@ function TimelinesEditor({ list, kickoff, onChangeList, onChangeKickoff }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
       <datalist id={typeListId}>
-        {TIMELINE_TYPE_OPTIONS.map(o => <option key={o} value={o} />)}
+        {typeOptions.map(o => <option key={o} value={o} />)}
       </datalist>
       <table style={{ borderCollapse: 'collapse', width: '100%' }}>
         <thead>
@@ -5511,6 +5534,8 @@ function TimelinesEditor({ list, kickoff, onChangeList, onChangeKickoff }) {
                     list={typeListId}
                     value={row.type || ''}
                     onChange={(e) => updateRow(idx, 'type', e.target.value)}
+                    onBlur={(e) => commitType(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') commitType(e.currentTarget.value); }}
                     placeholder="— Timeline type —"
                     style={cellInput}
                   />
