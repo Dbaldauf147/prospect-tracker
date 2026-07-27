@@ -54,6 +54,22 @@ const ISO_BADGE_COLOR = { seam: '#D97706', verify: '#7C3AED' };
 function withIso(row) {
   return { ...row, ...lookupIsoForZip(row?.zip) };
 }
+
+// Display/sortable/filterable text for a column on a given row. Field
+// columns read straight off the row; the three derived columns mirror
+// what their cells render so sorting and filtering match the eye.
+function isoText(row) {
+  const info = row.iso_confidence ? { iso: row.iso ?? null } : lookupIsoForZip(row.zip);
+  if (!info.iso) return '';
+  return info.iso.startsWith('None') ? 'None' : info.iso;
+}
+function cellText(key, row, look) {
+  if (key === 'iso') return isoText(row);
+  if (key === '__utility__') return look.utility || '';
+  if (key === '__status__') return look.status || '';
+  return String(row[key] || '');
+}
+
 const MIN_COL_WIDTH = 60;
 
 function colWidthOf(widths, key) {
@@ -160,6 +176,12 @@ export function MasterSiteListView() {
   const [colWidths, setColWidths] = useState(() => readJsonLs(WIDTHS_LS_KEY, {}));
   const [hiddenCols, setHiddenCols] = useState(() => new Set(readJsonLs(HIDDEN_LS_KEY, [])));
   const [showColMenu, setShowColMenu] = useState(false);
+  // Sort: { key, dir } while a column is sorted; key null = natural order.
+  const [sort, setSort] = useState({ key: null, dir: 'asc' });
+  // Per-column substring filters (keyed by column key) + a toggle for the
+  // in-header filter input row.
+  const [colFilters, setColFilters] = useState({});
+  const [showFilters, setShowFilters] = useState(false);
   const fileInputRef = useRef(null);
   const colMenuRef = useRef(null);
   const resizeRef = useRef(null); // { key, startX, startW } during a drag
@@ -216,6 +238,29 @@ export function MasterSiteListView() {
     });
   }, []);
 
+  // Header click cycles the sort on that column: asc → desc → off.
+  const toggleSort = useCallback((key) => {
+    setSort(prev => {
+      if (prev.key !== key) return { key, dir: 'asc' };
+      if (prev.dir === 'asc') return { key, dir: 'desc' };
+      return { key: null, dir: 'asc' };
+    });
+  }, []);
+
+  const setColFilter = useCallback((key, value) => {
+    setColFilters(prev => ({ ...prev, [key]: value }));
+  }, []);
+
+  const clearSortAndFilters = useCallback(() => {
+    setSort({ key: null, dir: 'asc' });
+    setColFilters({});
+  }, []);
+
+  const hasActiveFilters = useMemo(
+    () => Object.values(colFilters).some(v => v && v.trim()),
+    [colFilters],
+  );
+
   const visibleColumns = useMemo(() => COLUMNS.filter(c => !hiddenCols.has(c.key)), [hiddenCols]);
 
   // Initial load: master rows + the zip→utility lookup table.
@@ -249,12 +294,34 @@ export function MasterSiteListView() {
   }, [rows]);
 
   // Visible rows carry their index in the full array so edits/deletes
-  // target the right row even while filtered.
+  // target the right row even while filtered or sorted. Each also carries
+  // its resolved utility lookup so filter, sort, and render agree and we
+  // only look it up once per row.
   const visible = useMemo(() => {
-    const idx = rows.map((r, i) => ({ r, i }));
-    if (companyFilter === ALL) return idx;
-    return idx.filter(({ r }) => String(r.company || '').trim() === companyFilter);
-  }, [rows, companyFilter]);
+    let idx = rows.map((r, i) => ({ r, i, look: lookupUtilityForZip(zipMap, r.zip) }));
+    if (companyFilter !== ALL) {
+      idx = idx.filter(({ r }) => String(r.company || '').trim() === companyFilter);
+    }
+    const active = Object.entries(colFilters).filter(([, v]) => v && v.trim());
+    if (active.length) {
+      idx = idx.filter(({ r, look }) =>
+        active.every(([key, val]) =>
+          cellText(key, r, look).toLowerCase().includes(val.trim().toLowerCase())));
+    }
+    if (sort.key) {
+      const dir = sort.dir === 'desc' ? -1 : 1;
+      idx = idx.slice().sort((a, b) => {
+        const va = cellText(sort.key, a.r, a.look);
+        const vb = cellText(sort.key, b.r, b.look);
+        // Blanks always sort to the bottom regardless of direction.
+        if (!va && !vb) return 0;
+        if (!va) return 1;
+        if (!vb) return -1;
+        return dir * va.localeCompare(vb, undefined, { numeric: true, sensitivity: 'base' });
+      });
+    }
+    return idx;
+  }, [rows, companyFilter, colFilters, sort, zipMap]);
 
   const updateCell = useCallback((index, key, value) => {
     setRows(prev => {
@@ -499,6 +566,14 @@ export function MasterSiteListView() {
         <button className={styles.btn} onClick={importFromUtilityLookup} title="Pull sites in from the Utility Lookup page">↙ From Utility Lookup</button>
         <button className={styles.btn} onClick={exportToUtilityLookup} title="Send the selected sites to the Utility Lookup page">↗ To Utility Lookup</button>
 
+        <button
+          className={showFilters || hasActiveFilters ? styles.btnActive : styles.btn}
+          onClick={() => setShowFilters(v => !v)}
+          title="Show a filter box under each column header"
+        >
+          Filter ▾
+        </button>
+
         <div className={styles.colMenuWrap} ref={colMenuRef}>
           <button className={styles.btn} onClick={() => setShowColMenu(v => !v)} title="Show or hide columns">
             Columns ▾
@@ -525,6 +600,11 @@ export function MasterSiteListView() {
 
         <span className={styles.spacer} />
 
+        {(sort.key || hasActiveFilters) && (
+          <button className={styles.clearLink} onClick={clearSortAndFilters} title="Clear all column sorting and filters">
+            Clear sort/filter
+          </button>
+        )}
         <span className={styles.count}>{visible.length} shown</span>
         <button className={styles.btn} onClick={backfillAllIso} title="Assign ISO / RTO to every row from its zip (via EPA eGRID). Safe to re-run.">Backfill ISO</button>
         <button className={styles.btn} onClick={exportExcel}>Export Excel</button>
@@ -543,17 +623,38 @@ export function MasterSiteListView() {
           <thead>
             <tr>
               <th className={styles.rowNum}>#</th>
-              {visibleColumns.map(c => (
-                <th key={c.key} title={c.title || c.label}>
-                  <span className={styles.thLabel}>{c.label}</span>
-                  <span
-                    className={styles.resizer}
-                    title="Drag to resize"
-                    onMouseDown={(e) => startResize(c.key, e)}
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-              ))}
+              {visibleColumns.map(c => {
+                const sorted = sort.key === c.key;
+                return (
+                  <th key={c.key} title={c.title || c.label}>
+                    <span
+                      className={styles.thHead}
+                      onClick={() => toggleSort(c.key)}
+                      title={`Sort by ${c.label}`}
+                    >
+                      <span className={styles.thLabel}>{c.label}</span>
+                      <span className={sorted ? styles.sortArrowActive : styles.sortArrow}>
+                        {sorted ? (sort.dir === 'asc' ? '▲' : '▼') : '⇅'}
+                      </span>
+                    </span>
+                    {showFilters && (
+                      <input
+                        className={styles.filterInput}
+                        value={colFilters[c.key] || ''}
+                        placeholder="Filter…"
+                        onChange={(e) => setColFilter(c.key, e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    )}
+                    <span
+                      className={styles.resizer}
+                      title="Drag to resize"
+                      onMouseDown={(e) => startResize(c.key, e)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </th>
+                );
+              })}
               <th />
             </tr>
           </thead>
@@ -564,8 +665,7 @@ export function MasterSiteListView() {
                   No sites yet. Add a row, paste a list, import a file, or pull from the Utility Lookup page.
                 </td>
               </tr>
-            ) : visible.map(({ r, i }) => {
-              const look = lookupUtilityForZip(zipMap, r.zip);
+            ) : visible.map(({ r, i, look }) => {
               return (
                 <tr key={i}>
                   <td className={styles.rowNum}>{i + 1}</td>
