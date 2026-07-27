@@ -353,3 +353,48 @@
 .mapRow { display: grid; grid-template-columns: 120px 1fr; align-items: center; gap: 0.6rem; }
 .mapField { font-size: 0.74rem; font-weight: 600; color: var(--color-text); }
 .mapRow .select { max-width: none; width: 100%; }
+
+/* Unmapped-companies match popup */
+.unmappedList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  max-height: 52vh;
+  overflow: auto;
+  padding-right: 2px;
+}
+.unmappedRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) auto minmax(0, 1.3fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+}
+.unmappedName {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.unmappedCount { color: var(--color-text-muted); font-weight: 500; }
+.unmappedArrow { color: var(--color-text-muted); font-size: 0.8rem; }
+.unmappedInput {
+  width: 100%;
+  padding: 0.32rem 0.45rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-family: inherit;
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-sizing: border-box;
+}
+.unmappedInput:focus { outline: none; border-color: var(--color-accent); }
+.unmappedDone {
+  text-align: center;
+  color: var(--color-text-secondary);
+  padding: 1.25rem 0.5rem;
+  font-size: 0.82rem;
+}
