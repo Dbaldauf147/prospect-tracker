@@ -26,7 +26,7 @@ async function handler(req, res, auth) {
     // Fetch all emails — paginate through
     let allEmails = [];
     let after;
-    const properties = 'hs_email_subject,hs_email_status,hs_email_direction,hs_timestamp,hs_email_to_email,hs_email_from_email,hs_email_to_firstname,hs_email_to_lastname,hs_email_from_firstname,hs_email_from_lastname';
+    const properties = 'hs_email_subject,hs_email_status,hs_email_direction,hs_timestamp,hs_email_to_email,hs_email_cc_email,hs_email_from_email,hs_email_to_firstname,hs_email_to_lastname,hs_email_from_firstname,hs_email_from_lastname';
 
     while (true) {
       const params = new URLSearchParams({ limit: '100', properties, sort: '-hs_timestamp' });
@@ -91,11 +91,18 @@ async function handler(req, res, auth) {
     }
 
     // Group sent emails — deduplicate by recipient(s)
-    // If the same person is emailed multiple times, keep only the most recent
+    // If the same person is emailed multiple times, keep only the most recent.
+    // Recipients include both the To and CC addresses, so a contact who was
+    // CC'd on the send is tracked as "sent" just like a To recipient.
+    const splitAddrs = (raw) => (raw || '')
+      .toLowerCase().trim()
+      .split(';').map(a => a.trim()).filter(Boolean);
     const sendsByRecipients = {};
     for (const e of sentEmails) {
-      const toRaw = (e.hs_email_to_email || '').toLowerCase().trim();
-      const recipients = toRaw ? toRaw.split(';').map(a => a.trim()).filter(Boolean) : [];
+      const recipients = [...new Set([
+        ...splitAddrs(e.hs_email_to_email),
+        ...splitAddrs(e.hs_email_cc_email),
+      ])];
       if (recipients.length === 0) continue;
       const key = recipients.sort().join(',');
       // Keep most recent send per unique recipient set
