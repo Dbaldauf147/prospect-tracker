@@ -23,9 +23,11 @@ import styles from './MasterSiteListView.module.css';
 const MASTER_STORAGE_KEY = 'master-site-list-override';
 // The key the Utility Lookup page (SitesView) reads/writes its sites from.
 const SITES_STORAGE_KEY = 'sites-list-override';
-// Per-user UI preferences (column widths + hidden columns).
+// Per-user UI preferences (column widths + hidden columns + filter-row
+// visibility).
 const WIDTHS_LS_KEY = 'master-site-list:col-widths';
 const HIDDEN_LS_KEY = 'master-site-list:hidden-cols';
+const SHOW_FILTERS_LS_KEY = 'master-site-list:show-filters';
 
 const ALL = '__all__';
 
@@ -181,7 +183,12 @@ export function MasterSiteListView() {
   // Per-column substring filters (keyed by column key) + a toggle for the
   // in-header filter input row.
   const [colFilters, setColFilters] = useState({});
-  const [showFilters, setShowFilters] = useState(false);
+  // Filter boxes show under each header by default; the toolbar toggle
+  // hides them and that choice is remembered per user.
+  const [showFilters, setShowFilters] = useState(() => {
+    const v = readJsonLs(SHOW_FILTERS_LS_KEY, true);
+    return typeof v === 'boolean' ? v : true;
+  });
   const fileInputRef = useRef(null);
   const colMenuRef = useRef(null);
   const resizeRef = useRef(null); // { key, startX, startW } during a drag
@@ -190,6 +197,7 @@ export function MasterSiteListView() {
   // Persist column widths / hidden columns per user.
   useEffect(() => { userLsSet(WIDTHS_LS_KEY, JSON.stringify(colWidths)); }, [colWidths]);
   useEffect(() => { userLsSet(HIDDEN_LS_KEY, JSON.stringify([...hiddenCols])); }, [hiddenCols]);
+  useEffect(() => { userLsSet(SHOW_FILTERS_LS_KEY, JSON.stringify(showFilters)); }, [showFilters]);
 
   // Close the Columns popover on outside click / Escape.
   useEffect(() => {
