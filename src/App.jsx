@@ -41,6 +41,7 @@ import { ChartsView } from './components/ChartsView/ChartsView';
 // are split out of the main chunk; each load on first navigation.
 const PricingView = lazy(() => import('./components/PricingView/PricingView').then(m => ({ default: m.PricingView })));
 import { BFOActivityView } from './components/BFOActivityView/BFOActivityView';
+import { EmailTrackingView } from './components/EmailTrackingView/EmailTrackingView';
 import { DailySuccessManager } from './components/DailySuccess/DailySuccessManager';
 import { DailySuccessLogModal } from './components/DailySuccess/DailySuccessLogModal';
 import './App.css';
@@ -301,6 +302,8 @@ function App() {
             </Suspense>
           ) : view === 'bfo' ? (
             <BFOActivityView prospects={prospects} />
+          ) : view === 'tracking' ? (
+            <EmailTrackingView />
           ) : view === 'privacy' ? (
             <PrivacyPolicy />
           ) : view === 'activity' ? (
