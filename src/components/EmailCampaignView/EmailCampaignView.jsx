@@ -78,7 +78,25 @@ export function EmailCampaignView() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ subject: subjectLine.trim() }),
     });
-    const json = await res.json();
+    // The endpoint returns JSON on success and on its own handled errors,
+    // but a platform-level failure — the function crashing or timing out
+    // while paging a large mailbox — sends back plain text / HTML (e.g.
+    // "An error occurred with this application"). Read the body as text
+    // first and parse defensively so those never surface as an opaque
+    // "Unexpected token" JSON error; give the caller a clean message.
+    const body = await res.text();
+    let json;
+    let parsed = true;
+    try { json = body ? JSON.parse(body) : {}; } catch { parsed = false; }
+    if (!parsed) {
+      const snippet = body.replace(/\s+/g, ' ').trim().slice(0, 100);
+      throw new Error(
+        res.ok
+          ? `the server sent an unexpected response${snippet ? ` — “${snippet}”` : ''}`
+          : `the server is temporarily unavailable (HTTP ${res.status})`,
+      );
+    }
+    if (!res.ok) throw new Error(json.error || `request failed (HTTP ${res.status})`);
     if (json.error) throw new Error(json.error);
     return json;
   }
