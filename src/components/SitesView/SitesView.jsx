@@ -7425,6 +7425,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
     if (allSiteRows.length > 0) {
       const monthlySheet = wb.addWorksheet('Monthly Savings', {
+        // Hidden by default — a supporting per-site audit ledger for the
+        // by-state numbers, surfaced only when a reader unhides it. Same
+        // treatment as the Hedging Analysis / Gas Market Timing tabs.
+        state: 'hidden',
         properties: { tabColor: { argb: SE_GREEN } },
         views: [{ showGridLines: false, state: 'frozen', ySplit: 2, xSplit: 3 }],
       });
