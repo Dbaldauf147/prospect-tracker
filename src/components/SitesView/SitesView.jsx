@@ -80,6 +80,7 @@ import {
 import {
   ISO_REGIONS,
   ISO_FILL,
+  ISO_LABEL,
   isoForState,
   isoForProvince,
   resolveSiteIso,
@@ -6943,6 +6944,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       { label: 'Property Type', get: (s) => s.propertyType, width: 22 },
       { label: 'Size (ft²)', get: (s) => s.sqft, numFmt: '#,##0', width: 12 },
       { label: 'Electric Utility', get: (s) => s.electricUtility, width: 22 },
+      { label: 'ISO / RTO', get: (s) => s.iso, width: 11 },
       { label: 'Electric Supplier', get: (s) => s.electricSupplier, width: 22 },
       { label: 'Electric Market', get: (s) => s.electricMarket, width: 18 },
       { label: 'Reg. Rate Savings Opportunity', get: (s) => s.regRateOpportunity, width: 28 },
@@ -7051,6 +7053,18 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const gasMarket = gasUtility
           ? (classifyUtility(gasUtility) || '')
           : (naCat ? (naCat.ng || '') : (countryDereg?.gas || ''));
+        // ISO / RTO market for the site, resolved the same fine way as the
+        // ISO tab — electric utility first, then ZIP, then state / province.
+        // Only US/CA sites carry a market; everything else (and NA sites
+        // outside an IRC-mapped footprint) stays blank.
+        const iso = (isUSSite || isCASite)
+          ? (ISO_LABEL[resolveSiteIso({
+              admin: isCASite ? 'CA' : 'US',
+              code: stateCode,
+              zip: r.__zipNorm__,
+              utility: electricUtility,
+            })] || '')
+          : '';
         const kwh = typeof r.__kwh__ === 'number' ? Math.round(r.__kwh__) : null;
         // Mexico flag: Baja sites are off CFE's grid so they don't
         // get tagged at all. Other Mexican sites get either the
@@ -7083,6 +7097,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           // Mapped property size (sq ft) when the user provided one.
           sqft: (typeof r.__propertySizeFt2__ === 'number' && Number.isFinite(r.__propertySizeFt2__)) ? Math.round(r.__propertySizeFt2__) : null,
           electricUtility,
+          iso,
           electricSupplier,
           electricMarket,
           regRateOpportunity: isRegRateOpportunity ? 'Yes' : '',
