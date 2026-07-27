@@ -16,6 +16,7 @@ import { dbGet } from '../../utils/db';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { saveMyAccountsFlags } from '../../utils/myAccountsFlagsStore';
 import { loadOppsFromCache } from '../../utils/oppsCache';
+import { loadList } from '../../utils/uploadedListStore';
 import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import * as XLSX from 'xlsx';
 import styles from './MyAccountsView.module.css';
@@ -159,6 +160,11 @@ const TYPE2_COLORS = {
   'Other': { bg: '#F3F4F6', color: '#6B7280' },
 };
 
+// The Master Site List (SitesView's "Master Site List" tab) persists its
+// rows under this key via uploadedListStore. We load it here to show a
+// per-company count of how many sites exist on that tab.
+const MASTER_SITE_LIST_KEY = 'master-site-list-override';
+
 const ACCOUNT_COLUMNS = [
   { key: 'company', label: 'Company', defaultWidth: 220, sticky: true, render: null /* set below */ },
   { key: 'myTier', label: 'Tier', defaultWidth: 130, render: null /* set in columns memo */ },
@@ -174,6 +180,13 @@ const ACCOUNT_COLUMNS = [
   { key: 'reAum', label: 'RE AUM', defaultWidth: 90, render: (row) => formatAum(row.reAum) },
   { key: 'peAum', label: 'PE AUM', defaultWidth: 90, render: (row) => formatAum(row.peAum) },
   { key: 'numberOfSites', label: 'Sites', defaultWidth: 70, render: (row) => row.numberOfSites != null ? row.numberOfSites.toLocaleString() : '—' },
+  { key: 'mslSiteCount', label: 'MSL Sites', defaultWidth: 80, render: (row) => {
+    const n = row.mslSiteCount || 0;
+    const tip = `${n.toLocaleString()} site${n === 1 ? '' : 's'} on the Master Site List for "${row.company || ''}"`;
+    return n > 0
+      ? <span title={tip} style={{ fontWeight: 700, color: 'var(--color-accent)', cursor: 'help' }}>{n.toLocaleString()}</span>
+      : <span title={tip} style={{ color: 'var(--color-text-muted)', cursor: 'help' }}>0</span>;
+  } },
   // Frameworks now render as pills via the listFlags column below — the
   // two surfaces (My Accounts column + prospect-modal Frameworks
   // dropdown) share storage via prospect.frameworks plus the Lists-page
@@ -1009,6 +1022,29 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     refresh();
     window.addEventListener('hubspot-cache-updated', refresh);
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
+  }, []);
+
+  // Master Site List → per-company site count. Loaded once on mount from the
+  // same store the Master Site List tab persists to, then reduced to a
+  // company → count map (keyed on the trimmed, lowercased company name) so
+  // each account row can show how many sites exist for it on that tab.
+  const [mslCountByCompany, setMslCountByCompany] = useState(() => new Map());
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await loadList(MASTER_SITE_LIST_KEY);
+        if (cancelled || !Array.isArray(rows)) return;
+        const m = new Map();
+        for (const r of rows) {
+          const c = String(r?.company || '').trim().toLowerCase();
+          if (!c) continue;
+          m.set(c, (m.get(c) || 0) + 1);
+        }
+        setMslCountByCompany(m);
+      } catch { /* no master list yet — counts stay 0 */ }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   // Hydrate filter state once settings arrive after login, then debounce-persist changes.
@@ -2149,7 +2185,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       const isStrategicTier = tier === 'Tier 1' || tier === 'Tier 2';
       const keepForDan = isBaldauf && (isStrategicTier || p.status === 'Client');
       if (!keepForDan && (!oppsCount || oppsCount === 0)) continue;
-      const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, feedingOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, _contactDebug, suggestedStatus, statusMismatch, suggestedType, typeMismatch };
+      // Master Site List count for this account — summed across the parent
+      // company and any division names, matched on the normalized name.
+      let mslSiteCount = 0;
+      for (const name of allCompanyNames) mslSiteCount += mslCountByCompany.get(String(name).trim()) || 0;
+      const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, feedingOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, mslSiteCount, _contactDebug, suggestedStatus, statusMismatch, suggestedType, typeMismatch };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry); // Tier 2 and Tier 3 both go in t2 array
       const s = p.status || 'Unknown';
@@ -2287,6 +2327,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         otherReps: [],
         contactCount: 0,
         bucketCount: 0,
+        mslSiteCount: mslCountByCompany.get(String(displayNameRaw || '').trim().toLowerCase()) || 0,
         suggestedStatus,
         statusMismatch: false, // no stored status to compare against
         suggestedType: '',
@@ -2302,7 +2343,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     if (DEBUG_MA && skippedCdm.length > 0) console.log('My Accounts: skipped (CDM not Baldauf):', skippedCdm);
     if (DEBUG_MA) console.log(`My Accounts: ${t1.length} Tier 1, ${t2.length} Tier 2 (incl ${oppsOnlyAdded} opps-only)`);
     return { tier1: t1, tier2: t2, allAccounts: all, statusCounts: counts };
-  }, [prospects, targetMap, targetAccounts, targetAccountTiers, targetAccountTiersAllReps, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, displayNameByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactsByCompany, bucketsByCompany, contactsByEmailDomain, bucketsByEmailDomain, linkableContactById, settings?.companyContactLinks, divisionsMap, pePartnerAccountSet]);
+  }, [prospects, targetMap, targetAccounts, targetAccountTiers, targetAccountTiersAllReps, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, displayNameByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactsByCompany, bucketsByCompany, contactsByEmailDomain, bucketsByEmailDomain, linkableContactById, settings?.companyContactLinks, divisionsMap, pePartnerAccountSet, mslCountByCompany]);
 
   const clientCount = statusCounts['Client'] || 0;
   const tier3Count = allAccounts.filter(a => a.myTier === 'Tier 3').length;
@@ -2878,7 +2919,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return { ...col, render: (row) => <InlineCell row={row} field="emailDomain" value={row.emailDomain} onUpdate={onUpdate} /> };
       }
       // Skip computed columns — they stay read-only
-      if (['myTier', 'activityCount', 'oppsCount', 'contactCount', 'bucketCount', 'naRegion', 'type2', 'dmFound', 'sources', 'targetName', 'otherReps', 'divisions', 'listFlags', '_hide'].includes(col.key)) {
+      if (['myTier', 'activityCount', 'oppsCount', 'contactCount', 'bucketCount', 'mslSiteCount', 'naRegion', 'type2', 'dmFound', 'sources', 'targetName', 'otherReps', 'divisions', 'listFlags', '_hide'].includes(col.key)) {
         return col;
       }
       // Make any remaining columns editable as text
