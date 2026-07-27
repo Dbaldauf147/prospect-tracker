@@ -243,13 +243,6 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
           My Accounts
         </button>
         <button
-          className={view === 'table' ? styles.navItemActive : styles.navItem}
-          onClick={() => setView('table')}
-        >
-          <span className={styles.navIcon}>&#9776;</span>
-          Table View
-        </button>
-        <button
           className={view === 'lists' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('lists')}
         >
