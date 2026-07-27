@@ -132,11 +132,66 @@
   font-variant-numeric: tabular-nums;
 }
 
+.captionRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0 0.3rem;
+  margin: -0.1rem 0 0.1rem;
+}
+
 .caption {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
-  padding: 0 0.3rem;
-  margin: -0.1rem 0 0.1rem;
+}
+
+.dpControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+.dpLabel {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.dpBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.dpBtn:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  background: #f8fafc;
+}
+
+.dpBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.dpValue {
+  min-width: 1ch;
+  text-align: center;
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
 }
 
 .outputStrong {
