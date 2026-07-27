@@ -9405,6 +9405,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       generatedAt: new Date().toLocaleString('en-US'),
       siteCount: complianceSites.length,
       siteDetailSheetName: 'Compliance Site Detail',
+      companyName: deriveExportCompanyName(null),
     });
 
     // 3. Compliance Roadmap — flat quarter rows rebuilt as an ExcelJS sheet
@@ -10310,7 +10311,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       {mainTab === 'roadmap' ? (
         <ComplianceRoadmap sites={complianceSites} />
       ) : mainTab === 'compliance' ? (
-        <BuildingComplianceScreening sites={complianceSites} />
+        <BuildingComplianceScreening sites={complianceSites} companyName={deriveExportCompanyName(null)} />
       ) : mainTab === 'mapping' ? (
         <UtilityMappingView siteUtilities={siteUtilities} referenceUtilityNames={knownUtilityNames} onExportSiteMapping={exportUtilityMappingAnalysis} />
       ) : (
