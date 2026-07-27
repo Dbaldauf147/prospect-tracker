@@ -23,13 +23,9 @@ const LINE = 'FFE2E8F0';
 const ZEBRA = 'FFFAFCFB';
 const FONT = 'Nunito Sans';
 
-const usdShort = (n) => {
-  if (n == null) return '$-';
-  const a = Math.abs(n);
-  if (a >= 1e6) return '$' + (n / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace(/\.0$/, '') + 'M';
-  if (a >= 1e3) return '$' + Math.round(n / 1e3) + 'K';
-  return '$' + Math.round(n);
-};
+// Full comma-grouped dollars — matches the on-page cards (e.g. $1,845,310)
+// rather than an abbreviated $1.8M.
+const usd = (n) => (n == null ? '$-' : '$' + Math.round(n).toLocaleString('en-US'));
 const mdY = (iso) => { const [y, m, d] = String(iso).split('-'); return `${Number(m)}/${Number(d)}/${y}`; };
 
 // Draw a horizontal-bar chart to a PNG data URL, matching the report's bars
@@ -86,6 +82,81 @@ function drawHBarsPng(items, { color, valueFmt = String, title = '', width = 540
   return { dataUrl: canvas.toDataURL('image/png'), width, height };
 }
 
+// Draw one eligibility "card" — a coloured header bar ("BBS Eligibility"),
+// the Applicable Sites + Max Yearly Penalty stat callouts, and the same
+// per-jurisdiction bars — to a PNG, mirroring the on-page Compliance
+// Screening cards. Returns { dataUrl, width, height }.
+function drawEligibilityCardPng({ label, color, applicableSites, maxPenalty, items, width = 330 }) {
+  const scale = 2;
+  const headerH = 32, statsH = 56;
+  const rowH = 20, gap = 8, barsPadT = 8, barsPadB = 12;
+  const labelW = 116, valW = 34;
+  const nBars = Math.max(1, items.length);
+  const barsH = barsPadT + nBars * (rowH + gap) + barsPadB;
+  const height = headerH + statsH + barsH;
+  const canvas = document.createElement('canvas');
+  canvas.width = width * scale; canvas.height = height * scale;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+
+  ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, width, height);
+
+  // Coloured header bar.
+  ctx.fillStyle = color; ctx.fillRect(0, 0, width, headerH);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.font = `800 13px "${FONT}", Arial, sans-serif`;
+  ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+  ctx.fillText(`${label} Eligibility`, 12, headerH / 2 + 1);
+
+  // Stat callouts: Applicable Sites (left) · Max Yearly Penalty (right).
+  const col2X = Math.round(width * 0.42);
+  ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+  ctx.fillStyle = color; ctx.font = `800 20px "${FONT}", Arial, sans-serif`;
+  ctx.fillText(String(applicableSites), 12, headerH + 26);
+  ctx.fillText(usd(maxPenalty), col2X, headerH + 26);
+  ctx.fillStyle = '#64748B'; ctx.font = `700 9px "${FONT}", Arial, sans-serif`;
+  ctx.fillText('APPLICABLE SITES', 12, headerH + 42);
+  ctx.fillText('MAX YEARLY PENALTY', col2X, headerH + 42);
+
+  const rr = (x, y, w, h, rad0) => {
+    const rad = Math.min(rad0, h / 2, w / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + rad, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rad);
+    ctx.arcTo(x + w, y + h, x, y + h, rad);
+    ctx.arcTo(x, y + h, x, y, rad);
+    ctx.arcTo(x, y, x + w, y, rad);
+    ctx.closePath();
+  };
+  const barsTop = headerH + statsH;
+  const barMax = width - labelW - valW - 12;
+  const maxV = Math.max(1, ...items.map(i => i.value));
+  ctx.textBaseline = 'middle';
+  if (!items.length) {
+    ctx.fillStyle = '#94A3B8'; ctx.font = `12px "${FONT}", Arial, sans-serif`;
+    ctx.textAlign = 'left';
+    ctx.fillText('No eligible sites', 12, barsTop + barsPadT + 10);
+  }
+  items.forEach((it, i) => {
+    const y = barsTop + barsPadT + i * (rowH + gap);
+    const w = it.value > 0 ? Math.max(3, (it.value / maxV) * barMax) : 0;
+    ctx.fillStyle = '#475569'; ctx.font = `12px "${FONT}", Arial, sans-serif`;
+    ctx.textAlign = 'right';
+    ctx.fillText(String(it.label), labelW - 8, y + rowH / 2);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(226,232,240,0.55)'; rr(labelW, y + 1, barMax, rowH - 2, 5); ctx.fill();
+    ctx.fillStyle = color; rr(labelW, y + 1, w, rowH - 2, 5); ctx.fill();
+    ctx.fillStyle = '#0F172A'; ctx.font = `800 12px "${FONT}", Arial, sans-serif`;
+    ctx.fillText(String(it.value), labelW + barMax + 8, y + rowH / 2);
+  });
+
+  // Card border.
+  ctx.strokeStyle = '#E2E8F0'; ctx.lineWidth = 1;
+  ctx.strokeRect(0.5, 0.5, width - 1, height - 1);
+
+  return { dataUrl: canvas.toDataURL('image/png'), width, height };
+}
+
 // --- workbook builders ---------------------------------------------------
 
 function styleHeaderRow(row, labels) {
@@ -137,14 +208,26 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
 
   let r = 1;
 
-  // --- Branded title band ---
+  // --- Branded title band --- (company name over the title, matching the
+  // on-page Compliance Screening header).
+  const companyName = String(meta.companyName || '').trim();
   ws.mergeCells(r, 1, r, NCOLS);
   const title = ws.getCell(r, 1);
-  title.value = 'Building Compliance — Applicability Screening & Roadmap';
+  const titleFont = { name: FONT, bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+  if (companyName) {
+    title.value = {
+      richText: [
+        { font: { name: FONT, bold: true, size: 10, color: { argb: 'FFD1FADF' } }, text: `${companyName}\n` },
+        { font: titleFont, text: 'Building Compliance Screening & Roadmap' },
+      ],
+    };
+  } else {
+    title.value = 'Building Compliance Screening & Roadmap';
+    title.font = titleFont;
+  }
   title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_DARK } };
-  title.font = { name: FONT, bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
-  title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-  ws.getRow(r).height = 40;
+  title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+  ws.getRow(r).height = companyName ? 48 : 40;
   // Logo (white) floated over the right of the title band.
   try {
     const logo = schneiderLogoPngDataUrl({ onDark: true, width: 190 });
@@ -166,7 +249,7 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
     { v: String(siteCount), l: 'Sites screened', c: SE_DARK },
     { v: String(withMandate), l: 'Sites with a mandate', c: argb('#3DCD58') },
     { v: String(jurisdictions), l: 'Jurisdictions matched', c: argb('#29ABE2') },
-    { v: usdShort(grandPenalty), l: 'Est. max yearly exposure', c: argb('#F7941E') },
+    { v: usd(grandPenalty), l: 'Est. max yearly exposure', c: argb('#F7941E') },
   ];
   const numRow = ws.getRow(r), lblRow = ws.getRow(r + 1);
   kpis.forEach((k, i) => {
@@ -226,18 +309,25 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
   });
   r += 1;
 
-  // --- Section: Eligibility charts (images) ---
-  sectionTitle('Total Eligible Sites by Requirement');
+  // --- Section: Eligibility cards (images) ---
+  // One card per requirement — coloured header, Applicable Sites + Max
+  // Yearly Penalty callouts, and per-jurisdiction bars — matching the
+  // on-page Compliance Screening cards.
+  sectionTitle('Eligibility by Requirement');
   const imgTopRow = r - 1; // 0-indexed anchor
   let maxRows = 0;
-  // Spread the three category charts across the full width — anchored at
+  // Spread the three category cards across the full width — anchored at
   // columns A, D and G so the row fills the sheet instead of the left third.
   const EL_COLS = [0, 3, 6];
   CATEGORIES.forEach((c, i) => {
-    const png = drawHBarsPng(
-      eligibilityByOrdinance(results, c).map(x => ({ label: x.government, value: x.count })),
-      { color: CATEGORY_COLOR[c], title: `${CATEGORY_LABEL[c]} — ${totalEligible(results, c)} eligible`, width: 330, labelW: 132 }
-    );
+    const png = drawEligibilityCardPng({
+      label: CATEGORY_LABEL[c],
+      color: CATEGORY_COLOR[c],
+      applicableSites: totalEligible(results, c),
+      maxPenalty: totalPenalty(results, c),
+      items: eligibilityByOrdinance(results, c).map(x => ({ label: x.government, value: x.count })),
+      width: 330,
+    });
     const used = placeImage(ws, wb, png, { col: EL_COLS[i] ?? i * 3, row: imgTopRow, maxW: 330 });
     maxRows = Math.max(maxRows, used);
   });

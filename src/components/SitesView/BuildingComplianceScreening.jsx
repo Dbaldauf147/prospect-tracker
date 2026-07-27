@@ -59,7 +59,7 @@ function CatCell({ res }) {
 // reference (City Lookup → Government ID → Master Ordinances) and surfaces
 // BBS / Audits / BPS eligibility, a summary dashboard, and the exportable
 // branded report.
-export function BuildingComplianceScreening({ sites = [] }) {
+export function BuildingComplianceScreening({ sites = [], companyName = '' }) {
   const [mode, setMode] = useState('sites'); // 'sites' | 'manual'
   const [city, setCity] = useState('');
   const [state, setState] = useState('');
@@ -158,7 +158,7 @@ export function BuildingComplianceScreening({ sites = [] }) {
   // the printable report, distinct from the raw-data workbook.
   async function exportExcelReport() {
     try {
-      await exportComplianceReportXlsx(results, { generatedAt: new Date().toLocaleString(), siteCount: results.length });
+      await exportComplianceReportXlsx(results, { generatedAt: new Date().toLocaleString(), siteCount: results.length, companyName: companyLabel || companyName });
     } catch (err) {
       console.error('Excel report export failed', err);
       alert('Could not build the Excel report: ' + (err?.message || 'unknown error'));
