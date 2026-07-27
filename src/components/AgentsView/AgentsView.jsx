@@ -2958,10 +2958,31 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     window.setTimeout(() => setCopyAllFlash(''), 1500);
   };
 
+  // One-click copy of the standard deal-folder setup command, ready to
+  // paste into a terminal to scaffold the folder structure.
+  const FOLDER_SETUP_COMMAND = 'md Presentations PRW.SIA.Proposal Agreement "Other Docs.NDA" "Final Paperwork" PCs "Old" "Compliance Screening"';
+  const [foldersFlash, setFoldersFlash] = useState('');
+  const onCopyFolders = async () => {
+    try {
+      await navigator.clipboard.writeText(FOLDER_SETUP_COMMAND);
+      setFoldersFlash('Copied!');
+    } catch {
+      setFoldersFlash('Copy failed');
+    }
+    window.setTimeout(() => setFoldersFlash(''), 1500);
+  };
+
   return (
     <div className={styles.wrap}>
       <div className={styles.header}>
         <h1 className={styles.title}>Agents</h1>
+        <button
+          type="button"
+          className={styles.refreshActivityBtn}
+          onClick={onCopyFolders}
+          title={`Copy the folder-setup command to your clipboard:\n${FOLDER_SETUP_COMMAND}`}
+        >Copy folders</button>
+        {foldersFlash && <span className={styles.copyFlash}>{foldersFlash}</span>}
         {activeSubTab === 'automations' && (
           <>
             <span className={styles.dateline}>{dateLabel}</span>
