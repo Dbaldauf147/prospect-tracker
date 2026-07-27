@@ -165,6 +165,21 @@ const TYPE2_COLORS = {
 // per-company count of how many sites exist on that tab.
 const MASTER_SITE_LIST_KEY = 'master-site-list-override';
 
+// Build the native hover tooltip shown on a column header's ⚠ warning:
+// a short description of what the flag means plus the list of accounts it
+// applies to. Returns undefined when nothing is flagged so the header
+// falls back to its plain label tooltip. The list is capped so a table-
+// wide flag doesn't produce an unreadably long tooltip.
+function warningHeaderTitle(description, companies) {
+  const names = (companies || []).map(c => String(c || '').trim()).filter(Boolean);
+  if (names.length === 0) return undefined;
+  const CAP = 50;
+  const shown = names.slice(0, CAP);
+  const more = names.length - shown.length;
+  return `${description} — ${names.length} account${names.length === 1 ? '' : 's'}:\n• ${shown.join('\n• ')}`
+    + (more > 0 ? `\n…and ${more} more` : '');
+}
+
 const ACCOUNT_COLUMNS = [
   { key: 'company', label: 'Company', defaultWidth: 220, sticky: true, render: null /* set below */ },
   { key: 'myTier', label: 'Tier', defaultWidth: 130, render: null /* set in columns memo */ },
@@ -2752,10 +2767,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   const columns = useMemo(() => {
     const mapped = ACCOUNT_COLUMNS.map(col => {
       if (col.key === 'company') {
-        const similarCount = filteredAccounts.filter(a => similarNamesByAccount.has((a.company || '').toLowerCase().trim())).length;
+        const similarAccounts = filteredAccounts.filter(a => similarNamesByAccount.has((a.company || '').toLowerCase().trim())).map(a => a.company);
         return {
           ...col,
-          label: similarCount > 0 ? `Company ⚠ ${similarCount}` : 'Company',
+          label: similarAccounts.length > 0 ? `Company ⚠ ${similarAccounts.length}` : 'Company',
+          headerTitle: warningHeaderTitle('Similar names in Table View', similarAccounts),
           render: (row) => {
             const similar = similarNamesByAccount.get((row.company || '').toLowerCase().trim());
             return (
@@ -2828,8 +2844,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return { ...col, getFilterValue: (row) => (divisionsMap[row.id] || []).map(d => d.company).filter(Boolean).join(', '), render: (row) => <DivisionPicker parentId={row.id} divisions={divisionsMap[row.id] || []} allCompanies={allCompaniesForDivisions} onAdd={addDivision} onRemove={removeDivision} rules={divisionRules[row.id] || []} onSetRule={addDivisionRule} onRemoveRule={removeDivisionRule} /> };
       }
       if (col.key === 'status') {
-        const mismatchCount = filteredAccounts.filter(a => a.statusMismatch).length;
-        return { ...col, label: mismatchCount > 0 ? `Status ⚠ ${mismatchCount}` : 'Status', render: (row) => (
+        const mismatchAccounts = filteredAccounts.filter(a => a.statusMismatch).map(a => a.company);
+        return { ...col, label: mismatchAccounts.length > 0 ? `Status ⚠ ${mismatchAccounts.length}` : 'Status', headerTitle: warningHeaderTitle('Status differs from opps-derived suggestion', mismatchAccounts), render: (row) => (
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
             <InlineCell row={row} field="status" value={row.status} onUpdate={onUpdate} options={STATUSES} />
             {row.statusMismatch && <StatusMismatchWarning row={row} onUpdate={onUpdate} />}
@@ -2837,13 +2853,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         )};
       }
       if (col.key === 'type') {
-        const typeMismatchCount = filteredAccounts.filter(a => a.typeMismatch).length;
+        const typeMismatchAccounts = filteredAccounts.filter(a => a.typeMismatch).map(a => a.company);
         // Source the dropdown options from the configurable "Type" list on
         // the Dropdowns tab; fall back to the built-in enum if it's been
         // hidden or emptied there.
         const typeList = getEffectiveDropdownLists(settings).find(l => l.key === 'type');
         const typeOptions = (typeList && typeList.options && typeList.options.length) ? typeList.options : TYPES;
-        return { ...col, label: typeMismatchCount > 0 ? `Type ⚠ ${typeMismatchCount}` : 'Type', render: (row) => (
+        return { ...col, label: typeMismatchAccounts.length > 0 ? `Type ⚠ ${typeMismatchAccounts.length}` : 'Type', headerTitle: warningHeaderTitle('Type differs from PE-partner-derived suggestion', typeMismatchAccounts), render: (row) => (
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
             <InlineCell row={row} field="type" value={row.type} onUpdate={onUpdate} options={typeOptions} />
             {row.typeMismatch && <TypeMismatchWarning row={row} onUpdate={onUpdate} />}
@@ -2866,8 +2882,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return { ...col, render: (row) => <InlineCell row={row} field="numberOfSites" value={row.numberOfSites} onUpdate={onUpdate} type="number" /> };
       }
       if (col.key === 'hqRegion') {
-        const missingCount = filteredAccounts.filter(a => !a.hqRegion && !INACTIVE_STATUSES.has(a.status)).length;
-        return { ...col, label: missingCount > 0 ? `HQ Region ⚠ ${missingCount}` : 'HQ Region', render: (row) => <InlineCell row={row} field="hqRegion" value={row.hqRegion} onUpdate={onUpdate} options={['North America', 'Outside of North America']} /> };
+        const missingAccounts = filteredAccounts.filter(a => !a.hqRegion && !INACTIVE_STATUSES.has(a.status)).map(a => a.company);
+        return { ...col, label: missingAccounts.length > 0 ? `HQ Region ⚠ ${missingAccounts.length}` : 'HQ Region', headerTitle: warningHeaderTitle('Missing HQ Region', missingAccounts), render: (row) => <InlineCell row={row} field="hqRegion" value={row.hqRegion} onUpdate={onUpdate} options={['North America', 'Outside of North America']} /> };
       }
       if (col.key === 'naRegion') {
         return { ...col, getFilterValue: (row) => (row.hqRegion ? '' : (hqRegionMap[row.id] || '')), render: (row) => {
