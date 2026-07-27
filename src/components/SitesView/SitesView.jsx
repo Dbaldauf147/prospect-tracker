@@ -32,6 +32,7 @@ import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripS
 import { UtilityMappingView } from './UtilityMappingView';
 import { BuildingComplianceScreening } from './BuildingComplianceScreening';
 import { ComplianceRoadmap } from './ComplianceRoadmap';
+import CorporateCompliance from './CorporateCompliance';
 import { screenSites, buildComplianceRoadmap, CATEGORIES, totalPenalty } from '../../utils/complianceMandates';
 import { exportComplianceReportXlsx } from '../../utils/complianceReportXlsx';
 import { saveIndicativeAnalysis, deleteIndicativeAnalysis } from '../../utils/firestoreSync';
@@ -10701,8 +10702,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           className={mainTab === 'roadmap' ? styles.subtabActive : styles.subtab}
           onClick={() => setMainTab('roadmap')}
         >Compliance Roadmap</button>
+        <button
+          type="button"
+          className={mainTab === 'corporate' ? styles.subtabActive : styles.subtab}
+          onClick={() => setMainTab('corporate')}
+        >Corporate Compliance</button>
       </div>
-      {mainTab === 'roadmap' ? (
+      {mainTab === 'corporate' ? (
+        <CorporateCompliance sites={complianceSites} />
+      ) : mainTab === 'roadmap' ? (
         <ComplianceRoadmap sites={complianceSites} />
       ) : mainTab === 'compliance' ? (
         <BuildingComplianceScreening sites={complianceSites} companyName={deriveExportCompanyName(null)} />
