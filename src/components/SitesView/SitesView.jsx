@@ -7033,89 +7033,75 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         let sumRow = 8;
         summarySheet.getRow(sumRow++).height = 6; // spacer
 
-        // Section 1b: States & Regulation Status — one row per state /
-        // province / country in the portfolio, with its electric and
-        // natural-gas market structure and site count. Built from the same
-        // by-state buckets that drive the Indicative Savings tab, so the
-        // statuses line up exactly with that sheet. 'yes' → Deregulated,
-        // 'no'/blank → Regulated; anything else (Limited, Large load only,
-        // Some deregulation, country phrases) is shown verbatim.
-        const regStatusLabel = (status) => {
-          if (status === 'yes') return 'Deregulated';
-          if (!status || status === 'no') return 'Regulated';
-          return String(status).charAt(0).toUpperCase() + String(status).slice(1);
-        };
-        const regByState = new Map();
-        const collectReg = (bucketRows, commodityKey) => {
-          for (const g of bucketRows) {
-            let e = regByState.get(g.state);
-            if (!e) {
-              e = { state: g.state, sites: 0, electric: '—', gas: '—' };
-              regByState.set(g.state, e);
-            }
-            e.sites = Math.max(e.sites, g.totalSites || 0);
-            e[commodityKey] = regStatusLabel(g.status);
-          }
-        };
-        collectReg(electricRows, 'electric');
-        collectReg(gasRows, 'gas');
-        // US / Canada 2-letter codes first (alphabetical), then country
-        // names (alphabetical) so the states cluster together up top.
-        const isStateCode = (s) => /^[A-Z]{2}$/.test(String(s).trim());
-        const regRows = [...regByState.values()].sort((a, b) => {
-          const ac = isStateCode(a.state), bc = isStateCode(b.state);
-          if (ac !== bc) return ac ? -1 : 1;
-          return String(a.state).localeCompare(String(b.state));
-        });
+        // Section 1b: Top 5 States by Indicative Savings — the five
+        // highest-savings states / provinces / countries for electric and
+        // for natural gas, side by side. Ranked by the Base (mid) Year 1
+        // indicative savings from the same by-state buckets that drive the
+        // Indicative Savings tab, so the figures line up with that sheet.
+        const topSavingsBy = (bucketRows) => bucketRows
+          .map(g => ({ state: g.state, sites: g.totalSites || 0, savings: (g.year1 && g.year1.mid) || 0 }))
+          .filter(x => x.savings > 0)
+          .sort((a, b) => b.savings - a.savings)
+          .slice(0, 5);
+        const topElectric = topSavingsBy(electricRows);
+        const topGas = topSavingsBy(gasRows);
 
-        if (regRows.length) {
-          sumSection(sumRow++, 'States & Regulation Status');
-          // Column header row: State | Sites | Electric | Natural Gas.
-          const regHdrRowNum = sumRow++;
-          const regHdrs = [
-            { c: 1, span: 1, t: 'ST / Prov / Country' },
-            { c: 2, span: 1, t: 'Sites' },
-            { c: 3, span: 3, t: 'Electric' },
-            { c: 6, span: 3, t: 'Natural Gas' },
+        if (topElectric.length || topGas.length) {
+          sumSection(sumRow++, 'Top 5 States by Indicative Savings');
+          // Commodity header row: Electric (cols 1-4) | Natural Gas (cols 5-8).
+          const comHdrRowNum = sumRow++;
+          [{ c: 1, t: 'Electric' }, { c: 5, t: 'Natural Gas' }].forEach(h => {
+            summarySheet.mergeCells(comHdrRowNum, h.c, comHdrRowNum, h.c + 3);
+            const cell = summarySheet.getCell(comHdrRowNum, h.c);
+            cell.value = h.t;
+            cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
+            cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          });
+          summarySheet.getRow(comHdrRowNum).height = 18;
+          // Sub-header row: ST / Prov / Country | Sites | Yr 1 Savings (x2).
+          const subHdrRowNum = sumRow++;
+          const subHdrs = [
+            { c: 1, t: 'ST / Prov / Country' }, { c: 2, t: 'Sites' }, { c: 3, span: 2, t: 'Yr 1 Savings' },
+            { c: 5, t: 'ST / Prov / Country' }, { c: 6, t: 'Sites' }, { c: 7, span: 2, t: 'Yr 1 Savings' },
           ];
-          regHdrs.forEach(h => {
-            if (h.span > 1) summarySheet.mergeCells(regHdrRowNum, h.c, regHdrRowNum, h.c + h.span - 1);
-            const cell = summarySheet.getCell(regHdrRowNum, h.c);
+          subHdrs.forEach(h => {
+            if (h.span) summarySheet.mergeCells(subHdrRowNum, h.c, subHdrRowNum, h.c + h.span - 1);
+            const cell = summarySheet.getCell(subHdrRowNum, h.c);
             cell.value = h.t;
             cell.font = { name: 'Nunito Sans', bold: true, size: 9, color: { argb: SE_SLATE } };
             cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
             cell.border = { bottom: { style: 'thin', color: { argb: SE_BORDER } } };
           });
-          summarySheet.getRow(regHdrRowNum).height = 18;
-          // One row per state / country.
-          for (const st of regRows) {
-            const rowNum = sumRow++;
-            const stCell = summarySheet.getCell(rowNum, 1);
-            stCell.value = st.state;
+          summarySheet.getRow(subHdrRowNum).height = 16;
+          // Up to five ranked rows, electric on the left, gas on the right.
+          const writeTopBlock = (rowNum, startCol, item) => {
+            const stCell = summarySheet.getCell(rowNum, startCol);
+            stCell.value = item ? item.state : '';
             stCell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_TEXT_DARK } };
             stCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-            const cntCell = summarySheet.getCell(rowNum, 2);
-            cntCell.value = st.sites;
-            cntCell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-            cntCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-            summarySheet.mergeCells(rowNum, 3, rowNum, 5);
-            const eCell = summarySheet.getCell(rowNum, 3);
-            eCell.value = st.electric;
-            summarySheet.mergeCells(rowNum, 6, rowNum, 8);
-            const gCell = summarySheet.getCell(rowNum, 6);
-            gCell.value = st.gas;
-            for (const cell of [eCell, gCell]) {
-              const dereg = cell.value === 'Deregulated';
-              cell.font = { name: 'Nunito Sans', size: 10, bold: dereg, color: { argb: dereg ? SE_GREEN_DARK : SE_SLATE } };
-              cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-            }
+            const siCell = summarySheet.getCell(rowNum, startCol + 1);
+            siCell.value = item ? item.sites : '';
+            siCell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            siCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+            summarySheet.mergeCells(rowNum, startCol + 2, rowNum, startCol + 3);
+            const svCell = summarySheet.getCell(rowNum, startCol + 2);
+            svCell.value = item ? item.savings : '';
+            if (item) svCell.numFmt = '"$"#,##0';
+            svCell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
+            svCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          };
+          const nTop = Math.max(topElectric.length, topGas.length);
+          for (let i = 0; i < nTop; i++) {
+            const rowNum = sumRow++;
+            writeTopBlock(rowNum, 1, topElectric[i]);
+            writeTopBlock(rowNum, 5, topGas[i]);
             summarySheet.getRow(rowNum).height = 18;
           }
           summarySheet.mergeCells(sumRow, 1, sumRow, SUM_NCOLS);
-          const regNote = summarySheet.getCell(sumRow, 1);
-          regNote.value = 'Deregulated states support competitive supply (third-party sourcing); Regulated states buy from the incumbent utility. Mirrors the market structure used on the Indicative Savings tab.';
-          regNote.font = { name: 'Nunito Sans', italic: true, size: 9.5, color: { argb: SE_SLATE } };
-          regNote.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+          const topNote = summarySheet.getCell(sumRow, 1);
+          topNote.value = 'Ranked by Base (mid) Year 1 indicative savings. Mirrors the per-state figures on the Indicative Savings tab.';
+          topNote.font = { name: 'Nunito Sans', italic: true, size: 9.5, color: { argb: SE_SLATE } };
+          topNote.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
           summarySheet.getRow(sumRow++).height = 18;
           summarySheet.getRow(sumRow++).height = 6; // spacer
         }
