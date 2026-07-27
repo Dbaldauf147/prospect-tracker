@@ -7026,7 +7026,99 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         savNote.font = { name: 'Nunito Sans', italic: true, size: 9.5, color: { argb: SE_SLATE } };
         savNote.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
         summarySheet.getRow(7).height = 18;
-        summarySheet.getRow(8).height = 6;
+
+        // From here down the sections vary in length (the states table has
+        // one row per state), so track the next free row rather than hard-
+        // coding row numbers.
+        let sumRow = 8;
+        summarySheet.getRow(sumRow++).height = 6; // spacer
+
+        // Section 1b: States & Regulation Status — one row per state /
+        // province / country in the portfolio, with its electric and
+        // natural-gas market structure and site count. Built from the same
+        // by-state buckets that drive the Indicative Savings tab, so the
+        // statuses line up exactly with that sheet. 'yes' → Deregulated,
+        // 'no'/blank → Regulated; anything else (Limited, Large load only,
+        // Some deregulation, country phrases) is shown verbatim.
+        const regStatusLabel = (status) => {
+          if (status === 'yes') return 'Deregulated';
+          if (!status || status === 'no') return 'Regulated';
+          return String(status).charAt(0).toUpperCase() + String(status).slice(1);
+        };
+        const regByState = new Map();
+        const collectReg = (bucketRows, commodityKey) => {
+          for (const g of bucketRows) {
+            let e = regByState.get(g.state);
+            if (!e) {
+              e = { state: g.state, sites: 0, electric: '—', gas: '—' };
+              regByState.set(g.state, e);
+            }
+            e.sites = Math.max(e.sites, g.totalSites || 0);
+            e[commodityKey] = regStatusLabel(g.status);
+          }
+        };
+        collectReg(electricRows, 'electric');
+        collectReg(gasRows, 'gas');
+        // US / Canada 2-letter codes first (alphabetical), then country
+        // names (alphabetical) so the states cluster together up top.
+        const isStateCode = (s) => /^[A-Z]{2}$/.test(String(s).trim());
+        const regRows = [...regByState.values()].sort((a, b) => {
+          const ac = isStateCode(a.state), bc = isStateCode(b.state);
+          if (ac !== bc) return ac ? -1 : 1;
+          return String(a.state).localeCompare(String(b.state));
+        });
+
+        if (regRows.length) {
+          sumSection(sumRow++, 'States & Regulation Status');
+          // Column header row: State | Sites | Electric | Natural Gas.
+          const regHdrRowNum = sumRow++;
+          const regHdrs = [
+            { c: 1, span: 1, t: 'ST / Prov / Country' },
+            { c: 2, span: 1, t: 'Sites' },
+            { c: 3, span: 3, t: 'Electric' },
+            { c: 6, span: 3, t: 'Natural Gas' },
+          ];
+          regHdrs.forEach(h => {
+            if (h.span > 1) summarySheet.mergeCells(regHdrRowNum, h.c, regHdrRowNum, h.c + h.span - 1);
+            const cell = summarySheet.getCell(regHdrRowNum, h.c);
+            cell.value = h.t;
+            cell.font = { name: 'Nunito Sans', bold: true, size: 9, color: { argb: SE_SLATE } };
+            cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+            cell.border = { bottom: { style: 'thin', color: { argb: SE_BORDER } } };
+          });
+          summarySheet.getRow(regHdrRowNum).height = 18;
+          // One row per state / country.
+          for (const st of regRows) {
+            const rowNum = sumRow++;
+            const stCell = summarySheet.getCell(rowNum, 1);
+            stCell.value = st.state;
+            stCell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_TEXT_DARK } };
+            stCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+            const cntCell = summarySheet.getCell(rowNum, 2);
+            cntCell.value = st.sites;
+            cntCell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            cntCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+            summarySheet.mergeCells(rowNum, 3, rowNum, 5);
+            const eCell = summarySheet.getCell(rowNum, 3);
+            eCell.value = st.electric;
+            summarySheet.mergeCells(rowNum, 6, rowNum, 8);
+            const gCell = summarySheet.getCell(rowNum, 6);
+            gCell.value = st.gas;
+            for (const cell of [eCell, gCell]) {
+              const dereg = cell.value === 'Deregulated';
+              cell.font = { name: 'Nunito Sans', size: 10, bold: dereg, color: { argb: dereg ? SE_GREEN_DARK : SE_SLATE } };
+              cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+            }
+            summarySheet.getRow(rowNum).height = 18;
+          }
+          summarySheet.mergeCells(sumRow, 1, sumRow, SUM_NCOLS);
+          const regNote = summarySheet.getCell(sumRow, 1);
+          regNote.value = 'Deregulated states support competitive supply (third-party sourcing); Regulated states buy from the incumbent utility. Mirrors the market structure used on the Indicative Savings tab.';
+          regNote.font = { name: 'Nunito Sans', italic: true, size: 9.5, color: { argb: SE_SLATE } };
+          regNote.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+          summarySheet.getRow(sumRow++).height = 18;
+          summarySheet.getRow(sumRow++).height = 6; // spacer
+        }
 
         // Section 2: Building Compliance Screening — KPI tiles mirroring
         // the on-page Compliance Screening dashboard. Same derivation as
@@ -7040,19 +7132,21 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const cGrandPenalty = CATEGORIES.reduce((sum, c) => sum + totalPenalty(complianceResults, c), 0);
         const cSiteCount = complianceResults.length;
 
-        sumSection(9, 'Building Compliance Screening');
+        sumSection(sumRow++, 'Building Compliance Screening');
         const kpis = [
           { v: String(cSiteCount), l: 'Sites Screened', c: SE_GREEN_DARK },
           { v: String(cWithMandate), l: 'Sites With a Mandate', c: 'FF3DCD58' },
           { v: String(cJurisdictions), l: 'Jurisdictions Matched', c: 'FF29ABE2' },
           { v: usdShort(cGrandPenalty), l: 'Est. Max Yearly Exposure', c: 'FFF7941E' },
         ];
-        const kpiNumRow = summarySheet.getRow(10);
-        const kpiLblRow = summarySheet.getRow(11);
+        const kpiNumRowNum = sumRow++;
+        const kpiLblRowNum = sumRow++;
+        const kpiNumRow = summarySheet.getRow(kpiNumRowNum);
+        const kpiLblRow = summarySheet.getRow(kpiLblRowNum);
         kpis.forEach((k, i) => {
           const c0 = i * 2 + 1;
-          summarySheet.mergeCells(10, c0, 10, c0 + 1);
-          summarySheet.mergeCells(11, c0, 11, c0 + 1);
+          summarySheet.mergeCells(kpiNumRowNum, c0, kpiNumRowNum, c0 + 1);
+          summarySheet.mergeCells(kpiLblRowNum, c0, kpiLblRowNum, c0 + 1);
           const num = kpiNumRow.getCell(c0);
           num.value = k.v;
           num.font = { name: 'Nunito Sans', bold: true, size: 22, color: { argb: SE_TEXT_DARK } };
@@ -7075,12 +7169,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         kpiNumRow.height = 30;
         kpiLblRow.height = 16;
 
-        summarySheet.mergeCells(12, 1, 12, SUM_NCOLS);
-        const cmpNote = summarySheet.getCell(12, 1);
+        const cmpNoteRowNum = sumRow++;
+        summarySheet.mergeCells(cmpNoteRowNum, 1, cmpNoteRowNum, SUM_NCOLS);
+        const cmpNote = summarySheet.getCell(cmpNoteRowNum, 1);
         cmpNote.value = "Preliminary BBS / energy-audit / BPS applicability across the portfolio. Est. max yearly exposure sums each eligible site's maximum annual penalty across the three mandate types.";
         cmpNote.font = { name: 'Nunito Sans', italic: true, size: 9.5, color: { argb: SE_SLATE } };
         cmpNote.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
-        summarySheet.getRow(12).height = 30;
+        summarySheet.getRow(cmpNoteRowNum).height = 30;
       }
     }
 
