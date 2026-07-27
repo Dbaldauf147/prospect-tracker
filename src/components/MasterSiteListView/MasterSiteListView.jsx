@@ -5,6 +5,7 @@ import { loadUtilityRates } from '../../utils/utilityRatesStore';
 import { parseBestSheet } from '../../utils/xlsxParse';
 import { lookupUtilityForZip } from '../../utils/utilityClassify';
 import { lookupIsoForZip, backfillIso } from '../../utils/isoLookup';
+import { buildCompanyIndex, hasMatchInIndex } from '../../utils/companyIndex';
 import { Badge } from '../common/Badge';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import {
@@ -163,7 +164,7 @@ function rowsFromMapping(dataRows, mapping) {
   }).filter(r => !isRowEmpty(r));
 }
 
-export function MasterSiteListView() {
+export function MasterSiteListView({ prospects = [] }) {
   const [rows, setRows] = useState([]);
   const [zipMap, setZipMap] = useState(null);
   const [loaded, setLoaded] = useState(false);
@@ -182,6 +183,9 @@ export function MasterSiteListView() {
   // in-header filter input row.
   const [colFilters, setColFilters] = useState({});
   const [showFilters, setShowFilters] = useState(false);
+  // When on, show only sites whose company isn't found among the Table View
+  // (prospects) companies — i.e. unmapped to the tracker.
+  const [unmappedOnly, setUnmappedOnly] = useState(false);
   const fileInputRef = useRef(null);
   const colMenuRef = useRef(null);
   const resizeRef = useRef(null); // { key, startX, startW } during a drag
@@ -293,6 +297,33 @@ export function MasterSiteListView() {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [rows]);
 
+  // Index of the Table View (prospects) company names, using the app's shared
+  // fuzzy company matching so suffix / case / punctuation variants still count
+  // as "mapped".
+  const tableViewIndex = useMemo(() => {
+    const names = [];
+    const seen = new Set();
+    for (const p of (prospects || [])) {
+      const c = String(p?.company || '').trim();
+      if (!c) continue;
+      const k = c.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      names.push(c);
+    }
+    return buildCompanyIndex(names);
+  }, [prospects]);
+
+  // Distinct Master Site List companies with no match among the Table View
+  // companies — the "unmapped" set the filter narrows to.
+  const unmappedCompanies = useMemo(() => {
+    const set = new Set();
+    for (const c of companies) {
+      if (!hasMatchInIndex(tableViewIndex, c)) set.add(c);
+    }
+    return set;
+  }, [companies, tableViewIndex]);
+
   // Visible rows carry their index in the full array so edits/deletes
   // target the right row even while filtered or sorted. Each also carries
   // its resolved utility lookup so filter, sort, and render agree and we
@@ -301,6 +332,9 @@ export function MasterSiteListView() {
     let idx = rows.map((r, i) => ({ r, i, look: lookupUtilityForZip(zipMap, r.zip) }));
     if (companyFilter !== ALL) {
       idx = idx.filter(({ r }) => String(r.company || '').trim() === companyFilter);
+    }
+    if (unmappedOnly) {
+      idx = idx.filter(({ r }) => unmappedCompanies.has(String(r.company || '').trim()));
     }
     const active = Object.entries(colFilters).filter(([, v]) => v && v.trim());
     if (active.length) {
@@ -321,7 +355,7 @@ export function MasterSiteListView() {
       });
     }
     return idx;
-  }, [rows, companyFilter, colFilters, sort, zipMap]);
+  }, [rows, companyFilter, unmappedOnly, unmappedCompanies, colFilters, sort, zipMap]);
 
   const updateCell = useCallback((index, key, value) => {
     setRows(prev => {
@@ -562,6 +596,17 @@ export function MasterSiteListView() {
           <option value={ALL}>All companies ({rows.length})</option>
           {companies.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
+
+        <button
+          className={unmappedOnly ? styles.btnActive : styles.btn}
+          onClick={() => setUnmappedOnly(v => !v)}
+          disabled={!prospects.length}
+          title={prospects.length
+            ? 'Show only sites whose company is not found among the Table View companies'
+            : 'Table View companies are still loading'}
+        >
+          Unmapped to Table View{unmappedCompanies.size ? ` (${unmappedCompanies.size})` : ''}
+        </button>
 
         <button className={styles.btn} onClick={importFromUtilityLookup} title="Pull sites in from the Utility Lookup page">↙ From Utility Lookup</button>
         <button className={styles.btn} onClick={exportToUtilityLookup} title="Send the selected sites to the Utility Lookup page">↗ To Utility Lookup</button>
