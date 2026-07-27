@@ -1199,8 +1199,11 @@ export function DataTable({
                     const headerLabel = colNames[col.key] || col.label;
                     // Native hover tooltip on every header so users can
                     // read the full column name even when the cell text
-                    // is truncated by the fixed column width.
-                    const headerTitle = typeof headerLabel === 'string' ? headerLabel : undefined;
+                    // is truncated by the fixed column width. A column may
+                    // supply its own `headerTitle` (e.g. a warning column
+                    // listing which rows the ⚠ flag is for), which takes
+                    // precedence over the plain label.
+                    const headerTitle = col.headerTitle || (typeof headerLabel === 'string' ? headerLabel : undefined);
                     return (
                     <th
                       key={col.key}
