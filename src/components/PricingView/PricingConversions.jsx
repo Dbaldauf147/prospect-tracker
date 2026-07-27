@@ -106,6 +106,14 @@ export function PricingConversions() {
 
   const [open, setOpen] = useState(true);
 
+  // Optional extra decimal places on the displayed conversion results.
+  // This is purely a view control and is deliberately kept in local
+  // state (not persisted), so refreshing the page returns to the
+  // standard precision rather than making a wider view the new default.
+  const [extraDp, setExtraDp] = useState(0);
+  const money = (n) => fmtMoney(n, 2 + extraDp);
+  const pct = (n, base = 1) => fmtPct(n, base + extraDp);
+
   // Costs are bumped 4% before every calculation to match the pricing
   // model above (tech-depreciation uplift). The adjusted figure is shown
   // on its own muted line so the assumption stays transparent.
@@ -158,44 +166,64 @@ export function PricingConversions() {
       </button>
       {open && (
         <>
-        <div className={styles.caption}>
-          Cost figures assume a 4% higher cost (tech-depreciation uplift), matching the pricing model above.
+        <div className={styles.captionRow}>
+          <span className={styles.caption}>
+            Cost figures assume a 4% higher cost (tech-depreciation uplift), matching the pricing model above.
+          </span>
+          <div className={styles.dpControl} title="Add decimal places to the results below. This is a temporary view — it resets to the standard 2 places on refresh.">
+            <span className={styles.dpLabel}>Decimals</span>
+            <button
+              type="button"
+              className={styles.dpBtn}
+              onClick={() => setExtraDp(d => Math.max(0, d - 1))}
+              disabled={extraDp <= 0}
+              aria-label="Fewer decimal places"
+            >&minus;</button>
+            <span className={styles.dpValue}>{2 + extraDp}</span>
+            <button
+              type="button"
+              className={styles.dpBtn}
+              onClick={() => setExtraDp(d => Math.min(6, d + 1))}
+              disabled={extraDp >= 6}
+              aria-label="More decimal places"
+            >+</button>
+          </div>
         </div>
         <div className={styles.cards}>
           <Card title="Cost → Revenue (with GM%)">
             <Row label="Cost"><NumInput value={c1Cost} onChange={setC1Cost} prefix="$" /></Row>
-            <HintRow label="Cost +4%">{fmtMoney(c1CostAdj)}</HintRow>
+            <HintRow label="Cost +4%">{money(c1CostAdj)}</HintRow>
             <Row label="Gross Margin"><NumInput value={c1Gm} onChange={setC1Gm} suffix="%" width="5rem" /></Row>
-            <Row label="Revenue"><Output>{fmtMoney(c1Revenue)}</Output></Row>
-            <Row label="Annual retail"><Output strong>{fmtMoney(c1Annual)}</Output></Row>
+            <Row label="Revenue"><Output>{money(c1Revenue)}</Output></Row>
+            <Row label="Annual retail"><Output strong>{money(c1Annual)}</Output></Row>
           </Card>
 
           <Card title="Revenue → Cost (with GM%)">
             <Row label="Revenue"><NumInput value={c2Rev} onChange={setC2Rev} prefix="$" /></Row>
             <Row label="Gross Margin"><NumInput value={c2Gm} onChange={setC2Gm} suffix="%" width="5rem" /></Row>
-            <HintRow label="Base cost">{fmtMoney(c2BaseAnnualCost)}</HintRow>
-            <Row label="Annual cost +4%"><Output>{fmtMoney(c2AnnualCost)}</Output></Row>
-            <Row label="Monthly cost +4%"><Output strong>{fmtMoney(c2MonthlyCost)}</Output></Row>
+            <HintRow label="Base cost">{money(c2BaseAnnualCost)}</HintRow>
+            <Row label="Annual cost +4%"><Output>{money(c2AnnualCost)}</Output></Row>
+            <Row label="Monthly cost +4%"><Output strong>{money(c2MonthlyCost)}</Output></Row>
           </Card>
 
           <Card title="Cost + Revenue → GM%">
             <Row label="Cost"><NumInput value={c3Cost} onChange={setC3Cost} prefix="$" /></Row>
-            <HintRow label="Cost +4%">{fmtMoney(c3CostAdj)}</HintRow>
+            <HintRow label="Cost +4%">{money(c3CostAdj)}</HintRow>
             <Row label="Revenue"><NumInput value={c3Rev} onChange={setC3Rev} prefix="$" /></Row>
-            <Row label="Gross Margin"><Output strong>{fmtPct(c3Gm)}</Output></Row>
+            <Row label="Gross Margin"><Output strong>{pct(c3Gm)}</Output></Row>
           </Card>
 
           <Card title="Revenue + Cost → GM%">
             <Row label="Revenue"><NumInput value={c4Rev} onChange={setC4Rev} prefix="$" /></Row>
             <Row label="Cost"><NumInput value={c4Cost} onChange={setC4Cost} prefix="$" /></Row>
-            <HintRow label="Cost +4%">{fmtMoney(c4CostAdj)}</HintRow>
-            <Row label="Gross Margin"><Output strong>{fmtPct(c4Gm)}</Output></Row>
+            <HintRow label="Cost +4%">{money(c4CostAdj)}</HintRow>
+            <Row label="Gross Margin"><Output strong>{pct(c4Gm)}</Output></Row>
           </Card>
 
           <Card title="Starting → Ending → % Increase">
             <Row label="Starting"><NumInput value={c5Start} onChange={setC5Start} prefix="$" /></Row>
             <Row label="Ending"><NumInput value={c5End} onChange={setC5End} prefix="$" /></Row>
-            <Row label="Increase"><Output strong>{fmtPct(c5Increase, 0)}</Output></Row>
+            <Row label="Increase"><Output strong>{pct(c5Increase, 0)}</Output></Row>
           </Card>
         </div>
         </>
