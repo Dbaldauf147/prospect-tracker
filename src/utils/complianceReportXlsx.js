@@ -109,8 +109,10 @@ function placeImage(ws, wb, png, { col, row, maxW }) {
 
 export async function exportComplianceReportXlsx(results, meta = {}) {
   const { Workbook } = await import('exceljs');
-  const wb = new Workbook();
-  const ws = wb.addWorksheet('Compliance Report', {
+  // Combined-export mode passes a shared workbook so this report's sheets
+  // land in one master file alongside the other exports.
+  const wb = meta.targetWb || new Workbook();
+  const ws = wb.addWorksheet(meta.reportSheetName || 'Compliance Report', {
     properties: { tabColor: { argb: SE_DARK } },
     views: [{ showGridLines: false }],
   });
@@ -303,7 +305,11 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
   foot.alignment = { horizontal: 'center' };
 
   // === Sheet 2 — Site-by-Site Mandate Detail =============================
-  buildSiteDetailSheet(wb, results, { generatedAt, siteCount, matched });
+  buildSiteDetailSheet(wb, results, { generatedAt, siteCount, matched, sheetName: meta.siteDetailSheetName });
+
+  // Combined-export mode: the sheets were added to the caller's shared
+  // workbook, which writes and downloads the merged file itself.
+  if (meta.targetWb) return null;
 
   const buf = await wb.xlsx.writeBuffer();
   if (meta.returnBuffer) return buf;
@@ -324,7 +330,7 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
 // penalty. Green branded header, frozen header + Site column, autofilter,
 // zebra rows; "Applicable" cells are coloured in each category's hue.
 function buildSiteDetailSheet(wb, results, meta) {
-  const ws = wb.addWorksheet('Site Detail', {
+  const ws = wb.addWorksheet(meta.sheetName || 'Site Detail', {
     properties: { tabColor: { argb: SE_DARK } },
     views: [{ showGridLines: false, state: 'frozen', ySplit: 4, xSplit: 1 }],
   });

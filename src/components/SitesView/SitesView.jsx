@@ -32,6 +32,8 @@ import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripS
 import { UtilityMappingView } from './UtilityMappingView';
 import { BuildingComplianceScreening } from './BuildingComplianceScreening';
 import { ComplianceRoadmap } from './ComplianceRoadmap';
+import { screenSites, buildComplianceRoadmap } from '../../utils/complianceMandates';
+import { exportComplianceReportXlsx } from '../../utils/complianceReportXlsx';
 import { saveIndicativeAnalysis, deleteIndicativeAnalysis } from '../../utils/firestoreSync';
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
@@ -3245,7 +3247,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     return String(s).replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim();
   }
 
-  async function exportIndicativeSavings({ returnBuffer = false, companyName = null } = {}) {
+  async function exportIndicativeSavings({ returnBuffer = false, companyName = null, targetWb = null } = {}) {
     // The button is gated on sitesData.length, but the export reads
     // from `rows` — which strips entries without a Site Name when a
     // mapping is set. If every uploaded row is blank at the site-
@@ -3882,7 +3884,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     const { stateRows: electricRows, siteRows: electricSiteRows } = buildBucket('electric');
     const { stateRows: gasRows, siteRows: gasSiteRows } = buildBucket('gas');
 
-    const wb = new Workbook();
+    // Combined-export mode builds these sheets into a shared workbook so
+    // the Indicative Savings tabs sit alongside the compliance exports.
+    const wb = targetWb || new Workbook();
     wb.creator = 'Schneider Electric · Prospect Tracker';
     wb.created = new Date();
     // Captured inside the Hedging Analysis sheet builder so the chart
@@ -9189,42 +9193,45 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       });
     });
 
-    const rawBuf = await wb.xlsx.writeBuffer();
-    // Inject a native Excel chart into the Floating vs Hedging Example
-    // sheet. Combo chart: a stacked area chart underneath supplies the
-    // green "savings" band wherever spot sits below hedge (driven by
-    // hidden helper columns U + V), and a line chart on top draws the
-    // Spot and Hedge series. Helper data and all series resolve from
-    // live cell ranges so the chart recomputes as the user edits the
-    // yellow inputs. Y-axis bounds are omitted so Excel autoscales
-    // — if the user types a spot price beyond the default range, the
-    // chart range expands to fit instead of clipping.
+    // Native Excel charts are injected into the written .xlsx buffer
+    // (ExcelJS has no chart API). Collect the injection descriptors here
+    // and apply them after the workbook is written — in combined-export
+    // mode the caller writes the merged workbook and applies these, so the
+    // charts land on the same sheets inside the master file.
     const SHEET = 'Floating vs Hedging Example';
-    let buf = await injectLiveLineChart(rawBuf, {
-      sheetName: SHEET,
-      title: 'Spot Price Savings vs. Current Hedging Scenario',
-      catRef: `'${SHEET}'!$B$7:$B$18`,
-      // Area series first → drawn underneath. Index 0 is the
-      // invisible base (min of spot/hedge); index 1 is the green
-      // savings band (hedge − spot, clipped to ≥0). Both share the
-      // category axis with the lines.
-      areaSeries: [
-        { name: '',        valRef: `'${SHEET}'!$U$7:$U$18`, noFill: true },
-        { name: 'Savings', valRef: `'${SHEET}'!$V$7:$V$18`, color: '22C55E', alpha: 40000 },
-      ],
-      lineSeries: [
-        { name: 'Spot Price',  color: 'F97316', marker: 'circle', markerSize: 6, valRef: `'${SHEET}'!$E$7:$E$18` },
-        { name: '100 % Hedge', color: '1E40AF', dash: 'dash',                    valRef: `'${SHEET}'!$F$7:$F$18` },
-      ],
-      // The invisible base series would otherwise show up as a blank
-      // chip in the legend — strip it.
-      hideLegendIndices: [0],
-      // ~640 × 340 px (1 px ≈ 9525 EMU), anchored just right of the
-      // 9-column data table with a 0.2-col gutter so the chart sits
-      // beside the inputs instead of overlapping them. Row index is
-      // 0-based, so row: 5 = Excel row 6.
-      anchor: { col: 9, colOff: 190500, row: 5, rowOff: 0, cx: 6096000, cy: 3238500 },
-    });
+    // Combo chart on the Floating vs Hedging Example sheet: a stacked area
+    // chart underneath supplies the green "savings" band wherever spot sits
+    // below hedge (driven by hidden helper columns U + V), and a line chart
+    // on top draws the Spot and Hedge series. Helper data and all series
+    // resolve from live cell ranges so the chart recomputes as the user
+    // edits the yellow inputs. Y-axis bounds are omitted so Excel
+    // autoscales — a spot price beyond the default range expands the chart
+    // instead of clipping.
+    const chartInjections = [
+      {
+        sheetName: SHEET,
+        title: 'Spot Price Savings vs. Current Hedging Scenario',
+        catRef: `'${SHEET}'!$B$7:$B$18`,
+        // Area series first → drawn underneath. Index 0 is the invisible
+        // base (min of spot/hedge); index 1 is the green savings band
+        // (hedge − spot, clipped to ≥0). Both share the category axis.
+        areaSeries: [
+          { name: '',        valRef: `'${SHEET}'!$U$7:$U$18`, noFill: true },
+          { name: 'Savings', valRef: `'${SHEET}'!$V$7:$V$18`, color: '22C55E', alpha: 40000 },
+        ],
+        lineSeries: [
+          { name: 'Spot Price',  color: 'F97316', marker: 'circle', markerSize: 6, valRef: `'${SHEET}'!$E$7:$E$18` },
+          { name: '100 % Hedge', color: '1E40AF', dash: 'dash',                    valRef: `'${SHEET}'!$F$7:$F$18` },
+        ],
+        // The invisible base series would otherwise show up as a blank
+        // chip in the legend — strip it.
+        hideLegendIndices: [0],
+        // ~640 × 340 px (1 px ≈ 9525 EMU), anchored just right of the
+        // 9-column data table with a 0.2-col gutter. Row index is 0-based,
+        // so row: 5 = Excel row 6.
+        anchor: { col: 9, colOff: 190500, row: 5, rowOff: 0, cx: 6096000, cy: 3238500 },
+      },
+    ];
 
     // Mirror the same Spot Price Savings vs Current Hedging Scenario
     // chart onto the Hedging Analysis tab so the tranche table has the
@@ -9237,7 +9244,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     if (hedgingChartRange) {
       const HSHEET = 'Hedging Analysis';
       const { firstRow, lastRow, hedgePctYMin, hedgePctYMax } = hedgingChartRange;
-      buf = await injectLiveLineChart(buf, {
+      chartInjections.push({
         sheetName: HSHEET,
         charts: [
           {
@@ -9291,7 +9298,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     if (gasTimingChartRange) {
       const GSHEET = 'Gas Market Timing';
       const { firstRow, lastRow, allocYMin, allocYMax } = gasTimingChartRange;
-      buf = await injectLiveLineChart(buf, {
+      chartInjections.push({
         sheetName: GSHEET,
         charts: [
           {
@@ -9332,6 +9339,14 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     const fileName = exportCompany
       ? `${exportCompany}_Indicative Savings Analysis.xlsx`
       : `Indicative Savings Analysis - ${new Date().toISOString().slice(0, 10)}.xlsx`;
+    // Combined-export mode: hand the (already-added) sheets and the chart
+    // descriptors back so the master export writes the merged workbook once
+    // and injects the charts itself.
+    if (targetWb) return { chartInjections, fileName };
+    let buf = await wb.xlsx.writeBuffer();
+    for (const injection of chartInjections) {
+      buf = await injectLiveLineChart(buf, injection);
+    }
     if (returnBuffer) return { buffer: buf, fileName };
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
@@ -9343,6 +9358,79 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     a.remove();
     URL.revokeObjectURL(url);
     return null;
+  }
+
+  // Master Analysis export: one workbook with every tab from the three
+  // Utility Lookup exports — Indicative Savings, the Building Compliance
+  // report (+ its Site Detail), and the Compliance Roadmap. Each builder
+  // adds its sheets to a shared ExcelJS workbook; the Indicative Savings
+  // native charts are injected after the merged workbook is written (the
+  // roadmap's Site Detail is renamed so it doesn't collide with Indicative
+  // Savings' own Site Detail). Empty sections still emit their tab so the
+  // tab set stays consistent.
+  async function exportMasterAnalysis() {
+    if (!rows.length) {
+      throw new Error('No sites available to export — re-check the uploaded file or the Site Name column mapping.');
+    }
+    const { Workbook } = await import('exceljs');
+    const wb = new Workbook();
+    wb.creator = 'Schneider Electric · Prospect Tracker';
+
+    // 1. Indicative Savings sheets (returns its native-chart descriptors).
+    const indicative = await exportIndicativeSavings({ targetWb: wb });
+    const chartInjections = indicative?.chartInjections || [];
+
+    // 2. Building Compliance report + Site Detail, screened from the same
+    //    site list the compliance subtabs use. Site Detail is renamed to
+    //    avoid colliding with Indicative Savings' Site Detail sheet.
+    const complianceResults = screenSites(complianceSites);
+    await exportComplianceReportXlsx(complianceResults, {
+      targetWb: wb,
+      generatedAt: new Date().toLocaleString('en-US'),
+      siteCount: complianceSites.length,
+      siteDetailSheetName: 'Compliance Site Detail',
+    });
+
+    // 3. Compliance Roadmap — flat quarter rows rebuilt as an ExcelJS sheet
+    //    (the standalone export uses SheetJS). Headers emit even with no
+    //    dated deadlines so the tab is always present.
+    const { periods } = buildComplianceRoadmap(complianceResults);
+    const roadmapWs = wb.addWorksheet('Compliance Roadmap');
+    roadmapWs.addRow([
+      'Quarter', 'New Deadlines', 'New BBS', 'New Energy Audits', 'New BPS',
+      'New Sites In Scope', 'Cumulative Sites In Scope', 'Cumulative Deadlines',
+      'New Fine Exposure', 'Cumulative Fine Exposure',
+    ]);
+    roadmapWs.getRow(1).font = { bold: true };
+    for (const p of periods) {
+      roadmapWs.addRow([
+        p.label, p.newObligations,
+        p.newByCategory.bbs, p.newByCategory.audits, p.newByCategory.bps,
+        p.newSites, p.cumSites, p.cumObligations, p.newFines, p.cumFines,
+      ]);
+    }
+
+    // Write the merged workbook once, then inject the Indicative Savings
+    // native charts (ExcelJS drops charts on re-load, so this must run on
+    // the final buffer, last).
+    let buf = await wb.xlsx.writeBuffer();
+    for (const injection of chartInjections) {
+      buf = await injectLiveLineChart(buf, injection);
+    }
+
+    const exportCompany = sanitizeFileNamePart(deriveExportCompanyName(null));
+    const fileName = exportCompany
+      ? `${exportCompany}_Master Analysis.xlsx`
+      : `Master Analysis - ${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   }
 
   // Styled multi-tab utility-mapping workbook, launched from the Utility
@@ -10352,6 +10440,23 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
               style={{ padding: '0.4rem 0.8rem', border: '1px solid #009530', background: '#009530', color: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
             >
               ⬇ Indicative Savings
+            </button>
+          )}
+          {sitesData.length > 0 && (
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await exportMasterAnalysis();
+                } catch (err) {
+                  console.error('Master Analysis export failed:', err);
+                  alert(`Master Analysis export failed:\n\n${err?.message || err}`);
+                }
+              }}
+              title="Download one master workbook that combines every tab from the Indicative Savings, Building Compliance (Excel), and Compliance Roadmap exports."
+              style={{ padding: '0.4rem 0.8rem', border: '1px solid #005A9E', background: '#005A9E', color: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
+            >
+              ⬇ Master Analysis
             </button>
           )}
           {sitesData.length > 0 && (
