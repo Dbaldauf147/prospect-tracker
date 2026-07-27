@@ -5090,6 +5090,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const stateCounts = new Map();        // "US:IL" / "CA:ON" -> site count
       const stateRegionCounts = new Map();  // stateKey -> Map(regionKey -> count)
       const isoAggs = new Map();            // regionKey -> { sites, kwh, therms, cost }
+      const siteRecords = [];               // per-site rows feeding the ISO Site Explorer
       let naSiteCount = 0;
       let unmappedCount = 0;                // NA sites that resolve to no ISO market
       for (const r of rows) {
@@ -5122,6 +5123,18 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         agg.kwh += kwh;
         agg.therms += therms;
         agg.cost += eCost + gCost;
+        // Keep a per-site record so the ISO Site Explorer below can list the
+        // sites in whichever market the reader picks from the dropdown.
+        siteRecords.push({
+          company: String(r.__companyName__ || '').trim(),
+          city: String(r.__city__ || '').trim(),
+          state: String(r.__stateProvinceDisplay__ || r.__state__ || '').trim(),
+          zip: String(r.__zipNorm__ || '').trim(),
+          electric: String(r.__electric__ || '').trim(),
+          kwh: Math.round(kwh),
+          cost: Math.round(eCost + gCost),
+          iso: ISO_LABEL[region] || region,
+        });
       }
 
       // Per-feature helpers: the whole-polygon footprint ISO (dominant
@@ -5582,6 +5595,134 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           totalRow.getCell(ci).border = { top: { style: 'thin', color: { argb: SE_BORDER } } };
         }
         totalRow.height = 20;
+      }
+
+      // ---- ISO / RTO Site Explorer ------------------------------
+      // A dropdown-driven site list: pick an ISO / RTO market and its sites
+      // spill in below. The picker is a data-validation list sourced from the
+      // Overview rows above; the list itself is a dynamic-array FILTER over a
+      // hidden per-site table off to the right (columns O–V). FILTER spills
+      // live in Excel 365 and Google Sheets, and a forced recalc-on-open fills
+      // the list without the reader having to touch anything.
+      if (regionRows.length > 0 && siteRecords.length > 0) {
+        const firstRegionRow = tableHeaderRow + 1;
+        const lastRegionRow = tableHeaderRow + regionRows.length;
+
+        // Hidden source table (cols 15–22 = O–V): 7 display columns plus the
+        // ISO label used as the FILTER match key, in rows 2..N+1. Kept in
+        // hidden columns clear of the visible layout so only the spilled
+        // result is ever seen.
+        const SRC_DISP0 = 15;  // first display column (O)
+        const SRC_ISO = 22;    // ISO match-key column (V)
+        const SRC_FIRST = 2;
+        const SRC_LAST = SRC_FIRST + siteRecords.length - 1;
+        siteRecords.forEach((s, i) => {
+          const sr = ws.getRow(SRC_FIRST + i);
+          sr.getCell(SRC_DISP0 + 0).value = s.company;
+          sr.getCell(SRC_DISP0 + 1).value = s.city;
+          sr.getCell(SRC_DISP0 + 2).value = s.state;
+          sr.getCell(SRC_DISP0 + 3).value = s.zip;
+          sr.getCell(SRC_DISP0 + 4).value = s.electric;
+          sr.getCell(SRC_DISP0 + 5).value = s.kwh;
+          sr.getCell(SRC_DISP0 + 6).value = s.cost;
+          sr.getCell(SRC_ISO).value = s.iso;
+        });
+        for (let c = SRC_DISP0; c <= SRC_ISO; c++) {
+          const col = ws.getColumn(c);
+          if (!col.width) col.width = 12;
+          col.hidden = true;
+        }
+
+        // Explorer section header, a few rows below the Overview total.
+        const secRow = lastRegionRow + 3;
+        ws.mergeCells(secRow, 1, secRow, COLS);
+        const secHdr = ws.getCell(secRow, 1);
+        secHdr.value = 'ISO / RTO Site Explorer';
+        secHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+        secHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        secHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        ws.getRow(secRow).height = 22;
+
+        const noteRow = secRow + 1;
+        ws.mergeCells(noteRow, 1, noteRow, COLS);
+        const note = ws.getCell(noteRow, 1);
+        note.value = 'Pick an ISO / RTO market from the dropdown to list its sites below. (The live list requires Excel 365 or Google Sheets.)';
+        note.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+        note.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        ws.getRow(noteRow).height = 18;
+
+        // Picker row: label + dropdown cell (data validation list).
+        const pickRow = noteRow + 1;
+        const pickLabel = ws.getCell(pickRow, 1);
+        pickLabel.value = 'ISO / RTO market:';
+        pickLabel.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_TEXT_DARK } };
+        pickLabel.alignment = { vertical: 'middle', horizontal: 'right' };
+        const pickCell = ws.getCell(pickRow, 2);
+        pickCell.value = regionRows[0].region.label; // default to the top market
+        pickCell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
+        pickCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        pickCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF7CC' } };
+        pickCell.border = {
+          top:    { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          left:   { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          right:  { style: 'thin', color: { argb: SE_GREEN_DARK } },
+        };
+        ws.dataValidations.add(`B${pickRow}`, {
+          type: 'list',
+          allowBlank: false,
+          formulae: [`$A$${firstRegionRow}:$A$${lastRegionRow}`],
+          showErrorMessage: true,
+          errorStyle: 'warning',
+          showInputMessage: true,
+          promptTitle: 'ISO / RTO market',
+          prompt: 'Pick a market to list its sites below.',
+        });
+        ws.getRow(pickRow).height = 20;
+
+        // Site-list header row.
+        const listHdrRow = pickRow + 2;
+        const listHeaders = ['Company', 'City', 'State / Province', 'ZIP', 'Electric Utility', 'Load (kWh)', 'Annual Cost ($)'];
+        const lh = ws.getRow(listHdrRow);
+        listHeaders.forEach((label, i) => {
+          const cell = lh.getCell(i + 1);
+          cell.value = label;
+          cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          cell.border = {
+            top:    { style: 'thin', color: { argb: SE_BORDER } },
+            bottom: { style: 'thin', color: { argb: SE_BORDER } },
+            left:   { style: 'thin', color: { argb: SE_BORDER } },
+            right:  { style: 'thin', color: { argb: SE_BORDER } },
+          };
+        });
+        lh.height = 22;
+
+        // Dynamic FILTER spill: display columns O..U, matched against the ISO
+        // key in V. Excel stores the worksheet-only FILTER as _xlfn._xlws.FILTER.
+        const listStart = listHdrRow + 1;
+        const L = (n) => ws.getColumn(n).letter;
+        const dispRange = `${L(SRC_DISP0)}${SRC_FIRST}:${L(SRC_DISP0 + 6)}${SRC_LAST}`;
+        const isoRange = `${L(SRC_ISO)}${SRC_FIRST}:${L(SRC_ISO)}${SRC_LAST}`;
+        const emptyMsg = '"No sites in this ISO / RTO market"';
+        ws.getCell(listStart, 1).value = {
+          formula: `IFERROR(_xlfn._xlws.FILTER(${dispRange},${isoRange}=$B$${pickRow},${emptyMsg}),${emptyMsg})`,
+        };
+        // Pre-format the two numeric spill columns across the whole possible
+        // extent so the spilled Load / Cost values read as numbers / currency
+        // no matter how many rows the chosen market yields.
+        for (let i = 0; i < siteRecords.length; i++) {
+          ws.getCell(listStart + i, 6).numFmt = '#,##0';
+          ws.getCell(listStart + i, 7).numFmt = '"$"#,##0';
+        }
+        // The Cost column is width 6 (map underlay) — widen it so currency
+        // fits. The map image is pixel-sized, so this doesn't shift it.
+        if ((ws.getColumn(7).width || 0) < 14) ws.getColumn(7).width = 14;
+
+        // Recalculate on open so the FILTER spill fills without interaction.
+        wb.calcProperties = wb.calcProperties || {};
+        wb.calcProperties.fullCalcOnLoad = true;
       }
     }
 
