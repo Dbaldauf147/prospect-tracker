@@ -6,11 +6,13 @@ import { PipelineView } from '../PipelineView/PipelineView';
 // the user actually views.
 const YOYView = lazy(() => import('../YOYView/YOYView').then(m => ({ default: m.YOYView })));
 const ProgressView = lazy(() => import('../ProgressView/ProgressView').then(m => ({ default: m.ProgressView })));
+const WeeklyReportView = lazy(() => import('../WeeklyReportView/WeeklyReportView').then(m => ({ default: m.WeeklyReportView })));
 
 const TABS = [
   { key: 'yoy', label: 'YOY' },
   { key: 'progress', label: 'Progress' },
   { key: 'pipeline', label: 'Pipeline' },
+  { key: 'weekly', label: 'Weekly Report' },
 ];
 
 // Host for the "Charts" top-level tab: YOY / Progress / Pipeline as
@@ -57,6 +59,11 @@ export function ChartsView({ prospects, settings, cdmName, onSelectProspect }) {
           </Suspense>
         )}
         {tab === 'pipeline' && <PipelineView prospects={prospects} cdmName={cdmName} settings={settings} onSelectProspect={onSelectProspect} />}
+        {tab === 'weekly' && (
+          <Suspense fallback={<div className="loading">Loading view…</div>}>
+            <WeeklyReportView settings={settings} />
+          </Suspense>
+        )}
       </div>
     </div>
   );

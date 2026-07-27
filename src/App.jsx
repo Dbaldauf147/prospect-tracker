@@ -28,7 +28,6 @@ import { ClientsView } from './components/ClientsView/ClientsView';
 import { IssuesView } from './components/IssuesView/IssuesView';
 import { ActivityView } from './components/ActivityView/ActivityView';
 import { AgentsView } from './components/AgentsView/AgentsView';
-import { WeeklyReportView } from './components/WeeklyReportView/WeeklyReportView';
 import { loadTargetAccountsFromDB } from './components/TargetAccountsView/TargetAccountsView';
 import { DraftEmailsPage } from './components/DraftEmailView/DraftEmailsPage';
 import { VibeProspecting } from './components/VibeProspecting/VibeProspecting';
@@ -310,8 +309,6 @@ function App() {
             <ActivityView prospects={prospects} settings={settings} updateSettings={updateSettings} />
           ) : view === 'agents' ? (
             <AgentsView prospects={prospects} settings={settings} updateProspect={updateProspect} updateSettings={updateSettings} />
-          ) : view === 'weekly' ? (
-            <WeeklyReportView settings={settings} />
           ) : view === 'pe' ? (
             <PEPortfolioView prospects={prospects} onSelectProspect={handleSelect} metInPersonMap={settings.contactMetInPerson || {}} onUpdateProspect={updateProspect} onAddProspect={addProspect} settings={settings} updateSettings={updateSettings} />
           ) : view === 'contacts' ? (
