@@ -3899,6 +3899,59 @@ function AgreementSentFollowUpModal({
   );
 }
 
+// Normalize a pasted ticket reference into an href. Full URLs pass
+// through; a bare "host/path" gets an https:// prefix so the Open link
+// works. Anything without a dot (e.g. a lone ticket number) yields no link.
+function ticketHref(raw) {
+  const v = String(raw || '').trim();
+  if (!v) return '';
+  if (/^https?:\/\//i.test(v)) return v;
+  if (/^[\w-]+(\.[\w-]+)+/.test(v)) return `https://${v}`;
+  return '';
+}
+
+// Two link fields — Contract Service Desk ticket + COA Approval ticket —
+// shared by the Follow-Up status popup and the Notes editor so both render
+// identically. `onChange*` updates the live value; `onCommit*` fires on blur
+// for editors (like Notes) that persist immediately.
+function TicketLinksFields({ labelStyle, inputStyle, contractUrl, coaUrl, onChangeContract, onChangeCoa, onCommitContract, onCommitCoa }) {
+  const field = (label, value, onChange, onCommit) => {
+    const href = ticketHref(value);
+    return (
+      <div style={{ flex: '1 1 240px', minWidth: 0 }}>
+        <label style={labelStyle}>{label}</label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <input
+            type="url"
+            value={value}
+            placeholder="Paste a link…"
+            onChange={(e) => onChange(e.target.value)}
+            onBlur={(e) => { if (onCommit) onCommit(e.target.value); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
+            style={{ ...inputStyle, flex: 1 }}
+          />
+          {href ? (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={value}
+              onClick={(e) => e.stopPropagation()}
+              style={{ flexShrink: 0, fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-accent)', textDecoration: 'none', whiteSpace: 'nowrap' }}
+            >Open ↗</a>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
+  return (
+    <div style={{ display: 'flex', gap: '0.7rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+      {field('Contract Service Desk Ticket', contractUrl, onChangeContract, onCommitContract)}
+      {field('COA Approval Ticket', coaUrl, onChangeCoa, onCommitCoa)}
+    </div>
+  );
+}
+
 // Prompt shown whenever an opp's Follow Up date changes, asking the user
 // to pick the new Status (Who is waiting) for that opp so it stays
 // current with each follow-up. Cleared on Save or Skip.
@@ -3912,6 +3965,8 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, onSave, onClos
   const initialTimelines = useMemo(() => readTimelines(opp), [opp]);
   const [timelineList, setTimelineList] = useState(initialTimelines.list);
   const [kickoff, setKickoff] = useState(initialTimelines.kickoff);
+  const [contractTicket, setContractTicket] = useState(String(opp?._contractTicketUrl ?? ''));
+  const [coaTicket, setCoaTicket] = useState(String(opp?._coaTicketUrl ?? ''));
 
   // Seed the Next Steps rows from the same source the standalone
   // NextStepsEditor uses so this popup edits them in the identical
@@ -3934,7 +3989,7 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, onSave, onClos
     const kept = rows.filter(r => (r.note || '').trim() || (r.waitingOn || '').trim());
     const nextSteps = kept.map(r => encodeNoteLine(r.note)).join('\n');
     const nextStepsWaiting = kept.map(r => (r.waitingOn || '').trim());
-    onSave({ status, nextSteps, nextStepsWaiting, salesPartner: salesPartner.trim(), timelines: timelineList, kickoff });
+    onSave({ status, nextSteps, nextStepsWaiting, salesPartner: salesPartner.trim(), timelines: timelineList, kickoff, contractTicket: contractTicket.trim(), coaTicket: coaTicket.trim() });
   }
 
   const hintStyle = { fontSize: '0.68rem', color: 'var(--color-text-muted)', marginTop: 3 };
@@ -3979,12 +4034,7 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, onSave, onClos
       >
         <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)' }}>
           <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
-            Update Status
-          </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
-            <strong>{opp?.['Account'] || 'This opp'}</strong>
-            {opp?.['Scope'] ? <> &middot; {opp['Scope']}</> : null}
-            {' '}has a new <strong>Follow Up</strong> date. Pick the current Status and review the Notes below.
+            Update Status{opp?.['Account'] ? <> — {opp['Account']}</> : null}
           </div>
         </div>
 
@@ -4026,6 +4076,14 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, onSave, onClos
               />
             </div>
           </div>
+          <TicketLinksFields
+            labelStyle={labelStyle}
+            inputStyle={inputStyle}
+            contractUrl={contractTicket}
+            coaUrl={coaTicket}
+            onChangeContract={setContractTicket}
+            onChangeCoa={setCoaTicket}
+          />
           <div>
             <label style={labelStyle}>Timelines</label>
             <TimelinesEditor
@@ -5643,6 +5701,19 @@ function NextStepsEditor({ opp, clientManager, onClose, updateOppField }) {
   const initialTimelines = useMemo(() => readTimelines(opp), [opp]);
   const [timelineList, setTimelineList] = useState(initialTimelines.list);
   const [kickoff, setKickoff] = useState(initialTimelines.kickoff);
+  const [contractTicket, setContractTicket] = useState(String(opp?._contractTicketUrl ?? ''));
+  const [coaTicket, setCoaTicket] = useState(String(opp?._coaTicketUrl ?? ''));
+
+  // Shared with FollowUpStatusModal so the Notes editor renders its fields
+  // with the same label / input chrome as the Update Status popup.
+  const labelStyle = { fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text)', display: 'block', marginBottom: 4 };
+  const inputStyle = {
+    width: '100%', boxSizing: 'border-box',
+    padding: '0.45rem 0.55rem',
+    border: '1px solid var(--color-border)', borderRadius: 4,
+    fontSize: '0.85rem', fontFamily: 'inherit',
+    background: '#fff', color: 'var(--color-text)',
+  };
 
   function persistTimelines(nextList, nextKickoff) {
     updateOppField(opp._id, '_timelines', nextList);
@@ -5705,41 +5776,16 @@ function NextStepsEditor({ opp, clientManager, onClose, updateOppField }) {
     >
       <div
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } }}
         style={{
-          background: '#fff', borderRadius: 8, padding: '1rem 1.25rem',
-          width: 'min(1100px, 96vw)', maxHeight: '88vh', overflow: 'auto',
-          boxShadow: '0 18px 50px rgba(15, 23, 42, 0.32)',
+          width: 'min(820px, 94vw)', maxHeight: '88vh',
+          background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.6rem', gap: '1rem' }}>
-          <div style={{ overflow: 'hidden' }}>
-            <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              Notes — {account}
-            </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: '0.72rem', color: '#64748B' }}>
-              Sales Partner
-              <input
-                key={String(opp?.['Sales Partner'] ?? '')}
-                type="text"
-                defaultValue={String(opp?.['Sales Partner'] ?? '')}
-                placeholder="—"
-                onBlur={(e) => {
-                  const v = e.currentTarget.value.trim();
-                  if (v !== String(opp?.['Sales Partner'] ?? '').trim()) updateOppField(opp._id, 'Sales Partner', v);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
-                  else if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.value = String(opp?.['Sales Partner'] ?? ''); e.currentTarget.blur(); }
-                }}
-                style={{ padding: '2px 6px', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.78rem', fontFamily: 'inherit', color: '#334155', minWidth: 170 }}
-              />
-            </label>
-            {clientManager ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: '0.72rem', color: '#64748B' }}>
-                Client Manager
-                <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#334155' }}>{clientManager}</span>
-              </div>
-            ) : null}
+        <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            Notes — {account}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
             {markBtn('_calledOn', '📞', 'Called')}
@@ -5755,27 +5801,76 @@ function NextStepsEditor({ opp, clientManager, onClose, updateOppField }) {
             >×</button>
           </div>
         </div>
-        <div style={{ marginBottom: '0.85rem', paddingBottom: '0.85rem', borderBottom: '1px solid #E2E8F0' }}>
-          <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#334155', marginBottom: '0.4rem' }}>Timelines</div>
-          <TimelinesEditor
-            list={timelineList}
-            kickoff={kickoff}
-            onChangeList={changeTimelineList}
-            onChangeKickoff={changeKickoff}
+
+        <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem', overflow: 'auto' }}>
+          <div style={{ display: 'flex', gap: '0.7rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            {clientManager ? (
+              <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+                <label style={labelStyle}>Client Manager</label>
+                <div style={{
+                  padding: '0.45rem 0.55rem',
+                  border: '1px solid var(--color-border)', borderRadius: 4,
+                  fontSize: '0.85rem', background: 'var(--color-bg)', color: 'var(--color-text)',
+                }}>{clientManager}</div>
+              </div>
+            ) : null}
+            <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+              <label style={labelStyle}>Sales Partner</label>
+              <input
+                key={String(opp?.['Sales Partner'] ?? '')}
+                type="text"
+                defaultValue={String(opp?.['Sales Partner'] ?? '')}
+                placeholder="—"
+                onBlur={(e) => {
+                  const v = e.currentTarget.value.trim();
+                  if (v !== String(opp?.['Sales Partner'] ?? '').trim()) updateOppField(opp._id, 'Sales Partner', v);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+                  else if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.value = String(opp?.['Sales Partner'] ?? ''); e.currentTarget.blur(); }
+                }}
+                style={inputStyle}
+              />
+            </div>
+          </div>
+
+          <TicketLinksFields
+            labelStyle={labelStyle}
+            inputStyle={inputStyle}
+            contractUrl={contractTicket}
+            coaUrl={coaTicket}
+            onChangeContract={setContractTicket}
+            onChangeCoa={setCoaTicket}
+            onCommitContract={(v) => updateOppField(opp._id, '_contractTicketUrl', v.trim())}
+            onCommitCoa={(v) => updateOppField(opp._id, '_coaTicketUrl', v.trim())}
           />
+
+          <div>
+            <label style={labelStyle}>Timelines</label>
+            <TimelinesEditor
+              list={timelineList}
+              kickoff={kickoff}
+              onChangeList={changeTimelineList}
+              onChangeKickoff={changeKickoff}
+            />
+          </div>
+
+          <div>
+            <label style={labelStyle}>Notes</label>
+            <NextStepsRowsEditor
+              rows={rows}
+              onUpdateRow={updateRow}
+              onAddRow={addRow}
+              onDeleteRow={deleteRow}
+              onCommit={() => commit(rows)}
+              onQuickWaiting={(idx, value) => setRows(prev => {
+                const next = prev.map((r, i) => i === idx ? { ...r, waitingOn: value } : r);
+                commit(next);
+                return next;
+              })}
+            />
+          </div>
         </div>
-        <NextStepsRowsEditor
-          rows={rows}
-          onUpdateRow={updateRow}
-          onAddRow={addRow}
-          onDeleteRow={deleteRow}
-          onCommit={() => commit(rows)}
-          onQuickWaiting={(idx, value) => setRows(prev => {
-            const next = prev.map((r, i) => i === idx ? { ...r, waitingOn: value } : r);
-            commit(next);
-            return next;
-          })}
-        />
       </div>
     </div>
   );
@@ -9182,7 +9277,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             opp={opp}
             statusOptions={statusOpts}
             clientManager={clientManagerForAccount(opp?.['Account'])}
-            onSave={({ status, nextSteps, nextStepsWaiting, salesPartner, timelines, kickoff }) => {
+            onSave={({ status, nextSteps, nextStepsWaiting, salesPartner, timelines, kickoff, contractTicket, coaTicket }) => {
               if (status !== String(opp['Status'] ?? '')) {
                 updateOppField(opp._id, 'Status', status);
               }
@@ -9207,6 +9302,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               const curWaiting = Array.isArray(opp._nextStepsWaiting) ? opp._nextStepsWaiting : [];
               if (JSON.stringify(nextStepsWaiting) !== JSON.stringify(curWaiting)) {
                 updateOppField(opp._id, '_nextStepsWaiting', nextStepsWaiting);
+              }
+              if ((contractTicket || '') !== String(opp._contractTicketUrl ?? '')) {
+                updateOppField(opp._id, '_contractTicketUrl', contractTicket || '');
+              }
+              if ((coaTicket || '') !== String(opp._coaTicketUrl ?? '')) {
+                updateOppField(opp._id, '_coaTicketUrl', coaTicket || '');
               }
               setFollowUpStatusPromptId(null);
               setFollowUpStatusPrev(null);
