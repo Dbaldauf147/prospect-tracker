@@ -164,6 +164,36 @@ function rowsFromMapping(dataRows, mapping) {
   }).filter(r => !isRowEmpty(r));
 }
 
+// One row in the "match unmapped companies" popup: an unmapped Master Site
+// List company + a predictive input to pick the Table View company to rename
+// its rows to. Match is enabled only once the typed value is an actual Table
+// View company (picked from the shared datalist).
+function UnmappedMatchRow({ name, count, tableViewNames, onMatch }) {
+  const [value, setValue] = useState('');
+  const canonical = tableViewNames.find(n => n.toLowerCase() === value.trim().toLowerCase()) || '';
+  return (
+    <div className={styles.unmappedRow}>
+      <div className={styles.unmappedName} title={name}>
+        {name}<span className={styles.unmappedCount}> · {count} site{count === 1 ? '' : 's'}</span>
+      </div>
+      <span className={styles.unmappedArrow}>→</span>
+      <input
+        className={styles.unmappedInput}
+        list="msl-tableview-companies"
+        placeholder="Table View company…"
+        value={value}
+        onChange={e => setValue(e.target.value)}
+      />
+      <button
+        className={styles.btnPrimary}
+        disabled={!canonical}
+        onClick={() => onMatch(name, canonical, count)}
+        title={canonical ? `Rename ${count} row${count === 1 ? '' : 's'} to “${canonical}”` : 'Pick a Table View company first'}
+      >Match</button>
+    </div>
+  );
+}
+
 export function MasterSiteListView({ prospects = [] }) {
   const [rows, setRows] = useState([]);
   const [zipMap, setZipMap] = useState(null);
@@ -186,6 +216,9 @@ export function MasterSiteListView({ prospects = [] }) {
   // When on, show only sites whose company isn't found among the Table View
   // (prospects) companies — i.e. unmapped to the tracker.
   const [unmappedOnly, setUnmappedOnly] = useState(false);
+  // Opens the popup that lists unmapped companies and lets you match each to
+  // a Table View company (renaming its rows).
+  const [showUnmapped, setShowUnmapped] = useState(false);
   // Bulk-rename prompt: { oldName, newName, count } after a company edit that
   // leaves other rows still carrying the old name.
   const [bulkRename, setBulkRename] = useState(null);
@@ -334,6 +367,20 @@ export function MasterSiteListView({ prospects = [] }) {
     return set;
   }, [companies, tableViewIndex]);
 
+  // The unmapped companies with their site counts, sorted — drives the
+  // match popup. Recomputes as rows are matched/renamed so matched
+  // companies drop off the list.
+  const unmappedList = useMemo(() => {
+    const counts = new Map();
+    for (const r of rows) {
+      const c = String(r.company || '').trim();
+      if (c && unmappedCompanies.has(c)) counts.set(c, (counts.get(c) || 0) + 1);
+    }
+    return [...counts.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [rows, unmappedCompanies]);
+
   // Visible rows carry their index in the full array so edits/deletes
   // target the right row even while filtered or sorted. Each also carries
   // its resolved utility lookup so filter, sort, and render agree and we
@@ -402,6 +449,19 @@ export function MasterSiteListView({ prospects = [] }) {
       ));
       return null;
     });
+  }, []);
+
+  // Match an unmapped company to a Table View company: rename every row that
+  // carries the old name so it maps. Dropping that company off the unmapped
+  // list falls out of the rows change.
+  const matchUnmappedCompany = useCallback((oldName, newName, count = 0) => {
+    const target = String(oldName || '').trim();
+    const to = String(newName || '').trim();
+    if (!target || !to || target === to) return;
+    setRows(prev => prev.map(r =>
+      String(r.company || '').trim() === target ? { ...r, company: to } : r
+    ));
+    setBusy(`Matched “${target}” → “${to}”${count ? ` (${count} row${count === 1 ? '' : 's'})` : ''}.`);
   }, []);
 
   const deleteRow = useCallback((index) => {
@@ -635,10 +695,10 @@ export function MasterSiteListView({ prospects = [] }) {
 
         <button
           className={unmappedOnly ? styles.btnActive : styles.btn}
-          onClick={() => setUnmappedOnly(v => !v)}
+          onClick={() => setShowUnmapped(true)}
           disabled={!prospects.length}
           title={prospects.length
-            ? 'Show only sites whose company is not found among the Table View companies'
+            ? 'List companies not found among the Table View companies and match them to one'
             : 'Table View companies are still loading'}
         >
           Unmapped to Table View{unmappedCompanies.size ? ` (${unmappedCompanies.size})` : ''}
@@ -928,6 +988,41 @@ export function MasterSiteListView({ prospects = [] }) {
               <button className={styles.btnPrimary} onClick={applyBulkRename}>
                 Rename all {bulkRename.count + 1} rows
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showUnmapped && (
+        <div className={styles.modalBackdrop} onClick={() => setShowUnmapped(false)}>
+          <div className={styles.modalWide} onClick={e => e.stopPropagation()}>
+            <h3 className={styles.modalTitle}>Unmapped to Table View ({unmappedList.length})</h3>
+            <p className={styles.modalText}>
+              These Master Site List companies don’t match any Table View company. Pick a
+              Table View company for each to rename its rows so they map — start typing to
+              search. Matched companies drop off the list.
+            </p>
+            <label className={styles.checkRow}>
+              <input type="checkbox" checked={unmappedOnly} onChange={e => setUnmappedOnly(e.target.checked)} />
+              Also filter the table below to these companies
+            </label>
+            {unmappedList.length === 0 ? (
+              <div className={styles.unmappedDone}>Every company is mapped to a Table View company. 🎉</div>
+            ) : (
+              <div className={styles.unmappedList}>
+                {unmappedList.map(u => (
+                  <UnmappedMatchRow
+                    key={u.name}
+                    name={u.name}
+                    count={u.count}
+                    tableViewNames={tableViewNames}
+                    onMatch={matchUnmappedCompany}
+                  />
+                ))}
+              </div>
+            )}
+            <div className={styles.modalActions}>
+              <button className={styles.btn} onClick={() => setShowUnmapped(false)}>Close</button>
             </div>
           </div>
         </div>
