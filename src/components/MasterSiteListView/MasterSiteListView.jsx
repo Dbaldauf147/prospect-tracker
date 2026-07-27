@@ -168,9 +168,11 @@ function rowsFromMapping(dataRows, mapping) {
 // List company + a predictive input to pick the Table View company to rename
 // its rows to. Match is enabled only once the typed value is an actual Table
 // View company (picked from the shared datalist).
-function UnmappedMatchRow({ name, count, tableViewNames, onMatch }) {
-  const [value, setValue] = useState('');
-  const canonical = tableViewNames.find(n => n.toLowerCase() === value.trim().toLowerCase()) || '';
+// One unmapped company + its Table View picker. The selection is staged
+// (held by the parent), not applied on the spot — the parent's "Save &
+// rename" button commits every pick at once. A green check marks a row
+// whose typed text resolves to a real Table View company.
+function UnmappedMatchRow({ name, count, value, canonical, onChange }) {
   return (
     <div className={styles.unmappedRow}>
       <div className={styles.unmappedName} title={name}>
@@ -182,14 +184,13 @@ function UnmappedMatchRow({ name, count, tableViewNames, onMatch }) {
         list="msl-tableview-companies"
         placeholder="Table View company…"
         value={value}
-        onChange={e => setValue(e.target.value)}
+        onChange={e => onChange(name, e.target.value)}
       />
-      <button
-        className={styles.btnPrimary}
-        disabled={!canonical}
-        onClick={() => onMatch(name, canonical, count)}
-        title={canonical ? `Rename ${count} row${count === 1 ? '' : 's'} to “${canonical}”` : 'Pick a Table View company first'}
-      >Match</button>
+      <span
+        className={canonical ? styles.unmappedCheckOn : styles.unmappedCheck}
+        title={canonical ? `Will rename ${count} row${count === 1 ? '' : 's'} to “${canonical}”` : 'Pick a Table View company to stage this rename'}
+        aria-label={canonical ? 'Selection ready' : 'No selection yet'}
+      >{canonical ? '✓' : ''}</span>
     </div>
   );
 }
@@ -219,6 +220,10 @@ export function MasterSiteListView({ prospects = [] }) {
   // Opens the popup that lists unmapped companies and lets you match each to
   // a Table View company (renaming its rows).
   const [showUnmapped, setShowUnmapped] = useState(false);
+  // Staged unmapped→Table View picks, keyed by the unmapped company name.
+  // Held here (not per-row) so the modal's "Save & rename" button can commit
+  // every selection in one pass.
+  const [matchPicks, setMatchPicks] = useState({});
   // Bulk-rename prompt: { oldName, newName, count } after a company edit that
   // leaves other rows still carrying the old name.
   const [bulkRename, setBulkRename] = useState(null);
@@ -454,15 +459,41 @@ export function MasterSiteListView({ prospects = [] }) {
   // Match an unmapped company to a Table View company: rename every row that
   // carries the old name so it maps. Dropping that company off the unmapped
   // list falls out of the rows change.
-  const matchUnmappedCompany = useCallback((oldName, newName, count = 0) => {
-    const target = String(oldName || '').trim();
-    const to = String(newName || '').trim();
-    if (!target || !to || target === to) return;
-    setRows(prev => prev.map(r =>
-      String(r.company || '').trim() === target ? { ...r, company: to } : r
-    ));
-    setBusy(`Matched “${target}” → “${to}”${count ? ` (${count} row${count === 1 ? '' : 's'})` : ''}.`);
+  // Stage (or clear) one company's pick as the user types / picks.
+  const setMatchPick = useCallback((name, value) => {
+    setMatchPicks(prev => ({ ...prev, [name]: value }));
   }, []);
+
+  // Resolve each staged pick to a canonical Table View company (exact,
+  // case-insensitive). Only picks that land on a real Table View company —
+  // and actually change the name — count as a selection.
+  const resolvedPicks = useMemo(() => {
+    const out = [];
+    for (const u of unmappedList) {
+      const raw = String(matchPicks[u.name] || '').trim();
+      if (!raw) continue;
+      const canonical = tableViewNames.find(n => n.toLowerCase() === raw.toLowerCase());
+      if (canonical && canonical.toLowerCase() !== u.name.toLowerCase()) {
+        out.push({ oldName: u.name, newName: canonical, count: u.count });
+      }
+    }
+    return out;
+  }, [matchPicks, unmappedList, tableViewNames]);
+
+  // Commit every staged pick at once: rename all matching rows so the
+  // companies map to Table View. Matched companies then drop off the list.
+  const applyMatchPicks = useCallback(() => {
+    if (!resolvedPicks.length) return;
+    const map = new Map(resolvedPicks.map(p => [p.oldName, p.newName]));
+    setRows(prev => prev.map(r => {
+      const c = String(r.company || '').trim();
+      return map.has(c) ? { ...r, company: map.get(c) } : r;
+    }));
+    const nCompanies = resolvedPicks.length;
+    const nRows = resolvedPicks.reduce((s, p) => s + p.count, 0);
+    setBusy(`Renamed ${nRows} row${nRows === 1 ? '' : 's'} across ${nCompanies} compan${nCompanies === 1 ? 'y' : 'ies'} to match Table View.`);
+    setMatchPicks({});
+  }, [resolvedPicks]);
 
   const deleteRow = useCallback((index) => {
     setRows(prev => prev.filter((_, i) => i !== index));
@@ -1010,19 +1041,34 @@ export function MasterSiteListView({ prospects = [] }) {
               <div className={styles.unmappedDone}>Every company is mapped to a Table View company. 🎉</div>
             ) : (
               <div className={styles.unmappedList}>
-                {unmappedList.map(u => (
-                  <UnmappedMatchRow
-                    key={u.name}
-                    name={u.name}
-                    count={u.count}
-                    tableViewNames={tableViewNames}
-                    onMatch={matchUnmappedCompany}
-                  />
-                ))}
+                {unmappedList.map(u => {
+                  const raw = String(matchPicks[u.name] || '');
+                  const canonical = tableViewNames.find(n => n.toLowerCase() === raw.trim().toLowerCase()) || '';
+                  return (
+                    <UnmappedMatchRow
+                      key={u.name}
+                      name={u.name}
+                      count={u.count}
+                      value={raw}
+                      canonical={canonical}
+                      onChange={setMatchPick}
+                    />
+                  );
+                })}
               </div>
             )}
             <div className={styles.modalActions}>
               <button className={styles.btn} onClick={() => setShowUnmapped(false)}>Close</button>
+              <button
+                className={styles.btnPrimary}
+                disabled={!resolvedPicks.length}
+                onClick={applyMatchPicks}
+                title={resolvedPicks.length
+                  ? `Save ${resolvedPicks.length} selection${resolvedPicks.length === 1 ? '' : 's'} and rename the matched companies`
+                  : 'Pick a Table View company for at least one row first'}
+              >
+                Save &amp; rename{resolvedPicks.length ? ` (${resolvedPicks.length})` : ''}
+              </button>
             </div>
           </div>
         </div>
