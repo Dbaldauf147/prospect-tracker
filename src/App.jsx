@@ -268,6 +268,30 @@ function App() {
         onSelectContact={handleSelectContact}
       />
       <div className="main">
+        {(view === 'accounts' || view === 'table' || view === 'kanban') && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, borderBottom: '1px solid #E2E8F0', padding: '0 0.25rem' }}>
+            {[
+              { key: 'accounts', label: 'My Accounts', active: view === 'accounts' },
+              // Pipeline (kanban) is a mode of the Table experience, so the
+              // Table subtab stays highlighted for both.
+              { key: 'table', label: 'Table', active: view === 'table' || view === 'kanban' },
+            ].map(t => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setView(t.key)}
+                style={{
+                  background: 'none', border: 'none', padding: '0.55rem 0.9rem',
+                  fontFamily: 'inherit', fontSize: '0.82rem',
+                  fontWeight: t.active ? 700 : 500,
+                  color: t.active ? '#1D4ED8' : '#475569',
+                  borderBottom: t.active ? '2px solid #1D4ED8' : '2px solid transparent',
+                  cursor: 'pointer', marginBottom: -1,
+                }}
+              >{t.label}</button>
+            ))}
+          </div>
+        )}
         {(view === 'table' || view === 'kanban') && (
           <FilterBar
             searchTerm={searchTerm}
