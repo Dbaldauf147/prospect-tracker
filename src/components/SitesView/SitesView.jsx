@@ -32,7 +32,7 @@ import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripS
 import { UtilityMappingView } from './UtilityMappingView';
 import { BuildingComplianceScreening } from './BuildingComplianceScreening';
 import { ComplianceRoadmap } from './ComplianceRoadmap';
-import { screenSites, buildComplianceRoadmap } from '../../utils/complianceMandates';
+import { screenSites, buildComplianceRoadmap, CATEGORIES, totalPenalty } from '../../utils/complianceMandates';
 import { exportComplianceReportXlsx } from '../../utils/complianceReportXlsx';
 import { saveIndicativeAnalysis, deleteIndicativeAnalysis } from '../../utils/firestoreSync';
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
@@ -3891,6 +3891,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     const wb = targetWb || new Workbook();
     wb.creator = 'Schneider Electric · Prospect Tracker';
     wb.created = new Date();
+    // ---- Executive Summary sheet (tab #1) ---------------------------
+    // Created first so it leads the workbook; it's populated further
+    // down (see "Populate the Executive Summary tab") once the
+    // Indicative Savings headline figures and the building-compliance
+    // screening totals have been computed.
+    const summarySheet = wb.addWorksheet('Summary', {
+      properties: { tabColor: { argb: SE_GREEN } },
+      views: [{ showGridLines: false }],
+    });
     // Captured inside the Hedging Analysis sheet builder so the chart
     // injection at the end of the export knows which rows to plot.
     let hedgingChartRange = null;
@@ -6928,6 +6937,151 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       cNote.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
       cNote.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
       ws.getRow(summaryBandCumulativeRow).height = 24;
+
+      // ---- Populate the Executive Summary tab (tab #1) -------------
+      // The two headline savings figures mirror the band just written —
+      // via live cross-sheet references so they keep following the
+      // Savings Scenario + # of Years toggles on the Indicative Savings
+      // tab — sitting above the building-compliance screening KPIs so
+      // the first tab reads as the portfolio snapshot the user wants.
+      {
+        const SUM_NCOLS = 8;
+        const usdShort = (n) => {
+          if (n == null || !Number.isFinite(n)) return '$-';
+          const a = Math.abs(n);
+          if (a >= 1e6) return '$' + (n / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace(/\.0$/, '') + 'M';
+          if (a >= 1e3) return '$' + Math.round(n / 1e3) + 'K';
+          return '$' + Math.round(n);
+        };
+        summarySheet.columns = [
+          { width: 32 }, { width: 15 }, { width: 15 }, { width: 15 },
+          { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 },
+        ];
+
+        // Title + subtitle band.
+        summarySheet.mergeCells(1, 1, 1, SUM_NCOLS);
+        const sumTitle = summarySheet.getCell(1, 1);
+        sumTitle.value = 'Executive Summary';
+        sumTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN } };
+        sumTitle.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+        sumTitle.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        summarySheet.getRow(1).height = 38;
+
+        summarySheet.mergeCells(2, 1, 2, SUM_NCOLS);
+        const sumSub = summarySheet.getCell(2, 1);
+        sumSub.value = `Indicative savings headline and building-compliance exposure across the portfolio.  Generated ${new Date().toLocaleDateString()}`;
+        sumSub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+        sumSub.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        summarySheet.getRow(2).height = 20;
+        summarySheet.getRow(3).height = 6;
+
+        const sumSection = (rowNum, text) => {
+          summarySheet.mergeCells(rowNum, 1, rowNum, SUM_NCOLS);
+          const c = summarySheet.getCell(rowNum, 1);
+          c.value = text;
+          c.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+          c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          summarySheet.getRow(rowNum).height = 22;
+        };
+
+        // Section 1: Indicative Savings — the two headline figures,
+        // pulled live from the Indicative Savings tab's Savings Summary
+        // band (column J of the two band rows).
+        const savingsFigure = (rowNum, label, formulaRef, resultVal) => {
+          summarySheet.mergeCells(rowNum, 1, rowNum, 5);
+          const lab = summarySheet.getCell(rowNum, 1);
+          lab.value = label;
+          lab.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_TEXT_DARK } };
+          lab.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+          summarySheet.mergeCells(rowNum, 6, rowNum, SUM_NCOLS);
+          const val = summarySheet.getCell(rowNum, 6);
+          if (refs.length) {
+            val.value = { formula: formulaRef, result: resultVal };
+            val.ignoredErrors = { formula: true };
+          } else {
+            val.value = resultVal;
+          }
+          val.numFmt = '"$"#,##0';
+          val.font = { name: 'Nunito Sans', bold: true, size: 14, color: { argb: SE_GREEN_DARK } };
+          val.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          summarySheet.getRow(rowNum).height = 26;
+        };
+        sumSection(4, 'Indicative Savings');
+        savingsFigure(
+          5,
+          'Total Indicative Annual Savings (Electric + Natural Gas)',
+          `'${SCENARIO_SHEET_NAME}'!$J$${summaryBandValueRow}`,
+          baseResult,
+        );
+        savingsFigure(
+          6,
+          'Total Indicative Cumulative Savings over the Term (Electric + Natural Gas)',
+          `'${SCENARIO_SHEET_NAME}'!$J$${summaryBandCumulativeRow}`,
+          baseResult * defaultTermYears,
+        );
+        summarySheet.mergeCells(7, 1, 7, SUM_NCOLS);
+        const savNote = summarySheet.getCell(7, 1);
+        savNote.value = 'Mirrors the Indicative Savings tab — follows the Savings Scenario and # of Years selections made there.';
+        savNote.font = { name: 'Nunito Sans', italic: true, size: 9.5, color: { argb: SE_SLATE } };
+        savNote.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+        summarySheet.getRow(7).height = 18;
+        summarySheet.getRow(8).height = 6;
+
+        // Section 2: Building Compliance Screening — KPI tiles mirroring
+        // the on-page Compliance Screening dashboard. Same derivation as
+        // the compliance report: sites screened, sites with any eligible
+        // mandate, distinct matched jurisdictions, and the summed max
+        // yearly penalty across the three mandate types.
+        const complianceResults = screenSites(complianceSites);
+        const cMatched = complianceResults.filter(r => r.matched);
+        const cJurisdictions = new Set(cMatched.map(r => r.govId)).size;
+        const cWithMandate = complianceResults.filter(r => CATEGORIES.some(c => r[c]?.eligible === true)).length;
+        const cGrandPenalty = CATEGORIES.reduce((sum, c) => sum + totalPenalty(complianceResults, c), 0);
+        const cSiteCount = complianceResults.length;
+
+        sumSection(9, 'Building Compliance Screening');
+        const kpis = [
+          { v: String(cSiteCount), l: 'Sites Screened', c: SE_GREEN_DARK },
+          { v: String(cWithMandate), l: 'Sites With a Mandate', c: 'FF3DCD58' },
+          { v: String(cJurisdictions), l: 'Jurisdictions Matched', c: 'FF29ABE2' },
+          { v: usdShort(cGrandPenalty), l: 'Est. Max Yearly Exposure', c: 'FFF7941E' },
+        ];
+        const kpiNumRow = summarySheet.getRow(10);
+        const kpiLblRow = summarySheet.getRow(11);
+        kpis.forEach((k, i) => {
+          const c0 = i * 2 + 1;
+          summarySheet.mergeCells(10, c0, 10, c0 + 1);
+          summarySheet.mergeCells(11, c0, 11, c0 + 1);
+          const num = kpiNumRow.getCell(c0);
+          num.value = k.v;
+          num.font = { name: 'Nunito Sans', bold: true, size: 22, color: { argb: SE_TEXT_DARK } };
+          num.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          num.border = {
+            top: { style: 'medium', color: { argb: k.c } },
+            left: { style: 'thin', color: { argb: SE_BORDER } },
+            right: { style: 'thin', color: { argb: SE_BORDER } },
+          };
+          const lbl = kpiLblRow.getCell(c0);
+          lbl.value = k.l.toUpperCase();
+          lbl.font = { name: 'Nunito Sans', bold: true, size: 9, color: { argb: SE_SLATE } };
+          lbl.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          lbl.border = {
+            bottom: { style: 'thin', color: { argb: SE_BORDER } },
+            left: { style: 'thin', color: { argb: SE_BORDER } },
+            right: { style: 'thin', color: { argb: SE_BORDER } },
+          };
+        });
+        kpiNumRow.height = 30;
+        kpiLblRow.height = 16;
+
+        summarySheet.mergeCells(12, 1, 12, SUM_NCOLS);
+        const cmpNote = summarySheet.getCell(12, 1);
+        cmpNote.value = "Preliminary BBS / energy-audit / BPS applicability across the portfolio. Est. max yearly exposure sums each eligible site's maximum annual penalty across the three mandate types.";
+        cmpNote.font = { name: 'Nunito Sans', italic: true, size: 9.5, color: { argb: SE_SLATE } };
+        cmpNote.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
+        summarySheet.getRow(12).height = 30;
+      }
     }
 
     // ---- Second sheet: Site Detail ---------------------------------
