@@ -186,6 +186,12 @@ export function MasterSiteListView({ prospects = [] }) {
   // When on, show only sites whose company isn't found among the Table View
   // (prospects) companies — i.e. unmapped to the tracker.
   const [unmappedOnly, setUnmappedOnly] = useState(false);
+  // Bulk-rename prompt: { oldName, newName, count } after a company edit that
+  // leaves other rows still carrying the old name.
+  const [bulkRename, setBulkRename] = useState(null);
+  // Remembers the company value a cell held when focused, so a blur can tell
+  // whether (and from what) the name actually changed.
+  const companyEditRef = useRef(null);
   const fileInputRef = useRef(null);
   const colMenuRef = useRef(null);
   const resizeRef = useRef(null); // { key, startX, startW } during a drag
@@ -365,6 +371,32 @@ export function MasterSiteListView({ prospects = [] }) {
       if (key === 'zip') row = { ...row, ...lookupIsoForZip(value) };
       next[index] = row;
       return next;
+    });
+  }, []);
+
+  // After editing a company cell, if other rows still carry the name it used
+  // to hold, offer to rename those too. `rows` is already current here (the
+  // edited row now shows the new name), so we count the stragglers directly.
+  function offerBulkRename(index, newValueRaw) {
+    const edit = companyEditRef.current;
+    companyEditRef.current = null;
+    if (!edit) return;
+    const oldName = String(edit.original || '').trim();
+    const newName = String(newValueRaw || '').trim();
+    if (!oldName || !newName || oldName === newName) return;
+    const count = rows.filter((r, idx) => idx !== index && String(r.company || '').trim() === oldName).length;
+    if (count > 0) setBulkRename({ oldName, newName, count });
+  }
+
+  // Apply the pending rename to every row still carrying the old name.
+  const applyBulkRename = useCallback(() => {
+    setBulkRename(current => {
+      if (!current) return null;
+      const target = current.oldName;
+      setRows(prev => prev.map(r =>
+        String(r.company || '').trim() === target ? { ...r, company: current.newName } : r
+      ));
+      return null;
     });
   }, []);
 
@@ -716,12 +748,17 @@ export function MasterSiteListView({ prospects = [] }) {
                   <td className={styles.rowNum}>{i + 1}</td>
                   {visibleColumns.map(c => {
                     if (c.kind === 'field') {
+                      const isCompany = c.key === 'company';
                       return (
                         <td key={c.key}>
                           <input
                             className={styles.cellInput}
                             value={r[c.key] || ''}
                             onChange={e => updateCell(i, c.key, e.target.value)}
+                            {...(isCompany ? {
+                              onFocus: e => { companyEditRef.current = { original: e.target.value }; },
+                              onBlur: e => offerBulkRename(i, e.target.value),
+                            } : {})}
                           />
                         </td>
                       );
@@ -858,6 +895,26 @@ export function MasterSiteListView({ prospects = [] }) {
           </div>
         );
       })()}
+
+      {bulkRename && (
+        <div className={styles.modalBackdrop} onClick={() => setBulkRename(null)}>
+          <div className={styles.modal} onClick={e => e.stopPropagation()}>
+            <h3 className={styles.modalTitle}>Rename company across rows?</h3>
+            <p className={styles.modalText}>
+              You changed this row from “{bulkRename.oldName}” to “{bulkRename.newName}”.
+              {' '}{bulkRename.count} other row{bulkRename.count === 1 ? '' : 's'} still
+              {' '}list{bulkRename.count === 1 ? 's' : ''} “{bulkRename.oldName}”. Rename
+              {' '}{bulkRename.count === 1 ? 'it' : 'them'} to “{bulkRename.newName}” too?
+            </p>
+            <div className={styles.modalActions}>
+              <button className={styles.btn} onClick={() => setBulkRename(null)}>Keep just this row</button>
+              <button className={styles.btnPrimary} onClick={applyBulkRename}>
+                Rename all {bulkRename.count + 1} rows
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
