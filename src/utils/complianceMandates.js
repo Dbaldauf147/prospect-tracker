@@ -148,6 +148,27 @@ export function screenSites(sites, opts) {
   return (sites || []).map(s => screenSite(s, opts));
 }
 
+// Human label for the company / portfolio a compliance site list belongs to,
+// taken from each site's Company Name (mapped on the Utility Lookup upload).
+// One distinct company → that name; a couple → both; more → the first plus a
+// "+N more" tag; none → '' so callers can hide the line.
+export function sitesCompanyLabel(sites) {
+  const names = [];
+  const seen = new Set();
+  for (const s of (sites || [])) {
+    const c = String(s?.company || '').trim();
+    if (!c) continue;
+    const k = c.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    names.push(c);
+  }
+  if (names.length === 0) return '';
+  if (names.length === 1) return names[0];
+  if (names.length === 2) return `${names[0]} & ${names[1]}`;
+  return `${names[0]} +${names.length - 1} more`;
+}
+
 // ---- Aggregations for the dashboard / report -----------------------------
 // All operate on the output of screenSites(). A site "counts" for a category
 // when eligible === true.
