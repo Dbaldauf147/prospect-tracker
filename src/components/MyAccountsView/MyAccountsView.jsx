@@ -17,6 +17,7 @@ import { userLsGet, userLsSet } from '../../utils/userLs';
 import { saveMyAccountsFlags } from '../../utils/myAccountsFlagsStore';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { loadList } from '../../utils/uploadedListStore';
+import { MASTER_FIELDS, CANONICAL_HEADERS } from '../MasterSiteListView/masterSiteFields';
 import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import * as XLSX from 'xlsx';
 import styles from './MyAccountsView.module.css';
@@ -1039,28 +1040,70 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
 
-  // Master Site List → per-company site count. Loaded once on mount from the
-  // same store the Master Site List tab persists to, then reduced to a
-  // company → count map (keyed on the trimmed, lowercased company name) so
-  // each account row can show how many sites exist for it on that tab.
+  // Master Site List → per-company site count AND the rows themselves.
+  // Loaded once on mount from the same store the Master Site List tab
+  // persists to, keyed on the trimmed, lowercased company name. The count
+  // map drives the "MSL Sites" column; the rows map backs the popup that
+  // opens when that count is clicked (both built from the same filter so the
+  // clicked number always equals the number of rows shown).
   const [mslCountByCompany, setMslCountByCompany] = useState(() => new Map());
+  const [mslRowsByCompany, setMslRowsByCompany] = useState(() => new Map());
+  const [sitesPopup, setSitesPopup] = useState(null); // { company, rows } | null
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const rows = await loadList(MASTER_SITE_LIST_KEY);
         if (cancelled || !Array.isArray(rows)) return;
-        const m = new Map();
+        const counts = new Map();
+        const byCompany = new Map();
         for (const r of rows) {
           const c = String(r?.company || '').trim().toLowerCase();
           if (!c) continue;
-          m.set(c, (m.get(c) || 0) + 1);
+          counts.set(c, (counts.get(c) || 0) + 1);
+          if (!byCompany.has(c)) byCompany.set(c, []);
+          byCompany.get(c).push(r);
         }
-        setMslCountByCompany(m);
+        setMslCountByCompany(counts);
+        setMslRowsByCompany(byCompany);
       } catch { /* no master list yet — counts stay 0 */ }
     })();
     return () => { cancelled = true; };
   }, []);
+
+  // Open the site-list popup for an account, gathering the Master Site List
+  // rows across its parent company and any division names — the same set the
+  // "MSL Sites" count is summed over, so the popup matches that number.
+  function openSitesPopup(row) {
+    const names = [
+      String(row.company || '').trim().toLowerCase(),
+      ...((divisionsMap[row.id] || []).map(d => String(d.company || '').trim().toLowerCase())),
+    ];
+    const seen = new Set();
+    const rows = [];
+    for (const name of names) {
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      for (const r of (mslRowsByCompany.get(name) || [])) rows.push(r);
+    }
+    setSitesPopup({ company: row.company || '—', rows });
+  }
+
+  // Download the popped-up company's sites as an .xlsx, using the Master Site
+  // List's own canonical headers.
+  function exportSitesExcel(company, rows) {
+    const data = (rows || []).map(r => {
+      const o = {};
+      MASTER_FIELDS.forEach((f, i) => { o[CANONICAL_HEADERS[i]] = r[f.key] || ''; });
+      return o;
+    });
+    if (!data.length) { alert('No sites to export.'); return; }
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Sites');
+    const safe = String(company || 'sites').replace(/[^\w.-]+/g, '_').slice(0, 40) || 'sites';
+    XLSX.writeFile(wb, `${safe}-sites.xlsx`);
+  }
 
   // Hydrate filter state once settings arrive after login, then debounce-persist changes.
   const viewHydratedRef = useRef(!!savedView);
@@ -2934,8 +2977,26 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       if (col.key === 'emailDomain') {
         return { ...col, render: (row) => <InlineCell row={row} field="emailDomain" value={row.emailDomain} onUpdate={onUpdate} /> };
       }
+      // MSL Sites count is clickable: opens a popup of the company's Master
+      // Site List rows with an Excel download. Even "0" is clickable so the
+      // popup can explain there are none yet.
+      if (col.key === 'mslSiteCount') {
+        return { ...col, render: (row) => {
+          const n = row.mslSiteCount || 0;
+          const tip = n > 0
+            ? `View ${n.toLocaleString()} site${n === 1 ? '' : 's'} from the Master Site List for "${row.company || ''}"`
+            : `No sites on the Master Site List for "${row.company || ''}" — click for details`;
+          return (
+            <span
+              style={{ fontWeight: n > 0 ? 700 : 400, color: n > 0 ? 'var(--color-accent)' : 'var(--color-text-muted)', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '2px' }}
+              title={tip}
+              onClick={(e) => { e.stopPropagation(); openSitesPopup(row); }}
+            >{n.toLocaleString()}</span>
+          );
+        }};
+      }
       // Skip computed columns — they stay read-only
-      if (['myTier', 'activityCount', 'oppsCount', 'contactCount', 'bucketCount', 'mslSiteCount', 'naRegion', 'type2', 'dmFound', 'sources', 'targetName', 'otherReps', 'divisions', 'listFlags', '_hide'].includes(col.key)) {
+      if (['myTier', 'activityCount', 'oppsCount', 'contactCount', 'bucketCount', 'naRegion', 'type2', 'dmFound', 'sources', 'targetName', 'otherReps', 'divisions', 'listFlags', '_hide'].includes(col.key)) {
         return col;
       }
       // Make any remaining columns editable as text
@@ -2952,7 +3013,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       render: (row) => <button className={styles.deleteBtn} onClick={(e) => { e.stopPropagation(); if (confirm(`Remove "${row.company}" from the database?`)) { dismissCompany(row.company); onDelete(row.id); } }} title="Remove">&#x2715;</button>,
     });
     return mapped;
-  }, [onSelect, onUpdate, allTargetNames, divisionsMap, allCompaniesForDivisions, duplicateTargetNames, listFlagsByCompany, similarNamesByAccount, filteredAccounts, settings?.dropdownLists, settings?.dropdownListsHidden]);
+  }, [onSelect, onUpdate, allTargetNames, divisionsMap, allCompaniesForDivisions, duplicateTargetNames, listFlagsByCompany, similarNamesByAccount, filteredAccounts, mslRowsByCompany, settings?.dropdownLists, settings?.dropdownListsHidden]);
 
   // Prepend a checkbox column for the mass-edit selection. Opps-only rows
   // render no checkbox since they have no backing prospect to update.
@@ -3498,6 +3559,57 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
               <button onClick={() => setZoomImportPreview(null)} style={{ padding: '0.5rem 1rem', border: '1px solid var(--color-border)', borderRadius: '6px', background: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer', color: 'var(--color-text-secondary)' }}>Cancel</button>
               <button onClick={executeZoomImport} style={{ padding: '0.5rem 1rem', border: 'none', borderRadius: '6px', background: 'var(--color-accent)', color: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer', fontWeight: 600 }}>Import</button>
             </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {sitesPopup && createPortal(
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setSitesPopup(null)}>
+          <div style={{ background: '#fff', borderRadius: '12px', padding: '1.25rem 1.5rem', width: '920px', maxWidth: '96vw', maxHeight: '88vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', gap: '1rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>
+                {sitesPopup.company} — Sites <span style={{ color: 'var(--color-text-muted)', fontWeight: 600 }}>({sitesPopup.rows.length})</span>
+              </h3>
+              <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
+                <button
+                  onClick={() => exportSitesExcel(sitesPopup.company, sitesPopup.rows)}
+                  disabled={!sitesPopup.rows.length}
+                  style={{ padding: '0.4rem 0.85rem', border: 'none', borderRadius: '6px', background: sitesPopup.rows.length ? 'var(--color-accent)' : 'var(--color-border)', color: '#fff', fontSize: '0.78rem', fontFamily: 'inherit', fontWeight: 600, cursor: sitesPopup.rows.length ? 'pointer' : 'default' }}
+                >Export Excel</button>
+                <button onClick={() => setSitesPopup(null)} style={{ background: 'none', border: 'none', fontSize: '1.3rem', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}>&times;</button>
+              </div>
+            </div>
+            {sitesPopup.rows.length === 0 ? (
+              <p style={{ fontSize: '0.82rem', color: 'var(--color-text-secondary)', margin: '1rem 0' }}>
+                No sites found for this company in the Master Site List. Add them on the Master Site List page (Lists &rarr; Master Site List).
+              </p>
+            ) : (
+              <div style={{ overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: '8px' }}>
+                <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.74rem' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ position: 'sticky', top: 0, background: 'var(--color-surface-alt)', textAlign: 'right', fontWeight: 700, color: 'var(--color-text-secondary)', padding: '0.45rem 0.6rem', borderBottom: '1px solid var(--color-border)', whiteSpace: 'nowrap' }}>#</th>
+                      {MASTER_FIELDS.map(f => (
+                        <th key={f.key} style={{ position: 'sticky', top: 0, background: 'var(--color-surface-alt)', textAlign: 'left', fontWeight: 700, color: 'var(--color-text-secondary)', padding: '0.45rem 0.6rem', borderBottom: '1px solid var(--color-border)', whiteSpace: 'nowrap' }}>{f.label}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sitesPopup.rows.map((r, i) => (
+                      <tr key={i}>
+                        <td style={{ padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--color-border-light)', textAlign: 'right', color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>{i + 1}</td>
+                        {MASTER_FIELDS.map(f => (
+                          <td key={f.key} style={{ padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--color-border-light)', whiteSpace: 'nowrap', color: 'var(--color-text)' }}>
+                            {r[f.key] || <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>,
         document.body
