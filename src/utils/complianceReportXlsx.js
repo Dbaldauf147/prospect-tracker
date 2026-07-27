@@ -316,9 +316,25 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
   sectionTitle('Eligibility by Requirement');
   const imgTopRow = r - 1; // 0-indexed anchor
   let maxRows = 0;
-  // Spread the three category cards across the full width — anchored at
-  // columns A, D and G so the row fills the sheet instead of the left third.
-  const EL_COLS = [0, 3, 6];
+  // Lay the three category cards side by side. Each card is a fixed-width PNG
+  // (~330px); the sheet columns are wider than that, so anchoring to whole
+  // columns (A/D/G) left big white gaps between cards. Instead, convert a
+  // target x-pixel offset into a fractional column anchor and place the cards
+  // with an even gutter, centred across the full sheet width.
+  const CARD_W = 330, CARD_GUTTER = 24;
+  const colPx = (w) => Math.round(w * 7 + 5); // ExcelJS/Excel width → pixels
+  const COL_PX = ws.columns.map((c) => colPx(c.width));
+  const sheetPx = COL_PX.reduce((a, b) => a + b, 0);
+  const xToColAnchor = (x) => {
+    let acc = 0;
+    for (let i = 0; i < COL_PX.length; i++) {
+      if (x < acc + COL_PX[i]) return i + (x - acc) / COL_PX[i];
+      acc += COL_PX[i];
+    }
+    return COL_PX.length;
+  };
+  const cardBlockW = CATEGORIES.length * CARD_W + (CATEGORIES.length - 1) * CARD_GUTTER;
+  const cardStartX = Math.max(0, (sheetPx - cardBlockW) / 2);
   CATEGORIES.forEach((c, i) => {
     const png = drawEligibilityCardPng({
       label: CATEGORY_LABEL[c],
@@ -326,9 +342,10 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
       applicableSites: totalEligible(results, c),
       maxPenalty: totalPenalty(results, c),
       items: eligibilityByOrdinance(results, c).map(x => ({ label: x.government, value: x.count })),
-      width: 330,
+      width: CARD_W,
     });
-    const used = placeImage(ws, wb, png, { col: EL_COLS[i] ?? i * 3, row: imgTopRow, maxW: 330 });
+    const x = cardStartX + i * (CARD_W + CARD_GUTTER);
+    const used = placeImage(ws, wb, png, { col: xToColAnchor(x), row: imgTopRow, maxW: CARD_W });
     maxRows = Math.max(maxRows, used);
   });
   r += maxRows + 1;
