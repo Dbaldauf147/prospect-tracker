@@ -18,6 +18,7 @@ import { setOppPricingSnapshot } from '../../utils/oppsPricingSnapshot';
 import {
   loadOptionLinks,
   setOppOptionLink,
+  dropOptionFromLinks,
   OPTION_LINKS_EVENT,
 } from '../../utils/pricingOptionLinks';
 
@@ -2298,6 +2299,9 @@ export function PricingView({ settings } = {}) {
         return;
       }
       const parsed = parsePricingWorkbook(buf);
+      // A new SIA replaces the one on screen, so unlink any Opp the
+      // outgoing workbook was "Saved to" before we swap it out.
+      clearLoadedWorkbookOptionLinks(workbook);
       setWorkbook({
         fileName: file.name,
         options: parsed.options,
@@ -2415,8 +2419,25 @@ export function PricingView({ settings } = {}) {
     setDragOver(false);
   }
 
+  // Drop any "Saved to:" Opp links that point at the workbook currently
+  // loaded in the Pricing tab. Called when the SIA is cleared or replaced
+  // so the chip (and the Opps 2 "Pricing Option" column it feeds) doesn't
+  // dangle against a workbook that's no longer on screen.
+  function clearLoadedWorkbookOptionLinks(wb) {
+    const labels = new Set(
+      (wb?.options || [])
+        .map(o => (o.sheetName || '').trim())
+        .filter(Boolean)
+    );
+    for (const label of labels) {
+      dropOptionFromLinks(label).catch(() => {});
+    }
+  }
+
   function clearAll() {
     if (!confirm('Clear the loaded workbook, markup overrides, and the Alternative Fee schedule? Saved Linked-To defaults are kept.')) return;
+    // The SIA is going away, so unlink any Opp it was "Saved to".
+    clearLoadedWorkbookOptionLinks(workbook);
     setWorkbook(null);
     setOverrides({});
     setActiveOption(null);
