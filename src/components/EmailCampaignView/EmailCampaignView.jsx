@@ -568,6 +568,18 @@ export function EmailCampaignView() {
     return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   }
 
+  // A saved campaign greys out as "Inactive" once it has had no activity —
+  // neither a save nor a refresh — for 60 days. A campaign with no usable
+  // date stays Active so it never greys out purely for missing a timestamp.
+  function isCampaignActive(c) {
+    const times = [c?.refreshedAt, c?.savedAt]
+      .map(d => (d ? new Date(d).getTime() : 0))
+      .filter(t => Number.isFinite(t) && t > 0);
+    if (!times.length) return true;
+    const last = Math.max(...times);
+    return (Date.now() - last) <= 60 * 24 * 60 * 60 * 1000;
+  }
+
   // Click a column header to sort by it; click again to flip direction. A new
   // column starts ascending.
   function toggleSort(key) {
@@ -934,20 +946,37 @@ export function EmailCampaignView() {
               {refreshingAll ? 'Refreshing…' : 'Refresh all'}
             </button>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+          <div style={{ overflowX: 'auto', border: '1px solid var(--color-border)', borderRadius: '6px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+              <thead>
+                <tr style={{ textAlign: 'left', color: 'var(--color-text-secondary)', fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700 }}>Campaign</th>
+                  <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, textAlign: 'right', whiteSpace: 'nowrap' }}>% Sent</th>
+                  <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, textAlign: 'right', whiteSpace: 'nowrap' }}>Response Rate</th>
+                  <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, textAlign: 'center', whiteSpace: 'nowrap' }}>Status</th>
+                  <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700 }} aria-label="Actions"></th>
+                </tr>
+              </thead>
+              <tbody>
             {savedCampaigns.map((c, i) => {
               const isEditing = editingIndex === i;
+              const sent = c.uniqueRecipients ?? 0;
+              const total = c.totalContacts ?? c.contacts?.length ?? c.uniqueRecipients ?? 0;
+              const pctSent = total > 0 ? Math.round((sent / total) * 1000) / 10 : 0;
+              const active = isCampaignActive(c);
               return (
-              <div
+              <tr
                 key={i}
                 style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  padding: '0.5rem 0.7rem', border: viewingSaved === i ? '1px solid var(--color-accent)' : '1px solid var(--color-border)', borderRadius: '6px',
-                  background: viewingSaved === i ? '#EFF6FF' : 'var(--color-surface)', cursor: isEditing ? 'default' : 'pointer',
+                  borderTop: '1px solid var(--color-border)',
+                  background: viewingSaved === i ? '#EFF6FF' : 'transparent',
+                  cursor: isEditing ? 'default' : 'pointer',
+                  opacity: active ? 1 : 0.55,
                 }}
+                title={active ? undefined : 'Inactive — no save or refresh in the last 60 days'}
                 onClick={isEditing ? undefined : () => viewCampaign(i)}
               >
-                <div style={{ flex: 1, minWidth: 0 }}>
+                <td style={{ padding: '0.5rem 0.6rem', maxWidth: '340px', verticalAlign: 'top' }}>
                   {isEditing ? (
                     <div onClick={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
                       <div>
@@ -992,8 +1021,20 @@ export function EmailCampaignView() {
                     Saved {fmtDate(c.savedAt)} — {c.uniqueRecipients} of {c.totalContacts ?? c.contacts?.length ?? c.uniqueRecipients} sent, {c.uniqueRepliers} replies
                     {c.refreshedAt && <span style={{ color: 'var(--color-text-muted)' }}> · updated {fmtDate(c.refreshedAt)}</span>}
                   </div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0, marginLeft: '0.5rem' }}>
+                </td>
+                {isEditing ? (
+                  <td colSpan={3} />
+                ) : (
+                  <>
+                    <td style={{ padding: '0.5rem 0.6rem', textAlign: 'right', fontWeight: 600, color: 'var(--color-text)', whiteSpace: 'nowrap', verticalAlign: 'top' }}>{pctSent}%</td>
+                    <td style={{ padding: '0.5rem 0.6rem', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap', verticalAlign: 'top', color: c.responseRate >= 20 ? '#10B981' : c.responseRate >= 10 ? '#F59E0B' : '#DC2626' }}>{c.responseRate}%</td>
+                    <td style={{ padding: '0.5rem 0.6rem', textAlign: 'center', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
+                      <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', background: active ? '#DCFCE7' : '#F3F4F6', color: active ? '#15803D' : '#6B7280' }}>{active ? 'Active' : 'Inactive'}</span>
+                    </td>
+                  </>
+                )}
+                <td style={{ padding: '0.5rem 0.6rem', textAlign: 'right', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }} onClick={e => e.stopPropagation()}>
                   {isEditing ? (
                     <>
                       <button
@@ -1009,7 +1050,6 @@ export function EmailCampaignView() {
                     </>
                   ) : (
                     <>
-                      <span style={{ fontSize: '1rem', fontWeight: 700, color: c.responseRate >= 20 ? '#10B981' : c.responseRate >= 10 ? '#F59E0B' : '#DC2626' }}>{c.responseRate}%</span>
                       <button
                         onClick={e => startEdit(i, e)}
                         style={{ background: 'none', border: 'none', color: '#94A3B8', fontSize: '0.85rem', cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}
@@ -1026,10 +1066,13 @@ export function EmailCampaignView() {
                       >&times;</button>
                     </>
                   )}
-                </div>
-              </div>
+                  </div>
+                </td>
+              </tr>
               );
             })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
