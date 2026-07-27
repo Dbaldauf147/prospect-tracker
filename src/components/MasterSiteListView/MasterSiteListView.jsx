@@ -303,10 +303,9 @@ export function MasterSiteListView({ prospects = [] }) {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [rows]);
 
-  // Index of the Table View (prospects) company names, using the app's shared
-  // fuzzy company matching so suffix / case / punctuation variants still count
-  // as "mapped".
-  const tableViewIndex = useMemo(() => {
+  // Distinct Table View (prospects) company names, sorted — powers both the
+  // predictive-search datalist on the Company cells and the mapping index.
+  const tableViewNames = useMemo(() => {
     const names = [];
     const seen = new Set();
     for (const p of (prospects || [])) {
@@ -317,8 +316,13 @@ export function MasterSiteListView({ prospects = [] }) {
       seen.add(k);
       names.push(c);
     }
-    return buildCompanyIndex(names);
+    return names.sort((a, b) => a.localeCompare(b));
   }, [prospects]);
+
+  // Index of the Table View company names, using the app's shared fuzzy
+  // company matching so suffix / case / punctuation variants still count as
+  // "mapped".
+  const tableViewIndex = useMemo(() => buildCompanyIndex(tableViewNames), [tableViewNames]);
 
   // Distinct Master Site List companies with no match among the Table View
   // companies — the "unmapped" set the filter narrows to.
@@ -690,6 +694,14 @@ export function MasterSiteListView({ prospects = [] }) {
 
       {busy && <div className={styles.hint}>{busy}</div>}
 
+      {/* Predictive-search source for the Company cells: every Company input
+          references this one datalist of Table View company names. */}
+      {tableViewNames.length > 0 && (
+        <datalist id="msl-tableview-companies">
+          {tableViewNames.map(n => <option key={n} value={n} />)}
+        </datalist>
+      )}
+
       <div className={styles.tableWrap}>
         <table className={styles.table} style={{ tableLayout: 'fixed', width: 'auto' }}>
           <colgroup>
@@ -748,6 +760,9 @@ export function MasterSiteListView({ prospects = [] }) {
                   <td className={styles.rowNum}>{i + 1}</td>
                   {visibleColumns.map(c => {
                     if (c.kind === 'field') {
+                      // The Company cell offers predictive search against the
+                      // Table View company names via a shared <datalist>, plus
+                      // the bulk-rename prompt on blur.
                       const isCompany = c.key === 'company';
                       return (
                         <td key={c.key}>
@@ -755,6 +770,8 @@ export function MasterSiteListView({ prospects = [] }) {
                             className={styles.cellInput}
                             value={r[c.key] || ''}
                             onChange={e => updateCell(i, c.key, e.target.value)}
+                            list={isCompany && tableViewNames.length ? 'msl-tableview-companies' : undefined}
+                            autoComplete={isCompany ? 'off' : undefined}
                             {...(isCompany ? {
                               onFocus: e => { companyEditRef.current = { original: e.target.value }; },
                               onBlur: e => offerBulkRename(i, e.target.value),
