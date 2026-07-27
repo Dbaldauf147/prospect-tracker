@@ -1617,6 +1617,7 @@ export function PricingView({ settings } = {}) {
   const [chartUnitCounts, setChartUnitCounts] = useState({}); // per-line-item unit count (keyed by lowercased tag) for the Fee / Unit column
   const [techDeprPct, setTechDeprPct] = useState(0.04);
   const [colVisibility, setColVisibility] = useState({}); // upper table: { [colKey]: bool, default true }
+  const [hideEmptyCtsRows, setHideEmptyCtsRows] = useState(true); // upper table: hide line items with no CTS value by default; user opts in to show them
   const [summaryColWidths, setSummaryColWidths] = useState({});
   const [summaryColVisibility, setSummaryColVisibility] = useState({});
   const [colMenuOpen, setColMenuOpen] = useState(false);
@@ -1725,6 +1726,7 @@ export function PricingView({ settings } = {}) {
         if (saved.chartUnitCounts && typeof saved.chartUnitCounts === 'object') setChartUnitCounts(saved.chartUnitCounts);
         if (typeof saved.techDeprPct === 'number') setTechDeprPct(saved.techDeprPct);
         if (saved.colVisibility) setColVisibility(saved.colVisibility);
+        if (typeof saved.hideEmptyCtsRows === 'boolean') setHideEmptyCtsRows(saved.hideEmptyCtsRows);
         if (saved.summaryColWidths) setSummaryColWidths(saved.summaryColWidths);
         if (saved.summaryColVisibility) setSummaryColVisibility(saved.summaryColVisibility);
         if (saved.pageSubtab === 'pricing' || saved.pageSubtab === 'linkedTo' || saved.pageSubtab === 'options' || saved.pageSubtab === 'compare' || saved.pageSubtab === 'brokerFees' || saved.pageSubtab === 's2c' || saved.pageSubtab === 'calculator') setPageSubtab(saved.pageSubtab);
@@ -1744,9 +1746,9 @@ export function PricingView({ settings } = {}) {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
 
   // Mirror Linked-To defaults under their dedicated key so they
   // outlive the main cache (parser-version bumps, Clear button,
@@ -2285,6 +2287,7 @@ export function PricingView({ settings } = {}) {
     if (s.chartUnitCounts && typeof s.chartUnitCounts === 'object') setChartUnitCounts(s.chartUnitCounts);
     if (typeof s.techDeprPct === 'number') setTechDeprPct(s.techDeprPct);
     setColVisibility(s.colVisibility || {});
+    if (typeof s.hideEmptyCtsRows === 'boolean') setHideEmptyCtsRows(s.hideEmptyCtsRows);
     setSummaryColWidths(s.summaryColWidths || {});
     setSummaryColVisibility(s.summaryColVisibility || {});
   }
@@ -3673,6 +3676,26 @@ export function PricingView({ settings } = {}) {
                       hiddenFn={colHidden}
                       onItemToggle={toggleColVisible}
                     />
+                    {(() => {
+                      const emptyCtsCount = opt.sections
+                        .flatMap(s => s.items)
+                        .filter(i => typeof i.cts !== 'number').length;
+                      if (emptyCtsCount === 0) return null;
+                      return (
+                        <button
+                          type="button"
+                          className={styles.actionBtn}
+                          onClick={() => setHideEmptyCtsRows(v => !v)}
+                          title={hideEmptyCtsRows
+                            ? `${emptyCtsCount} line item${emptyCtsCount === 1 ? '' : 's'} with no CTS value ${emptyCtsCount === 1 ? 'is' : 'are'} hidden. Click to show them.`
+                            : `Showing ${emptyCtsCount} line item${emptyCtsCount === 1 ? '' : 's'} with no CTS value. Click to hide them.`}
+                        >
+                          {hideEmptyCtsRows
+                            ? `Show empty-CTS rows (${emptyCtsCount})`
+                            : `Hide empty-CTS rows (${emptyCtsCount})`}
+                        </button>
+                      );
+                    })()}
                     {t && (
                       <div className={styles.optionSummary}>
                         <span>Cost: <span className={styles.summaryNum}>{fmtMoney(t.cost)}</span></span>
@@ -3854,7 +3877,7 @@ export function PricingView({ settings } = {}) {
                           </tr>
                         </thead>
                         <tbody>
-                          {flatItems.map(item => {
+                          {flatItems.filter(item => !hideEmptyCtsRows || typeof item.cts === 'number').map(item => {
                             const { gm, source, price } = priceFor(item);
                             const overrideVal = overrides[item.id]?.gmPct;
                             const passThrough = isPassThrough(item);
