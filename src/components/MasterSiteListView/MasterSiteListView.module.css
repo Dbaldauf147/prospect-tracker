@@ -392,6 +392,14 @@
   box-sizing: border-box;
 }
 .unmappedInput:focus { outline: none; border-color: var(--color-accent); }
+.unmappedCheck,
+.unmappedCheckOn {
+  width: 1.1rem;
+  text-align: center;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+.unmappedCheckOn { color: var(--color-success, #16a34a); }
 .unmappedDone {
   text-align: center;
   color: var(--color-text-secondary);
