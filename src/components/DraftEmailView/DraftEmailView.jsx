@@ -924,6 +924,9 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
   const [showSearch, setShowSearch] = useState(false);
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
+  // Opt-in open/click tracking for the drafts this batch produces.
+  // Persisted so the choice sticks between sessions; defaults on.
+  const [trackEmails, setTrackEmails] = useState(settings?.trackEmails !== false);
   const drafts = settings?.emailDrafts || [];
   function setDrafts(updater) {
     const next = typeof updater === 'function' ? updater(drafts) : updater;
@@ -1803,7 +1806,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     }).join('\r\n');
   }
 
-  function generateEmlFiles({ onlyFirst = false } = {}) {
+  async function generateEmlFiles({ onlyFirst = false } = {}) {
     if (selectedContacts.length === 0 || !subject.trim()) return;
 
     const ccMap = settings?.ccMap || {};
@@ -1813,8 +1816,8 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     // drafts for the whole list.
     const contactsToProcess = onlyFirst ? selectedContacts.slice(0, 1) : selectedContacts;
 
-    // Build every recipient's .eml in memory first.
-    const built = contactsToProcess.map((c) => {
+    // Assemble each recipient's headers + HTML body first.
+    const prepared = contactsToProcess.map((c) => {
       const pBodyHtml = personalizeForContact(body, c);
       const pSubject = personalizeForContact(subject, c);
       const contactCc = ccMap[c.email] || [];
@@ -1829,7 +1832,43 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       // signature block (the .eml is opened/sent as-is, so it carries its own
       // signature rather than relying on Outlook to add one).
       const htmlContent = buildStyledBodyHtml(pBodyHtml, { signature });
+      return { c, pSubject, toHeader, ccHeader, htmlContent };
+    });
 
+    // When tracking is on, hand each body to the server to inject the
+    // open pixel + rewrite links and register the tracking docs. The
+    // returned HTML replaces the plain body. A failure here is
+    // non-fatal — we fall back to the untracked body so the send still
+    // goes out.
+    if (trackEmails) {
+      try {
+        const res = await apiFetch('/api/track-prepare', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            items: prepared.map(p => ({
+              to: p.c.email,
+              name: p.c.name,
+              subject: p.pSubject,
+              html: p.htmlContent,
+            })),
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          (data.items || []).forEach((it, i) => {
+            if (it && typeof it.html === 'string' && prepared[i]) prepared[i].htmlContent = it.html;
+          });
+        } else {
+          console.error('track-prepare failed:', res.status);
+        }
+      } catch (err) {
+        console.error('track-prepare error:', err?.message || err);
+      }
+    }
+
+    // Build every recipient's .eml in memory.
+    const built = prepared.map(({ c, pSubject, toHeader, ccHeader, htmlContent }) => {
       let eml;
       if (attachments.length > 0) {
         const boundary = '----=_Part_' + Date.now() + '_' + Math.random().toString(36).slice(2);
@@ -2269,6 +2308,19 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
               {result.message}
             </div>
           )}
+
+          <label
+            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '0 0 0.6rem', fontSize: '0.76rem', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
+            title="Adds an invisible open pixel and rewrites links so you can see opens & clicks in the Email Tracking tab. Note: opens are approximate — Apple Mail & Gmail can pre-load or block the pixel."
+          >
+            <input
+              type="checkbox"
+              checked={trackEmails}
+              onChange={e => { setTrackEmails(e.target.checked); updateSettings({ trackEmails: e.target.checked }); }}
+              style={{ width: 16, height: 16, cursor: 'pointer' }}
+            />
+            <span>Track opens &amp; clicks <span style={{ color: 'var(--color-text-muted)' }}>(view in the Email Tracking tab)</span></span>
+          </label>
 
           <div className={styles.actions}>
             <button className={styles.primaryBtn} onClick={() => generateEmlFiles()} disabled={selectedContacts.length === 0 || !subject.trim()}>

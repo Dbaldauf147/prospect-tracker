@@ -80,6 +80,17 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Email open/click tracking. Docs are created and updated ONLY by
+    // the server (firebase-admin bypasses rules) — the open pixel and
+    // click redirector are unauthenticated public endpoints, so clients
+    // must never be able to forge or tamper with tracking data. The
+    // owner (and admin) may read their own tracking records for the
+    // Email Tracking dashboard.
+    match /emailTracking/{trackingId} {
+      allow read: if isAdmin() || (isAuthorized() && resource.data.uid == request.auth.uid);
+      allow write: if false;
+    }
+
     // User settings: users can only read/write their own settings
     match /userSettings/{userId} {
       allow read, write: if owns(userId);
