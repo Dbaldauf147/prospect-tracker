@@ -580,6 +580,25 @@ export function EmailCampaignView() {
     return (Date.now() - last) <= 60 * 24 * 60 * 60 * 1000;
   }
 
+  // A manual Active/Inactive override always wins over the 60-day auto rule.
+  // `manualActive` is a boolean when the user has set the status by hand, and
+  // undefined when the campaign should follow the automatic activity check.
+  function effectiveActive(c) {
+    return typeof c?.manualActive === 'boolean' ? c.manualActive : isCampaignActive(c);
+  }
+
+  // Flip a saved campaign's Active/Inactive status by hand and persist it.
+  // Toggling always writes an explicit boolean, so a campaign the auto rule
+  // considers stale can be forced Active and a fresh one can be marked
+  // Inactive.
+  function toggleCampaignActive(index, e) {
+    if (e) e.stopPropagation();
+    const c = savedCampaigns[index];
+    if (!c) return;
+    const next = !effectiveActive(c);
+    saveCampaigns(savedCampaigns.map((x, i) => (i === index ? { ...x, manualActive: next } : x)));
+  }
+
   // Click a column header to sort by it; click again to flip direction. A new
   // column starts ascending.
   function toggleSort(key) {
@@ -963,7 +982,8 @@ export function EmailCampaignView() {
               const sent = c.uniqueRecipients ?? 0;
               const total = c.totalContacts ?? c.contacts?.length ?? c.uniqueRecipients ?? 0;
               const pctSent = total > 0 ? Math.round((sent / total) * 1000) / 10 : 0;
-              const active = isCampaignActive(c);
+              const active = effectiveActive(c);
+              const manualStatus = typeof c.manualActive === 'boolean';
               return (
               <tr
                 key={i}
@@ -973,7 +993,7 @@ export function EmailCampaignView() {
                   cursor: isEditing ? 'default' : 'pointer',
                   opacity: active ? 1 : 0.55,
                 }}
-                title={active ? undefined : 'Inactive — no save or refresh in the last 60 days'}
+                title={active ? undefined : (manualStatus ? 'Manually marked inactive' : 'Inactive — no save or refresh in the last 60 days')}
                 onClick={isEditing ? undefined : () => viewCampaign(i)}
               >
                 <td style={{ padding: '0.5rem 0.6rem', maxWidth: '340px', verticalAlign: 'top' }}>
@@ -1029,7 +1049,20 @@ export function EmailCampaignView() {
                     <td style={{ padding: '0.5rem 0.6rem', textAlign: 'right', fontWeight: 600, color: 'var(--color-text)', whiteSpace: 'nowrap', verticalAlign: 'top' }}>{pctSent}%</td>
                     <td style={{ padding: '0.5rem 0.6rem', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap', verticalAlign: 'top', color: c.responseRate >= 20 ? '#10B981' : c.responseRate >= 10 ? '#F59E0B' : '#DC2626' }}>{c.responseRate}%</td>
                     <td style={{ padding: '0.5rem 0.6rem', textAlign: 'center', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
-                      <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', background: active ? '#DCFCE7' : '#F3F4F6', color: active ? '#15803D' : '#6B7280' }}>{active ? 'Active' : 'Inactive'}</span>
+                      <button
+                        onClick={e => toggleCampaignActive(i, e)}
+                        title={active
+                          ? 'Active — click to mark this campaign inactive'
+                          : (manualStatus
+                            ? 'Manually marked inactive — click to mark active'
+                            : 'Inactive (no activity in 60 days) — click to mark active')}
+                        style={{
+                          padding: '2px 8px', borderRadius: '999px', fontSize: '0.62rem', fontWeight: 700,
+                          textTransform: 'uppercase', letterSpacing: '0.03em', fontFamily: 'inherit', cursor: 'pointer',
+                          border: active ? '1px solid #86EFAC' : '1px solid var(--color-border)',
+                          background: active ? '#DCFCE7' : '#F3F4F6', color: active ? '#15803D' : '#6B7280',
+                        }}
+                      >{active ? 'Active' : 'Inactive'}</button>
                     </td>
                   </>
                 )}
