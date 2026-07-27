@@ -94,9 +94,18 @@ async function handler(req, res, auth) {
     // If the same person is emailed multiple times, keep only the most recent.
     // Recipients include both the To and CC addresses, so a contact who was
     // CC'd on the send is tracked as "sent" just like a To recipient.
+    // HubSpot separates addresses in the To/CC fields with either a
+    // semicolon or a comma (and may wrap them as "Name <email>"), so split
+    // on both and pull the bare address out of any angle brackets — same
+    // parsing the Activity views use.
     const splitAddrs = (raw) => (raw || '')
-      .toLowerCase().trim()
-      .split(';').map(a => a.trim()).filter(Boolean);
+      .toLowerCase()
+      .split(/[;,]/)
+      .map(a => {
+        const m = a.match(/<([^>]+)>/);
+        return (m ? m[1] : a).trim();
+      })
+      .filter(Boolean);
     const sendsByRecipients = {};
     for (const e of sentEmails) {
       const recipients = [...new Set([
