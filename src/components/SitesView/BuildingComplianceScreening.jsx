@@ -4,7 +4,7 @@ import MASTER_ORDINANCES from '../../data/masterOrdinances.js';
 import {
   screenSites, lookupGovId, getMandates, classifyPropertyType,
   CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
-  totalEligible, eligibilityByOrdinance, totalPenalty,
+  totalEligible, eligibilityByOrdinance, totalPenalty, sitesCompanyLabel,
 } from '../../utils/complianceMandates';
 import { buildComplianceReportHtml } from '../../utils/complianceReportHtml';
 import { exportComplianceReportXlsx } from '../../utils/complianceReportXlsx';
@@ -66,6 +66,7 @@ export function BuildingComplianceScreening({ sites = [] }) {
   const [siteSearch, setSiteSearch] = useState('');
   const [onlyEligible, setOnlyEligible] = useState(false);
 
+  const companyLabel = useMemo(() => sitesCompanyLabel(sites), [sites]);
   const results = useMemo(() => screenSites(sites), [sites]);
   const matchedCount = useMemo(() => results.filter(r => r.matched).length, [results]);
   const anyEligibleCount = useMemo(
@@ -174,7 +175,12 @@ export function BuildingComplianceScreening({ sites = [] }) {
     <div className={styles.wrapper}>
       <div className={styles.brandBand}>
         <div className={styles.brandBandLeft}>
-          <h1 className={styles.title} style={{ color: '#fff' }}>Building Compliance Screening &amp; Roadmap</h1>
+          <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+            {companyLabel && (
+              <div style={{ color: 'rgba(255,255,255,0.92)', fontSize: '0.9rem', fontWeight: 700, letterSpacing: '0.01em', lineHeight: 1.2 }}>{companyLabel}</div>
+            )}
+            <h1 className={styles.title} style={{ color: '#fff' }}>Building Compliance Screening &amp; Roadmap</h1>
+          </div>
         </div>
         <span className={styles.brandLogo} dangerouslySetInnerHTML={{ __html: schneiderLogoSvg({ onDark: true, width: 172 }) }} />
       </div>

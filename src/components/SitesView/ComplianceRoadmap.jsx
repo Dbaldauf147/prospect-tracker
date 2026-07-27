@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import {
-  screenSites, buildComplianceRoadmap,
+  screenSites, buildComplianceRoadmap, sitesCompanyLabel,
   CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
 } from '../../utils/complianceMandates';
 import { schneiderLogoSvg } from '../../utils/schneiderLogo';
@@ -102,6 +102,7 @@ function ChartCard({ title, subtitle, children }) {
 // the same screened Utility Lookup site list as the Building Compliance
 // Screening subtab.
 export function ComplianceRoadmap({ sites = [] }) {
+  const companyLabel = useMemo(() => sitesCompanyLabel(sites), [sites]);
   const results = useMemo(() => screenSites(sites), [sites]);
   const roadmap = useMemo(() => buildComplianceRoadmap(results), [results]);
   const { periods, totals } = roadmap;
@@ -129,7 +130,12 @@ export function ComplianceRoadmap({ sites = [] }) {
   return (
     <div className={styles.wrapper}>
       <div className={styles.brandBand}>
-        <h1 className={styles.title}>Compliance Roadmap</h1>
+        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          {companyLabel && (
+            <div style={{ color: 'rgba(255,255,255,0.92)', fontSize: '0.9rem', fontWeight: 700, letterSpacing: '0.01em', lineHeight: 1.2 }}>{companyLabel}</div>
+          )}
+          <h1 className={styles.title}>Compliance Roadmap</h1>
+        </div>
         <span className={styles.brandLogo} dangerouslySetInnerHTML={{ __html: schneiderLogoSvg({ onDark: true, width: 172 }) }} />
       </div>
       <div className={styles.header}>

@@ -1480,6 +1480,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   const complianceSites = useMemo(() => {
     return rows.map((r, i) => ({
       id: r.id ?? i,
+      company: r.__companyName__ || '',
       siteName: siteNameColumn ? String(r[siteNameColumn] ?? '').trim() : (r.__siteName__ || ''),
       city: String(r.__city__ || (cityOverride ? r[cityOverride] : '') || '').trim(),
       state: String(r.__state__ || (stateColumnOverride ? r[stateColumnOverride] : '') || '').trim(),
