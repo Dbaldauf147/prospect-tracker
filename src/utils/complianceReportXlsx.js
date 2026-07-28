@@ -645,3 +645,360 @@ function buildSiteDetailSheet(wb, results, meta) {
 
   ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: NC } };
 }
+
+// Shared branded title band + floated logo, used by the Corporate Compliance
+// and Methodology sheets so they read as part of the same report as the
+// Compliance Report / Site Detail tabs above.
+function titleBand(wb, ws, ncols, titleText, companyName, { logoWidth = 170 } = {}) {
+  ws.mergeCells(1, 1, 1, ncols);
+  const title = ws.getCell(1, 1);
+  const titleFont = { name: FONT, bold: true, size: 15, color: { argb: 'FFFFFFFF' } };
+  const co = String(companyName || '').trim();
+  if (co) {
+    title.value = {
+      richText: [
+        { font: { name: FONT, bold: true, size: 10, color: { argb: 'FFD1FADF' } }, text: `${co}\n` },
+        { font: titleFont, text: titleText },
+      ],
+    };
+  } else {
+    title.value = titleText;
+    title.font = titleFont;
+  }
+  title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_DARK } };
+  title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+  ws.getRow(1).height = co ? 44 : 34;
+  try {
+    const logo = schneiderLogoPngDataUrl({ onDark: true, width: logoWidth });
+    const id = wb.addImage({ base64: logo.dataUrl, extension: 'png' });
+    ws.addImage(id, { tl: { col: ncols - 1.9, row: 0.14 }, ext: { width: logo.width, height: logo.height } });
+  } catch { /* canvas unavailable — skip logo */ }
+}
+
+// === Corporate Compliance sheet ==========================================
+// Company-level portfolio view mirroring the on-page Corporate Compliance
+// tab: one row per company with its total site footprint, California site
+// count (the state that drives most corporate-disclosure obligations), and
+// the California site locations. `sites` is the complianceSites list
+// ({ company, siteName, city, state, ... }).
+export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
+  const ws = wb.addWorksheet(meta.sheetName || 'Corporate Compliance', {
+    properties: { tabColor: { argb: SE_DARK } },
+    views: [{ showGridLines: false, state: 'frozen', ySplit: 4, xSplit: 1 }],
+  });
+  const NC = 5;
+  ws.columns = [
+    { width: 36 }, { width: 13 }, { width: 15 }, { width: 13 }, { width: 60 },
+  ];
+
+  const isCA = (s) => {
+    const x = String(s || '').trim().toLowerCase();
+    return x === 'ca' || x === 'california';
+  };
+  const byCompany = new Map();
+  for (const site of (sites || [])) {
+    const name = String(site.company || '').trim() || '(Unnamed company)';
+    if (!byCompany.has(name)) byCompany.set(name, { name, total: 0, california: 0, caSites: [] });
+    const e = byCompany.get(name);
+    e.total += 1;
+    if (isCA(site.state)) {
+      e.california += 1;
+      const label = [site.siteName, site.city].filter(Boolean).join(' — ');
+      if (label) e.caSites.push(label);
+    }
+  }
+  const companies = [...byCompany.values()].sort(
+    (a, b) => b.california - a.california || b.total - a.total || a.name.localeCompare(b.name)
+  );
+  const totalSites = companies.reduce((s, c) => s + c.total, 0);
+  const totalCA = companies.reduce((s, c) => s + c.california, 0);
+  const generatedAt = meta.generatedAt || '';
+  const CA_GREEN = argb('#166534');
+
+  titleBand(wb, ws, NC, 'Corporate Compliance', meta.companyName);
+
+  ws.mergeCells(2, 1, 2, NC);
+  const sub = ws.getCell(2, 1);
+  sub.value = `Company-level portfolio view: total site footprint and California site operations.  Generated ${generatedAt}  ·  ${companies.length} ${companies.length === 1 ? 'company' : 'companies'} · ${totalSites} sites · ${totalCA} California sites`;
+  sub.font = { name: FONT, italic: true, size: 10, color: { argb: SLATE } };
+  sub.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  ws.getRow(2).height = 20;
+  ws.getRow(3).height = 6;
+
+  const headers = ['Company', 'Total Sites', 'California Sites', '% California', 'California Site Locations'];
+  const hr = ws.getRow(4);
+  headers.forEach((label, i) => {
+    const c = hr.getCell(i + 1);
+    c.value = label;
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_DARK } };
+    c.font = { name: FONT, bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+    c.alignment = { vertical: 'middle', horizontal: i === 0 || i === 4 ? 'left' : 'center', indent: i === 0 || i === 4 ? 1 : 0, wrapText: true };
+    c.border = { bottom: { style: 'thin', color: { argb: LINE } } };
+  });
+  hr.height = 24;
+
+  let rr = 5;
+  const firstDataRow = rr;
+  if (!companies.length) {
+    ws.mergeCells(rr, 1, rr, NC);
+    const c = ws.getCell(rr, 1);
+    c.value = 'No sites loaded — upload sites on the Utility Lookup tab to populate companies here.';
+    c.font = { name: FONT, italic: true, size: 10, color: { argb: SLATE } };
+    c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    rr += 1;
+  } else {
+    companies.forEach((co, idx) => {
+      const zebra = idx % 2 === 1;
+      const row = ws.getRow(rr);
+      const MAX_LABELS = 15;
+      const shown = co.caSites.slice(0, MAX_LABELS).join('; ');
+      const caText = co.caSites.length > MAX_LABELS
+        ? `${shown}; +${co.caSites.length - MAX_LABELS} more`
+        : shown;
+      const cells = [
+        { v: co.name, align: 'left' },
+        { v: co.total, align: 'center', num: '#,##0' },
+        { v: co.california, align: 'center', num: '#,##0', green: co.california > 0 },
+        { v: co.total ? co.california / co.total : 0, align: 'center', num: '0%' },
+        { v: caText || (co.california ? '' : '—'), align: 'left', wrap: true },
+      ];
+      cells.forEach((spec, i) => {
+        const c = row.getCell(i + 1);
+        c.value = (spec.v === '' ) ? null : spec.v;
+        if (spec.num) c.numFmt = spec.num;
+        c.font = {
+          name: FONT, size: 10,
+          bold: i === 0 || (i === 2 && spec.green),
+          color: { argb: i === 0 ? INK : (spec.green ? CA_GREEN : SLATE) },
+        };
+        c.alignment = { vertical: 'middle', horizontal: spec.align, indent: spec.align === 'left' ? 1 : 0, wrapText: !!spec.wrap };
+        if (zebra) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
+        c.border = { bottom: { style: 'hair', color: { argb: LINE } } };
+      });
+      rr += 1;
+    });
+
+    // Totals row.
+    const trow = ws.getRow(rr);
+    const totals = ['All companies', totalSites, totalCA, totalSites ? totalCA / totalSites : 0, ''];
+    totals.forEach((v, i) => {
+      const c = trow.getCell(i + 1);
+      c.value = (v === '') ? null : v;
+      if (i === 1 || i === 2) c.numFmt = '#,##0';
+      if (i === 3) c.numFmt = '0%';
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_LIGHT } };
+      c.font = { name: FONT, bold: true, size: 10, color: { argb: INK } };
+      c.alignment = { vertical: 'middle', horizontal: i === 0 || i === 4 ? 'left' : 'center', indent: i === 0 ? 1 : 0 };
+      c.border = { top: { style: 'medium', color: { argb: argb('#3DCD58') } } };
+    });
+    trow.height = 19;
+
+    // Live green data bar down the California Sites column.
+    const lastDataRow = firstDataRow + companies.length - 1;
+    const col = colLetter(3);
+    ws.addConditionalFormatting({
+      ref: `${col}${firstDataRow}:${col}${lastDataRow}`,
+      rules: [{
+        type: 'dataBar', gradient: false,
+        cfvo: [{ type: 'num', value: 0 }, { type: 'max' }],
+        color: { argb: CA_GREEN },
+      }],
+    });
+    rr += 2;
+  }
+
+  ws.mergeCells(rr, 1, rr, NC);
+  const note = ws.getCell(rr, 1);
+  note.value = 'Company revenue and sustainability-framework matches (CDP, GRESB, SBT, Ecovadis, …) are surfaced on the Corporate Compliance page, which fuzzy-matches each company against your uploaded Lists.';
+  note.font = { name: FONT, italic: true, size: 9, color: { argb: 'FF94A3B8' } };
+  note.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+  ws.getRow(rr).height = 26;
+}
+
+// === Compliance Report Methodology sheet =================================
+// A written explanation of how the estimated fines were derived, broken out
+// by mandate (BBS / Energy Audits / BPS), plus a concrete per-jurisdiction
+// penalty reference so the numbers on the Compliance Report tab can be traced
+// back to their inputs. `results` is the output of screenSites().
+export function buildComplianceMethodologySheet(wb, results, meta = {}) {
+  const ws = wb.addWorksheet(meta.sheetName || 'Compliance Report Methodology', {
+    properties: { tabColor: { argb: SE_DARK } },
+    views: [{ showGridLines: false }],
+  });
+  const NC = 5;
+  ws.columns = [
+    { width: 30 }, { width: 16 }, { width: 22 }, { width: 14 }, { width: 22 },
+  ];
+  const generatedAt = meta.generatedAt || '';
+
+  titleBand(wb, ws, NC, 'Compliance Report Methodology', meta.companyName);
+
+  ws.mergeCells(2, 1, 2, NC);
+  const sub = ws.getCell(2, 1);
+  sub.value = `How the estimated compliance fines on the Compliance Report were derived, by mandate.  Generated ${generatedAt}`;
+  sub.font = { name: FONT, italic: true, size: 10, color: { argb: SLATE } };
+  sub.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  ws.getRow(2).height = 20;
+
+  let r = 4;
+
+  // Neutral (green) section header spanning the sheet.
+  const section = (text, color = SE_DARK, fill = SE_LIGHT, textColor = SE_DARK) => {
+    ws.getRow(r).height = 8; r += 1;
+    ws.mergeCells(r, 1, r, NC);
+    const c = ws.getCell(r, 1);
+    c.value = text;
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
+    c.font = { name: FONT, bold: true, size: 12, color: { argb: textColor } };
+    c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(r).height = 22; r += 1;
+  };
+  // Coloured mandate banner (white text on the category hue).
+  const mandateBanner = (text, color) => {
+    ws.getRow(r).height = 8; r += 1;
+    ws.mergeCells(r, 1, r, NC);
+    const c = ws.getCell(r, 1);
+    c.value = text;
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: color } };
+    c.font = { name: FONT, bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
+    c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(r).height = 20; r += 1;
+  };
+  // Wrapped body paragraph. `label` bolds a lead-in; `text` is the body.
+  const para = (label, text, { lines = 2 } = {}) => {
+    ws.mergeCells(r, 1, r, NC);
+    const c = ws.getCell(r, 1);
+    c.value = label
+      ? { richText: [
+          { font: { name: FONT, bold: true, size: 10, color: { argb: INK } }, text: `${label}  ` },
+          { font: { name: FONT, size: 10, color: { argb: SLATE } }, text },
+        ] }
+      : text;
+    if (!label) c.font = { name: FONT, size: 10, color: { argb: SLATE } };
+    c.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
+    ws.getRow(r).height = 15 * lines;
+    r += 1;
+  };
+
+  // --- Overview -----------------------------------------------------------
+  section('Overview');
+  para('Two-step lookup.', 'Every site is resolved city + state → Government ID (City Lookup), then Government ID → the jurisdiction\'s BBS, Energy-Audit, and BPS mandates (Master Ordinances). Sites whose city/state don\'t resolve to a jurisdiction are reported as "no match" and carry no estimated fine.', { lines: 3 });
+  para('Applicability.', 'A mandate applies to a site when that jurisdiction\'s ordinance is Active. The square-footage threshold for the site\'s property type is reported as context but does not gate applicability — an active ordinance makes the site applicable regardless of size.', { lines: 3 });
+  para('Estimates only.', 'All figures are preliminary maximum-exposure estimates for prioritization, not a legal determination of liability. Actual penalties depend on each jurisdiction\'s enforcement, compliance pathway, and the site\'s reported performance.', { lines: 2 });
+
+  // --- Per-mandate calculation --------------------------------------------
+  section('Fine Calculation by Mandate');
+
+  mandateBanner('BBS — Building Benchmarking & Disclosure', argb(CATEGORY_COLOR.bbs));
+  para('Applies when', 'the site\'s jurisdiction has an active BBS benchmarking / disclosure ordinance.', { lines: 1 });
+  para('Estimated max yearly penalty', '= the jurisdiction\'s maximum annual BBS penalty (from the Master Ordinances), charged once per applicable site per year.', { lines: 2 });
+
+  mandateBanner('Energy Audits', argb(CATEGORY_COLOR.audits));
+  para('Applies when', 'the site\'s jurisdiction has an active energy-audit / tune-up ordinance.', { lines: 1 });
+  para('Estimated max yearly penalty', '= the jurisdiction\'s maximum annual energy-audit penalty (from the Master Ordinances), charged once per applicable site per year.', { lines: 2 });
+
+  mandateBanner('BPS — Building Performance Standards', argb(CATEGORY_COLOR.bps));
+  para('Applies when', 'the site\'s jurisdiction has an active BPS ordinance.', { lines: 1 });
+  para('Estimated non-reporting penalty', '= the jurisdiction\'s BPS penalty. When the penalty UOM is "$ per SqFt / Year" it scales by the building\'s square footage (rate × ft²); otherwise it is a flat annual amount. A size-based penalty on a site with no square footage is left blank ("—") rather than guessed.', { lines: 3 });
+  para('Fee for exceeding limits', 'is the jurisdiction\'s enforcement cost for exceeding performance targets. It is shown as its own labelled figure on the Compliance Report\'s BPS Prioritization table and is NOT added into the estimated exposure totals.', { lines: 2 });
+
+  // --- Roll-ups -----------------------------------------------------------
+  section('Portfolio Roll-ups');
+  para('Applicable sites (per mandate)', '= the number of applicable sites for that mandate across the portfolio.', { lines: 1 });
+  para('Max yearly penalty (per mandate)', '= the per-site penalty summed over every applicable site for that mandate.', { lines: 1 });
+  para('Penalty exposure by jurisdiction', '= for each jurisdiction and mandate, the per-site penalty × the number of applicable sites in that jurisdiction. A jurisdiction\'s total counts each site once even when it carries more than one mandate.', { lines: 2 });
+  para('Est. max yearly exposure (grand total)', '= BBS + Energy Audits + BPS estimated penalties summed across every jurisdiction.', { lines: 1 });
+  para('Deadlines', 'Each applicable mandate carries the jurisdiction\'s compliance deadline where one is published; mandates that are active but have no published deadline are still counted in the exposure but are reported as undated.', { lines: 2 });
+
+  // --- Concrete per-jurisdiction penalty inputs ---------------------------
+  // One row per (jurisdiction, mandate) present in this portfolio, tracing the
+  // exposure back to its inputs: est. per-site penalty, applicable sites, and
+  // the resulting category exposure.
+  section('Penalty Inputs Used in This Report');
+  const refHeaders = ['Jurisdiction', 'Mandate', 'Est. Penalty / Site / Yr', 'Applicable Sites', 'Category Exposure / Yr'];
+  const rhr = ws.getRow(r);
+  refHeaders.forEach((label, i) => {
+    const c = rhr.getCell(i + 1);
+    c.value = label;
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_DARK } };
+    c.font = { name: FONT, bold: true, size: 9.5, color: { argb: 'FFFFFFFF' } };
+    c.alignment = { vertical: 'middle', horizontal: i === 0 || i === 1 ? 'left' : 'center', indent: i === 0 || i === 1 ? 1 : 0, wrapText: true };
+    c.border = { bottom: { style: 'thin', color: { argb: LINE } } };
+  });
+  rhr.height = 26;
+  r += 1;
+
+  // Build rows from penaltyByOrdinance (summed exposure) + eligibilityByOrdinance
+  // (applicable-site counts); est. per-site = exposure / count.
+  const refRows = [];
+  for (const c of CATEGORIES) {
+    const counts = new Map(eligibilityByOrdinance(results, c).map(x => [x.government, x.count]));
+    for (const { government, penalty } of penaltyByOrdinance(results, c)) {
+      const count = counts.get(government) || 0;
+      if (!count) continue;
+      refRows.push({
+        government,
+        mandate: CATEGORY_LABEL[c],
+        perSite: penalty / count,
+        count,
+        exposure: penalty,
+        color: argb(CATEGORY_COLOR[c]),
+      });
+    }
+  }
+  refRows.sort((a, b) => b.exposure - a.exposure || a.government.localeCompare(b.government) || a.mandate.localeCompare(b.mandate));
+
+  if (!refRows.length) {
+    ws.mergeCells(r, 1, r, NC);
+    const c = ws.getCell(r, 1);
+    c.value = 'No jurisdiction in the screened portfolio carries a mandate with a defined penalty.';
+    c.font = { name: FONT, italic: true, size: 10, color: { argb: SLATE } };
+    c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    r += 1;
+  } else {
+    refRows.forEach((row, idx) => {
+      const zebra = idx % 2 === 1;
+      const rw = ws.getRow(r);
+      const vals = [
+        { v: row.government, align: 'left' },
+        { v: row.mandate, align: 'left', color: row.color, bold: true },
+        { v: row.perSite, align: 'center', num: '"$"#,##0' },
+        { v: row.count, align: 'center', num: '#,##0' },
+        { v: row.exposure, align: 'center', num: '"$"#,##0' },
+      ];
+      vals.forEach((spec, i) => {
+        const c = rw.getCell(i + 1);
+        c.value = spec.v;
+        if (spec.num) c.numFmt = spec.num;
+        c.font = { name: FONT, size: 10, bold: i === 0 || spec.bold, color: { argb: spec.color || (i === 0 ? INK : SLATE) } };
+        c.alignment = { vertical: 'middle', horizontal: spec.align, indent: spec.align === 'left' ? 1 : 0 };
+        if (zebra) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
+        c.border = { bottom: { style: 'hair', color: { argb: LINE } } };
+      });
+      rw.height = 17;
+      r += 1;
+    });
+    // Grand-total row.
+    const grand = CATEGORIES.reduce((s, c) => s + totalPenalty(results, c), 0);
+    const trow = ws.getRow(r);
+    const tvals = ['All jurisdictions', '', null, null, grand];
+    tvals.forEach((v, i) => {
+      const c = trow.getCell(i + 1);
+      if (i === 4) { c.value = v; c.numFmt = '"$"#,##0'; }
+      else c.value = (v === '' || v == null) ? null : v;
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_LIGHT } };
+      c.font = { name: FONT, bold: true, size: 10, color: { argb: INK } };
+      c.alignment = { vertical: 'middle', horizontal: i === 0 ? 'left' : 'center', indent: i === 0 ? 1 : 0 };
+      c.border = { top: { style: 'medium', color: { argb: argb('#3DCD58') } } };
+    });
+    trow.height = 19;
+    r += 1;
+  }
+
+  r += 1;
+  ws.mergeCells(r, 1, r, NC);
+  const foot = ws.getCell(r, 1);
+  foot.value = `Schneider Electric · Preliminary compliance estimates · Generated ${generatedAt} · Public`;
+  foot.font = { name: FONT, size: 9, color: { argb: 'FF94A3B8' } };
+  foot.alignment = { horizontal: 'center' };
+}
