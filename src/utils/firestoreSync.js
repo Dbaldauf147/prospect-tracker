@@ -13,7 +13,7 @@ const SHARED_COL = 'prospects';
 // company names. Mirrors the normalization used by the My Accounts
 // "similar names" detector so the de-dupe collapses exactly the
 // records the UI already flags as the same company.
-const CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
+const CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holding|holdings|group|grp)\b\.?/g;
 
 // Normalize a company name to a comparison key: lowercase, drop
 // diacritics, strip parentheticals/brackets and corporate suffixes,

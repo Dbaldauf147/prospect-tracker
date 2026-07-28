@@ -31,7 +31,7 @@ export const LIST_FLAG_BY_LABEL = Object.fromEntries(
 // vocabulary.
 export const ALL_FRAMEWORK_LABELS = LIST_FLAG_SOURCES.map(s => s.label);
 
-const LIST_CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
+const LIST_CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holding|holdings|group|grp)\b\.?/g;
 export function normalizeListCompany(name) {
   return String(name || '')
     .toLowerCase()

@@ -14,7 +14,7 @@ const TWO_PART_TLDS = new Set([
   'co.uk', 'co.jp', 'com.au', 'com.br', 'co.nz', 'com.mx', 'co.in',
 ]);
 
-const CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
+const CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holding|holdings|group|grp)\b\.?/g;
 
 // Strip parentheticals, corporate suffixes, punctuation, and accents
 // so "Acme, Inc." and "Acme Corporation" collapse to the same key.
