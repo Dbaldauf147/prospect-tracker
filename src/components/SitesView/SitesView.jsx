@@ -320,6 +320,192 @@ function SupplierAutocomplete({ initialValue, onCommit, onCancel }) {
   );
 }
 
+// Same slug transform ProspectModal uses to key a company's uploaded site
+// list under settings.companySiteLists — kept in sync so a lookup here
+// resolves the exact entry the modal wrote.
+function companySlug(name) {
+  return (name || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
+}
+
+// Look up a company (from Table View / any company that has a site list)
+// and show whether a site list is already mapped to it. Site lists live in
+// settings.companySiteLists, keyed by the company-name slug, and are
+// uploaded from the company popup. This is a read-only convenience so the
+// user doesn't have to open each company to check.
+function CompanySiteListLookup({ prospects = [], companySiteLists = {} }) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState('');
+  const boxRef = useRef(null);
+
+  useEffect(() => {
+    function onDown(e) { if (!boxRef.current?.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, []);
+
+  // slug -> entry for every company that actually has a site list.
+  const bySlug = useMemo(() => {
+    const m = new Map();
+    for (const [slug, entry] of Object.entries(companySiteLists || {})) {
+      if (entry && Array.isArray(entry.rows) && entry.rows.length > 0) m.set(slug, entry);
+    }
+    return m;
+  }, [companySiteLists]);
+
+  // Autocomplete pool: every Table View company, unioned with any company
+  // that has a site list (so a mapped company shows even without a prospect
+  // record). Deduped case-insensitively.
+  const companyNames = useMemo(() => {
+    const seen = new Set();
+    const names = [];
+    const add = (n) => {
+      const name = String(n || '').trim();
+      if (!name) return;
+      const k = name.toLowerCase();
+      if (seen.has(k)) return;
+      seen.add(k);
+      names.push(name);
+    };
+    for (const p of prospects || []) add(p?.company);
+    for (const entry of bySlug.values()) add(entry?.company);
+    return names.sort((a, b) => a.localeCompare(b));
+  }, [prospects, bySlug]);
+
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const starts = [], includes = [];
+    for (const n of companyNames) {
+      const lower = n.toLowerCase();
+      if (lower.startsWith(q)) starts.push(n);
+      else if (lower.includes(q)) includes.push(n);
+      if (starts.length + includes.length >= 40) break;
+    }
+    return [...starts, ...includes].slice(0, 30);
+  }, [query, companyNames]);
+
+  const result = useMemo(() => {
+    if (!picked) return null;
+    const entry = bySlug.get(companySlug(picked)) || null;
+    return { company: picked, entry };
+  }, [picked, bySlug]);
+
+  function choose(name) {
+    setPicked(name);
+    setQuery(name);
+    setOpen(false);
+  }
+
+  const mappedCount = bySlug.size;
+
+  return (
+    <div
+      ref={boxRef}
+      style={{
+        marginTop: '0.6rem', padding: '0.6rem 0.75rem',
+        border: '1px solid var(--color-border)', borderRadius: 8, background: '#fff',
+        maxWidth: 520,
+      }}
+    >
+      <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#0F172A', marginBottom: '0.1rem' }}>
+        Company site-list lookup
+      </div>
+      <div style={{ fontSize: '0.68rem', color: '#64748B', marginBottom: '0.45rem' }}>
+        Check whether a company already has a site list mapped to it.
+        {mappedCount > 0 && <> {mappedCount} compan{mappedCount === 1 ? 'y has' : 'ies have'} one.</>}
+      </div>
+      <div style={{ position: 'relative' }}>
+        <input
+          type="text"
+          value={query}
+          placeholder="Type a company name…"
+          onChange={(e) => { setQuery(e.target.value); setOpen(true); if (picked) setPicked(''); }}
+          onFocus={() => { if (query.trim()) setOpen(true); }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              if (matches.length > 0) choose(matches[0]);
+              else if (query.trim()) { setPicked(query.trim()); setOpen(false); }
+            } else if (e.key === 'Escape') {
+              setOpen(false);
+            }
+          }}
+          style={{
+            width: '100%', boxSizing: 'border-box', padding: '0.4rem 0.55rem',
+            border: '1px solid var(--color-border)', borderRadius: 6,
+            fontSize: '0.8rem', fontFamily: 'inherit',
+          }}
+        />
+        {open && matches.length > 0 && (
+          <div
+            style={{
+              position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30,
+              marginTop: 2, maxHeight: 240, overflowY: 'auto',
+              background: '#fff', border: '1px solid #CBD5E1', borderRadius: 6,
+              boxShadow: '0 8px 20px rgba(15,23,42,0.18)',
+            }}
+          >
+            {matches.map((n) => {
+              const has = bySlug.has(companySlug(n));
+              return (
+                <div
+                  key={n}
+                  onMouseDown={(e) => { e.preventDefault(); choose(n); }}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem',
+                    padding: '0.35rem 0.55rem', fontSize: '0.76rem', color: '#1E293B', cursor: 'pointer',
+                  }}
+                  onMouseOver={(e) => e.currentTarget.style.background = '#F1F5F9'}
+                  onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
+                >
+                  <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n}</span>
+                  <span style={{ flexShrink: 0, fontSize: '0.62rem', fontWeight: 700, color: has ? '#166534' : '#94A3B8' }}>
+                    {has ? '● list' : '—'}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {result && (
+        result.entry ? (
+          <div style={{
+            marginTop: '0.5rem', padding: '0.5rem 0.65rem', borderRadius: 6,
+            background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534',
+            fontSize: '0.74rem',
+          }}>
+            <div style={{ fontWeight: 700 }}>
+              ✓ {result.company} has a site list mapped
+            </div>
+            <div style={{ marginTop: '0.15rem', color: '#15803D' }}>
+              {result.entry.rows.length} site{result.entry.rows.length === 1 ? '' : 's'}
+              {result.entry.fileName ? <> · {result.entry.fileName}</> : null}
+              {result.entry.uploadedAt ? <> · added {new Date(result.entry.uploadedAt).toLocaleDateString()}</> : null}
+            </div>
+            <div style={{ marginTop: '0.2rem', fontSize: '0.66rem', color: '#3F6212' }}>
+              Open this company from Table View to view or edit its site list.
+            </div>
+          </div>
+        ) : (
+          <div style={{
+            marginTop: '0.5rem', padding: '0.5rem 0.65rem', borderRadius: 6,
+            background: '#F1F5F9', border: '1px solid #CBD5E1', color: '#475569',
+            fontSize: '0.74rem',
+          }}>
+            <span style={{ fontWeight: 700 }}>No site list mapped</span> to <strong>{result.company}</strong> yet.
+            <div style={{ marginTop: '0.2rem', fontSize: '0.66rem', color: '#64748B' }}>
+              Open the company from Table View to upload or paste one.
+            </div>
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
 export function SitesView({ settings, updateSettings, updateSettingsPath, prospects = [] } = {}) {
   // Top-level toggle between the Utility Lookup page and the nested
   // Utility Mapping view (interval-data availability by utility).
@@ -10984,6 +11170,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           }}>{saveStatus.message}</div>
         )}
       </div>
+
+      <CompanySiteListLookup prospects={prospects} companySiteLists={settings?.companySiteLists || {}} />
 
       {savePickerSearch !== null && createPortal(
         <div
