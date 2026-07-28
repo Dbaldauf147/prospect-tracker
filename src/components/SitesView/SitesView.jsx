@@ -33,7 +33,7 @@ import { UtilityMappingView } from './UtilityMappingView';
 import { BuildingComplianceScreening } from './BuildingComplianceScreening';
 import { ComplianceRoadmap } from './ComplianceRoadmap';
 import CorporateCompliance from './CorporateCompliance';
-import { screenSites, buildComplianceRoadmap, CATEGORIES, totalPenalty } from '../../utils/complianceMandates';
+import { screenSites, buildComplianceRoadmap, CATEGORIES, totalPenalty, bpsPrioritization } from '../../utils/complianceMandates';
 import { exportComplianceReportXlsx } from '../../utils/complianceReportXlsx';
 import { saveIndicativeAnalysis, deleteIndicativeAnalysis } from '../../utils/firestoreSync';
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
@@ -7340,6 +7340,61 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         cmpNote.font = { name: 'Nunito Sans', italic: true, size: 9.5, color: { argb: SE_SLATE } };
         cmpNote.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
         summarySheet.getRow(cmpNoteRowNum).height = 30;
+        summarySheet.getRow(sumRow++).height = 6; // spacer
+
+        // Section 2b: BPS — Prioritization. One row per (deadline,
+        // jurisdiction) over the BPS-eligible sites, matching the compliance
+        // exports + on-page table.
+        const bpsRows = bpsPrioritization(complianceResults);
+        if (bpsRows.length) {
+          sumSection(sumRow++, 'BPS — Prioritization');
+          const bpsHdrRowNum = sumRow++;
+          const bpsHdrs = [
+            { c: 1, t: 'Upcoming Deadline' },
+            { c: 2, t: 'Compliance Government' },
+            { c: 3, t: 'BPS Fines for Exceeding Limits' },
+            { c: 4, t: 'Eligible sites' },
+            { c: 5, span: 2, t: 'Sum of Est. Penalty (non-reporting)' },
+            { c: 7, span: 2, t: 'Fee for exceeding limits' },
+          ];
+          bpsHdrs.forEach(h => {
+            if (h.span) summarySheet.mergeCells(bpsHdrRowNum, h.c, bpsHdrRowNum, h.c + h.span - 1);
+            const cell = summarySheet.getCell(bpsHdrRowNum, h.c);
+            cell.value = h.t;
+            cell.font = { name: 'Nunito Sans', bold: true, size: 9, color: { argb: SE_SLATE } };
+            cell.alignment = { vertical: 'middle', horizontal: h.c >= 4 ? 'right' : 'left', indent: 1, wrapText: true };
+            cell.border = { bottom: { style: 'thin', color: { argb: SE_BORDER } } };
+          });
+          summarySheet.getRow(bpsHdrRowNum).height = 28;
+          for (const g of bpsRows) {
+            const rowNum = sumRow++;
+            const cells = [
+              { c: 1, v: g.deadline ? `${Number(g.deadline.split('-')[1])}/${Number(g.deadline.split('-')[2])}/${g.deadline.split('-')[0]}` : '—', align: 'left', bold: true, dark: true },
+              { c: 2, v: g.government || '—', align: 'left', bold: true, dark: true },
+              { c: 3, v: g.fine, align: 'left' },
+              { c: 4, v: g.sites, align: 'right', dark: true },
+            ];
+            cells.forEach(cd => {
+              const cell = summarySheet.getCell(rowNum, cd.c);
+              cell.value = cd.v;
+              cell.font = { name: 'Nunito Sans', size: 10, bold: !!cd.bold, color: { argb: cd.dark ? SE_TEXT_DARK : SE_SLATE } };
+              cell.alignment = { vertical: 'middle', horizontal: cd.align, indent: 1 };
+            });
+            summarySheet.mergeCells(rowNum, 5, rowNum, 6);
+            const penCell = summarySheet.getCell(rowNum, 5);
+            penCell.value = g.penaltyKnown ? g.penalty : '—';
+            if (g.penaltyKnown) penCell.numFmt = '"$"#,##0';
+            penCell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_TEXT_DARK } };
+            penCell.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
+            summarySheet.mergeCells(rowNum, 7, rowNum, 8);
+            const feeCell = summarySheet.getCell(rowNum, 7);
+            feeCell.value = g.feeExceeding;
+            feeCell.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: SE_SLATE } };
+            feeCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+            summarySheet.getRow(rowNum).height = 18;
+          }
+          summarySheet.getRow(sumRow++).height = 6; // spacer
+        }
       }
     }
 

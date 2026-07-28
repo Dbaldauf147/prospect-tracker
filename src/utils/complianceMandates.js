@@ -215,6 +215,78 @@ export function totalPenalty(results, category) {
   return penaltyByOrdinance(results, category).reduce((n, x) => n + x.penalty, 0);
 }
 
+// ---- BPS Prioritization ---------------------------------------------------
+// A focused BPS view grouped by (deadline, jurisdiction): the fine for
+// exceeding performance limits, how many sites are eligible, and the summed
+// estimated non-reporting penalty. Surfaced on the Master Analysis overview,
+// both compliance exports, and the on-page screening tab.
+
+// "BPS Fines for Exceeding Limits" label from a jurisdiction's raw fields,
+// e.g. "62000 $/year", "0.35 $/kBtu", "270 $/Metric ton/ CO2e", or "N/A".
+function bpsExceedFineLabel(mandate) {
+  const raw = mandate?.raw || {};
+  const costRaw = raw['BPS - Enforcement Cost (Exceed limits)'];
+  const uomRaw = raw['BPS - Enforcement UOM (Exceed Limits)'];
+  const cost = costRaw == null ? '' : String(costRaw).trim();
+  const uom = uomRaw == null ? '' : String(uomRaw).trim();
+  const costBlank = cost === '' || Number(cost) === 0;
+  const uomBlank = uom === '' || uom.toUpperCase() === 'N/A';
+  if (costBlank && uomBlank) return 'N/A';
+  if (costBlank) return uom || 'N/A';
+  return [cost, uomBlank ? '' : uom].filter(Boolean).join(' ');
+}
+
+// Per-site estimated BPS non-reporting penalty, respecting the jurisdiction's
+// penalty UOM: a "$ per SqFt/Year" penalty scales by building size; anything
+// else is a flat annual amount. Returns null when it can't be computed (no
+// penalty defined, or a size-based penalty with unknown square footage).
+export function bpsNonReportingPenalty(bpsMandate, sqft) {
+  const cost = bpsMandate?.maxPenalty;
+  if (cost == null) return null;
+  const uom = String(bpsMandate?.penaltyUom || '').toLowerCase();
+  const perSqft = /sq\s*\.?\s*ft|sqft|\/\s*sf\b/.test(uom);
+  if (perSqft) return Number.isFinite(sqft) ? cost * sqft : null;
+  return cost;
+}
+
+// BPS prioritization rows: one per (deadline, government) across BPS-eligible
+// sites, sorted by deadline (undated last) then government. `penalty` is the
+// summed estimated non-reporting exposure; `penaltyKnown` is false when no
+// site in the group had a computable penalty (so callers can show a dash).
+export function bpsPrioritization(results, ordinances = MASTER_ORDINANCES) {
+  const m = new Map();
+  for (const r of (results || [])) {
+    if (!isEligible(r, 'bps')) continue;
+    const mandate = getMandates(r.govId, ordinances);
+    const deadline = r.bps.deadline || null;
+    const government = r.government || mandate?.government || '';
+    const key = `${deadline || ''}||${government}`;
+    let g = m.get(key);
+    if (!g) {
+      g = {
+        deadline,
+        deadlineRaw: r.bps.deadlineRaw || null,
+        government,
+        fine: bpsExceedFineLabel(mandate),
+        sites: 0,
+        penalty: 0,
+        penaltyKnown: false,
+        feeExceeding: 'TBD (Full Screening Analysis Needed)',
+      };
+      m.set(key, g);
+    }
+    g.sites += 1;
+    const p = bpsNonReportingPenalty(mandate?.bps, r.sqft);
+    if (p != null) { g.penalty += p; g.penaltyKnown = true; }
+  }
+  return [...m.values()].sort((a, b) => {
+    const ad = a.deadline || '9999-12-31';
+    const bd = b.deadline || '9999-12-31';
+    if (ad !== bd) return ad.localeCompare(bd);
+    return String(a.government).localeCompare(String(b.government));
+  });
+}
+
 // Whole-Building Utility Data Collection eligibility: sites eligible for BBS or
 // BPS, grouped by state → utility, for a commodity ('electric' | 'gas').
 export function utilityFeedEligibility(results, commodity) {

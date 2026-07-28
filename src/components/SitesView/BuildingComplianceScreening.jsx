@@ -5,6 +5,7 @@ import {
   screenSites, lookupGovId, getMandates, classifyPropertyType,
   CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
   totalEligible, eligibilityByOrdinance, totalPenalty, sitesCompanyLabel,
+  bpsPrioritization,
 } from '../../utils/complianceMandates';
 import { buildComplianceReportHtml } from '../../utils/complianceReportHtml';
 import { exportComplianceReportXlsx } from '../../utils/complianceReportXlsx';
@@ -68,6 +69,7 @@ export function BuildingComplianceScreening({ sites = [], companyName = '' }) {
 
   const companyLabel = useMemo(() => sitesCompanyLabel(sites), [sites]);
   const results = useMemo(() => screenSites(sites), [sites]);
+  const bpsRows = useMemo(() => bpsPrioritization(results), [results]);
   const matchedCount = useMemo(() => results.filter(r => r.matched).length, [results]);
   const anyEligibleCount = useMemo(
     () => results.filter(r => CATEGORIES.some(c => r[c]?.eligible === true)).length,
@@ -253,6 +255,41 @@ export function BuildingComplianceScreening({ sites = [], companyName = '' }) {
                 </div>
               ))}
             </div>
+
+            {/* BPS — Prioritization: one row per (deadline, jurisdiction) over
+                the BPS-eligible sites. Mirrors the compliance exports and the
+                Master Analysis overview. */}
+            {bpsRows.length > 0 && (
+              <div className={styles.bpsSection}>
+                <div className={styles.bpsTitle}>BPS — Prioritization</div>
+                <div className={styles.tableScroll}>
+                  <table className={styles.siteTable}>
+                    <thead>
+                      <tr>
+                        <th>Upcoming Deadline</th>
+                        <th>Compliance Government</th>
+                        <th>BPS Fines for Exceeding Limits</th>
+                        <th style={{ textAlign: 'right' }}>Number of eligible sites</th>
+                        <th style={{ textAlign: 'right' }}>Sum of Est. Penalty for non-reporting on BPS</th>
+                        <th>Fee for exceeding limits</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bpsRows.map((g, i) => (
+                        <tr key={i}>
+                          <td>{g.deadline ? mdY(g.deadline) : '—'}</td>
+                          <td><strong>{g.government || '—'}</strong></td>
+                          <td>{g.fine}</td>
+                          <td style={{ textAlign: 'right' }}>{g.sites.toLocaleString('en-US')}</td>
+                          <td style={{ textAlign: 'right' }}>{g.penaltyKnown ? usd(g.penalty) : '—'}</td>
+                          <td style={{ color: 'var(--color-text-muted)', fontStyle: 'italic' }}>{g.feeExceeding}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             <div className={styles.siteToolbar}>
               <input className={styles.searchInput} type="text" placeholder="Search sites, cities, jurisdictions…" value={siteSearch} onChange={e => setSiteSearch(e.target.value)} />
