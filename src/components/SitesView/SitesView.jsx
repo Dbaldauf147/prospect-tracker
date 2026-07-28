@@ -5127,7 +5127,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         // Keep a per-site record so the ISO Site Explorer below can list the
         // sites in whichever market the reader picks from the dropdown.
         siteRecords.push({
-          company: String(r.__companyName__ || '').trim(),
+          siteName: siteNameColumn ? String(r[siteNameColumn] ?? '').trim() : String(r.__siteName__ || '').trim(),
           city: String(r.__city__ || '').trim(),
           state: String(r.__stateProvinceDisplay__ || r.__state__ || '').trim(),
           zip: String(r.__zipNorm__ || '').trim(),
@@ -5641,7 +5641,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         siteRecords.forEach((s, i) => {
           const rowNum = SRC_FIRST + i;
           const sr = ws.getRow(rowNum);
-          sr.getCell(SRC_DISP0 + 0).value = s.company;
+          sr.getCell(SRC_DISP0 + 0).value = s.siteName;
           sr.getCell(SRC_DISP0 + 1).value = s.city;
           sr.getCell(SRC_DISP0 + 2).value = s.state;
           sr.getCell(SRC_DISP0 + 3).value = s.zip;
@@ -5707,7 +5707,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ws.getRow(pickRow).height = 20;
 
         // Site-list header row.
-        const listHeaders = ['Company', 'City', 'State / Province', 'ZIP', 'Electric Utility', 'Load (kWh)', 'Annual Cost ($)'];
+        const listHeaders = ['Site Name', 'City', 'State / Province', 'ZIP', 'Electric Utility', 'Load (kWh)', 'Annual Cost ($)'];
         const lh = ws.getRow(listHdrRow);
         listHeaders.forEach((label, i) => {
           const cell = lh.getCell(i + 1);
@@ -5731,7 +5731,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         // they re-evaluate whenever the dropdown changes. Cached results show
         // the default market on open.
         const maxListRows = Math.max(1, ...regionRows.map(x => x.agg.sites));
-        const fieldByCol = ['company', 'city', 'state', 'zip', 'electric', 'kwh', 'cost'];
+        const fieldByCol = ['siteName', 'city', 'state', 'zip', 'electric', 'kwh', 'cost'];
         for (let k = 0; k < maxListRows; k++) {
           const rowNum = listStart + k;
           const rank = k + 1;
