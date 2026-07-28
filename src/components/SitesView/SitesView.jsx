@@ -3384,10 +3384,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       }
       const { buffer, fileName } = result;
       const dataBase64 = arrayBufferToBase64(buffer);
-      // Firestore single-document limit is 1 MiB; warn the user well
-      // below that since the wrapper metadata adds a few KB on top.
-      if (dataBase64.length > 950_000) {
-        setSaveStatus({ state: 'error', message: 'Analysis is too large for a single Firestore doc (> ~700 KB raw). Trim sites and retry.' });
+      // The analysis is chunked across multiple Firestore docs on save, so
+      // it's no longer bound by the ~1 MiB single-document cap. Keep a
+      // generous sanity ceiling so a pathologically large workbook can't
+      // spray dozens of chunk docs (and slow the company popup's read).
+      if (dataBase64.length > 15_000_000) {
+        setSaveStatus({ state: 'error', message: 'Analysis is too large to save (over ~11 MB). Trim sites and retry.' });
         return;
       }
       // Wipe any prior saved analysis on this prospect before writing
