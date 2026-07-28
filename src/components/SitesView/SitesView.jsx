@@ -7200,7 +7200,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         );
         summarySheet.mergeCells(7, 1, 7, SUM_NCOLS);
         const savNote = summarySheet.getCell(7, 1);
-        savNote.value = 'Mirrors the Indicative Savings tab — follows the Savings Scenario and # of Years selections made there.';
+        savNote.value = 'Mirrors the Indicative Savings tab, following the Savings Scenario and # of Years selections made there.';
         savNote.font = { name: 'Nunito Sans', italic: true, size: 9.5, color: { argb: SE_SLATE } };
         savNote.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
         summarySheet.getRow(7).height = 18;
@@ -7347,7 +7347,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         // exports + on-page table.
         const bpsRows = bpsPrioritization(complianceResults);
         if (bpsRows.length) {
-          sumSection(sumRow++, 'BPS — Prioritization');
+          sumSection(sumRow++, 'BPS Prioritization');
           const bpsHdrRowNum = sumRow++;
           const bpsHdrs = [
             { c: 1, t: 'Upcoming Deadline' },

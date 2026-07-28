@@ -37,20 +37,6 @@ const colLetter = (n) => { let s = ''; while (n > 0) { const m = (n - 1) % 26; s
 
 // --- workbook builders ---------------------------------------------------
 
-function styleHeaderRow(row, labels) {
-  labels.forEach((label, i) => {
-    const cell = row.getCell(i + 1);
-    cell.value = label;
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_DARK } };
-    cell.font = { name: FONT, bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
-    // wrapText so a longer header (e.g. "Energy Audits") still fits the now-
-    // narrow gutter column instead of clipping.
-    cell.alignment = { vertical: 'middle', horizontal: i === 0 ? 'left' : 'center', indent: i === 0 ? 1 : 0, wrapText: true };
-    cell.border = { top: { style: 'thin', color: { argb: LINE } }, bottom: { style: 'thin', color: { argb: LINE } } };
-  });
-  row.height = 28;
-}
-
 export async function exportComplianceReportXlsx(results, meta = {}) {
   const { Workbook } = await import('exceljs');
   // Combined-export mode passes a shared workbook so this report's sheets
@@ -71,9 +57,17 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
   // cards (and Utility-feed panels); the rest are the wide card / table
   // columns. Keeping the gutters thin makes the cards read as wide tiles with
   // only a small white gap between them.
+  // The eligibility-card bar columns (2/5/8) and the two utility-feed bar
+  // columns (4 for EP, 8 for NG) are all the same width (34) so every data
+  // bar — cards and feeds alike — is symmetric. The outer card name columns
+  // (1/7) stay narrow so short jurisdiction names sit close to their bars;
+  // column 4 doubles as the middle card's name and the EP feed bar, so it
+  // matches the other bar columns. Columns 3 and 6 are the thin gutters
+  // between cards; the penalty and BPS tables span across them (see their
+  // *_SPANS arrays) so wide values aren't clipped by a gutter.
   ws.columns = [
-    { width: 30 }, { width: 26 }, { width: 10 }, { width: 28 },
-    { width: 26 }, { width: 10 }, { width: 28 }, { width: 26 },
+    { width: 20 }, { width: 34 }, { width: 8 }, { width: 34 },
+    { width: 34 }, { width: 8 }, { width: 20 }, { width: 34 },
   ];
 
   const matched = results.filter(r => r.matched);
@@ -236,7 +230,7 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
         const nameCell = row.getCell(d.c0);
         nameCell.value = item.government;
         nameCell.font = { name: FONT, size: 10, color: { argb: SLATE } };
-        nameCell.alignment = { vertical: 'middle', horizontal: 'right' };
+        nameCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
         const valCell = row.getCell(d.c0 + 1);
         valCell.value = item.count;
         valCell.font = { name: FONT, bold: true, size: 10, color: { argb: INK } };
@@ -319,16 +313,16 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
       if (header) {
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_DARK } };
         cell.font = { name: FONT, bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
-        cell.alignment = { vertical: 'middle', horizontal: ci === 0 ? 'left' : 'center', indent: ci === 0 ? 1 : 0 };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
         cell.border = { top: { style: 'thin', color: { argb: LINE } }, bottom: { style: 'thin', color: { argb: LINE } } };
       } else if (total) {
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_LIGHT } };
         cell.font = { name: FONT, bold: true, size: 10, color: { argb: INK } };
-        cell.alignment = { vertical: 'middle', horizontal: ci === 0 ? 'left' : 'right', indent: 1 };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
         cell.border = { top: { style: 'medium', color: { argb: argb('#3DCD58') } } };
       } else {
         cell.font = { name: FONT, size: 10, bold: ci === 0 || ci === 4, color: { argb: ci === 0 || ci === 4 ? INK : SLATE } };
-        cell.alignment = { vertical: 'middle', horizontal: ci === 0 ? 'left' : 'right', indent: 1 };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
         if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
         cell.border = { bottom: { style: 'hair', color: { argb: LINE } } };
       }
@@ -370,14 +364,28 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
   // exceed-limit fine, eligible-site count, and summed estimated
   // non-reporting penalty. Mirrors the on-page table + Master Analysis
   // overview.
-  sectionTitle('BPS — Prioritization');
+  sectionTitle('BPS Prioritization');
   const bpsRows = bpsPrioritization(results);
-  const bpsHdrRow = ws.getRow(r);
-  styleHeaderRow(bpsHdrRow, [
+  // Each logical column spans one or two sheet columns so wide values (the
+  // fine label, the "$…" penalty, the long fee note) clear the narrow card
+  // gutters (cols 3 and 6) instead of being clipped. Fee sits at the far
+  // right and its header fills that last column.
+  const BPS_SPANS = [[1, 1], [2, 2], [3, 4], [5, 5], [6, 7], [8, 8]];
+  const bpsHeaders = [
     'Upcoming Deadline', 'Compliance Government', 'BPS Fines for Exceeding Limits',
-    'Number of eligible sites', 'Sum of Est. Penalty for non-reporting on BPS', 'Fee for exceeding limits', '', '',
-  ]);
-  for (let ci = 0; ci < 6; ci++) bpsHdrRow.getCell(ci + 1).alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: ci !== 5 };
+    'Number of eligible sites', 'Sum of Est. Penalty for non-reporting on BPS', 'Fee for exceeding limits',
+  ];
+  const bpsHdrRow = ws.getRow(r);
+  BPS_SPANS.forEach(([a, b], ci) => {
+    if (b > a) ws.mergeCells(r, a, r, b);
+    const cell = bpsHdrRow.getCell(a);
+    cell.value = bpsHeaders[ci];
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_DARK } };
+    cell.font = { name: FONT, bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+    // The fee header fits on one line in the wide last column; the rest wrap.
+    cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: ci !== 5 };
+    cell.border = { top: { style: 'thin', color: { argb: LINE } }, bottom: { style: 'thin', color: { argb: LINE } } };
+  });
   bpsHdrRow.height = 30;
   r += 1;
   if (!bpsRows.length) {
@@ -398,10 +406,12 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
         g.penaltyKnown ? g.penalty : '',
         g.feeExceeding,
       ];
-      vals.forEach((v, ci) => {
-        const cell = rr2.getCell(ci + 1);
-        cell.value = v;
+      BPS_SPANS.forEach(([a, b], ci) => {
+        if (b > a) ws.mergeCells(r, a, r, b);
+        const cell = rr2.getCell(a);
+        cell.value = vals[ci];
         if (ci === 4 && g.penaltyKnown) cell.numFmt = '"$"#,##0';
+        cell.ignoredErrors = { numberStoredAsText: true };
         cell.font = { name: FONT, size: 10, bold: ci === 0 || ci === 1, italic: ci === 5, color: { argb: ci === 0 || ci === 1 ? INK : SLATE } };
         cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: false };
         if (i % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
@@ -473,7 +483,7 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
         const nameCell = row.getCell(f.nameCols[0]);
         nameCell.value = item.utility;
         nameCell.font = { name: FONT, size: 10, color: { argb: SLATE } };
-        nameCell.alignment = { vertical: 'middle', horizontal: 'right' };
+        nameCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
         const valCell = row.getCell(f.barCol);
         valCell.value = item.count;
         valCell.font = { name: FONT, bold: true, size: 10, color: { argb: INK } };

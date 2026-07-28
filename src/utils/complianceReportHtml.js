@@ -128,7 +128,7 @@ export function buildComplianceReportHtml(results, meta = {}) {
   })();
 
   const brandbar = `<div class="brandbar">
-    <div class="bbLeft"><span class="bbTitle">Building Compliance — Applicability Screening &amp; Roadmap</span></div>
+    <div class="bbLeft"><span class="bbTitle">Building Compliance Applicability Screening &amp; Roadmap</span></div>
     <div class="bbLogo">${schneiderLogoSvg({ onDark: true, width: 176 })}</div>
   </div>`;
 
@@ -164,7 +164,7 @@ export function buildComplianceReportHtml(results, meta = {}) {
   </table>` : '<div class="empty">No dated deadlines across the screened portfolio.</div>';
 
   const timelines = CATEGORIES.map(c =>
-    `<div class="tl"><div class="tlTitle" style="color:${CATEGORY_COLOR[c]}">${CATEGORY_LABEL[c]} — sites per deadline</div>${svgColumns(deadlinesByDate(results, c).map(d => ({ date: d.date, value: d.count })), { color: CATEGORY_COLOR[c] })}</div>`
+    `<div class="tl"><div class="tlTitle" style="color:${CATEGORY_COLOR[c]}">${CATEGORY_LABEL[c]} sites per deadline</div>${svgColumns(deadlinesByDate(results, c).map(d => ({ date: d.date, value: d.count })), { color: CATEGORY_COLOR[c] })}</div>`
   ).join('');
 
   const overview = CATEGORIES.map(c =>
@@ -174,7 +174,7 @@ export function buildComplianceReportHtml(results, meta = {}) {
 
   const page1 = page(
     `${kpis}
-     <div class="sectionTitle">Compliance Roadmap — Upcoming Deadlines</div>
+     <div class="sectionTitle">Compliance Roadmap Upcoming Deadlines</div>
      <div class="twoCol">
        <div class="rmWrap">${roadmapTable}</div>
        <div class="grid1 tlGrid">${timelines}</div>
@@ -238,11 +238,11 @@ export function buildComplianceReportHtml(results, meta = {}) {
   </table>` : '<div class="empty">No BPS-eligible sites across the screened portfolio.</div>';
 
   const page2 = page(
-    `<div class="sectionTitle">Estimated Max Yearly Penalties — BBS, Energy Audits &amp; BPS</div>
+    `<div class="sectionTitle">Estimated Max Yearly Penalties: BBS, Energy Audits &amp; BPS</div>
      <div class="grid3">${penalties}</div>
      <div class="sectionTitle">Penalty Exposure by Jurisdiction</div>
      <div class="rmWrap wide">${penTable}</div>
-     <div class="sectionTitle">BPS — Prioritization</div>
+     <div class="sectionTitle">BPS Prioritization</div>
      <div class="rmWrap wide">${bpsTable}</div>`
   );
 
@@ -292,11 +292,11 @@ export function buildComplianceReportHtml(results, meta = {}) {
   </table>` : '<div class="empty">No sites screened.</div>';
   const page4 = page(
     `<div class="sectionTitle">Site-by-Site Mandate Detail</div>
-     <div class="sdIntro">Every screened site and the specific BBS / Energy Audits / BPS mandates that apply to it — each with its compliance deadline and estimated max yearly penalty. Sites are ordered by how many mandates apply.</div>
+     <div class="sdIntro">Every screened site and the specific BBS / Energy Audits / BPS mandates that apply to it, each with its compliance deadline and estimated max yearly penalty. Sites are ordered by how many mandates apply.</div>
      <div class="rmWrap wide">${siteTable}</div>`
   );
 
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Building Compliance — Screening &amp; Roadmap</title>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Building Compliance Screening &amp; Roadmap</title>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; font-family: 'Nunito Sans', 'Segoe UI', Arial, Helvetica, sans-serif; color: ${SE_INK}; background: #EEF2F6; }
