@@ -1565,7 +1565,19 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     const { headers, rows, mapping, linkMap } = pasteModal;
     const idxOf = {};
     headers.forEach((h, i) => { idxOf[h] = i; });
+    // Emails belonging to hidden leads. A pasted lead whose email matches
+    // one of these is blocked from import — the user hid that lead on
+    // purpose, so re-importing it (e.g. from a fresh Salesforce copy)
+    // would resurrect it. Case-insensitive, trimmed, to match how emails
+    // are compared elsewhere.
+    const hiddenEmails = new Set(
+      persistedRows
+        .filter(r => hiddenLeadIds.has(r.id))
+        .map(r => (r.email || '').toLowerCase().trim())
+        .filter(Boolean)
+    );
     const incoming = [];
+    let blockedByHidden = 0;
     for (const cells of rows) {
       const fresh = emptyRow();
       let any = false;
@@ -1579,6 +1591,10 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
         fresh[t.key] = v;
       }
       if (!any) continue;
+      // Skip leads that match a hidden lead's email — don't resurrect
+      // something the user deliberately hid.
+      const email = (fresh.email || '').toLowerCase().trim();
+      if (email && hiddenEmails.has(email)) { blockedByHidden += 1; continue; }
       // Backfill the Salesforce Link from the clipboard's HTML anchors
       // (matched by the lead's name) when no URL / Lead-ID column was
       // mapped — this is how the record link travels through a plain
@@ -1594,6 +1610,13 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     }
     if (incoming.length) persist([...persistedRows, ...incoming]);
     setPasteModal(null);
+    if (blockedByHidden > 0) {
+      window.alert(
+        `${blockedByHidden} lead${blockedByHidden === 1 ? '' : 's'} skipped: ` +
+        `${blockedByHidden === 1 ? 'its' : 'their'} email matches a hidden lead. ` +
+        `Unhide from "Show hidden" if you want to import ${blockedByHidden === 1 ? 'it' : 'them'} again.`
+      );
+    }
   }
 
   // ---- Add to Table View bridge ---------------------------------------
