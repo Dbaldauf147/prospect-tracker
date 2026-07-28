@@ -265,7 +265,7 @@ function isPlaceholderCompany(s) {
 // navigates, Enter / click commits, Escape cancels. Local state until
 // commit so the table doesn't re-render on every keystroke. Ported from
 // the Zoom Info view's company picker.
-const CompanyAutocomplete = memo(function CompanyAutocomplete({ value, onCommit, suggestions, placeholder, style }) {
+const CompanyAutocomplete = memo(function CompanyAutocomplete({ value, onCommit, suggestions, placeholder, style, autoFocus, onEditEnd }) {
   const [draft, setDraft] = useState(value ?? '');
   const [open, setOpen] = useState(false);
   const [hoverIdx, setHoverIdx] = useState(0);
@@ -303,6 +303,10 @@ const CompanyAutocomplete = memo(function CompanyAutocomplete({ value, onCommit,
     const next = v ?? draft;
     if (next !== lastExternal.current) { lastExternal.current = next; onCommit(next); }
     setOpen(false);
+    // Signal the caller that this edit session is over (commit fires on Enter,
+    // Tab, suggestion-pick, and blur), so an inline "edit" toggle can close
+    // even when the value was left unchanged.
+    onEditEnd?.();
   }
 
   function handleKey(e) {
@@ -320,6 +324,7 @@ const CompanyAutocomplete = memo(function CompanyAutocomplete({ value, onCommit,
       <input
         type="text"
         value={draft}
+        autoFocus={autoFocus}
         onChange={e => { setDraft(e.target.value); setOpen(true); setHoverIdx(0); }}
         onFocus={() => setOpen(true)}
         onBlur={() => { requestAnimationFrame(() => { if (!wrapRef.current?.contains(document.activeElement)) commit(); }); }}
@@ -1387,6 +1392,10 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
   // inline input so blank / pad rows can still be typed without the popup.
   const [editingLead, setEditingLead] = useState(null);
   const [editingNameId, setEditingNameId] = useState(null);
+  // Toggles a row's Company Mapping (when already mapped to a Table View
+  // account, so it renders as a link) back to the inline picker so an existing
+  // mapping can be changed in place instead of only cleared.
+  const [editingMapId, setEditingMapId] = useState(null);
 
   // Build the contact object handed to ContactEditModal from a lead row.
   // When the lead's email matches a HubSpot contact already in the cache
@@ -2336,7 +2345,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                           // renders as a link into the company popup, with an ×
                           // to re-map. Unmapped / free-text values keep the
                           // editable picker + accept-suggestion pill below.
-                          if (mapped && prospect && onSelectProspect && !isPad) {
+                          if (mapped && prospect && onSelectProspect && !isPad && editingMapId !== r.id) {
                             return (
                               <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem', display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, overflow: 'hidden' }}>
                                 <button
@@ -2345,6 +2354,14 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                                   title={`Open the company popup for "${prospect.company || mapped}"`}
                                   style={{ background: 'none', border: 'none', padding: 0, color: '#0369A1', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer', textAlign: 'left', textDecoration: 'underline', fontFamily: 'inherit', flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                                 >{prospect.company || mapped}</button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingMapId(r.id)}
+                                  title="Change this mapping"
+                                  style={{ border: 'none', background: 'transparent', color: '#CBD5E1', cursor: 'pointer', fontSize: '0.75rem', lineHeight: 1, padding: 0, flexShrink: 0 }}
+                                  onMouseEnter={e => { e.currentTarget.style.color = '#64748B'; }}
+                                  onMouseLeave={e => { e.currentTarget.style.color = '#CBD5E1'; }}
+                                >✎</button>
                                 <button
                                   type="button"
                                   onClick={() => updateCell(r.id, 'mappedCompany', '')}
@@ -2362,6 +2379,8 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                                 suggestions={companyOptions}
                                 placeholder={isPad ? '' : 'Map to account…'}
                                 style={cellInputStyle}
+                                autoFocus={editingMapId === r.id}
+                                onEditEnd={editingMapId === r.id ? () => setEditingMapId(null) : undefined}
                               />
                               {!isPad && (() => {
                                 // Only surface the accept-suggestion pill for
