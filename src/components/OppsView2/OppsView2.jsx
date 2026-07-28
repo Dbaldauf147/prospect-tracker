@@ -16,6 +16,7 @@ import {
   LinkColumnsModal,
 } from '../common/columnLinks';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
+import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
 import { dbGet } from '../../utils/db';
 import {
   OPPS2_FIRESTORE_COLLECTION,
@@ -385,6 +386,71 @@ function summarizeTimelines(list) {
     .filter(r => r.value)
     .map(r => (r.type ? `${r.type}: ${r.value}` : r.value))
     .join(' · ');
+}
+
+// Resolve a raw Scope token (e.g. "BBS") to a canonical Solutions name
+// (e.g. "BBS reporting") so the timeline-driven lookup works even when
+// the opp stores a shorthand. Matching, all case-insensitive:
+//   1. exact name match, else
+//   2. the token is a leading-word abbreviation of exactly one option
+//      (option starts with `token + " "`) — ambiguous prefixes (e.g.
+//      "RA" matching many "RA …" services) resolve to nothing so we
+//      never invent spurious rows.
+// Returns the canonical option string, or null when unresolved.
+function resolveScopeToSolution(token, options) {
+  const t = normCell(token);
+  if (!t) return null;
+  const opts = Array.isArray(options) ? options : [];
+  for (const o of opts) {
+    if (normCell(o) === t) return o;
+  }
+  const prefixed = opts.filter(o => normCell(o).startsWith(`${t} `));
+  return prefixed.length === 1 ? prefixed[0] : null;
+}
+
+// Canonical Solutions names in the opp's Scope flagged "Timeline Driven
+// = Yes" in Dropdowns › Services (seed catalog + settings.serviceOverrides).
+// These drive an auto-inserted timeline row in the Update Status / Notes
+// editors so every timeline-driven service always shows a table to fill
+// in. `solutionOptions` is the live Solutions list so shorthand Scope
+// values resolve to the real service name. Order follows Scope; dupes
+// collapse.
+function timelineDrivenServices(opp, solutionOptions, serviceOverrides) {
+  const tokens = parseMulti(rowValueByHeader(opp, 'scope'));
+  const out = [];
+  const seen = new Set();
+  for (const token of tokens) {
+    const name = resolveScopeToSolution(token, solutionOptions) || token;
+    const key = String(name).trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const meta = getEffectiveServiceMetadata(name, serviceOverrides);
+    if (meta && String(meta.timelineDriven || '').trim().toLowerCase() === 'yes') {
+      out.push(name);
+    }
+  }
+  return out;
+}
+
+// Merge an auto timeline row for each timeline-driven service into an
+// existing timeline list. A service already represented by a row whose
+// type matches its name (case-insensitive) is left untouched; missing
+// ones are appended as empty rows so the user just fills in the
+// date/detail. Empty auto rows never reach the Timeline? summary
+// (summarizeTimelines drops value-less rows), so seeding is side-effect
+// free until the user actually logs a date.
+function withServiceTimelines(list, services) {
+  const rows = Array.isArray(list) ? [...list] : [];
+  const present = new Set(
+    rows.map(r => String(r?.type ?? '').trim().toLowerCase()).filter(Boolean)
+  );
+  for (const name of services) {
+    const key = String(name).trim().toLowerCase();
+    if (!key || present.has(key)) continue;
+    rows.push({ type: name, value: '' });
+    present.add(key);
+  }
+  return rows;
 }
 
 // The Kickoff Deadline enters its Flags-column warning window when it's fewer
@@ -3955,15 +4021,21 @@ function TicketLinksFields({ labelStyle, inputStyle, contractUrl, coaUrl, onChan
 // Prompt shown whenever an opp's Follow Up date changes, asking the user
 // to pick the new Status (Who is waiting) for that opp so it stays
 // current with each follow-up. Cleared on Save or Skip.
-function FollowUpStatusModal({ opp, statusOptions, clientManager, onSave, onClose, onCancel }) {
+function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOptions, serviceOverrides, onSave, onClose, onCancel }) {
   const curStatus = opp?.['Status'] ?? '';
   const [status, setStatus] = useState(String(curStatus ?? ''));
   const [salesPartner, setSalesPartner] = useState(String(opp?.['Sales Partner'] ?? ''));
   // Structured timelines: a list of { type, value } rows plus a kickoff
   // deadline, seeded from the opp (falling back to the legacy free-text
-  // Timeline? column). Flattened back to a readable summary on Save.
+  // Timeline? column). Any service in the opp's Scope flagged "Timeline
+  // Driven = Yes" also gets an auto row so its table always appears.
+  // Flattened back to a readable summary on Save.
   const initialTimelines = useMemo(() => readTimelines(opp), [opp]);
-  const [timelineList, setTimelineList] = useState(initialTimelines.list);
+  const seededTimelines = useMemo(
+    () => withServiceTimelines(initialTimelines.list, timelineDrivenServices(opp, solutionOptions, serviceOverrides)),
+    [initialTimelines, opp, solutionOptions, serviceOverrides]
+  );
+  const [timelineList, setTimelineList] = useState(seededTimelines);
   const [kickoff, setKickoff] = useState(initialTimelines.kickoff);
   const [contractTicket, setContractTicket] = useState(String(opp?._contractTicketUrl ?? ''));
   const [coaTicket, setCoaTicket] = useState(String(opp?._coaTicketUrl ?? ''));
@@ -5642,7 +5714,7 @@ function TimelinesEditor({ list, kickoff, onChangeList, onChangeKickoff }) {
   );
 }
 
-function NextStepsEditor({ opp, clientManager, onClose, updateOppField }) {
+function NextStepsEditor({ opp, clientManager, solutionOptions, serviceOverrides, onClose, updateOppField }) {
   const noteLines = useMemo(() => textToBulletItems(opp?.['Next Steps']), [opp]);
   const storedWaiting = Array.isArray(opp?._nextStepsWaiting) ? opp._nextStepsWaiting : [];
   const initialRows = useMemo(() => {
@@ -5698,8 +5770,15 @@ function NextStepsEditor({ opp, clientManager, onClose, updateOppField }) {
   // deadline. Seeded from the opp (falling back to the legacy free-text
   // Timeline? column) and persisted on every change — the list also writes a
   // readable summary back into Timeline? so table cells / flags keep working.
+  // Any service in the opp's Scope flagged "Timeline Driven = Yes" also gets
+  // an auto row so its table always appears (empty auto rows aren't persisted
+  // until the user logs a date).
   const initialTimelines = useMemo(() => readTimelines(opp), [opp]);
-  const [timelineList, setTimelineList] = useState(initialTimelines.list);
+  const seededTimelines = useMemo(
+    () => withServiceTimelines(initialTimelines.list, timelineDrivenServices(opp, solutionOptions, serviceOverrides)),
+    [initialTimelines, opp, solutionOptions, serviceOverrides]
+  );
+  const [timelineList, setTimelineList] = useState(seededTimelines);
   const [kickoff, setKickoff] = useState(initialTimelines.kickoff);
   const [contractTicket, setContractTicket] = useState(String(opp?._contractTicketUrl ?? ''));
   const [coaTicket, setCoaTicket] = useState(String(opp?._coaTicketUrl ?? ''));
@@ -9277,6 +9356,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             opp={opp}
             statusOptions={statusOpts}
             clientManager={clientManagerForAccount(opp?.['Account'])}
+            solutionOptions={listRegistry.get('solutions')?.options || []}
+            serviceOverrides={settings?.serviceOverrides}
             onSave={({ status, nextSteps, nextStepsWaiting, salesPartner, timelines, kickoff, contractTicket, coaTicket }) => {
               if (status !== String(opp['Status'] ?? '')) {
                 updateOppField(opp._id, 'Status', status);
@@ -9421,6 +9502,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             key={opp._id}
             opp={opp}
             clientManager={clientManagerForAccount(opp?.['Account'])}
+            solutionOptions={listRegistry.get('solutions')?.options || []}
+            serviceOverrides={settings?.serviceOverrides}
             onClose={() => setNextStepsPopupId(null)}
             updateOppField={updateOppField}
           />
