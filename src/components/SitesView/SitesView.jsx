@@ -33,8 +33,8 @@ import { UtilityMappingView } from './UtilityMappingView';
 import { BuildingComplianceScreening } from './BuildingComplianceScreening';
 import { ComplianceRoadmap } from './ComplianceRoadmap';
 import CorporateCompliance from './CorporateCompliance';
-import { screenSites, buildComplianceRoadmap, CATEGORIES, totalPenalty, bpsPrioritization } from '../../utils/complianceMandates';
-import { exportComplianceReportXlsx } from '../../utils/complianceReportXlsx';
+import { screenSites, CATEGORIES, totalPenalty, bpsPrioritization } from '../../utils/complianceMandates';
+import { exportComplianceReportXlsx, buildCorporateComplianceSheet, buildComplianceMethodologySheet } from '../../utils/complianceReportXlsx';
 import { saveIndicativeAnalysis, deleteIndicativeAnalysis } from '../../utils/firestoreSync';
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
@@ -9848,14 +9848,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     return null;
   }
 
-  // Master Analysis export: one workbook with every tab from the three
-  // Utility Lookup exports — Indicative Savings, the Building Compliance
-  // report (+ its Site Detail), and the Compliance Roadmap. Each builder
-  // adds its sheets to a shared ExcelJS workbook; the Indicative Savings
-  // native charts are injected after the merged workbook is written (the
-  // roadmap's Site Detail is renamed so it doesn't collide with Indicative
-  // Savings' own Site Detail). Empty sections still emit their tab so the
-  // tab set stays consistent.
+  // Master Analysis export: one workbook combining the Utility Lookup
+  // exports — Indicative Savings, the Building Compliance report (+ its Site
+  // Detail), Corporate Compliance (company footprint + California ops), and
+  // the Compliance Report Methodology. Each builder adds its sheets to a
+  // shared ExcelJS workbook; the Indicative Savings native charts are
+  // injected after the merged workbook is written (the compliance report's
+  // Site Detail is renamed so it doesn't collide with Indicative Savings' own
+  // Site Detail). Empty sections still emit their tab so the tab set stays
+  // consistent.
   async function exportMasterAnalysis() {
     if (!rows.length) {
       throw new Error('No sites available to export — re-check the uploaded file or the Site Name column mapping.');
@@ -9880,24 +9881,19 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       companyName: deriveExportCompanyName(null),
     });
 
-    // 3. Compliance Roadmap — flat quarter rows rebuilt as an ExcelJS sheet
-    //    (the standalone export uses SheetJS). Headers emit even with no
-    //    dated deadlines so the tab is always present.
-    const { periods } = buildComplianceRoadmap(complianceResults);
-    const roadmapWs = wb.addWorksheet('Compliance Roadmap');
-    roadmapWs.addRow([
-      'Quarter', 'New Deadlines', 'New BBS', 'New Energy Audits', 'New BPS',
-      'New Sites In Scope', 'Cumulative Sites In Scope', 'Cumulative Deadlines',
-      'New Fine Exposure', 'Cumulative Fine Exposure',
-    ]);
-    roadmapWs.getRow(1).font = { bold: true };
-    for (const p of periods) {
-      roadmapWs.addRow([
-        p.label, p.newObligations,
-        p.newByCategory.bbs, p.newByCategory.audits, p.newByCategory.bps,
-        p.newSites, p.cumSites, p.cumObligations, p.newFines, p.cumFines,
-      ]);
-    }
+    // 3. Corporate Compliance — company-level portfolio view (site footprint
+    //    + California operations), Schneider-formatted.
+    buildCorporateComplianceSheet(wb, complianceSites, {
+      generatedAt: new Date().toLocaleString('en-US'),
+      companyName: deriveExportCompanyName(null),
+    });
+
+    // 4. Compliance Report Methodology — how the estimated fines were derived,
+    //    by mandate, plus the per-jurisdiction penalty inputs behind them.
+    buildComplianceMethodologySheet(wb, complianceResults, {
+      generatedAt: new Date().toLocaleString('en-US'),
+      companyName: deriveExportCompanyName(null),
+    });
 
     // Write the merged workbook once, then inject the Indicative Savings
     // native charts (ExcelJS drops charts on re-load, so this must run on
@@ -10949,7 +10945,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                   alert(`Master Analysis export failed:\n\n${err?.message || err}`);
                 }
               }}
-              title="Download one master workbook that combines every tab from the Indicative Savings, Building Compliance (Excel), and Compliance Roadmap exports."
+              title="Download one master workbook that combines the Indicative Savings and Building Compliance (Excel) tabs plus a Corporate Compliance tab and a Compliance Report Methodology tab."
               style={{ padding: '0.4rem 0.8rem', border: '1px solid #005A9E', background: '#005A9E', color: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
             >
               ⬇ Master Analysis
