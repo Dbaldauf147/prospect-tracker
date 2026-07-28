@@ -437,6 +437,21 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
     updateSettingsPath({ [`corporateComplianceScreening.${slug}.${key}`]: value || null });
   }, [updateSettingsPath]);
 
+  // Portfolio company field. Writes the shared setting SitesView reads to
+  // name every uploaded site that has no per-row Company Name column — so
+  // setting it here names the company across all Utility Lookup subtabs.
+  // Local input state (persist on blur / Enter) avoids a write per
+  // keystroke; re-sync if the value changes elsewhere (Save to Company,
+  // the site-list lookup).
+  const savedPortfolioCompany = String(settings?.utilityLookupCompanyName || '');
+  const [companyInput, setCompanyInput] = useState(savedPortfolioCompany);
+  useEffect(() => { setCompanyInput(savedPortfolioCompany); }, [savedPortfolioCompany]);
+  const applyPortfolioCompany = useCallback((value) => {
+    if (!updateSettingsPath) return;
+    const v = String(value ?? '').trim();
+    updateSettingsPath({ utilityLookupCompanyName: v || null });
+  }, [updateSettingsPath]);
+
   const researchRevenue = useCallback(async (name) => {
     const company = String(name || '').trim();
     if (!company || company === UNNAMED) return;
@@ -564,6 +579,36 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
       </p>
 
       <RegulationReference />
+
+      {/* Portfolio company — names every uploaded site that has no per-row
+          Company Name column, across all Utility Lookup subtabs. */}
+      <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <label htmlFor="cc-portfolio-company" style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, color: 'var(--color-text)' }}>
+          Portfolio company
+        </label>
+        <input
+          id="cc-portfolio-company"
+          value={companyInput}
+          onChange={(e) => setCompanyInput(e.target.value)}
+          onBlur={(e) => applyPortfolioCompany(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); applyPortfolioCompany(e.currentTarget.value); e.currentTarget.blur(); } }}
+          placeholder="Name the company for all uploaded sites…"
+          style={{ flex: '1 1 260px', maxWidth: 360, padding: '0.35rem 0.55rem', border: '1px solid var(--color-border)', borderRadius: 6, fontSize: 'var(--font-size-xs)', fontFamily: 'inherit', background: 'var(--color-surface)', color: 'var(--color-text)' }}
+        />
+        {savedPortfolioCompany && (
+          <button
+            type="button"
+            onClick={() => { setCompanyInput(''); applyPortfolioCompany(''); }}
+            title="Clear the portfolio company (sites fall back to any mapped Company Name column)"
+            style={{ padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text-muted)', borderRadius: 6, fontSize: '0.68rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
+          >
+            Clear
+          </button>
+        )}
+        <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)' }}>
+          Applies to every site without a mapped Company Name column — across all Utility Lookup subtabs.
+        </span>
+      </div>
 
       {companies.length === 0 ? (
         <div style={{
