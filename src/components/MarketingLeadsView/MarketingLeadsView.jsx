@@ -2263,19 +2263,32 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                         (() => {
                           const mapped = (r.mappedCompany || '').trim();
                           const prospect = mapped ? findProspectByCompany(mapped) : null;
-                          // A mapping that resolves to a Table View account
-                          // renders as a link into the company popup, with an ×
-                          // to re-map. Unmapped / free-text values keep the
-                          // editable picker + accept-suggestion pill below.
-                          if (mapped && prospect && onSelectProspect && !isPad && editingMapId !== r.id) {
+                          // Any non-empty mapping renders as its value plus an
+                          // inline ✎ (open the picker to change it) and × (clear
+                          // it). When the value resolves to one of the user's own
+                          // Table View accounts it's a link into that company's
+                          // popup; otherwise — e.g. a value that only matches the
+                          // cross-CDM Target Accounts list, or free text — it's
+                          // plain text, but still fully editable via the ✎. Empty
+                          // mappings, pad rows, and the active edit toggle fall
+                          // through to the editable picker + suggestion pill below.
+                          if (mapped && !isPad && editingMapId !== r.id) {
+                            const canLink = prospect && onSelectProspect;
                             return (
                               <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem', display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, overflow: 'hidden' }}>
-                                <button
-                                  type="button"
-                                  onClick={() => onSelectProspect(prospect)}
-                                  title={`Open the company popup for "${prospect.company || mapped}"`}
-                                  style={{ background: 'none', border: 'none', padding: 0, color: '#0369A1', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer', textAlign: 'left', textDecoration: 'underline', fontFamily: 'inherit', flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                                >{prospect.company || mapped}</button>
+                                {canLink ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => onSelectProspect(prospect)}
+                                    title={`Open the company popup for "${prospect.company || mapped}"`}
+                                    style={{ background: 'none', border: 'none', padding: 0, color: '#0369A1', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer', textAlign: 'left', textDecoration: 'underline', fontFamily: 'inherit', flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                  >{prospect.company || mapped}</button>
+                                ) : (
+                                  <span
+                                    title={`Mapped to "${mapped}" — not on your Table View. Click ✎ to change it.`}
+                                    style={{ fontSize: '0.8rem', color: '#334155', flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                  >{mapped}</span>
+                                )}
                                 <button
                                   type="button"
                                   onClick={() => setEditingMapId(r.id)}
