@@ -24,6 +24,7 @@ import { addQueuedLeads } from '../../utils/draftLeadsQueue';
 const COLUMNS = [
   { key: 'name',                label: 'Name',                       defaultWidth: 170 },
   { key: 'sfUrl',               label: 'Salesforce Link',            defaultWidth: 120 },
+  { key: 'linkedin',            label: 'LinkedIn',                   defaultWidth: 120 },
   { key: 'email',               label: 'Email',                      defaultWidth: 220 },
   { key: 'jobTitle',            label: 'Job Title',                  defaultWidth: 170 },
   { key: 'company',             label: 'Company',                    defaultWidth: 190 },
@@ -83,6 +84,8 @@ const PASTE_TARGETS = [
     aliases: ['country', 'countrycode', 'mailingcountry', 'billingcountry'] },
   { key: 'qualificationDetail', label: 'Qualification Source Detail', required: false,
     aliases: ['qualificationsourcedetail', 'qualificationdetail', 'qualificationsource', 'sourcedetail'] },
+  { key: 'linkedin',            label: 'LinkedIn',                   required: false,
+    aliases: ['linkedin', 'linkedinurl', 'linkedinprofile', 'linkedinprofileurl', 'linkedinlink', 'li', 'liurl'] },
   // Salesforce record link / id. Auto-filled from the clipboard's HTML
   // anchors when pasting a list view; a mapped URL / Lead-ID column takes
   // precedence. Listed last so its generic aliases (url / id / link)
@@ -122,6 +125,18 @@ function splitPasteRow(line) {
 
 function normaliseHeader(s) {
   return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// Turn a stored LinkedIn value into an openable URL. Accepts a full
+// http(s) URL, a bare "linkedin.com/in/…" (no scheme), or just a vanity
+// slug ("john-doe") — the last becomes a /in/ profile URL. Returns null
+// for blanks so the cell can fall back to an editable input.
+function linkedinHref(raw) {
+  const v = String(raw || '').trim();
+  if (!v) return null;
+  if (/^https?:\/\//i.test(v)) return v;
+  if (/^(www\.)?linkedin\.com/i.test(v)) return `https://${v}`;
+  return `https://www.linkedin.com/in/${v.replace(/^\/+/, '')}`;
 }
 
 // Build a default header → target-key mapping. Each header is matched
@@ -926,6 +941,20 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
   function hubspotTitleForRow(r) {
     const live = r.hubspotContactId ? findHubspotById(r.hubspotContactId) : null;
     return String(live?.jobtitle || r.hubspotContactTitle || '').trim();
+  }
+
+  // Resolve a lead's LinkedIn: the value stored on the lead wins; when
+  // it's blank, fall back to the LinkedIn URL on the mapped HubSpot
+  // contact so a mapped lead shows a link without re-entering it.
+  // Returns { value, url, fromHubspot } — value is what's stored on the
+  // lead (drives the clear × / editable input), url is the openable link.
+  function linkedinForRow(r) {
+    const stored = String(r.linkedin || '').trim();
+    if (stored) return { value: stored, url: linkedinHref(stored), fromHubspot: false };
+    const live = r.hubspotContactId ? findHubspotById(r.hubspotContactId) : null;
+    const hs = String(live?.hs_linkedin_url || live?.linkedin_url || live?.hs_linkedinid || '').trim();
+    if (hs) return { value: '', url: linkedinHref(hs), fromHubspot: true };
+    return { value: '', url: null, fromHubspot: false };
   }
 
   // Best existing HubSpot contact for a lead: an exact email match wins
@@ -2082,7 +2111,56 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                         overflow: (c.key === 'mappedCompany' || c.key === 'hubspotContact') ? 'visible' : 'hidden',
                       }}
                     >
-                      {c.key === 'sfUrl' ? (
+                      {c.key === 'linkedin' ? (
+                        (() => {
+                          const { value, url, fromHubspot } = linkedinForRow(r);
+                          if (url) {
+                            return (
+                              <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <a
+                                  href={url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title={fromHubspot
+                                    ? `Open this lead's LinkedIn profile (from the mapped HubSpot contact)\n${url}`
+                                    : `Open this lead's LinkedIn profile\n${url}`}
+                                  style={{ color: '#0A66C2', fontWeight: 700, fontSize: '0.75rem', textDecoration: 'none', whiteSpace: 'nowrap' }}
+                                >in ↗</a>
+                                {fromHubspot && <span title="From the mapped HubSpot contact" style={{ color: '#94A3B8', fontSize: '0.62rem' }}>HS</span>}
+                                {!isPad && value && (
+                                  <button
+                                    type="button"
+                                    onClick={() => updateCell(r.id, 'linkedin', '')}
+                                    title="Clear this LinkedIn link"
+                                    style={{ border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer', fontSize: '0.85rem', lineHeight: 1, padding: 0 }}
+                                  >×</button>
+                                )}
+                              </div>
+                            );
+                          }
+                          return (
+                            <div>
+                              <CommitOnBlurInput
+                                value={value}
+                                onCommit={v => updateCell(r.id, 'linkedin', v)}
+                                placeholder={isPad ? '' : 'Paste LinkedIn URL…'}
+                                style={cellInputStyle}
+                              />
+                              {!isPad && (r.name || '').trim() && (
+                                <div style={{ padding: '0 0.6rem 0.3rem' }}>
+                                  <a
+                                    href={`https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent([r.name, effectiveCompany(r)].filter(Boolean).join(' '))}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    title="Search LinkedIn for this person, then paste their profile URL into the field above."
+                                    style={{ color: '#0A66C2', fontSize: '0.68rem', fontWeight: 600, textDecoration: 'none', whiteSpace: 'nowrap' }}
+                                  >Find ↗</a>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()
+                      ) : c.key === 'sfUrl' ? (
                         (() => {
                           const raw = (r.sfUrl || '').trim();
                           const url = resolveSfUrl(raw);
