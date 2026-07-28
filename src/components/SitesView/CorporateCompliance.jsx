@@ -1,9 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { loadList } from '../../utils/uploadedListStore';
 import { normalizeCompany, pickNameKey } from '../../utils/companyNorm';
 import { UPLOADED_LISTS } from '../../utils/uploadedListsRegistry';
 import { LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { userLsGet } from '../../utils/userLs';
+import { apiFetch } from '../../utils/apiFetch';
+
+// Firestore path segment for a company's persisted revenue research —
+// same slug shape the prospect modal uses for its research blobs.
+const revenueSlug = (name) => String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
 
 // Corporate Compliance — placeholder scaffold, now with framework-list
 // mapping. Company-specific research (revenue, California site operations)
@@ -109,7 +114,86 @@ function matchCompany(companyNorm, loadedLists) {
     });
 }
 
-export default function CorporateCompliance({ sites = [], settings }) {
+// Compact date label for the "researched …" stamp.
+function fmtStamp(ms) {
+  if (!ms) return '';
+  try { return new Date(ms).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); }
+  catch { return ''; }
+}
+
+// Revenue block for one company card. Shows the persisted research when
+// present (headline figure + supporting detail + citations), otherwise a
+// "Research revenue" button that asks Claude (with web search) to find
+// the company's most recent annual revenue. `disabled` guards the
+// unnamed-company card, which has nothing to research.
+function RevenueSection({ data, loading, error, disabled, onResearch }) {
+  const btn = (label) => (
+    <button
+      type="button"
+      onClick={onResearch}
+      disabled={loading || disabled}
+      style={{
+        fontSize: '0.65rem', fontWeight: 700, fontFamily: 'inherit',
+        padding: '0.2rem 0.55rem', borderRadius: 999, cursor: (loading || disabled) ? 'default' : 'pointer',
+        border: '1px solid var(--color-accent)', background: 'var(--color-surface)',
+        color: 'var(--color-accent)', opacity: (loading || disabled) ? 0.5 : 1, whiteSpace: 'nowrap',
+      }}
+    >{label}</button>
+  );
+
+  return (
+    <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginTop: '0.4rem' }}>
+      {data && (data.revenue || data.summary) ? (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: 700, color: 'var(--color-text)', fontSize: 'var(--font-size-sm)' }}>
+              {data.revenue || '—'}
+            </span>
+            {data.fiscalYear && <span style={{ fontSize: '0.65rem' }}>{data.fiscalYear}</span>}
+          </div>
+          {(data.ownership || data.ticker || data.employees) && (
+            <div style={{ marginTop: '0.15rem', fontSize: '0.65rem' }}>
+              {[data.ownership, data.ticker, data.employees ? `${Number(data.employees).toLocaleString()} employees` : '']
+                .filter(Boolean).join(' · ')}
+            </div>
+          )}
+          {data.summary && (
+            <div style={{ marginTop: '0.25rem', color: 'var(--color-text)', fontStyle: 'italic' }}>{data.summary}</div>
+          )}
+          {Array.isArray(data.sources) && data.sources.length > 0 && (
+            <div style={{ marginTop: '0.3rem', display: 'flex', flexWrap: 'wrap', gap: '0.3rem 0.5rem' }}>
+              {data.sources.slice(0, 6).map((s, i) => (
+                <a key={i} href={s.url} target="_blank" rel="noreferrer"
+                  title={s.url}
+                  style={{ fontSize: '0.62rem', color: 'var(--color-accent)', textDecoration: 'none', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  ↗ {s.title || s.url}
+                </a>
+              ))}
+            </div>
+          )}
+          <div style={{ marginTop: '0.35rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            {btn(loading ? 'Researching…' : 'Re-run research')}
+            {data.savedAt && !loading && (
+              <span style={{ fontSize: '0.6rem' }}>researched {fmtStamp(data.savedAt)}</span>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <span style={{ fontStyle: 'italic' }}>
+            {loading ? 'Researching revenue…' : 'Revenue: pending research'}
+          </span>
+          {btn(loading ? 'Researching…' : 'Research revenue')}
+        </div>
+      )}
+      {error && (
+        <div style={{ marginTop: '0.25rem', color: '#B91C1C', fontSize: '0.65rem' }}>{error}</div>
+      )}
+    </div>
+  );
+}
+
+export default function CorporateCompliance({ sites = [], settings, updateSettingsPath }) {
   const companies = useMemo(() => {
     const byCompany = new Map();
     for (const site of sites) {
@@ -132,6 +216,42 @@ export default function CorporateCompliance({ sites = [], settings }) {
   }, [sites]);
 
   const totalCA = companies.reduce((sum, c) => sum + c.california, 0);
+
+  // Persisted revenue-research blobs keyed by company slug (synced via
+  // settings.companyRevenueResearch). Transient loading / error state per
+  // company lives in local state; the resolved data is read back from
+  // settings so it survives reloads and syncs across devices.
+  const revenueResearch = settings?.companyRevenueResearch || {};
+  const [revState, setRevState] = useState({});
+
+  const researchRevenue = useCallback(async (name) => {
+    const company = String(name || '').trim();
+    if (!company || company === UNNAMED) return;
+    const slug = revenueSlug(company);
+    setRevState(s => ({ ...s, [company]: { loading: true, error: null } }));
+    try {
+      const r = await apiFetch('/api/research-revenue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company }),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        let msg = `HTTP ${r.status}`;
+        try { msg = JSON.parse(txt).error || msg; } catch { msg = txt.slice(0, 200) || msg; }
+        setRevState(s => ({ ...s, [company]: { loading: false, error: msg } }));
+        return;
+      }
+      const data = await r.json();
+      const stamped = { ...data, savedAt: Date.now() };
+      setRevState(s => ({ ...s, [company]: { loading: false, error: null } }));
+      if (updateSettingsPath && slug) {
+        updateSettingsPath({ [`companyRevenueResearch.${slug}`]: stamped });
+      }
+    } catch (err) {
+      setRevState(s => ({ ...s, [company]: { loading: false, error: err?.message || 'Request failed' } }));
+    }
+  }, [updateSettingsPath]);
 
   // Re-scan when the company set or the synced list mappings change.
   const companyKey = companies.map(c => c.name).join('|');
@@ -217,9 +337,13 @@ export default function CorporateCompliance({ sites = [], settings }) {
                       </>
                     )}
                   </div>
-                  <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginTop: '0.4rem' }}>
-                    <span style={{ fontStyle: 'italic' }}>Revenue: pending research</span>
-                  </div>
+                  <RevenueSection
+                    data={revenueResearch[revenueSlug(c.name)] || null}
+                    loading={!!revState[c.name]?.loading}
+                    error={revState[c.name]?.error || null}
+                    disabled={c.name === UNNAMED}
+                    onResearch={() => researchRevenue(c.name)}
+                  />
 
                   {/* Framework / List matches */}
                   <div style={{ marginTop: '0.6rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.5rem' }}>

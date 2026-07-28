@@ -320,7 +320,7 @@ function SupplierAutocomplete({ initialValue, onCommit, onCancel }) {
   );
 }
 
-export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
+export function SitesView({ settings, updateSettings, updateSettingsPath, prospects = [] } = {}) {
   // Top-level toggle between the Utility Lookup page and the nested
   // Utility Mapping view (interval-data availability by utility).
   const [mainTab, setMainTab] = useState('lookup'); // 'lookup' | 'mapping' | 'compliance'
@@ -10786,7 +10786,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         >Corporate Compliance</button>
       </div>
       {mainTab === 'corporate' ? (
-        <CorporateCompliance sites={complianceSites} settings={settings} />
+        <CorporateCompliance sites={complianceSites} settings={settings} updateSettingsPath={updateSettingsPath} />
       ) : mainTab === 'roadmap' ? (
         <ComplianceRoadmap sites={complianceSites} />
       ) : mainTab === 'compliance' ? (
