@@ -11,6 +11,7 @@ import {
   CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
   eligibilityByOrdinance, totalEligible, deadlinesByDate,
   penaltyByOrdinance, totalPenalty, utilityFeedEligibility,
+  bpsPrioritization,
 } from './complianceMandates.js';
 import { schneiderLogoPngDataUrl, SE_GREEN_DARK } from './schneiderLogo.js';
 
@@ -392,6 +393,55 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
     });
     tr.height = 19;
     r += 2;
+  }
+
+  // --- Section: BPS prioritization table ---
+  // One row per (deadline, jurisdiction) over BPS-eligible sites: the
+  // exceed-limit fine, eligible-site count, and summed estimated
+  // non-reporting penalty. Mirrors the on-page table + Master Analysis
+  // overview.
+  sectionTitle('BPS — Prioritization');
+  const bpsRows = bpsPrioritization(results);
+  const bpsHdrRow = ws.getRow(r);
+  styleHeaderRow(bpsHdrRow, [
+    'Upcoming Deadline', 'Compliance Government', 'BPS Fines for Exceeding Limits',
+    'Number of eligible sites', 'Sum of Est. Penalty for non-reporting on BPS', 'Fee for exceeding limits', '', '',
+  ]);
+  for (let ci = 0; ci < 6; ci++) bpsHdrRow.getCell(ci + 1).alignment = { vertical: 'middle', horizontal: ci === 0 || ci === 1 ? 'left' : 'right', indent: 1, wrapText: true };
+  bpsHdrRow.height = 30;
+  r += 1;
+  if (!bpsRows.length) {
+    ws.mergeCells(r, 1, r, NCOLS);
+    const c = ws.getCell(r, 1);
+    c.value = 'No BPS-eligible sites across the screened portfolio.';
+    c.font = { name: FONT, italic: true, size: 10, color: { argb: SLATE } };
+    c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    r += 2;
+  } else {
+    bpsRows.forEach((g, i) => {
+      const rr2 = ws.getRow(r);
+      const vals = [
+        g.deadline ? mdY(g.deadline) : '—',
+        g.government || '—',
+        g.fine,
+        g.sites,
+        g.penaltyKnown ? g.penalty : '—',
+        g.feeExceeding,
+      ];
+      vals.forEach((v, ci) => {
+        const cell = rr2.getCell(ci + 1);
+        cell.value = v;
+        if (ci === 4 && g.penaltyKnown) cell.numFmt = '"$"#,##0';
+        const numeric = ci === 3 || ci === 4;
+        cell.font = { name: FONT, size: 10, bold: ci === 0 || ci === 1, italic: ci === 5, color: { argb: ci === 0 || ci === 1 ? INK : SLATE } };
+        cell.alignment = { vertical: 'middle', horizontal: numeric ? 'right' : 'left', indent: 1, wrapText: ci === 5 };
+        if (i % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
+        cell.border = { bottom: { style: 'hair', color: { argb: LINE } } };
+      });
+      rr2.height = 18;
+      r += 1;
+    });
+    r += 1;
   }
 
   // --- Section: Utility feeds (images) ---

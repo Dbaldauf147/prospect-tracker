@@ -10,6 +10,7 @@ import {
   CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
   eligibilityByOrdinance, totalEligible, deadlinesByDate,
   penaltyByOrdinance, totalPenalty, utilityFeedEligibility,
+  bpsPrioritization,
 } from './complianceMandates.js';
 import { schneiderLogoSvg } from './schneiderLogo.js';
 
@@ -216,11 +217,33 @@ export function buildComplianceReportHtml(results, meta = {}) {
     </table>`;
   })();
 
+  // BPS prioritization: one row per (deadline, jurisdiction) over BPS-eligible
+  // sites — the exceed-limit fine, eligible-site count, and summed estimated
+  // non-reporting penalty. Mirrors the Master Analysis overview + Excel exports.
+  const bpsRows = bpsPrioritization(results);
+  const bpsTable = bpsRows.length ? `<table class="rmTable penTable bpsTable">
+    <thead><tr>
+      <th>Upcoming Deadline</th><th>Compliance Government</th>
+      <th>BPS Fines for Exceeding Limits</th><th class="bpsNumH">Number of eligible sites</th>
+      <th class="bpsNumH">Sum of Est. Penalty for non-reporting on BPS</th><th>Fee for exceeding limits</th>
+    </tr></thead>
+    <tbody>${bpsRows.map(g => `<tr>
+      <td class="rmDate">${esc(g.deadline ? mdY(g.deadline) : '—')}</td>
+      <td class="rmDate">${esc(g.government || '—')}</td>
+      <td>${esc(g.fine)}</td>
+      <td class="bpsNum">${g.sites.toLocaleString('en-US')}</td>
+      <td class="bpsNum">${g.penaltyKnown ? usd(g.penalty) : '—'}</td>
+      <td class="bpsFee">${esc(g.feeExceeding)}</td>
+    </tr>`).join('')}</tbody>
+  </table>` : '<div class="empty">No BPS-eligible sites across the screened portfolio.</div>';
+
   const page2 = page(
     `<div class="sectionTitle">Estimated Max Yearly Penalties — BBS, Energy Audits &amp; BPS</div>
      <div class="grid3">${penalties}</div>
      <div class="sectionTitle">Penalty Exposure by Jurisdiction</div>
-     <div class="rmWrap wide">${penTable}</div>`
+     <div class="rmWrap wide">${penTable}</div>
+     <div class="sectionTitle">BPS — Prioritization</div>
+     <div class="rmWrap wide">${bpsTable}</div>`
   );
 
   // Page 3 — utility feeds.
@@ -337,6 +360,9 @@ export function buildComplianceReportHtml(results, meta = {}) {
   .rmSum td { background: #E6F7EC !important; font-weight: 900; color: ${SE_INK}; border-top: 2px solid ${SE_GREEN}; }
   .rmSum td:first-child { text-align: left; }
   .penTable tbody td:not(.rmDate) { font-variant-numeric: tabular-nums; }
+  .bpsTable thead th.bpsNumH { text-align: right; }
+  .bpsTable .bpsNum { text-align: right; font-variant-numeric: tabular-nums; color: ${SE_INK}; font-weight: 700; }
+  .bpsTable .bpsFee { color: ${SE_MUTE}; font-style: italic; }
   .rmWrap.wide { margin-top: 2px; }
 
   .wbudc { font-size: 10.5px; color: ${SE_SLATE}; margin: 2px 0 14px; line-height: 1.5; }
