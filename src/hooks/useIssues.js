@@ -30,7 +30,7 @@ const BFO_ACTIVITY_KEY = 'current';
 //
 // Each returned issue carries a `snoozed` flag. `openCount` is the number
 // of issues that are NOT snoozed — that's the number shown on the sidebar.
-export function useIssues({ prospects = [], cdmName, user, marketingLeads = [] }) {
+export function useIssues({ prospects = [], cdmName, user, marketingLeads = [], serviceOverrides = {} }) {
   const [dealsList, setDealsList] = useState(() => loadDealsList().data);
   const [clientMap, setClientMap] = useState(() => loadDealClientMap());
   const [untrackedMap, setUntrackedMap] = useState(() => loadClientUntrackedMap());
@@ -103,9 +103,9 @@ export function useIssues({ prospects = [], cdmName, user, marketingLeads = [] }
   }, []);
 
   const issues = useMemo(() => {
-    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache });
+    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides });
     return rows.map((r) => ({ ...r, snoozed: !!snoozedMap[r.id] }));
-  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache]);
+  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides]);
 
   const openCount = useMemo(() => issues.reduce((n, r) => n + (r.snoozed ? 0 : 1), 0), [issues]);
 

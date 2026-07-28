@@ -7,6 +7,7 @@
 // of soonest expiration, not two that can drift apart.
 import { asDate, fmtDate } from './dealsFormat';
 import { matchesCdm } from './cdmMatch';
+import { computeNewBfoOpps, computeNewBfoMissingData, normalizeBfoCompany } from './newBfoOpps';
 
 const MS_PER_DAY = 86400000;
 
@@ -343,6 +344,41 @@ function detectUntaggedBfoOppNames({ bfoActivity, oppsCache }) {
   return issues;
 }
 
+// ---- New BFO Opp prompt missing data ----
+// Mirrors the red banner on the Agents page: an opp that needs a fresh
+// BFO Guided Opportunity created ("BFO Link" == "-") but is missing one
+// of the fields the New BFO Opp prompt needs — BFO Company Name (from the
+// company's Table View record) or Product Line / Type / Region / Scope /
+// Local Project Name (from Dropdowns › Services for the opp's Scope). One
+// issue row per affected opp so each can be snoozed / actioned on its own.
+// Suppressed until BOTH the Opps cache and the Table View prospects have
+// loaded, so we don't flag every opp's "BFO Company Name" as missing
+// during the pre-load window (empty prospects → empty lookup).
+function detectNewBfoMissingData({ prospects = [], oppsCache = null, serviceOverrides = {} }) {
+  if (!oppsCache?.records?.length || prospects.length === 0) return [];
+  const newBfoOpps = computeNewBfoOpps({ oppsCache, prospects, serviceOverrides });
+  const missingList = computeNewBfoMissingData(newBfoOpps);
+  if (missingList.length === 0) return [];
+  // Normalized company → Table View prospect id, so the Issues row can
+  // link to the account (where the BFO Company Name is fixed). First
+  // match wins, matching the util's own lookup.
+  const prospectIdByNorm = new Map();
+  for (const p of prospects) {
+    const norm = normalizeBfoCompany(p.company);
+    if (norm && !prospectIdByNorm.has(norm)) prospectIdByNorm.set(norm, p.id);
+  }
+  return missingList.map((m) => ({
+    id: `new-bfo-missing:${m.id}`,
+    source: 'Agents',
+    type: 'New BFO Opp missing data',
+    company: m.company || '—',
+    prospectId: prospectIdByNorm.get(normalizeBfoCompany(m.company)) || null,
+    daysUntil: null,
+    expirationDate: null,
+    detail: `New BFO Opp prompt is missing ${m.missing.join(', ')} — BFO Company Name comes from the company's Table View record; Product Line / Type / Region / Local Project Name come from Dropdowns › Services for the opp's Scope.`,
+  }));
+}
+
 // Active clients whose soonest contract End Date falls within `withinDays`
 // days (default 270 — the Clients-tab renewal-warning threshold). Mirrors
 // the Clients-tab row build: CDM match + Status = Client, untracked clients
@@ -382,7 +418,7 @@ export function computeExpiringClients({ prospects = [], cdmName, dealsList = []
 
 // Build the full list of outstanding issues. Each detector contributes
 // rows; add more detectors here as new issue classes are mapped.
-export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null }) {
+export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {} }) {
   const dealsByClient = groupDealsByClient(dealsList, clientMap);
   const issues = [];
   issues.push(...detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedMap }));
@@ -391,5 +427,6 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   issues.push(...detectMyAccountsFlags({ myAccountsFlags, prospects }));
   issues.push(...detectMarketingLeadStatuses({ marketingLeads }));
   issues.push(...detectUntaggedBfoOppNames({ bfoActivity, oppsCache }));
+  issues.push(...detectNewBfoMissingData({ prospects, oppsCache, serviceOverrides }));
   return issues;
 }
