@@ -388,16 +388,39 @@ function summarizeTimelines(list) {
     .join(' · ');
 }
 
-// Services in the opp's Scope flagged "Timeline Driven = Yes" in
-// Dropdowns › Services (seed catalog + settings.serviceOverrides). These
-// drive an auto-inserted timeline row in the Update Status / Notes
+// Resolve a raw Scope token (e.g. "BBS") to a canonical Solutions name
+// (e.g. "BBS reporting") so the timeline-driven lookup works even when
+// the opp stores a shorthand. Matching, all case-insensitive:
+//   1. exact name match, else
+//   2. the token is a leading-word abbreviation of exactly one option
+//      (option starts with `token + " "`) — ambiguous prefixes (e.g.
+//      "RA" matching many "RA …" services) resolve to nothing so we
+//      never invent spurious rows.
+// Returns the canonical option string, or null when unresolved.
+function resolveScopeToSolution(token, options) {
+  const t = normCell(token);
+  if (!t) return null;
+  const opts = Array.isArray(options) ? options : [];
+  for (const o of opts) {
+    if (normCell(o) === t) return o;
+  }
+  const prefixed = opts.filter(o => normCell(o).startsWith(`${t} `));
+  return prefixed.length === 1 ? prefixed[0] : null;
+}
+
+// Canonical Solutions names in the opp's Scope flagged "Timeline Driven
+// = Yes" in Dropdowns › Services (seed catalog + settings.serviceOverrides).
+// These drive an auto-inserted timeline row in the Update Status / Notes
 // editors so every timeline-driven service always shows a table to fill
-// in. Order follows the Scope column; duplicates are collapsed.
-function timelineDrivenServices(opp, serviceOverrides) {
-  const services = parseMulti(rowValueByHeader(opp, 'scope'));
+// in. `solutionOptions` is the live Solutions list so shorthand Scope
+// values resolve to the real service name. Order follows Scope; dupes
+// collapse.
+function timelineDrivenServices(opp, solutionOptions, serviceOverrides) {
+  const tokens = parseMulti(rowValueByHeader(opp, 'scope'));
   const out = [];
   const seen = new Set();
-  for (const name of services) {
+  for (const token of tokens) {
+    const name = resolveScopeToSolution(token, solutionOptions) || token;
     const key = String(name).trim().toLowerCase();
     if (!key || seen.has(key)) continue;
     seen.add(key);
@@ -3998,7 +4021,7 @@ function TicketLinksFields({ labelStyle, inputStyle, contractUrl, coaUrl, onChan
 // Prompt shown whenever an opp's Follow Up date changes, asking the user
 // to pick the new Status (Who is waiting) for that opp so it stays
 // current with each follow-up. Cleared on Save or Skip.
-function FollowUpStatusModal({ opp, statusOptions, clientManager, serviceOverrides, onSave, onClose, onCancel }) {
+function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOptions, serviceOverrides, onSave, onClose, onCancel }) {
   const curStatus = opp?.['Status'] ?? '';
   const [status, setStatus] = useState(String(curStatus ?? ''));
   const [salesPartner, setSalesPartner] = useState(String(opp?.['Sales Partner'] ?? ''));
@@ -4009,8 +4032,8 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, serviceOverrid
   // Flattened back to a readable summary on Save.
   const initialTimelines = useMemo(() => readTimelines(opp), [opp]);
   const seededTimelines = useMemo(
-    () => withServiceTimelines(initialTimelines.list, timelineDrivenServices(opp, serviceOverrides)),
-    [initialTimelines, opp, serviceOverrides]
+    () => withServiceTimelines(initialTimelines.list, timelineDrivenServices(opp, solutionOptions, serviceOverrides)),
+    [initialTimelines, opp, solutionOptions, serviceOverrides]
   );
   const [timelineList, setTimelineList] = useState(seededTimelines);
   const [kickoff, setKickoff] = useState(initialTimelines.kickoff);
@@ -5691,7 +5714,7 @@ function TimelinesEditor({ list, kickoff, onChangeList, onChangeKickoff }) {
   );
 }
 
-function NextStepsEditor({ opp, clientManager, serviceOverrides, onClose, updateOppField }) {
+function NextStepsEditor({ opp, clientManager, solutionOptions, serviceOverrides, onClose, updateOppField }) {
   const noteLines = useMemo(() => textToBulletItems(opp?.['Next Steps']), [opp]);
   const storedWaiting = Array.isArray(opp?._nextStepsWaiting) ? opp._nextStepsWaiting : [];
   const initialRows = useMemo(() => {
@@ -5752,8 +5775,8 @@ function NextStepsEditor({ opp, clientManager, serviceOverrides, onClose, update
   // until the user logs a date).
   const initialTimelines = useMemo(() => readTimelines(opp), [opp]);
   const seededTimelines = useMemo(
-    () => withServiceTimelines(initialTimelines.list, timelineDrivenServices(opp, serviceOverrides)),
-    [initialTimelines, opp, serviceOverrides]
+    () => withServiceTimelines(initialTimelines.list, timelineDrivenServices(opp, solutionOptions, serviceOverrides)),
+    [initialTimelines, opp, solutionOptions, serviceOverrides]
   );
   const [timelineList, setTimelineList] = useState(seededTimelines);
   const [kickoff, setKickoff] = useState(initialTimelines.kickoff);
@@ -9333,6 +9356,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             opp={opp}
             statusOptions={statusOpts}
             clientManager={clientManagerForAccount(opp?.['Account'])}
+            solutionOptions={listRegistry.get('solutions')?.options || []}
             serviceOverrides={settings?.serviceOverrides}
             onSave={({ status, nextSteps, nextStepsWaiting, salesPartner, timelines, kickoff, contractTicket, coaTicket }) => {
               if (status !== String(opp['Status'] ?? '')) {
@@ -9478,6 +9502,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             key={opp._id}
             opp={opp}
             clientManager={clientManagerForAccount(opp?.['Account'])}
+            solutionOptions={listRegistry.get('solutions')?.options || []}
             serviceOverrides={settings?.serviceOverrides}
             onClose={() => setNextStepsPopupId(null)}
             updateOppField={updateOppField}
