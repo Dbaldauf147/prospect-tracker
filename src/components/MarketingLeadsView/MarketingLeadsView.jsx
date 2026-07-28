@@ -115,6 +115,47 @@ function emptyRow() {
   return r;
 }
 
+// Normalized email used as the duplicate key: trimmed + lower-cased so
+// "Chris.Kirk@CBRE.com " and "chris.kirk@cbre.com" collapse to one lead.
+// Rows without an email return '' and are never treated as duplicates of
+// each other.
+function emailKey(row) {
+  return (row?.email || '').toLowerCase().trim();
+}
+
+// How "complete" a lead row is — the count of non-empty editable fields.
+// When two rows share an email we keep the richer one (more filled cells,
+// e.g. a job title + mapped HubSpot contact) and drop the sparser copies.
+function rowRichness(row) {
+  let n = 0;
+  for (const k of EDITABLE_KEYS) if (String(row?.[k] || '').trim()) n += 1;
+  return n;
+}
+
+// Collapse rows sharing an email down to a single best row, preserving the
+// original order. Rows without an email are always kept. Returns the kept
+// rows plus the ids that were dropped (so callers can prune the hidden
+// list). For each email the richest row wins; ties keep the earliest.
+function dedupeByEmail(rows) {
+  const bestIdxByEmail = new Map();
+  const dropIds = [];
+  rows.forEach((row, idx) => {
+    const key = emailKey(row);
+    if (!key) return; // keep every email-less row
+    const prevIdx = bestIdxByEmail.get(key);
+    if (prevIdx == null) { bestIdxByEmail.set(key, idx); return; }
+    // A later row replaces the earlier only if it is strictly richer.
+    if (rowRichness(row) > rowRichness(rows[prevIdx])) {
+      dropIds.push(rows[prevIdx].id);
+      bestIdxByEmail.set(key, idx);
+    } else {
+      dropIds.push(row.id);
+    }
+  });
+  const dropSet = new Set(dropIds);
+  return { kept: rows.filter(r => !dropSet.has(r.id)), dropIds };
+}
+
 // Tab / comma / semicolon-tolerant split for a clipboard row — handles
 // Excel + Salesforce ("Ana Higueras<TAB>ana@x.com<TAB>…") and the
 // occasional CSV that leaks in from a spreadsheet export.
@@ -1483,6 +1524,40 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     }
     updateSettings(patch);
   }
+  // Delete existing duplicate leads, keeping one row per email (the most
+  // complete). Prunes any removed ids from the hidden list too. Counts
+  // hidden + visible leads alike so a duplicate can't hide from the sweep.
+  function removeDuplicates() {
+    const { kept, dropIds } = dedupeByEmail(persistedRows);
+    if (!dropIds.length) {
+      window.alert('No duplicate contacts found — every saved lead has a unique email.');
+      return;
+    }
+    const ok = window.confirm(
+      `Delete ${dropIds.length} duplicate lead${dropIds.length === 1 ? '' : 's'}? ` +
+      `The most complete row for each email is kept. This cannot be undone.`,
+    );
+    if (!ok) return;
+    const patch = { marketingLeads: kept };
+    const dropSet = new Set(dropIds);
+    if ([...hiddenLeadIds].some(id => dropSet.has(id))) {
+      const nextHidden = new Set([...hiddenLeadIds].filter(id => !dropSet.has(id)));
+      patch.marketingLeadsHiddenLeads = [...nextHidden];
+      if (nextHidden.size === 0) setShowHidden(false);
+    }
+    updateSettings(patch);
+    setSelectedLeadIds(prev => {
+      if (![...prev].some(id => dropSet.has(id))) return prev;
+      return new Set([...prev].filter(id => !dropSet.has(id)));
+    });
+  }
+  // Number of duplicate rows that removeDuplicates would delete — drives
+  // the button's enabled state and label.
+  const duplicateCount = useMemo(
+    () => dedupeByEmail(persistedRows).dropIds.length,
+    [persistedRows],
+  );
+
   function clearTable() {
     if (!persistedRows.length) return;
     const ok = window.confirm(
@@ -1619,8 +1694,18 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
         .map(r => (r.email || '').toLowerCase().trim())
         .filter(Boolean)
     );
+    // Emails already saved (visible or hidden). A pasted lead whose email
+    // matches an existing one is a duplicate and is ignored on input — the
+    // user asked never to see the same contact twice.
+    const existingEmails = new Set(
+      persistedRows.map(r => (r.email || '').toLowerCase().trim()).filter(Boolean)
+    );
+    // Emails seen so far in THIS paste, so a block that itself repeats a
+    // contact only imports it once.
+    const seenInPaste = new Set();
     const incoming = [];
     let blockedByHidden = 0;
+    let blockedByDuplicate = 0;
     for (const cells of rows) {
       const fresh = emptyRow();
       let any = false;
@@ -1638,6 +1723,13 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
       // something the user deliberately hid.
       const email = (fresh.email || '').toLowerCase().trim();
       if (email && hiddenEmails.has(email)) { blockedByHidden += 1; continue; }
+      // Skip duplicates: an email already saved, or already imported
+      // earlier in this same paste.
+      if (email && (existingEmails.has(email) || seenInPaste.has(email))) {
+        blockedByDuplicate += 1;
+        continue;
+      }
+      if (email) seenInPaste.add(email);
       // Backfill the Salesforce Link from the clipboard's HTML anchors
       // (matched by the lead's name) when no URL / Lead-ID column was
       // mapped — this is how the record link travels through a plain
@@ -1653,13 +1745,21 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     }
     if (incoming.length) persist([...persistedRows, ...incoming]);
     setPasteModal(null);
+    const notes = [];
+    if (blockedByDuplicate > 0) {
+      notes.push(
+        `${blockedByDuplicate} duplicate${blockedByDuplicate === 1 ? '' : 's'} skipped ` +
+        `(email already saved).`
+      );
+    }
     if (blockedByHidden > 0) {
-      window.alert(
+      notes.push(
         `${blockedByHidden} lead${blockedByHidden === 1 ? '' : 's'} skipped: ` +
         `${blockedByHidden === 1 ? 'its' : 'their'} email matches a hidden lead. ` +
         `Unhide from "Show hidden" if you want to import ${blockedByHidden === 1 ? 'it' : 'them'} again.`
       );
     }
+    if (notes.length) window.alert(notes.join('\n'));
   }
 
   // ---- Add to Table View bridge ---------------------------------------
@@ -1913,6 +2013,15 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
             : 'Every lead is already mapped to a HubSpot contact.'}
           style={btn({ border: 'none', background: (hubspotAddable.length && !bulkAddingHubspot) ? '#FF7A59' : '#CBD5E1', color: '#fff', fontWeight: 700, cursor: (hubspotAddable.length && !bulkAddingHubspot) ? 'pointer' : 'not-allowed' })}
         >{bulkAddingHubspot ? 'Adding to HubSpot…' : `+ Add ${hubspotAddable.length || ''} to HubSpot`}</button>
+        <button
+          type="button"
+          onClick={removeDuplicates}
+          disabled={!duplicateCount}
+          title={duplicateCount
+            ? `Delete ${duplicateCount} duplicate lead${duplicateCount === 1 ? '' : 's'} (same email), keeping the most complete row for each.`
+            : 'No duplicate contacts — every saved lead has a unique email.'}
+          style={btn({ border: '1px solid #FCD34D', background: duplicateCount ? '#fff' : '#F8FAFC', color: duplicateCount ? '#B45309' : '#CBD5E1', cursor: duplicateCount ? 'pointer' : 'not-allowed' })}
+        >Remove {duplicateCount || ''} duplicate{duplicateCount === 1 ? '' : 's'}</button>
         <button
           type="button"
           onClick={clearTable}
