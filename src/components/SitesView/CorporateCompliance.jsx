@@ -5,6 +5,7 @@ import { UPLOADED_LISTS } from '../../utils/uploadedListsRegistry';
 import { LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { userLsGet } from '../../utils/userLs';
 import { apiFetch } from '../../utils/apiFetch';
+import { JURISDICTION_QUESTIONS, SCREENING_ANSWERS, REGULATIONS_BY_JURISDICTION } from '../../data/corporateComplianceScreening';
 
 // Firestore path segment for a company's persisted revenue research —
 // same slug shape the prospect modal uses for its research blobs.
@@ -193,6 +194,134 @@ function RevenueSection({ data, loading, error, disabled, onResearch }) {
   );
 }
 
+// Compact "value metric" list, e.g. "1,000 Employees · 450 Global Net Turnover".
+function thresholdText(thresholds) {
+  return (thresholds || []).map(t => `${t.value} ${t.metric}`).join(' · ');
+}
+
+// Colour a screening answer select: Yes = green, No = muted, blank = default.
+function answerSelectStyle(val) {
+  const base = {
+    fontSize: '0.68rem', fontWeight: 700, fontFamily: 'inherit',
+    padding: '0.15rem 0.35rem', borderRadius: 5, cursor: 'pointer',
+    border: '1px solid var(--color-border)', background: 'var(--color-surface)',
+    color: 'var(--color-text-muted)', flexShrink: 0,
+  };
+  if (val === 'Yes') return { ...base, borderColor: '#86EFAC', background: '#F0FDF4', color: '#166534' };
+  if (val === 'No') return { ...base, color: 'var(--color-text)' };
+  return base;
+}
+
+// Per-company jurisdiction screening: the six Yes/No gating questions.
+// Answering "Yes" reveals the regulations that jurisdiction may trigger
+// (from the reference data). `answers` is this company's saved map
+// ({ california: 'Yes', ... }); `onSet(key, value)` persists one answer.
+function JurisdictionScreening({ answers, caSiteCount = 0, onSet, disabled }) {
+  return (
+    <div style={{ marginTop: '0.6rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.5rem' }}>
+      <div style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)', marginBottom: '0.35rem' }}>
+        Jurisdiction screening
+      </div>
+      {disabled ? (
+        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
+          Add a company name to screen jurisdictions.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+          {JURISDICTION_QUESTIONS.map((q) => {
+            const val = answers?.[q.key] || '';
+            const regs = REGULATIONS_BY_JURISDICTION[q.key] || [];
+            return (
+              <div key={q.key}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.4rem' }}>
+                  <label style={{ flex: 1, minWidth: 0, fontSize: 'var(--font-size-xs)', color: 'var(--color-text)', lineHeight: 1.35 }}>
+                    <span style={{ fontWeight: 700 }}>{q.jurisdiction}</span>{' '}
+                    <span style={{ color: 'var(--color-text-muted)' }}>{q.question}</span>
+                    {q.key === 'california' && caSiteCount > 0 && (
+                      <span style={{ color: '#166534', fontWeight: 700 }}> · {caSiteCount} CA {caSiteCount === 1 ? 'site' : 'sites'} on file</span>
+                    )}
+                  </label>
+                  <select
+                    value={val}
+                    onChange={(e) => onSet(q.key, e.target.value)}
+                    aria-label={`${q.jurisdiction}: ${q.question}`}
+                    style={answerSelectStyle(val)}
+                  >
+                    <option value="">—</option>
+                    {SCREENING_ANSWERS.map((a) => <option key={a} value={a}>{a}</option>)}
+                  </select>
+                </div>
+                {val === 'Yes' && regs.length > 0 && (
+                  <ul style={{ margin: '0.25rem 0 0', paddingLeft: '0.95rem', fontSize: '0.65rem', color: 'var(--color-text-muted)', display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                    {regs.map((r) => (
+                      <li key={r.regulation}>
+                        <span style={{ fontWeight: 700, color: 'var(--color-text)' }}>{r.regulation}</span>
+                        {' · '}{r.timeline}
+                        {r.thresholds.length > 0 && <> · {thresholdText(r.thresholds)}</>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Collapsible reference for the screening "logic": every jurisdiction's
+// regulations with reporting timeline, description, and the numeric
+// thresholds that gate them. Static — shown once at the top of the page.
+function RegulationReference() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ marginTop: '0.75rem', border: '1px solid var(--color-border)', borderRadius: 8, background: 'var(--color-surface)' }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', gap: '0.4rem',
+          background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+          padding: '0.55rem 0.9rem', fontSize: 'var(--font-size-xs)', fontWeight: 700, color: 'var(--color-text)',
+        }}
+      >
+        <span style={{ color: 'var(--color-text-muted)' }}>{open ? '▾' : '▸'}</span>
+        Regulation reference &amp; thresholds
+        <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>— what each question screens for</span>
+      </button>
+      {open && (
+        <div style={{ padding: '0 0.9rem 0.75rem' }}>
+          {JURISDICTION_QUESTIONS.map((q) => {
+            const regs = REGULATIONS_BY_JURISDICTION[q.key] || [];
+            return (
+              <div key={q.key} style={{ marginTop: '0.7rem' }}>
+                <div style={{ fontWeight: 700, color: 'var(--color-text)', fontSize: 'var(--font-size-xs)' }}>{q.jurisdiction}</div>
+                <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>{q.question}</div>
+                {regs.map((r) => (
+                  <div key={r.regulation} style={{ marginTop: '0.35rem', paddingLeft: '0.6rem', borderLeft: '2px solid var(--color-border)' }}>
+                    <div style={{ fontSize: 'var(--font-size-xs)' }}>
+                      <span style={{ fontWeight: 700, color: 'var(--color-text)' }}>{r.regulation}</span>
+                      <span style={{ color: 'var(--color-text-muted)' }}> · {r.timeline}</span>
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--color-text)', marginTop: '0.1rem' }}>{r.description}</div>
+                    {r.thresholds.length > 0 && (
+                      <div style={{ fontSize: '0.62rem', color: 'var(--color-text-muted)', marginTop: '0.1rem' }}>
+                        Thresholds: {thresholdText(r.thresholds)}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CorporateCompliance({ sites = [], settings, updateSettingsPath }) {
   const companies = useMemo(() => {
     const byCompany = new Map();
@@ -223,6 +352,16 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
   // settings so it survives reloads and syncs across devices.
   const revenueResearch = settings?.companyRevenueResearch || {};
   const [revState, setRevState] = useState({});
+
+  // Per-company jurisdiction screening answers, keyed by company slug then
+  // jurisdiction key (settings.corporateComplianceScreening). Persisted via
+  // updateSettingsPath so a single answer writes just its own leaf; an
+  // empty answer deletes the leaf (null → delete).
+  const screening = settings?.corporateComplianceScreening || {};
+  const setScreeningAnswer = useCallback((slug, key, value) => {
+    if (!updateSettingsPath || !slug) return;
+    updateSettingsPath({ [`corporateComplianceScreening.${slug}.${key}`]: value || null });
+  }, [updateSettingsPath]);
 
   const researchRevenue = useCallback(async (name) => {
     const company = String(name || '').trim();
@@ -295,11 +434,14 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
         </span>
       </div>
       <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', maxWidth: 640, marginTop: '0.35rem' }}>
-        Company-specific research lives here: <strong>annual revenue</strong> and{' '}
-        <strong>California site operations</strong> per company. Each card also fuzzy-matches the
-        company name against the uploaded <strong>Lists</strong> (CDP, GRESB, SBT, Ecovadis, …) to
-        show which sustainability frameworks it appears on.
+        Screen each company against the corporate disclosure regimes — <strong>California</strong>{' '}
+        (SB 253 / SB 261), <strong>EU</strong> (CSRD), <strong>UK</strong>, <strong>Australia</strong>,{' '}
+        <strong>Mexico</strong>, and <strong>Brazil</strong> — with the six gating questions on each card.
+        Cards also carry <strong>annual revenue</strong> research, <strong>California site operations</strong>,
+        and fuzzy matches against the uploaded <strong>Lists</strong> (CDP, GRESB, SBT, Ecovadis, …).
       </p>
+
+      <RegulationReference />
 
       {companies.length === 0 ? (
         <div style={{
@@ -343,6 +485,14 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                     error={revState[c.name]?.error || null}
                     disabled={c.name === UNNAMED}
                     onResearch={() => researchRevenue(c.name)}
+                  />
+
+                  {/* Jurisdiction screening — the six gating questions */}
+                  <JurisdictionScreening
+                    answers={screening[revenueSlug(c.name)] || null}
+                    caSiteCount={c.california}
+                    disabled={c.name === UNNAMED}
+                    onSet={(key, value) => setScreeningAnswer(revenueSlug(c.name), key, value)}
                   />
 
                   {/* Framework / List matches */}
