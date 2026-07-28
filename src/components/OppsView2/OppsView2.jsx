@@ -3601,23 +3601,54 @@ function LeadQuotedAmountModal({ opp, onSave, onClose }) {
 // Margin Email Date - Sales Leader Review Date). Pre-populated with the
 // opp's current values (with fallbacks to alternate key names) so it
 // doubles as a review screen. Mirrors the NotSoldFollowUpModal pattern.
-function QuotedFollowUpModal({ opp, chanceOptions, onSave, onClose }) {
+function QuotedFollowUpModal({ opp, chanceOptions, columnLinks, listRegistry, onSave, onClose }) {
+  // Resolve the dropdown options for a field the same way the Opp details
+  // popup (and the Agreement Sent prompt) do — via the user's column-link
+  // config against the shared list registry — so the "USD?" field shows
+  // the same menu it does elsewhere. Falls back to a same-named Dropdowns
+  // list when there's no explicit link.
+  const normName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const optionsFor = (field) => {
+    const link = columnLinks ? resolveColumnLink(field, columnLinks) : null;
+    if (link && listRegistry) return listRegistry.get(link.listKey)?.options || [];
+    if (listRegistry) {
+      const target = normName(field);
+      for (const list of listRegistry.values()) {
+        if (normName(list.label) === target && Array.isArray(list.options) && list.options.length) {
+          return list.options;
+        }
+      }
+    }
+    return null;
+  };
+
   // Read current values with fallbacks to the alternate key names other
   // views / imported sheets use, so existing data shows up here instead
   // of looking blank. The combined margin/review field also absorbs the
   // two legacy split columns if a row was saved before they merged.
   const curQuotedOn = opp?.['Quoted On'] ?? opp?.['Quoted Date'] ?? '';
+  const curUsd = opp?.['USD?'] ?? '';
   const curChance = opp?.['Chance?'] ?? opp?.['Chance'] ?? '';
   const curMarginReview = opp?.['Margin Email Date - Sales Leader Review Date']
     ?? opp?.['Margin Email Date'] ?? opp?.['Sales Leader Review Date'] ?? '';
 
-  const [quotedOn, setQuotedOn] = useState(toISODate(curQuotedOn) || '');
+  // Default the Quoted On date to today when the opp doesn't already have
+  // one — the opp just moved into the Quoted stage, so today is almost
+  // always the right answer and pre-filling it saves a click.
+  const [quotedOn, setQuotedOn] = useState(toISODate(curQuotedOn) || todayISO());
+  const [usd, setUsd] = useState(String(curUsd ?? ''));
   const [chance, setChance] = useState(String(curChance ?? ''));
   const [marginReviewDate, setMarginReviewDate] = useState(toISODate(curMarginReview) || '');
 
   function handleSave() {
-    onSave({ quotedOn, chance, marginReviewDate });
+    onSave({ quotedOn, usd, chance, marginReviewDate });
   }
+
+  // Render the USD? field as a dropdown when it has resolvable options
+  // (matching the Opp details popup), otherwise a free-text input. A
+  // stored value that isn't one of the configured options is kept
+  // selectable so legacy data doesn't silently drop off the menu.
+  const usdOptions = optionsFor('USD?');
 
   // Shows the value already stored on the opp so the user reviews what's
   // there rather than entering blind. Hidden when there's nothing yet.
@@ -3687,6 +3718,29 @@ function QuotedFollowUpModal({ opp, chanceOptions, onSave, onClose }) {
               style={inputStyle}
             />
             {dateHint(curQuotedOn)}
+          </div>
+          <div>
+            <label style={labelStyle}>USD?</label>
+            {usdOptions ? (
+              <select
+                value={usd}
+                onChange={(e) => setUsd(e.target.value)}
+                style={inputStyle}
+              >
+                <option value="">— Select —</option>
+                {((!usd || usdOptions.includes(usd)) ? usdOptions : [usd, ...usdOptions]).map(o => (
+                  <option key={o} value={o}>{o}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={usd}
+                onChange={(e) => setUsd(e.target.value)}
+                style={inputStyle}
+              />
+            )}
+            {textHint(curUsd)}
           </div>
           <div>
             <label style={labelStyle}>Chance?</label>
@@ -9294,12 +9348,17 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           <QuotedFollowUpModal
             opp={opp}
             chanceOptions={listRegistry.get('chance')?.options || []}
-            onSave={({ quotedOn, chance, marginReviewDate }) => {
+            columnLinks={columnLinks}
+            listRegistry={listRegistry}
+            onSave={({ quotedOn, usd, chance, marginReviewDate }) => {
               // Only push fields whose value actually changed so the
               // undo stack stays uncluttered with no-op snapshots.
               const curQuotedOn = toISODate(opp['Quoted On'] ?? opp['Quoted Date']) || '';
               if (quotedOn !== curQuotedOn) {
                 updateOppField(opp._id, 'Quoted On', quotedOn);
+              }
+              if (usd !== String(opp['USD?'] ?? '')) {
+                updateOppField(opp._id, 'USD?', usd);
               }
               if (chance !== String(opp['Chance?'] ?? opp['Chance'] ?? '')) {
                 updateOppField(opp._id, 'Chance?', chance);
