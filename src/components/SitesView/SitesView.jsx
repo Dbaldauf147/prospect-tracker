@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { sanitizeExcelWorkbook } from '../../utils/exportSanitize.js';
 import { DataTable } from '../common/DataTable';
@@ -332,7 +332,7 @@ function companySlug(name) {
 // settings.companySiteLists, keyed by the company-name slug, and are
 // uploaded from the company popup. This is a read-only convenience so the
 // user doesn't have to open each company to check.
-function CompanySiteListLookup({ prospects = [], companySiteLists = {} }) {
+function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCompany, activeCompany = '' }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [picked, setPicked] = useState('');
@@ -412,9 +412,25 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {} }) {
         Company site-list lookup
       </div>
       <div style={{ fontSize: '0.68rem', color: '#64748B', marginBottom: '0.45rem' }}>
-        Check whether a company already has a site list mapped to it.
+        Check whether a company already has a site list mapped to it, or set it
+        as the company for this uploaded portfolio.
         {mappedCount > 0 && <> {mappedCount} compan{mappedCount === 1 ? 'y has' : 'ies have'} one.</>}
       </div>
+      {activeCompany && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.45rem', fontSize: '0.7rem', color: '#166534' }}>
+          <span>Portfolio company: <strong>{activeCompany}</strong></span>
+          {onUseCompany && (
+            <button
+              type="button"
+              onClick={() => onUseCompany('')}
+              title="Clear the portfolio company (sites fall back to any mapped Company Name column)"
+              style={{ padding: '0.05rem 0.4rem', border: '1px solid #CBD5E1', background: '#fff', color: '#64748B', borderRadius: 999, fontSize: '0.62rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700 }}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
       <div style={{ position: 'relative' }}>
         <input
           type="text"
@@ -469,6 +485,17 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {} }) {
           </div>
         )}
       </div>
+
+      {result && onUseCompany && result.company !== activeCompany && (
+        <button
+          type="button"
+          onClick={() => onUseCompany(result.company)}
+          title="Apply this company to every uploaded site (shows on all Utility Lookup subtabs, including Corporate Compliance)"
+          style={{ marginTop: '0.5rem', padding: '0.35rem 0.7rem', border: '1px solid #009530', background: '#009530', color: '#fff', borderRadius: 6, fontSize: '0.74rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700 }}
+        >
+          Use “{result.company}” as the portfolio company
+        </button>
+      )}
 
       {result && (
         result.entry ? (
@@ -563,6 +590,17 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // (doesn't drive any computation). Surfaced on the on-page table and
   // used to name the Indicative Savings export file.
   const [companyNameOverride, setCompanyNameOverride] = useState(null);
+  // A single company applied to every uploaded site that has no per-row
+  // Company Name value. Set from "Save to Company", the site-list lookup,
+  // or typed directly, and persisted so ALL Utility Lookup subtabs (the
+  // on-page table, Corporate Compliance, the exports) treat the portfolio
+  // as one company. Per-row Company Name column values still win over it.
+  const portfolioCompanyName = String(settings?.utilityLookupCompanyName || '').trim();
+  const setPortfolioCompanyName = useCallback((name) => {
+    if (!updateSettingsPath) return;
+    const v = String(name || '').trim();
+    updateSettingsPath({ utilityLookupCompanyName: v || null });
+  }, [updateSettingsPath]);
   const [addressOverride, setAddressOverride] = useState(null);
   const [cityOverride, setCityOverride] = useState(null);
   const [stateColumnOverride, setStateColumnOverride] = useState(null);
@@ -1617,7 +1655,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             ? (state || stateColInput || countryLabel || '')
             : (stateColInput || countryLabel || '');
         })(),
-        __companyName__: inputCompanyName || null,
+        __companyName__: (inputCompanyName || portfolioCompanyName) || null,
         __propertyTypeRaw__: inputPropertyType || null,
         __propertyType__: canonicalPropertyType,
         __segment__: segment,
@@ -1657,7 +1695,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         __matched__: !!match || electricUtilityTokens.length > 0 || gasUtilityTokens.length > 0,
       };
     });
-  }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, companyNameOverride, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, segmentOverride, siteDescriptionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
+  }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, companyNameOverride, portfolioCompanyName, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, segmentOverride, siteDescriptionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
 
   // Sites fed to the Building Compliance Screening subtab. Built from the
   // processed rows so each site carries the derived square footage, property
@@ -3375,6 +3413,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
   async function saveIndicativeSavingsToCompany(prospect) {
     if (!prospect?.id) return;
+    // Picking a company to save to also names the whole portfolio, so the
+    // company flows onto every Utility Lookup subtab (incl. Corporate
+    // Compliance) — not just the saved export file.
+    setPortfolioCompanyName(prospect.company);
     setSaveStatus({ state: 'saving', message: `Saving to ${prospect.company || 'company'}…` });
     try {
       const result = await exportIndicativeSavings({ returnBuffer: true, companyName: prospect.company });
@@ -11171,7 +11213,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         )}
       </div>
 
-      <CompanySiteListLookup prospects={prospects} companySiteLists={settings?.companySiteLists || {}} />
+      <CompanySiteListLookup
+        prospects={prospects}
+        companySiteLists={settings?.companySiteLists || {}}
+        onUseCompany={setPortfolioCompanyName}
+        activeCompany={portfolioCompanyName}
+      />
 
       {savePickerSearch !== null && createPortal(
         <div
