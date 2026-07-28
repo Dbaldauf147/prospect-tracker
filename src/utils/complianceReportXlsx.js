@@ -283,9 +283,9 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
       totalN: v.bbsN + v.auditsN + v.bpsN,
     })).sort((a, b) => b.totalP - a.totalP || b.totalN - a.totalN || a.government.localeCompare(b.government));
   })();
-  // Cell text: penalty with the eligible-site count in parentheses; a dash
+  // Cell text: penalty with the eligible-site count in parentheses; blank
   // when a jurisdiction has neither a penalty nor an eligible site here.
-  const cellPN = (penalty, count) => (count === 0 && penalty === 0) ? '—' : `${usd(penalty)} (${count})`;
+  const cellPN = (penalty, count) => (count === 0 && penalty === 0) ? '' : `${usd(penalty)} (${count})`;
   styleHeaderRow(ws.getRow(r), ['Jurisdiction', 'BBS', 'Energy Audits', 'BPS', 'Total / yr', '', '', '']);
   r += 1;
   exposure.forEach((row, i) => {
@@ -341,7 +341,7 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
     'Upcoming Deadline', 'Compliance Government', 'BPS Fines for Exceeding Limits',
     'Number of eligible sites', 'Sum of Est. Penalty for non-reporting on BPS', 'Fee for exceeding limits', '', '',
   ]);
-  for (let ci = 0; ci < 6; ci++) bpsHdrRow.getCell(ci + 1).alignment = { vertical: 'middle', horizontal: ci === 0 || ci === 1 ? 'left' : 'right', indent: 1, wrapText: true };
+  for (let ci = 0; ci < 6; ci++) bpsHdrRow.getCell(ci + 1).alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: ci !== 5 };
   bpsHdrRow.height = 30;
   r += 1;
   if (!bpsRows.length) {
@@ -355,20 +355,19 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
     bpsRows.forEach((g, i) => {
       const rr2 = ws.getRow(r);
       const vals = [
-        g.deadline ? mdY(g.deadline) : '—',
-        g.government || '—',
+        g.deadline ? mdY(g.deadline) : '',
+        g.government || '',
         g.fine,
         g.sites,
-        g.penaltyKnown ? g.penalty : '—',
+        g.penaltyKnown ? g.penalty : '',
         g.feeExceeding,
       ];
       vals.forEach((v, ci) => {
         const cell = rr2.getCell(ci + 1);
         cell.value = v;
         if (ci === 4 && g.penaltyKnown) cell.numFmt = '"$"#,##0';
-        const numeric = ci === 3 || ci === 4;
         cell.font = { name: FONT, size: 10, bold: ci === 0 || ci === 1, italic: ci === 5, color: { argb: ci === 0 || ci === 1 ? INK : SLATE } };
-        cell.alignment = { vertical: 'middle', horizontal: numeric ? 'right' : 'left', indent: 1, wrapText: ci === 5 };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: false };
         if (i % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
         cell.border = { bottom: { style: 'hair', color: { argb: LINE } } };
       });
@@ -571,7 +570,7 @@ function buildSiteDetailSheet(wb, results, meta) {
       const applicable = !!(e && e.active && e.eligible === true);
       const c0 = 7 + ci * 3;
       const appCell = row.getCell(c0);
-      appCell.value = applicable ? 'Yes' : (r.matched ? 'No' : '—');
+      appCell.value = applicable ? 'Yes' : (r.matched ? 'No' : '');
       appCell.font = { name: FONT, size: 9.5, bold: applicable, color: { argb: applicable ? argb(CATEGORY_COLOR[cat]) : 'FF94A3B8' } };
       appCell.alignment = { vertical: 'middle', horizontal: 'center' };
       const dlCell = row.getCell(c0 + 1);
