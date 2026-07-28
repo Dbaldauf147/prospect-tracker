@@ -228,11 +228,31 @@ function answerSelectStyle(val) {
 // Answering "Yes" reveals the regulations that jurisdiction may trigger
 // (from the reference data). `answers` is this company's saved map
 // ({ california: 'Yes', ... }); `onSet(key, value)` persists one answer.
-function JurisdictionScreening({ answers, caSiteCount = 0, onSet, disabled }) {
+// The "Research answers" button asks Claude (web search) to fill them all
+// in; `research` holds the last run's per-question rationale + sources.
+function JurisdictionScreening({ answers, caSiteCount = 0, onSet, disabled, onResearch, researching, researchError, research }) {
   return (
     <div style={{ marginTop: '0.6rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.5rem' }}>
-      <div style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)', marginBottom: '0.35rem' }}>
-        Jurisdiction screening
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem', marginBottom: '0.35rem' }}>
+        <span style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)' }}>
+          Jurisdiction screening
+        </span>
+        {!disabled && (
+          <button
+            type="button"
+            onClick={onResearch}
+            disabled={researching}
+            title="Use Claude (with web search) to answer all six questions for this company. You can still edit any answer."
+            style={{
+              fontSize: '0.62rem', fontWeight: 700, fontFamily: 'inherit',
+              padding: '0.15rem 0.5rem', borderRadius: 999, cursor: researching ? 'default' : 'pointer',
+              border: '1px solid var(--color-accent)', background: 'var(--color-surface)',
+              color: 'var(--color-accent)', opacity: researching ? 0.5 : 1, whiteSpace: 'nowrap', flexShrink: 0,
+            }}
+          >
+            {researching ? 'Researching…' : (research ? 'Re-run answers' : 'Research answers')}
+          </button>
+        )}
       </div>
       {disabled ? (
         <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
@@ -243,6 +263,7 @@ function JurisdictionScreening({ answers, caSiteCount = 0, onSet, disabled }) {
           {JURISDICTION_QUESTIONS.map((q) => {
             const val = answers?.[q.key] || '';
             const regs = REGULATIONS_BY_JURISDICTION[q.key] || [];
+            const note = research?.notes?.[q.key] || '';
             return (
               <div key={q.key}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.4rem' }}>
@@ -263,6 +284,11 @@ function JurisdictionScreening({ answers, caSiteCount = 0, onSet, disabled }) {
                     {SCREENING_ANSWERS.map((a) => <option key={a} value={a}>{a}</option>)}
                   </select>
                 </div>
+                {note && (
+                  <div style={{ margin: '0.15rem 0 0', paddingLeft: '0.1rem', fontSize: '0.63rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
+                    {note}
+                  </div>
+                )}
                 {val === 'Yes' && regs.length > 0 && (
                   <ul style={{ margin: '0.25rem 0 0', paddingLeft: '0.95rem', fontSize: '0.65rem', color: 'var(--color-text-muted)', display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
                     {regs.map((r) => (
@@ -277,6 +303,25 @@ function JurisdictionScreening({ answers, caSiteCount = 0, onSet, disabled }) {
               </div>
             );
           })}
+          {researchError && (
+            <div style={{ fontSize: '0.63rem', color: '#B91C1C' }}>{researchError}</div>
+          )}
+          {research && (research.summary || (research.sources && research.sources.length > 0) || research.savedAt) && (
+            <div style={{ marginTop: '0.15rem', fontSize: '0.62rem', color: 'var(--color-text-muted)' }}>
+              {research.summary && <div style={{ fontStyle: 'italic', marginBottom: '0.2rem' }}>{research.summary}</div>}
+              {Array.isArray(research.sources) && research.sources.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.2rem 0.5rem' }}>
+                  {research.sources.slice(0, 6).map((s, i) => (
+                    <a key={i} href={s.url} target="_blank" rel="noreferrer" title={s.url}
+                      style={{ color: 'var(--color-accent)', textDecoration: 'none', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      ↗ {s.title || s.url}
+                    </a>
+                  ))}
+                </div>
+              )}
+              {research.savedAt && <div style={{ marginTop: '0.2rem' }}>answered {fmtStamp(research.savedAt)}</div>}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -421,6 +466,54 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
     }
   }, [updateSettingsPath]);
 
+  // Persisted compliance-research blobs (per-question verdicts + rationale
+  // + sources), keyed by the canonical company key so they line up with the
+  // screening answers. Transient loading / error lives in local state.
+  const complianceResearch = settings?.companyComplianceResearch || {};
+  const [screenState, setScreenState] = useState({});
+
+  // Ask Claude (web search) to answer all six gating questions, then fill
+  // the screening dropdowns and persist the run's rationale + sources — in
+  // ONE settings write. The user can still override any answer by hand.
+  const researchCompliance = useCallback(async (name, key) => {
+    const company = String(name || '').trim();
+    if (!company || company === UNNAMED || !key) return;
+    setScreenState(s => ({ ...s, [key]: { loading: true, error: null } }));
+    try {
+      const r = await apiFetch('/api/research-compliance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company }),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        let msg = `HTTP ${r.status}`;
+        try { msg = JSON.parse(txt).error || msg; } catch { msg = txt.slice(0, 200) || msg; }
+        setScreenState(s => ({ ...s, [key]: { loading: false, error: msg } }));
+        return;
+      }
+      const data = await r.json();
+      const answers = data.answers || {};
+      const updates = {};
+      // Fill each dropdown: Yes/No are set, Unknown clears the answer (null).
+      for (const q of JURISDICTION_QUESTIONS) {
+        const a = answers[q.key];
+        updates[`corporateComplianceScreening.${key}.${q.key}`] = (a === 'Yes' || a === 'No') ? a : null;
+      }
+      // Keep the rationale + sources alongside so the card can explain itself.
+      updates[`companyComplianceResearch.${key}`] = {
+        notes: data.notes || {},
+        summary: String(data.summary || ''),
+        sources: Array.isArray(data.sources) ? data.sources : [],
+        savedAt: Date.now(),
+      };
+      setScreenState(s => ({ ...s, [key]: { loading: false, error: null } }));
+      if (updateSettingsPath) updateSettingsPath(updates);
+    } catch (err) {
+      setScreenState(s => ({ ...s, [key]: { loading: false, error: err?.message || 'Request failed' } }));
+    }
+  }, [updateSettingsPath]);
+
   // Re-scan when the company set or the synced list mappings change.
   const companyKey = companies.map(c => c.name).join('|');
   const [listMatches, setListMatches] = useState({});
@@ -525,6 +618,10 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                     caSiteCount={c.california}
                     disabled={!c.key}
                     onSet={(qKey, value) => setScreeningAnswer(c.key, qKey, value)}
+                    onResearch={() => researchCompliance(c.name, c.key)}
+                    researching={!!screenState[c.key]?.loading}
+                    researchError={screenState[c.key]?.error || null}
+                    research={complianceResearch[c.key] || null}
                   />
 
                   {/* Framework / List matches */}
