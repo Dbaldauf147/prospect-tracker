@@ -427,7 +427,7 @@ const EMPTY = {
 // Company-name normalizer shared with the list tabs so fuzzy matching
 // lines up: lowercased, accent-stripped, punctuation removed, common
 // corporate suffixes dropped.
-const PORTFOLIO_CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
+const PORTFOLIO_CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holding|holdings|group|grp)\b\.?/g;
 function normalizePortfolioCompany(name) {
   return String(name || '')
     .toLowerCase()
