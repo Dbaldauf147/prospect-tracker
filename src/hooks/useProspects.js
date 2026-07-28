@@ -11,7 +11,7 @@ function todayISO() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-export function useProspects(user) {
+export function useProspects(user, { settingsLoaded = true, onDuplicatesCollapsed } = {}) {
   const [prospects, setProspects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -19,6 +19,10 @@ export function useProspects(user) {
   const pausedRef = useRef(false);
   const unsubRef = useRef(null);
   const dedupeRanRef = useRef(false);
+  // Keep the collapse callback in a ref so wiring it doesn't re-run (and
+  // re-arm) the one-time auto-dedupe effect below.
+  const onCollapseRef = useRef(onDuplicatesCollapsed);
+  onCollapseRef.current = onDuplicatesCollapsed;
   // Always-current view of the loaded prospects so addProspect can check
   // for an existing record without a Firestore read.
   const prospectsRef = useRef([]);
@@ -63,8 +67,14 @@ export function useProspects(user) {
   // just an in-memory grouping. It only touches Firestore when actual
   // duplicates are found, and those deletions stream back through the
   // live subscription so every page self-heals without a manual step.
+  //
+  // Gate on settingsLoaded as well: collapsing a duplicate has to migrate
+  // the loser's account-id-keyed settings (Target Account mappings, etc.)
+  // onto the keeper, and that migration needs the loaded settings. Running
+  // before settings arrive would delete the copy and drop its mapping with
+  // no chance to move it.
   useEffect(() => {
-    if (loading || dedupeRanRef.current || !user) return;
+    if (loading || !settingsLoaded || dedupeRanRef.current || !user) return;
     dedupeRanRef.current = true;
     const groups = groupDuplicateProspects(prospectsRef.current);
     if (groups.length === 0) return; // clean: no I/O
@@ -74,11 +84,12 @@ export function useProspects(user) {
         if (result.removed > 0) {
           console.log(`Auto-removed ${result.removed} duplicate prospect(s) across ${result.groups} compan${result.groups === 1 ? 'y' : 'ies'}`);
         }
+        if (result.remaps?.length && onCollapseRef.current) onCollapseRef.current(result.remaps);
       } catch (err) {
         console.warn('Auto de-dupe failed:', err.message);
       }
     })();
-  }, [loading, user]);
+  }, [loading, settingsLoaded, user]);
 
   async function addProspect(prospect) {
     // Idempotent by company name, checked against the in-memory list (no
@@ -145,7 +156,11 @@ export function useProspects(user) {
   // Collapse duplicate prospects, keeping the richest record. The
   // onSnapshot listener stays live so the UI reflects the deletions as
   // they stream in.
-  const dedupe = useCallback(() => dedupeProspects(), []);
+  const dedupe = useCallback(async () => {
+    const result = await dedupeProspects();
+    if (result?.remaps?.length && onCollapseRef.current) onCollapseRef.current(result.remaps);
+    return result;
+  }, []);
 
   return { prospects, loading, error, addProspect, updateProspect, deleteProspect, replaceAll, findDuplicates, dedupe };
 }

@@ -265,6 +265,13 @@ export function groupDuplicateProspects(list) {
 export async function collapseDuplicateGroups(groups) {
   let removed = 0;
   const merged = [];
+  // loser-id → keeper-id for every removed duplicate. Prospect record
+  // fields are backfilled onto the keeper below, but ID-keyed maps that
+  // live in the *settings* doc (Target Account mappings, divisions, HQ
+  // regions) aren't reachable from here — callers use these remaps to move
+  // those entries onto the keeper so a mapping stored on a removed copy
+  // isn't silently orphaned.
+  const remaps = [];
   for (const { docs } of (groups || [])) {
     const keeper = docs[0];
     const losers = docs.slice(1);
@@ -277,6 +284,7 @@ export async function collapseDuplicateGroups(groups) {
       }
     }
     if (Object.keys(patch).length > 0) await updateProspect(keeper.id, patch);
+    for (const l of losers) remaps.push({ from: l.id, to: keeper.id });
     for (let i = 0; i < losers.length; i += 400) {
       const batch = writeBatch(db);
       losers.slice(i, i + 400).forEach(l => batch.delete(getDoc(l.id)));
@@ -285,7 +293,7 @@ export async function collapseDuplicateGroups(groups) {
     }
     merged.push({ company: keeper.company, removed: losers.length });
   }
-  return { groups: groups?.length || 0, removed, merged };
+  return { groups: groups?.length || 0, removed, merged, remaps };
 }
 
 // Read the live collection and return its duplicate groups. Used by the

@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
 import { getHubspotContacts } from './utils/hubspotContactsCache';
 import { useAuth } from './contexts/AuthContext';
 import { useProspects } from './hooks/useProspects';
 import { userLsGet, userLsSet } from './utils/userLs';
 import { runProspectBackfill, formatBackfillReport, BACKFILL_PASSES } from './utils/peOwnerBackfill';
+import { migrateIdKeyedSettings } from './utils/dedupeSettingsMigration';
 import { useSheetSync } from './hooks/useSheetSync';
 import { useFilters } from './hooks/useFilters';
 import { useUserSettings } from './hooks/useUserSettings';
@@ -49,8 +50,28 @@ const EMPTY_OBJ = Object.freeze({});
 
 function App() {
   const { user, isAdmin, loading: authLoading, authError, signInWithEmail, createAccount, resetPassword, logout } = useAuth();
-  const { prospects, loading: dataLoading, addProspect, updateProspect, deleteProspect, replaceAll, findDuplicates, dedupe } = useProspects(user);
   const { settings, loaded: settingsLoaded, updateSettings, updateSettingsPath } = useUserSettings(user);
+
+  // Live ref to settings so the de-dupe migration callback — which can fire
+  // asynchronously well after this render — reads the current maps instead
+  // of a value captured in a stale closure.
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+
+  // When the auto/manual de-dupe collapses duplicate accounts, move the
+  // removed copies' account-id-keyed settings (Target Account mappings,
+  // divisions, HQ regions) onto the surviving account so a hand-set mapping
+  // isn't orphaned to a deleted id and lost.
+  const handleDuplicatesCollapsed = useCallback((remaps) => {
+    const patch = migrateIdKeyedSettings(settingsRef.current, remaps);
+    if (patch) {
+      console.log('Migrated account-keyed settings after de-dupe:', Object.keys(patch));
+      updateSettings(patch);
+    }
+  }, [updateSettings]);
+
+  const { prospects, loading: dataLoading, addProspect, updateProspect, deleteProspect, replaceAll, findDuplicates, dedupe } =
+    useProspects(user, { settingsLoaded, onDuplicatesCollapsed: handleDuplicatesCollapsed });
 
   // The CDM name to filter and default new-prospect ownership against.
   // Stored per-user in userSettings.cdmName; the admin account falls back
