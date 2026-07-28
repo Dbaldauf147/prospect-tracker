@@ -98,7 +98,7 @@ function categoryPanel(title, color, total, totalLabel, barsSvg) {
 
 // A category "chip" for the roadmap table cells.
 function catChip(c, n) {
-  if (!n) return `<span class="rmZero">—</span>`;
+  if (!n) return '';
   return `<span class="rmChip" style="background:${CATEGORY_COLOR[c]}1A;color:${CATEGORY_COLOR[c]};border-color:${CATEGORY_COLOR[c]}66">${n}</span>`;
 }
 
@@ -207,9 +207,9 @@ export function buildComplianceReportHtml(results, meta = {}) {
       <thead><tr><th>Jurisdiction</th><th>BBS</th><th>Energy Audits</th><th>BPS</th><th>Total / yr</th></tr></thead>
       <tbody>${rows.map(r => `<tr>
         <td class="rmDate">${esc(r.government)}</td>
-        <td>${r.bbs ? usd(r.bbs) : '<span class="rmZero">—</span>'}</td>
-        <td>${r.audits ? usd(r.audits) : '<span class="rmZero">—</span>'}</td>
-        <td>${r.bps ? usd(r.bps) : '<span class="rmZero">—</span>'}</td>
+        <td>${r.bbs ? usd(r.bbs) : ''}</td>
+        <td>${r.audits ? usd(r.audits) : ''}</td>
+        <td>${r.bps ? usd(r.bps) : ''}</td>
         <td class="rmTotal">${usd(r.total)}</td>
       </tr>`).join('')}
       <tr class="rmSum"><td>All jurisdictions</td><td>${usd(tot.bbs)}</td><td>${usd(tot.audits)}</td><td>${usd(tot.bps)}</td><td class="rmTotal">${usd(tot.total)}</td></tr>
@@ -228,11 +228,11 @@ export function buildComplianceReportHtml(results, meta = {}) {
       <th class="bpsNumH">Sum of Est. Penalty for non-reporting on BPS</th><th>Fee for exceeding limits</th>
     </tr></thead>
     <tbody>${bpsRows.map(g => `<tr>
-      <td class="rmDate">${esc(g.deadline ? mdY(g.deadline) : '—')}</td>
-      <td class="rmDate">${esc(g.government || '—')}</td>
+      <td class="rmDate">${esc(g.deadline ? mdY(g.deadline) : '')}</td>
+      <td class="rmDate">${esc(g.government || '')}</td>
       <td>${esc(g.fine)}</td>
       <td class="bpsNum">${g.sites.toLocaleString('en-US')}</td>
-      <td class="bpsNum">${g.penaltyKnown ? usd(g.penalty) : '—'}</td>
+      <td class="bpsNum">${g.penaltyKnown ? usd(g.penalty) : ''}</td>
       <td class="bpsFee">${esc(g.feeExceeding)}</td>
     </tr>`).join('')}</tbody>
   </table>` : '<div class="empty">No BPS-eligible sites across the screened portfolio.</div>';
@@ -266,7 +266,7 @@ export function buildComplianceReportHtml(results, meta = {}) {
   // apply (busiest sites first), then jurisdiction, then name.
   const siteCell = (r, c) => {
     const e = r[c];
-    if (!e || !e.active || e.eligible !== true) return '<span class="rmZero">—</span>';
+    if (!e || !e.active || e.eligible !== true) return '';
     const dl = e.deadline ? mdY(e.deadline) : (e.deadlineRaw || '');
     const pen = e.penalty != null ? usd(e.penalty) + '/yr' : '';
     return `<span class="sdChip" style="background:${CATEGORY_COLOR[c]}1A;color:${CATEGORY_COLOR[c]};border-color:${CATEGORY_COLOR[c]}66">Applicable</span>`
@@ -281,10 +281,10 @@ export function buildComplianceReportHtml(results, meta = {}) {
   const siteTable = siteRows.length ? `<table class="sdTable">
     <thead><tr><th>Site</th><th>City / State</th><th>Jurisdiction</th><th class="sdNumH">Sq Ft</th><th>BBS</th><th>Energy Audits</th><th>BPS</th></tr></thead>
     <tbody>${siteRows.map(r => `<tr>
-      <td class="sdName">${esc(r.siteName || '—')}</td>
-      <td>${esc([r.city, r.state].filter(Boolean).join(', ') || '—')}</td>
+      <td class="sdName">${esc(r.siteName || '')}</td>
+      <td>${esc([r.city, r.state].filter(Boolean).join(', ') || '')}</td>
       <td>${r.matched ? esc(r.government || '') + (r.govId ? ` <span class="sdGov">${esc(r.govId)}</span>` : '') : '<span class="rmZero">no match</span>'}</td>
-      <td class="sdNum">${r.sqft != null && Number.isFinite(Number(r.sqft)) ? Number(r.sqft).toLocaleString('en-US') : '—'}</td>
+      <td class="sdNum">${r.sqft != null && Number.isFinite(Number(r.sqft)) ? Number(r.sqft).toLocaleString('en-US') : ''}</td>
       <td>${siteCell(r, 'bbs')}</td>
       <td>${siteCell(r, 'audits')}</td>
       <td>${siteCell(r, 'bps')}</td>

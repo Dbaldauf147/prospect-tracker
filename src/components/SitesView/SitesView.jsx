@@ -7362,17 +7362,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             const cell = summarySheet.getCell(bpsHdrRowNum, h.c);
             cell.value = h.t;
             cell.font = { name: 'Nunito Sans', bold: true, size: 9, color: { argb: SE_SLATE } };
-            cell.alignment = { vertical: 'middle', horizontal: h.c >= 4 ? 'right' : 'left', indent: 1, wrapText: true };
+            cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: h.c !== 7 };
             cell.border = { bottom: { style: 'thin', color: { argb: SE_BORDER } } };
           });
           summarySheet.getRow(bpsHdrRowNum).height = 28;
           for (const g of bpsRows) {
             const rowNum = sumRow++;
             const cells = [
-              { c: 1, v: g.deadline ? `${Number(g.deadline.split('-')[1])}/${Number(g.deadline.split('-')[2])}/${g.deadline.split('-')[0]}` : '—', align: 'left', bold: true, dark: true },
-              { c: 2, v: g.government || '—', align: 'left', bold: true, dark: true },
+              { c: 1, v: g.deadline ? `${Number(g.deadline.split('-')[1])}/${Number(g.deadline.split('-')[2])}/${g.deadline.split('-')[0]}` : '', align: 'left', bold: true, dark: true },
+              { c: 2, v: g.government || '', align: 'left', bold: true, dark: true },
               { c: 3, v: g.fine, align: 'left' },
-              { c: 4, v: g.sites, align: 'right', dark: true },
+              { c: 4, v: g.sites, align: 'left', dark: true },
             ];
             cells.forEach(cd => {
               const cell = summarySheet.getCell(rowNum, cd.c);
@@ -7382,15 +7382,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             });
             summarySheet.mergeCells(rowNum, 5, rowNum, 6);
             const penCell = summarySheet.getCell(rowNum, 5);
-            penCell.value = g.penaltyKnown ? g.penalty : '—';
+            penCell.value = g.penaltyKnown ? g.penalty : '';
             if (g.penaltyKnown) penCell.numFmt = '"$"#,##0';
             penCell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_TEXT_DARK } };
-            penCell.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
+            penCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
             summarySheet.mergeCells(rowNum, 7, rowNum, 8);
             const feeCell = summarySheet.getCell(rowNum, 7);
             feeCell.value = g.feeExceeding;
             feeCell.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: SE_SLATE } };
-            feeCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+            feeCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: false };
             summarySheet.getRow(rowNum).height = 18;
           }
           summarySheet.getRow(sumRow++).height = 6; // spacer
