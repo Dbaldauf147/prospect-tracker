@@ -1336,6 +1336,20 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     setCritique(null);
   }
 
+  // The saved-draft list is capped so it never grows unbounded, but that cap
+  // applies to UNPINNED drafts only: every pinned draft is kept, plus at most
+  // the 5 most recent unpinned ones (the list is newest-first). Pinning a
+  // draft therefore protects it from being auto-removed.
+  const UNPINNED_DRAFT_LIMIT = 5;
+  function capUnpinnedDrafts(list) {
+    let unpinned = 0;
+    return list.filter(d => {
+      if (d.pinned) return true;
+      unpinned += 1;
+      return unpinned <= UNPINNED_DRAFT_LIMIT;
+    });
+  }
+
   function saveDraft() {
     // Quill wraps empty content in <p><br></p> — check for actual content
     const bodyText = body.replace(/<[^>]*>/g, '').trim();
@@ -1347,13 +1361,18 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       contacts: selectedContacts,
       cc: draftCc,
       createdAt: new Date().toISOString(),
+      pinned: false,
     };
-    // Keep only the 5 most recent drafts — older ones are dropped
-    // automatically so the list never grows unbounded.
-    const updated = [draft, ...drafts].slice(0, 5);
+    const updated = capUnpinnedDrafts([draft, ...drafts]);
     setDrafts(updated);
     setResult({ type: 'success', message: 'Draft saved' });
     setTimeout(() => setResult(null), 3000);
+  }
+
+  // Pin / unpin a saved draft. Pinned drafts are exempt from the auto-drop
+  // cap in saveDraft, so they stick around until deleted by hand.
+  function togglePin(id) {
+    setDrafts(drafts.map(d => (d.id === id ? { ...d, pinned: !d.pinned } : d)));
   }
 
   function loadDraft(draft) {
@@ -2514,9 +2533,10 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
             />
           </div>
 
-          {/* Saved drafts — sits below Variable Coverage. Only the 5
-              most recent drafts are kept; older ones are dropped
-              automatically when a new draft is saved. */}
+          {/* Saved drafts — sits below Variable Coverage. Unpinned drafts are
+              capped at the 5 most recent (older ones drop automatically when a
+              new draft is saved); pinned drafts (📌) are exempt and kept until
+              deleted by hand. */}
           <div className={`${styles.draftsCard} ${styles.coverageCard}`}>
             <div className={styles.draftsHeader}>
               <h3 className={styles.cardTitle}>Saved Drafts ({drafts.length})</h3>
@@ -2529,19 +2549,32 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
             {drafts.length === 0 ? (
               <p className={styles.emptyDrafts}>No saved drafts yet</p>
             ) : (
-              <div className={styles.draftsList}>
-                {drafts.map(d => (
-                  <div key={d.id} className={styles.draftItem}>
-                    <button className={styles.draftLoad} onClick={() => loadDraft(d)}>
-                      <span className={styles.draftSubject}>{d.subject || '(No subject)'}</span>
-                      <span className={styles.draftMeta}>
-                        {d.contacts?.length || 0} contact{(d.contacts?.length || 0) !== 1 ? 's' : ''} · {new Date(d.createdAt).toLocaleDateString()}
-                      </span>
-                    </button>
-                    <button className={styles.draftDelete} onClick={() => deleteDraft(d.id)}>&times;</button>
-                  </div>
-                ))}
-              </div>
+              <>
+                <p className={styles.draftsHint}>
+                  Only the 5 most recent drafts are kept automatically. Pin a draft (📌) to keep it from being removed.
+                </p>
+                <div className={styles.draftsList}>
+                  {[...drafts]
+                    .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0))
+                    .map(d => (
+                      <div key={d.id} className={`${styles.draftItem} ${d.pinned ? styles.draftItemPinned : ''}`}>
+                        <button
+                          className={`${styles.draftPin} ${d.pinned ? styles.draftPinActive : ''}`}
+                          onClick={() => togglePin(d.id)}
+                          aria-pressed={d.pinned}
+                          title={d.pinned ? 'Pinned — kept from auto-removal. Click to unpin.' : 'Pin to keep this draft from being auto-removed.'}
+                        >📌</button>
+                        <button className={styles.draftLoad} onClick={() => loadDraft(d)}>
+                          <span className={styles.draftSubject}>{d.subject || '(No subject)'}</span>
+                          <span className={styles.draftMeta}>
+                            {d.contacts?.length || 0} contact{(d.contacts?.length || 0) !== 1 ? 's' : ''} · {new Date(d.createdAt).toLocaleDateString()}
+                          </span>
+                        </button>
+                        <button className={styles.draftDelete} onClick={() => deleteDraft(d.id)}>&times;</button>
+                      </div>
+                    ))}
+                </div>
+              </>
             )}
           </div>
         </div>
