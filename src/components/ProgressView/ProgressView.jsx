@@ -92,7 +92,7 @@ function withGreenKeys(data, series) {
   });
 }
 
-function ProgressChart({ title, data, series, isPct, defaultView = 'line', secondarySeries, onHide, onRename, onViewChange, pins = [], onTogglePin, onClearPins }) {
+function ProgressChart({ title, data, series, isPct, defaultView = 'line', secondarySeries, onHide, onRename, onViewChange, pins = [], onTogglePin, onClearPins, onDownload }) {
   const [viewType, setViewType] = useState(defaultView);
   // Persist the picked view so it becomes this chart's default next visit.
   const changeView = (v) => { setViewType(v); if (onViewChange) onViewChange(v); };
@@ -172,6 +172,16 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
               <option key={opt.key} value={opt.key}>{opt.label}</option>
             ))}
           </select>
+          {onDownload && (
+            <button
+              type="button"
+              onClick={onDownload}
+              title="Download this chart's raw weekly data (Excel)"
+              style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: 5, color: 'var(--color-text-secondary)', cursor: 'pointer', padding: '0.1rem 0.45rem', fontSize: '0.8rem', lineHeight: 1, fontFamily: 'inherit' }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = '#059669'; e.currentTarget.style.borderColor = '#6EE7B7'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-secondary)'; e.currentTarget.style.borderColor = 'var(--color-border)'; }}
+            >⬇</button>
+          )}
           {onHide && (
             <button
               type="button"
@@ -988,11 +998,12 @@ export function ProgressView({ prospects, settings, cdmName }) {
     return new Date(w + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   }
 
-  // Export the raw weekly data behind the charts to Excel: a combined
-  // "All Data" sheet plus one sheet per chart (columns = that chart's
-  // series, rows = weeks). Reads PROGRESS_CHART_DEFS so the download always
-  // mirrors exactly what the charts plot, honoring any renamed titles.
-  async function downloadChartsData() {
+  // Export the raw weekly data behind the charts to Excel. With no argument
+  // it exports every chart — a combined "All Data" sheet plus one sheet per
+  // chart. Passed a single chart def, it exports just that chart. Reads
+  // PROGRESS_CHART_DEFS so the download always mirrors what the charts plot,
+  // honoring any renamed titles.
+  async function downloadChartsData(onlyDef) {
     if (!chartData.length) return;
     const XLSX = await import('xlsx');
     const wb = XLSX.utils.book_new();
@@ -1007,37 +1018,43 @@ export function ProgressView({ prospects, settings, cdmName }) {
       usedNames.add(name.toLowerCase());
       return name;
     };
-
-    // Combined sheet: Week + every series across all charts (deduped by
-    // key). Column headers are prefixed with the chart title since several
-    // charts reuse series names like "Tier 1" — the prefix keeps them
-    // unambiguous in the single flat sheet.
-    const combinedCols = [];
-    const seenKeys = new Set();
-    for (const c of PROGRESS_CHART_DEFS) {
-      const chartTitle = titleFor(c.id, c.label);
-      for (const s of [...c.series, ...(c.secondarySeries || [])]) {
-        if (!seenKeys.has(s.key)) { seenKeys.add(s.key); combinedCols.push({ key: s.key, header: `${chartTitle} — ${s.name}` }); }
-      }
-    }
-    const combined = [['Week', 'Week Start', ...combinedCols.map(s => s.header)]];
-    for (const row of chartData) {
-      combined.push([row.weekLabel, row.week, ...combinedCols.map(s => (row[s.key] == null ? '' : row[s.key]))]);
-    }
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(combined), uniqueSheetName('All Data'));
-
-    // One sheet per chart with just that chart's columns.
-    for (const c of PROGRESS_CHART_DEFS) {
-      const cols = [...c.series, ...(c.secondarySeries || [])];
-      const aoa = [['Week', 'Week Start', ...cols.map(s => s.name)]];
+    const appendChartSheet = (def, headerNames) => {
+      const cols = [...def.series, ...(def.secondarySeries || [])];
+      const aoa = [['Week', 'Week Start', ...cols.map((s, i) => (headerNames ? headerNames[i] : s.name))]];
       for (const row of chartData) {
         aoa.push([row.weekLabel, row.week, ...cols.map(s => (row[s.key] == null ? '' : row[s.key]))]);
       }
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), uniqueSheetName(titleFor(c.id, c.label), c.id));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), uniqueSheetName(titleFor(def.id, def.label), def.id));
+    };
+
+    const defs = onlyDef ? [onlyDef] : PROGRESS_CHART_DEFS;
+
+    // For the full export, lead with a combined sheet: Week + every series
+    // across all charts (deduped by key). Column headers are prefixed with
+    // the chart title since several charts reuse series names like "Tier 1".
+    if (!onlyDef) {
+      const combinedCols = [];
+      const seenKeys = new Set();
+      for (const c of PROGRESS_CHART_DEFS) {
+        const chartTitle = titleFor(c.id, c.label);
+        for (const s of [...c.series, ...(c.secondarySeries || [])]) {
+          if (!seenKeys.has(s.key)) { seenKeys.add(s.key); combinedCols.push({ key: s.key, header: `${chartTitle} — ${s.name}` }); }
+        }
+      }
+      const combined = [['Week', 'Week Start', ...combinedCols.map(s => s.header)]];
+      for (const row of chartData) {
+        combined.push([row.weekLabel, row.week, ...combinedCols.map(s => (row[s.key] == null ? '' : row[s.key]))]);
+      }
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(combined), uniqueSheetName('All Data'));
     }
 
+    for (const c of defs) appendChartSheet(c);
+
     const stamp = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(wb, `Weekly Progress Charts - ${stamp}.xlsx`);
+    const fileBase = onlyDef
+      ? `${titleFor(onlyDef.id, onlyDef.label).replace(/[\\/?*[\]:]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)} - data`
+      : 'Weekly Progress Charts';
+    XLSX.writeFile(wb, `${fileBase} - ${stamp}.xlsx`);
   }
 
   if (loading) return <div style={{ padding: '2rem', color: 'var(--color-text-muted)' }}>Loading...</div>;
@@ -1139,11 +1156,11 @@ export function ProgressView({ prospects, settings, cdmName }) {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.5rem', position: 'relative' }}>
             <button
               type="button"
-              onClick={downloadChartsData}
-              title="Download an Excel workbook with the raw weekly data behind every chart (one sheet per chart)"
-              style={{ padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', borderRadius: 6, background: 'var(--color-surface)', color: 'var(--color-text-secondary)', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+              onClick={() => downloadChartsData()}
+              title="Download an Excel workbook with the raw weekly data behind every chart — a combined sheet plus one sheet per chart"
+              style={{ padding: '0.3rem 0.8rem', border: '1px solid #059669', borderRadius: 6, background: '#059669', color: '#fff', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
             >
-              ⬇ Excel
+              ⬇ Excel (raw data)
             </button>
             <button
               type="button"
@@ -1183,6 +1200,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
                 pins={chartPins[c.id] || []}
                 onTogglePin={(wk) => toggleChartPin(c.id, wk)}
                 onClearPins={() => clearChartPins(c.id)}
+                onDownload={() => downloadChartsData(c)}
               />
             ))}
           </div>
