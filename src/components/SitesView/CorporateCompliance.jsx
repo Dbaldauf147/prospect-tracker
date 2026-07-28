@@ -24,6 +24,18 @@ const isCalifornia = (state) => {
   return s === 'ca' || s === 'california';
 };
 
+// Canonical key for a company, using the SAME normalization the page uses
+// to match company names from the uploaded Utility Lookup file
+// (companyNorm — lower-cased, corporate suffixes and punctuation stripped).
+// Screening answers are saved under this key so a company keeps its
+// answers regardless of cosmetic name differences ("Acme Inc" vs
+// "ACME, INC."), and name variants collapse onto one company. Hyphenated
+// so it is safe as a Firestore dotted field-path segment (no dots).
+function companyKeyOf(name) {
+  const norm = normalizeCompany(name);
+  return norm ? norm.replace(/\s+/g, '-') : '';
+}
+
 // Same fuzzy scorer the prospect-modal "Matches across Lists" panel uses,
 // so a company reads the same way here as it does there.
 function fuzzyScore(rowNorm, companyNorm) {
@@ -324,14 +336,19 @@ function RegulationReference() {
 
 export default function CorporateCompliance({ sites = [], settings, updateSettingsPath }) {
   const companies = useMemo(() => {
-    const byCompany = new Map();
+    // Group by the canonical company key (the file-matching identity), so
+    // name variants collapse onto one company and its saved answers.
+    const byKey = new Map();
     for (const site of sites) {
-      const name = String(site.company || '').trim() || UNNAMED;
-      if (!byCompany.has(name)) {
-        byCompany.set(name, { name, total: 0, california: 0, caSites: [] });
+      const rawName = String(site.company || '').trim();
+      const key = companyKeyOf(rawName);
+      const mapKey = key || '__unnamed__';
+      if (!byKey.has(mapKey)) {
+        byKey.set(mapKey, { key, total: 0, california: 0, caSites: [], names: new Map() });
       }
-      const entry = byCompany.get(name);
+      const entry = byKey.get(mapKey);
       entry.total += 1;
+      if (rawName) entry.names.set(rawName, (entry.names.get(rawName) || 0) + 1);
       if (isCalifornia(site.state)) {
         entry.california += 1;
         if (site.siteName || site.city) {
@@ -339,7 +356,19 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
         }
       }
     }
-    return [...byCompany.values()].sort(
+    // Display name = the most common raw spelling in the group (tie-break:
+    // longer, then alphabetical) so the label is stable across sessions.
+    const out = [...byKey.values()].map((e) => {
+      let name = UNNAMED;
+      let bestCount = -1;
+      for (const [n, c] of e.names) {
+        if (c > bestCount || (c === bestCount && (n.length > name.length || (n.length === name.length && n < name)))) {
+          name = n; bestCount = c;
+        }
+      }
+      return { key: e.key, name, total: e.total, california: e.california, caSites: e.caSites };
+    });
+    return out.sort(
       (a, b) => b.california - a.california || b.total - a.total || a.name.localeCompare(b.name)
     );
   }, [sites]);
@@ -463,7 +492,7 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
             {companies.map((c) => {
               const matches = listMatches[c.name] || [];
               return (
-                <div key={c.name} style={{
+                <div key={c.key || c.name} style={{
                   border: '1px solid var(--color-border)', borderRadius: 8,
                   background: 'var(--color-surface)', padding: '0.75rem 0.9rem',
                 }}>
@@ -487,12 +516,15 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                     onResearch={() => researchRevenue(c.name)}
                   />
 
-                  {/* Jurisdiction screening — the six gating questions */}
+                  {/* Jurisdiction screening — the six gating questions.
+                      Keyed by the canonical company identity (c.key) so
+                      answers save against the matched company from the
+                      uploaded file, not a raw-name slug. */}
                   <JurisdictionScreening
-                    answers={screening[revenueSlug(c.name)] || null}
+                    answers={screening[c.key] || null}
                     caSiteCount={c.california}
-                    disabled={c.name === UNNAMED}
-                    onSet={(key, value) => setScreeningAnswer(revenueSlug(c.name), key, value)}
+                    disabled={!c.key}
+                    onSet={(qKey, value) => setScreeningAnswer(c.key, qKey, value)}
                   />
 
                   {/* Framework / List matches */}
