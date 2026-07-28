@@ -296,6 +296,53 @@ function detectMarketingLeadStatuses({ marketingLeads = [] }) {
   return issues;
 }
 
+// ---- BFO Opportunity Names not tagged to an opp on Opps ----
+// Mirrors the ⚠ warning on the BFO Activity / Agents pages: an Opportunity
+// Name in the pasted BFO Activity data that has no matching opp (by "BFO
+// Link") on the Opps tab. One issue row per untagged name so each can be
+// snoozed / actioned individually. Suppressed until the Opps cache has
+// loaded (tagged set empty) so we don't flag every row before there's
+// anything to match against — same guard the source pages use.
+const BFO_BLANK_SENTINELS = new Set(['', '-', '#n/a', 'n/a']);
+function bfoLinkName(r) {
+  const v = String(r?.['BFO Link'] || '').trim();
+  return BFO_BLANK_SENTINELS.has(v.toLowerCase()) ? '' : v;
+}
+function detectUntaggedBfoOppNames({ bfoActivity, oppsCache }) {
+  if (!bfoActivity?.headers?.length) return [];
+  const tagged = new Set();
+  for (const r of (oppsCache?.records || [])) {
+    const k = bfoLinkName(r).toLowerCase();
+    if (k) tagged.add(k);
+  }
+  if (tagged.size === 0) return [];
+  const oppCol = bfoActivity.headers.find(h => /opportunity\s*name/i.test(h));
+  if (!oppCol) return [];
+  const acctCol = bfoActivity.headers.find(h => /^account(\s*name)?$/i.test(String(h).trim()))
+    || bfoActivity.headers.find(h => /account/i.test(h));
+  const seen = new Set();
+  const issues = [];
+  for (const row of bfoActivity.rows) {
+    const raw = String(row[oppCol] || '').trim();
+    if (!raw) continue;
+    const k = raw.toLowerCase();
+    if (tagged.has(k) || seen.has(k)) continue;
+    seen.add(k);
+    const account = acctCol ? String(row[acctCol] || '').trim() : '';
+    issues.push({
+      id: `bfo-untagged:${k}`,
+      source: 'Opps',
+      type: 'BFO Opp not tagged',
+      company: account || raw,
+      prospectId: null,
+      daysUntil: null,
+      expirationDate: null,
+      detail: `BFO Opportunity Name "${raw}" is not tagged to an opp on Opps${account ? ` — from ${account}` : ''}`,
+    });
+  }
+  return issues;
+}
+
 // Active clients whose soonest contract End Date falls within `withinDays`
 // days (default 270 — the Clients-tab renewal-warning threshold). Mirrors
 // the Clients-tab row build: CDM match + Status = Client, untracked clients
@@ -335,7 +382,7 @@ export function computeExpiringClients({ prospects = [], cdmName, dealsList = []
 
 // Build the full list of outstanding issues. Each detector contributes
 // rows; add more detectors here as new issue classes are mapped.
-export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [] }) {
+export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null }) {
   const dealsByClient = groupDealsByClient(dealsList, clientMap);
   const issues = [];
   issues.push(...detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedMap }));
@@ -343,5 +390,6 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   issues.push(...detectMissingExpiration({ prospects, cdmName, dealsByClient, untrackedMap }));
   issues.push(...detectMyAccountsFlags({ myAccountsFlags, prospects }));
   issues.push(...detectMarketingLeadStatuses({ marketingLeads }));
+  issues.push(...detectUntaggedBfoOppNames({ bfoActivity, oppsCache }));
   return issues;
 }
