@@ -57,14 +57,17 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
   // cards (and Utility-feed panels); the rest are the wide card / table
   // columns. Keeping the gutters thin makes the cards read as wide tiles with
   // only a small white gap between them.
-  // Name columns (1/4/7) are kept narrow and the bar columns (2/5/8) wide so
-  // each card's data bar reads as a long bar with little trailing white space
-  // after the left-aligned jurisdiction name. Columns 3 and 6 are the thin
-  // gutters between cards; the penalty and BPS tables span across them (see
-  // their *_SPANS arrays) so wide values aren't clipped by a gutter.
+  // The eligibility-card bar columns (2/5/8) and the two utility-feed bar
+  // columns (4 for EP, 8 for NG) are all the same width (34) so every data
+  // bar — cards and feeds alike — is symmetric. The outer card name columns
+  // (1/7) stay narrow so short jurisdiction names sit close to their bars;
+  // column 4 doubles as the middle card's name and the EP feed bar, so it
+  // matches the other bar columns. Columns 3 and 6 are the thin gutters
+  // between cards; the penalty and BPS tables span across them (see their
+  // *_SPANS arrays) so wide values aren't clipped by a gutter.
   ws.columns = [
-    { width: 20 }, { width: 34 }, { width: 8 }, { width: 24 },
-    { width: 34 }, { width: 8 }, { width: 20 }, { width: 36 },
+    { width: 20 }, { width: 34 }, { width: 8 }, { width: 34 },
+    { width: 34 }, { width: 8 }, { width: 20 }, { width: 34 },
   ];
 
   const matched = results.filter(r => r.matched);
