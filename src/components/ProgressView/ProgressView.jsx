@@ -92,7 +92,7 @@ function withGreenKeys(data, series) {
   });
 }
 
-function ProgressChart({ title, data, series, isPct, defaultView = 'line', secondarySeries, onHide, onRename, onViewChange, pins = [], onTogglePin, onClearPins, onDownload }) {
+function ProgressChart({ title, data, series, isPct, defaultView = 'line', secondarySeries, onHide, onRename, onViewChange, pins = [], onTogglePin, onClearPins, onDownload, onDownloadPoint }) {
   const [viewType, setViewType] = useState(defaultView);
   // Persist the picked view so it becomes this chart's default next visit.
   const changeView = (v) => { setViewType(v); if (onViewChange) onViewChange(v); };
@@ -295,6 +295,14 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
                     );
                   })}
                 </span>
+                {onDownloadPoint && (
+                  <button
+                    type="button"
+                    onClick={() => onDownloadPoint(row.week)}
+                    title="Download the raw data feeding this pinned point (Excel)"
+                    style={{ background: 'none', border: 'none', color: '#059669', cursor: 'pointer', padding: 0, fontSize: '0.8rem', lineHeight: 1 }}
+                  >⬇</button>
+                )}
                 {onTogglePin && (
                   <button
                     type="button"
@@ -407,6 +415,49 @@ const PROGRESS_CHART_DEFS = [
     series: PE_STAGE_SERIES.map(s => ({ key: s.key, name: s.stage, color: s.color })),
     secondarySeries: [{ key: 'peTotal', name: 'Total PE Firms', color: '#111827' }] },
 ];
+
+// Build the account-level rows that PRODUCED a chart's data point for a
+// given week, from that week's saved `details` lists. Returns
+// { columns, rows } for the charts that store per-account drill-down, or
+// null for the count charts (tier totals, no-opps activity) that only
+// persist aggregates — those still get a summary sheet on export.
+function pointDetailRows(chartId, details) {
+  if (!details) return null;
+  const asStr = (v) => (typeof v === 'string' ? v : (v?.company || ''));
+  const yesNo = (metric, t1Yes, t1No, t2Yes, t2No) => {
+    const rows = [];
+    (details[t1Yes] || []).forEach(v => rows.push([asStr(v), 'Tier 1', 'Yes']));
+    (details[t1No] || []).forEach(v => rows.push([asStr(v), 'Tier 1', 'No']));
+    (details[t2Yes] || []).forEach(v => rows.push([asStr(v), 'Tier 2', 'Yes']));
+    (details[t2No] || []).forEach(v => rows.push([asStr(v), 'Tier 2', 'No']));
+    return { columns: ['Company', 'Tier', metric], rows };
+  };
+  switch (chartId) {
+    case 'contactPct':
+      return yesNo('Has HubSpot Contacts', 't1WithContacts', 't1NoContacts', 't2WithContacts', 't2NoContacts');
+    case 'dmPct':
+      return yesNo('Decision Maker Identified', 't1WithDM', 't1NoDM', 't2WithDM', 't2NoDM');
+    case 'connectedPct':
+      return yesNo('Connected (Had Opportunity)', 't1Connected', 't1NotConnected', 't2Connected', 't2NotConnected');
+    case 'inactivePct': {
+      // Only the inactive accounts (the numerator) are stored, each with
+      // its status. Those ARE the raw data behind the percentage.
+      const rows = [];
+      (details.t1Inactive || []).forEach(v => rows.push([asStr(v), 'Tier 1', typeof v === 'string' ? '' : (v.status || '')]));
+      (details.t2Inactive || []).forEach(v => rows.push([asStr(v), 'Tier 2', typeof v === 'string' ? '' : (v.status || '')]));
+      return { columns: ['Company', 'Tier', 'Inactive Status'], rows };
+    }
+    case 'peStages': {
+      const rows = [];
+      for (const s of PE_STAGE_SERIES) {
+        (details[s.key] || []).forEach(v => rows.push([asStr(v), s.stage]));
+      }
+      return { columns: ['Company', 'PE Stage'], rows };
+    }
+    default:
+      return null; // tierTotals, noOppsActivity — no per-account detail stored
+  }
+}
 function loadHiddenCharts() {
   try {
     const raw = localStorage.getItem(HIDDEN_CHARTS_KEY);
@@ -1057,6 +1108,41 @@ export function ProgressView({ prospects, settings, cdmName }) {
     XLSX.writeFile(wb, `${fileBase} - ${stamp}.xlsx`);
   }
 
+  // Export the raw data feeding a single PINNED data point: one specific
+  // chart at one specific week. Includes a Summary sheet with that week's
+  // plotted values and, when the chart stores per-account drill-down, an
+  // Accounts sheet listing the exact accounts that produced the point.
+  async function downloadPointData(def, weekKey) {
+    const row = chartData.find(d => d.week === weekKey);
+    if (!def || !row) return;
+    const XLSX = await import('xlsx');
+    const wb = XLSX.utils.book_new();
+    const title = titleFor(def.id, def.label);
+    const cols = [...def.series, ...(def.secondarySeries || [])];
+
+    // Summary: the plotted values for this week.
+    const summary = [
+      ['Chart', title],
+      ['Week', row.weekLabel],
+      ['Week Start', row.week],
+      [],
+      ['Series', 'Value'],
+      ...cols.map(s => [s.name, row[s.key] == null ? '' : (def.isPct && def.series.includes(s) ? `${row[s.key]}%` : row[s.key])]),
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), 'Summary');
+
+    // Accounts: the underlying rows that produced the point, when stored.
+    const detail = pointDetailRows(def.id, row.details);
+    if (detail && detail.rows.length) {
+      const aoa = [detail.columns, ...detail.rows];
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Accounts');
+    }
+
+    const safeTitle = title.replace(/[\\/?*[\]:]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 45);
+    const safeWeek = String(row.week).replace(/[\\/?*[\]:]/g, '-');
+    XLSX.writeFile(wb, `${safeTitle} - ${safeWeek}.xlsx`);
+  }
+
   if (loading) return <div style={{ padding: '2rem', color: 'var(--color-text-muted)' }}>Loading...</div>;
 
   return (
@@ -1201,6 +1287,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
                 onTogglePin={(wk) => toggleChartPin(c.id, wk)}
                 onClearPins={() => clearChartPins(c.id)}
                 onDownload={() => downloadChartsData(c)}
+                onDownloadPoint={(wk) => downloadPointData(c, wk)}
               />
             ))}
           </div>
