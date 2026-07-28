@@ -5609,16 +5609,38 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const firstRegionRow = tableHeaderRow + 1;
         const lastRegionRow = tableHeaderRow + regionRows.length;
 
-        // Hidden source table (cols 15–22 = O–V): 7 display columns plus the
-        // ISO label used as the FILTER match key, in rows 2..N+1. Kept in
-        // hidden columns clear of the visible layout so only the spilled
-        // result is ever seen.
+        // Row layout for the explorer, a few rows below the Overview total.
+        const secRow = lastRegionRow + 3;   // section header
+        const noteRow = secRow + 1;         // instruction line
+        const pickRow = noteRow + 1;        // label + dropdown
+        const listHdrRow = pickRow + 2;     // site-list header
+        const listStart = listHdrRow + 1;   // first site row
+        const pickRef = `$B$${pickRow}`;
+
+        // Hidden source table (cols O–W): 7 display columns, the ISO label as
+        // the match key (V), and a running match-rank helper (W) that numbers
+        // 1,2,3… down the rows of whichever market is picked. Kept in hidden
+        // columns clear of the visible layout so only the assembled list shows.
         const SRC_DISP0 = 15;  // first display column (O)
         const SRC_ISO = 22;    // ISO match-key column (V)
+        const SRC_RANK = 23;   // running match-rank column (W)
         const SRC_FIRST = 2;
         const SRC_LAST = SRC_FIRST + siteRecords.length - 1;
+        const L = (n) => ws.getColumn(n).letter;
+        const vCol = L(SRC_ISO);
+        const wCol = L(SRC_RANK);
+
+        // The list defaults to the top market; cache that view as each
+        // formula's stored result so the list is right on open even in a
+        // viewer that doesn't recalculate (the Master Analysis file is
+        // re-zipped after export, which can drop the recalc-on-open flag).
+        const defaultIso = regionRows[0].region.label;
+        const defaultMatches = siteRecords.filter(s => s.iso === defaultIso);
+
+        let defRank = 0;
         siteRecords.forEach((s, i) => {
-          const sr = ws.getRow(SRC_FIRST + i);
+          const rowNum = SRC_FIRST + i;
+          const sr = ws.getRow(rowNum);
           sr.getCell(SRC_DISP0 + 0).value = s.company;
           sr.getCell(SRC_DISP0 + 1).value = s.city;
           sr.getCell(SRC_DISP0 + 2).value = s.state;
@@ -5627,15 +5649,20 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           sr.getCell(SRC_DISP0 + 5).value = s.kwh;
           sr.getCell(SRC_DISP0 + 6).value = s.cost;
           sr.getCell(SRC_ISO).value = s.iso;
+          const isDefault = s.iso === defaultIso;
+          if (isDefault) defRank += 1;
+          sr.getCell(SRC_RANK).value = {
+            formula: `IF($${vCol}$${rowNum}=${pickRef},COUNTIF($${vCol}$${SRC_FIRST}:$${vCol}$${rowNum},${pickRef}),"")`,
+            result: isDefault ? defRank : '',
+          };
         });
-        for (let c = SRC_DISP0; c <= SRC_ISO; c++) {
+        for (let c = SRC_DISP0; c <= SRC_RANK; c++) {
           const col = ws.getColumn(c);
           if (!col.width) col.width = 12;
           col.hidden = true;
         }
 
-        // Explorer section header, a few rows below the Overview total.
-        const secRow = lastRegionRow + 3;
+        // Explorer section header.
         ws.mergeCells(secRow, 1, secRow, COLS);
         const secHdr = ws.getCell(secRow, 1);
         secHdr.value = 'ISO / RTO Site Explorer';
@@ -5644,22 +5671,20 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         secHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
         ws.getRow(secRow).height = 22;
 
-        const noteRow = secRow + 1;
         ws.mergeCells(noteRow, 1, noteRow, COLS);
         const note = ws.getCell(noteRow, 1);
-        note.value = 'Pick an ISO / RTO market from the dropdown to list its sites below. (The live list requires Excel 365 or Google Sheets.)';
+        note.value = 'Pick an ISO / RTO market from the dropdown to list its sites below.';
         note.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
         note.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
         ws.getRow(noteRow).height = 18;
 
         // Picker row: label + dropdown cell (data validation list).
-        const pickRow = noteRow + 1;
         const pickLabel = ws.getCell(pickRow, 1);
         pickLabel.value = 'ISO / RTO market:';
         pickLabel.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_TEXT_DARK } };
         pickLabel.alignment = { vertical: 'middle', horizontal: 'right' };
         const pickCell = ws.getCell(pickRow, 2);
-        pickCell.value = regionRows[0].region.label; // default to the top market
+        pickCell.value = defaultIso; // default to the top market
         pickCell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
         pickCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
         pickCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF7CC' } };
@@ -5682,7 +5707,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ws.getRow(pickRow).height = 20;
 
         // Site-list header row.
-        const listHdrRow = pickRow + 2;
         const listHeaders = ['Company', 'City', 'State / Province', 'ZIP', 'Electric Utility', 'Load (kWh)', 'Annual Cost ($)'];
         const lh = ws.getRow(listHdrRow);
         listHeaders.forEach((label, i) => {
@@ -5690,7 +5714,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           cell.value = label;
           cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          cell.alignment = { vertical: 'middle', horizontal: (i >= 5) ? 'right' : 'left', indent: 1 };
           cell.border = {
             top:    { style: 'thin', color: { argb: SE_BORDER } },
             bottom: { style: 'thin', color: { argb: SE_BORDER } },
@@ -5700,28 +5724,40 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         });
         lh.height = 22;
 
-        // Dynamic FILTER spill: display columns O..U, matched against the ISO
-        // key in V. Excel stores the worksheet-only FILTER as _xlfn._xlws.FILTER.
-        const listStart = listHdrRow + 1;
-        const L = (n) => ws.getColumn(n).letter;
-        const dispRange = `${L(SRC_DISP0)}${SRC_FIRST}:${L(SRC_DISP0 + 6)}${SRC_LAST}`;
-        const isoRange = `${L(SRC_ISO)}${SRC_FIRST}:${L(SRC_ISO)}${SRC_LAST}`;
-        const emptyMsg = '"No sites in this ISO / RTO market"';
-        ws.getCell(listStart, 1).value = {
-          formula: `IFERROR(_xlfn._xlws.FILTER(${dispRange},${isoRange}=$B$${pickRow},${emptyMsg}),${emptyMsg})`,
-        };
-        // Pre-format the two numeric spill columns across the whole possible
-        // extent so the spilled Load / Cost values read as numbers / currency
-        // no matter how many rows the chosen market yields.
-        for (let i = 0; i < siteRecords.length; i++) {
-          ws.getCell(listStart + i, 6).numFmt = '#,##0';
-          ws.getCell(listStart + i, 7).numFmt = '"$"#,##0';
+        // Assemble the list: a fixed block sized to the largest single market,
+        // each cell pulling the rank-th matching site via INDEX/MATCH against
+        // the running-rank helper. These are plain formulas (no dynamic
+        // arrays), so they work in every Excel version and Google Sheets, and
+        // they re-evaluate whenever the dropdown changes. Cached results show
+        // the default market on open.
+        const maxListRows = Math.max(1, ...regionRows.map(x => x.agg.sites));
+        const fieldByCol = ['company', 'city', 'state', 'zip', 'electric', 'kwh', 'cost'];
+        for (let k = 0; k < maxListRows; k++) {
+          const rowNum = listStart + k;
+          const rank = k + 1;
+          const rec = defaultMatches[k];
+          const rr = ws.getRow(rowNum);
+          for (let c = 1; c <= 7; c++) {
+            const srcCol = L(SRC_DISP0 + (c - 1));
+            const cell = rr.getCell(c);
+            const cached = rec ? rec[fieldByCol[c - 1]] : '';
+            cell.value = {
+              formula: `IFERROR(INDEX($${srcCol}$${SRC_FIRST}:$${srcCol}$${SRC_LAST},MATCH(${rank},$${wCol}$${SRC_FIRST}:$${wCol}$${SRC_LAST},0)),"")`,
+              result: (cached === undefined || cached === null) ? '' : cached,
+            };
+            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            cell.alignment = { vertical: 'middle', horizontal: (c >= 6) ? 'right' : 'left', indent: 1 };
+            cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } } };
+            if (c === 6) cell.numFmt = '#,##0';
+            if (c === 7) cell.numFmt = '"$"#,##0';
+          }
+          rr.height = 18;
         }
         // The Cost column is width 6 (map underlay) — widen it so currency
         // fits. The map image is pixel-sized, so this doesn't shift it.
         if ((ws.getColumn(7).width || 0) < 14) ws.getColumn(7).width = 14;
 
-        // Recalculate on open so the FILTER spill fills without interaction.
+        // Recalculate on open so the list reflects the current pick.
         wb.calcProperties = wb.calcProperties || {};
         wb.calcProperties.fullCalcOnLoad = true;
       }
