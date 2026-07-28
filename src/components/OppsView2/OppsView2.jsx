@@ -361,19 +361,42 @@ function needsBudgetTimelineFlag(row) {
 // Budget + one Compliance timeline).
 
 // Read the structured timelines off an opp. Newer records store an array of
-// { type, value } rows under `_timelines` plus a `_kickoffDeadline` string.
-// Older records only carry the free-text "Timeline?" column — we surface that
-// as a single untyped row so nothing is lost when the popup first opens.
+// { type, value, kickoff } rows under `_timelines`, each with its own Kickoff
+// Deadline. Older records only carry the free-text "Timeline?" column — we
+// surface that as a single untyped row so nothing is lost when the popup first
+// opens. Older-still records kept one per-opp kickoff under `_kickoffDeadline`;
+// we surface that on the first row so an existing deadline isn't dropped.
 function readTimelines(opp) {
   const stored = Array.isArray(opp?._timelines) ? opp._timelines : null;
   let list;
+  const legacyKickoff = String(opp?._kickoffDeadline ?? '').trim();
   if (stored) {
-    list = stored.map(r => ({ type: String(r?.type ?? ''), value: String(r?.value ?? '') }));
+    list = stored.map(r => ({
+      type: String(r?.type ?? ''),
+      value: String(r?.value ?? ''),
+      kickoff: String(r?.kickoff ?? ''),
+    }));
+    // Migrate a pre-per-row single kickoff onto the first row when none of the
+    // rows carries its own yet.
+    if (legacyKickoff && list.length && !list.some(r => r.kickoff)) {
+      list[0] = { ...list[0], kickoff: legacyKickoff };
+    }
   } else {
     const legacy = String(rowValueByHeader(opp, 'timeline?') ?? '').trim();
-    list = legacy ? [{ type: '', value: legacy }] : [];
+    list = legacy ? [{ type: '', value: legacy, kickoff: legacyKickoff }] : [];
   }
-  return { list, kickoff: String(opp?._kickoffDeadline ?? '') };
+  return { list };
+}
+
+// The soonest (earliest) Kickoff Deadline across the timeline rows, as an ISO
+// yyyy-mm-dd string ('' when none is set). ISO dates sort lexically, so the
+// min string is the min date. This drives the opp-level `_kickoffDeadline`
+// mirror so the Flags column warns on whichever kickoff is most urgent.
+function earliestKickoff(list) {
+  const dates = (Array.isArray(list) ? list : [])
+    .map(r => String(r?.kickoff ?? '').trim())
+    .filter(Boolean);
+  return dates.length ? dates.reduce((a, b) => (a < b ? a : b)) : '';
 }
 
 // Collapse the structured timeline rows into the single human-readable string
@@ -470,7 +493,8 @@ function daysUntilDateISO(iso) {
   return Math.round((t - todayMid) / 86400000);
 }
 
-// Days until the opp's Kickoff Deadline (`_kickoffDeadline`), or null when unset.
+// Days until the opp's soonest Kickoff Deadline (`_kickoffDeadline` mirrors the
+// earliest per-row kickoff), or null when unset.
 function kickoffDaysUntil(opp) {
   return daysUntilDateISO(opp?._kickoffDeadline);
 }
@@ -4025,10 +4049,10 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
   const curStatus = opp?.['Status'] ?? '';
   const [status, setStatus] = useState(String(curStatus ?? ''));
   const [salesPartner, setSalesPartner] = useState(String(opp?.['Sales Partner'] ?? ''));
-  // Structured timelines: a list of { type, value } rows plus a kickoff
-  // deadline, seeded from the opp (falling back to the legacy free-text
-  // Timeline? column). Any service in the opp's Scope flagged "Timeline
-  // Driven = Yes" also gets an auto row so its table always appears.
+  // Structured timelines: a list of { type, value, kickoff } rows, each with its
+  // own Kickoff Deadline, seeded from the opp (falling back to the legacy
+  // free-text Timeline? column). Any service in the opp's Scope flagged
+  // "Timeline Driven = Yes" also gets an auto row so its table always appears.
   // Flattened back to a readable summary on Save.
   const initialTimelines = useMemo(() => readTimelines(opp), [opp]);
   const seededTimelines = useMemo(
@@ -4036,7 +4060,6 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
     [initialTimelines, opp, solutionOptions, serviceOverrides]
   );
   const [timelineList, setTimelineList] = useState(seededTimelines);
-  const [kickoff, setKickoff] = useState(initialTimelines.kickoff);
   const [contractTicket, setContractTicket] = useState(String(opp?._contractTicketUrl ?? ''));
   const [coaTicket, setCoaTicket] = useState(String(opp?._coaTicketUrl ?? ''));
 
@@ -4061,7 +4084,7 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
     const kept = rows.filter(r => (r.note || '').trim() || (r.waitingOn || '').trim());
     const nextSteps = kept.map(r => encodeNoteLine(r.note)).join('\n');
     const nextStepsWaiting = kept.map(r => (r.waitingOn || '').trim());
-    onSave({ status, nextSteps, nextStepsWaiting, salesPartner: salesPartner.trim(), timelines: timelineList, kickoff, contractTicket: contractTicket.trim(), coaTicket: coaTicket.trim() });
+    onSave({ status, nextSteps, nextStepsWaiting, salesPartner: salesPartner.trim(), timelines: timelineList, contractTicket: contractTicket.trim(), coaTicket: coaTicket.trim() });
   }
 
   const hintStyle = { fontSize: '0.68rem', color: 'var(--color-text-muted)', marginTop: 3 };
@@ -4160,9 +4183,7 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
             <label style={labelStyle}>Timelines</label>
             <TimelinesEditor
               list={timelineList}
-              kickoff={kickoff}
               onChangeList={setTimelineList}
-              onChangeKickoff={setKickoff}
             />
           </div>
           <div>
@@ -5562,16 +5583,17 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onCommi
 }
 
 // Shared "Timelines" editor used inside both the Notes and Follow Up popups.
-// Presentational only — the parent owns the `list` (array of { type, value })
-// and `kickoff` string and passes change handlers. Rows are laid out as a
+// Presentational only — the parent owns the `list` (array of
+// { type, value, kickoff }) and passes a change handler. Rows are laid out as a
 // table: each row types a timeline kind (the two presets are offered via a
-// datalist, but any custom type can be typed) and logs a date or note. The
-// Kickoff Deadline sits in a right-hand column, aligned beside the timelines.
-function TimelinesEditor({ list, kickoff, onChangeList, onChangeKickoff }) {
+// datalist, but any custom type can be typed), logs a date or note, and carries
+// its own Kickoff Deadline in the right-hand column so every timeline gets its
+// own deadline.
+function TimelinesEditor({ list, onChangeList }) {
   const rows = Array.isArray(list) ? list : [];
   const updateRow = (idx, key, value) =>
     onChangeList(rows.map((r, i) => (i === idx ? { ...r, [key]: value } : r)));
-  const addRow = () => onChangeList([...rows, { type: '', value: '' }]);
+  const addRow = () => onChangeList([...rows, { type: '', value: '', kickoff: '' }]);
   const deleteRow = (idx) => onChangeList(rows.filter((_, i) => i !== idx));
 
   // Dropdown options are the presets plus every custom type the user has
@@ -5607,30 +5629,32 @@ function TimelinesEditor({ list, kickoff, onChangeList, onChangeKickoff }) {
   };
   const td = { padding: '0 0.4rem 0.4rem 0', verticalAlign: 'top' };
 
-  // A single per-opp Kickoff Deadline field, rendered once in the right-hand
-  // column and (when there are multiple timelines) spanning the whole table.
-  // A live "days until" countdown sits beside it, turning amber inside the
-  // warning window and red once the deadline is overdue.
-  const kickoffDays = daysUntilDateISO(kickoff);
-  const countdownColor = kickoffDays == null ? '#64748B'
-    : kickoffDays < 0 ? '#991B1B'
-    : kickoffDays < KICKOFF_WARN_DAYS ? '#92400E'
-    : '#64748B';
-  const kickoffField = (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap' }}>
-      <input
-        type="date"
-        value={kickoff || ''}
-        onChange={(e) => onChangeKickoff(e.target.value)}
-        style={{ ...cellInput, width: 'auto' }}
-      />
-      {kickoffDays != null ? (
-        <span style={{ fontSize: '0.7rem', fontWeight: 700, color: countdownColor }}>
-          {kickoffCountdownLabel(kickoffDays)}
-        </span>
-      ) : null}
-    </div>
-  );
+  // A per-row Kickoff Deadline field for the right-hand column. A live "days
+  // until" countdown sits beside it, turning amber inside the warning window
+  // and red once the deadline is overdue.
+  const renderKickoff = (row, idx) => {
+    const kickoff = String(row?.kickoff ?? '');
+    const kickoffDays = daysUntilDateISO(kickoff);
+    const countdownColor = kickoffDays == null ? '#64748B'
+      : kickoffDays < 0 ? '#991B1B'
+      : kickoffDays < KICKOFF_WARN_DAYS ? '#92400E'
+      : '#64748B';
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap' }}>
+        <input
+          type="date"
+          value={kickoff || ''}
+          onChange={(e) => updateRow(idx, 'kickoff', e.target.value)}
+          style={{ ...cellInput, width: 'auto' }}
+        />
+        {kickoffDays != null ? (
+          <span style={{ fontSize: '0.7rem', fontWeight: 700, color: countdownColor }}>
+            {kickoffCountdownLabel(kickoffDays)}
+          </span>
+        ) : null}
+      </div>
+    );
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
@@ -5649,11 +5673,9 @@ function TimelinesEditor({ list, kickoff, onChangeList, onChangeKickoff }) {
         <tbody>
           {rows.length === 0 ? (
             <tr>
-              <td style={td} colSpan={2}>
+              <td style={td} colSpan={4}>
                 <div style={{ fontSize: '0.72rem', color: '#94A3B8', padding: '0.2rem 0' }}>No timelines yet.</div>
               </td>
-              <td style={{ ...td, whiteSpace: 'nowrap' }}>{kickoffField}</td>
-              <td style={td} />
             </tr>
           ) : (
             rows.map((row, idx) => (
@@ -5679,9 +5701,7 @@ function TimelinesEditor({ list, kickoff, onChangeList, onChangeKickoff }) {
                     style={cellInput}
                   />
                 </td>
-                {idx === 0 ? (
-                  <td style={{ ...td, whiteSpace: 'nowrap' }} rowSpan={rows.length}>{kickoffField}</td>
-                ) : null}
+                <td style={{ ...td, whiteSpace: 'nowrap' }}>{renderKickoff(row, idx)}</td>
                 <td style={{ ...td, textAlign: 'center' }}>
                   <button
                     type="button"
@@ -5766,10 +5786,11 @@ function NextStepsEditor({ opp, clientManager, solutionOptions, serviceOverrides
     return 'Timeline?';
   }, [opp]);
 
-  // Structured timelines: a list of { type, value } rows plus a kickoff
-  // deadline. Seeded from the opp (falling back to the legacy free-text
-  // Timeline? column) and persisted on every change — the list also writes a
-  // readable summary back into Timeline? so table cells / flags keep working.
+  // Structured timelines: a list of { type, value, kickoff } rows, each with
+  // its own Kickoff Deadline. Seeded from the opp (falling back to the legacy
+  // free-text Timeline? column) and persisted on every change — the list also
+  // writes a readable summary back into Timeline? so table cells / flags keep
+  // working.
   // Any service in the opp's Scope flagged "Timeline Driven = Yes" also gets
   // an auto row so its table always appears (empty auto rows aren't persisted
   // until the user logs a date).
@@ -5779,7 +5800,6 @@ function NextStepsEditor({ opp, clientManager, solutionOptions, serviceOverrides
     [initialTimelines, opp, solutionOptions, serviceOverrides]
   );
   const [timelineList, setTimelineList] = useState(seededTimelines);
-  const [kickoff, setKickoff] = useState(initialTimelines.kickoff);
   const [contractTicket, setContractTicket] = useState(String(opp?._contractTicketUrl ?? ''));
   const [coaTicket, setCoaTicket] = useState(String(opp?._coaTicketUrl ?? ''));
 
@@ -5794,18 +5814,16 @@ function NextStepsEditor({ opp, clientManager, solutionOptions, serviceOverrides
     background: '#fff', color: 'var(--color-text)',
   };
 
-  function persistTimelines(nextList, nextKickoff) {
+  function persistTimelines(nextList) {
     updateOppField(opp._id, '_timelines', nextList);
-    updateOppField(opp._id, '_kickoffDeadline', nextKickoff);
+    // Mirror the soonest per-row kickoff to the opp-level field the Flags
+    // column reads, so the most urgent kickoff still drives the warning.
+    updateOppField(opp._id, '_kickoffDeadline', earliestKickoff(nextList));
     updateOppField(opp._id, timelineKey, summarizeTimelines(nextList));
   }
   function changeTimelineList(nextList) {
     setTimelineList(nextList);
-    persistTimelines(nextList, kickoff);
-  }
-  function changeKickoff(nextKickoff) {
-    setKickoff(nextKickoff);
-    persistTimelines(timelineList, nextKickoff);
+    persistTimelines(nextList);
   }
 
   // One-click activity marks. Stamps today's date on `_calledOn` /
@@ -5928,9 +5946,7 @@ function NextStepsEditor({ opp, clientManager, solutionOptions, serviceOverrides
             <label style={labelStyle}>Timelines</label>
             <TimelinesEditor
               list={timelineList}
-              kickoff={kickoff}
               onChangeList={changeTimelineList}
-              onChangeKickoff={changeKickoff}
             />
           </div>
 
@@ -9358,7 +9374,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             clientManager={clientManagerForAccount(opp?.['Account'])}
             solutionOptions={listRegistry.get('solutions')?.options || []}
             serviceOverrides={settings?.serviceOverrides}
-            onSave={({ status, nextSteps, nextStepsWaiting, salesPartner, timelines, kickoff, contractTicket, coaTicket }) => {
+            onSave={({ status, nextSteps, nextStepsWaiting, salesPartner, timelines, contractTicket, coaTicket }) => {
               if (status !== String(opp['Status'] ?? '')) {
                 updateOppField(opp._id, 'Status', status);
               }
@@ -9376,9 +9392,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 updateOppField(opp._id, '_timelines', timelines);
                 const timelineKey = Object.keys(opp).find(k => normCell(k) === 'timeline?') || 'Timeline?';
                 updateOppField(opp._id, timelineKey, summarizeTimelines(timelines));
-              }
-              if ((kickoff || '') !== (prevTimelines.kickoff || '')) {
-                updateOppField(opp._id, '_kickoffDeadline', kickoff || '');
+                // Mirror the soonest per-row kickoff to the opp-level field the
+                // Flags column reads, so the most urgent kickoff still warns.
+                updateOppField(opp._id, '_kickoffDeadline', earliestKickoff(timelines));
               }
               const curWaiting = Array.isArray(opp._nextStepsWaiting) ? opp._nextStepsWaiting : [];
               if (JSON.stringify(nextStepsWaiting) !== JSON.stringify(curWaiting)) {
