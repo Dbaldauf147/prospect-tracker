@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase';
+import { apiFetch } from '../../utils/apiFetch';
 import { useAuth } from '../../contexts/AuthContext';
 
 function toDate(ts) {
@@ -93,9 +94,37 @@ export function EmailTrackingView() {
   const [expanded, setExpanded] = useState(null);
   const [sortBy, setSortBy] = useState('sent'); // 'sent' | 'opens' | 'clicks'
   const [search, setSearch] = useState('');
+  // True when we loaded via the server fallback because the realtime
+  // client read was blocked (emailTracking rule not deployed yet).
+  const [fallback, setFallback] = useState(false);
 
   useEffect(() => {
     if (!user?.uid) return;
+    let cancelled = false;
+
+    // Server-side fallback: reads the same owner-scoped rows through the
+    // Admin SDK (which bypasses Firestore rules), so the dashboard still
+    // populates when the emailTracking read rule hasn't been deployed to
+    // the project yet. One-shot fetch — no realtime, but opens/clicks
+    // trickle in over hours, so a reload is enough until rules deploy.
+    const loadViaApi = async () => {
+      try {
+        const res = await apiFetch('/api/track-list');
+        if (!res.ok) throw new Error(`track-list ${res.status}`);
+        const data = await res.json();
+        if (cancelled) return;
+        setRows(Array.isArray(data.items) ? data.items : []);
+        setFallback(true);
+        setError(null);
+        setLoading(false);
+      } catch (e) {
+        if (cancelled) return;
+        console.error('track-list fallback failed:', e?.message || e);
+        setError('Failed to load tracking data');
+        setLoading(false);
+      }
+    };
+
     // Filter by owner only; sort client-side by createdAt so we don't
     // require a composite index the user would have to create by hand.
     // `loading` starts true (useState) and the first snapshot clears it —
@@ -107,19 +136,30 @@ export function EmailTrackingView() {
     const unsub = onSnapshot(
       q,
       (snap) => {
+        if (cancelled) return;
         setRows(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        setFallback(false);
         setLoading(false);
         setError(null);
       },
       (err) => {
         console.error('emailTracking snapshot error:', err);
+        // Most commonly the emailTracking read rule hasn't been deployed
+        // to the project yet -> permission-denied. Fall back to the
+        // authenticated server reader so the page still works instead of
+        // showing a raw "Missing or insufficient permissions" error.
+        if (err?.code === 'permission-denied') {
+          loadViaApi();
+          return;
+        }
         // A missing composite index surfaces here with a console link to
         // create it; show a readable hint rather than a blank screen.
+        if (cancelled) return;
         setError(err?.message || 'Failed to load tracking data');
         setLoading(false);
       }
     );
-    return () => unsub();
+    return () => { cancelled = true; unsub(); };
   }, [user?.uid]);
 
   const stats = useMemo(() => {
@@ -164,6 +204,15 @@ export function EmailTrackingView() {
       <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E', borderRadius: 8, padding: '0.5rem 0.75rem', fontSize: '0.74rem', lineHeight: 1.45, margin: '0.5rem 0 1rem' }}>
         <strong>Reading these numbers:</strong> opens are a directional signal — Apple Mail Privacy Protection pre-loads the pixel (inflating opens), Gmail proxies images (so location shows Google), and Outlook blocks images by default (so some real opens never register). <strong>Clicks are the hard signal.</strong>
       </div>
+
+      {/* Shown only when the realtime read was blocked and we fell back to
+          the server reader — a nudge to deploy the Firestore rules so
+          live updates come back. Harmless if the reader keeps working. */}
+      {fallback && (
+        <div style={{ background: '#EFF6FF', border: '1px solid #BFDBFE', color: '#1E40AF', borderRadius: 8, padding: '0.45rem 0.7rem', fontSize: '0.72rem', lineHeight: 1.45, margin: '0 0 1rem' }}>
+          Loaded from the server. Live updates are off until the Firestore rules are deployed (<code>firebase deploy --only firestore:rules</code>); reload to refresh in the meantime.
+        </div>
+      )}
 
       {/* Summary tiles */}
       <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
