@@ -8,7 +8,7 @@ import { dbGet } from '../../utils/db';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { apiFetch } from '../../utils/apiFetch';
 import { useAuth } from '../../contexts/AuthContext';
-import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
+import { computeNewBfoOpps, computeNewBfoMissingData } from '../../utils/newBfoOpps';
 import { resolveSfUrl } from '../../utils/salesforceLeads';
 import { OppInfoModal } from '../OppsView2/OppsView2';
 import styles from './AgentsView.module.css';
@@ -724,11 +724,6 @@ function fmtMoney(n) {
   if (!Number.isFinite(n)) return '';
   return `$${Math.round(n).toLocaleString('en-US')}`;
 }
-
-// Same client-keyword test PipelineView + YOY's Annual Sales use on the
-// Opps Lead Source — keeps "is this a current customer?" consistent
-// across views.
-const CURRENT_CUSTOMER_LEAD_SOURCE_RE = /client|existing|renewal|cross[\s-]?sell|expansion|upsell/i;
 
 // Same localStorage key the Activity tab caches its HubSpot pull into.
 // We piggy-back on that cache instead of doing our own fetch so the two
@@ -2274,117 +2269,19 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     return '';
   };
 
-  const newBfoOpps = useMemo(() => {
-    const records = oppsCache?.records || [];
-    const EXCLUDED_STAGES = new Set(['Not Started', 'Not Sold', 'Sold']);
-    const overrides = settings?.serviceOverrides || {};
-    const rows = [];
-    for (const r of records) {
-      const stage = String(r.Stage || '').trim();
-      if (!stage || EXCLUDED_STAGES.has(stage)) continue;
-      // Only list opps whose BFO Opportunity Name is exactly "-" — the
-      // deliberate placeholder for "needs a BFO opp created". Blank and
-      // "#N/A" do not qualify.
-      const bfoLink = String(r['BFO Link'] ?? '').trim();
-      if (bfoLink !== '-') continue;
-      const callInRaw = String(r['Call In'] ?? '').trim();
-      const account = String(r.Account || '').trim();
-      const leadSource = String(r['Lead Source'] || r['Source'] || '').trim();
-      // A Scope can list several comma-joined services (e.g. "Remote
-      // assessments, Audits"). The New BFO Opp flow only creates an opp
-      // for the first one, so use just the first listed scope item for
-      // the Scope column, the metadata lookup, and the Project Name.
-      const rawScope = String(r.Scope || '').trim();
-      const scope = rawScope.includes(',')
-        ? rawScope.split(',')[0].trim()
-        : rawScope;
-      const followUp = String(r['Follow Up'] ?? '').trim();
-      const bfoCompanyName = bfoCompanyByNorm.get(normalizeCompany(account)) || '';
-      // Look up the per-service metadata from the Dropdowns › Services
-      // subtab. Scope is the canonical service name; the catalog
-      // supplies Product Line, Type, Region, Class (= BFO Tag), and
-      // Local Project Name. User overrides on the Services tab win
-      // over the seed values.
-      const svcMeta = getEffectiveServiceMetadata(scope, overrides);
-      const productLine = svcMeta?.productLine || '';
-      const type = svcMeta?.serviceType || '';
-      const region = svcMeta?.region || '';
-      const klass = svcMeta?.bfoTag || '';
-      // Local Project Name picks up the seed / override value. When
-      // the opp's Lead Source is "PE Partner" (the PE-firm referral
-      // bucket), append "#PE PRACTICE" so the BFO opp is tagged into
-      // the PE practice book of business.
-      const baseLpn = svcMeta?.localProjectName || '';
-      const isPePartner = /^pe partner$/i.test(leadSource);
-      const localProjectName = isPePartner
-        ? (baseLpn ? `${baseLpn} #PE PRACTICE` : '#PE PRACTICE')
-        : baseLpn;
-      // Years is fixed: every new BFO opp starts at Year 1. The
-      // catalog's "X years" value represents contract duration, which
-      // BFO doesn't surface in the opp name.
-      const years = 'YEAR1';
-      // Combined Project Name the user pastes into BFO's Project Name
-      // box. Format:
-      //   SB - {ProductLine code} - New - {Type} - {Region} - YEAR1 - {Scope}
-      // {ProductLine code} is the first segment of the Product Line
-      // before " - " (e.g. "SUSUP" from "SUSUP - SUPPLY & SUST
-      // SERVICES"). Falls back to the raw productLine when the code
-      // can't be parsed.
-      const plCode = productLine.includes(' - ')
-        ? productLine.split(' - ')[0].trim()
-        : productLine.trim();
-      const projectNameParts = ['SB', plCode, 'New', type, region, years, scope].filter(Boolean);
-      const projectName = projectNameParts.join(' - ');
-      rows.push({
-        id: r._id ?? `${account}|${scope}`,
-        // Raw Opps-tab record, so the table can open the same Opp info
-        // modal Opps 2 uses (read-only here).
-        raw: r,
-        company: account || '—',
-        bfoCompanyName,
-        leadSource: leadSource || '—',
-        currentCustomer: CURRENT_CUSTOMER_LEAD_SOURCE_RE.test(leadSource),
-        scope: scope || '—',
-        stage,
-        followUp,
-        callIn: callInRaw,
-        productLine,
-        localProjectName,
-        projectName,
-        type,
-        region,
-        class: klass,
-        years,
-      });
-    }
-    rows.sort((a, b) => a.company.localeCompare(b.company));
-    return rows;
-  }, [oppsCache, bfoCompanyByNorm, settings?.serviceOverrides]);
+  // Opps that don't yet exist in BFO and need a fresh Guided Opportunity
+  // created. Computed by the shared util so the Agents table, the red
+  // banner, and the Issues tab all agree on the same set (and the same
+  // "what's missing" check). See utils/newBfoOpps.js.
+  const newBfoOpps = useMemo(
+    () => computeNewBfoOpps({ oppsCache, prospects, serviceOverrides: settings?.serviceOverrides }),
+    [oppsCache, prospects, settings?.serviceOverrides]
+  );
 
-  // Missing data the New BFO Opp AI prompt needs. The prompt emits
-  // "BFO Company Name | Project Name | Product Line | Local Project Name"
-  // per opp, with Project Name composed from the Product Line code, Type,
-  // Region and Scope — so any blank among those fields leaves a hole in
-  // the prompt. One entry per affected opp, listing its blank fields;
-  // drives the red banner at the top of the page.
-  const newBfoMissingData = useMemo(() => {
-    const blank = (v) => {
-      const s = String(v ?? '').trim();
-      return !s || s === '—' || s === '-';
-    };
-    const out = [];
-    for (const o of newBfoOpps) {
-      const missing = [];
-      if (blank(o.bfoCompanyName)) missing.push('BFO Company Name');
-      if (blank(o.productLine)) missing.push('Product Line');
-      if (blank(o.type)) missing.push('Type');
-      if (blank(o.region)) missing.push('Region');
-      if (blank(o.scope)) missing.push('Scope');
-      if (blank(o.localProjectName)) missing.push('Local Project Name');
-      if (missing.length) out.push({ company: o.company, missing });
-    }
-    return out;
-  }, [newBfoOpps]);
+  // Missing data the New BFO Opp AI prompt needs. One entry per affected
+  // opp, listing its blank fields; drives the red banner at the top of
+  // the page (and the matching row on the Issues tab).
+  const newBfoMissingData = useMemo(() => computeNewBfoMissingData(newBfoOpps), [newBfoOpps]);
 
   // BFO Opportunity Name → Last Activity date from the BFO Activity tab.
   // Lets the Called and Sent emails tables show how long it's been since
