@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import { LineChart, Line, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
+import { LineChart, Line, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 import { buildCompanyIndex, hasMatchInIndex } from '../../utils/companyIndex';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
@@ -92,10 +92,36 @@ function withGreenKeys(data, series) {
   });
 }
 
-function ProgressChart({ title, data, series, isPct, defaultView = 'line', secondarySeries, onHide, onRename, onViewChange }) {
+function ProgressChart({ title, data, series, isPct, defaultView = 'line', secondarySeries, onHide, onRename, onViewChange, pins = [], onTogglePin, onClearPins }) {
   const [viewType, setViewType] = useState(defaultView);
   // Persist the picked view so it becomes this chart's default next visit.
   const changeView = (v) => { setViewType(v); if (onViewChange) onViewChange(v); };
+  // Resolve pinned week keys to the data rows still present, preserving
+  // chronological order so the callout reads left-to-right like the chart.
+  const pinnedRows = useMemo(() => {
+    const set = new Set(pins);
+    return data.filter(d => set.has(d.week));
+  }, [pins, data]);
+  // Clicking a point (or anywhere on a column's band) toggles a pin at that
+  // week. Recharts hands us the active x-axis label; map it back to the row.
+  const handleChartClick = (state) => {
+    if (!onTogglePin || !state || state.activeLabel == null) return;
+    const row = data.find(d => d.weekLabel === state.activeLabel);
+    if (row) onTogglePin(row.week);
+  };
+  // Vertical reference line marking each pinned week, drawn inside every
+  // chart variant so the pin shows regardless of the selected view.
+  const pinLines = pinnedRows.map(row => (
+    <ReferenceLine
+      key={`pin-${row.week}`}
+      x={row.weekLabel}
+      yAxisId="left"
+      stroke="#6366F1"
+      strokeDasharray="5 3"
+      ifOverflow="extendDomain"
+      label={{ value: '📌', position: 'top', fontSize: 12 }}
+    />
+  ));
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   // For percent line charts, augment the data with the green-overlay keys.
@@ -160,13 +186,14 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
       </div>
       <ResponsiveContainer width="100%" height={250}>
         {viewType === 'bar' || viewType === 'stackedBar' ? (
-          <BarChart data={data}>
+          <BarChart data={data} onClick={handleChartClick}>
             <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
             <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
             <YAxis yAxisId="left" fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
             {hasSecondary && <YAxis yAxisId="right" orientation="right" fontSize={11} tick={{ fill: '#64748B' }} allowDecimals={false} />}
             <Tooltip formatter={tooltipFmt} />
             <Legend />
+            {pinLines}
             {series.map(s => (
               <Bar key={s.key} yAxisId="left" dataKey={s.key} name={s.name} fill={s.color} stackId={stacked ? 'a' : undefined} />
             ))}
@@ -175,13 +202,14 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
             ))}
           </BarChart>
         ) : viewType === 'area' || viewType === 'stackedArea' ? (
-          <AreaChart data={data}>
+          <AreaChart data={data} onClick={handleChartClick}>
             <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
             <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
             <YAxis yAxisId="left" fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
             {hasSecondary && <YAxis yAxisId="right" orientation="right" fontSize={11} tick={{ fill: '#64748B' }} allowDecimals={false} />}
             <Tooltip formatter={tooltipFmt} />
             <Legend />
+            {pinLines}
             {series.map(s => (
               <Area key={s.key} yAxisId="left" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} fill={s.color} fillOpacity={0.3} stackId={stacked ? 'a' : undefined} />
             ))}
@@ -190,13 +218,14 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
             ))}
           </AreaChart>
         ) : viewType === 'stackedLine' ? (
-          <AreaChart data={data}>
+          <AreaChart data={data} onClick={handleChartClick}>
             <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
             <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
             <YAxis yAxisId="left" fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
             {hasSecondary && <YAxis yAxisId="right" orientation="right" fontSize={11} tick={{ fill: '#64748B' }} allowDecimals={false} />}
             <Tooltip formatter={tooltipFmt} />
             <Legend />
+            {pinLines}
             {series.map(s => (
               <Area key={s.key} yAxisId="left" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} fill="none" stackId="a" dot={isPct ? makeDot(s.color, 3) : { r: 3, fill: s.color }} activeDot={{ r: 5 }} />
             ))}
@@ -205,13 +234,14 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
             ))}
           </AreaChart>
         ) : (
-          <LineChart data={lineData}>
+          <LineChart data={lineData} onClick={handleChartClick}>
             <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
             <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
             <YAxis yAxisId="left" fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
             {hasSecondary && <YAxis yAxisId="right" orientation="right" fontSize={11} tick={{ fill: '#64748B' }} allowDecimals={false} />}
             <Tooltip formatter={tooltipFmt} payloadUniqBy={isPct ? (o => o.name) : undefined} />
             <Legend payload={isPct ? lineLegendPayload : undefined} />
+            {pinLines}
             {series.map(s => (
               <Line key={s.key} yAxisId="left" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} dot={isPct ? makeDot(s.color, 4) : { r: 4 }} />
             ))}
@@ -225,6 +255,55 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
           </LineChart>
         )}
       </ResponsiveContainer>
+      {pinnedRows.length > 0 ? (
+        <div style={{ marginTop: '0.6rem', borderTop: '1px dashed var(--color-border)', paddingTop: '0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
+            <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>📌 Pinned points</span>
+            {onClearPins && (
+              <button
+                type="button"
+                onClick={onClearPins}
+                style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: 5, color: 'var(--color-text-secondary)', cursor: 'pointer', padding: '0.1rem 0.4rem', fontSize: '0.65rem', fontFamily: 'inherit' }}
+              >Clear all</button>
+            )}
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+            {pinnedRows.map(row => (
+              <div key={row.week} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', border: '1px solid #C7D2FE', background: '#EEF2FF', borderRadius: 6, padding: '0.2rem 0.4rem' }}>
+                <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#3730A3' }}>{row.weekLabel}</span>
+                <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+                  {[...series, ...(Array.isArray(secondarySeries) ? secondarySeries : [])].map(s => {
+                    const v = row[s.key];
+                    if (v == null) return null;
+                    const isPrimary = series.includes(s);
+                    const shown = isPct && isPrimary ? `${v}%` : v;
+                    return (
+                      <span key={s.key} style={{ fontSize: '0.68rem', color: 'var(--color-text)', whiteSpace: 'nowrap' }}>
+                        <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: s.color, marginRight: 3, verticalAlign: 'middle' }} />
+                        {s.name}: <strong>{shown}</strong>
+                      </span>
+                    );
+                  })}
+                </span>
+                {onTogglePin && (
+                  <button
+                    type="button"
+                    onClick={() => onTogglePin(row.week)}
+                    title="Unpin"
+                    style={{ background: 'none', border: 'none', color: '#6366F1', cursor: 'pointer', padding: 0, fontSize: '0.85rem', lineHeight: 1 }}
+                  >×</button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        onTogglePin && (
+          <div style={{ marginTop: '0.4rem', fontSize: '0.65rem', color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>
+            Tip: click a point on the chart to pin it.
+          </div>
+        )
+      )}
     </div>
   );
 }
@@ -275,15 +354,7 @@ function companiesMatch(a, b) {
 const HIDDEN_CHARTS_KEY = 'progress:hidden-charts';
 const CHART_TITLES_KEY = 'progress:chart-titles';
 const CHART_VIEWS_KEY = 'progress:chart-views';
-const PROGRESS_CHART_DEFS = [
-  { id: 'contactPct',     label: '% of Accounts with HubSpot Contacts' },
-  { id: 'dmPct',          label: '% of Accounts with Decision Maker Identified' },
-  { id: 'connectedPct',   label: '% of Accounts Connected (Had Opportunity)' },
-  { id: 'inactivePct',    label: '% of Accounts Inactive (Lost / Hold Off / Old Client)' },
-  { id: 'tierTotals',     label: 'My Accounts by Tier' },
-  { id: 'noOppsActivity', label: 'Activity on Accounts with No Opportunities (30d)' },
-  { id: 'peStages',       label: 'PE Firms by PE Stage' },
-];
+const CHART_PINS_KEY = 'progress:chart-pins';
 
 // PE Stage → snapshot field + chart color. Mirrors the four PE_STAGES on
 // the PE Portfolio page so this chart tracks the same buckets. The snapshot
@@ -293,6 +364,38 @@ const PE_STAGE_SERIES = [
   { stage: 'Piloting',             key: 'pePiloting',            color: '#F59E0B' },
   { stage: 'Existing Partnership', key: 'peExistingPartnership', color: '#10B981' },
   { stage: 'Not Sold',             key: 'peNotSold',             color: '#DC2626' },
+];
+
+// Single source of truth for every progress chart: its id, label, the
+// series (and optional secondary series) it plots, whether it's a percent
+// chart, and its default view. Both the rendered charts and the Excel
+// raw-data export read from this so the download always matches the charts.
+const PROGRESS_CHART_DEFS = [
+  { id: 'contactPct',   label: '% of Accounts with HubSpot Contacts', isPct: true,
+    series: [{ key: 't1ContactPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ContactPct', name: 'Tier 2', color: '#3B82F6' }] },
+  { id: 'dmPct',        label: '% of Accounts with Decision Maker Identified', isPct: true,
+    series: [{ key: 't1DMPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2DMPct', name: 'Tier 2', color: '#3B82F6' }] },
+  { id: 'connectedPct', label: '% of Accounts Connected (Had Opportunity)', isPct: true,
+    series: [{ key: 't1ConnectedPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ConnectedPct', name: 'Tier 2', color: '#3B82F6' }] },
+  { id: 'inactivePct',  label: '% of Accounts Inactive (Lost / Hold Off / Old Client)', isPct: true,
+    series: [{ key: 't1InactivePct', name: 'Tier 1', color: '#DC2626' }, { key: 't2InactivePct', name: 'Tier 2', color: '#3B82F6' }] },
+  { id: 'tierTotals',   label: 'My Accounts by Tier',
+    series: [
+      { key: 't1Total', name: 'Tier 1', color: '#DC2626' },
+      { key: 't2Total', name: 'Tier 2', color: '#3B82F6' },
+      { key: 't3Total', name: 'Tier 3', color: '#F59E0B' },
+    ],
+    secondarySeries: [{ key: 'totalAccounts', name: 'Total Accounts', color: '#111827' }] },
+  { id: 'noOppsActivity', label: 'Activity on Accounts with No Opportunities (30d)',
+    series: [
+      { key: 'noOppsActivityT1', name: 'Tier 1', color: '#DC2626' },
+      { key: 'noOppsActivityT2', name: 'Tier 2', color: '#3B82F6' },
+      { key: 'noOppsActivityT3', name: 'Tier 3', color: '#F59E0B' },
+    ],
+    secondarySeries: [{ key: 'noOppsAccountCount', name: 'No-Opps Accounts', color: '#111827' }] },
+  { id: 'peStages',     label: 'PE Firms by PE Stage', defaultView: 'stackedBar',
+    series: PE_STAGE_SERIES.map(s => ({ key: s.key, name: s.stage, color: s.color })),
+    secondarySeries: [{ key: 'peTotal', name: 'Total PE Firms', color: '#111827' }] },
 ];
 function loadHiddenCharts() {
   try {
@@ -328,6 +431,21 @@ function loadChartViews() {
 }
 function persistChartViews(map) {
   try { localStorage.setItem(CHART_VIEWS_KEY, JSON.stringify(map)); } catch {}
+}
+
+// Per-chart pinned data points. Keyed by chart id → array of week keys
+// (the snapshot's stable `week` value, not the display label) the user has
+// pinned. Pins render as a labelled reference line on the chart plus a
+// values callout below it, and persist across visits.
+function loadChartPins() {
+  try {
+    const raw = localStorage.getItem(CHART_PINS_KEY);
+    const obj = raw ? JSON.parse(raw) : null;
+    return obj && typeof obj === 'object' ? obj : {};
+  } catch { return {}; }
+}
+function persistChartPins(map) {
+  try { localStorage.setItem(CHART_PINS_KEY, JSON.stringify(map)); } catch {}
 }
 
 export function ProgressView({ prospects, settings, cdmName }) {
@@ -375,6 +493,27 @@ export function ProgressView({ prospects, settings, cdmName }) {
       if (trimmed) next[id] = trimmed;
       else delete next[id];
       persistChartTitles(next);
+      return next;
+    });
+  };
+  const [chartPins, setChartPins] = useState(() => loadChartPins());
+  const toggleChartPin = (id, weekKey) => {
+    setChartPins(prev => {
+      const cur = Array.isArray(prev[id]) ? prev[id] : [];
+      const has = cur.includes(weekKey);
+      const nextList = has ? cur.filter(w => w !== weekKey) : [...cur, weekKey];
+      const next = { ...prev };
+      if (nextList.length) next[id] = nextList; else delete next[id];
+      persistChartPins(next);
+      return next;
+    });
+  };
+  const clearChartPins = (id) => {
+    setChartPins(prev => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      persistChartPins(next);
       return next;
     });
   };
@@ -849,6 +988,58 @@ export function ProgressView({ prospects, settings, cdmName }) {
     return new Date(w + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   }
 
+  // Export the raw weekly data behind the charts to Excel: a combined
+  // "All Data" sheet plus one sheet per chart (columns = that chart's
+  // series, rows = weeks). Reads PROGRESS_CHART_DEFS so the download always
+  // mirrors exactly what the charts plot, honoring any renamed titles.
+  async function downloadChartsData() {
+    if (!chartData.length) return;
+    const XLSX = await import('xlsx');
+    const wb = XLSX.utils.book_new();
+
+    const usedNames = new Set();
+    const uniqueSheetName = (desired, fallback) => {
+      const cleaned = String(desired || fallback || 'Sheet').replace(/[\\/?*[\]:]/g, ' ').replace(/\s+/g, ' ').trim();
+      let base = (cleaned || fallback || 'Sheet').slice(0, 28);
+      let name = base;
+      let n = 2;
+      while (usedNames.has(name.toLowerCase())) { name = `${base.slice(0, 25)} ${n++}`; }
+      usedNames.add(name.toLowerCase());
+      return name;
+    };
+
+    // Combined sheet: Week + every series across all charts (deduped by
+    // key). Column headers are prefixed with the chart title since several
+    // charts reuse series names like "Tier 1" — the prefix keeps them
+    // unambiguous in the single flat sheet.
+    const combinedCols = [];
+    const seenKeys = new Set();
+    for (const c of PROGRESS_CHART_DEFS) {
+      const chartTitle = titleFor(c.id, c.label);
+      for (const s of [...c.series, ...(c.secondarySeries || [])]) {
+        if (!seenKeys.has(s.key)) { seenKeys.add(s.key); combinedCols.push({ key: s.key, header: `${chartTitle} — ${s.name}` }); }
+      }
+    }
+    const combined = [['Week', 'Week Start', ...combinedCols.map(s => s.header)]];
+    for (const row of chartData) {
+      combined.push([row.weekLabel, row.week, ...combinedCols.map(s => (row[s.key] == null ? '' : row[s.key]))]);
+    }
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(combined), uniqueSheetName('All Data'));
+
+    // One sheet per chart with just that chart's columns.
+    for (const c of PROGRESS_CHART_DEFS) {
+      const cols = [...c.series, ...(c.secondarySeries || [])];
+      const aoa = [['Week', 'Week Start', ...cols.map(s => s.name)]];
+      for (const row of chartData) {
+        aoa.push([row.weekLabel, row.week, ...cols.map(s => (row[s.key] == null ? '' : row[s.key]))]);
+      }
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), uniqueSheetName(titleFor(c.id, c.label), c.id));
+    }
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `Weekly Progress Charts - ${stamp}.xlsx`);
+  }
+
   if (loading) return <div style={{ padding: '2rem', color: 'var(--color-text-muted)' }}>Loading...</div>;
 
   return (
@@ -945,7 +1136,15 @@ export function ProgressView({ prospects, settings, cdmName }) {
       {/* Charts */}
       {chartData.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', position: 'relative' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.5rem', position: 'relative' }}>
+            <button
+              type="button"
+              onClick={downloadChartsData}
+              title="Download an Excel workbook with the raw weekly data behind every chart (one sheet per chart)"
+              style={{ padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', borderRadius: 6, background: 'var(--color-surface)', color: 'var(--color-text-secondary)', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+            >
+              ⬇ Excel
+            </button>
             <button
               type="button"
               onClick={() => setShowChartsMenu(v => !v)}
@@ -969,104 +1168,23 @@ export function ProgressView({ prospects, settings, cdmName }) {
             )}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
-            {!hiddenCharts.has('contactPct') && (
+            {PROGRESS_CHART_DEFS.filter(c => !hiddenCharts.has(c.id)).map(c => (
               <ProgressChart
-                title={titleFor('contactPct', '% of Accounts with HubSpot Contacts')}
+                key={c.id}
+                title={titleFor(c.id, c.label)}
                 data={chartData}
-                series={[{ key: 't1ContactPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ContactPct', name: 'Tier 2', color: '#3B82F6' }]}
-                isPct
-                defaultView={viewFor('contactPct')}
-                onViewChange={(v) => setChartView('contactPct', v)}
-                onHide={() => toggleChartHidden('contactPct')}
-                onRename={(t) => renameChart('contactPct', t)}
+                series={c.series}
+                secondarySeries={c.secondarySeries}
+                isPct={c.isPct}
+                defaultView={viewFor(c.id, c.defaultView || 'line')}
+                onViewChange={(v) => setChartView(c.id, v)}
+                onHide={() => toggleChartHidden(c.id)}
+                onRename={(t) => renameChart(c.id, t)}
+                pins={chartPins[c.id] || []}
+                onTogglePin={(wk) => toggleChartPin(c.id, wk)}
+                onClearPins={() => clearChartPins(c.id)}
               />
-            )}
-            {!hiddenCharts.has('dmPct') && (
-              <ProgressChart
-                title={titleFor('dmPct', '% of Accounts with Decision Maker Identified')}
-                data={chartData}
-                series={[{ key: 't1DMPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2DMPct', name: 'Tier 2', color: '#3B82F6' }]}
-                isPct
-                defaultView={viewFor('dmPct')}
-                onViewChange={(v) => setChartView('dmPct', v)}
-                onHide={() => toggleChartHidden('dmPct')}
-                onRename={(t) => renameChart('dmPct', t)}
-              />
-            )}
-            {!hiddenCharts.has('connectedPct') && (
-              <ProgressChart
-                title={titleFor('connectedPct', '% of Accounts Connected (Had Opportunity)')}
-                data={chartData}
-                series={[{ key: 't1ConnectedPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ConnectedPct', name: 'Tier 2', color: '#3B82F6' }]}
-                isPct
-                defaultView={viewFor('connectedPct')}
-                onViewChange={(v) => setChartView('connectedPct', v)}
-                onHide={() => toggleChartHidden('connectedPct')}
-                onRename={(t) => renameChart('connectedPct', t)}
-              />
-            )}
-            {!hiddenCharts.has('inactivePct') && (
-              <ProgressChart
-                title={titleFor('inactivePct', '% of Accounts Inactive (Lost / Hold Off / Old Client)')}
-                data={chartData}
-                series={[{ key: 't1InactivePct', name: 'Tier 1', color: '#DC2626' }, { key: 't2InactivePct', name: 'Tier 2', color: '#3B82F6' }]}
-                isPct
-                defaultView={viewFor('inactivePct')}
-                onViewChange={(v) => setChartView('inactivePct', v)}
-                onHide={() => toggleChartHidden('inactivePct')}
-                onRename={(t) => renameChart('inactivePct', t)}
-              />
-            )}
-            {!hiddenCharts.has('tierTotals') && (
-              <ProgressChart
-                title={titleFor('tierTotals', 'My Accounts by Tier')}
-                data={chartData}
-                series={[
-                  { key: 't1Total', name: 'Tier 1', color: '#DC2626' },
-                  { key: 't2Total', name: 'Tier 2', color: '#3B82F6' },
-                  { key: 't3Total', name: 'Tier 3', color: '#F59E0B' },
-                ]}
-                secondarySeries={[
-                  { key: 'totalAccounts', name: 'Total Accounts', color: '#111827' },
-                ]}
-                defaultView={viewFor('tierTotals')}
-                onViewChange={(v) => setChartView('tierTotals', v)}
-                onHide={() => toggleChartHidden('tierTotals')}
-                onRename={(t) => renameChart('tierTotals', t)}
-              />
-            )}
-            {!hiddenCharts.has('noOppsActivity') && (
-              <ProgressChart
-                title={titleFor('noOppsActivity', 'Activity on Accounts with No Opportunities (30d)')}
-                data={chartData}
-                series={[
-                  { key: 'noOppsActivityT1', name: 'Tier 1', color: '#DC2626' },
-                  { key: 'noOppsActivityT2', name: 'Tier 2', color: '#3B82F6' },
-                  { key: 'noOppsActivityT3', name: 'Tier 3', color: '#F59E0B' },
-                ]}
-                secondarySeries={[
-                  { key: 'noOppsAccountCount', name: 'No-Opps Accounts', color: '#111827' },
-                ]}
-                defaultView={viewFor('noOppsActivity')}
-                onViewChange={(v) => setChartView('noOppsActivity', v)}
-                onHide={() => toggleChartHidden('noOppsActivity')}
-                onRename={(t) => renameChart('noOppsActivity', t)}
-              />
-            )}
-            {!hiddenCharts.has('peStages') && (
-              <ProgressChart
-                title={titleFor('peStages', 'PE Firms by PE Stage')}
-                data={chartData}
-                series={PE_STAGE_SERIES.map(s => ({ key: s.key, name: s.stage, color: s.color }))}
-                secondarySeries={[
-                  { key: 'peTotal', name: 'Total PE Firms', color: '#111827' },
-                ]}
-                defaultView={viewFor('peStages', 'stackedBar')}
-                onViewChange={(v) => setChartView('peStages', v)}
-                onHide={() => toggleChartHidden('peStages')}
-                onRename={(t) => renameChart('peStages', t)}
-              />
-            )}
+            ))}
           </div>
 
           {/* History table */}
