@@ -97,10 +97,17 @@
 .clearAllDrafts { flex-shrink: 0; border: 1px solid #FECACA; background: #FEF2F2; color: #EF4444; cursor: pointer; font-size: 0.75rem; font-weight: 600; padding: 0.25rem 0.6rem; border-radius: 6px; line-height: 1; }
 .clearAllDrafts:hover { background: #FEE2E2; border-color: #FCA5A5; }
 .emptyDrafts { font-size: 0.82rem; color: var(--color-text-muted); text-align: center; padding: 1.5rem 0; }
+.draftsHint { font-size: 0.68rem; color: var(--color-text-muted); margin: -0.6rem 0 0.75rem; line-height: 1.35; }
 .draftsList { display: flex; flex-direction: column; gap: 0.35rem; }
 .draftItem { display: flex; align-items: center; gap: 0.35rem; }
 .draftLoad { flex: 1; display: flex; flex-direction: column; padding: 0.5rem 0.65rem; border: 1px solid var(--color-border); border-radius: 6px; background: none; cursor: pointer; text-align: left; font-family: inherit; }
 .draftLoad:hover { background: #F8FAFC; border-color: var(--color-accent); }
+/* Pinned drafts are exempt from the auto-drop; give them a subtle amber accent. */
+.draftItemPinned .draftLoad { border-color: #FCD34D; background: #FFFBEB; }
+.draftItemPinned .draftLoad:hover { background: #FEF3C7; border-color: #F59E0B; }
+.draftPin { flex-shrink: 0; background: none; border: none; font-size: 0.95rem; cursor: pointer; padding: 0.25rem; line-height: 1; filter: grayscale(1); opacity: 0.55; }
+.draftPin:hover { opacity: 1; }
+.draftPinActive { filter: none; opacity: 1; }
 .draftSubject { font-size: 0.8rem; font-weight: 600; color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .draftMeta { font-size: 0.65rem; color: var(--color-text-muted); }
 .draftDelete { background: none; border: none; color: var(--color-text-muted); font-size: 1rem; cursor: pointer; padding: 0.25rem; line-height: 1; }
