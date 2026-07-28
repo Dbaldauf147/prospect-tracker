@@ -1,11 +1,15 @@
 // Formatted Excel version of the Building Compliance report — mirrors the
 // printable HTML report (Schneider-branded header + logo, KPI tiles, the
-// Compliance Roadmap table, penalty-by-jurisdiction table, and the same
-// eligibility / penalty / utility-feed bar charts embedded as images).
+// Compliance Roadmap table, penalty-by-jurisdiction table, the eligibility
+// cards, and the utility-feed bar charts).
 //
-// Browser-only: uses <canvas> to rasterize the charts + logo and ExcelJS to
-// build the workbook. Mirrors the ExcelJS + canvas-image pattern already used
-// by the ISO / NAM exports in SitesView.
+// The eligibility-by-requirement cards are built from native cells with Excel
+// data-bar conditional formatting, so those bars stay live and editable in the
+// sheet. The utility-feed charts still rasterize to PNG via <canvas>.
+//
+// Browser-only: uses <canvas> to rasterize the feed charts + logo and ExcelJS
+// to build the workbook. Mirrors the ExcelJS + canvas-image pattern already
+// used by the ISO / NAM exports in SitesView.
 
 import {
   CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
@@ -27,6 +31,8 @@ const FONT = 'Nunito Sans';
 // rather than an abbreviated $1.8M.
 const usd = (n) => (n == null ? '$-' : '$' + Math.round(n).toLocaleString('en-US'));
 const mdY = (iso) => { const [y, m, d] = String(iso).split('-'); return `${Number(m)}/${Number(d)}/${y}`; };
+// 1 -> 'A', 2 -> 'B', ... for building conditional-formatting ranges.
+const colLetter = (n) => { let s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
 
 // Draw a horizontal-bar chart to a PNG data URL, matching the report's bars
 // (scale track + rounded ends + value labels). Returns { dataUrl, width, height }.
@@ -79,81 +85,6 @@ function drawHBarsPng(items, { color, valueFmt = String, title = '', width = 540
     ctx.font = `800 12.5px "${FONT}", Arial, sans-serif`;
     ctx.fillText(valueFmt(it.value), labelW + barMax + 10, y + rowH / 2);
   });
-  return { dataUrl: canvas.toDataURL('image/png'), width, height };
-}
-
-// Draw one eligibility "card" — a coloured header bar ("BBS Eligibility"),
-// the Applicable Sites + Max Yearly Penalty stat callouts, and the same
-// per-jurisdiction bars — to a PNG, mirroring the on-page Compliance
-// Screening cards. Returns { dataUrl, width, height }.
-function drawEligibilityCardPng({ label, color, applicableSites, maxPenalty, items, width = 330 }) {
-  const scale = 2;
-  const headerH = 32, statsH = 56;
-  const rowH = 20, gap = 8, barsPadT = 8, barsPadB = 12;
-  const labelW = 116, valW = 34;
-  const nBars = Math.max(1, items.length);
-  const barsH = barsPadT + nBars * (rowH + gap) + barsPadB;
-  const height = headerH + statsH + barsH;
-  const canvas = document.createElement('canvas');
-  canvas.width = width * scale; canvas.height = height * scale;
-  const ctx = canvas.getContext('2d');
-  ctx.scale(scale, scale);
-
-  ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, width, height);
-
-  // Coloured header bar.
-  ctx.fillStyle = color; ctx.fillRect(0, 0, width, headerH);
-  ctx.fillStyle = '#FFFFFF';
-  ctx.font = `800 13px "${FONT}", Arial, sans-serif`;
-  ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-  ctx.fillText(`${label} Eligibility`, 12, headerH / 2 + 1);
-
-  // Stat callouts: Applicable Sites (left) · Max Yearly Penalty (right).
-  const col2X = Math.round(width * 0.42);
-  ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
-  ctx.fillStyle = color; ctx.font = `800 20px "${FONT}", Arial, sans-serif`;
-  ctx.fillText(String(applicableSites), 12, headerH + 26);
-  ctx.fillText(usd(maxPenalty), col2X, headerH + 26);
-  ctx.fillStyle = '#64748B'; ctx.font = `700 9px "${FONT}", Arial, sans-serif`;
-  ctx.fillText('APPLICABLE SITES', 12, headerH + 42);
-  ctx.fillText('MAX YEARLY PENALTY', col2X, headerH + 42);
-
-  const rr = (x, y, w, h, rad0) => {
-    const rad = Math.min(rad0, h / 2, w / 2);
-    ctx.beginPath();
-    ctx.moveTo(x + rad, y);
-    ctx.arcTo(x + w, y, x + w, y + h, rad);
-    ctx.arcTo(x + w, y + h, x, y + h, rad);
-    ctx.arcTo(x, y + h, x, y, rad);
-    ctx.arcTo(x, y, x + w, y, rad);
-    ctx.closePath();
-  };
-  const barsTop = headerH + statsH;
-  const barMax = width - labelW - valW - 12;
-  const maxV = Math.max(1, ...items.map(i => i.value));
-  ctx.textBaseline = 'middle';
-  if (!items.length) {
-    ctx.fillStyle = '#94A3B8'; ctx.font = `12px "${FONT}", Arial, sans-serif`;
-    ctx.textAlign = 'left';
-    ctx.fillText('No eligible sites', 12, barsTop + barsPadT + 10);
-  }
-  items.forEach((it, i) => {
-    const y = barsTop + barsPadT + i * (rowH + gap);
-    const w = it.value > 0 ? Math.max(3, (it.value / maxV) * barMax) : 0;
-    ctx.fillStyle = '#475569'; ctx.font = `12px "${FONT}", Arial, sans-serif`;
-    ctx.textAlign = 'right';
-    ctx.fillText(String(it.label), labelW - 8, y + rowH / 2);
-    ctx.textAlign = 'left';
-    ctx.fillStyle = 'rgba(226,232,240,0.55)'; rr(labelW, y + 1, barMax, rowH - 2, 5); ctx.fill();
-    ctx.fillStyle = color; rr(labelW, y + 1, w, rowH - 2, 5); ctx.fill();
-    ctx.fillStyle = '#0F172A'; ctx.font = `800 12px "${FONT}", Arial, sans-serif`;
-    ctx.fillText(String(it.value), labelW + barMax + 8, y + rowH / 2);
-  });
-
-  // Card border.
-  ctx.strokeStyle = '#E2E8F0'; ctx.lineWidth = 1;
-  ctx.strokeRect(0.5, 0.5, width - 1, height - 1);
-
   return { dataUrl: canvas.toDataURL('image/png'), width, height };
 }
 
@@ -309,46 +240,107 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
   });
   r += 1;
 
-  // --- Section: Eligibility cards (images) ---
-  // One card per requirement — coloured header, Applicable Sites + Max
-  // Yearly Penalty callouts, and per-jurisdiction bars — matching the
-  // on-page Compliance Screening cards.
+  // --- Section: Eligibility by Requirement (native data-bar cards) ---
+  // Three cards side by side (BBS · Energy Audits · BPS), mirroring the
+  // on-page Compliance Screening dashboard but built from native cells: a
+  // coloured header, Applicable Sites + Max Yearly Penalty callouts, and a
+  // per-jurisdiction list whose count column carries an Excel data-bar
+  // conditional format. The bars therefore stay live and editable in the
+  // sheet instead of being flattened to an image.
   sectionTitle('Eligibility by Requirement');
-  const imgTopRow = r - 1; // 0-indexed anchor
-  let maxRows = 0;
-  // Lay the three category cards side by side. Each card is a fixed-width PNG
-  // (~330px); the sheet columns are wider than that, so anchoring to whole
-  // columns (A/D/G) left big white gaps between cards. Instead, convert a
-  // target x-pixel offset into a fractional column anchor and place the cards
-  // with an even gutter, centred across the full sheet width.
-  const CARD_W = 330, CARD_GUTTER = 24;
-  const colPx = (w) => Math.round(w * 7 + 5); // ExcelJS/Excel width → pixels
-  const COL_PX = ws.columns.map((c) => colPx(c.width));
-  const sheetPx = COL_PX.reduce((a, b) => a + b, 0);
-  const xToColAnchor = (x) => {
-    let acc = 0;
-    for (let i = 0; i < COL_PX.length; i++) {
-      if (x < acc + COL_PX[i]) return i + (x - acc) / COL_PX[i];
-      acc += COL_PX[i];
-    }
-    return COL_PX.length;
-  };
-  const cardBlockW = CATEGORIES.length * CARD_W + (CATEGORIES.length - 1) * CARD_GUTTER;
-  const cardStartX = Math.max(0, (sheetPx - cardBlockW) / 2);
-  CATEGORIES.forEach((c, i) => {
-    const png = drawEligibilityCardPng({
-      label: CATEGORY_LABEL[c],
-      color: CATEGORY_COLOR[c],
-      applicableSites: totalEligible(results, c),
-      maxPenalty: totalPenalty(results, c),
-      items: eligibilityByOrdinance(results, c).map(x => ({ label: x.government, value: x.count })),
-      width: CARD_W,
-    });
-    const x = cardStartX + i * (CARD_W + CARD_GUTTER);
-    const used = placeImage(ws, wb, png, { col: xToColAnchor(x), row: imgTopRow, maxW: CARD_W });
-    maxRows = Math.max(maxRows, used);
+  // Each card is a 2-column pair; columns 3 and 6 stay empty as gutters so the
+  // three cards read as separated tiles (matching the screenshot).
+  const CARD_COLS = [1, 4, 7];
+  const cards = CATEGORIES.map((c, i) => ({
+    color: argb(CATEGORY_COLOR[c]),
+    label: CATEGORY_LABEL[c],
+    applicable: totalEligible(results, c),
+    penalty: totalPenalty(results, c),
+    items: eligibilityByOrdinance(results, c), // [{ government, count }], desc
+    c0: CARD_COLS[i],
+  }));
+  const cardTop = r;                          // 1-indexed first row of the block
+  const maxCityRows = Math.max(1, ...cards.map(d => d.items.length));
+
+  // Coloured header band per card.
+  const hRow = ws.getRow(cardTop);
+  cards.forEach(d => {
+    ws.mergeCells(cardTop, d.c0, cardTop, d.c0 + 1);
+    const cell = hRow.getCell(d.c0);
+    cell.value = `${d.label} Eligibility`;
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: d.color } };
+    cell.font = { name: FONT, bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
+    cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
   });
-  r += maxRows + 1;
+  hRow.height = 22;
+
+  // KPI callouts: Applicable Sites (left col) · Max Yearly Penalty (right col),
+  // with small uppercase labels underneath — mirroring the on-page cards.
+  const kNum = ws.getRow(cardTop + 1);
+  const kLbl = ws.getRow(cardTop + 2);
+  cards.forEach(d => {
+    const nApp = kNum.getCell(d.c0);
+    nApp.value = d.applicable;
+    nApp.font = { name: FONT, bold: true, size: 18, color: { argb: d.color } };
+    nApp.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    const nPen = kNum.getCell(d.c0 + 1);
+    nPen.value = d.penalty || 0;
+    nPen.numFmt = '"$"#,##0';
+    nPen.font = { name: FONT, bold: true, size: 16, color: { argb: d.color } };
+    nPen.alignment = { vertical: 'middle', horizontal: 'left' };
+    const lApp = kLbl.getCell(d.c0);
+    lApp.value = 'APPLICABLE SITES';
+    lApp.font = { name: FONT, bold: true, size: 8, color: { argb: SLATE } };
+    lApp.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    const lPen = kLbl.getCell(d.c0 + 1);
+    lPen.value = 'MAX YEARLY PENALTY';
+    lPen.font = { name: FONT, bold: true, size: 8, color: { argb: SLATE } };
+    lPen.alignment = { vertical: 'middle', horizontal: 'left' };
+  });
+  kNum.height = 24; kLbl.height = 14;
+
+  // Per-jurisdiction rows: label (right-aligned, against the bar) + count.
+  const cityTop = cardTop + 3;
+  for (let ri = 0; ri < maxCityRows; ri++) {
+    const row = ws.getRow(cityTop + ri);
+    cards.forEach(d => {
+      const item = d.items[ri];
+      if (item) {
+        const nameCell = row.getCell(d.c0);
+        nameCell.value = item.government;
+        nameCell.font = { name: FONT, size: 10, color: { argb: SLATE } };
+        nameCell.alignment = { vertical: 'middle', horizontal: 'right' };
+        const valCell = row.getCell(d.c0 + 1);
+        valCell.value = item.count;
+        valCell.font = { name: FONT, bold: true, size: 10, color: { argb: INK } };
+        valCell.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
+      } else if (ri === 0 && !d.items.length) {
+        const noneCell = row.getCell(d.c0);
+        noneCell.value = 'No eligible sites';
+        noneCell.font = { name: FONT, italic: true, size: 10, color: { argb: 'FF94A3B8' } };
+        noneCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      }
+    });
+    row.height = 17;
+  }
+
+  // Live data bar down each card's count column, scaled from 0 so a count of
+  // 1 vs 2 reads proportionally. The count stays visible inside the cell.
+  cards.forEach(d => {
+    if (!d.items.length) return;
+    const col = colLetter(d.c0 + 1);
+    ws.addConditionalFormatting({
+      ref: `${col}${cityTop}:${col}${cityTop + d.items.length - 1}`,
+      rules: [{
+        type: 'dataBar',
+        gradient: false,
+        cfvo: [{ type: 'num', value: 0 }, { type: 'max' }],
+        color: { argb: d.color },
+      }],
+    });
+  });
+
+  r = cityTop + maxCityRows + 1;
 
   // --- Section: Penalty exposure by jurisdiction table ---
   sectionTitle('Penalty Exposure by Jurisdiction (Est. Max / Year)');
