@@ -10786,7 +10786,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         >Corporate Compliance</button>
       </div>
       {mainTab === 'corporate' ? (
-        <CorporateCompliance sites={complianceSites} />
+        <CorporateCompliance sites={complianceSites} settings={settings} />
       ) : mainTab === 'roadmap' ? (
         <ComplianceRoadmap sites={complianceSites} />
       ) : mainTab === 'compliance' ? (
