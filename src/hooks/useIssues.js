@@ -4,7 +4,14 @@ import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../utils/dealClientMa
 import { loadClientUntrackedMap, CLIENT_UNTRACKED_EVENT, loadClientStatusMap, CLIENT_STATUS_EVENT } from '../utils/clientManagerStore';
 import { loadIssueSnoozedMap, ISSUE_SNOOZED_EVENT } from '../utils/issueSnoozeStore';
 import { loadMyAccountsFlags, MY_ACCOUNTS_FLAGS_EVENT, MY_ACCOUNTS_FLAGS_KEY } from '../utils/myAccountsFlagsStore';
+import { dbGet } from '../utils/db';
+import { loadOppsFromCache } from '../utils/oppsCache';
 import { computeIssues } from '../utils/clientIssues';
+
+// BFO Activity rows are pasted on the BFO Activity tab and persisted in this
+// IndexedDB store; the Opps cache backs the "not tagged to an opp" check.
+const BFO_ACTIVITY_STORE = 'bfo-activity';
+const BFO_ACTIVITY_KEY = 'current';
 
 // Single source of truth for the Issues tab, shared by IssuesView (which
 // renders the rows) and the Sidebar badge (which counts them). Reads the
@@ -30,6 +37,10 @@ export function useIssues({ prospects = [], cdmName, user, marketingLeads = [] }
   const [clientStatusMap, setClientStatusMap] = useState(() => loadClientStatusMap());
   const [snoozedMap, setSnoozedMap] = useState(() => loadIssueSnoozedMap());
   const [myAccountsFlags, setMyAccountsFlags] = useState(() => loadMyAccountsFlags());
+  // BFO Activity rows + Opps cache (both IndexedDB) drive the "BFO
+  // Opportunity Name not tagged to an opp" issue. Loaded async below.
+  const [bfoActivity, setBfoActivity] = useState(null);
+  const [oppsCache, setOppsCache] = useState(null);
 
   // Re-read once the per-user localStorage scope is established (and on any
   // later account switch), since the initial reads above may have run
@@ -41,6 +52,8 @@ export function useIssues({ prospects = [], cdmName, user, marketingLeads = [] }
     setClientStatusMap(loadClientStatusMap());
     setSnoozedMap(loadIssueSnoozedMap());
     setMyAccountsFlags(loadMyAccountsFlags());
+    dbGet(BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY).then(d => setBfoActivity(d || null)).catch(() => {});
+    loadOppsFromCache().then(o => setOppsCache(o)).catch(() => {});
   }, [user?.uid]);
 
   useEffect(() => {
@@ -58,6 +71,16 @@ export function useIssues({ prospects = [], cdmName, user, marketingLeads = [] }
     function onClientStatus() { setClientStatusMap(loadClientStatusMap()); }
     function onSnoozed() { setSnoozedMap(loadIssueSnoozedMap()); }
     function onMaFlags() { setMyAccountsFlags(loadMyAccountsFlags()); }
+    // BFO Activity (IndexedDB) + Opps cache (IndexedDB): refresh on window
+    // focus (a fresh paste on either tab) and on the opps2 cache-updated
+    // event, mirroring how the BFO Activity / Agents pages reload them.
+    function refreshBfo() { dbGet(BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY).then(d => setBfoActivity(d || null)).catch(() => {}); }
+    function refreshOpps() { loadOppsFromCache().then(o => setOppsCache(o)).catch(() => {}); }
+    refreshBfo();
+    refreshOpps();
+    window.addEventListener('focus', refreshBfo);
+    window.addEventListener('focus', refreshOpps);
+    window.addEventListener('opps2-cache-updated', refreshOpps);
     window.addEventListener('storage', onStorage);
     window.addEventListener(DEALS_LIST_EVENT, onDealsList);
     window.addEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
@@ -66,6 +89,9 @@ export function useIssues({ prospects = [], cdmName, user, marketingLeads = [] }
     window.addEventListener(ISSUE_SNOOZED_EVENT, onSnoozed);
     window.addEventListener(MY_ACCOUNTS_FLAGS_EVENT, onMaFlags);
     return () => {
+      window.removeEventListener('focus', refreshBfo);
+      window.removeEventListener('focus', refreshOpps);
+      window.removeEventListener('opps2-cache-updated', refreshOpps);
       window.removeEventListener('storage', onStorage);
       window.removeEventListener(DEALS_LIST_EVENT, onDealsList);
       window.removeEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
@@ -77,9 +103,9 @@ export function useIssues({ prospects = [], cdmName, user, marketingLeads = [] }
   }, []);
 
   const issues = useMemo(() => {
-    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads });
+    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache });
     return rows.map((r) => ({ ...r, snoozed: !!snoozedMap[r.id] }));
-  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads]);
+  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache]);
 
   const openCount = useMemo(() => issues.reduce((n, r) => n + (r.snoozed ? 0 : 1), 0), [issues]);
 
