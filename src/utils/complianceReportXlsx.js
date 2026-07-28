@@ -122,11 +122,14 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
   r += 2;
 
   // --- KPI tiles (4 across, 2 cols each) ---
+  // Values are stored as real numbers (with a numFmt) rather than pre-formatted
+  // strings, so Excel doesn't flag them with the green "number stored as text"
+  // error triangle. The coloured top bar is thick to read as a header accent.
   const kpis = [
-    { v: String(siteCount), l: 'Sites screened', c: SE_DARK },
-    { v: String(withMandate), l: 'Sites with a mandate', c: argb('#3DCD58') },
-    { v: String(jurisdictions), l: 'Jurisdictions matched', c: argb('#29ABE2') },
-    { v: usd(grandPenalty), l: 'Est. max yearly exposure', c: argb('#F7941E') },
+    { v: siteCount, l: 'Sites screened', c: SE_DARK },
+    { v: withMandate, l: 'Sites with a mandate', c: argb('#3DCD58') },
+    { v: jurisdictions, l: 'Jurisdictions matched', c: argb('#29ABE2') },
+    { v: grandPenalty, l: 'Est. max yearly exposure', c: argb('#F7941E'), money: true },
   ];
   const numRow = ws.getRow(r), lblRow = ws.getRow(r + 1);
   kpis.forEach((k, i) => {
@@ -135,9 +138,11 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
     ws.mergeCells(r + 1, c0, r + 1, c0 + 1);
     const num = numRow.getCell(c0);
     num.value = k.v;
+    num.numFmt = k.money ? '"$"#,##0' : '#,##0';
+    num.ignoredErrors = { numberStoredAsText: true };
     num.font = { name: FONT, bold: true, size: 22, color: { argb: INK } };
     num.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-    num.border = { top: { style: 'medium', color: { argb: k.c } }, left: { style: 'thin', color: { argb: LINE } }, right: { style: 'thin', color: { argb: LINE } } };
+    num.border = { top: { style: 'thick', color: { argb: k.c } }, left: { style: 'thin', color: { argb: LINE } }, right: { style: 'thin', color: { argb: LINE } } };
     const lbl = lblRow.getCell(c0);
     lbl.value = k.l.toUpperCase();
     lbl.font = { name: FONT, bold: true, size: 9, color: { argb: SLATE } };
@@ -149,6 +154,9 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
 
   // --- Section: Compliance Roadmap table ---
   const sectionTitle = (text) => {
+    // Blank white spacer row so consecutive tables read as separated blocks.
+    ws.getRow(r).height = 12;
+    r += 1;
     ws.mergeCells(r, 1, r, NCOLS);
     const c = ws.getCell(r, 1);
     c.value = text;
@@ -270,42 +278,73 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
   const exposure = (() => {
     const map = new Map();
     const bump = (gov) => {
-      if (!map.has(gov)) map.set(gov, { bbsP: 0, bbsN: 0, auditsP: 0, auditsN: 0, bpsP: 0, bpsN: 0 });
+      if (!map.has(gov)) map.set(gov, { bbsP: 0, bbsN: 0, auditsP: 0, auditsN: 0, bpsP: 0, bpsN: 0, uniqueN: 0 });
       return map.get(gov);
     };
     for (const c of CATEGORIES) {
       for (const { government, penalty } of penaltyByOrdinance(results, c)) bump(government)[`${c}P`] = penalty;
       for (const { government, count } of eligibilityByOrdinance(results, c)) bump(government)[`${c}N`] = count;
     }
+    // Total-column count = the number of UNIQUE sites in the jurisdiction (a
+    // site with two mandates counts once), not the sum of the per-category
+    // counts. A site belongs to a single government, so summing these gives
+    // the true portfolio-wide unique total on the footer row.
+    for (const rr of results) {
+      if (!rr.matched) continue;
+      if (!CATEGORIES.some(c => rr[c] && rr[c].eligible === true)) continue;
+      bump(rr.government).uniqueN += 1;
+    }
     return [...map.entries()].map(([government, v]) => ({
       government, ...v,
       totalP: v.bbsP + v.auditsP + v.bpsP,
-      totalN: v.bbsN + v.auditsN + v.bpsN,
+      totalN: v.uniqueN,
     })).sort((a, b) => b.totalP - a.totalP || b.totalN - a.totalN || a.government.localeCompare(b.government));
   })();
   // Cell text: penalty with the eligible-site count in parentheses; blank
   // when a jurisdiction has neither a penalty nor an eligible site here.
   const cellPN = (penalty, count) => (count === 0 && penalty === 0) ? '' : `${usd(penalty)} (${count})`;
-  styleHeaderRow(ws.getRow(r), ['Jurisdiction', 'BBS', 'Energy Audits', 'BPS', 'Total / yr', '', '', '']);
+  // Each of the five logical columns spans one or two sheet columns so it
+  // absorbs the narrow card-gutter columns (3 and 6) — keeping the values
+  // (e.g. "$1,825,000 (1)") from being cut off.
+  const PEN_SPANS = [[1, 1], [2, 3], [4, 4], [5, 6], [7, 8]];
+  const writePenRow = (rowNum, values, { header = false, total = false, zebra = false } = {}) => {
+    const rw = ws.getRow(rowNum);
+    PEN_SPANS.forEach(([a, b], ci) => {
+      if (b > a) ws.mergeCells(rowNum, a, rowNum, b);
+      const cell = rw.getCell(a);
+      cell.value = values[ci];
+      // The "$… (n)" values are text; suppress Excel's number-stored-as-text
+      // green error triangle.
+      cell.ignoredErrors = { numberStoredAsText: true };
+      if (header) {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_DARK } };
+        cell.font = { name: FONT, bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        cell.alignment = { vertical: 'middle', horizontal: ci === 0 ? 'left' : 'center', indent: ci === 0 ? 1 : 0 };
+        cell.border = { top: { style: 'thin', color: { argb: LINE } }, bottom: { style: 'thin', color: { argb: LINE } } };
+      } else if (total) {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_LIGHT } };
+        cell.font = { name: FONT, bold: true, size: 10, color: { argb: INK } };
+        cell.alignment = { vertical: 'middle', horizontal: ci === 0 ? 'left' : 'right', indent: 1 };
+        cell.border = { top: { style: 'medium', color: { argb: argb('#3DCD58') } } };
+      } else {
+        cell.font = { name: FONT, size: 10, bold: ci === 0 || ci === 4, color: { argb: ci === 0 || ci === 4 ? INK : SLATE } };
+        cell.alignment = { vertical: 'middle', horizontal: ci === 0 ? 'left' : 'right', indent: 1 };
+        if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
+        cell.border = { bottom: { style: 'hair', color: { argb: LINE } } };
+      }
+    });
+    return rw;
+  };
+  writePenRow(r, ['Jurisdiction', 'BBS', 'Energy Audits', 'BPS', 'Total / yr'], { header: true }).height = 20;
   r += 1;
   exposure.forEach((row, i) => {
-    const rr2 = ws.getRow(r);
-    const vals = [
+    writePenRow(r, [
       row.government,
       cellPN(row.bbsP, row.bbsN),
       cellPN(row.auditsP, row.auditsN),
       cellPN(row.bpsP, row.bpsN),
       cellPN(row.totalP, row.totalN),
-    ];
-    vals.forEach((v, ci) => {
-      const cell = rr2.getCell(ci + 1);
-      cell.value = v;
-      cell.font = { name: FONT, size: 10, bold: ci === 0 || ci === 4, color: { argb: ci === 0 || ci === 4 ? INK : SLATE } };
-      cell.alignment = { vertical: 'middle', horizontal: ci === 0 ? 'left' : 'right', indent: 1 };
-      if (i % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
-      cell.border = { bottom: { style: 'hair', color: { argb: LINE } } };
-    });
-    rr2.height = 18;
+    ], { zebra: i % 2 === 1 }).height = 18;
     r += 1;
   });
   // Total row.
@@ -316,16 +355,13 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
       bpsP: s.bpsP + x.bpsP, bpsN: s.bpsN + x.bpsN,
       totalP: s.totalP + x.totalP, totalN: s.totalN + x.totalN,
     }), { bbsP: 0, bbsN: 0, auditsP: 0, auditsN: 0, bpsP: 0, bpsN: 0, totalP: 0, totalN: 0 });
-    const tr = ws.getRow(r);
-    ['All jurisdictions', cellPN(tot.bbsP, tot.bbsN), cellPN(tot.auditsP, tot.auditsN), cellPN(tot.bpsP, tot.bpsN), cellPN(tot.totalP, tot.totalN)].forEach((v, ci) => {
-      const cell = tr.getCell(ci + 1);
-      cell.value = v;
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_LIGHT } };
-      cell.font = { name: FONT, bold: true, size: 10, color: { argb: INK } };
-      cell.alignment = { vertical: 'middle', horizontal: ci === 0 ? 'left' : 'right', indent: 1 };
-      cell.border = { top: { style: 'medium', color: { argb: argb('#3DCD58') } } };
-    });
-    tr.height = 19;
+    writePenRow(r, [
+      'All jurisdictions',
+      cellPN(tot.bbsP, tot.bbsN),
+      cellPN(tot.auditsP, tot.auditsN),
+      cellPN(tot.bpsP, tot.bpsN),
+      cellPN(tot.totalP, tot.totalN),
+    ], { total: true }).height = 19;
     r += 2;
   }
 
@@ -384,9 +420,14 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
   // instead of being flattened to an image. Each panel's utility names span
   // the wide gutter/card columns (merged) so long provider names fit.
   sectionTitle('Eligibility per Data Stream for Utility Feeds');
+  // Rows ordered by eligible-site count, high to low (ties alphabetical).
+  const feedData = (commodity) => {
+    const f = utilityFeedEligibility(results, commodity);
+    return { total: f.total, rows: [...f.rows].sort((a, b) => b.count - a.count || a.utility.localeCompare(b.utility)) };
+  };
   const feeds = [
-    { color: argb('#F2B705'), label: 'Electric Power (EP)', nameCols: [1, 3], barCol: 4, ...utilityFeedEligibility(results, 'electric') },
-    { color: argb('#B5179E'), label: 'Natural Gas (NG)', nameCols: [5, 7], barCol: 8, ...utilityFeedEligibility(results, 'gas') },
+    { color: argb('#F2B705'), label: 'Electric Power (EP)', nameCols: [1, 3], barCol: 4, ...feedData('electric') },
+    { color: argb('#B5179E'), label: 'Natural Gas (NG)', nameCols: [5, 7], barCol: 8, ...feedData('gas') },
   ];
   const feedTop = r;
   const maxFeedRows = Math.max(1, ...feeds.map(f => f.rows.length));
