@@ -3097,6 +3097,38 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
 
   return (
     <div className={styles.wrapper}>
+      {(() => {
+        // Company mappings resolve against `targetAccounts` — the Target
+        // Accounts list, filtered to this CDM + Tier 1/2. When that list
+        // comes back empty, every auto-fuzzy mapping silently vanishes and
+        // the picker dropdown empties, which reads as "all my mappings
+        // disappeared." Surface the two ways it collapses so the failure is
+        // actionable instead of mysterious: (1) the Target Accounts data
+        // never loaded, or (2) it loaded but nothing matched the CDM.
+        if (!prospects || prospects.length === 0) return null;
+        if (targetAccounts.length > 0) return null;
+        const dataLoaded = !!(targetAccountsData && targetAccountsData.sheets &&
+          (targetAccountsData.sheetNames || []).some(n => targetAccountsData.sheets[n]?.records?.length));
+        return (
+          <div
+            role="status"
+            style={{
+              display: 'flex', alignItems: 'flex-start', gap: '0.5rem',
+              padding: '0.6rem 0.85rem', margin: '0 0 0.6rem',
+              background: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: '8px',
+              fontSize: '0.78rem', color: '#991B1B', lineHeight: 1.4,
+            }}
+          >
+            <span style={{ fontSize: '1rem', lineHeight: 1 }}>&#9888;</span>
+            <span>
+              <strong>Company mappings can&rsquo;t resolve — your Target Accounts list is empty.</strong>{' '}
+              {dataLoaded
+                ? <>The list loaded, but no accounts matched your CDM{cdmName ? <> &ldquo;{cdmName}&rdquo;</> : ' (no CDM name set)'}. Check your CDM name in Settings, or the owner/CDM column on the Target Accounts sheet (Lists &rarr; Targets).</>
+                : <>The Target Accounts list didn&rsquo;t load. Open Lists &rarr; Targets to re-upload it — auto-mapped companies will repopulate once it&rsquo;s back.</>}
+            </span>
+          </div>
+        );
+      })()}
       <div className={styles.filterBar}>
         <input
           className={styles.searchInput}
