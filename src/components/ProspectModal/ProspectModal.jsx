@@ -2530,6 +2530,41 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [mergeQuery, setMergeQuery] = useState('');
   const [listsMatchOpen, setListsMatchOpen] = useState(false);
   const listsMatchBtnRef = useRef(null);
+  // Fuzzy-match this company's name against the RA Clients list (Lists →
+  // RA Clients tab). Surfaces a warning in the modal so the user doesn't
+  // prospect a company that's already a live RA client. Uses the same
+  // normalization + substring-ratio scoring the list tabs use, and reads
+  // the effective list (user-uploaded override or bundled default).
+  const raClientMatches = useMemo(() => {
+    const company = (fields.company || '').trim();
+    if (!company) return [];
+    const target = normalizePortfolioCompany(company);
+    if (!target) return [];
+    const raClientsData = loadEffectiveRaClients().data || [];
+    const seen = new Set();
+    const out = [];
+    for (const ra of raClientsData) {
+      const name = raClientName(ra);
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      const norm = normalizePortfolioCompany(name);
+      if (!norm) continue;
+      let score = 0;
+      if (norm === target) score = 1;
+      else if (norm.length >= 3 && target.length >= 3 && (norm.includes(target) || target.includes(norm))) {
+        const shorter = Math.min(norm.length, target.length);
+        const longer = Math.max(norm.length, target.length);
+        score = longer > 0 ? shorter / longer : 0;
+      }
+      if (score >= 0.5) {
+        seen.add(key);
+        out.push({ name, cm: raClientCm(ra), score, exact: score === 1 });
+      }
+    }
+    out.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+    return out.slice(0, 5);
+  }, [fields.company]);
   const [pastePortfolio, setPastePortfolio] = useState('');
   // Slug used as the Firestore path segment for persisted research
   // results — same shape as companySlug below; declared earlier here
@@ -4516,6 +4551,45 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           />
         )}
         <div className={styles.body}>
+          {raClientMatches.length > 0 && (
+            <div style={{
+              marginBottom: '0.8rem',
+              padding: '0.6rem 0.8rem',
+              background: '#FFFBEB',
+              border: '1px solid #FDE68A',
+              borderRadius: 6,
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '0.6rem',
+            }}>
+              <div style={{ fontSize: '1rem', lineHeight: 1.2 }}>⚠️</div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  {raClientMatches.some(m => m.exact) ? 'Matches an RA Client' : 'Possible RA Client match'}
+                </div>
+                <div style={{ fontSize: '0.75rem', color: '#78350F', marginTop: '0.2rem' }}>
+                  This company looks like {raClientMatches.length === 1 ? 'an existing RA Client' : 'existing RA Clients'} on the Lists → RA Clients tab. Double-check before prospecting.
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginTop: '0.4rem' }}>
+                  {raClientMatches.map(m => (
+                    <span
+                      key={m.name}
+                      title={m.cm ? `Client Manager: ${m.cm}` : undefined}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
+                        padding: '0.15rem 0.5rem', background: '#FEF3C7', border: '1px solid #FDE68A',
+                        borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, color: '#92400E',
+                      }}
+                    >
+                      {m.name}
+                      <span style={{ fontWeight: 700, color: '#B45309' }}>{m.exact ? 'exact' : `${Math.round(m.score * 100)}%`}</span>
+                      {m.cm && <span style={{ fontWeight: 400, color: '#A16207' }}>· {m.cm}</span>}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
           {indicativeAnalysis && (
             <div style={{
               marginBottom: '0.8rem',
