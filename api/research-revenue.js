@@ -42,6 +42,12 @@ Return ONLY a single JSON object (no prose, no markdown fences) with these field
 
 Prefer official filings and the company's own investor relations pages over third-party estimators. If the company is private and no credible revenue figure surfaces, return the object with revenue and revenueUsd empty/null and explain in summary.`;
 
+  // The agentic web-search loop (up to 6 sequential searches plus generation)
+  // can run long. Abort it a little before the function's own maxDuration so a
+  // stuck call returns a clean, retryable error rather than letting Vercel kill
+  // the whole invocation with an opaque FUNCTION_INVOCATION_TIMEOUT page.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 290_000);
   try {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -59,6 +65,7 @@ Prefer official filings and the company's own investor relations pages over thir
           { role: 'user', content: `Research the most recent annual revenue for "${company}". Return the JSON object as specified.` },
         ],
       }),
+      signal: controller.signal,
     });
 
     if (!resp.ok) {
@@ -104,7 +111,12 @@ Prefer official filings and the company's own investor relations pages over thir
       sources: asLinkArray(parsed.sources),
     });
   } catch (err) {
+    if (err?.name === 'AbortError') {
+      return res.status(504).json({ error: 'Revenue research timed out. Please try again.' });
+    }
     return res.status(500).json({ error: err.message || 'Unknown error' });
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
