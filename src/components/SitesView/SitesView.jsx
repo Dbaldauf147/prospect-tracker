@@ -4046,7 +4046,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
               // to convert to MWh before comparing to the 10,000 MWh
               // Risk Management threshold.
               const consumptionMWh = g.consumption / 1000;
-              if (consumptionMWh > 10_000) out.push('⚠ Risk Management should be considered (>10,000 MWh)');
+              // Risk Management is a NAM-only offering: US / Canada
+              // state buckets always qualify; country buckets only
+              // when the reference table places the country in North
+              // America (e.g. Mexico). International markets skip it.
+              const isNamMarket = !g.isCountry
+                || COUNTRY_DEREGULATION[g.state]?.region === 'North America';
+              if (isNamMarket && consumptionMWh > 10_000) out.push('⚠ Risk Management should be considered (>10,000 MWh)');
               // Wholesale Plus: > 44,000 MWh/yr of deregulated electric
               // in a single state is large enough to justify exploring
               // the structured wholesale procurement product.
@@ -9811,8 +9817,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         },
         {
           alert: 'Risk Management',
-          commodity: 'Electric (per state)',
-          trigger: 'State-level deregulated electric consumption',
+          commodity: 'Electric (per state, NAM only)',
+          trigger: 'State-level deregulated electric consumption — NAM markets only (US states, Canadian provinces, Mexico); international markets are excluded',
           threshold: '> 10,000 MWh / yr',
           action: 'Risk Management strategy (hedge layering, structured product) should be considered.',
         },
