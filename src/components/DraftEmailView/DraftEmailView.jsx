@@ -904,9 +904,24 @@ function PreviewTabs({ contacts, subject, body, personalizeForContact, draftCc, 
 const AUTOSAVE_KEY = 'prospect-draft-autosave';
 
 // The body "Clear all" resets to — a personalized greeting kept as a real
-// {goesBy} token so it still resolves per recipient on send/preview. The
-// signature lives in its own field, so it's untouched by a compose clear.
-const GREETING_BODY = '<p>Hi {goesBy},</p><p><br></p>';
+// {goesBy} token so it still resolves per recipient on send/preview, followed
+// by two blank lines so the cursor starts a couple of returns below the
+// greeting. The signature lives in its own field, so it's untouched by a
+// compose clear.
+const GREETING_BODY = '<p>Hi {goesBy},</p><p><br></p><p><br></p>';
+
+// "Clear all" leaves the user's own address in the To line rather than an
+// empty recipient list, so a freshly-cleared compose is ready to send a test
+// to self. Shaped like a contact record (id/name/email) so it flows through
+// the To rendering and {goesBy}/{firstName} token resolution unchanged.
+const SELF_RECIPIENT = Object.freeze({
+  id: 'self:daniel.baldauf@se.com',
+  name: 'Daniel Baldauf',
+  firstName: 'Daniel',
+  lastName: 'Baldauf',
+  email: 'daniel.baldauf@se.com',
+  company: '',
+});
 
 export function DraftEmailView({ prospects, settings, updateSettings }) {
   const { isAdmin, user } = useAuth();
@@ -1321,14 +1336,15 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     setSelectedContacts(prev => prev.filter(c => c.id !== id));
   }
 
-  // "Clear all" — reset the composer to a fresh email: drop every recipient
-  // (To + CC), the subject, the attachments, and the message body. The body
-  // resets to the "Hi {goesBy}," greeting rather than going fully blank, and
-  // the saved signature (a separate field) is left untouched.
+  // "Clear all" — reset the composer to a fresh email: drop the CC list, the
+  // subject, the attachments, and the message body, and reset the To line to
+  // just the user's own address (SELF_RECIPIENT). The body resets to the
+  // "Hi {goesBy}," greeting rather than going fully blank, and the saved
+  // signature (a separate field) is left untouched.
   function clearCompose() {
-    const ok = window.confirm('Clear the recipients, subject, message, and attachments? The "Hi {goesBy}," greeting and your signature are kept.');
+    const ok = window.confirm('Clear the CC, subject, message, and attachments? The To line is reset to your own address (daniel.baldauf@se.com), and the "Hi {goesBy}," greeting and your signature are kept.');
     if (!ok) return;
-    setSelectedContacts([]);
+    setSelectedContacts([SELF_RECIPIENT]);
     setDraftCc([]);
     setSubject('');
     setBody(GREETING_BODY);
