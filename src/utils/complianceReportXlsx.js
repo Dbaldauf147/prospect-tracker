@@ -1,7 +1,7 @@
 // Formatted Excel version of the Building Compliance report — mirrors the
 // printable HTML report (Schneider-branded header + logo, KPI tiles, the
-// Compliance Roadmap table, penalty-by-jurisdiction table, the eligibility
-// cards, and the utility-feed bar charts).
+// eligibility cards, a combined penalty-and-site-count table by jurisdiction,
+// and the utility-feed bar charts).
 //
 // The eligibility-by-requirement cards are built from native cells with Excel
 // data-bar conditional formatting, so those bars stay live and editable in the
@@ -13,7 +13,7 @@
 
 import {
   CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
-  eligibilityByOrdinance, totalEligible, deadlinesByDate,
+  eligibilityByOrdinance, totalEligible,
   penaltyByOrdinance, totalPenalty, utilityFeedEligibility,
 } from './complianceMandates.js';
 import { schneiderLogoPngDataUrl, SE_GREEN_DARK } from './schneiderLogo.js';
@@ -213,33 +213,6 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
     r += 1;
   };
 
-  sectionTitle('Compliance Roadmap — Upcoming Deadlines');
-  const roadmap = (() => {
-    const map = new Map();
-    for (const c of CATEGORIES) for (const { date, count } of deadlinesByDate(results, c)) {
-      if (!map.has(date)) map.set(date, { bbs: 0, audits: 0, bps: 0 });
-      map.get(date)[c] = count;
-    }
-    return [...map.entries()].map(([date, v]) => ({ date, ...v, total: v.bbs + v.audits + v.bps })).sort((a, b) => a.date.localeCompare(b.date));
-  })();
-  styleHeaderRow(ws.getRow(r), ['Compliance deadline', 'BBS', 'Energy Audits', 'BPS', 'Total sites', '', '', '']);
-  r += 1;
-  roadmap.forEach((row, i) => {
-    const rr2 = ws.getRow(r);
-    const vals = [mdY(row.date), row.bbs || '—', row.audits || '—', row.bps || '—', row.total];
-    vals.forEach((v, ci) => {
-      const cell = rr2.getCell(ci + 1);
-      cell.value = v;
-      cell.font = { name: FONT, size: 10, bold: ci === 0 || ci === 4, color: { argb: ci === 0 || ci === 4 ? INK : SLATE } };
-      cell.alignment = { vertical: 'middle', horizontal: ci === 0 ? 'left' : 'center', indent: ci === 0 ? 1 : 0 };
-      if (i % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
-      cell.border = { bottom: { style: 'hair', color: { argb: LINE } } };
-    });
-    rr2.height = 18;
-    r += 1;
-  });
-  r += 1;
-
   // --- Section: Eligibility by Requirement (native data-bar cards) ---
   // Three cards side by side (BBS · Energy Audits · BPS), mirroring the
   // on-page Compliance Screening dashboard but built from native cells: a
@@ -342,25 +315,45 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
 
   r = cityTop + maxCityRows + 1;
 
-  // --- Section: Penalty exposure by jurisdiction table ---
-  sectionTitle('Penalty Exposure by Jurisdiction (Est. Max / Year)');
-  const penRows = (() => {
+  // --- Section: Combined compliance exposure by jurisdiction ---
+  // Merges the former "Compliance Roadmap" (site counts) and "Penalty
+  // Exposure" ($/yr) tables into one jurisdiction-keyed table. Each category
+  // cell shows the estimated max yearly penalty with the number of eligible
+  // sites in parentheses, e.g. "$2,000 (1)".
+  sectionTitle('Penalty Exposure by Jurisdiction (Est. Max / Year · site count in parentheses)');
+  const exposure = (() => {
     const map = new Map();
-    for (const c of CATEGORIES) for (const { government, penalty } of penaltyByOrdinance(results, c)) {
-      if (!map.has(government)) map.set(government, { bbs: 0, audits: 0, bps: 0 });
-      map.get(government)[c] = penalty;
+    const bump = (gov) => {
+      if (!map.has(gov)) map.set(gov, { bbsP: 0, bbsN: 0, auditsP: 0, auditsN: 0, bpsP: 0, bpsN: 0 });
+      return map.get(gov);
+    };
+    for (const c of CATEGORIES) {
+      for (const { government, penalty } of penaltyByOrdinance(results, c)) bump(government)[`${c}P`] = penalty;
+      for (const { government, count } of eligibilityByOrdinance(results, c)) bump(government)[`${c}N`] = count;
     }
-    return [...map.entries()].map(([government, v]) => ({ government, ...v, total: v.bbs + v.audits + v.bps })).sort((a, b) => b.total - a.total);
+    return [...map.entries()].map(([government, v]) => ({
+      government, ...v,
+      totalP: v.bbsP + v.auditsP + v.bpsP,
+      totalN: v.bbsN + v.auditsN + v.bpsN,
+    })).sort((a, b) => b.totalP - a.totalP || b.totalN - a.totalN || a.government.localeCompare(b.government));
   })();
+  // Cell text: penalty with the eligible-site count in parentheses; a dash
+  // when a jurisdiction has neither a penalty nor an eligible site here.
+  const cellPN = (penalty, count) => (count === 0 && penalty === 0) ? '—' : `${usd(penalty)} (${count})`;
   styleHeaderRow(ws.getRow(r), ['Jurisdiction', 'BBS', 'Energy Audits', 'BPS', 'Total / yr', '', '', '']);
   r += 1;
-  penRows.forEach((row, i) => {
+  exposure.forEach((row, i) => {
     const rr2 = ws.getRow(r);
-    const vals = [row.government, row.bbs || 0, row.audits || 0, row.bps || 0, row.total];
+    const vals = [
+      row.government,
+      cellPN(row.bbsP, row.bbsN),
+      cellPN(row.auditsP, row.auditsN),
+      cellPN(row.bpsP, row.bpsN),
+      cellPN(row.totalP, row.totalN),
+    ];
     vals.forEach((v, ci) => {
       const cell = rr2.getCell(ci + 1);
       cell.value = v;
-      if (ci > 0) cell.numFmt = '"$"#,##0';
       cell.font = { name: FONT, size: 10, bold: ci === 0 || ci === 4, color: { argb: ci === 0 || ci === 4 ? INK : SLATE } };
       cell.alignment = { vertical: 'middle', horizontal: ci === 0 ? 'left' : 'right', indent: 1 };
       if (i % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
@@ -370,13 +363,17 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
     r += 1;
   });
   // Total row.
-  if (penRows.length) {
-    const tot = penRows.reduce((s, x) => ({ bbs: s.bbs + x.bbs, audits: s.audits + x.audits, bps: s.bps + x.bps, total: s.total + x.total }), { bbs: 0, audits: 0, bps: 0, total: 0 });
+  if (exposure.length) {
+    const tot = exposure.reduce((s, x) => ({
+      bbsP: s.bbsP + x.bbsP, bbsN: s.bbsN + x.bbsN,
+      auditsP: s.auditsP + x.auditsP, auditsN: s.auditsN + x.auditsN,
+      bpsP: s.bpsP + x.bpsP, bpsN: s.bpsN + x.bpsN,
+      totalP: s.totalP + x.totalP, totalN: s.totalN + x.totalN,
+    }), { bbsP: 0, bbsN: 0, auditsP: 0, auditsN: 0, bpsP: 0, bpsN: 0, totalP: 0, totalN: 0 });
     const tr = ws.getRow(r);
-    ['All jurisdictions', tot.bbs, tot.audits, tot.bps, tot.total].forEach((v, ci) => {
+    ['All jurisdictions', cellPN(tot.bbsP, tot.bbsN), cellPN(tot.auditsP, tot.auditsN), cellPN(tot.bpsP, tot.bpsN), cellPN(tot.totalP, tot.totalN)].forEach((v, ci) => {
       const cell = tr.getCell(ci + 1);
       cell.value = v;
-      if (ci > 0) cell.numFmt = '"$"#,##0';
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_LIGHT } };
       cell.font = { name: FONT, bold: true, size: 10, color: { argb: INK } };
       cell.alignment = { vertical: 'middle', horizontal: ci === 0 ? 'left' : 'right', indent: 1 };
