@@ -1,7 +1,7 @@
 // Formatted Excel version of the Building Compliance report — mirrors the
 // printable HTML report (Schneider-branded header + logo, KPI tiles, the
-// Compliance Roadmap table, penalty-by-jurisdiction table, the eligibility
-// cards, and the utility-feed bar charts).
+// eligibility cards, a combined penalty-and-site-count table by jurisdiction,
+// and the utility-feed bar charts).
 //
 // The eligibility-by-requirement cards are built from native cells with Excel
 // data-bar conditional formatting, so those bars stay live and editable in the
@@ -13,7 +13,7 @@
 
 import {
   CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
-  eligibilityByOrdinance, totalEligible, deadlinesByDate,
+  eligibilityByOrdinance, totalEligible,
   penaltyByOrdinance, totalPenalty, utilityFeedEligibility,
   bpsPrioritization,
 } from './complianceMandates.js';
@@ -35,60 +35,6 @@ const mdY = (iso) => { const [y, m, d] = String(iso).split('-'); return `${Numbe
 // 1 -> 'A', 2 -> 'B', ... for building conditional-formatting ranges.
 const colLetter = (n) => { let s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
 
-// Draw a horizontal-bar chart to a PNG data URL, matching the report's bars
-// (scale track + rounded ends + value labels). Returns { dataUrl, width, height }.
-function drawHBarsPng(items, { color, valueFmt = String, title = '', width = 540, labelW = 176 }) {
-  const rowH = 22, gap = 10, valW = 88, padT = title ? 30 : 10, padB = 10;
-  const barMax = width - labelW - valW;
-  const max = Math.max(1, ...items.map(i => i.value));
-  const height = padT + Math.max(1, items.length) * (rowH + gap) + padB;
-  const scale = 2;
-  const canvas = document.createElement('canvas');
-  canvas.width = width * scale; canvas.height = height * scale;
-  const ctx = canvas.getContext('2d');
-  ctx.scale(scale, scale);
-  ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, width, height);
-  ctx.textBaseline = 'middle';
-  if (title) {
-    ctx.textBaseline = 'alphabetic';
-    ctx.fillStyle = '#0F172A';
-    ctx.font = `800 13px "${FONT}", Arial, sans-serif`;
-    ctx.fillText(title, 0, 18);
-    ctx.textBaseline = 'middle';
-  }
-  const rr = (x, y, w, h, r) => { // rounded rect
-    const rad = Math.min(r, h / 2, w / 2);
-    ctx.beginPath();
-    ctx.moveTo(x + rad, y);
-    ctx.arcTo(x + w, y, x + w, y + h, rad);
-    ctx.arcTo(x + w, y + h, x, y + h, rad);
-    ctx.arcTo(x, y + h, x, y, rad);
-    ctx.arcTo(x, y, x + w, y, rad);
-    ctx.closePath();
-  };
-  if (!items.length) {
-    ctx.fillStyle = '#94A3B8'; ctx.font = `12px "${FONT}", Arial, sans-serif`;
-    ctx.fillText('No eligible sites', labelW, padT + 12);
-  }
-  items.forEach((it, i) => {
-    const y = padT + i * (rowH + gap);
-    const w = it.value > 0 ? Math.max(3, (it.value / max) * barMax) : 0;
-    ctx.fillStyle = '#475569';
-    ctx.font = `12px "${FONT}", Arial, sans-serif`;
-    ctx.textAlign = 'right';
-    ctx.fillText(String(it.label), labelW - 10, y + rowH / 2);
-    ctx.textAlign = 'left';
-    ctx.fillStyle = 'rgba(226,232,240,0.55)';
-    rr(labelW, y + 1, barMax, rowH - 2, 5); ctx.fill();
-    ctx.fillStyle = color;
-    rr(labelW, y + 1, w, rowH - 2, 5); ctx.fill();
-    ctx.fillStyle = '#0F172A';
-    ctx.font = `800 12.5px "${FONT}", Arial, sans-serif`;
-    ctx.fillText(valueFmt(it.value), labelW + barMax + 10, y + rowH / 2);
-  });
-  return { dataUrl: canvas.toDataURL('image/png'), width, height };
-}
-
 // --- workbook builders ---------------------------------------------------
 
 function styleHeaderRow(row, labels) {
@@ -97,17 +43,12 @@ function styleHeaderRow(row, labels) {
     cell.value = label;
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_DARK } };
     cell.font = { name: FONT, bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
-    cell.alignment = { vertical: 'middle', horizontal: i === 0 ? 'left' : 'center', indent: i === 0 ? 1 : 0 };
+    // wrapText so a longer header (e.g. "Energy Audits") still fits the now-
+    // narrow gutter column instead of clipping.
+    cell.alignment = { vertical: 'middle', horizontal: i === 0 ? 'left' : 'center', indent: i === 0 ? 1 : 0, wrapText: true };
     cell.border = { top: { style: 'thin', color: { argb: LINE } }, bottom: { style: 'thin', color: { argb: LINE } } };
   });
-  row.height = 20;
-}
-
-function placeImage(ws, wb, png, { col, row, maxW }) {
-  const scale = maxW && png.width > maxW ? maxW / png.width : 1;
-  const id = wb.addImage({ base64: png.dataUrl, extension: 'png' });
-  ws.addImage(id, { tl: { col, row }, ext: { width: png.width * scale, height: png.height * scale } });
-  return Math.ceil((png.height * scale) / 19); // rows consumed (≈19px/row)
+  row.height = 28;
 }
 
 export async function exportComplianceReportXlsx(results, meta = {}) {
@@ -126,9 +67,13 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
   // left third. Chart images below anchor to whole columns (see the *_COLS
   // arrays) and are sized to the resulting gaps, so they stay non-overlapping
   // against these widths.
+  // Columns 3 and 6 are the narrow gutters between the three Eligibility
+  // cards (and Utility-feed panels); the rest are the wide card / table
+  // columns. Keeping the gutters thin makes the cards read as wide tiles with
+  // only a small white gap between them.
   ws.columns = [
-    { width: 30 }, { width: 24 }, { width: 24 }, { width: 24 },
-    { width: 24 }, { width: 24 }, { width: 24 }, { width: 24 },
+    { width: 30 }, { width: 26 }, { width: 10 }, { width: 28 },
+    { width: 26 }, { width: 10 }, { width: 28 }, { width: 26 },
   ];
 
   const matched = results.filter(r => r.matched);
@@ -213,33 +158,6 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
     ws.getRow(r).height = 22;
     r += 1;
   };
-
-  sectionTitle('Compliance Roadmap — Upcoming Deadlines');
-  const roadmap = (() => {
-    const map = new Map();
-    for (const c of CATEGORIES) for (const { date, count } of deadlinesByDate(results, c)) {
-      if (!map.has(date)) map.set(date, { bbs: 0, audits: 0, bps: 0 });
-      map.get(date)[c] = count;
-    }
-    return [...map.entries()].map(([date, v]) => ({ date, ...v, total: v.bbs + v.audits + v.bps })).sort((a, b) => a.date.localeCompare(b.date));
-  })();
-  styleHeaderRow(ws.getRow(r), ['Compliance deadline', 'BBS', 'Energy Audits', 'BPS', 'Total sites', '', '', '']);
-  r += 1;
-  roadmap.forEach((row, i) => {
-    const rr2 = ws.getRow(r);
-    const vals = [mdY(row.date), row.bbs || '', row.audits || '', row.bps || '', row.total];
-    vals.forEach((v, ci) => {
-      const cell = rr2.getCell(ci + 1);
-      cell.value = v;
-      cell.font = { name: FONT, size: 10, bold: ci === 0 || ci === 4, color: { argb: ci === 0 || ci === 4 ? INK : SLATE } };
-      cell.alignment = { vertical: 'middle', horizontal: ci === 0 ? 'left' : 'center', indent: ci === 0 ? 1 : 0 };
-      if (i % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
-      cell.border = { bottom: { style: 'hair', color: { argb: LINE } } };
-    });
-    rr2.height = 18;
-    r += 1;
-  });
-  r += 1;
 
   // --- Section: Eligibility by Requirement (native data-bar cards) ---
   // Three cards side by side (BBS · Energy Audits · BPS), mirroring the
@@ -343,25 +261,45 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
 
   r = cityTop + maxCityRows + 1;
 
-  // --- Section: Penalty exposure by jurisdiction table ---
-  sectionTitle('Penalty Exposure by Jurisdiction (Est. Max / Year)');
-  const penRows = (() => {
+  // --- Section: Combined compliance exposure by jurisdiction ---
+  // Merges the former "Compliance Roadmap" (site counts) and "Penalty
+  // Exposure" ($/yr) tables into one jurisdiction-keyed table. Each category
+  // cell shows the estimated max yearly penalty with the number of eligible
+  // sites in parentheses, e.g. "$2,000 (1)".
+  sectionTitle('Penalty Exposure by Jurisdiction (Est. Max / Year · site count in parentheses)');
+  const exposure = (() => {
     const map = new Map();
-    for (const c of CATEGORIES) for (const { government, penalty } of penaltyByOrdinance(results, c)) {
-      if (!map.has(government)) map.set(government, { bbs: 0, audits: 0, bps: 0 });
-      map.get(government)[c] = penalty;
+    const bump = (gov) => {
+      if (!map.has(gov)) map.set(gov, { bbsP: 0, bbsN: 0, auditsP: 0, auditsN: 0, bpsP: 0, bpsN: 0 });
+      return map.get(gov);
+    };
+    for (const c of CATEGORIES) {
+      for (const { government, penalty } of penaltyByOrdinance(results, c)) bump(government)[`${c}P`] = penalty;
+      for (const { government, count } of eligibilityByOrdinance(results, c)) bump(government)[`${c}N`] = count;
     }
-    return [...map.entries()].map(([government, v]) => ({ government, ...v, total: v.bbs + v.audits + v.bps })).sort((a, b) => b.total - a.total);
+    return [...map.entries()].map(([government, v]) => ({
+      government, ...v,
+      totalP: v.bbsP + v.auditsP + v.bpsP,
+      totalN: v.bbsN + v.auditsN + v.bpsN,
+    })).sort((a, b) => b.totalP - a.totalP || b.totalN - a.totalN || a.government.localeCompare(b.government));
   })();
+  // Cell text: penalty with the eligible-site count in parentheses; blank
+  // when a jurisdiction has neither a penalty nor an eligible site here.
+  const cellPN = (penalty, count) => (count === 0 && penalty === 0) ? '' : `${usd(penalty)} (${count})`;
   styleHeaderRow(ws.getRow(r), ['Jurisdiction', 'BBS', 'Energy Audits', 'BPS', 'Total / yr', '', '', '']);
   r += 1;
-  penRows.forEach((row, i) => {
+  exposure.forEach((row, i) => {
     const rr2 = ws.getRow(r);
-    const vals = [row.government, row.bbs || 0, row.audits || 0, row.bps || 0, row.total];
+    const vals = [
+      row.government,
+      cellPN(row.bbsP, row.bbsN),
+      cellPN(row.auditsP, row.auditsN),
+      cellPN(row.bpsP, row.bpsN),
+      cellPN(row.totalP, row.totalN),
+    ];
     vals.forEach((v, ci) => {
       const cell = rr2.getCell(ci + 1);
       cell.value = v;
-      if (ci > 0) cell.numFmt = '"$"#,##0';
       cell.font = { name: FONT, size: 10, bold: ci === 0 || ci === 4, color: { argb: ci === 0 || ci === 4 ? INK : SLATE } };
       cell.alignment = { vertical: 'middle', horizontal: ci === 0 ? 'left' : 'right', indent: 1 };
       if (i % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
@@ -371,13 +309,17 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
     r += 1;
   });
   // Total row.
-  if (penRows.length) {
-    const tot = penRows.reduce((s, x) => ({ bbs: s.bbs + x.bbs, audits: s.audits + x.audits, bps: s.bps + x.bps, total: s.total + x.total }), { bbs: 0, audits: 0, bps: 0, total: 0 });
+  if (exposure.length) {
+    const tot = exposure.reduce((s, x) => ({
+      bbsP: s.bbsP + x.bbsP, bbsN: s.bbsN + x.bbsN,
+      auditsP: s.auditsP + x.auditsP, auditsN: s.auditsN + x.auditsN,
+      bpsP: s.bpsP + x.bpsP, bpsN: s.bpsN + x.bpsN,
+      totalP: s.totalP + x.totalP, totalN: s.totalN + x.totalN,
+    }), { bbsP: 0, bbsN: 0, auditsP: 0, auditsN: 0, bpsP: 0, bpsN: 0, totalP: 0, totalN: 0 });
     const tr = ws.getRow(r);
-    ['All jurisdictions', tot.bbs, tot.audits, tot.bps, tot.total].forEach((v, ci) => {
+    ['All jurisdictions', cellPN(tot.bbsP, tot.bbsN), cellPN(tot.auditsP, tot.auditsN), cellPN(tot.bpsP, tot.bpsN), cellPN(tot.totalP, tot.totalN)].forEach((v, ci) => {
       const cell = tr.getCell(ci + 1);
       cell.value = v;
-      if (ci > 0) cell.numFmt = '"$"#,##0';
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_LIGHT } };
       cell.font = { name: FONT, bold: true, size: 10, color: { argb: INK } };
       cell.alignment = { vertical: 'middle', horizontal: ci === 0 ? 'left' : 'right', indent: 1 };
@@ -435,15 +377,92 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
     r += 1;
   }
 
-  // --- Section: Utility feeds (images) ---
+  // --- Section: Utility feeds (native data-bar panels) ---
+  // Two panels (Electric Power · Natural Gas), built the same way as the
+  // Eligibility cards above — a coloured header, a Total callout, and a
+  // per-utility list whose count column carries a live Excel data bar —
+  // instead of being flattened to an image. Each panel's utility names span
+  // the wide gutter/card columns (merged) so long provider names fit.
   sectionTitle('Eligibility per Data Stream for Utility Feeds');
-  const feedTop = r - 1;
-  // Two feed charts, each ~half the sheet: anchored at columns A and E.
-  const epPng = drawHBarsPng(utilityFeedEligibility(results, 'electric').rows.map(x => ({ label: x.utility, value: x.count })), { color: '#F2B705', title: 'Electric Power (EP)', width: 660, labelW: 200 });
-  const ngPng = drawHBarsPng(utilityFeedEligibility(results, 'gas').rows.map(x => ({ label: x.utility, value: x.count })), { color: '#B5179E', title: 'Natural Gas (NG)', width: 660, labelW: 200 });
-  const u1 = placeImage(ws, wb, epPng, { col: 0, row: feedTop, maxW: 660 });
-  const u2 = placeImage(ws, wb, ngPng, { col: 4, row: feedTop, maxW: 660 });
-  r += Math.max(u1, u2) + 1;
+  const feeds = [
+    { color: argb('#F2B705'), label: 'Electric Power (EP)', nameCols: [1, 3], barCol: 4, ...utilityFeedEligibility(results, 'electric') },
+    { color: argb('#B5179E'), label: 'Natural Gas (NG)', nameCols: [5, 7], barCol: 8, ...utilityFeedEligibility(results, 'gas') },
+  ];
+  const feedTop = r;
+  const maxFeedRows = Math.max(1, ...feeds.map(f => f.rows.length));
+
+  // Coloured header band per panel (spans the panel's full width).
+  const fHdr = ws.getRow(feedTop);
+  feeds.forEach(f => {
+    ws.mergeCells(feedTop, f.nameCols[0], feedTop, f.barCol);
+    const cell = fHdr.getCell(f.nameCols[0]);
+    cell.value = f.label;
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: f.color } };
+    cell.font = { name: FONT, bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
+    cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  });
+  fHdr.height = 22;
+
+  // Total eligible-sites callout with a small uppercase label underneath.
+  const fNum = ws.getRow(feedTop + 1);
+  const fLbl = ws.getRow(feedTop + 2);
+  feeds.forEach(f => {
+    ws.mergeCells(feedTop + 1, f.nameCols[0], feedTop + 1, f.barCol);
+    const n = fNum.getCell(f.nameCols[0]);
+    n.value = f.total;
+    n.font = { name: FONT, bold: true, size: 18, color: { argb: f.color } };
+    n.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.mergeCells(feedTop + 2, f.nameCols[0], feedTop + 2, f.barCol);
+    const l = fLbl.getCell(f.nameCols[0]);
+    l.value = 'TOTAL ELIGIBLE SITES';
+    l.font = { name: FONT, bold: true, size: 8, color: { argb: SLATE } };
+    l.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  });
+  fNum.height = 24; fLbl.height = 14;
+
+  // Per-utility rows: name (merged across the panel's label columns, right-
+  // aligned against the bar) + count (with the data bar).
+  const feedRowTop = feedTop + 3;
+  for (let ri = 0; ri < maxFeedRows; ri++) {
+    const row = ws.getRow(feedRowTop + ri);
+    feeds.forEach(f => {
+      const item = f.rows[ri];
+      if (item) {
+        ws.mergeCells(feedRowTop + ri, f.nameCols[0], feedRowTop + ri, f.nameCols[1]);
+        const nameCell = row.getCell(f.nameCols[0]);
+        nameCell.value = item.utility;
+        nameCell.font = { name: FONT, size: 10, color: { argb: SLATE } };
+        nameCell.alignment = { vertical: 'middle', horizontal: 'right' };
+        const valCell = row.getCell(f.barCol);
+        valCell.value = item.count;
+        valCell.font = { name: FONT, bold: true, size: 10, color: { argb: INK } };
+        valCell.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
+      } else if (ri === 0 && !f.rows.length) {
+        ws.mergeCells(feedRowTop + ri, f.nameCols[0], feedRowTop + ri, f.barCol);
+        const noneCell = row.getCell(f.nameCols[0]);
+        noneCell.value = 'No eligible sites';
+        noneCell.font = { name: FONT, italic: true, size: 10, color: { argb: 'FF94A3B8' } };
+        noneCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      }
+    });
+    row.height = 17;
+  }
+
+  // Live data bar down each panel's count column, scaled from 0.
+  feeds.forEach(f => {
+    if (!f.rows.length) return;
+    const col = colLetter(f.barCol);
+    ws.addConditionalFormatting({
+      ref: `${col}${feedRowTop}:${col}${feedRowTop + f.rows.length - 1}`,
+      rules: [{
+        type: 'dataBar',
+        gradient: false,
+        cfvo: [{ type: 'num', value: 0 }, { type: 'max' }],
+        color: { argb: f.color },
+      }],
+    });
+  });
+  r = feedRowTop + maxFeedRows + 1;
 
   // Footer.
   ws.mergeCells(r, 1, r, NCOLS);
