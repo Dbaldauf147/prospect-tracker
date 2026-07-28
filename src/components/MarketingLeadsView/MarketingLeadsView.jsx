@@ -307,7 +307,12 @@ const CompanyAutocomplete = memo(function CompanyAutocomplete({ value, onCommit,
         value={draft}
         onChange={e => { setDraft(e.target.value); setOpen(true); setHoverIdx(0); }}
         onFocus={() => setOpen(true)}
-        onBlur={() => { requestAnimationFrame(() => { if (!wrapRef.current?.contains(document.activeElement)) commit(); }); }}
+        // Commit synchronously on blur (like CommitOnBlurInput) so a
+        // type-then-refresh doesn't lose the mapping — a deferred
+        // requestAnimationFrame commit never runs as the page tears down.
+        // relatedTarget is the element gaining focus, so we still skip the
+        // commit when focus merely moves to another control inside the widget.
+        onBlur={(e) => { if (!wrapRef.current?.contains(e.relatedTarget)) commit(); }}
         onKeyDown={handleKey}
         placeholder={placeholder}
         style={style}
