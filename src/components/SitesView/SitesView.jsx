@@ -3487,6 +3487,50 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     return btoa(binary);
   }
 
+  // Mirror the currently-loaded sites into settings.companySiteLists under
+  // the company's slug, matching the shape the company popup writes
+  // ({ company, fileName, headers, rows, uploadedAt }) so the Company Look
+  // Up status and the Site List Overview both read it. Returns a short
+  // note to append to the save status ('' when the list was written).
+  function saveSitesAsCompanySiteList(company) {
+    const slug = companySlug(company);
+    if (!slug || !updateSettingsPath) return '';
+    if (!sitesData.length || !siteHeaders.length) return '';
+    // Firestore rejects Dates / nested objects in these row maps, and the
+    // popup's own upload path normalizes the same way.
+    const safeCell = (v) => {
+      if (v == null) return '';
+      if (v instanceof Date) return v.toISOString();
+      if (typeof v === 'object') return String(v);
+      return v;
+    };
+    const rows = sitesData.map((r) => {
+      const o = {};
+      for (const h of siteHeaders) o[h] = safeCell(r[h]);
+      return o;
+    });
+    const entry = {
+      company: company || '',
+      fileName: 'Saved from Utility Look Up',
+      headers: siteHeaders,
+      rows,
+      uploadedAt: new Date().toISOString(),
+    };
+    // companySiteLists lives on the single settings document, which
+    // Firestore caps at ~1 MiB across every company's list. Skip rather
+    // than fail the whole save when these rows alone would crowd it out.
+    if (JSON.stringify(entry).length > 400_000) {
+      return ' Site list not mapped — too many sites for the settings document.';
+    }
+    try {
+      updateSettingsPath({ [`companySiteLists.${slug}`]: entry });
+      return '';
+    } catch (e) {
+      console.warn('Could not save company site list:', e);
+      return ' Site list could not be mapped.';
+    }
+  }
+
   async function saveIndicativeSavingsToCompany(prospect) {
     if (!prospect?.id) return;
     // Picking a company to save to also names the whole portfolio, so the
@@ -3530,7 +3574,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           });
         } catch (e) { console.warn('Could not stamp analysis marker on prospect:', e); }
       }
-      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.` });
+      // Also register the loaded sites as this company's site list, so the
+      // "Site list mapped" status (and the Site List Overview) reflect the
+      // save instead of staying empty until someone re-uploads the same
+      // rows from the company popup.
+      const siteListNote = saveSitesAsCompanySiteList(prospect.company);
+      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteListNote}` });
       setSavePickerSearch(null);
       setTimeout(() => setSaveStatus({ state: 'idle', message: '' }), 4000);
     } catch (err) {
