@@ -3624,6 +3624,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   function corporateComplianceSummary() {
     const screening = settings?.corporateComplianceScreening || {};
     const revenueResearch = settings?.companyRevenueResearch || {};
+    const complianceResearch = settings?.companyComplianceResearch || {};
     const keyOf = (name) => {
       const norm = normalizeCompany(name);
       return norm ? norm.replace(/\s+/g, '-') : '';
@@ -3640,11 +3641,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       if (!rawName) continue; // unnamed sites carry no company to screen
       const key = keyOf(rawName);
       const mapKey = key || rawName.toLowerCase();
-      if (!byKey.has(mapKey)) byKey.set(mapKey, { key, california: 0, total: 0, names: new Map() });
+      if (!byKey.has(mapKey)) byKey.set(mapKey, { key, california: 0, total: 0, names: new Map(), caSites: [] });
       const e = byKey.get(mapKey);
       e.total += 1;
       e.names.set(rawName, (e.names.get(rawName) || 0) + 1);
-      if (isCA(site.state)) e.california += 1;
+      if (isCA(site.state)) {
+        e.california += 1;
+        const label = [site.siteName, site.city].filter(Boolean).join(' — ');
+        if (label) e.caSites.push(label);
+      }
     }
 
     const out = [];
@@ -3664,29 +3669,58 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
       // Revenue: the researched figure, else the matched prospect record —
       // the same fallback order the page's cards use.
-      const researched = revenueResearch[revSlug(name)]?.revenue;
+      const revData = revenueResearch[revSlug(name)] || null;
       const fromProspect = (prospects || []).find(p => keyOf(p?.company) === e.key)?.revenue;
-      const revenueLabel = String(researched || fromProspect || '').trim();
+      const revenueLabel = String(revData?.revenue || fromProspect || '').trim();
       const revenueUsd = parseRevenueUsd(revenueLabel);
+      const research = complianceResearch[e.key] || null;
 
+      // Per-jurisdiction detail mirroring the card's table, including each
+      // regulation's Applies? verdict. A hand-picked answer (stored under
+      // `<jurisdiction>__<regulation-slug>`) always wins over the derived
+      // one — same precedence the card applies.
       const regulations = [];
-      for (const q of JURISDICTION_QUESTIONS) {
-        for (const reg of (REGULATIONS_BY_JURISDICTION[q.key] || [])) {
-          const derived = deriveRegulationVerdict(reg, {
-            revenueUsd,
-            revenueLabel,
-            jurisdictionAnswer: answers[q.key],
-            jurisdictionLabel: q.jurisdiction,
+      const jurisdictions = JURISDICTION_QUESTIONS.map((q) => {
+        const answer = answers[q.key] || '';
+        // Regulations surface for Yes and Unknown, matching the card: an
+        // unresolved jurisdiction still needs its regimes visible.
+        const showRegs = answer === 'Yes' || answer === 'Unknown';
+        const regs = (showRegs ? (REGULATIONS_BY_JURISDICTION[q.key] || []) : []).map((reg) => {
+          const regKey = `${q.key}__${String(reg.regulation || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
+          const picked = answers[regKey] || '';
+          const auto = picked ? null : deriveRegulationVerdict(reg, {
+            revenueUsd, revenueLabel, jurisdictionAnswer: answer, jurisdictionLabel: q.jurisdiction,
           });
-          // Regimes without a revenue gate apply on the jurisdiction answer
-          // alone; gated ones need deriveRegulationVerdict to return Yes.
-          const applies = derived
-            ? derived.verdict === 'Yes'
-            : (reg.revenueThresholdUsd == null && answers[q.key] === 'Yes');
-          if (applies) regulations.push({ regulation: reg.regulation, timeline: reg.timeline });
-        }
-      }
-      out.push({ name, california: e.california, total: e.total, yesJurisdictions, regulations, revenueLabel });
+          const verdict = picked || auto?.verdict || '';
+          if (verdict === 'Yes') regulations.push({ regulation: reg.regulation, timeline: reg.timeline });
+          return {
+            regulation: reg.regulation,
+            timeline: reg.timeline,
+            thresholds: (reg.thresholds || []).map(t => `${t.value} ${t.metric}`).join(' · '),
+            description: reg.description || '',
+            verdict,
+            auto: !!auto,
+          };
+        });
+        return {
+          jurisdiction: q.jurisdiction,
+          question: q.question,
+          answer,
+          note: research?.notes?.[q.key] || '',
+          regulations: regs,
+        };
+      });
+
+      out.push({
+        name, california: e.california, total: e.total, caSites: e.caSites,
+        yesJurisdictions, regulations, revenueLabel,
+        revenueFiscalYear: revData?.fiscalYear || '',
+        revenueSummary: revData?.summary || '',
+        summary: research?.summary || '',
+        sources: Array.isArray(research?.sources) ? research.sources : [],
+        answeredAt: research?.savedAt || null,
+        jurisdictions,
+      });
     }
     return out.sort(
       (a, b) => b.regulations.length - a.regulations.length
@@ -10494,6 +10528,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     buildCorporateComplianceSheet(wb, complianceSites, {
       generatedAt: new Date().toLocaleString('en-US'),
       companyName: company,
+      // Full per-company screening detail (jurisdiction answers, rationale,
+      // regulation verdicts, narrative + sources) so the sheet can carry the
+      // same analysis the Corporate Compliance page shows on its cards.
+      screening: corporateComplianceSummary(),
     });
 
     // 4. Compliance Report Methodology — how the estimated fines were derived,

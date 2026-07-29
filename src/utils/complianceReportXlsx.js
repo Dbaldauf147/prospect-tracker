@@ -687,8 +687,11 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
     views: [{ showGridLines: false, state: 'frozen', ySplit: 4, xSplit: 1 }],
   });
   const NC = 5;
+  // Columns 2 and 3 are wider than the overview table alone needs: the
+  // screening detail below reuses them for the question text and the
+  // researched rationale, which are prose rather than counts.
   ws.columns = [
-    { width: 36 }, { width: 13 }, { width: 15 }, { width: 13 }, { width: 60 },
+    { width: 30 }, { width: 34 }, { width: 42 }, { width: 13 }, { width: 60 },
   ];
 
   const isCA = (s) => {
@@ -813,6 +816,149 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
   note.font = { name: FONT, italic: true, size: 9, color: { argb: 'FF94A3B8' } };
   note.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
   ws.getRow(rr).height = 26;
+  rr += 2;
+
+  // ---- Per-company screening detail -------------------------------------
+  // The jurisdiction-by-jurisdiction analysis from each Corporate Compliance
+  // card: the six gating questions with their researched rationale, the
+  // regulations each answer triggers with their Applies? verdicts, and the
+  // company narrative + sources behind the run. Only rendered for companies
+  // that have actually been screened — an unscreened company would just be
+  // six blank rows.
+  const screened = (meta.screening || []).filter(
+    c => c.jurisdictions?.some(j => j.answer) || c.summary
+  );
+  if (screened.length) {
+    ws.mergeCells(rr, 1, rr, NC);
+    const dh = ws.getCell(rr, 1);
+    dh.value = 'Screening Detail by Company';
+    dh.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_DARK } };
+    dh.font = { name: FONT, bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
+    dh.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(rr).height = 24;
+    rr += 2;
+
+    for (const co of screened) {
+      // Company banner: name + the headline facts from the card.
+      ws.mergeCells(rr, 1, rr, NC);
+      const nameCell = ws.getCell(rr, 1);
+      const bits = [
+        `${co.total} ${co.total === 1 ? 'site' : 'sites'}`,
+        co.california ? `${co.california} in CA` : '',
+        co.revenueLabel ? `Revenue ${co.revenueLabel}${co.revenueFiscalYear ? ` (${co.revenueFiscalYear})` : ''}` : '',
+      ].filter(Boolean).join('  ·  ');
+      nameCell.value = `${co.name}    ${bits}`;
+      nameCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_LIGHT } };
+      nameCell.font = { name: FONT, bold: true, size: 11, color: { argb: INK } };
+      nameCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(rr).height = 20;
+      rr += 1;
+
+      // Column headers mirroring the card's table.
+      const hdrs = ['Jurisdiction', 'Question / Regulation', 'Screening', 'Applies?', 'Thresholds / Basis'];
+      const hrow = ws.getRow(rr);
+      hdrs.forEach((label, i) => {
+        const c = hrow.getCell(i + 1);
+        c.value = label;
+        c.font = { name: FONT, bold: true, size: 9, color: { argb: SLATE } };
+        c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+        c.border = { bottom: { style: 'thin', color: { argb: LINE } } };
+      });
+      hrow.height = 18;
+      rr += 1;
+
+      for (const j of co.jurisdictions || []) {
+        const jrow = ws.getRow(rr);
+        const jCells = [
+          { v: j.jurisdiction, bold: true },
+          { v: j.question },
+          {
+            v: [
+              j.jurisdiction === 'California' && co.california ? `${co.california} ${co.california === 1 ? 'site' : 'sites'}` : '',
+              j.note,
+            ].filter(Boolean).join(' — ') || '—',
+            wrap: true,
+          },
+          { v: j.answer || '—', center: true, green: j.answer === 'Yes' },
+          { v: '' },
+        ];
+        jCells.forEach((spec, i) => {
+          const c = jrow.getCell(i + 1);
+          c.value = spec.v === '' ? null : spec.v;
+          c.font = {
+            name: FONT, size: 9.5, bold: !!spec.bold,
+            color: { argb: spec.green ? CA_GREEN : (spec.bold ? INK : SLATE) },
+          };
+          c.alignment = {
+            vertical: 'top', horizontal: spec.center ? 'center' : 'left',
+            indent: spec.center ? 0 : 1, wrapText: !!spec.wrap,
+          };
+          c.border = { bottom: { style: 'hair', color: { argb: LINE } } };
+        });
+        jrow.height = j.note ? 30 : 16;
+        rr += 1;
+
+        // Each regulation this jurisdiction triggers, indented under it.
+        for (const reg of j.regulations || []) {
+          const rrow = ws.getRow(rr);
+          const rCells = [
+            { v: '' },
+            { v: `${reg.regulation} — ${reg.timeline}`, bold: true },
+            { v: '' },
+            { v: reg.verdict || '—', center: true, green: reg.verdict === 'Yes' },
+            { v: [reg.thresholds || reg.description, reg.auto ? '(auto)' : ''].filter(Boolean).join('  '), wrap: true },
+          ];
+          rCells.forEach((spec, i) => {
+            const c = rrow.getCell(i + 1);
+            c.value = spec.v === '' ? null : spec.v;
+            c.font = {
+              name: FONT, size: 9, bold: !!spec.bold, italic: i === 4,
+              color: { argb: spec.green ? CA_GREEN : SLATE },
+            };
+            c.alignment = {
+              vertical: 'top', horizontal: spec.center ? 'center' : 'left',
+              indent: spec.center ? 0 : (i === 1 ? 2 : 1), wrapText: !!spec.wrap,
+            };
+            c.border = { bottom: { style: 'hair', color: { argb: LINE } } };
+          });
+          rrow.height = 16;
+          rr += 1;
+        }
+      }
+
+      // Narrative + sources + CA site list behind the run.
+      const trailing = [];
+      if (co.summary) trailing.push({ label: 'Summary', text: co.summary });
+      if (co.sources?.length) {
+        trailing.push({
+          label: 'Sources',
+          text: co.sources.map(s => s?.title || s?.url).filter(Boolean).join('  ·  '),
+        });
+      }
+      if (co.caSites?.length) {
+        const MAX = 15;
+        const shown = co.caSites.slice(0, MAX).join('; ');
+        trailing.push({
+          label: 'CA sites',
+          text: co.caSites.length > MAX ? `${shown}; +${co.caSites.length - MAX} more` : shown,
+        });
+      }
+      for (const t of trailing) {
+        const lab = ws.getCell(rr, 1);
+        lab.value = t.label;
+        lab.font = { name: FONT, bold: true, size: 9, color: { argb: SLATE } };
+        lab.alignment = { vertical: 'top', horizontal: 'left', indent: 1 };
+        ws.mergeCells(rr, 2, rr, NC);
+        const val = ws.getCell(rr, 2);
+        val.value = t.text;
+        val.font = { name: FONT, italic: true, size: 9, color: { argb: SLATE } };
+        val.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
+        ws.getRow(rr).height = Math.min(60, 14 + Math.ceil(t.text.length / 110) * 12);
+        rr += 1;
+      }
+      rr += 1; // gap before the next company
+    }
+  }
 }
 
 // === Compliance Report Methodology sheet =================================
