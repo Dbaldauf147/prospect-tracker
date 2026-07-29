@@ -12,18 +12,22 @@ import { DedupeView } from '../DedupeView/DedupeView';
 import { ZoomInfoView } from '../ZoomInfoView/ZoomInfoView';
 import { AllContactsView } from '../AllContactsView/AllContactsView';
 import { KeyProspectsView } from '../KeyProspectsView/KeyProspectsView';
-import { setHubspotCache } from '../../utils/hubspotContactsCache';
+import { EventsView } from '../EventsView/EventsView';
+import { MarketingLeadsView } from '../MarketingLeadsView/MarketingLeadsView';
+import { setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
 
 const ALL_SUBTABS = [
-  { key: 'hubspot',    label: 'HubSpot Contacts', adminOnly: true },
-  { key: 'se',         label: 'SE Contacts',      adminOnly: true },
-  { key: 'bulk',       label: 'Bulk Add Contacts' },
+  { key: 'hubspot',    label: 'HubSpot',          adminOnly: true },
+  { key: 'se',         label: 'SE',               adminOnly: true },
+  { key: 'bulk',       label: 'Bulk Add' },
+  { key: 'marketing',  label: 'Marketing Leads' },
   { key: 'all',        label: 'All Contacts' },
   { key: 'key',        label: 'Key Contacts' },
   { key: 'keyprospects', label: 'Key Prospects' },
   { key: 'active',     label: 'Active Contacts' },
   { key: 'clients',    label: 'Client Contacts' },
   { key: 'changed',    label: 'Changed Jobs' },
+  { key: 'events',     label: 'Events' },
   { key: 'zoominfo',   label: 'Zoom Info' },
   { key: 'dedupe',     label: 'Deduplication' },
 ];
@@ -47,6 +51,7 @@ export function ContactsView({
   settings,
   updateSettings,
   targetAccountsData,
+  onNavigate,
 }) {
   const { isAdmin } = useAuth();
   // The HubSpot Contacts and SE Contacts subtabs both hit /api/hubspot,
@@ -99,7 +104,7 @@ export function ContactsView({
         hs_sequences_is_enrolled: c.hs_sequences_is_enrolled,
         notes_last_contacted: c.notes_last_contacted,
       }));
-      await setHubspotCache({ ...json, contacts: slimContacts, syncedAt: new Date().toISOString() });
+      await setHubspotCachePreservingManual({ ...json, contacts: slimContacts, syncedAt: new Date().toISOString() });
     } catch (err) {
       setRefreshError(err?.message || 'Refresh failed');
     } finally {
@@ -156,6 +161,17 @@ export function ContactsView({
             targetAccountsData={targetAccountsData}
           />
         )}
+        {subtab === 'marketing' && (
+          <MarketingLeadsView
+            prospects={prospects}
+            settings={settings}
+            updateSettings={updateSettings}
+            onAddProspect={onAddProspect}
+            onSelectProspect={onSelectProspect}
+            targetAccountsData={targetAccountsData}
+            onNavigate={onNavigate}
+          />
+        )}
         {subtab === 'all' && (
           <AllContactsView
             prospects={prospects}
@@ -207,6 +223,17 @@ export function ContactsView({
             onSelectProspect={onSelectProspect}
             settings={settings}
             updateSettings={updateSettings}
+            cdmName={cdmName}
+          />
+        )}
+        {subtab === 'events' && (
+          <EventsView
+            settings={settings}
+            updateSettings={updateSettings}
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
+            onAddProspect={onAddProspect}
+            onUpdateProspect={onUpdateProspect}
             cdmName={cdmName}
           />
         )}

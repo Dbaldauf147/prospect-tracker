@@ -6,7 +6,6 @@
 // services render with empty cells.
 
 export const SERVICE_CATALOG = [
-  { name: 'AEM',                                        bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: '-', localProjectName: '#SUSUP' },
   { name: 'AP upload (indirect payment)',               bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#DATA' },
   { name: 'Global compliance screening',                bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUECO' },
   { name: 'API/ETL',                                    bfoTag: '#DATA',  region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#DATA' },
@@ -165,9 +164,11 @@ export function getServiceMetadata(name) {
 // The seed values above are the defaults; the user can override any of
 // them via settings.serviceOverrides. Local Project Name has no seed —
 // it's a user-supplied label that flows into the AI Prompt (New BFO
-// Opp) prompt block.
+// Opp) prompt block. Timeline Driven (yes/no) and Rollout Time also
+// have no seed — they're user-supplied and default to empty.
 export const SERVICE_EDITABLE_FIELDS = [
   'bfoTag', 'region', 'years', 'productLine', 'serviceType', 'localProjectName',
+  'timelineDriven', 'rolloutTime',
 ];
 
 // Merge the static seed catalog with the user's per-service overrides.
@@ -196,6 +197,7 @@ export function getEffectiveServiceMetadata(name, overrides) {
     return {
       name, bfoTag: '', region: '', years: '',
       productLine: '', serviceType: '', localProjectName: '',
+      timelineDriven: '', rolloutTime: '',
     };
   }
   return {
@@ -206,6 +208,8 @@ export function getEffectiveServiceMetadata(name, overrides) {
     productLine:      override?.productLine      ?? seed?.productLine      ?? '',
     serviceType:      override?.serviceType      ?? seed?.serviceType      ?? '',
     localProjectName: override?.localProjectName ?? seed?.localProjectName ?? '',
+    timelineDriven:   override?.timelineDriven   ?? seed?.timelineDriven   ?? '',
+    rolloutTime:      override?.rolloutTime      ?? seed?.rolloutTime      ?? '',
     graveyard: seed?.graveyard || false,
   };
 }

@@ -6,17 +6,19 @@ import { PipelineView } from '../PipelineView/PipelineView';
 // the user actually views.
 const YOYView = lazy(() => import('../YOYView/YOYView').then(m => ({ default: m.YOYView })));
 const ProgressView = lazy(() => import('../ProgressView/ProgressView').then(m => ({ default: m.ProgressView })));
+const WeeklyReportView = lazy(() => import('../WeeklyReportView/WeeklyReportView').then(m => ({ default: m.WeeklyReportView })));
 
 const TABS = [
   { key: 'yoy', label: 'YOY' },
   { key: 'progress', label: 'Progress' },
   { key: 'pipeline', label: 'Pipeline' },
+  { key: 'weekly', label: 'Weekly Report' },
 ];
 
 // Host for the "Charts" top-level tab: YOY / Progress / Pipeline as
 // sub-tabs. Each sub-view still renders its own full-height layout, so
 // this just stacks a thin sub-tab bar above the active one.
-export function ChartsView({ prospects, settings, cdmName }) {
+export function ChartsView({ prospects, settings, cdmName, onSelectProspect }) {
   const [tab, setTab] = useState('yoy');
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
@@ -56,7 +58,12 @@ export function ChartsView({ prospects, settings, cdmName }) {
             <ProgressView prospects={prospects} settings={settings} cdmName={cdmName} />
           </Suspense>
         )}
-        {tab === 'pipeline' && <PipelineView />}
+        {tab === 'pipeline' && <PipelineView prospects={prospects} cdmName={cdmName} settings={settings} onSelectProspect={onSelectProspect} />}
+        {tab === 'weekly' && (
+          <Suspense fallback={<div className="loading">Loading view…</div>}>
+            <WeeklyReportView settings={settings} />
+          </Suspense>
+        )}
       </div>
     </div>
   );

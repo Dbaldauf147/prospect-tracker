@@ -35,8 +35,12 @@ export async function saveUserSettings(userId, updates, opts = {}) {
         }
       }
     } catch (err) {
-      // Network hiccup — don't silently overwrite. Surface the error.
+      // We can't tell whether our copy is stale (e.g. laptop just woke
+      // and the network isn't back) — writing anyway could replace
+      // another device's newer data with ours. Fail the save; the
+      // caller alerts and a pre-save backup was already taken.
       console.warn('saveUserSettings: stale check failed', err);
+      throw err;
     }
   }
 
@@ -98,7 +102,10 @@ export async function savePathUpdates(userId, pathUpdates, opts = {}) {
         }
       }
     } catch (err) {
+      // Same as saveUserSettings: an unverifiable stale check must not
+      // fall through to a write that could clobber newer remote data.
       console.warn('savePathUpdates: stale check failed', err);
+      throw err;
     }
   }
 

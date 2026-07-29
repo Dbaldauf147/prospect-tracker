@@ -1,0 +1,1328 @@
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
+import styles from './DataTable.module.css';
+
+const COL_WIDTHS_PREFIX = 'prospect-col-widths-';
+const COL_VISIBLE_PREFIX = 'prospect-col-visible-';
+const COL_NAMES_PREFIX = 'prospect-col-names-';
+const COL_ORDER_PREFIX = 'prospect-col-order-';
+const COL_REMOVED_PREFIX = 'prospect-col-removed-';
+
+function loadColNames(tableId) {
+  try { return JSON.parse(localStorage.getItem(COL_NAMES_PREFIX + tableId)) || {}; } catch { return {}; }
+}
+function saveColNames(tableId, names) { localStorage.setItem(COL_NAMES_PREFIX + tableId, JSON.stringify(names)); }
+
+function loadColOrder(tableId) {
+  try { const v = JSON.parse(localStorage.getItem(COL_ORDER_PREFIX + tableId)); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+function saveColOrder(tableId, order) { localStorage.setItem(COL_ORDER_PREFIX + tableId, JSON.stringify(order)); }
+
+// Reorder the columns array by a saved key order. Keys in `order` lead
+// (in that order); any column not in the saved order — e.g. a column
+// added to the code after the user last arranged the table — keeps its
+// original relative position at the tail so it never goes missing.
+function orderColumns(columns, order) {
+  let out;
+  if (!Array.isArray(order) || order.length === 0) {
+    out = columns;
+  } else {
+    const byKey = new Map(columns.map(c => [c.key, c]));
+    out = [];
+    const used = new Set();
+    for (const k of order) {
+      const c = byKey.get(k);
+      if (c) { out.push(c); used.add(k); }
+    }
+    for (const c of columns) {
+      if (!used.has(c.key)) out.push(c);
+    }
+  }
+  // A selection checkbox column always belongs at the far left, even when a
+  // stale saved order (from before the column was added) would push it to
+  // the tail. Non-mutating so the caller's array is untouched.
+  const selIdx = out.findIndex(c => c.key === '__select__');
+  if (selIdx > 0) out = [out[selIdx], ...out.slice(0, selIdx), ...out.slice(selIdx + 1)];
+  return out;
+}
+
+function loadColWidths(tableId) {
+  try { return JSON.parse(localStorage.getItem(COL_WIDTHS_PREFIX + tableId)) || {}; } catch { return {}; }
+}
+function saveColWidths(tableId, w) { localStorage.setItem(COL_WIDTHS_PREFIX + tableId, JSON.stringify(w)); }
+
+function loadColVisible(tableId, allKeys) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(COL_VISIBLE_PREFIX + tableId));
+    // An empty array means the user (or a sync race) saved a "no
+    // columns visible" set. That's never a usable state — fall back to
+    // showing everything so the table doesn't render as a blank panel.
+    if (Array.isArray(saved) && saved.length > 0) return new Set(saved);
+    return new Set(allKeys);
+  } catch { return new Set(allKeys); }
+}
+function saveColVisible(tableId, set) { localStorage.setItem(COL_VISIBLE_PREFIX + tableId, JSON.stringify([...set])); }
+
+// Removed columns (removableColumns mode only): keys the user has taken
+// out of the table layout entirely. Unlike hidden columns these don't
+// appear in the Columns dropdown's "Hidden" list — they come back only
+// via Reset. Stored as a plain key array; absent / unparseable reads as
+// "nothing removed".
+function loadColRemoved(tableId) {
+  try { const v = JSON.parse(localStorage.getItem(COL_REMOVED_PREFIX + tableId)); return new Set(Array.isArray(v) ? v : []); } catch { return new Set(); }
+}
+function saveColRemoved(tableId, set) { localStorage.setItem(COL_REMOVED_PREFIX + tableId, JSON.stringify([...set])); }
+
+// Combobox-style per-column filter. Holds an array of "picked" values that
+// the row's column value must match (substring). A text input drives both
+// free-text search and an autocomplete dropdown of unique column values
+// gathered from the visible row set; pressing Enter adds the typed value
+// as a free-text chip, clicking a suggestion adds it as a chip.
+// Parse a colFilters value into normalized {picks, draft}. Backwards
+// compatible with the older array-only and string forms.
+function readFilterValue(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return {
+      picks: Array.isArray(value.picks) ? value.picks : [],
+      draft: typeof value.draft === 'string' ? value.draft : '',
+    };
+  }
+  if (Array.isArray(value)) return { picks: value, draft: '' };
+  if (typeof value === 'string' && value.trim()) return { picks: [value.trim()], draft: '' };
+  return { picks: [], draft: '' };
+}
+function writeFilterValue(picks, draft) {
+  // Collapse to the simpler array form when there's no draft so the
+  // shape stays clean for callers that haven't been updated.
+  if (!draft) return picks;
+  return { picks, draft };
+}
+
+// Hard cap on the dropdown list so a column with thousands of unique
+// values doesn't ship a 10k-button popover. Past this, the footer
+// nudges the user to type to narrow.
+const FILTER_DROPDOWN_CAP = 500;
+
+function ColumnFilterCell({ value, onChange, suggestions }) {
+  const { picks, draft: incomingDraft } = readFilterValue(value);
+  // We mirror the parent-controlled draft so typing feels instant
+  // even when the parent re-render is async (e.g. inside a useMemo
+  // chain). Sync down whenever the parent changes the draft.
+  const [draft, setDraft] = useState(incomingDraft);
+  useEffect(() => { setDraft(incomingDraft); }, [incomingDraft]);
+  const [open, setOpen] = useState(false);
+  const [anchorRect, setAnchorRect] = useState(null);
+  const wrapRef = useRef(null);
+  const dropdownRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    function onDocMouseDown(e) {
+      // Closes when the click lands outside both the filter cell and
+      // the portal-rendered dropdown. Without checking the dropdown
+      // too, the mousedown on a value button would close the dropdown
+      // before the click reaches it.
+      const inWrap = wrapRef.current && wrapRef.current.contains(e.target);
+      const inDropdown = dropdownRef.current && dropdownRef.current.contains(e.target);
+      if (!inWrap && !inDropdown) setOpen(false);
+    }
+    function reposition() {
+      if (wrapRef.current) setAnchorRect(wrapRef.current.getBoundingClientRect());
+    }
+    document.addEventListener('mousedown', onDocMouseDown);
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      document.removeEventListener('mousedown', onDocMouseDown);
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
+  }, [open]);
+
+  function openDropdown() {
+    if (wrapRef.current) setAnchorRect(wrapRef.current.getBoundingClientRect());
+    setOpen(true);
+  }
+
+  const { matches, totalAvailable } = useMemo(() => {
+    const q = draft.trim().toLowerCase();
+    const seen = new Set(picks.map(p => p.toLowerCase()));
+    const out = [];
+    let totalAvailable = 0;
+    for (const s of suggestions) {
+      const sl = s.toLowerCase();
+      if (seen.has(sl)) continue;
+      if (q && !sl.includes(q)) continue;
+      totalAvailable += 1;
+      if (out.length < FILTER_DROPDOWN_CAP) out.push(s);
+    }
+    return { matches: out, totalAvailable };
+  }, [suggestions, draft, picks]);
+
+  function pushDraft(next) {
+    setDraft(next);
+    onChange(writeFilterValue(picks, next));
+  }
+  function addPick(s) {
+    const t = String(s || '').trim();
+    if (!t) return;
+    if (picks.some(p => p.toLowerCase() === t.toLowerCase())) {
+      setDraft('');
+      onChange(writeFilterValue(picks, ''));
+      return;
+    }
+    setDraft('');
+    onChange(writeFilterValue([...picks, t], ''));
+  }
+  function removePick(s) {
+    onChange(writeFilterValue(picks.filter(p => p !== s), draft));
+  }
+  function onKeyDown(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      // First match wins on Enter — picks the highlighted suggestion or
+      // commits the typed text when nothing matches.
+      if (matches.length > 0) addPick(matches[0]);
+      else if (draft.trim()) addPick(draft);
+    } else if (e.key === 'Backspace' && !draft && picks.length > 0) {
+      removePick(picks[picks.length - 1]);
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    } else if (e.key === 'ArrowDown') {
+      setOpen(true);
+    }
+  }
+
+  // Portal-rendered dropdown: the sticky table header / horizontal
+  // scroll container both clip absolutely-positioned children, so the
+  // list disappeared under the table body. Fixed-positioning against
+  // viewport coordinates side-steps that and lets the list be wider
+  // than the (often narrow) filter column.
+  const dropdownStyle = anchorRect ? (() => {
+    const minWidth = Math.max(anchorRect.width, 220);
+    const left = Math.min(anchorRect.left, window.innerWidth - minWidth - 8);
+    const spaceBelow = window.innerHeight - anchorRect.bottom;
+    const flipAbove = spaceBelow < 200 && anchorRect.top > spaceBelow;
+    return {
+      position: 'fixed',
+      top: flipAbove ? undefined : anchorRect.bottom + 1,
+      bottom: flipAbove ? window.innerHeight - anchorRect.top + 1 : undefined,
+      left,
+      minWidth,
+      maxWidth: Math.min(420, window.innerWidth - left - 8),
+      maxHeight: flipAbove ? Math.min(320, anchorRect.top - 8) : Math.min(320, spaceBelow - 8),
+      zIndex: 10000,
+      background: '#fff',
+      border: '1px solid var(--color-border)',
+      borderRadius: 4,
+      overflowY: 'auto',
+      boxShadow: '0 8px 24px rgba(15, 23, 42, 0.18)',
+    };
+  })() : null;
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <div
+        onClick={openDropdown}
+        style={{
+          display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center',
+          padding: '1px 3px',
+          border: '1px solid var(--color-border)', borderRadius: 4,
+          background: '#fff', minHeight: 22, cursor: 'text',
+        }}
+      >
+        {picks.map(p => (
+          <span
+            key={p}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 2, background: '#DBEAFE', border: '1px solid #93C5FD', color: '#1E3A8A', borderRadius: 999, padding: '0 4px 0 6px', fontSize: '0.62rem', fontWeight: 600, lineHeight: 1.5, maxWidth: '100%' }}
+            title={p}
+          >
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 100 }}>{p}</span>
+            <button
+              type="button"
+              onClick={e => { e.stopPropagation(); removePick(p); }}
+              style={{ background: 'transparent', border: 'none', color: '#1E3A8A', cursor: 'pointer', padding: 0, lineHeight: 1, fontSize: '0.85rem' }}
+              title="Remove filter"
+            >×</button>
+          </span>
+        ))}
+        <input
+          type="text"
+          value={draft}
+          onChange={e => { pushDraft(e.target.value); openDropdown(); }}
+          onFocus={openDropdown}
+          onKeyDown={onKeyDown}
+          placeholder={picks.length === 0 ? 'Filter…' : ''}
+          style={{ border: 'none', outline: 'none', flex: '1 0 60px', minWidth: 40, fontSize: '0.68rem', fontFamily: 'inherit', padding: '1px 2px', background: 'transparent' }}
+        />
+      </div>
+      {open && dropdownStyle && createPortal(
+        <div
+          ref={dropdownRef}
+          style={dropdownStyle}
+          onMouseDown={e => e.preventDefault() /* keep input focused */}
+        >
+          {matches.length === 0 ? (
+            <div style={{ padding: '6px 10px', fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+              {suggestions.length === 0 ? 'No values to filter by.' : 'No match — keep typing to filter.'}
+            </div>
+          ) : (
+            <>
+              {matches.map(s => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => addPick(s)}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '4px 8px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.72rem', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#F1F5F9'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  title={s}
+                >{s}</button>
+              ))}
+              {totalAvailable > matches.length && (
+                <div style={{ position: 'sticky', bottom: 0, padding: '4px 8px', fontSize: '0.65rem', color: 'var(--color-text-muted)', background: '#F8FAFC', borderTop: '1px solid var(--color-border-light)' }}>
+                  Showing {matches.length} of {totalAvailable} — type to narrow.
+                </div>
+              )}
+            </>
+          )}
+        </div>,
+        document.body,
+      )}
+    </div>
+  );
+}
+
+function ColumnToggle({ columns, visibleCols, onToggle, onRemove, removedCount = 0, alwaysVisible, colNames, onRename, onReorder, onResetOrder, removable, onResetColumns }) {
+  const [open, setOpen] = useState(false);
+  const [editingKey, setEditingKey] = useState(null);
+  const [editName, setEditName] = useState('');
+  // Drag-to-reorder state: the key being dragged and the key it's
+  // currently hovering over (for the drop-position highlight).
+  const [dragKey, setDragKey] = useState(null);
+  const [overKey, setOverKey] = useState(null);
+  // Removable mode tucks hidden columns into a collapsed section so the
+  // main list only shows the columns in play; this toggles it open.
+  const [showHidden, setShowHidden] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [open]);
+
+  function startRename(col) {
+    setEditingKey(col.key);
+    setEditName(colNames[col.key] || col.label);
+  }
+
+  function saveRename() {
+    if (editingKey && editName.trim()) {
+      onRename(editingKey, editName.trim());
+    }
+    setEditingKey(null);
+  }
+
+  // Drop `dragKey` at the position of `targetKey`, emit the full new
+  // key order to the parent.
+  function handleDrop(targetKey) {
+    setOverKey(null);
+    const from = dragKey;
+    setDragKey(null);
+    if (!from || from === targetKey || !onReorder) return;
+    const keys = columns.map(c => c.key);
+    const fromIdx = keys.indexOf(from);
+    const toIdx = keys.indexOf(targetKey);
+    if (fromIdx === -1 || toIdx === -1) return;
+    keys.splice(fromIdx, 1);
+    keys.splice(toIdx, 0, from);
+    onReorder(keys);
+  }
+
+  const labelOf = (col) => colNames[col.key] || col.label;
+
+  // The editable name field, shared by both modes.
+  function renderName(col) {
+    return editingKey === col.key ? (
+      <input
+        className={styles.colRenameInput}
+        value={editName}
+        onChange={e => setEditName(e.target.value)}
+        onBlur={saveRename}
+        onKeyDown={e => { if (e.key === 'Enter') saveRename(); if (e.key === 'Escape') setEditingKey(null); }}
+        autoFocus
+        onClick={e => e.stopPropagation()}
+      />
+    ) : (
+      <span className={styles.colToggleLabel} onDoubleClick={() => startRename(col)}>
+        {labelOf(col) || <span style={{ color: 'var(--color-text-muted)', fontStyle: 'italic' }}>(unnamed)</span>}
+      </span>
+    );
+  }
+
+  const dragHandle = (col) => onReorder && (
+    <span
+      draggable
+      onDragStart={(e) => { setDragKey(col.key); e.dataTransfer.effectAllowed = 'move'; }}
+      onDragEnd={() => { setDragKey(null); setOverKey(null); }}
+      title="Drag to reorder"
+      style={{ cursor: 'grab', color: 'var(--color-text-muted)', fontSize: '0.8rem', lineHeight: 1, userSelect: 'none', padding: '0 2px' }}
+    >⠿</span>
+  );
+
+  const rowDragProps = (col) => onReorder ? {
+    onDragOver: (e) => { e.preventDefault(); if (overKey !== col.key) setOverKey(col.key); },
+    onDrop: () => handleDrop(col.key),
+    style: {
+      ...(dragKey === col.key ? { opacity: 0.4 } : null),
+      ...(overKey === col.key && dragKey && dragKey !== col.key ? { borderTop: '2px solid var(--color-accent)' } : null),
+    },
+  } : {};
+
+  // Active (shown) and hidden columns for removable mode. alwaysVisible
+  // columns can never be removed, so they always live in the active list.
+  const activeCols = removable ? columns.filter(c => visibleCols.has(c.key) || alwaysVisible?.includes(c.key)) : columns;
+  const hiddenCols = removable ? columns.filter(c => !visibleCols.has(c.key) && !alwaysVisible?.includes(c.key)) : [];
+
+  return (
+    <div className={styles.colToggleWrap} ref={ref}>
+      <button className={styles.colToggleBtn} onClick={() => setOpen(p => !p)}>
+        Columns ({visibleCols.size}/{columns.length})
+      </button>
+      {open && (
+        <div className={styles.colToggleDropdown}>
+          {(onReorder || removable) && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, padding: '2px 6px 6px', borderBottom: '1px solid var(--color-border-light)', marginBottom: 4 }}>
+              <span style={{ fontSize: '0.62rem', color: 'var(--color-text-muted)' }}>
+                {removable ? 'Drag ⠿ to reorder · Hide (restorable) or Remove (Reset only)' : 'Drag ⠿ to reorder · uncheck to hide'}
+              </span>
+              {(removable ? onResetColumns : onResetOrder) && (
+                <button
+                  type="button"
+                  onClick={() => (removable ? onResetColumns() : onResetOrder())}
+                  style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.62rem', color: 'var(--color-text-muted)', cursor: 'pointer', padding: '1px 6px', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                  title={removable
+                    ? `Restore all columns (incl. ${removedCount} removed) and the default order`
+                    : 'Restore the default column order'}
+                >{removable ? `Reset${removedCount ? ` (${removedCount} removed)` : ''}` : 'Reset order'}</button>
+              )}
+            </div>
+          )}
+
+          {removable ? (
+            <>
+              {activeCols.map(col => {
+                const locked = alwaysVisible?.includes(col.key);
+                return (
+                  <div key={col.key} className={styles.colToggleItem} {...rowDragProps(col)}>
+                    {dragHandle(col)}
+                    {renderName(col)}
+                    {locked ? (
+                      <span title="This column can't be hidden or removed" style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem', padding: '0 2px' }}>🔒</span>
+                    ) : (
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <button
+                          type="button"
+                          onClick={() => onToggle(col.key)}
+                          title="Hide this column — moves it to the Hidden list, where you can restore it with “+ Show”"
+                          aria-label={`Hide ${labelOf(col)}`}
+                          style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.62rem', fontWeight: 600, color: 'var(--color-text-muted)', cursor: 'pointer', padding: '1px 6px', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                        >Hide</button>
+                        <button
+                          type="button"
+                          onClick={() => (onRemove ? onRemove(col.key) : onToggle(col.key))}
+                          title="Remove this column from the table — it won’t show in the Hidden list. Restore it with Reset."
+                          aria-label={`Remove ${labelOf(col)}`}
+                          style={{ background: 'transparent', border: '1px solid #FECACA', borderRadius: 4, fontSize: '0.62rem', fontWeight: 600, color: '#B91C1C', cursor: 'pointer', padding: '1px 6px', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                        >Remove</button>
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+
+              {hiddenCols.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setShowHidden(s => !s)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%', textAlign: 'left', background: 'var(--color-surface-alt)', border: 'none', borderTop: '1px solid var(--color-border-light)', marginTop: 4, padding: '0.35rem 0.5rem', fontSize: '0.65rem', fontWeight: 700, color: 'var(--color-text-muted)', cursor: 'pointer', fontFamily: 'inherit' }}
+                  >
+                    <span style={{ fontSize: '0.6rem' }}>{showHidden ? '▾' : '▸'}</span>
+                    Hidden columns ({hiddenCols.length})
+                  </button>
+                  {showHidden && hiddenCols.map(col => (
+                    <div key={col.key} className={styles.colToggleItem} style={{ opacity: 0.85 }}>
+                      <span className={styles.colToggleLabel} style={{ color: 'var(--color-text-muted)' }}>{labelOf(col)}</span>
+                      <button
+                        type="button"
+                        onClick={() => onToggle(col.key)}
+                        title="Restore this column"
+                        style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.62rem', fontWeight: 600, color: 'var(--color-accent)', cursor: 'pointer', padding: '1px 6px', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                      >+ Show</button>
+                    </div>
+                  ))}
+                </>
+              )}
+            </>
+          ) : (
+            columns.map(col => (
+              <div key={col.key} className={styles.colToggleItem} {...rowDragProps(col)}>
+                {dragHandle(col)}
+                <input
+                  type="checkbox"
+                  checked={visibleCols.has(col.key)}
+                  onChange={() => onToggle(col.key)}
+                  disabled={alwaysVisible?.includes(col.key)}
+                />
+                {renderName(col)}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Firestore rejects map field names that both start AND end with "__"
+// (e.g. UploadedListView's helper columns __select__, __myAccountsList__).
+// We prefix those keys with a sentinel before persisting and strip it
+// back off on read so the rest of the app sees the original key.
+const REMOTE_KEY_PREFIX = '_x_';
+function encodeRemoteKey(k) {
+  return /^__.*__$/.test(k) ? REMOTE_KEY_PREFIX + k : k;
+}
+function decodeRemoteKey(k) {
+  return k.startsWith(REMOTE_KEY_PREFIX) ? k.slice(REMOTE_KEY_PREFIX.length) : k;
+}
+function encodeRemoteMap(m) {
+  if (!m || typeof m !== 'object') return m;
+  const out = {};
+  for (const [k, v] of Object.entries(m)) out[encodeRemoteKey(k)] = v;
+  return out;
+}
+function decodeRemoteMap(m) {
+  if (!m || typeof m !== 'object') return m;
+  const out = {};
+  for (const [k, v] of Object.entries(m)) out[decodeRemoteKey(k)] = v;
+  return out;
+}
+
+// When settings + updateSettings are provided, column prefs (widths,
+// visibility, renames) are mirrored to Firestore at
+// settings.tablePrefs[tableId]. Localstorage continues to be written
+// as a fast/offline mirror. This makes the prefs survive a browser
+// "Clear site data" — Firestore reseeds localStorage on the next
+// load. Tables not wired to settings keep the legacy localStorage-only
+// behavior.
+function persistPrefs(tableId, settings, updateSettings, prefsUpdate) {
+  if (prefsUpdate.widths !== undefined) saveColWidths(tableId, prefsUpdate.widths);
+  if (prefsUpdate.visible !== undefined) saveColVisible(tableId, prefsUpdate.visible);
+  if (prefsUpdate.names !== undefined) saveColNames(tableId, prefsUpdate.names);
+  if (prefsUpdate.order !== undefined) saveColOrder(tableId, prefsUpdate.order);
+  if (prefsUpdate.removed !== undefined) saveColRemoved(tableId, prefsUpdate.removed);
+  if (!settings || !updateSettings || !tableId) return;
+  const current = settings.tablePrefs?.[tableId] || {};
+  const nextEntry = { ...current };
+  if (prefsUpdate.widths !== undefined) nextEntry.widths = encodeRemoteMap(prefsUpdate.widths);
+  if (prefsUpdate.visible !== undefined) nextEntry.visible = [...prefsUpdate.visible];
+  if (prefsUpdate.names !== undefined) nextEntry.names = encodeRemoteMap(prefsUpdate.names);
+  // Order is a plain array of column keys — stored as-is (no map-key
+  // encoding needed, and keys like `_select` are fine as array values).
+  if (prefsUpdate.order !== undefined) nextEntry.order = [...prefsUpdate.order];
+  if (prefsUpdate.removed !== undefined) nextEntry.removed = [...prefsUpdate.removed];
+  updateSettings({
+    tablePrefs: { ...(settings.tablePrefs || {}), [tableId]: nextEntry },
+  });
+}
+
+/**
+ * Reusable data table with resizable columns and column visibility toggle.
+ *
+ * Props:
+ *   tableId      - unique string for persisting settings (e.g. 'main', 'accounts', 'hubspot')
+ *   columns      - array of { key, label, defaultWidth, render(row) }
+ *   rows         - array of data objects
+ *   onSort       - (key) => void, optional
+ *   sortConfig   - { key, direction }, optional
+ *   alwaysVisible - array of column keys that can't be hidden
+ *   onRowClick   - (row) => void, optional
+ *   emptyMessage - string
+ */
+export function DataTable({
+  tableId,
+  columns,
+  rows,
+  onSort: externalSort,
+  sortConfig: externalSortConfig,
+  defaultSort,
+  // Imperative sort trigger: { key, direction, nonce }. Bumping nonce
+  // re-applies the given sort through the same path as a header click
+  // (incl. the freeze snapshot). Lets a parent re-rank on demand
+  // without owning sort state. Ignored when an external sort is wired.
+  sortSignal,
+  alwaysVisible = [],
+  onRowClick,
+  rowClassName,
+  rowStyle,
+  // Inline expansion: when both are provided, rows whose id is in
+  // expandedRowIds get a follow-up <tr> rendered immediately below
+  // them with the JSX returned by renderExpansion(row). Virtualization
+  // is disabled in this mode since expansion rows have variable height.
+  expandedRowIds,
+  renderExpansion,
+  emptyMessage = 'No data found',
+  exportFileName,
+  exportPrimarySheetName,
+  // Extra sheets appended to the exported workbook. Each entry is
+  // { name, rows: [{ header: value }] }. Column widths auto-fit from
+  // the row keys.
+  exportExtraSheets,
+  // When provided, clicking Export Excel calls onExport with the full
+  // export context instead of running the default XLSX writer. Lets a
+  // consumer render a fully-branded workbook (Schneider Electric
+  // formatting, etc.) while reusing the table's sort / visibility /
+  // rename state.
+  onExport,
+  // When true, every visible column gets a compact text input under
+  // its header. Rows are filtered (substring, case-insensitive) by
+  // the raw cell value for each column that has a non-empty filter.
+  enableColumnFilters = false,
+  // Fires with the rows currently passing the in-table column filters,
+  // so a parent can sync its own "select all visible" / "rows on
+  // screen" UI against the same set the user sees.
+  onFilteredRowsChange,
+  // Opt out of fixed-rowHeight virtualization. Consumers whose rows
+  // can grow taller than a single line (Opps 2's Alt+Enter Next Steps,
+  // Notes, etc.) set this so the table renders every row instead — the
+  // JS spacer math assumes a constant row height, and a single tall
+  // row breaks scrolling for everything below it. The browser still
+  // skips painting off-screen rows via `content-visibility: auto`, so
+  // scroll perf stays close to the virtualized path.
+  variableRowHeight = false,
+  // Optional Firestore-backed settings store. When provided, column
+  // prefs (widths, visibility, renames) persist to settings.tablePrefs[tableId]
+  // in addition to localStorage so they survive a clear-site-data.
+  settings,
+  updateSettings,
+  // When true, the Columns dropdown lets the user remove columns (× →
+  // collapsed "Hidden columns" section with restore) instead of the
+  // classic checkbox show/hide list. Visibility still drives what
+  // renders; this is purely a friendlier remove/restore affordance.
+  removableColumns = false,
+}) {
+  const rawRemotePrefs = settings?.tablePrefs?.[tableId];
+  const remotePrefs = useMemo(() => {
+    if (!rawRemotePrefs) return rawRemotePrefs;
+    return {
+      ...rawRemotePrefs,
+      widths: decodeRemoteMap(rawRemotePrefs.widths),
+      names: decodeRemoteMap(rawRemotePrefs.names),
+    };
+  }, [rawRemotePrefs]);
+  // settings._lastWriteAt is the canonical "Firestore subscription has
+  // produced data" signal — it's stamped by every saveUserSettings call.
+  // We use it to distinguish "Firestore has no entry for this table"
+  // (don't sync, leave defaults / localStorage) from "Firestore is
+  // still loading" (don't do anything; wait).
+  const settingsLoaded = !!(settings && settings._lastWriteAt);
+  const [colWidths, setColWidths] = useState(() => remotePrefs?.widths || loadColWidths(tableId));
+  const [visibleCols, setVisibleCols] = useState(() => (
+    // Same empty-array safeguard as loadColVisible: an empty Firestore
+    // set has historically rendered the table as blank, so fall through
+    // to the local default (= every column visible).
+    Array.isArray(remotePrefs?.visible) && remotePrefs.visible.length > 0
+      ? new Set(remotePrefs.visible)
+      : loadColVisible(tableId, columns.map(c => c.key))
+  ));
+  const [colNames, setColNames] = useState(() => remotePrefs?.names || loadColNames(tableId));
+  const [colOrder, setColOrder] = useState(() => (
+    Array.isArray(remotePrefs?.order) ? remotePrefs.order : loadColOrder(tableId)
+  ));
+  const [removedCols, setRemovedCols] = useState(() => (
+    Array.isArray(remotePrefs?.removed) ? new Set(remotePrefs.removed) : loadColRemoved(tableId)
+  ));
+  const [colFilters, setColFilters] = useState({});
+  const resizingRef = useRef(null);
+
+  // Columns the user hasn't removed from the layout. Removed columns
+  // (removableColumns mode) are dropped here so they don't render, don't
+  // export, and don't appear in the Columns dropdown — they return only
+  // via Reset. Tables without removable mode never populate removedCols,
+  // so this is a no-op for them.
+  const presentColumns = useMemo(
+    () => (removedCols.size === 0 ? columns : columns.filter(c => !removedCols.has(c.key))),
+    [columns, removedCols],
+  );
+
+  // The columns in the user's saved order (defaults to prop order). All
+  // rendering — header, body, visibility list, export — runs off this.
+  const orderedColumns = useMemo(() => orderColumns(presentColumns, colOrder), [presentColumns, colOrder]);
+
+  // Sync local state when Firestore-backed prefs arrive or change on
+  // another device. Stringify-compare so we don't churn state when the
+  // values are equivalent. Only acts once settings is loaded — guards
+  // against an early-render where settings={} reads as "no entry"
+  // and races with a later real value.
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    if (!remotePrefs) return;
+    if (remotePrefs.widths && JSON.stringify(remotePrefs.widths) !== JSON.stringify(colWidths)) {
+      setColWidths(remotePrefs.widths);
+    }
+    // Skip empty-array remotes for the same reason loadColVisible
+    // does: a synced "nothing visible" state would blank the table.
+    if (Array.isArray(remotePrefs.visible) && remotePrefs.visible.length > 0) {
+      const incoming = new Set(remotePrefs.visible);
+      const same = incoming.size === visibleCols.size && [...incoming].every(k => visibleCols.has(k));
+      if (!same) setVisibleCols(incoming);
+    }
+    if (remotePrefs.names && JSON.stringify(remotePrefs.names) !== JSON.stringify(colNames)) {
+      setColNames(remotePrefs.names);
+    }
+    if (Array.isArray(remotePrefs.order) && JSON.stringify(remotePrefs.order) !== JSON.stringify(colOrder)) {
+      setColOrder(remotePrefs.order);
+    }
+    if (Array.isArray(remotePrefs.removed)) {
+      const incoming = new Set(remotePrefs.removed);
+      const same = incoming.size === removedCols.size && [...incoming].every(k => removedCols.has(k));
+      if (!same) setRemovedCols(incoming);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsLoaded, remotePrefs]);
+
+  function reorderCols(nextKeys) {
+    setColOrder(nextKeys);
+    persistPrefs(tableId, settings, updateSettings, { order: nextKeys });
+  }
+  function resetColOrder() {
+    setColOrder([]);
+    persistPrefs(tableId, settings, updateSettings, { order: [] });
+  }
+  // Removable mode's Reset: restore every column (all visible, none
+  // removed) and the default order in one go.
+  function resetColumns() {
+    const allKeys = new Set(columns.map(c => c.key));
+    const emptyRemoved = new Set();
+    setVisibleCols(allKeys);
+    setColOrder([]);
+    setRemovedCols(emptyRemoved);
+    persistPrefs(tableId, settings, updateSettings, { visible: allKeys, order: [], removed: emptyRemoved });
+  }
+
+  function renameCol(key, name) {
+    setColNames(prev => {
+      const next = { ...prev, [key]: name };
+      persistPrefs(tableId, settings, updateSettings, { names: next });
+      return next;
+    });
+  }
+
+  // Built-in sort state (used when no external sort is provided)
+  const [internalSort, setInternalSort] = useState(() => ({
+    key: defaultSort?.key ?? null,
+    direction: defaultSort?.direction === 'desc' ? 'desc' : 'asc',
+  }));
+  const sortConfig = externalSortConfig || internalSort;
+
+  // Snapshot of row-id order captured when the user sorts by a column
+  // flagged `freezeSortOrder`. While the snapshot is active, sortedRows
+  // re-uses this order instead of re-running the comparator — so a
+  // value edit that would otherwise re-rank the row (e.g. typing into
+  // Follow Up while sorted by the computed Call In column) leaves the
+  // row in place. Clicking the same header again resnapshots.
+  const [sortSnapshot, setSortSnapshot] = useState(null);
+
+  function applySort(key, direction) {
+    setInternalSort({ key, direction });
+    const col = colByKey.get(key);
+    if (col?.freezeSortOrder) {
+      const sortGetter = col.getSortValue;
+      const sorted = [...filteredRows].sort((a, b) => {
+        let aVal = sortGetter ? sortGetter(a) : a[key];
+        let bVal = sortGetter ? sortGetter(b) : b[key];
+        if (aVal == null && bVal == null) return 0;
+        if (aVal == null) return 1;
+        if (bVal == null) return -1;
+        const aNum = parseFloat(String(aVal).replace(/[,$%]/g, ''));
+        const bNum = parseFloat(String(bVal).replace(/[,$%]/g, ''));
+        if (!isNaN(aNum) && !isNaN(bNum)) {
+          return direction === 'asc' ? aNum - bNum : bNum - aNum;
+        }
+        aVal = String(aVal).toLowerCase();
+        bVal = String(bVal).toLowerCase();
+        if (aVal < bVal) return direction === 'asc' ? -1 : 1;
+        if (aVal > bVal) return direction === 'asc' ? 1 : -1;
+        return 0;
+      });
+      setSortSnapshot({
+        key, direction,
+        ids: sorted.map(r => (r?.id != null ? String(r.id) : null)).filter(Boolean),
+      });
+    } else {
+      setSortSnapshot(null);
+    }
+  }
+
+  function handleSort(key) {
+    if (externalSort) {
+      externalSort(key);
+      return;
+    }
+    const isSame = internalSort.key === key;
+    const nextDirection = isSame && internalSort.direction === 'asc' ? 'desc' : 'asc';
+    applySort(key, nextDirection);
+  }
+
+  // Lets a parent imperatively trigger a sort (e.g. re-rank by Call In
+  // after an edit) without taking over sort state. The parent bumps
+  // `sortSignal.nonce` to fire; we apply the requested key + direction
+  // through the same path as a header click, including the
+  // freeze-snapshot capture for `freezeSortOrder` columns. Ignored when
+  // an external sort controls the table.
+  const lastSortNonce = useRef(sortSignal?.nonce);
+  useEffect(() => {
+    if (externalSort || externalSortConfig) return;
+    const nonce = sortSignal?.nonce;
+    if (nonce == null || nonce === lastSortNonce.current) return;
+    lastSortNonce.current = nonce;
+    if (sortSignal.key) {
+      applySort(sortSignal.key, sortSignal.direction === 'desc' ? 'desc' : 'asc');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortSignal?.nonce]);
+
+  // Sort rows internally if no external sort.
+  // Apply per-column filters on top of the externally-filtered rows prop.
+  // Each colFilters[key] is either a string (legacy) or array of strings
+  // (chips from ColumnFilterCell). A row passes if, for each filtered
+  // column, the cell value (case-insensitive) contains at least one of
+  // the picked values. Columns that supply getFilterValue use that
+  // instead of row[key] so derived/custom-render columns can still
+  // filter on what the user actually sees.
+  const colByKey = useMemo(() => {
+    const m = new Map();
+    for (const c of columns) m.set(c.key, c);
+    return m;
+  }, [columns]);
+  const filteredRows = useMemo(() => {
+    const active = [];
+    for (const [key, raw] of Object.entries(colFilters)) {
+      let picks = [];
+      let draft = '';
+      if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+        if (Array.isArray(raw.picks)) picks = raw.picks.map(s => String(s || '').trim()).filter(Boolean);
+        if (typeof raw.draft === 'string') draft = raw.draft.trim();
+      } else if (Array.isArray(raw)) {
+        picks = raw.map(s => String(s || '').trim()).filter(Boolean);
+      } else if (typeof raw === 'string' && raw.trim()) {
+        picks = [raw.trim()];
+      }
+      if (picks.length > 0 || draft.length > 0) active.push({ key, picks, draft });
+    }
+    if (active.length === 0) return rows;
+    return rows.filter(row => {
+      for (const { key, picks, draft } of active) {
+        const col = colByKey.get(key);
+        const getter = col?.getFilterValue;
+        const raw = getter ? getter(row) : row[key];
+        const hay = String(raw ?? '').toLowerCase();
+        // Combine committed picks (OR) with the live-typed draft (also OR).
+        // The row passes the column's filter if any pick matches as a
+        // substring OR the draft matches as a substring.
+        const candidates = [...picks];
+        if (draft) candidates.push(draft);
+        if (!candidates.some(p => hay.includes(p.toLowerCase()))) return false;
+      }
+      return true;
+    });
+  }, [rows, colFilters, colByKey]);
+
+  // Notify the consumer whenever the filtered-row set changes so it can
+  // sync its own "select all visible" state against what's actually on
+  // screen. Skipped when the prop isn't provided.
+  useEffect(() => {
+    if (onFilteredRowsChange) onFilteredRowsChange(filteredRows);
+  }, [filteredRows, onFilteredRowsChange]);
+
+  // Distinct values per column from the current row pool, used to feed
+  // the column-filter autocomplete suggestions. Computed lazily and
+  // cached so opening the dropdown is cheap on big lists.
+  const filterSuggestions = useMemo(() => {
+    const cache = new Map();
+    return (key) => {
+      if (cache.has(key)) return cache.get(key);
+      const col = colByKey.get(key);
+      const getter = col?.getFilterValue;
+      const seen = new Set();
+      const out = [];
+      for (const row of rows) {
+        const raw = getter ? getter(row) : row[key];
+        const v = String(raw ?? '').trim();
+        if (!v) continue;
+        const lower = v.toLowerCase();
+        if (seen.has(lower)) continue;
+        seen.add(lower);
+        out.push(v);
+      }
+      out.sort((a, b) => a.localeCompare(b));
+      cache.set(key, out);
+      return out;
+    };
+  }, [rows, colByKey]);
+
+  const sortedRows = useMemo(() => {
+    if (externalSortConfig || !internalSort.key) return filteredRows;
+    // When the active sort was captured against a `freezeSortOrder`
+    // column, use the snapshotted ID order rather than re-running the
+    // comparator. New rows (not in the snapshot) tail the list so they
+    // remain visible until the next manual resort.
+    if (
+      sortSnapshot
+      && sortSnapshot.key === internalSort.key
+      && sortSnapshot.direction === internalSort.direction
+    ) {
+      const order = new Map();
+      sortSnapshot.ids.forEach((id, i) => order.set(id, i));
+      const fallback = sortSnapshot.ids.length;
+      return [...filteredRows].sort((a, b) => {
+        const ai = order.has(String(a?.id)) ? order.get(String(a.id)) : fallback;
+        const bi = order.has(String(b?.id)) ? order.get(String(b.id)) : fallback;
+        return ai - bi;
+      });
+    }
+    // Columns can supply a getSortValue(row) that returns a number
+    // (e.g. epoch ms for a date) — overrides the default raw-cell
+    // numeric/string comparison so date columns sort chronologically
+    // instead of as alphabetical text on the displayed format.
+    const col = colByKey.get(internalSort.key);
+    const sortGetter = col?.getSortValue;
+    const sorted = [...filteredRows];
+    sorted.sort((a, b) => {
+      let aVal = sortGetter ? sortGetter(a) : a[internalSort.key];
+      let bVal = sortGetter ? sortGetter(b) : b[internalSort.key];
+      if (aVal == null && bVal == null) return 0;
+      if (aVal == null) return 1;
+      if (bVal == null) return -1;
+      // Try numeric comparison
+      const aNum = parseFloat(String(aVal).replace(/[,$%]/g, ''));
+      const bNum = parseFloat(String(bVal).replace(/[,$%]/g, ''));
+      if (!isNaN(aNum) && !isNaN(bNum)) {
+        return internalSort.direction === 'asc' ? aNum - bNum : bNum - aNum;
+      }
+      // String comparison
+      aVal = String(aVal).toLowerCase();
+      bVal = String(bVal).toLowerCase();
+      if (aVal < bVal) return internalSort.direction === 'asc' ? -1 : 1;
+      if (aVal > bVal) return internalSort.direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+    return sorted;
+  }, [filteredRows, internalSort, externalSortConfig, colByKey, sortSnapshot]);
+
+  const headerRef = useRef(null);
+  const bodyRef = useRef(null);
+  const firstRowRef = useRef(null);
+
+  // Virtualization. Only render rows in (or near) the viewport when the
+  // dataset is large enough that the savings outweigh the wrapper-row
+  // overhead. Row height is measured from the first rendered row so the
+  // spacers stay aligned even if the design's padding changes. Below
+  // VIRTUALIZE_THRESHOLD, behavior is identical to the legacy table.
+  const VIRTUALIZE_THRESHOLD = 50;
+  const ROW_BUFFER = 8;
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const [rowHeight, setRowHeight] = useState(33);
+
+  function handleBodyScroll(e) {
+    if (headerRef.current) headerRef.current.scrollLeft = e.target.scrollLeft;
+    setScrollTop(e.target.scrollTop);
+  }
+
+  useEffect(() => {
+    if (!bodyRef.current) return;
+    const el = bodyRef.current;
+    const update = () => setViewportHeight(el.clientHeight);
+    update();
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(update);
+      ro.observe(el);
+      return () => ro.disconnect();
+    }
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+
+  // Measure row height once on first paint and freeze it. Re-measuring
+  // on every render (or only ratcheting up) breaks scrolling on tables
+  // with variable-height rows: when the user scrolls past a tall row
+  // (e.g. an Opps 2 Next Steps cell with several Alt+Enter lines), that
+  // row becomes the new firstRowRef, the estimate balloons, and the
+  // virtualization spacer math drops the visible window into a "ghost"
+  // zone where no rendered rows live. A single measurement avoids both
+  // that bug and the original oscillation / infinite re-render loop the
+  // ratcheting was meant to dodge — at the cost of slight under- or
+  // over-estimation if the very first row isn't representative.
+  const rowHeightMeasuredRef = useRef(false);
+  useEffect(() => {
+    if (rowHeightMeasuredRef.current) return;
+    if (!firstRowRef.current) return;
+    const h = firstRowRef.current.offsetHeight;
+    if (h > 0) {
+      rowHeightMeasuredRef.current = true;
+      if (Math.abs(h - rowHeight) > 0.5) setRowHeight(h);
+    }
+  });
+
+  const getWidth = (col) => colWidths[col.key] || col.defaultWidth || 120;
+  // Filter to user-visible columns. Safety net: when the persisted
+  // visibility set was saved against a different column lineup (e.g.
+  // an older Firestore-synced list whose keys don't match the current
+  // tableId), the filter can shrink to empty — at which point the
+  // table renders as a blank panel even though `visibleCols.size`
+  // looks healthy. Fall back to showing every column so the data is
+  // never invisible. The user's toggle still works on the next
+  // interaction; this just refuses to render an unusable empty state.
+  let visibleColumns = orderedColumns.filter(c => visibleCols.has(c.key) || alwaysVisible.includes(c.key));
+  if (visibleColumns.length === 0 && orderedColumns.length > 0) visibleColumns = orderedColumns;
+
+  function toggleCol(key) {
+    if (alwaysVisible.includes(key)) return;
+    setVisibleCols(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      persistPrefs(tableId, settings, updateSettings, { visible: next });
+      return next;
+    });
+  }
+
+  // Remove a column from the layout entirely (removableColumns mode).
+  // Unlike Hide it doesn't land in the restorable "Hidden" list — Reset
+  // is the only way back. We also drop it from the visible set so a later
+  // Reset (which restores everything visible) shows it again rather than
+  // resurrecting it hidden.
+  function removeCol(key) {
+    if (alwaysVisible.includes(key)) return;
+    const nextVisible = new Set(visibleCols); nextVisible.delete(key);
+    setVisibleCols(nextVisible);
+    // Drop any active filter on the column so it doesn't keep silently
+    // filtering rows once its header (and filter input) are gone.
+    setColFilters(prev => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev }; delete next[key];
+      return next;
+    });
+    setRemovedCols(prev => {
+      const next = new Set(prev); next.add(key);
+      persistPrefs(tableId, settings, updateSettings, { removed: next, visible: nextVisible });
+      return next;
+    });
+  }
+
+  const handleResizeStart = useCallback((e, colKey) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startWidth = colWidths[colKey] || columns.find(c => c.key === colKey)?.defaultWidth || 120;
+    resizingRef.current = colKey;
+
+    function onMouseMove(ev) {
+      const diff = ev.clientX - startX;
+      const newWidth = Math.max(50, startWidth + diff);
+      setColWidths(prev => {
+        const next = { ...prev, [colKey]: newWidth };
+        persistPrefs(tableId, settings, updateSettings, { widths: next });
+        return next;
+      });
+    }
+
+    function onMouseUp() {
+      resizingRef.current = null;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [colWidths, columns, tableId, settings, updateSettings]);
+
+  return (
+    <div className={styles.outerWrap}>
+      <div className={styles.toolbar}>
+        <ColumnToggle columns={orderedColumns} visibleCols={visibleCols} onToggle={toggleCol} onRemove={removeCol} removedCount={removedCols.size} alwaysVisible={alwaysVisible} colNames={colNames} onRename={renameCol} onReorder={reorderCols} onResetOrder={resetColOrder} removable={removableColumns} onResetColumns={resetColumns} />
+        <button className={styles.resetBtn} onClick={() => { setColWidths({}); persistPrefs(tableId, settings, updateSettings, { widths: {} }); }}>
+          Reset widths
+        </button>
+        <button className={styles.exportBtn} onClick={async () => {
+          if (typeof onExport === 'function') {
+            onExport({
+              columns: visibleColumns,
+              rows: sortedRows,
+              colNames,
+              extraSheets: exportExtraSheets,
+            });
+            return;
+          }
+          const XLSX = await import('xlsx');
+          const exportCols = visibleColumns;
+          const data = sortedRows.map(row => {
+            const obj = {};
+            for (const col of exportCols) {
+              const label = colNames[col.key] || col.label;
+              let val;
+              // Columns with derived data (e.g. values stored under
+              // __electricCost__ while the column key is electricCost)
+              // can provide an exportValue mapper so the export matches
+              // what's on screen.
+              if (typeof col.exportValue === 'function') {
+                val = col.exportValue(row);
+              } else {
+                val = row[col.key];
+              }
+              obj[label] = Array.isArray(val) ? val.join(', ') : (val ?? '');
+            }
+            return obj;
+          });
+          const ws = XLSX.utils.json_to_sheet(data);
+          ws['!cols'] = exportCols.map(col => ({ wch: Math.max((colNames[col.key] || col.label).length, 12) }));
+          const wb = XLSX.utils.book_new();
+          const primarySheetName = (exportPrimarySheetName || exportFileName || tableId || 'Export').replace(/[\\/:*?\[\]]+/g, '-').slice(0, 31);
+          XLSX.utils.book_append_sheet(wb, ws, primarySheetName);
+          if (Array.isArray(exportExtraSheets)) {
+            for (const extra of exportExtraSheets) {
+              if (!extra || !Array.isArray(extra.rows) || extra.rows.length === 0) continue;
+              const extraWs = XLSX.utils.json_to_sheet(extra.rows);
+              const extraHeaders = Object.keys(extra.rows[0]);
+              extraWs['!cols'] = extraHeaders.map(h => ({ wch: Math.max(h.length + 2, 14) }));
+              const extraName = String(extra.name || 'Sheet').replace(/[\\/:*?\[\]]+/g, '-').slice(0, 31);
+              XLSX.utils.book_append_sheet(wb, extraWs, extraName);
+            }
+          }
+          const safeName = (exportFileName || tableId || 'export').replace(/[\\/:*?"<>|]+/g, '-');
+          XLSX.writeFile(wb, `${safeName} - ${new Date().toISOString().slice(0, 10)}.xlsx`);
+        }}>
+          Export Excel
+        </button>
+        {/* Defensive row-count indicator: surfaces what the table
+            actually sees right next to the export controls. If the
+            parent says 'showing 42' but this badge shows '0 rows',
+            the bug is upstream of the table; if it shows '42 rows'
+            but the body is blank, the bug is in the body render. */}
+        <span
+          title={`${sortedRows.length} of ${rows.length} rows rendered`}
+          style={{ marginLeft: 'auto', padding: '0.25rem 0.5rem', borderRadius: 4, background: sortedRows.length === 0 ? '#FEF3C7' : '#F1F5F9', color: sortedRows.length === 0 ? '#92400E' : '#475569', fontSize: '0.65rem', fontWeight: 600 }}
+        >
+          {sortedRows.length} row{sortedRows.length === 1 ? '' : 's'}
+        </span>
+      </div>
+      {/* Always render the table header + body shell so the column
+          headers stay visible when a search / column filter zeros out
+          the rows — users need to see which columns exist (and clear
+          their filter) instead of staring at a blank panel. */}
+      <>
+        <div className={styles.headerWrap} ref={headerRef}>
+            <table className={styles.table} style={{ tableLayout: 'fixed', width: visibleColumns.reduce((s, c) => s + getWidth(c), 0) }}>
+              <colgroup>
+                {visibleColumns.map(col => (
+                  <col key={col.key} style={{ width: getWidth(col) }} />
+                ))}
+              </colgroup>
+              <thead>
+                <tr>
+                  {visibleColumns.map(col => {
+                    const headerLabel = colNames[col.key] || col.label;
+                    // Native hover tooltip on every header so users can
+                    // read the full column name even when the cell text
+                    // is truncated by the fixed column width.
+                    const headerTitle = typeof headerLabel === 'string' ? headerLabel : undefined;
+                    return (
+                    <th
+                      key={col.key}
+                      style={{ width: getWidth(col), position: 'relative' }}
+                      onClick={() => handleSort(col.key)}
+                      className={col.sticky ? styles.stickyCol : undefined}
+                      title={headerTitle}
+                    >
+                      {col.renderHeader
+                        ? col.renderHeader(headerLabel)
+                        : headerLabel}
+                      {sortConfig?.key === col.key && (
+                        <span className={styles.sortArrow}>
+                          {sortConfig.direction === 'asc' ? '\u25B2' : '\u25BC'}
+                        </span>
+                      )}
+                      <span
+                        className={styles.resizeHandle}
+                        onMouseDown={e => handleResizeStart(e, col.key)}
+                        onClick={e => e.stopPropagation()}
+                      />
+                    </th>
+                    );
+                  })}
+                </tr>
+                {enableColumnFilters && (
+                  <tr>
+                    {visibleColumns.map(col => {
+                      // Skip filtering on the leftmost helper / select / row-action
+                      // columns. Their key starts with "_" by convention.
+                      const filterable = !String(col.key || '').startsWith('_') || !!col.getFilterValue;
+                      return (
+                        <th
+                          key={col.key}
+                          style={{ width: getWidth(col), padding: '2px 4px', background: 'var(--color-surface)', borderBottom: '1px solid var(--color-border-light)' }}
+                          onClick={e => e.stopPropagation()}
+                          className={col.sticky ? styles.stickyCol : undefined}
+                        >
+                          {filterable ? (
+                            <ColumnFilterCell
+                              value={colFilters[col.key]}
+                              onChange={(next) => setColFilters(prev => {
+                                const out = { ...prev };
+                                if (Array.isArray(next) && next.length === 0) delete out[col.key];
+                                else out[col.key] = next;
+                                return out;
+                              })}
+                              suggestions={filterSuggestions(col.key)}
+                            />
+                          ) : null}
+                        </th>
+                      );
+                    })}
+                  </tr>
+                )}
+              </thead>
+            </table>
+          </div>
+          {sortedRows.length === 0 ? (
+            // Wrap the empty message in a scrollable container the
+            // same width as the column total so horizontal scrolling
+            // still works when a filter narrows the view to zero rows
+            // (the user can otherwise lose access to off-screen
+            // columns just because no rows match the current filter).
+            // Syncs scrollLeft to the header so the column titles
+            // track the user's pan even with no body rows.
+            <div className={styles.scrollWrap} ref={bodyRef} onScroll={handleBodyScroll}>
+              <div style={{ minWidth: visibleColumns.reduce((s, c) => s + getWidth(c), 0) }}>
+                <div className={styles.empty}>{emptyMessage}</div>
+              </div>
+            </div>
+          ) : (() => {
+            const total = sortedRows.length;
+            const expandable = typeof renderExpansion === 'function';
+            const expandedSet = expandable
+              ? (expandedRowIds instanceof Set ? expandedRowIds : new Set(expandedRowIds || []))
+              : null;
+            // Expansion rows have variable height and would corrupt the
+            // fixed-rowHeight virtualization math; render every row when
+            // expansion is enabled.
+            const virtualize = !expandable && !variableRowHeight && total > VIRTUALIZE_THRESHOLD && rowHeight > 0;
+            let startIdx = 0;
+            let endIdx = total;
+            if (virtualize) {
+              const visibleCount = Math.max(1, Math.ceil(viewportHeight / rowHeight));
+              startIdx = Math.max(0, Math.floor(scrollTop / rowHeight) - ROW_BUFFER);
+              endIdx = Math.min(total, startIdx + visibleCount + ROW_BUFFER * 2);
+            }
+            let topPad = virtualize ? startIdx * rowHeight : 0;
+            let bottomPad = virtualize ? Math.max(0, (total - endIdx) * rowHeight) : 0;
+            let visibleRows = virtualize ? sortedRows.slice(startIdx, endIdx) : sortedRows;
+            // Belt-and-braces: if the virtualization math ever produces
+            // an empty slice while data exists (stale scrollTop after
+            // a dataset shrinks, weird rowHeight measurement, etc.),
+            // render everything rather than show a blank body.
+            if (visibleRows.length === 0 && total > 0) {
+              visibleRows = sortedRows;
+              topPad = 0;
+              bottomPad = 0;
+            }
+            return (
+              <div className={styles.scrollWrap} ref={bodyRef} onScroll={handleBodyScroll}>
+                <table className={styles.table} style={{ tableLayout: 'fixed', width: visibleColumns.reduce((s, c) => s + getWidth(c), 0) }}>
+                  <colgroup>
+                    {visibleColumns.map(col => (
+                      <col key={col.key} style={{ width: getWidth(col) }} />
+                    ))}
+                  </colgroup>
+                  <tbody>
+                    {topPad > 0 && (
+                      <tr aria-hidden="true" style={{ height: topPad }}>
+                        <td colSpan={visibleColumns.length} style={{ padding: 0, border: 'none' }} />
+                      </tr>
+                    )}
+                    {visibleRows.map((row, ri) => {
+                      const absoluteIdx = startIdx + ri;
+                      const rowKey = row.id ?? absoluteIdx;
+                      // Compute the rowStyle once and apply it to both
+                      // the <tr> AND every <td>: tr-level backgrounds
+                      // can't tint cells whose CSS sets an explicit
+                      // background (e.g. the sticky Account column), so
+                      // mirroring the style onto each cell guarantees
+                      // visible row tints on `.stickyCol` too.
+                      const computedRowStyle = rowStyle ? rowStyle(row) : undefined;
+                      // In variable-row-height mode we render every row
+                      // and let the browser skip painting the ones off
+                      // screen via content-visibility. The reserved
+                      // ~33px keeps the scrollbar accurate before each
+                      // row is laid out.
+                      const variableRowStyle = variableRowHeight
+                        ? { contentVisibility: 'auto', containIntrinsicSize: '0 33px' }
+                        : undefined;
+                      const rowTr = (
+                        <tr
+                          key={expandable ? `r:${rowKey}` : rowKey}
+                          ref={ri === 0 ? firstRowRef : undefined}
+                          className={rowClassName ? rowClassName(row) : undefined}
+                          onClick={onRowClick ? () => onRowClick(row) : undefined}
+                          style={{ ...(onRowClick ? { cursor: 'pointer' } : undefined), ...variableRowStyle, ...computedRowStyle }}
+                        >
+                          {visibleColumns.map(col => (
+                            <td
+                              key={col.key}
+                              className={col.sticky ? styles.stickyCol : undefined}
+                              style={computedRowStyle}
+                            >
+                              {col.render ? col.render(row) : (row[col.key] ?? '—')}
+                            </td>
+                          ))}
+                        </tr>
+                      );
+                      if (!expandable) return rowTr;
+                      const isExpanded = expandedSet.has(row.id);
+                      // Two adjacent <tr>s when expanded; React handles
+                      // a returned array directly inside tbody.
+                      return isExpanded
+                        ? [
+                            rowTr,
+                            (
+                              <tr key={`x:${rowKey}`}>
+                                <td colSpan={visibleColumns.length} style={{ padding: 0, background: '#F8FAFC', borderTop: '1px solid #E2E8F0' }}>
+                                  {renderExpansion(row)}
+                                </td>
+                              </tr>
+                            ),
+                          ]
+                        : rowTr;
+                    })}
+                    {bottomPad > 0 && (
+                      <tr aria-hidden="true" style={{ height: bottomPad }}>
+                        <td colSpan={visibleColumns.length} style={{ padding: 0, border: 'none' }} />
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
+        </>
+    </div>
+  );
+}

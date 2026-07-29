@@ -9,7 +9,7 @@ export function RECAClientsView({ prospects = [], onSelectProspect, cdmName, set
     <UploadedListView
       storageKey="reca-clients-override"
       tableIdPrefix="reca-clients"
-      title="RECA Clients"
+      title="RECA"
       singular="client"
       plural="clients"
       prospects={prospects}

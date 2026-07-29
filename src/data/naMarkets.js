@@ -1,16 +1,23 @@
-// North America deregulation breakdown — the rich category each US
-// state / Canadian province falls into for the "Indicative Savings"
-// Excel export's North America Markets sheet. Matches the legend on
-// the Schneider Electric US/Canada deregulation map.
+// North America deregulation breakdown — the state-level Natural Gas /
+// Electric Power regulation status each US state / Canadian province
+// falls into. Drives the "Indicative Savings" Excel export (the
+// State / Province deregulation status table + the per-site Electric
+// Market / Gas Market columns) and the NA deregulation choropleth.
+//
+// This is the STATE-LEVEL view only. A recognized regulated utility
+// (City of …, municipal, co-op, public power, etc. — see
+// utilityClassify.js) still trumps this when the site's actual provider
+// is known; this table is the fallback used when we're reasoning about
+// the state as a whole.
 //
 // Each entry returns:
 //   key   — stable enum (for switch/case)
-//   label — human label as it appears in the map legend
-//   ng    — short label for the Natural Gas status
-//   ep    — short label for the Electric Power status
+//   label — human label combining the NG + EP status
+//   ng    — Natural Gas status string (shown verbatim in the export)
+//   ep    — Electric Power status string (shown verbatim in the export)
 //   fill  — Excel ARGB cell fill colour (8-char hex, "FF" alpha + RRGGBB)
 //   fg    — Excel ARGB text colour (8-char hex)
-// Anything not listed defaults to "Regulated – NG & EP".
+// Anything not listed defaults to "Regulated — NG & EP".
 
 export const NA_CATEGORIES = {
   REG_NG_EP: {
@@ -18,93 +25,76 @@ export const NA_CATEGORIES = {
     label: 'Regulated — NG & EP',
     ng: 'Regulated',
     ep: 'Regulated',
-    fill: 'FFD1D5DB',
-    fg:   'FF1F2937',
+    fill: 'FF4AA3E0',
+    fg:   'FFFFFFFF',
   },
   DEREG_NG: {
     key: 'DEREG_NG',
-    label: 'Deregulated — NG',
+    label: 'Deregulated — NG; Regulated — EP',
     ng: 'Deregulated',
     ep: 'Regulated',
-    fill: 'FF166534',
-    fg:   'FFFFFFFF',
+    fill: 'FF4CAF50',
+    fg:   'FF14532D',
   },
   DEREG_NG_EP: {
     key: 'DEREG_NG_EP',
     label: 'Deregulated — NG & EP',
     ng: 'Deregulated',
     ep: 'Deregulated',
-    fill: 'FF4ADE80',
-    fg:   'FF14532D',
+    fill: 'FF2E9E4F',
+    fg:   'FFFFFFFF',
   },
-  DEREG_NG_LIMITED_EP: {
-    key: 'DEREG_NG_LIMITED_EP',
-    label: 'Deregulated — NG; Limited Deregulation — EP',
-    ng: 'Deregulated',
-    ep: 'Limited Deregulation',
-    fill: 'FFEAB308',
+  DEREG_LTD_NG: {
+    key: 'DEREG_LTD_NG',
+    label: 'Deregulated – Limited Opportunity — NG; Regulated — EP',
+    ng: 'Deregulated – Limited Opportunity',
+    ep: 'Regulated',
+    fill: 'FFF2C200',
     fg:   'FF422006',
   },
-  DEREG_NG_HEAVY_EP: {
-    key: 'DEREG_NG_HEAVY_EP',
-    label: 'Deregulated — NG; Heavy Energy Users Only (5-10 MW min.) — EP',
+  CA_DEREG_LOTTERY: {
+    key: 'CA_DEREG_LOTTERY',
+    label: 'Deregulated — NG; Deregulated (market cap + annual lottery) — EP',
     ng: 'Deregulated',
-    ep: 'Heavy Energy Users Only (5-10 MW min.)',
-    fill: 'FFEA580C',
+    ep: 'Deregulated (market cap + annual lottery eligibility)',
+    fill: 'FFE8743B',
     fg:   'FFFFFFFF',
   },
-  LIMITED_EP: {
-    key: 'LIMITED_EP',
-    label: 'Limited Deregulation — EP (NG regulated)',
-    ng: 'Regulated',
-    ep: 'Limited Deregulation',
-    fill: 'FFE5E7EB',
-    fg:   'FF1F2937',
-  },
-  DIRECT_ACCESS_EP: {
-    key: 'DIRECT_ACCESS_EP',
-    label: 'Limited to those w/ Direct Access Rights — EP',
-    ng: 'Regulated',
-    ep: 'Direct Access Rights only',
-    fill: 'FF9CA3AF',
-    fg:   'FF111827',
-  },
-  HEAVY_EP: {
-    key: 'HEAVY_EP',
-    label: 'Heavy Energy Users Only (5-10 MW min.) — EP',
-    ng: 'Regulated',
-    ep: 'Heavy Energy Users Only (5-10 MW min.)',
-    fill: 'FF111827',
+  MI_DEREG_CAP: {
+    key: 'MI_DEREG_CAP',
+    label: 'Deregulated — NG; Deregulated with market cap — EP',
+    ng: 'Deregulated',
+    ep: 'Deregulated with market cap',
+    fill: 'FF6B7280',
     fg:   'FFFFFFFF',
   },
-  // Canada-specific bucket combinations.
-  CA_LIMITED_NG_DEREG_EP: {
-    key: 'CA_LIMITED_NG_DEREG_EP',
-    label: 'Limited Deregulation — NG; Deregulated — EP',
-    ng: 'Limited Deregulation',
-    ep: 'Deregulated',
-    fill: 'FF38BDF8',
-    fg:   'FF0C4A6E',
+  OR_DEREG_ELECTION: {
+    key: 'OR_DEREG_ELECTION',
+    label: 'Deregulated — NG; Deregulated with annual election period — EP',
+    ng: 'Deregulated',
+    ep: 'Deregulated with annual election period',
+    fill: 'FF5B9BD5',
+    fg:   'FFFFFFFF',
   },
-  CA_LIMITED_NG_REG_EP: {
-    key: 'CA_LIMITED_NG_REG_EP',
-    label: 'Limited Deregulation — NG; Regulated — EP',
-    ng: 'Limited Deregulation',
-    ep: 'Regulated',
-    fill: 'FFBE185D',
+  VA_DEREG_LTD_EP: {
+    key: 'VA_DEREG_LTD_EP',
+    label: 'Deregulated — NG; Deregulated – Limited Opportunity (5 MW min.) — EP',
+    ng: 'Deregulated',
+    ep: 'Deregulated – Limited Opportunity (utility account must be 5 MW)',
+    fill: 'FFD68910',
     fg:   'FFFFFFFF',
   },
 };
 
-// US states + DC: full name + assigned category. Categories were
-// taken from the Schneider Electric "US Natural Gas & Electric
-// Power Deregulation" reference map.
+// US states + DC: full name + assigned category. Status per the curated
+// state-level regulation table. Alaska and Hawaii aren't on the table
+// (no retail-choice programs) so they stay fully regulated.
 export const US_MARKETS = [
-  { code: 'AL', name: 'Alabama',         category: 'REG_NG_EP' },
+  { code: 'AL', name: 'Alabama',         category: 'DEREG_LTD_NG' },
   { code: 'AK', name: 'Alaska',          category: 'REG_NG_EP' },
-  { code: 'AZ', name: 'Arizona',         category: 'HEAVY_EP' },
-  { code: 'AR', name: 'Arkansas',        category: 'REG_NG_EP' },
-  { code: 'CA', name: 'California',      category: 'DIRECT_ACCESS_EP' },
+  { code: 'AZ', name: 'Arizona',         category: 'DEREG_NG' },
+  { code: 'AR', name: 'Arkansas',        category: 'DEREG_NG' },
+  { code: 'CA', name: 'California',      category: 'CA_DEREG_LOTTERY' },
   { code: 'CO', name: 'Colorado',        category: 'DEREG_NG' },
   { code: 'CT', name: 'Connecticut',     category: 'DEREG_NG_EP' },
   { code: 'DC', name: 'District of Columbia', category: 'DEREG_NG_EP' },
@@ -112,7 +102,7 @@ export const US_MARKETS = [
   { code: 'FL', name: 'Florida',         category: 'DEREG_NG' },
   { code: 'GA', name: 'Georgia',         category: 'DEREG_NG' },
   { code: 'HI', name: 'Hawaii',          category: 'REG_NG_EP' },
-  { code: 'ID', name: 'Idaho',           category: 'DEREG_NG' },
+  { code: 'ID', name: 'Idaho',           category: 'DEREG_LTD_NG' },
   { code: 'IL', name: 'Illinois',        category: 'DEREG_NG_EP' },
   { code: 'IN', name: 'Indiana',         category: 'DEREG_NG' },
   { code: 'IA', name: 'Iowa',            category: 'DEREG_NG' },
@@ -122,42 +112,41 @@ export const US_MARKETS = [
   { code: 'ME', name: 'Maine',           category: 'DEREG_NG_EP' },
   { code: 'MD', name: 'Maryland',        category: 'DEREG_NG_EP' },
   { code: 'MA', name: 'Massachusetts',   category: 'DEREG_NG_EP' },
-  { code: 'MI', name: 'Michigan',        category: 'DEREG_NG_LIMITED_EP' },
-  { code: 'MN', name: 'Minnesota',       category: 'REG_NG_EP' },
-  { code: 'MS', name: 'Mississippi',     category: 'DEREG_NG' },
+  { code: 'MI', name: 'Michigan',        category: 'MI_DEREG_CAP' },
+  { code: 'MN', name: 'Minnesota',       category: 'DEREG_NG' },
+  { code: 'MS', name: 'Mississippi',     category: 'DEREG_LTD_NG' },
   { code: 'MO', name: 'Missouri',        category: 'DEREG_NG' },
-  { code: 'MT', name: 'Montana',         category: 'DEREG_NG' },
+  { code: 'MT', name: 'Montana',         category: 'DEREG_LTD_NG' },
   { code: 'NE', name: 'Nebraska',        category: 'DEREG_NG' },
-  { code: 'NV', name: 'Nevada',          category: 'REG_NG_EP' },
+  { code: 'NV', name: 'Nevada',          category: 'DEREG_NG' },
   { code: 'NH', name: 'New Hampshire',   category: 'DEREG_NG_EP' },
   { code: 'NJ', name: 'New Jersey',      category: 'DEREG_NG_EP' },
   { code: 'NM', name: 'New Mexico',      category: 'DEREG_NG' },
   { code: 'NY', name: 'New York',        category: 'DEREG_NG_EP' },
   { code: 'NC', name: 'North Carolina',  category: 'DEREG_NG' },
-  { code: 'ND', name: 'North Dakota',    category: 'DEREG_NG' },
+  { code: 'ND', name: 'North Dakota',    category: 'DEREG_LTD_NG' },
   { code: 'OH', name: 'Ohio',            category: 'DEREG_NG_EP' },
   { code: 'OK', name: 'Oklahoma',        category: 'DEREG_NG' },
-  { code: 'OR', name: 'Oregon',          category: 'DEREG_NG_LIMITED_EP' },
+  { code: 'OR', name: 'Oregon',          category: 'OR_DEREG_ELECTION' },
   { code: 'PA', name: 'Pennsylvania',    category: 'DEREG_NG_EP' },
   { code: 'RI', name: 'Rhode Island',    category: 'DEREG_NG_EP' },
   { code: 'SC', name: 'South Carolina',  category: 'DEREG_NG' },
-  { code: 'SD', name: 'South Dakota',    category: 'DEREG_NG' },
+  { code: 'SD', name: 'South Dakota',    category: 'DEREG_LTD_NG' },
   { code: 'TN', name: 'Tennessee',       category: 'DEREG_NG' },
   { code: 'TX', name: 'Texas',           category: 'DEREG_NG_EP' },
   { code: 'UT', name: 'Utah',            category: 'DEREG_NG' },
   { code: 'VT', name: 'Vermont',         category: 'REG_NG_EP' },
-  { code: 'VA', name: 'Virginia',        category: 'DEREG_NG_HEAVY_EP' },
-  { code: 'WA', name: 'Washington',      category: 'LIMITED_EP' },
+  { code: 'VA', name: 'Virginia',        category: 'VA_DEREG_LTD_EP' },
+  { code: 'WA', name: 'Washington',      category: 'DEREG_NG' },
   { code: 'WV', name: 'West Virginia',   category: 'DEREG_NG' },
   { code: 'WI', name: 'Wisconsin',       category: 'DEREG_NG' },
   { code: 'WY', name: 'Wyoming',         category: 'DEREG_NG' },
 ];
 
-// Canadian provinces + territories. Categories taken from the
-// Schneider Electric Canada deregulation reference map.
+// Canadian provinces + territories.
 export const CA_MARKETS = [
-  { code: 'AB', name: 'Alberta',                  category: 'CA_LIMITED_NG_REG_EP' },
-  { code: 'BC', name: 'British Columbia',         category: 'CA_LIMITED_NG_DEREG_EP' },
+  { code: 'AB', name: 'Alberta',                  category: 'DEREG_NG_EP' },
+  { code: 'BC', name: 'British Columbia',         category: 'DEREG_NG' },
   { code: 'MB', name: 'Manitoba',                 category: 'DEREG_NG' },
   { code: 'NB', name: 'New Brunswick',            category: 'REG_NG_EP' },
   { code: 'NL', name: 'Newfoundland and Labrador',category: 'REG_NG_EP' },
@@ -166,10 +155,42 @@ export const CA_MARKETS = [
   { code: 'NU', name: 'Nunavut',                  category: 'REG_NG_EP' },
   { code: 'ON', name: 'Ontario',                  category: 'DEREG_NG_EP' },
   { code: 'PE', name: 'Prince Edward Island',     category: 'REG_NG_EP' },
-  { code: 'QC', name: 'Québec',                   category: 'DEREG_NG_EP' },
+  { code: 'QC', name: 'Québec',                   category: 'DEREG_NG' },
   { code: 'SK', name: 'Saskatchewan',             category: 'DEREG_NG' },
   { code: 'YT', name: 'Yukon',                    category: 'REG_NG_EP' },
 ];
+
+// Map a free-text Canadian province / territory value to its 2-letter
+// postal code: a code already ("ON"), a full name ("Ontario"), or an
+// accented / aliased variant ("Québec", "Quebec", "Newfoundland"). Returns
+// null when nothing matches. This mirrors normalizeState (which is US-only)
+// so Canadian sites resolve to the codes the province-centre table and the
+// admin-1 map polygons key on, instead of staying as raw province names.
+const _PROVINCE_CODES = new Set(CA_MARKETS.map(m => m.code));
+const _PROVINCE_NAME_TO_CODE = (() => {
+  const m = {};
+  for (const { code, name } of CA_MARKETS) m[name.toLowerCase()] = code;
+  // Common aliases / unaccented + shorthand variants beyond the
+  // canonical names above (the only accented name is "Québec").
+  return Object.assign(m, {
+    'quebec': 'QC',
+    'newfoundland': 'NL',
+    'newfoundland & labrador': 'NL',
+    'labrador': 'NL',
+    'pei': 'PE',
+    'nwt': 'NT',
+    'yukon territory': 'YT',
+  });
+})();
+export function normalizeProvince(value) {
+  if (!value) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const code2 = raw.toUpperCase().replace(/[^A-Z]/g, '');
+  if (code2.length === 2 && _PROVINCE_CODES.has(code2)) return code2;
+  const key = raw.toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ').trim();
+  return _PROVINCE_NAME_TO_CODE[key] || null;
+}
 
 export function naCategoryFor(stateCode, isUS, isCA) {
   if (!stateCode) return null;

@@ -8,9 +8,30 @@
 .header {
   padding: 1rem 1.25rem 0.5rem;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
+}
+
+.headerRight {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.nomadworks {
+  font-style: normal;
+  text-align: right;
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+  color: var(--color-text-muted);
+}
+
+.nomadworksName {
+  display: block;
+  font-weight: 700;
+  color: var(--color-text);
 }
 
 .title {
@@ -88,6 +109,66 @@
   color: var(--color-text-muted);
   cursor: not-allowed;
   opacity: 0.6;
+}
+
+/* Per-chart hide button in each ChartHeader. */
+.hideBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  padding: 0;
+  font-size: 0.8rem;
+  line-height: 1;
+  font-family: inherit;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.hideBtn:hover {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+/* Restore bar in the page header listing hidden charts as chips. */
+.hiddenBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  justify-content: flex-end;
+}
+
+.hiddenBarLabel {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.hiddenChip,
+.showAllBtn {
+  padding: 0.2rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.hiddenChip:hover,
+.showAllBtn:hover {
+  background: var(--color-bg);
+}
+
+.showAllBtn {
+  color: var(--color-text-muted);
 }
 
 .empty {

@@ -39,6 +39,33 @@
 .btnDanger { color: var(--color-danger); border-color: var(--color-danger); }
 .btnDanger:hover { background: var(--color-danger-light); }
 
+/* Toggle button in its "on" state (Filter row shown / filters active). */
+.btnActive {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--color-accent);
+  border-radius: 6px;
+  background: var(--color-accent-light);
+  color: var(--color-accent);
+  font-size: 0.74rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.clearLink {
+  border: none;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0.2rem 0.35rem;
+  white-space: nowrap;
+}
+.clearLink:hover { text-decoration: underline; }
+
 .select {
   padding: 0.38rem 0.5rem;
   border: 1px solid var(--color-border);
@@ -85,14 +112,58 @@
   white-space: nowrap;
 }
 
+/* Clickable label + sort arrow. Click anywhere on it to cycle the sort;
+   the resize handle to its right stops propagation so a drag never sorts. */
+.thHead {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  padding-right: 6px;
+  user-select: none;
+}
+
 /* Header label clips with ellipsis so a narrow column stays tidy and
    leaves room for the resize handle on the right edge. */
 .thLabel {
-  display: block;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding-right: 6px;
+}
+
+/* Idle sort hint (faint, appears on hover) vs the active sort arrow. */
+.sortArrow {
+  flex: none;
+  font-size: 0.6rem;
+  color: var(--color-text-muted);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.thHead:hover .sortArrow { opacity: 0.55; }
+.sortArrowActive {
+  flex: none;
+  font-size: 0.6rem;
+  color: var(--color-accent);
+}
+
+.filterInput {
+  width: 100%;
+  margin-top: 4px;
+  padding: 0.2rem 0.35rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 0.7rem;
+  font-weight: 400;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+.filterInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
 }
 
 /* Grab strip on the right edge of each header cell. */
@@ -282,3 +353,56 @@
 .mapRow { display: grid; grid-template-columns: 120px 1fr; align-items: center; gap: 0.6rem; }
 .mapField { font-size: 0.74rem; font-weight: 600; color: var(--color-text); }
 .mapRow .select { max-width: none; width: 100%; }
+
+/* Unmapped-companies match popup */
+.unmappedList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  max-height: 52vh;
+  overflow: auto;
+  padding-right: 2px;
+}
+.unmappedRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) auto minmax(0, 1.3fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+}
+.unmappedName {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.unmappedCount { color: var(--color-text-muted); font-weight: 500; }
+.unmappedArrow { color: var(--color-text-muted); font-size: 0.8rem; }
+.unmappedInput {
+  width: 100%;
+  padding: 0.32rem 0.45rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-family: inherit;
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-sizing: border-box;
+}
+.unmappedInput:focus { outline: none; border-color: var(--color-accent); }
+.unmappedCheck,
+.unmappedCheckOn {
+  width: 1.1rem;
+  text-align: center;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+.unmappedCheckOn { color: var(--color-success, #16a34a); }
+.unmappedDone {
+  text-align: center;
+  color: var(--color-text-secondary);
+  padding: 1.25rem 0.5rem;
+  font-size: 0.82rem;
+}

@@ -3,6 +3,8 @@ import * as XLSX from 'xlsx';
 import { Badge } from '../common/Badge';
 import { statusColor, tierColor, formatAum, formatNumber } from '../../utils/formatters';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS } from '../../data/enums';
+import { buildTypeOptions, buildCdmOptions, persistCustomOption, buildAssetTypeOptions } from '../../utils/prospectOptions';
+import { PasteAddModal } from './PasteAddModal';
 import styles from './TableView.module.css';
 
 const ASSET_TYPES_ALL = ASSET_TYPES;
@@ -84,7 +86,9 @@ function TagsCell({ value, prospect, colDef, onUpdate }) {
       </span>
       {expanded && (
         <div className={styles.tagsDropdown}>
-          {(colDef.key === 'assetTypes' ? ASSET_TYPES_ALL : FRAMEWORKS_ALL).map(opt => (
+          {/* Prefer options injected on the colDef (Asset Types is managed
+              on the Dropdowns tab); fall back to the built-in vocab. */}
+          {(Array.isArray(colDef.options) ? colDef.options : (colDef.key === 'assetTypes' ? ASSET_TYPES_ALL : FRAMEWORKS_ALL)).map(opt => (
             <label key={opt} className={styles.tagsDropdownItem}>
               <input
                 type="checkbox"
@@ -113,7 +117,10 @@ const ADD_NEW_OPTION = '__ADD_NEW__';
 // is set on the column definition.
 const EDIT_OPTIONS = '__EDIT_OPTIONS__';
 
-function InlineCell({ value, prospect, colDef, onUpdate, onAddOption, onEditOptions }) {
+// Shared inline cell editor: double-click to edit; enum columns show a
+// dropdown of options. Exported so other prospect tables (PE › Blue
+// Owl) edit cells exactly the way Table View does.
+export function InlineCell({ value, prospect, colDef, onUpdate, onAddOption, onEditOptions }) {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
   const [showSaved, setShowSaved] = useState(false);
@@ -438,70 +445,25 @@ function EditOptionsModal({ colKey, options, allProspects, onUpdate, settings, u
 }
 
 export function TableView({ prospects, allProspects, sortConfig, toggleSort, onUpdate, onDelete, onSelect, onAdd, onReplaceAll, settings, updateSettings }) {
-  // Type options union: built-in TYPES + values currently in use across
-  // every prospect + custom types the user has added via the dropdown.
-  // De-duped case-insensitively while keeping the first spelling, then
-  // sorted so the dropdown reads naturally.
-  const dynamicTypeOptions = useMemo(() => {
-    const seen = new Set();
-    const out = [];
-    const push = (t) => {
-      const v = String(t || '').trim();
-      if (!v) return;
-      const k = v.toLowerCase();
-      if (seen.has(k)) return;
-      seen.add(k);
-      out.push(v);
-    };
-    for (const t of TYPES) push(t);
-    for (const p of (allProspects || prospects || [])) push(p?.type);
-    for (const t of (settings?.customTypes || [])) push(t);
-    return out.sort((a, b) => a.localeCompare(b));
-  }, [allProspects, prospects, settings]);
+  const dynamicTypeOptions = useMemo(
+    () => buildTypeOptions(allProspects || prospects, settings),
+    [allProspects, prospects, settings]
+  );
 
-  // CDM options union: every CDM currently set on a prospect + custom
-  // CDMs the user has added via "+ Add new CDM…". CDMs are pure
-  // user-defined names (no built-in list), so the dropdown is fully
-  // driven by data + settings.customCdms. De-duped case-insensitively.
-  const dynamicCdmOptions = useMemo(() => {
-    const seen = new Set();
-    const out = [];
-    const push = (t) => {
-      const v = String(t || '').trim();
-      if (!v) return;
-      const k = v.toLowerCase();
-      if (seen.has(k)) return;
-      seen.add(k);
-      out.push(v);
-    };
-    for (const p of (allProspects || prospects || [])) push(p?.cdm);
-    for (const t of (settings?.customCdms || [])) push(t);
-    return out.sort((a, b) => a.localeCompare(b));
-  }, [allProspects, prospects, settings]);
+  const dynamicCdmOptions = useMemo(
+    () => buildCdmOptions(allProspects || prospects, settings),
+    [allProspects, prospects, settings]
+  );
 
-  // Persist a newly-added Type / CDM to its custom-list setting so it
-  // sticks across reloads. Called by the InlineCell when the user picks
-  // "+ Add new …" on the dropdown.
+  // Asset Types vocabulary, managed on the Dropdowns tab (plus any value
+  // already in use), injected into the tags column below.
+  const dynamicAssetTypeOptions = useMemo(
+    () => buildAssetTypeOptions(allProspects || prospects, settings),
+    [allProspects, prospects, settings]
+  );
+
   const handleAddOption = useCallback((colKey, name) => {
-    if (!name) return;
-    const trimmed = name.trim();
-    if (colKey === 'type') {
-      const list = Array.isArray(settings?.customTypes) ? settings.customTypes : [];
-      const exists = list.some(t => String(t).trim().toLowerCase() === trimmed.toLowerCase());
-      const builtIn = TYPES.some(t => t.toLowerCase() === trimmed.toLowerCase());
-      if (exists || builtIn) return;
-      if (updateSettings) updateSettings({ customTypes: [...list, trimmed] });
-      return;
-    }
-    if (colKey === 'cdm') {
-      const list = Array.isArray(settings?.customCdms) ? settings.customCdms : [];
-      const exists = list.some(t => String(t).trim().toLowerCase() === trimmed.toLowerCase());
-      // CDM has no built-in list, but skip if already present in the
-      // dynamic options (i.e. some prospect already uses it).
-      const inUse = dynamicCdmOptions.some(t => t.toLowerCase() === trimmed.toLowerCase());
-      if (exists || inUse) return;
-      if (updateSettings) updateSettings({ customCdms: [...list, trimmed] });
-    }
+    persistCustomOption(colKey, name, settings, updateSettings, dynamicCdmOptions);
   }, [settings, updateSettings, dynamicCdmOptions]);
 
   // "Edit CDMs…" opens this modal — column key is stored so the editor
@@ -519,9 +481,10 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
     return COLUMNS.map(c => {
       if (c.key === 'type') return { ...c, options: dynamicTypeOptions, allowAddNew: true };
       if (c.key === 'cdm')  return { ...c, options: dynamicCdmOptions,  allowAddNew: true, allowEditOptions: true };
+      if (c.key === 'assetTypes') return { ...c, options: dynamicAssetTypeOptions };
       return c;
     });
-  }, [dynamicTypeOptions, dynamicCdmOptions]);
+  }, [dynamicTypeOptions, dynamicCdmOptions, dynamicAssetTypeOptions]);
   const [colWidths, setColWidths] = useState(loadColWidths);
   const [visibleCols, setVisibleCols] = useState(() => {
     const saved = loadColVisible();
@@ -533,6 +496,43 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
   const [uploading, setUploading] = useState(false);
   const [uploadPreview, setUploadPreview] = useState(null); // { mapping, rawHeaders, rows, fileName }
   const uploadRef = useRef(null);
+  const [pasteOpen, setPasteOpen] = useState(false);
+
+  // Additive import from the Paste from Excel modal. The modal already
+  // filtered out duplicates and rows without a company; this just adds
+  // the new prospects one by one (onAdd dedupes again by company key as
+  // a backstop) and surfaces progress + a final summary.
+  async function handlePasteImport({ toAdd, dupes, noCompany }) {
+    setPasteOpen(false);
+    setUploading(true);
+    let added = 0;
+    const failed = [];
+    try {
+      for (const record of toAdd) {
+        setUploadStatus({ type: 'loading', message: `Adding ${added + 1}/${toAdd.length}…` });
+        try {
+          await onAdd(record);
+          added++;
+        } catch (err) {
+          console.error('Paste import: add failed for', record.company, err);
+          failed.push(record.company);
+        }
+      }
+      const skips = [];
+      if (dupes.length) skips.push(`${dupes.length} already in Table View`);
+      if (noCompany) skips.push(`${noCompany} without a company`);
+      if (failed.length) skips.push(`${failed.length} FAILED`);
+      setUploadStatus({
+        type: failed.length ? 'error' : 'success',
+        message: `Added ${added} compan${added === 1 ? 'y' : 'ies'}.${skips.length ? ` Skipped: ${skips.join(', ')}.` : ''}`,
+      });
+      if (failed.length) {
+        window.alert(`These rows failed to save — try them again:\n  ${failed.join('\n  ')}`);
+      }
+    } finally {
+      setUploading(false);
+    }
+  }
 
   function handleFileSelect(file) {
     if (!file) return;
@@ -738,6 +738,12 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
           XLSX.utils.book_append_sheet(wb, ws, 'Template');
           XLSX.writeFile(wb, 'prospect-upload-template.xlsx');
         }}>Download Template</button>
+        <button
+          style={{ padding: '0.3rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', fontSize: 'var(--font-size-xs)', fontWeight: 500, color: 'var(--color-text-secondary)', background: 'var(--color-surface)', cursor: 'pointer', fontFamily: 'inherit' }}
+          onClick={() => setPasteOpen(true)}
+          disabled={uploading}
+          title="Copy rows from Excel (with the header row) and paste them in to mass-add companies — existing companies are skipped"
+        >Paste from Excel</button>
         <label style={{ padding: '0.3rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', fontSize: 'var(--font-size-xs)', fontWeight: 500, color: 'var(--color-text-secondary)', cursor: 'pointer', transition: 'border-color 0.15s' }}>
           {uploading ? 'Uploading...' : 'Upload Excel'}
           <input ref={uploadRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} onChange={e => { handleFileSelect(e.target.files?.[0]); e.target.value = ''; }} disabled={uploading} />
@@ -748,6 +754,13 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
           </span>
         )}
       </div>
+      {pasteOpen && (
+        <PasteAddModal
+          existingProspects={allProspects || prospects}
+          onImport={handlePasteImport}
+          onClose={() => setPasteOpen(false)}
+        />
+      )}
       {editOptionsCol && (
         <EditOptionsModal
           colKey={editOptionsCol}

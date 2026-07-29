@@ -1,4 +1,6 @@
 import { Component, useEffect, useMemo, useState, useRef, useCallback } from 'react';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
 import { apiFetch } from '../../utils/apiFetch';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
@@ -6,9 +8,20 @@ import { userLsGet } from '../../utils/userLs';
 import { loadOpps2Newest } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
+import { toggleContactInEvents } from '../../utils/eventsStore';
 import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
+import { buildEmailFormatIndex, predictEmailForContact } from '../../utils/emailFormat';
 import { matchesCdm } from '../../utils/cdmMatch';
-import { useDraftCampaignQueue, toggleQueuedContact, setQueuedContactIds } from '../../utils/draftCampaignQueue';
+import { checkCity, checkState } from '../../utils/locationStandardize';
+import { getStateForCity, lookupStateForCity, CITY_OPTIONS, matchCities } from '../../data/cities';
+import { useDraftCampaignQueue, setQueuedContactIds } from '../../utils/draftCampaignQueue';
+
+// Curated city names for the inline City autocomplete. Matches the
+// predictive-text dropdown the Edit HubSpot Contact popup uses, so the
+// flat All Contacts table offers the same suggestions (alias-aware via
+// matchCities) and the same State / Country auto-fill on commit.
+const CITY_NAME_OPTIONS = CITY_OPTIONS.map(o => o.name);
+const matchCityNames = (query) => matchCities(query, CITY_OPTIONS).slice(0, 12);
 
 // Click-to-edit cell used inside the All Contacts table. Idle state
 // renders the value as plain text; on click it switches to an <input>
@@ -16,151 +29,6 @@ import { useDraftCampaignQueue, toggleQueuedContact, setQueuedContactIds } from 
 // commits on blur / Enter, and discards on Escape. The actual write
 // is delegated to `onCommit(nextValue)` so the parent can call the
 // HubSpot endpoint and update the cache.
-
-// Inline editor for the dans_tags HubSpot field. Renders each tag as
-// a removable pill (× drops it) with a "+" button that opens a small
-// dropdown of every tag option NOT already on this contact. onCommit
-// receives the new ;-joined string so the parent's existing
-// inlineUpdateField('dans_tags', …) path keeps working.
-function TagsInlineCell({ value, options, onCommit }) {
-  const tags = useMemo(() => String(value || '').split(';').map(s => s.trim()).filter(Boolean), [value]);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [draft, setDraft] = useState('');
-  const wrapRef = useRef(null);
-  useEffect(() => {
-    if (!pickerOpen) return;
-    function onDown(e) { if (!wrapRef.current?.contains(e.target)) { setPickerOpen(false); setDraft(''); } }
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [pickerOpen]);
-
-  function commit(nextTags) {
-    const out = [...new Set(nextTags.map(t => String(t || '').trim()).filter(Boolean))];
-    onCommit(out.join(';'));
-  }
-  function removeTag(tag) {
-    commit(tags.filter(t => t.toLowerCase() !== String(tag).toLowerCase()));
-  }
-  function addTag(tag) {
-    const v = String(tag || '').trim();
-    if (!v) return;
-    if (tags.some(t => t.toLowerCase() === v.toLowerCase())) { setPickerOpen(false); setDraft(''); return; }
-    commit([...tags, v]);
-    setPickerOpen(false);
-    setDraft('');
-  }
-
-  const lowerTagSet = new Set(tags.map(t => t.toLowerCase()));
-  const filteredOpts = (options || [])
-    .filter(o => !lowerTagSet.has(String(o).toLowerCase()))
-    .filter(o => !draft.trim() || String(o).toLowerCase().includes(draft.trim().toLowerCase()))
-    .slice(0, 30);
-  const draftIsNewTag = draft.trim()
-    && !lowerTagSet.has(draft.trim().toLowerCase())
-    && !filteredOpts.some(o => o.toLowerCase() === draft.trim().toLowerCase());
-
-  return (
-    <div ref={wrapRef} style={{ position: 'relative', display: 'flex', flexWrap: 'wrap', gap: 3, alignItems: 'center', padding: '0.15rem 0.2rem', minHeight: '1.4rem' }}>
-      {tags.map(tag => (
-        <span
-          key={tag}
-          title={`Click × to remove "${tag}"`}
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 2,
-            background: '#EFF6FF', border: '1px solid #BFDBFE', color: '#1E40AF',
-            padding: '0 5px', borderRadius: 999,
-            fontSize: '0.62rem', fontWeight: 600, lineHeight: '1.4',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {tag}
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); removeTag(tag); }}
-            style={{ background: 'none', border: 'none', color: '#93C5FD', fontSize: '0.7rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
-            aria-label={`Remove ${tag}`}
-          >×</button>
-        </span>
-      ))}
-      <button
-        type="button"
-        onClick={() => setPickerOpen(o => !o)}
-        title="Add a tag"
-        style={{
-          background: pickerOpen ? '#1E40AF' : 'transparent',
-          color: pickerOpen ? '#fff' : '#475569',
-          border: '1px dashed #94A3B8',
-          fontSize: '0.6rem', fontWeight: 700,
-          cursor: 'pointer', padding: '1px 5px',
-          borderRadius: 999, lineHeight: 1.2,
-        }}
-      >+</button>
-      {pickerOpen && (
-        <div
-          style={{
-            position: 'absolute', top: '100%', left: 0, marginTop: 2, zIndex: 30,
-            background: '#fff', border: '1px solid var(--color-border)', borderRadius: 6,
-            boxShadow: '0 8px 20px rgba(15,23,42,0.12)',
-            minWidth: 200, maxHeight: 240, overflowY: 'auto',
-            padding: '0.2rem 0',
-            fontSize: '0.72rem',
-          }}
-        >
-          <div style={{ padding: '0.25rem 0.4rem', borderBottom: '1px solid #F1F5F9' }}>
-            <input
-              type="text"
-              autoFocus
-              value={draft}
-              onChange={e => setDraft(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  if (filteredOpts[0]) addTag(filteredOpts[0]);
-                  else if (draftIsNewTag) addTag(draft.trim());
-                } else if (e.key === 'Escape') {
-                  setPickerOpen(false); setDraft('');
-                }
-              }}
-              placeholder="Filter tags or type a new one…"
-              style={{ width: '100%', padding: '3px 6px', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.7rem', fontFamily: 'inherit', boxSizing: 'border-box' }}
-            />
-          </div>
-          {filteredOpts.length === 0 && !draftIsNewTag && (
-            <div style={{ padding: '0.4rem 0.6rem', color: '#94A3B8', fontStyle: 'italic' }}>No matching tags.</div>
-          )}
-          {filteredOpts.map(o => (
-            <button
-              key={o}
-              type="button"
-              onClick={() => addTag(o)}
-              style={{
-                display: 'block', width: '100%', textAlign: 'left',
-                padding: '0.3rem 0.6rem', border: 'none', background: 'transparent',
-                cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.72rem',
-                color: '#1E293B',
-              }}
-              onMouseEnter={e => (e.currentTarget.style.background = '#EFF6FF')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-            >{o}</button>
-          ))}
-          {draftIsNewTag && (
-            <button
-              type="button"
-              onClick={() => addTag(draft.trim())}
-              style={{
-                display: 'block', width: '100%', textAlign: 'left',
-                padding: '0.3rem 0.6rem', border: 'none', background: '#F0FDF4',
-                cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.72rem',
-                color: '#166534', fontWeight: 600,
-                borderTop: filteredOpts.length > 0 ? '1px solid #DCFCE7' : 'none',
-              }}
-            >+ Add new tag: "{draft.trim()}"</button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function InlineCell({
   value,
@@ -173,8 +41,12 @@ function InlineCell({
   align = 'left',
   type = 'text',
   suggestions = null,
+  matchFn = null,
+  suggestionsNoun = 'Table View companies',
   title,
   disabled = false,
+  flagIssue = null,
+  flagFix = null,
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -221,6 +93,39 @@ function InlineCell({
   }
   if (!editing) {
     const empty = value === null || value === undefined || value === '';
+    // Non-standard value: amber background, a ⚠ marker, and a one-click
+    // Fix button when a standardized replacement is available.
+    if (flagIssue) {
+      return (
+        <div
+          onClick={startEdit}
+          title={flagIssue}
+          style={{
+            padding: '0.45rem 0.6rem',
+            fontSize,
+            fontWeight,
+            color: empty ? emptyColor : textColor,
+            textAlign: align,
+            cursor: disabled ? 'default' : 'text',
+            background: '#FEF3C7',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+          }}
+        >
+          <span style={{ flexShrink: 0, color: '#B45309', fontWeight: 700 }}>⚠</span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{empty ? placeholder : value}</span>
+          {flagFix && flagFix !== value && (
+            <button
+              type="button"
+              onClick={e => { e.stopPropagation(); commit(flagFix); }}
+              title={`Set to "${flagFix}"`}
+              style={{ flexShrink: 0, background: '#ECFDF5', border: '1px solid #6EE7B7', color: '#065F46', fontSize: '0.6rem', fontWeight: 700, padding: '1px 5px', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit' }}
+            >Fix</button>
+          )}
+        </div>
+      );
+    }
     return (
       <div
         onClick={startEdit}
@@ -240,9 +145,13 @@ function InlineCell({
     );
   }
   const q = (draft || '').trim().toLowerCase();
-  const matches = suggestions && suggestions.length > 0
-    ? (q ? suggestions.filter(n => String(n).toLowerCase().includes(q)).slice(0, 50) : suggestions.slice(0, 50))
-    : [];
+  // `matchFn` (e.g. the city autocomplete using alias-aware matchCities)
+  // overrides the default substring filter when provided.
+  const matches = matchFn
+    ? matchFn(draft)
+    : (suggestions && suggestions.length > 0
+      ? (q ? suggestions.filter(n => String(n).toLowerCase().includes(q)).slice(0, 50) : suggestions.slice(0, 50))
+      : []);
   const showSuggestionList = !!suggestions && suggestionsOpen && matches.length > 0;
   return (
     <div ref={wrapperRef} style={{ position: 'relative', padding: '0.2rem 0.3rem' }}>
@@ -297,10 +206,10 @@ function InlineCell({
         }}>
           <div style={{ position: 'sticky', top: 0, background: '#F8FAFC', borderBottom: '1px solid #E2E8F0', padding: '0.25rem 0.6rem', fontSize: '0.6rem', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}>
             {(suggestions || []).length === 0
-              ? 'No Table View companies loaded'
+              ? `No ${suggestionsNoun} loaded`
               : draft.trim()
                 ? `${matches.length} of ${(suggestions || []).length} match "${draft.trim()}"`
-                : `${(suggestions || []).length} Table View companies`}
+                : `${(suggestions || []).length} ${suggestionsNoun}`}
           </div>
           {matches.length > 0 ? matches.map((n, i) => (
             <div
@@ -326,12 +235,65 @@ function InlineCell({
             // that pressing Enter will still save it as-is.
             <div style={{ padding: '0.5rem 0.6rem', fontSize: '0.7rem', color: '#64748B', fontStyle: 'italic' }}>
               {draft.trim()
-                ? <>No Table View company matches <strong style={{ color: '#1E293B', fontStyle: 'normal' }}>"{draft.trim()}"</strong>. Press <strong style={{ color: '#1E293B', fontStyle: 'normal' }}>Enter</strong> to save your typed value as-is.</>
-                : <>Start typing to filter the {(suggestions || []).length} Table View companies.</>}
+                ? <>No {suggestionsNoun} match <strong style={{ color: '#1E293B', fontStyle: 'normal' }}>"{draft.trim()}"</strong>. Press <strong style={{ color: '#1E293B', fontStyle: 'normal' }}>Enter</strong> to save your typed value as-is.</>
+                : <>Start typing to filter the {(suggestions || []).length} {suggestionsNoun}.</>}
             </div>
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// Read-only cell for the Changed Jobs "Expected Email" column. Takes the
+// status-tagged prediction from predictEmailForContact and either shows
+// the guessed address with a Copy button, or a muted explanation of why
+// no address could be produced yet.
+function ExpectedEmailCell({ info, name }) {
+  const [copied, setCopied] = useState(false);
+  const status = info?.status || 'no-company';
+  const muted = (text, title) => (
+    <div
+      title={title || undefined}
+      style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#94A3B8', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+    >{text}</div>
+  );
+  if (status === 'no-company') return muted('—', 'Map a New Company to predict an email.');
+  if (status === 'no-domain') return muted('Domain unknown', `We don't have an email domain on file for "${info.company}", so no address can be predicted. Add the company to the Table View with an Email Domain / Website to enable this.`);
+  if (status === 'no-format') return muted('Format unknown', `We know the domain (${info.domain}) but haven't seen enough contacts there to learn its email format.`);
+  if (status === 'no-name') return muted('Missing name', 'This contact is missing the first/last name needed to build the address.');
+  const email = info.email;
+  const provenance = info.sample
+    ? `Predicted from ${info.domain}'s format (${info.label}). Learned from ${info.votes}/${info.total} known contact${info.total === 1 ? '' : 's'}, e.g. ${info.sample}.`
+    : `Predicted from ${info.domain}'s format (${info.label}).`;
+  const doCopy = (e) => {
+    e.stopPropagation();
+    try {
+      navigator.clipboard?.writeText(email);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch { /* clipboard blocked — ignore */ }
+  };
+  return (
+    <div style={{ padding: '0.3rem 0.5rem', display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }} title={provenance}>
+      <span style={{ color: '#065F46', fontSize: '0.72rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{email}</span>
+      <button
+        type="button"
+        onClick={doCopy}
+        title={`Copy ${name ? `${name}'s ` : ''}predicted email`}
+        style={{
+          background: copied ? '#065F46' : '#ECFDF5',
+          border: '1px solid #6EE7B7',
+          color: copied ? '#fff' : '#065F46',
+          fontSize: '0.6rem',
+          fontWeight: 700,
+          padding: '1px 6px',
+          borderRadius: 4,
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+          flexShrink: 0,
+        }}
+      >{copied ? 'Copied' : 'Copy'}</button>
     </div>
   );
 }
@@ -414,7 +376,7 @@ class ContactsErrorBoundary extends Component {
     try {
       const prefix = this.props.storagePrefix || 'key-contacts';
       const drop = [
-        'visible-cols', 'contact-col-widths', 'contact-col-filters',
+        'visible-cols', 'contact-col-widths', 'contact-col-filters', 'contact-col-value-filters',
         'contact-sort-key', 'contact-sort-dir', 'view-mode',
         'col-widths', 'sort-key', 'sort-dir',
       ];
@@ -491,6 +453,15 @@ function KeyContactsViewInner({
   // company for each contact based on their email domain / current
   // Company text. Most useful when paired with `unmappedOnly`.
   showSuggestedCompany = false,
+  // Adds a "New Company" mapping column plus an "Expected Email" column
+  // that predicts the contact's address at that new employer from the
+  // company's learned email format. Used by the Changed Jobs tab so a
+  // person who left their old company can be re-targeted at the new one.
+  showNewCompanyEmail = false,
+  // Adds a per-row "Reached out" toggle in the actions column (and a
+  // "Reached Out" status column) so the user can track who they've
+  // already contacted at their new employer. Used by the Changed Jobs tab.
+  showReachedOut = false,
   // Optional categorisation function. When provided, KeyContactsView
   // renders an extra "Category" column showing coloured pills for
   // each label the function returns. Used by All Contacts to mark
@@ -501,6 +472,11 @@ function KeyContactsViewInner({
   // categorizeContact() output includes that label. Driven by the
   // clickable Totals pills on the All Contacts page. null = no filter.
   categoryFilter = null,
+  // When true, a contact's company name renders as a hyperlink that opens
+  // the company popup (via onSelectProspect) instead of an inline-edit
+  // cell — used by All Contacts. Only applies to rows mapped to a prospect;
+  // unmapped companies stay editable so they can be fixed/mapped.
+  linkCompanyToProspect = false,
   // Default view mode when no per-page localStorage entry exists yet.
   // 'contacts' (the default) lands the user on the flat name-by-name
   // table; 'companies' lands them on the By Company rollup. Used by
@@ -530,7 +506,6 @@ function KeyContactsViewInner({
   // Contacts (all three render via this component) so a checkbox
   // toggled here surfaces in the Drafts page's queue immediately.
   const queuedIds = useDraftCampaignQueue();
-  const queuedSet = useMemo(() => new Set(queuedIds), [queuedIds]);
   const [massField, setMassField] = useState('company');
   const [massValue, setMassValue] = useState('');
   const [massStatus, setMassStatus] = useState(null); // { type, message }
@@ -538,6 +513,28 @@ function KeyContactsViewInner({
   const [massCompanyOpen, setMassCompanyOpen] = useState(false);
   const [massCompanyHover, setMassCompanyHover] = useState(0);
   const massCompanyBoxRef = useRef(null);
+  // Push the currently-selected contacts into the Custom Email Campaign
+  // queue (Draft Emails page). Shared by the Mass Edit toolbar and the
+  // normal-mode selection bar, so "Queue for Campaign" works whether or
+  // not Mass Edit is on.
+  const queueSelectedForCampaign = useCallback(() => {
+    if (massSelected.size === 0) return;
+    const current = new Set(queuedIds);
+    let added = 0, already = 0;
+    for (const id of massSelected) {
+      const k = String(id);
+      if (current.has(k)) already++;
+      else { current.add(k); added++; }
+    }
+    setQueuedContactIds(Array.from(current));
+    setMassStatus({
+      type: 'success',
+      message: added === 0
+        ? `All ${already} already queued`
+        : `Queued ${added}${already > 0 ? ` · ${already} already queued` : ''} for Custom Email Campaign`,
+    });
+    setTimeout(() => setMassStatus(null), 3500);
+  }, [massSelected, queuedIds]);
   useEffect(() => {
     if (!massCompanyOpen) return;
     const onDown = (e) => { if (!massCompanyBoxRef.current?.contains(e.target)) setMassCompanyOpen(false); };
@@ -584,28 +581,37 @@ function KeyContactsViewInner({
         if (target) target[field] = next;
       });
     } catch (err) { console.warn('Inline cache update failed', err); }
-    // Company-field saves also need the local-override pin so the
-    // typed value sticks when HubSpot's fuzzy Company match resolves
-    // to a record whose name differs (e.g. "Prologis" → "Prologis
-    // Inc"). Mirror HubSpotView.handleInlineUpdate's behavior:
-    //   - association failed entirely → keep override = typed value
-    //   - association succeeded but matched-name differs → keep override
-    //   - association succeeded with matching name → clear override
+    // Company-field saves rename the Company record this contact is linked
+    // to (so the new name lands in HubSpot and cascades to every contact at
+    // that company). Keep a local override only when that push fails, or
+    // when the contact had no company and HubSpot linked it to a
+    // differently-named record. Mirror HubSpotView.handleInlineUpdate:
+    //   - rename/associate failed → keep override = typed value
+    //   - associate fallback matched a different name → keep override
+    //   - rename succeeded (or names already matched) → clear override
     if (field === 'company') {
       const cur = settings?.contactLocalFields || {};
       const merged = { ...(cur[id] || {}) };
       let didChange = false;
-      if (!companyAssignment || companyAssignment.ok === false || companyAssignment.nameDiffers) {
+      // Always pin the typed value locally so it survives a refresh
+      // regardless of HubSpot sync/association timing; the API also renamed
+      // the linked Company record. (Empty string → clear the override.)
+      if (next) {
         if (merged._companyOverride !== next) {
           merged._companyOverride = next;
           didChange = true;
         }
-        if (companyAssignment?.nameDiffers && companyAssignment?.matchedName) {
-          setMassStatus({ type: 'success', message: `Saved "${next}" locally. HubSpot linked this contact to "${companyAssignment.matchedName}" — Prospect Tracker will keep your typed value here.` });
-        }
       } else if (merged._companyOverride !== undefined) {
         delete merged._companyOverride;
         didChange = true;
+      }
+      if (companyAssignment?.ok === false) {
+        const what = companyAssignment.mode === 'rename-failed' ? 'rename the Company record' : 'pin the Company association';
+        setMassStatus({ type: 'success', message: `Saved "${next}" locally. HubSpot couldn't ${what} — Prospect Tracker will keep your typed value here.` });
+      } else if (companyAssignment?.nameDiffers && companyAssignment?.matchedName) {
+        setMassStatus({ type: 'success', message: `Saved "${next}" locally. This contact had no linked company, so HubSpot linked it to "${companyAssignment.matchedName}".` });
+      } else if (companyAssignment?.mode === 'renamed') {
+        setMassStatus({ type: 'success', message: `Renamed the HubSpot Company "${companyAssignment.oldName || '—'}" → "${next}" (updates every contact linked to it).` });
       }
       if (didChange) {
         const nextLocal = { ...cur };
@@ -614,6 +620,72 @@ function KeyContactsViewInner({
         updateSettings({ contactLocalFields: nextLocal });
       }
     }
+  }
+
+  // Persist the "New Company" a changed-jobs contact moved to. Stored in
+  // the same per-contact local settings bag as _companyOverride, under
+  // _newCompany, so it survives refreshes but is never pushed to HubSpot
+  // (pushing it would overwrite the Company field and drop the contact
+  // off the Changed Jobs tab). Empty clears the mapping.
+  function setNewCompanyMapping(contact, value) {
+    const id = String(contact?.id || contact?.vid || '');
+    if (!id) return;
+    const next = String(value ?? '').trim();
+    const cur = settings?.contactLocalFields || {};
+    const merged = { ...(cur[id] || {}) };
+    if (next) merged._newCompany = next;
+    else delete merged._newCompany;
+    const nextLocal = { ...cur };
+    if (Object.keys(merged).length === 0) delete nextLocal[id];
+    else nextLocal[id] = merged;
+    updateSettings({ contactLocalFields: nextLocal });
+  }
+
+  // Toggle the "reached out" flag for a changed-jobs contact. Stored in
+  // the same per-contact local settings bag under _reachedOut (+ a
+  // timestamp), synced via Firestore, never pushed to HubSpot. Pass an
+  // explicit `next` to force a value, or omit to flip the current one.
+  function toggleReachedOut(contact, next) {
+    const id = String(contact?.id || contact?.vid || '');
+    if (!id) return;
+    const cur = settings?.contactLocalFields || {};
+    const merged = { ...(cur[id] || {}) };
+    const value = next === undefined ? !merged._reachedOut : !!next;
+    if (value) { merged._reachedOut = true; merged._reachedOutAt = new Date().toISOString(); }
+    else { delete merged._reachedOut; delete merged._reachedOutAt; }
+    const nextLocal = { ...cur };
+    if (Object.keys(merged).length === 0) delete nextLocal[id];
+    else nextLocal[id] = merged;
+    updateSettings({ contactLocalFields: nextLocal });
+  }
+
+  // When a City is committed inline, auto-fill State and Country the
+  // same way the Edit HubSpot Contact popup does: try the curated city
+  // list first (fast, handles ambiguous-name cities by leaving State
+  // alone), then fall back to the Nominatim geocoder. Only blank fields
+  // are filled — a State/Country the user already entered is never
+  // overridden. `current` carries the row's existing state/country so
+  // we know what's safe to fill.
+  async function autoFillLocationFromCity(contact, cityValue, current = {}) {
+    const city = (cityValue || '').trim();
+    if (!city) return;
+    const hasState = !!String(current.state || '').trim();
+    const hasCountry = !!String(current.country || '').trim();
+    // Mirror the popup: if a State is already present we leave the
+    // location alone entirely rather than second-guessing it.
+    if (hasState) return;
+    let state = '';
+    let country = '';
+    const local = getStateForCity(city);
+    if (local) {
+      state = local.state || '';
+      country = local.country || '';
+    } else {
+      const result = await lookupStateForCity(city, current.country);
+      if (result) { state = result.state || ''; country = result.country || ''; }
+    }
+    if (state && !hasState) await inlineUpdateField(contact, 'state', state);
+    if (country && !hasCountry) await inlineUpdateField(contact, 'country', country);
   }
 
   async function applyHideTag(contactIds) {
@@ -873,6 +945,16 @@ function KeyContactsViewInner({
       const c = lf && typeof lf._companyOverride === 'string' && lf._companyOverride
         ? { ...baseC, company: lf._companyOverride }
         : baseC;
+      // When the page supplies its own categoriser (All Contacts), use it
+      // so the export is a 1:1 dump of every contact the page surfaces —
+      // including the Key Prospect category — rather than the internal
+      // Key/Active/Client recomputation below.
+      if (categorizeContact) {
+        const categories = categorizeContact(c) || [];
+        if (categories.length === 0) continue;
+        out.push({ contact: c, categories });
+        continue;
+      }
       const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
       if (tags.includes('hide')) continue;
       if (tags.includes('left')) continue;
@@ -917,9 +999,11 @@ function KeyContactsViewInner({
       out.push({ contact: c, categories });
     }
     if (out.length === 0) {
-      alert('No contacts qualify for any of the three tabs.');
+      alert(categorizeContact ? 'No contacts to export.' : 'No contacts qualify for any of the three tabs.');
       return;
     }
+    // Label used for the workbook title, sheet name, and download file.
+    const exportLabel = categorizeContact ? 'All Contacts' : 'Contacts (Combined: Key + Active + Client)';
     // Schneider-branded XLSX export. Same green palette as the
     // Indicative Savings workbook on the Sites page so the company
     // collateral looks consistent. Column widths are capped at 30 —
@@ -932,7 +1016,7 @@ function KeyContactsViewInner({
     const wb = new Workbook();
     wb.creator = 'Schneider Electric · Prospect Tracker';
     wb.created = new Date();
-    const ws = wb.addWorksheet('Contacts (Combined)', {
+    const ws = wb.addWorksheet(categorizeContact ? 'All Contacts' : 'Contacts (Combined)', {
       properties: { tabColor: { argb: SE_GREEN } },
       views: [{ showGridLines: false, state: 'frozen', ySplit: 3 }],
     });
@@ -947,10 +1031,7 @@ function KeyContactsViewInner({
       { label: 'State',         width: 16, get: ({ contact: c }) => c.state || '' },
       { label: 'Country',       width: 16, get: ({ contact: c }) => c.country || '' },
       { label: 'LinkedIn URL',  width: 30, get: ({ contact: c }) => c.hs_linkedin_url || c.linkedin_url || '' },
-      { label: 'Met In Person', width: 14, get: ({ contact: c }) => {
-        const t = String(c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-        return t.includes('met in person') ? 'Yes' : '';
-      } },
+      { label: 'Met In Person', width: 14, get: ({ contact: c }) => resolveMetInPerson(c) ? 'Yes' : '' },
       { label: 'Events',        width: 30, get: ({ contact: c }) => contactEvents[String(c.id || '')] || '' },
       { label: 'Tags',          width: 30, get: ({ contact: c }) => c.dans_tags || c.dan_s_tags || c.dans_tag || '' },
     ];
@@ -959,7 +1040,7 @@ function KeyContactsViewInner({
     // Title row — Schneider green band, white text.
     ws.mergeCells(1, 1, 1, columns.length);
     const title = ws.getCell(1, 1);
-    title.value = `Contacts (Combined: Key + Active + Client) · ${out.length} contact${out.length === 1 ? '' : 's'}`;
+    title.value = `${exportLabel} · ${out.length} contact${out.length === 1 ? '' : 's'}`;
     title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
     title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
     title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -1007,7 +1088,7 @@ function KeyContactsViewInner({
     const a = document.createElement('a');
     a.href = url;
     const date = new Date().toISOString().slice(0, 10);
-    a.download = `contacts-combined-${date}.xlsx`;
+    a.download = `${categorizeContact ? 'all-contacts' : 'contacts-combined'}-${date}.xlsx`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -1015,7 +1096,7 @@ function KeyContactsViewInner({
   }
 
   function downloadContactsCsv() {
-    const list = viewMode === 'contacts'
+    const list = isContactList
       ? filteredContacts
       : filteredRows.flatMap(row => row.contacts.map(c => ({
           ...c,
@@ -1153,6 +1234,12 @@ function KeyContactsViewInner({
     if (val && val.trim()) next[cid] = val; else delete next[cid];
     updateSettings({ contactOldEmails: next });
   }, [settings?.contactOldEmails, updateSettings]);
+  const handleSaveContactOldCompany = useCallback((cid, val) => {
+    const cur = settings?.contactOldCompany || {};
+    const next = { ...cur };
+    if (val && val.trim()) next[cid] = val; else delete next[cid];
+    updateSettings({ contactOldCompany: next });
+  }, [settings?.contactOldCompany, updateSettings]);
   const handleSaveContactNickname = useCallback((cid, val) => {
     const cur = settings?.contactNicknames || {};
     const next = { ...cur };
@@ -1176,6 +1263,37 @@ function KeyContactsViewInner({
   }, [settings?.contactReportsTo, updateSettings]);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem(lsKey('view-mode')) || defaultViewMode);
   useEffect(() => { try { localStorage.setItem(lsKey('view-mode'), viewMode); } catch {} }, [viewMode]);
+  // Travel mode (All Contacts only) — a third view alongside All Contacts /
+  // By Company. Pick a state and/or city and the flat contacts table
+  // narrows to people in that area, so a trip can be planned around who's
+  // nearby. The chosen location persists alongside the other view prefs.
+  const travelEnabled = storagePrefix === 'all-contacts';
+  const isTravel = travelEnabled && viewMode === 'travel';
+  // "By Location" rollup — contacts counted by State and City. Like
+  // Travel, it's an All Contacts–only view.
+  const isGeography = travelEnabled && viewMode === 'geography';
+  // Everything that isn't the By Company rollup or the By Location rollup
+  // renders the flat contacts table (All Contacts + Travel share the same
+  // table, Travel just adds a location filter on top).
+  const isContactList = viewMode !== 'companies' && viewMode !== 'geography';
+  // Expanded states in the By Location view (state → its cities).
+  const [geoExpanded, setGeoExpanded] = useState(() => new Set());
+  function toggleGeo(key) {
+    setGeoExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+  const [travelState, setTravelState] = useState(() => localStorage.getItem(lsKey('travel-state')) || '');
+  const [travelCity, setTravelCity] = useState(() => localStorage.getItem(lsKey('travel-city')) || '');
+  useEffect(() => { try { localStorage.setItem(lsKey('travel-state'), travelState); } catch {} }, [travelState]);
+  useEffect(() => { try { localStorage.setItem(lsKey('travel-city'), travelCity); } catch {} }, [travelCity]);
+  // "Only city/state needing cleanup" filter — narrows the contacts
+  // list to rows whose City or State fails the standard-format checks.
+  const [onlyLocationFlagged, setOnlyLocationFlagged] = useState(() => localStorage.getItem(lsKey('only-loc-flagged')) === '1');
+  useEffect(() => { try { localStorage.setItem(lsKey('only-loc-flagged'), onlyLocationFlagged ? '1' : '0'); } catch {} }, [onlyLocationFlagged]);
   const [contactSortKey, setContactSortKey] = useState(() => localStorage.getItem(lsKey('contact-sort-key')) || 'name');
   const [contactSortDir, setContactSortDir] = useState(() => localStorage.getItem(lsKey('contact-sort-dir')) || 'asc');
   useEffect(() => { try { localStorage.setItem(lsKey('contact-sort-key'), contactSortKey); } catch {} }, [contactSortKey]);
@@ -1186,7 +1304,7 @@ function KeyContactsViewInner({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, tags: 200, lastOutreach: 160,
+    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 150, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, toCc: 280, tags: 200, lastOutreach: 160, emailCampaigns: 240,
   };
   // Column visibility — every contact column except Name (always
   // shown; it's the primary identifier). Stored per-page so the Key,
@@ -1194,7 +1312,7 @@ function KeyContactsViewInner({
   // State sit alongside Location so a user who wants the combined
   // "City, State" string keeps it, while the separate columns are
   // available for filtering / sorting on either field independently.
-  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(storagePrefix === 'all-contacts' ? ['custom'] : []), 'tags', 'lastOutreach'];
+  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(storagePrefix === 'all-contacts' ? ['custom', 'toCc'] : []), 'tags', 'lastOutreach', ...(storagePrefix === 'all-contacts' ? ['emailCampaigns'] : [])];
   const [visibleCols, setVisibleCols] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('visible-cols')));
@@ -1208,6 +1326,37 @@ function KeyContactsViewInner({
           try { localStorage.setItem(migKey, '1'); } catch {}
           next = [...next, 'lastOutreach'];
         }
+        // One-time migration for the Changed Jobs "New Company" +
+        // "Expected Email" columns — inject them (right after Company) for
+        // users whose saved visibility predates the feature. Sticky flag
+        // so re-hiding them sticks.
+        if (showNewCompanyEmail) {
+          const njMigKey = lsKey('visible-cols-mig-newCompanyEmail');
+          if (!localStorage.getItem(njMigKey)) {
+            try { localStorage.setItem(njMigKey, '1'); } catch {}
+            const add = ['newCompany', 'expectedEmail'].filter(k => !next.includes(k));
+            if (add.length > 0) {
+              const compIdx = next.indexOf('company');
+              next = compIdx >= 0
+                ? [...next.slice(0, compIdx + 1), ...add, ...next.slice(compIdx + 1)]
+                : [...next, ...add];
+            }
+          }
+        }
+        // One-time migration for the Changed Jobs "Reached Out" column.
+        if (showReachedOut) {
+          const roMigKey = lsKey('visible-cols-mig-reachedOut');
+          if (!localStorage.getItem(roMigKey)) {
+            try { localStorage.setItem(roMigKey, '1'); } catch {}
+            if (!next.includes('reachedOut')) {
+              const eeIdx = next.indexOf('expectedEmail');
+              const anchor = eeIdx >= 0 ? eeIdx : next.indexOf('company');
+              next = anchor >= 0
+                ? [...next.slice(0, anchor + 1), 'reachedOut', ...next.slice(anchor + 1)]
+                : [...next, 'reachedOut'];
+            }
+          }
+        }
         // Same one-time migration for the All Contacts "custom" column —
         // existing users have a saved set that predates it, so inject it
         // once (just before tags, to match DEFAULT_VISIBLE_COLS order).
@@ -1219,6 +1368,14 @@ function KeyContactsViewInner({
             next = tagsIdx >= 0
               ? [...next.slice(0, tagsIdx), 'custom', ...next.slice(tagsIdx)]
               : [...next, 'custom'];
+          }
+          // One-time migration for the new All Contacts "Email Campaigns"
+          // column — append it (after Last Outreach) for users whose saved
+          // visibility predates it. Sticky flag so re-hiding it sticks.
+          const campMigKey = lsKey('visible-cols-mig-emailCampaigns');
+          if (!localStorage.getItem(campMigKey) && !next.includes('emailCampaigns')) {
+            try { localStorage.setItem(campMigKey, '1'); } catch {}
+            next = [...next, 'emailCampaigns'];
           }
         }
         return next;
@@ -1245,10 +1402,26 @@ function KeyContactsViewInner({
     } catch { return DEFAULT_CONTACT_COL_WIDTHS; }
   });
   useEffect(() => { try { localStorage.setItem(lsKey('contact-col-widths'), JSON.stringify(contactColWidths)); } catch {} }, [contactColWidths]);
-  const [contactColFilters, setContactColFilters] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(lsKey('contact-col-filters'))) || {}; } catch { return {}; }
+  // Per-column value filters (Excel-style checklist). Each entry maps a
+  // column key → array of selected display values; a row passes when its
+  // value for that column is one of them. Absent / empty = column not
+  // filtered. Replaces the old free-text per-column filter.
+  const [contactColValueFilters, setContactColValueFilters] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(lsKey('contact-col-value-filters'))) || {}; } catch { return {}; }
   });
-  useEffect(() => { try { localStorage.setItem(lsKey('contact-col-filters'), JSON.stringify(contactColFilters)); } catch {} }, [contactColFilters]);
+  useEffect(() => { try { localStorage.setItem(lsKey('contact-col-value-filters'), JSON.stringify(contactColValueFilters)); } catch {} }, [contactColValueFilters]);
+  // Which column's filter dropdown is currently open, plus the working
+  // (uncommitted) set of checked values and the in-dropdown search text.
+  const [openFilterCol, setOpenFilterCol] = useState(null);
+  const [filterDraft, setFilterDraft] = useState(null); // Set | null (null = seed from current selection)
+  const [filterSearch, setFilterSearch] = useState('');
+  const filterMenuRef = useRef(null);
+  useEffect(() => {
+    if (!openFilterCol) return;
+    const onDown = (e) => { if (!filterMenuRef.current?.contains(e.target)) { setOpenFilterCol(null); setFilterDraft(null); setFilterSearch(''); } };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [openFilterCol]);
   const contactResizingRef = useRef(null);
   function startContactResize(colKey, e) {
     e.preventDefault();
@@ -1292,11 +1465,21 @@ function KeyContactsViewInner({
   const [activityCache, setActivityCache] = useState(() => {
     try { return JSON.parse(userLsGet('hubspot-activity-cache')); } catch { return null; }
   });
+  // Compact email/phone → {tsMs, ts, type} index written by the Activity
+  // tab. Preferred source for the column: the full activityCache above is
+  // often missing because the raw feed exceeds the localStorage quota and
+  // its write is silently dropped, whereas this index always fits.
+  const [outreachIndex, setOutreachIndex] = useState(() => {
+    try { return JSON.parse(userLsGet('hubspot-outreach-index')); } catch { return null; }
+  });
   useEffect(() => {
     const reload = () => {
       try { setActivityCache(JSON.parse(userLsGet('hubspot-activity-cache'))); } catch { setActivityCache(null); }
+      try { setOutreachIndex(JSON.parse(userLsGet('hubspot-outreach-index'))); } catch { setOutreachIndex(null); }
     };
-    const onStorage = (e) => { if (e.key && e.key.endsWith(':hubspot-activity-cache')) reload(); };
+    const onStorage = (e) => {
+      if (e.key && (e.key.endsWith(':hubspot-activity-cache') || e.key.endsWith(':hubspot-outreach-index'))) reload();
+    };
     window.addEventListener('hubspot-activity-cache-updated', reload);
     window.addEventListener('storage', onStorage);
     return () => {
@@ -1305,31 +1488,29 @@ function KeyContactsViewInner({
     };
   }, []);
 
-  // Tag options for the inline Tags column. Union of (a) the canonical
-  // Dan-curated list plus (b) every distinct dans_tags value already
-  // in the loaded HubSpot cache, so a tag the user has typed
-  // ad-hoc on a prior contact still shows up in the dropdown the
-  // next time they open it.
-  const tagOptionsList = useMemo(() => {
-    const CURATED = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Efficiency / Renewables', 'Dan Key Target', 'Decision Maker', 'Met In Person', 'EU', 'Hide', 'Left'];
-    const seen = new Set();
-    const out = [];
-    const push = (t) => {
-      const v = String(t || '').trim();
-      if (!v) return;
-      const k = v.toLowerCase();
-      if (seen.has(k)) return;
-      seen.add(k);
-      out.push(v);
-    };
-    for (const t of CURATED) push(t);
-    for (const c of (hubspotCache?.contacts || [])) {
-      const raw = c?.dans_tags || c?.dan_s_tags || c?.dans_tag || '';
-      if (!raw) continue;
-      for (const t of String(raw).split(';')) push(t);
-    }
-    return out.sort((a, b) => a.localeCompare(b));
-  }, [hubspotCache]);
+  // Saved email campaigns (created on the Email Campaigns subtab of the
+  // Draft Emails page and persisted to Firestore at emailCampaigns/{uid}).
+  // Drives the All Contacts "Email Campaigns" column, surfacing the most
+  // recent campaign a contact was a recipient of. Only the All Contacts
+  // page renders that column, so we skip the Firestore read elsewhere.
+  const [savedCampaigns, setSavedCampaigns] = useState([]);
+  useEffect(() => {
+    if (storagePrefix !== 'all-contacts' || !user?.uid) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, 'emailCampaigns', user.uid));
+        if (!cancelled) setSavedCampaigns(snap.exists() ? (snap.data().campaigns || []) : []);
+      } catch { if (!cancelled) setSavedCampaigns([]); }
+    })();
+    return () => { cancelled = true; };
+  }, [user, storagePrefix]);
+
+  // Campaign membership filter (All Contacts only): pick a saved email
+  // campaign to see which contacts are already in it vs. still missing.
+  // campaignFilterId '' = no campaign picked; mode is 'all' | 'in' | 'out'.
+  const [campaignFilterId, setCampaignFilterId] = useState('');
+  const [campaignFilterMode, setCampaignFilterMode] = useState('all');
 
   // contactId → latest call/email activity. The HubSpot API only
   // attaches associated contact IDs to meetings, so we match emails
@@ -1338,7 +1519,6 @@ function KeyContactsViewInner({
   // asked specifically for calls + emails.
   const contactLastOutreach = useMemo(() => {
     const map = new Map();
-    if (!activityCache) return map;
     const contacts = hubspotCache?.contacts || [];
     if (contacts.length === 0) return map;
 
@@ -1347,75 +1527,168 @@ function KeyContactsViewInner({
       return digits.length >= 10 ? digits.slice(-10) : digits;
     };
 
-    const emailToIds = new Map();
-    const phoneToIds = new Map();
-    for (const c of contacts) {
-      const id = String(c.id || '');
-      if (!id) continue;
-      if (c.email) {
-        const k = String(c.email).toLowerCase().trim();
-        if (k) {
-          if (!emailToIds.has(k)) emailToIds.set(k, []);
-          emailToIds.get(k).push(id);
-        }
-      }
-      if (c.phone) {
-        const k = normalizePhone(c.phone);
-        if (k.length >= 10) {
-          if (!phoneToIds.has(k)) phoneToIds.set(k, []);
-          phoneToIds.get(k).push(id);
-        }
-      }
-    }
-
-    const consider = (ids, ts, type) => {
-      if (!ts || !ids || ids.length === 0) return;
+    const consider = (id, ts, type) => {
+      if (!id || !ts) return;
       const tsMs = new Date(ts).getTime();
       if (!Number.isFinite(tsMs)) return;
-      for (const id of ids) {
-        const prev = map.get(id);
-        if (!prev || tsMs > prev.tsMs) map.set(id, { tsMs, ts, type });
-      }
+      const prev = map.get(id);
+      if (!prev || tsMs > prev.tsMs) map.set(id, { tsMs, ts, type });
     };
 
-    for (const e of (activityCache.emails || [])) {
-      const subj = String(e.hs_email_subject || '').toLowerCase();
-      if (subj.includes('(sample email)')) continue;
-      const idSet = new Set();
-      for (const field of ['hs_email_to_email', 'hs_email_from_email']) {
-        const raw = e[field];
-        if (!raw) continue;
-        for (const part of String(raw).split(/[;,]/)) {
-          const em = part.trim().toLowerCase();
-          if (!em) continue;
-          const ids = emailToIds.get(em);
-          if (ids) for (const id of ids) idSet.add(id);
+    // Preferred path: the compact email/phone index. Look up each
+    // contact's address/number directly — it's keyed the same way the
+    // contacts are matched, just pre-computed and small enough to persist.
+    if (outreachIndex) {
+      for (const c of contacts) {
+        const id = String(c.id || '');
+        if (!id) continue;
+        if (c.email) {
+          const hit = outreachIndex.emails?.[String(c.email).toLowerCase().trim()];
+          if (hit) consider(id, hit.ts, hit.type);
+        }
+        if (c.phone) {
+          const ph = normalizePhone(c.phone);
+          if (ph.length >= 10) {
+            const hit = outreachIndex.phones?.[ph];
+            if (hit) consider(id, hit.ts, hit.type);
+          }
         }
       }
-      consider(Array.from(idSet), e.hs_timestamp, 'email');
     }
-    for (const c of (activityCache.calls || [])) {
-      const idSet = new Set();
-      for (const field of ['hs_call_to_number', 'hs_call_from_number']) {
-        const ph = normalizePhone(c[field]);
-        if (ph.length < 10) continue;
-        const ids = phoneToIds.get(ph);
-        if (ids) for (const id of ids) idSet.add(id);
+
+    // Fallback / merge: when the full feed is still cached (older sessions,
+    // or quota allowed it), fold it in too so nothing is lost — newest
+    // wins via `consider`.
+    if (activityCache) {
+      const emailToIds = new Map();
+      const phoneToIds = new Map();
+      for (const c of contacts) {
+        const id = String(c.id || '');
+        if (!id) continue;
+        if (c.email) {
+          const k = String(c.email).toLowerCase().trim();
+          if (k) {
+            if (!emailToIds.has(k)) emailToIds.set(k, []);
+            emailToIds.get(k).push(id);
+          }
+        }
+        if (c.phone) {
+          const k = normalizePhone(c.phone);
+          if (k.length >= 10) {
+            if (!phoneToIds.has(k)) phoneToIds.set(k, []);
+            phoneToIds.get(k).push(id);
+          }
+        }
       }
-      consider(Array.from(idSet), c.hs_timestamp, 'call');
+
+      for (const e of (activityCache.emails || [])) {
+        const subj = String(e.hs_email_subject || '').toLowerCase();
+        if (subj.includes('(sample email)')) continue;
+        const idSet = new Set();
+        for (const field of ['hs_email_to_email', 'hs_email_from_email']) {
+          const raw = e[field];
+          if (!raw) continue;
+          for (const part of String(raw).split(/[;,]/)) {
+            const em = part.trim().toLowerCase();
+            if (!em) continue;
+            const ids = emailToIds.get(em);
+            if (ids) for (const id of ids) idSet.add(id);
+          }
+        }
+        for (const id of idSet) consider(id, e.hs_timestamp, 'email');
+      }
+      for (const c of (activityCache.calls || [])) {
+        const idSet = new Set();
+        for (const field of ['hs_call_to_number', 'hs_call_from_number']) {
+          const ph = normalizePhone(c[field]);
+          if (ph.length < 10) continue;
+          const ids = phoneToIds.get(ph);
+          if (ids) for (const id of ids) idSet.add(id);
+        }
+        for (const id of idSet) consider(id, c.hs_timestamp, 'call');
+      }
     }
 
     return map;
-  }, [activityCache, hubspotCache]);
+  }, [activityCache, outreachIndex, hubspotCache]);
+
+  // Whole days between the most recent outreach and now. Floored, so an
+  // outreach earlier today reads as 0.
+  const daysSinceOutreach = (entry) => {
+    const ms = entry?.tsMs ?? (entry?.ts ? new Date(entry.ts).getTime() : NaN);
+    if (!Number.isFinite(ms)) return null;
+    return Math.max(0, Math.floor((Date.now() - ms) / 86400000));
+  };
 
   const fmtLastOutreach = (entry) => {
-    if (!entry) return '';
-    const d = new Date(entry.ts);
-    if (isNaN(d)) return '';
-    const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    const label = entry.type === 'call' ? 'Call' : 'Email';
-    return `${date} · ${label}`;
+    const days = daysSinceOutreach(entry);
+    if (days == null) return '';
+    return days === 1 ? '1 day' : `${days} days`;
   };
+
+  // Map each recipient email → the most recent campaign send they were
+  // part of. Saved-campaign contacts store their recipients as a single
+  // '; '-joined string (group sends), so split them back out and key by
+  // individual lowercased email, keeping the newest sentDate per email.
+  const contactCampaign = useMemo(() => {
+    const map = new Map();
+    for (const camp of (savedCampaigns || [])) {
+      const subject = String(camp.subject || '').trim();
+      for (const ct of (camp.contacts || [])) {
+        const t = ct.sentDate ? new Date(ct.sentDate).getTime() : NaN;
+        const tsMs = Number.isFinite(t) ? t : 0;
+        for (const part of String(ct.email || '').split(/[;,]/)) {
+          const em = part.trim().toLowerCase();
+          if (!em) continue;
+          const prev = map.get(em);
+          if (!prev || tsMs > prev.tsMs) {
+            map.set(em, { subject, tsMs, ts: ct.sentDate || '', replied: !!ct.replied });
+          }
+        }
+      }
+    }
+    return map;
+  }, [savedCampaigns]);
+  const campaignForContact = (c) => contactCampaign.get(String(c?.email || '').toLowerCase().trim());
+
+  // One option per saved campaign, each carrying the full set of its
+  // recipient emails (lowercased). Unlike contactCampaign (which keeps
+  // only the newest campaign per email) this lets us answer "is this
+  // contact in THIS campaign?" for any campaign, which the membership
+  // filter needs. Keyed by index so two campaigns with the same subject
+  // stay distinct.
+  const campaignRecipientOptions = useMemo(() => {
+    return (savedCampaigns || []).map((camp, idx) => {
+      const recipients = new Set();
+      for (const ct of (camp.contacts || [])) {
+        for (const part of String(ct.email || '').split(/[;,]/)) {
+          const em = part.trim().toLowerCase();
+          if (em) recipients.add(em);
+        }
+      }
+      const dateLabel = camp.savedAt
+        ? new Date(camp.savedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+        : '';
+      return {
+        id: String(idx),
+        subject: String(camp.subject || '(untitled campaign)'),
+        dateLabel,
+        count: recipients.size,
+        recipients,
+      };
+    });
+  }, [savedCampaigns]);
+  const selectedCampaign = campaignFilterId
+    ? (campaignRecipientOptions.find(o => o.id === campaignFilterId) || null)
+    : null;
+  // If the picked campaign disappears (e.g. the Firestore doc reloads),
+  // drop the filter so the table doesn't silently keep an invisible gate.
+  useEffect(() => {
+    if (campaignFilterId && !campaignRecipientOptions.some(o => o.id === campaignFilterId)) {
+      setCampaignFilterId('');
+      setCampaignFilterMode('all');
+    }
+  }, [campaignRecipientOptions, campaignFilterId]);
 
   const DEFAULT_COL_WIDTHS = { company: 260, aum: 100, type: 120, status: 130, keyContacts: 130, dm: 150, met: 130, ratio: 110 };
   const [colWidths, setColWidths] = useState(() => {
@@ -1512,6 +1785,44 @@ function KeyContactsViewInner({
     [showSuggestedCompany, prospects, hubspotCache]
   );
 
+  // Learned email-format index (domain → address pattern), built from the
+  // Table View prospects and every HubSpot contact. Powers the Changed
+  // Jobs tab's Expected Email column. Only computed when that column is on.
+  const emailFormatIndex = useMemo(
+    () => showNewCompanyEmail ? buildEmailFormatIndex(prospects, hubspotCache?.contacts || []) : null,
+    [showNewCompanyEmail, prospects, hubspotCache]
+  );
+  // Autocomplete for the New Company column: companies we can actually
+  // predict an email for come first (so picking one yields an address),
+  // followed by every Table View company. De-duped, case-insensitive.
+  const newCompanySuggestions = useMemo(() => {
+    if (!showNewCompanyEmail) return [];
+    const out = [];
+    const seen = new Set();
+    const add = (name) => {
+      const v = String(name || '').trim();
+      if (!v) return;
+      const lc = v.toLowerCase();
+      if (seen.has(lc)) return;
+      seen.add(lc);
+      out.push(v);
+    };
+    for (const n of (emailFormatIndex?.companiesWithFormat || [])) add(n);
+    for (const p of prospects) add(p.company);
+    return out;
+  }, [showNewCompanyEmail, emailFormatIndex, prospects]);
+
+  // "Met In Person" is now a local checkbox (settings.contactMetInPerson),
+  // not a HubSpot tag. Prefer the saved local value; fall back to the legacy
+  // HubSpot tag for contacts that haven't been touched yet, so existing
+  // tagged contacts keep counting until they're explicitly set.
+  const metInPersonMap = settings?.contactMetInPerson || {};
+  const resolveMetInPerson = useCallback((c) => {
+    const id = String(c?.id || c?.vid || '');
+    if (id && Object.prototype.hasOwnProperty.call(metInPersonMap, id)) return !!metInPersonMap[id];
+    return metInPersonSelector(c);
+  }, [metInPersonMap, metInPersonSelector]);
+
   const keyContacts = useMemo(() => {
     const out = [];
     const localFields = settings?.contactLocalFields || {};
@@ -1564,6 +1875,13 @@ function KeyContactsViewInner({
       const at = email.lastIndexOf('@');
       const rawDomain = at >= 0 ? email.slice(at + 1).trim() : '';
       const domain = rawDomain && !FREE_MAIL.has(rawDomain) ? rawDomain : '';
+      // The new employer the user mapped this changed-jobs contact to,
+      // stored locally (never pushed to HubSpot so it doesn't move the
+      // contact off the tab), plus the address we predict from it.
+      const newCompany = String(local?._newCompany || '').trim();
+      const expectedEmail = emailFormatIndex
+        ? predictEmailForContact({ firstname: c.firstname, lastname: c.lastname, company: newCompany }, emailFormatIndex)
+        : null;
       out.push({
         id: c.id || `${c.email || ''}|${c.firstname || ''}|${c.lastname || ''}`,
         name: [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'Unknown',
@@ -1576,15 +1894,19 @@ function KeyContactsViewInner({
         city: String(c.city || '').trim(),
         state: String(c.state || '').trim(),
         country: String(c.country || '').trim(),
-        metInPerson: metInPersonSelector(c),
+        metInPerson: resolveMetInPerson(c),
         company,
         domain,
         suggestedCompany: companyGuessIndex ? guessCompanyForContact(c, companyGuessIndex) : '',
+        newCompany,
+        expectedEmail,
+        reachedOut: !!local?._reachedOut,
+        reachedOutAt: local?._reachedOutAt || '',
         raw: c,
       });
     }
     return out;
-  }, [hubspotCache, FREE_MAIL, contactSelector, metInPersonSelector, activeOppCompanies, unmappedOnly, prospects, companyGuessIndex, settings?.contactLocalFields]);
+  }, [hubspotCache, FREE_MAIL, contactSelector, resolveMetInPerson, activeOppCompanies, unmappedOnly, prospects, companyGuessIndex, emailFormatIndex, settings?.contactLocalFields]);
 
   // Count of contacts the "unmapped past 30 days" filter WOULD yield,
   // computed independently from the active filters above so we can
@@ -1644,12 +1966,12 @@ function KeyContactsViewInner({
         name: [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'Unknown',
         company,
         domain,
-        metInPerson: tags.includes('met in person'),
+        metInPerson: resolveMetInPerson(c),
         city: String(c.city || '').trim(),
       });
     }
     return out;
-  }, [hubspotCache, FREE_MAIL]);
+  }, [hubspotCache, FREE_MAIL, resolveMetInPerson]);
 
   // Build one row per distinct company that has ≥1 Dan Key Target contact.
   // Each row is anchored to a prospect when one matches by name OR domain;
@@ -1825,6 +2147,32 @@ function KeyContactsViewInner({
     return out;
   }, [rows]);
 
+  // Distinct states / cities across the loaded contacts, powering the
+  // Travel mode dropdowns. Cities narrow to the selected state when one
+  // is chosen so the city list stays relevant.
+  const travelStateOptions = useMemo(() => {
+    const set = new Set();
+    for (const c of flatContacts) { const s = String(c.state || '').trim(); if (s) set.add(s); }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [flatContacts]);
+  const travelCityOptions = useMemo(() => {
+    const set = new Set();
+    const stateLc = travelState.trim().toLowerCase();
+    for (const c of flatContacts) {
+      if (stateLc && String(c.state || '').trim().toLowerCase() !== stateLc) continue;
+      const city = String(c.city || '').trim();
+      if (city) set.add(city);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [flatContacts, travelState]);
+
+  // How many loaded contacts have a non-standard City or State — drives
+  // the "needs cleanup" filter badge.
+  const locationFlaggedCount = useMemo(
+    () => flatContacts.reduce((n, c) => (checkCity(c.city) || checkState(c.state) ? n + 1 : n), 0),
+    [flatContacts]
+  );
+
   const sortedContacts = useMemo(() => {
     const arr = [...flatContacts];
     arr.sort((a, b) => {
@@ -1837,6 +2185,8 @@ function KeyContactsViewInner({
         case 'title':   cmp = (a.jobtitle || '').localeCompare(b.jobtitle || ''); break;
         case 'company': cmp = (a.companyName || '').localeCompare(b.companyName || ''); break;
         case 'suggestedCompany': cmp = (a.suggestedCompany || '').localeCompare(b.suggestedCompany || ''); break;
+        case 'newCompany': cmp = (a.newCompany || '').localeCompare(b.newCompany || ''); break;
+        case 'reachedOut': cmp = Number(!!a.reachedOut) - Number(!!b.reachedOut); break;
         case 'email':   cmp = (a.email || '').localeCompare(b.email || ''); break;
         case 'location':
           cmp = ((a.state || '') + (a.city || '')).localeCompare((b.state || '') + (b.city || ''));
@@ -1852,6 +2202,18 @@ function KeyContactsViewInner({
           cmp = av - bv;
           break;
         }
+        case 'category': {
+          const av = (categorizeContact ? (categorizeContact(a.raw || a) || []) : []).join(' ');
+          const bv = (categorizeContact ? (categorizeContact(b.raw || b) || []) : []).join(' ');
+          cmp = av.localeCompare(bv);
+          break;
+        }
+        case 'emailCampaigns': {
+          const av = contactCampaign.get(String(a.email || '').toLowerCase().trim())?.tsMs || 0;
+          const bv = contactCampaign.get(String(b.email || '').toLowerCase().trim())?.tsMs || 0;
+          cmp = av - bv;
+          break;
+        }
         default: cmp = 0;
       }
       if (contactSortDir === 'desc') cmp = -cmp;
@@ -1859,7 +2221,92 @@ function KeyContactsViewInner({
       return cmp;
     });
     return arr;
-  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactEvents]);
+  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactEvents, categorizeContact, contactCampaign]);
+
+  // Combined "To Also" + "CC" recipients edited in the contact popup,
+  // keyed by lowercased primary email so the All Contacts "To / CC"
+  // column can surface every linked recipient at a glance. `toAlsoMap`
+  // feeds the To line, `ccMap` the CC line — both live on settings and
+  // are keyed by the contact's primary email.
+  const toCcByEmail = useMemo(() => {
+    const map = new Map();
+    const add = (src, kind) => {
+      for (const [email, list] of Object.entries(src || {})) {
+        if (!Array.isArray(list) || list.length === 0) continue;
+        const k = String(email).toLowerCase().trim();
+        if (!k) continue;
+        const entry = map.get(k) || { to: [], cc: [] };
+        for (const addr of list) {
+          const a = String(addr).trim();
+          if (a && !entry[kind].includes(a)) entry[kind].push(a);
+        }
+        map.set(k, entry);
+      }
+    };
+    add(settings?.toAlsoMap, 'to');
+    add(settings?.ccMap, 'cc');
+    return map;
+  }, [settings?.toAlsoMap, settings?.ccMap]);
+  const toCcEntryFor = useCallback(
+    (c) => {
+      const e = String(c?.email || '').toLowerCase().trim();
+      return (e && toCcByEmail.get(e)) || null;
+    },
+    [toCcByEmail]
+  );
+
+  // Friendly display name for any email that belongs to a loaded contact —
+  // lets the "also a To / CC for …" note name the owning contact instead of
+  // showing a bare address.
+  const contactNameByEmail = useMemo(() => {
+    const m = new Map();
+    for (const c of flatContacts) {
+      const e = String(c?.email || '').toLowerCase().trim();
+      if (e && !m.has(e)) m.set(e, c.name || e);
+    }
+    return m;
+  }, [flatContacts]);
+
+  // Reverse of toCcByEmail: for each recipient address, which *other* contacts
+  // list it on their To Also / CC lines. Keyed by lowercased recipient email
+  // so the All Contacts "To / CC" column can flag a contact that is itself a
+  // recipient on someone else's outreach. `owner` is the contact whose popup
+  // added the recipient (their primary email).
+  const referencedAsRecipient = useMemo(() => {
+    const map = new Map();
+    const add = (src, kind) => {
+      for (const [owner, list] of Object.entries(src || {})) {
+        if (!Array.isArray(list) || list.length === 0) continue;
+        const ownerK = String(owner).toLowerCase().trim();
+        if (!ownerK) continue;
+        for (const addr of list) {
+          const a = String(addr).toLowerCase().trim();
+          if (!a) continue;
+          const entry = map.get(a) || { to: new Set(), cc: new Set() };
+          entry[kind].add(ownerK);
+          map.set(a, entry);
+        }
+      }
+    };
+    add(settings?.toAlsoMap, 'to');
+    add(settings?.ccMap, 'cc');
+    return map;
+  }, [settings?.toAlsoMap, settings?.ccMap]);
+  // The other contacts that reference contact `c` as a To / CC recipient,
+  // excluding `c` itself. Returns { to: string[], cc: string[] } of owner
+  // emails, or null when nobody references this contact.
+  const inboundRefsFor = useCallback(
+    (c) => {
+      const e = String(c?.email || '').toLowerCase().trim();
+      if (!e) return null;
+      const entry = referencedAsRecipient.get(e);
+      if (!entry) return null;
+      const to = [...entry.to].filter(o => o !== e);
+      const cc = [...entry.cc].filter(o => o !== e);
+      return (to.length || cc.length) ? { to, cc } : null;
+    },
+    [referencedAsRecipient]
+  );
 
   const contactFieldGetters = {
     name:     c => c.name || '',
@@ -1867,6 +2314,9 @@ function KeyContactsViewInner({
     title:    c => c.jobtitle || '',
     company:  c => c.companyName || '',
     suggestedCompany: c => c.suggestedCompany || '',
+    newCompany: c => c.newCompany || '',
+    reachedOut: c => c.reachedOut ? 'Reached out' : 'Not yet',
+    expectedEmail: c => (c.expectedEmail?.status === 'ok' ? c.expectedEmail.email : ''),
     email:    c => c.email || '',
     phone:    c => c.phone || '',
     location: c => [c.city, c.state].filter(Boolean).join(', '),
@@ -1878,27 +2328,120 @@ function KeyContactsViewInner({
     met:      c => c.metInPerson ? 'yes' : 'no',
     events:   c => contactEvents[String(c.id || '')] || '',
     lastOutreach: c => fmtLastOutreach(contactLastOutreach.get(String(c.id || ''))),
+    emailCampaigns: c => campaignForContact(c)?.subject || '',
+    toCc:     c => {
+      const entry = toCcEntryFor(c);
+      if (!entry) return '';
+      return [...entry.to, ...entry.cc].join(', ');
+    },
   };
-  const activeContactFilters = Object.entries(contactColFilters)
-    .map(([k, v]) => [k, String(v || '').trim().toLowerCase()])
-    .filter(([, v]) => v.length > 0);
-  const filteredContacts = sortedContacts.filter(c => {
+  const activeValueFilters = Object.entries(contactColValueFilters)
+    .filter(([, v]) => Array.isArray(v) && v.length > 0)
+    .map(([k, v]) => [k, new Set(v)]);
+  // Page-level gates (category pills, travel, location flag, search box)
+  // that every column's filter dropdown should respect when listing the
+  // values available to pick from.
+  const passesNonColumnFilters = (c, opts) => {
     if (categoryFilter && categorizeContact) {
       const cats = categorizeContact(c.raw || c) || [];
       if (!cats.includes(categoryFilter)) return false;
+    }
+    if (isTravel) {
+      if (travelState && String(c.state || '').trim().toLowerCase() !== travelState.trim().toLowerCase()) return false;
+      if (travelCity && String(c.city || '').trim().toLowerCase() !== travelCity.trim().toLowerCase()) return false;
+    }
+    if (onlyLocationFlagged && !checkCity(c.city) && !checkState(c.state)) return false;
+    // Campaign membership gate — 'in' keeps contacts already emailed in
+    // the picked campaign, 'out' keeps everyone else. skipCampaign lets
+    // the In/Not-in counts measure against the pre-gate roster.
+    if (!opts?.skipCampaign && selectedCampaign && campaignFilterMode !== 'all') {
+      const em = String(c.email || '').toLowerCase().trim();
+      const inCampaign = !!em && selectedCampaign.recipients.has(em);
+      if (campaignFilterMode === 'in' && !inCampaign) return false;
+      if (campaignFilterMode === 'out' && inCampaign) return false;
     }
     if (q) {
       const blob = (c.name || '') + ' ' + (c.companyName || '') + ' '
         + (c.email || '') + ' ' + (c.jobtitle || '');
       if (!blob.toLowerCase().includes(q)) return false;
     }
-    for (const [key, needle] of activeContactFilters) {
+    return true;
+  };
+  // Column value filters, optionally skipping one column (so a dropdown
+  // can show the values that would be available ignoring its own filter).
+  const passesColumnFilters = (c, exceptKey) => {
+    for (const [key, vals] of activeValueFilters) {
+      if (key === exceptKey) continue;
       const getter = contactFieldGetters[key];
       if (!getter) continue;
-      if (!String(getter(c)).toLowerCase().includes(needle)) return false;
+      if (!vals.has(String(getter(c)))) return false;
     }
     return true;
-  });
+  };
+  // Distinct values available for a column, honoring all other filters —
+  // this is the checklist the dropdown shows and what "Select All" ticks.
+  const columnFilterValues = (key) => {
+    const getter = contactFieldGetters[key];
+    if (!getter) return [];
+    const set = new Set();
+    for (const c of sortedContacts) {
+      if (!passesNonColumnFilters(c)) continue;
+      if (!passesColumnFilters(c, key)) continue;
+      set.add(String(getter(c)));
+    }
+    return Array.from(set).sort((a, b) => {
+      if (a === '' && b !== '') return 1;
+      if (b === '' && a !== '') return -1;
+      return a.localeCompare(b);
+    });
+  };
+  const filteredContacts = sortedContacts.filter(c => passesNonColumnFilters(c) && passesColumnFilters(c, null));
+
+  // In / Not-in tallies for the campaign membership pills, measured over
+  // the roster the OTHER filters (category, search, columns) leave — so
+  // the numbers reflect "within what I'm looking at, X are already in the
+  // campaign and Y still aren't."
+  const campaignCounts = selectedCampaign ? (() => {
+    let inC = 0, outC = 0;
+    for (const c of sortedContacts) {
+      if (!passesNonColumnFilters(c, { skipCampaign: true })) continue;
+      if (!passesColumnFilters(c, null)) continue;
+      const em = String(c.email || '').toLowerCase().trim();
+      if (em && selectedCampaign.recipients.has(em)) inC += 1; else outC += 1;
+    }
+    return { inC, outC, total: inC + outC };
+  })() : null;
+
+  // Geography rollup for the By Location view — contacts grouped by State,
+  // then City within each state. Built from filteredContacts so the search
+  // box and the Key / Active / Client category pills narrow it the same way
+  // they narrow the table. States and cities are ordered by count (desc),
+  // then alphabetically; blanks collapse into a "(no value)" bucket.
+  const NO_LOCATION = '(no value)';
+  const geoSummary = useMemo(() => {
+    const byState = new Map();
+    for (const c of filteredContacts) {
+      const state = String(c.state || '').trim() || NO_LOCATION;
+      const city = String(c.city || '').trim() || NO_LOCATION;
+      let entry = byState.get(state);
+      if (!entry) { entry = { state, total: 0, cities: new Map() }; byState.set(state, entry); }
+      entry.total += 1;
+      entry.cities.set(city, (entry.cities.get(city) || 0) + 1);
+    }
+    const states = [...byState.values()].map(s => ({
+      state: s.state,
+      total: s.total,
+      cities: [...s.cities.entries()]
+        .map(([city, count]) => ({ city, count }))
+        .sort((a, b) => b.count - a.count || a.city.localeCompare(b.city)),
+    }));
+    states.sort((a, b) => b.total - a.total || a.state.localeCompare(b.state));
+    return states;
+  }, [filteredContacts]);
+  const geoTotals = useMemo(() => ({
+    contacts: geoSummary.reduce((n, s) => n + s.total, 0),
+    states: geoSummary.length,
+  }), [geoSummary]);
 
   function toggle(key) {
     setExpanded(prev => {
@@ -1923,6 +2466,8 @@ function KeyContactsViewInner({
             {[
               { key: 'contacts', label: 'All Contacts' },
               { key: 'companies', label: 'By Company' },
+              ...(travelEnabled ? [{ key: 'travel', label: 'Travel' }] : []),
+              ...(travelEnabled ? [{ key: 'geography', label: 'By Location' }] : []),
             ].map((opt, i) => (
               <button
                 key={opt.key}
@@ -1967,7 +2512,9 @@ function KeyContactsViewInner({
           <button
             type="button"
             onClick={downloadCombinedContactsCsv}
-            title="Download a single CSV combining contacts from Key Contacts, Active Contacts, and Client Contacts. Each row has a Categories column listing every tab the contact qualifies for. Filters and search on this page are NOT applied — the export covers the full tag/CDM-derived sets."
+            title={categorizeContact
+              ? 'Download a formatted Excel workbook of every contact on this page. Each row has a Categories column (Key / Active / Client / Key Prospect). The export covers the full page set — on-screen filters and search are NOT applied.'
+              : 'Download a single workbook combining contacts from Key Contacts, Active Contacts, and Client Contacts. Each row has a Categories column listing every tab the contact qualifies for. Filters and search on this page are NOT applied — the export covers the full tag/CDM-derived sets.'}
             style={{
               padding: '0.35rem 0.75rem',
               fontSize: '0.72rem',
@@ -1979,8 +2526,8 @@ function KeyContactsViewInner({
               cursor: 'pointer',
               fontFamily: 'inherit',
             }}
-          >Download Combined (Key + Active + Client)</button>
-          {viewMode === 'contacts' && (
+          >{categorizeContact ? 'Download All (Excel)' : 'Download Combined (Key + Active + Client)'}</button>
+          {isContactList && (
             <div ref={colsMenuRef} style={{ position: 'relative' }}>
               <button
                 type="button"
@@ -2019,6 +2566,8 @@ function KeyContactsViewInner({
                     { key: 'title', label: 'Title' },
                     { key: 'company', label: 'Company' },
                     ...(showSuggestedCompany ? [{ key: 'suggestedCompany', label: 'Suggested Company' }] : []),
+                    ...(showNewCompanyEmail ? [{ key: 'newCompany', label: 'New Company' }, { key: 'expectedEmail', label: 'Expected Email' }] : []),
+                    ...(showReachedOut ? [{ key: 'reachedOut', label: 'Reached Out' }] : []),
                     { key: 'email', label: 'Email' },
                     { key: 'phone', label: 'Phone' },
                     { key: 'location', label: 'Location' },
@@ -2029,7 +2578,9 @@ function KeyContactsViewInner({
                     { key: 'salesNav', label: 'LinkedIn Search' },
                     { key: 'met', label: 'Met' },
                     { key: 'events', label: 'Events' },
+                    ...(storagePrefix === 'all-contacts' ? [{ key: 'toCc', label: 'To / CC' }] : []),
                     { key: 'lastOutreach', label: 'Last Outreach' },
+                    ...(storagePrefix === 'all-contacts' ? [{ key: 'emailCampaigns', label: 'Email Campaigns' }] : []),
                   ].map(opt => (
                     <label key={opt.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.35rem 0.75rem', fontSize: '0.74rem', color: '#1E293B', cursor: 'pointer' }}>
                       <input
@@ -2051,7 +2602,7 @@ function KeyContactsViewInner({
               )}
             </div>
           )}
-          {viewMode === 'contacts' && (
+          {isContactList && (
             <button
               type="button"
               onClick={() => {
@@ -2076,7 +2627,7 @@ function KeyContactsViewInner({
         </div>
       </div>
 
-      {viewMode === 'contacts' && massMode && (
+      {isContactList && massMode && (
         <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', padding: '0.5rem 0.75rem', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: 6 }}>
             <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1E293B' }}>{massSelected.size} selected</span>
@@ -2222,24 +2773,7 @@ function KeyContactsViewInner({
             >Hide Selected</button>
             <button
               type="button"
-              onClick={() => {
-                if (massSelected.size === 0) return;
-                const current = new Set(queuedIds);
-                let added = 0, already = 0;
-                for (const id of massSelected) {
-                  const k = String(id);
-                  if (current.has(k)) already++;
-                  else { current.add(k); added++; }
-                }
-                setQueuedContactIds(Array.from(current));
-                setMassStatus({
-                  type: 'success',
-                  message: added === 0
-                    ? `All ${already} already queued`
-                    : `Queued ${added}${already > 0 ? ` · ${already} already queued` : ''} for Custom Email Campaign`,
-                });
-                setTimeout(() => setMassStatus(null), 3500);
-              }}
+              onClick={queueSelectedForCampaign}
               disabled={massProcessing || massSelected.size === 0}
               title="Push the selected contacts into the Custom Email Campaign queue (Draft Emails page)"
               style={{
@@ -2261,16 +2795,154 @@ function KeyContactsViewInner({
         </div>
       )}
 
+      {/* Normal-mode selection bar — lets you check contacts and queue
+          them for a Custom Email Campaign without entering Mass Edit.
+          Appears once at least one contact is selected. */}
+      {isContactList && !massMode && massSelected.size > 0 && (
+        <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', padding: '0.5rem 0.75rem', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: 6 }}>
+            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1E293B' }}>{massSelected.size} selected</span>
+            <button
+              type="button"
+              onClick={queueSelectedForCampaign}
+              title="Push the selected contacts into the Custom Email Campaign queue (Draft Emails page)"
+              style={{
+                padding: '0.3rem 0.75rem',
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                border: '1px solid #2563EB',
+                borderRadius: 4,
+                background: '#EFF6FF',
+                color: '#1D4ED8',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >Queue for Campaign</button>
+            <button
+              type="button"
+              onClick={() => setMassSelected(new Set())}
+              style={{ padding: '0.2rem 0.5rem', fontSize: '0.68rem', border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: '#475569', cursor: 'pointer', fontFamily: 'inherit' }}
+            >Clear</button>
+            {massStatus && (
+              <span style={{ fontSize: '0.7rem', color: massStatus.type === 'success' ? '#166534' : '#92400E' }}>{massStatus.message}</span>
+            )}
+          </div>
+        </div>
+      )}
+
       <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <input
           type="text"
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder={viewMode === 'contacts'
+          placeholder={isContactList || isGeography
             ? `Search ${flatContacts.length} contact${flatContacts.length === 1 ? '' : 's'}…`
             : `Search ${rows.length} compan${rows.length === 1 ? 'y' : 'ies'}…`}
           style={{ width: '100%', maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
+        {isTravel && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1E293B' }}>Travel to:</span>
+            <select
+              value={travelState}
+              onChange={e => { setTravelState(e.target.value); setTravelCity(''); }}
+              style={{ padding: '0.35rem 0.5rem', fontSize: '0.72rem', border: '1px solid #CBD5E1', borderRadius: 6, fontFamily: 'inherit', background: '#fff', color: '#334155' }}
+            >
+              <option value="">All states</option>
+              {travelStateOptions.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <select
+              value={travelCity}
+              onChange={e => setTravelCity(e.target.value)}
+              style={{ padding: '0.35rem 0.5rem', fontSize: '0.72rem', border: '1px solid #CBD5E1', borderRadius: 6, fontFamily: 'inherit', background: '#fff', color: '#334155' }}
+            >
+              <option value="">{travelState ? `All cities in ${travelState}` : 'All cities'}</option>
+              {travelCityOptions.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            {(travelState || travelCity) && (
+              <button
+                type="button"
+                onClick={() => { setTravelState(''); setTravelCity(''); }}
+                style={{ padding: '0.3rem 0.6rem', fontSize: '0.7rem', fontWeight: 600, border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', color: '#475569', cursor: 'pointer', fontFamily: 'inherit' }}
+              >Clear</button>
+            )}
+            <span style={{ fontSize: '0.7rem', color: '#64748B' }}>
+              {filteredContacts.length} contact{filteredContacts.length === 1 ? '' : 's'}{(travelState || travelCity) ? ' in area' : ''}
+            </span>
+          </div>
+        )}
+        {isContactList && (
+          <label
+            title="Show only contacts whose City or State isn't in standard format (e.g. NY → New York, or Atlanta, GA → Atlanta). Use the per-cell Fix button to standardize."
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.7rem', color: '#475569', cursor: 'pointer' }}
+          >
+            <input type="checkbox" checked={onlyLocationFlagged} onChange={e => setOnlyLocationFlagged(e.target.checked)} />
+            <span>Needs city/state cleanup</span>
+            <span style={{
+              display: 'inline-block', padding: '0 6px', fontSize: '0.62rem', fontWeight: 700, borderRadius: 999,
+              background: locationFlaggedCount > 0 ? '#FEF3C7' : '#F1F5F9',
+              color: locationFlaggedCount > 0 ? '#92400E' : '#94A3B8',
+              border: '1px solid ' + (locationFlaggedCount > 0 ? '#FDE68A' : '#E2E8F0'),
+              minWidth: 18, textAlign: 'center',
+            }}>{locationFlaggedCount}</span>
+          </label>
+        )}
+        {storagePrefix === 'all-contacts' && isContactList && campaignRecipientOptions.length > 0 && (
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span
+              title="Pick a saved email campaign (from Draft Emails → Email Campaigns) to see which of these contacts are already in it vs. still missing."
+              style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1E293B' }}
+            >Campaign:</span>
+            <select
+              value={campaignFilterId}
+              onChange={e => { setCampaignFilterId(e.target.value); setCampaignFilterMode(e.target.value ? 'in' : 'all'); }}
+              style={{ padding: '0.35rem 0.5rem', fontSize: '0.72rem', border: '1px solid #CBD5E1', borderRadius: 6, fontFamily: 'inherit', background: '#fff', color: '#334155', maxWidth: 280 }}
+            >
+              <option value="">— filter by campaign —</option>
+              {campaignRecipientOptions.map(o => (
+                <option key={o.id} value={o.id}>
+                  {o.subject}{o.dateLabel ? ` (${o.dateLabel})` : ''} · {o.count} sent
+                </option>
+              ))}
+            </select>
+            {selectedCampaign && campaignCounts && (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                {[
+                  { mode: 'all', label: `Show all ${campaignCounts.total}`, bg: '#F1F5F9', border: '#CBD5E1', color: '#334155' },
+                  { mode: 'in', label: `In campaign ${campaignCounts.inC}`, bg: '#DCFCE7', border: '#86EFAC', color: '#166534' },
+                  { mode: 'out', label: `Not in campaign ${campaignCounts.outC}`, bg: '#FEF3C7', border: '#FCD34D', color: '#92400E' },
+                ].map(({ mode, label, bg, border, color }) => {
+                  const active = campaignFilterMode === mode;
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setCampaignFilterMode(mode)}
+                      title={mode === 'in'
+                        ? 'Show only contacts already emailed in this campaign'
+                        : mode === 'out'
+                          ? 'Show only contacts NOT yet in this campaign — the ones left to add'
+                          : 'Show all contacts (both in and not in the campaign)'}
+                      style={{
+                        padding: '1px 8px', borderRadius: 999,
+                        background: active ? color : bg,
+                        border: `1px solid ${active ? color : border}`,
+                        color: active ? '#fff' : color,
+                        fontSize: '0.68rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+                      }}
+                    >{label}</button>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={() => { setCampaignFilterId(''); setCampaignFilterMode('all'); }}
+                  title="Clear the campaign filter"
+                  style={{ padding: '1px 6px', borderRadius: 999, background: '#fff', border: '1px solid #CBD5E1', color: '#64748B', fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}
+                >×</button>
+              </div>
+            )}
+          </div>
+        )}
         {/* Surface inline-edit save status here so failures are
             visible whether or not Mass Edit mode is on. */}
         {!massMode && massStatus && (
@@ -2301,7 +2973,7 @@ function KeyContactsViewInner({
             Loading HubSpot contacts… open the <strong>HubSpot Contacts</strong> tab once if this doesn't populate.
           </div>
         )}
-        {viewMode === 'contacts' ? (
+        {isContactList ? (
           flatContacts.length === 0 ? (
             <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
               <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>{emptyTitle}</div>
@@ -2310,10 +2982,12 @@ function KeyContactsViewInner({
           ) : (() => {
             const ALL_CONTACT_COLS = [
               { key: 'name',     label: 'Name', alwaysOn: true },
-              ...(categorizeContact ? [{ key: 'category', label: 'Category', sortable: false }] : []),
+              ...(categorizeContact ? [{ key: 'category', label: 'Category' }] : []),
               { key: 'title',    label: 'Title' },
               { key: 'company',  label: 'Company' },
               ...(showSuggestedCompany ? [{ key: 'suggestedCompany', label: 'Suggested Company' }] : []),
+              ...(showNewCompanyEmail ? [{ key: 'newCompany', label: 'New Company' }, { key: 'expectedEmail', label: 'Expected Email', sortable: false }] : []),
+              ...(showReachedOut ? [{ key: 'reachedOut', label: 'Reached Out' }] : []),
               { key: 'email',    label: 'Email' },
               { key: 'phone',    label: 'Phone' },
               { key: 'location', label: 'Location' },
@@ -2328,8 +3002,11 @@ function KeyContactsViewInner({
               // Reads/writes the same per-contact `settings.customField`
               // value used by the {custom} email variable.
               ...(storagePrefix === 'all-contacts' ? [{ key: 'custom', label: 'Custom', sortable: false }] : []),
+              // Combined To / CC recipients from the contact popup — All Contacts only.
+              ...(storagePrefix === 'all-contacts' ? [{ key: 'toCc', label: 'To / CC', sortable: false }] : []),
               { key: 'tags',     label: 'Tags', sortable: false },
               { key: 'lastOutreach', label: 'Last Outreach' },
+              ...(storagePrefix === 'all-contacts' ? [{ key: 'emailCampaigns', label: 'Email Campaigns' }] : []),
             ].filter(Boolean);
             const visibleSet = new Set(visibleCols);
             const CONTACT_COLS = ALL_CONTACT_COLS.filter(c => c.alwaysOn || visibleSet.has(c.key));
@@ -2342,56 +3019,33 @@ function KeyContactsViewInner({
             const CONTACT_GRID = '32px '
               + CONTACT_COLS.map(c => `${contactColWidths[c.key] || 120}px`).join(' ')
               + ' 60px';
-            const allVisibleQueued = filteredContacts.length > 0
-              && filteredContacts.every(c => queuedSet.has(String(c.id)));
-            const toggleQueueAllVisible = () => {
-              const next = new Set(queuedIds);
-              if (allVisibleQueued) {
-                for (const c of filteredContacts) next.delete(String(c.id));
-              } else {
-                for (const c of filteredContacts) next.add(String(c.id));
-              }
-              setQueuedContactIds(Array.from(next));
-            };
-            const allVisibleSelected = massMode
-              && filteredContacts.length > 0
+            const allVisibleSelected = filteredContacts.length > 0
               && filteredContacts.every(c => massSelected.has(c.id));
             const CONTACT_GLYPH = (key) => contactSortKey === key ? (contactSortDir === 'desc' ? ' ▼' : ' ▲') : '';
             const RESIZE_HANDLE = { position: 'absolute', top: 0, right: 0, bottom: 0, width: 6, cursor: 'col-resize', userSelect: 'none' };
             return (
               <div style={{ background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: CONTACT_GRID, background: '#F1F5F9', borderBottom: '1px solid #CBD5E1', borderTopLeftRadius: 8, borderTopRightRadius: 8, position: 'sticky', top: 0, zIndex: 2 }}>
-                  {massMode ? (
-                    <div style={{ padding: '0.4rem 0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: '1px solid #E2E8F0' }}>
-                      <input
-                        type="checkbox"
-                        checked={allVisibleSelected}
-                        onChange={() => {
-                          if (allVisibleSelected) {
-                            const rest = new Set(massSelected);
-                            for (const c of filteredContacts) rest.delete(c.id);
-                            setMassSelected(rest);
-                          } else {
-                            const next = new Set(massSelected);
-                            for (const c of filteredContacts) next.add(c.id);
-                            setMassSelected(next);
-                          }
-                        }}
-                        title={allVisibleSelected ? 'Clear visible' : 'Select visible'}
-                      />
-                    </div>
-                  ) : (
-                    <div style={{ padding: '0.4rem 0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: '1px solid #E2E8F0' }}
-                      title={allVisibleQueued ? 'Remove all visible contacts from the Custom Email Campaign queue' : 'Add all visible contacts to the Custom Email Campaign queue (Draft Emails page)'}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={allVisibleQueued}
-                        onChange={toggleQueueAllVisible}
-                        title={allVisibleQueued ? 'Clear visible from queue' : 'Queue visible for campaign'}
-                      />
-                    </div>
-                  )}
+                  <div style={{ padding: '0.4rem 0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: '1px solid #E2E8F0' }}
+                    title={allVisibleSelected ? 'Clear visible selection' : 'Select all visible contacts'}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      onChange={() => {
+                        if (allVisibleSelected) {
+                          const rest = new Set(massSelected);
+                          for (const c of filteredContacts) rest.delete(c.id);
+                          setMassSelected(rest);
+                        } else {
+                          const next = new Set(massSelected);
+                          for (const c of filteredContacts) next.add(c.id);
+                          setMassSelected(next);
+                        }
+                      }}
+                      title={allVisibleSelected ? 'Clear visible' : 'Select visible'}
+                    />
+                  </div>
                   {CONTACT_COLS.map(c => (
                     <div
                       key={c.key}
@@ -2424,17 +3078,96 @@ function KeyContactsViewInner({
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: CONTACT_GRID, background: '#F8FAFC', borderBottom: '1px solid #E2E8F0', position: 'sticky', top: 30, zIndex: 2 }}>
                   <div style={{ borderRight: '1px solid #E2E8F0' }} />
-                  {CONTACT_COLS.map(c => (
-                    <div key={c.key} style={{ padding: '0.25rem 0.4rem', borderRight: '1px solid #E2E8F0' }}>
-                      <input
-                        type="text"
-                        value={contactColFilters[c.key] || ''}
-                        onChange={e => setContactColFilters(prev => ({ ...prev, [c.key]: e.target.value }))}
-                        placeholder="Filter…"
-                        style={{ width: '100%', padding: '0.2rem 0.35rem', fontSize: '0.7rem', border: '1px solid #E2E8F0', borderRadius: 3, fontFamily: 'inherit', background: '#fff' }}
-                      />
-                    </div>
-                  ))}
+                  {CONTACT_COLS.map(col => {
+                    const sel = contactColValueFilters[col.key];
+                    const isFiltered = Array.isArray(sel) && sel.length > 0;
+                    const isOpen = openFilterCol === col.key;
+                    return (
+                      <div key={col.key} style={{ padding: '0.25rem 0.4rem', borderRight: '1px solid #E2E8F0', position: 'relative' }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isOpen) { setOpenFilterCol(null); setFilterDraft(null); setFilterSearch(''); return; }
+                            setFilterSearch('');
+                            setFilterDraft(null);
+                            setOpenFilterCol(col.key);
+                          }}
+                          title={isFiltered ? `Filtered to ${sel.length} value${sel.length === 1 ? '' : 's'} — click to change` : 'Filter by value'}
+                          style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, padding: '0.2rem 0.35rem', fontSize: '0.7rem', border: '1px solid ' + (isFiltered ? '#2563EB' : '#E2E8F0'), borderRadius: 3, fontFamily: 'inherit', background: isFiltered ? '#EFF6FF' : '#fff', color: isFiltered ? '#1D4ED8' : '#64748B', cursor: 'pointer' }}
+                        >
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{isFiltered ? `${sel.length} selected` : 'All'}</span>
+                          <span style={{ flexShrink: 0 }}>▾</span>
+                        </button>
+                        {isOpen && (() => {
+                          const available = columnFilterValues(col.key);
+                          const draft = filterDraft || new Set(isFiltered ? sel : available);
+                          const searchLc = filterSearch.trim().toLowerCase();
+                          const shown = available.filter(v => !searchLc || (v === '' ? '(blanks)' : v.toLowerCase()).includes(searchLc));
+                          const allShownChecked = shown.length > 0 && shown.every(v => draft.has(v));
+                          const apply = () => {
+                            const chosen = available.filter(v => draft.has(v));
+                            setContactColValueFilters(prev => {
+                              const next = { ...prev };
+                              if (chosen.length === 0 || chosen.length === available.length) delete next[col.key];
+                              else next[col.key] = chosen;
+                              return next;
+                            });
+                            setOpenFilterCol(null); setFilterDraft(null); setFilterSearch('');
+                          };
+                          const clear = () => {
+                            setContactColValueFilters(prev => { const n = { ...prev }; delete n[col.key]; return n; });
+                            setOpenFilterCol(null); setFilterDraft(null); setFilterSearch('');
+                          };
+                          return (
+                            <div ref={filterMenuRef} style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 40, background: '#fff', border: '1px solid #CBD5E1', borderRadius: 6, boxShadow: '0 6px 16px rgba(15,23,42,0.18)', width: 240, padding: 6 }}>
+                              <input
+                                autoFocus
+                                type="text"
+                                value={filterSearch}
+                                onChange={e => setFilterSearch(e.target.value)}
+                                placeholder="Search…"
+                                style={{ width: '100%', padding: '0.25rem 0.4rem', fontSize: '0.72rem', border: '1px solid #E2E8F0', borderRadius: 4, fontFamily: 'inherit', marginBottom: 6, boxSizing: 'border-box' }}
+                              />
+                              <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0.2rem 0.3rem', fontSize: '0.74rem', fontWeight: 700, color: '#1E293B', cursor: 'pointer' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={allShownChecked}
+                                    onChange={() => {
+                                      const next = new Set(draft);
+                                      if (allShownChecked) { for (const v of shown) next.delete(v); }
+                                      else { for (const v of shown) next.add(v); }
+                                      setFilterDraft(next);
+                                    }}
+                                  />
+                                  (Select All{searchLc ? ' matching' : ''})
+                                </label>
+                                {shown.length === 0 && <div style={{ padding: '0.3rem', fontSize: '0.72rem', color: '#94A3B8' }}>No values</div>}
+                                {shown.map(v => (
+                                  <label key={v || '__blank__'} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0.2rem 0.3rem', fontSize: '0.74rem', color: '#334155', cursor: 'pointer' }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={draft.has(v)}
+                                      onChange={() => {
+                                        const next = new Set(draft);
+                                        if (next.has(v)) next.delete(v); else next.add(v);
+                                        setFilterDraft(next);
+                                      }}
+                                    />
+                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v === '' ? '(Blanks)' : v}</span>
+                                  </label>
+                                ))}
+                              </div>
+                              <div style={{ display: 'flex', gap: 6, marginTop: 6, paddingTop: 6, borderTop: '1px solid #F1F5F9' }}>
+                                <button type="button" onClick={apply} style={{ flex: 1, padding: '0.25rem', fontSize: '0.7rem', fontWeight: 700, border: '1px solid #2563EB', borderRadius: 4, background: '#2563EB', color: '#fff', cursor: 'pointer', fontFamily: 'inherit' }}>Apply</button>
+                                <button type="button" onClick={clear} style={{ flex: 1, padding: '0.25rem', fontSize: '0.7rem', border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: '#475569', cursor: 'pointer', fontFamily: 'inherit' }}>Clear</button>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    );
+                  })}
                   <div />
                 </div>
                 {filteredContacts.length === 0 && (
@@ -2450,31 +3183,20 @@ function KeyContactsViewInner({
                       gridTemplateColumns: CONTACT_GRID,
                       alignItems: 'center',
                       borderTop: i === 0 ? 'none' : '1px solid #F1F5F9',
-                      background: massMode && massSelected.has(c.id) ? '#EFF6FF' : (i % 2 === 0 ? '#fff' : '#FCFCFD'),
+                      background: massSelected.has(c.id) ? '#EFF6FF' : (i % 2 === 0 ? '#fff' : '#FCFCFD'),
                     }}
                   >
-                    {massMode ? (
-                      <div style={{ padding: '0.45rem 0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <input
-                          type="checkbox"
-                          checked={massSelected.has(c.id)}
-                          onChange={() => toggleMassSelect(c.id)}
-                          onClick={e => e.stopPropagation()}
-                        />
-                      </div>
-                    ) : (
-                      <div
-                        style={{ padding: '0.45rem 0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                        title={queuedSet.has(String(c.id)) ? 'Remove from Custom Email Campaign queue' : 'Add to Custom Email Campaign queue (pulls into Draft Emails)'}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={queuedSet.has(String(c.id))}
-                          onChange={() => toggleQueuedContact(c.id)}
-                          onClick={e => e.stopPropagation()}
-                        />
-                      </div>
-                    )}
+                    <div
+                      style={{ padding: '0.45rem 0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                      title={massSelected.has(c.id) ? 'Deselect this contact' : 'Select this contact'}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={massSelected.has(c.id)}
+                        onChange={() => toggleMassSelect(c.id)}
+                        onClick={e => e.stopPropagation()}
+                      />
+                    </div>
                     <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.8rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Click to edit ${c.name}`}>
                       <span
                         role="button"
@@ -2493,6 +3215,7 @@ function KeyContactsViewInner({
                             Key:    { bg: '#FEF3C7', border: '#FCD34D', color: '#92400E' },
                             Active: { bg: '#DCFCE7', border: '#86EFAC', color: '#166534' },
                             Client: { bg: '#DBEAFE', border: '#93C5FD', color: '#1E3A8A' },
+                            'Key Prospect': { bg: '#EDE9FE', border: '#C4B5FD', color: '#5B21B6' },
                           };
                           return cats.map(cat => {
                             const k = COLORS[cat] || { bg: '#F1F5F9', border: '#CBD5E1', color: '#334155' };
@@ -2539,17 +3262,29 @@ function KeyContactsViewInner({
                       title={c.companyName && !c.prospect ? `"${c.companyName}" is not mapped to any prospect in the Table View — no matching company name and no shared email domain.` : undefined}
                     >
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <InlineCell
-                          value={c.companyName}
-                          onCommit={v => inlineUpdateField(c.raw || c, 'company', v)}
-                          fontSize="0.74rem"
-                          textColor="#1E293B"
-                          fontWeight={600}
-                          suggestions={prospects.map(p => p.company).filter(Boolean)}
-                          title={c.prospect ? `Click to edit. Use the ↗ button to open ${c.companyName}.` : 'Not mapped to any Table View prospect. Click to edit (autocomplete from Table View companies).'}
-                        />
+                        {linkCompanyToProspect && c.prospect ? (
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={e => { e.stopPropagation(); onSelectProspect?.(c.prospect); }}
+                            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); onSelectProspect?.(c.prospect); } }}
+                            title={`Open ${c.companyName} prospect record`}
+                            style={{ display: 'block', padding: '0.3rem 0.5rem', fontSize: '0.74rem', fontWeight: 600, color: '#1D4ED8', cursor: 'pointer', textDecoration: 'underline', textDecorationColor: '#93C5FD', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                          >{c.companyName}</span>
+                        ) : (
+                          <InlineCell
+                            value={c.companyName}
+                            onCommit={v => inlineUpdateField(c.raw || c, 'company', v)}
+                            fontSize="0.74rem"
+                            textColor="#1E293B"
+                            fontWeight={600}
+                            suggestions={prospects.map(p => p.company).filter(Boolean)}
+                            title={c.prospect ? `Click to edit. Use the ↗ button to open ${c.companyName}.` : 'Not mapped to any Table View prospect. Click to edit (autocomplete from Table View companies).'}
+                          />
+                        )}
                       </div>
                       {c.prospect ? (
+                        linkCompanyToProspect ? null : (
                         <span
                           role="button"
                           tabIndex={0}
@@ -2558,6 +3293,7 @@ function KeyContactsViewInner({
                           title={`Open ${c.companyName} prospect record`}
                           style={{ flexShrink: 0, marginRight: 4, fontSize: '0.7rem', color: '#1D4ED8', cursor: 'pointer', fontWeight: 700 }}
                         >↗</span>
+                        )
                       ) : c.companyName ? (
                         <span
                           title={`"${c.companyName}" is not in the Table View`}
@@ -2595,6 +3331,42 @@ function KeyContactsViewInner({
                         )}
                       </div>
                     )}
+                    {showNewCompanyEmail && visibleSet.has('newCompany') && (
+                      <InlineCell
+                        value={c.newCompany}
+                        onCommit={v => setNewCompanyMapping(c.raw || c, v)}
+                        fontSize="0.74rem"
+                        textColor="#1E293B"
+                        fontWeight={600}
+                        suggestions={newCompanySuggestions}
+                        suggestionsNoun="companies"
+                        placeholder="Map new company…"
+                        title="The company this person moved to. Pick one to predict their new email (autocomplete lists companies with a known email format first)."
+                      />
+                    )}
+                    {showNewCompanyEmail && visibleSet.has('expectedEmail') && (
+                      <ExpectedEmailCell info={c.expectedEmail} name={c.name} />
+                    )}
+                    {showReachedOut && visibleSet.has('reachedOut') && (
+                      <div style={{ padding: '0.3rem 0.5rem', display: 'flex', alignItems: 'center' }}>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); toggleReachedOut(c.raw || c); }}
+                          title={c.reachedOut
+                            ? `Marked reached out${c.reachedOutAt ? ` on ${new Date(c.reachedOutAt).toLocaleDateString()}` : ''} — click to unmark`
+                            : 'Click to mark that you\'ve reached out to this contact'}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                            padding: '2px 8px', borderRadius: 999,
+                            fontSize: '0.62rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                            background: c.reachedOut ? '#DCFCE7' : '#fff',
+                            border: `1px solid ${c.reachedOut ? '#86EFAC' : '#CBD5E1'}`,
+                            color: c.reachedOut ? '#166534' : '#64748B',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >{c.reachedOut ? '✓ Reached out' : 'Mark reached out'}</button>
+                      </div>
+                    )}
                     {visibleSet.has('email') && (
                     <InlineCell
                       value={c.email}
@@ -2616,6 +3388,7 @@ function KeyContactsViewInner({
                         const [city = '', state = ''] = String(v || '').split(',').map(s => s.trim());
                         await inlineUpdateField(c.raw || c, 'city', city);
                         if ((c.state || '') !== state) await inlineUpdateField(c.raw || c, 'state', state);
+                        await autoFillLocationFromCity(c.raw || c, city, { state: state || c.state, country: c.country });
                       }}
                       textColor="#64748B"
                       placeholder="—"
@@ -2623,24 +3396,41 @@ function KeyContactsViewInner({
                       fontSize="0.7rem"
                     />
                     )}
-                    {visibleSet.has('city') && (
-                    <InlineCell
-                      value={c.city}
-                      onCommit={v => inlineUpdateField(c.raw || c, 'city', v)}
-                      textColor="#64748B"
-                      placeholder="—"
-                      fontSize="0.7rem"
-                    />
-                    )}
-                    {visibleSet.has('state') && (
-                    <InlineCell
-                      value={c.state}
-                      onCommit={v => inlineUpdateField(c.raw || c, 'state', v)}
-                      textColor="#64748B"
-                      placeholder="—"
-                      fontSize="0.7rem"
-                    />
-                    )}
+                    {visibleSet.has('city') && (() => {
+                      const flag = checkCity(c.city);
+                      return (
+                        <InlineCell
+                          value={c.city}
+                          onCommit={async (v) => {
+                            await inlineUpdateField(c.raw || c, 'city', v);
+                            await autoFillLocationFromCity(c.raw || c, v, { state: c.state, country: c.country });
+                          }}
+                          suggestions={CITY_NAME_OPTIONS}
+                          matchFn={matchCityNames}
+                          suggestionsNoun="cities"
+                          title="Click to edit. Pick a city for auto-filled State / Country, or type your own."
+                          textColor="#64748B"
+                          placeholder="—"
+                          fontSize="0.7rem"
+                          flagIssue={flag?.issue || null}
+                          flagFix={flag?.fix || null}
+                        />
+                      );
+                    })()}
+                    {visibleSet.has('state') && (() => {
+                      const flag = checkState(c.state);
+                      return (
+                        <InlineCell
+                          value={c.state}
+                          onCommit={v => inlineUpdateField(c.raw || c, 'state', v)}
+                          textColor="#64748B"
+                          placeholder="—"
+                          fontSize="0.7rem"
+                          flagIssue={flag?.issue || null}
+                          flagFix={flag?.fix || null}
+                        />
+                      );
+                    })()}
                     {visibleSet.has('country') && (
                     <InlineCell
                       value={c.country}
@@ -2708,20 +3498,130 @@ function KeyContactsViewInner({
                       textColor="#475569"
                     />
                     )}
-                    {visibleSet.has('tags') && (
-                    <TagsInlineCell
-                      value={c.dans_tags || c.dan_s_tags || c.dans_tag || ''}
-                      options={tagOptionsList}
-                      onCommit={v => inlineUpdateField(c.raw || c, 'dans_tags', v)}
-                    />
-                    )}
+                    {storagePrefix === 'all-contacts' && visibleSet.has('toCc') && (() => {
+                      const entry = toCcEntryFor(c);
+                      const hasOwn = !!entry && (entry.to.length > 0 || entry.cc.length > 0);
+                      // Other contacts that list THIS contact on their own
+                      // To Also / CC lines — surfaced in italics so it reads
+                      // as "referenced elsewhere", not a recipient of its own.
+                      const inbound = inboundRefsFor(c);
+                      const ownerNames = (owners) => owners.map(o => contactNameByEmail.get(o) || o);
+                      if (!hasOwn && !inbound) {
+                        return (
+                          <div
+                            style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1' }}
+                            title="No To / CC recipients set. Open the contact and use the To Also / CC Emails fields to link recipients."
+                          >—</div>
+                        );
+                      }
+                      const tip = [
+                        entry?.to?.length ? `To: ${entry.to.join(', ')}` : '',
+                        entry?.cc?.length ? `CC: ${entry.cc.join(', ')}` : '',
+                        inbound?.to?.length ? `Also a To for: ${ownerNames(inbound.to).join(', ')}` : '',
+                        inbound?.cc?.length ? `Also a CC for: ${ownerNames(inbound.cc).join(', ')}` : '',
+                      ].filter(Boolean).join('\n');
+                      return (
+                        <div
+                          style={{ padding: '0.4rem 0.6rem', display: 'flex', flexDirection: 'column', gap: 4, overflow: 'hidden' }}
+                          title={tip}
+                        >
+                          {hasOwn && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', overflow: 'hidden' }}>
+                              {entry.to.map(email => (
+                                <span
+                                  key={`to|${email}`}
+                                  style={{ display: 'inline-flex', alignItems: 'center', gap: 3, maxWidth: '100%', padding: '1px 7px', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 999, fontSize: '0.66rem', color: '#92400E', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                                >
+                                  <span style={{ fontWeight: 800, fontSize: '0.58rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>To</span>
+                                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{email}</span>
+                                </span>
+                              ))}
+                              {entry.cc.map(email => (
+                                <span
+                                  key={`cc|${email}`}
+                                  style={{ display: 'inline-flex', alignItems: 'center', gap: 3, maxWidth: '100%', padding: '1px 7px', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 999, fontSize: '0.66rem', color: '#1E40AF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                                >
+                                  <span style={{ fontWeight: 800, fontSize: '0.58rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>CC</span>
+                                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{email}</span>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {inbound && (
+                            <div style={{ fontStyle: 'italic', fontSize: '0.63rem', color: '#64748B', lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {inbound.to.length > 0 && (
+                                <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Also a To for: {ownerNames(inbound.to).join(', ')}</div>
+                              )}
+                              {inbound.cc.length > 0 && (
+                                <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Also a CC for: {ownerNames(inbound.cc).join(', ')}</div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                    {visibleSet.has('tags') && (() => {
+                      // Read-only, comma-separated tag list. The HubSpot
+                      // tags live on the un-normalized `raw` contact
+                      // (dans_tags), so read from there first — the
+                      // top-level normalized object doesn't carry them.
+                      // Kept on a single line and clipped with an ellipsis
+                      // so long tag lists don't wrap the row; full text is
+                      // available on hover.
+                      const raw = c.raw || c;
+                      const tagStr = String(raw.dans_tags || raw.dan_s_tags || raw.dans_tag || '')
+                        .split(';').map(s => s.trim()).filter(Boolean).join(', ');
+                      return (
+                        <div
+                          title={tagStr}
+                          style={{
+                            padding: '0.45rem 0.6rem',
+                            fontSize: '0.7rem',
+                            color: tagStr ? '#1E293B' : '#CBD5E1',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            minWidth: 0,
+                          }}
+                        >{tagStr || '—'}</div>
+                      );
+                    })()}
                     {visibleSet.has('lastOutreach') && (() => {
                       const entry = contactLastOutreach.get(String(c.id || ''));
                       if (!entry) {
                         return (
                           <div
                             style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1' }}
-                            title={activityCache ? 'No call or email logged in the Activity feed for this contact' : 'Open the Activity tab once to load HubSpot activity'}
+                            title={(activityCache || outreachIndex) ? 'No call or email logged in the Activity feed for this contact' : 'Open the Activity tab once to load HubSpot activity'}
+                          >—</div>
+                        );
+                      }
+                      const d = new Date(entry.ts);
+                      const days = isNaN(d) ? null : Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000));
+                      const isCall = entry.type === 'call';
+                      // Flag contacts gone quiet for over 100 days so stale
+                      // relationships are easy to spot at a glance.
+                      const stale = days != null && days > 100;
+                      const tip = isNaN(d)
+                        ? ''
+                        : `Most recent ${isCall ? 'call' : 'email'} on ${d.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })} (from the Activity tab)${stale ? ' — over 100 days since last outreach' : ''}`;
+                      return (
+                        <div
+                          style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: stale ? '#B45309' : '#475569', fontWeight: stale ? 700 : 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                          title={tip}
+                        >
+                          {stale && <span style={{ flexShrink: 0, marginRight: 4, color: '#B45309', fontWeight: 700 }}>⚠</span>}
+                          {days == null ? '' : `${days} ${days === 1 ? 'day' : 'days'}`}
+                        </div>
+                      );
+                    })()}
+                    {storagePrefix === 'all-contacts' && visibleSet.has('emailCampaigns') && (() => {
+                      const entry = contactCampaign.get(String(c.email || '').toLowerCase().trim());
+                      if (!entry) {
+                        return (
+                          <div
+                            style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1' }}
+                            title={savedCampaigns.length ? "This contact isn't a recipient in any saved email campaign" : 'Save a campaign on the Email Campaigns subtab (Draft Emails) to populate this column'}
                           >—</div>
                         );
                       }
@@ -2729,31 +3629,15 @@ function KeyContactsViewInner({
                       const dateLabel = isNaN(d)
                         ? ''
                         : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                      const isCall = entry.type === 'call';
-                      const tip = isNaN(d)
-                        ? ''
-                        : `Most recent ${isCall ? 'call' : 'email'} on ${d.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })} (from the Activity tab)`;
+                      const tip = `Most recent campaign: “${entry.subject}”${dateLabel ? ` · sent ${dateLabel}` : ''}`;
                       return (
                         <div
                           style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#475569', display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                           title={tip}
                         >
-                          <span
-                            style={{
-                              display: 'inline-block',
-                              padding: '1px 6px',
-                              fontSize: '0.58rem',
-                              fontWeight: 700,
-                              borderRadius: 999,
-                              background: isCall ? '#FEF3C7' : '#DBEAFE',
-                              color: isCall ? '#92400E' : '#1E3A8A',
-                              border: `1px solid ${isCall ? '#FCD34D' : '#93C5FD'}`,
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.04em',
-                              flexShrink: 0,
-                            }}
-                          >{isCall ? 'Call' : 'Email'}</span>
-                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{dateLabel}</span>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {entry.subject}{dateLabel ? ` · ${dateLabel}` : ''}
+                          </span>
                         </div>
                       );
                     })()}
@@ -2781,6 +3665,63 @@ function KeyContactsViewInner({
               </div>
             );
           })()
+        ) : isGeography ? (
+          geoSummary.length === 0 ? (
+            <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
+              <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No contacts to summarize</div>
+              <div style={{ fontSize: '0.78rem' }}>{emptyDetail}</div>
+            </div>
+          ) : (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: '0.6rem' }}>
+                <span style={{ fontSize: '0.72rem', color: '#475569' }}>
+                  <strong style={{ color: '#1E293B' }}>{geoTotals.contacts}</strong> contact{geoTotals.contacts === 1 ? '' : 's'} across{' '}
+                  <strong style={{ color: '#1E293B' }}>{geoTotals.states}</strong> state{geoTotals.states === 1 ? '' : 's'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setGeoExpanded(new Set(geoSummary.map(s => s.state)))}
+                  style={{ padding: '0.25rem 0.55rem', fontSize: '0.68rem', fontWeight: 600, border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', color: '#475569', cursor: 'pointer', fontFamily: 'inherit' }}
+                >Expand all</button>
+                <button
+                  type="button"
+                  onClick={() => setGeoExpanded(new Set())}
+                  style={{ padding: '0.25rem 0.55rem', fontSize: '0.68rem', fontWeight: 600, border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', color: '#475569', cursor: 'pointer', fontFamily: 'inherit' }}
+                >Collapse all</button>
+              </div>
+              <div style={{ background: '#fff', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px', padding: '0.5rem 0.9rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0', fontSize: '0.62rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  <span>State / City</span>
+                  <span style={{ textAlign: 'right' }}>Contacts</span>
+                </div>
+                {geoSummary.map(s => {
+                  const open = geoExpanded.has(s.state);
+                  return (
+                    <div key={s.state}>
+                      <div
+                        onClick={() => toggleGeo(s.state)}
+                        title={open ? 'Click to collapse cities' : 'Click to show cities'}
+                        style={{ display: 'grid', gridTemplateColumns: '1fr 120px', alignItems: 'center', padding: '0.5rem 0.9rem', borderBottom: '1px solid #F1F5F9', cursor: 'pointer', background: open ? '#F8FAFC' : '#fff' }}
+                      >
+                        <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1E293B', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ color: '#94A3B8', fontSize: '0.7rem', width: 10, flexShrink: 0 }}>{open ? '▾' : '▸'}</span>
+                          {s.state}
+                          <span style={{ color: '#94A3B8', fontWeight: 500, fontSize: '0.7rem' }}>({s.cities.length} {s.cities.length === 1 ? 'city' : 'cities'})</span>
+                        </span>
+                        <span style={{ textAlign: 'right', fontSize: '0.8rem', fontWeight: 700, color: '#1E293B' }}>{s.total}</span>
+                      </div>
+                      {open && s.cities.map(ct => (
+                        <div key={ct.city} style={{ display: 'grid', gridTemplateColumns: '1fr 120px', alignItems: 'center', padding: '0.35rem 0.9rem 0.35rem 2.1rem', borderBottom: '1px solid #F8FAFC', background: '#fff' }}>
+                          <span style={{ fontSize: '0.75rem', color: '#475569' }}>{ct.city}</span>
+                          <span style={{ textAlign: 'right', fontSize: '0.75rem', color: '#475569' }}>{ct.count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )
         ) : rows.length === 0 ? (
           <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
             <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>{emptyTitle}</div>
@@ -3128,6 +4069,8 @@ function KeyContactsViewInner({
             onSaveNote={handleSaveContactNote}
             contactOldEmails={settings?.contactOldEmails || {}}
             onSaveOldEmails={handleSaveContactOldEmails}
+            contactOldCompany={settings?.contactOldCompany || {}}
+            onSaveOldCompany={handleSaveContactOldCompany}
             contactNicknames={settings?.contactNicknames || {}}
             onSaveNickname={handleSaveContactNickname}
             contactTeamNames={settings?.contactTeamNames || {}}
@@ -3148,6 +4091,18 @@ function KeyContactsViewInner({
               else next[contactId] = { partner, kids };
               updateSettings({ contactFamilies: next });
             }}
+            contactMetInPerson={settings?.contactMetInPerson || {}}
+            onSaveMetInPerson={(contactId, met) => {
+              const current = settings?.contactMetInPerson || {};
+              updateSettings({ contactMetInPerson: { ...current, [contactId]: !!met } });
+            }}
+            contactInvitedToLouisville={settings?.contactInvitedToLouisville || {}}
+            onSaveInvitedToLouisville={(contactId, invited) => {
+              const current = settings?.contactInvitedToLouisville || {};
+              updateSettings({ contactInvitedToLouisville: { ...current, [contactId]: !!invited } });
+            }}
+            events={settings?.events || []}
+            onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settings?.events || [], eventId, c) })}
             companyContacts={sameCompanyContacts}
             emailDomains={emailDomains}
             companyNames={prospects.map(p => p.company).filter(Boolean)}
