@@ -3,8 +3,7 @@ import { onAuthStateChanged, signInWithPopup, signOut, signInWithEmailAndPasswor
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../firebase';
 import { logAction } from '../utils/auditLog';
-
-const ADMIN_EMAIL = 'baldaufdan@gmail.com';
+import { ADMIN_EMAIL, isEmailAllowed, allowlistDescription } from '../config/accessControl';
 
 const AuthContext = createContext(null);
 
@@ -47,8 +46,18 @@ export function AuthProvider({ children }) {
     }
   }
 
+  const [authError, setAuthError] = useState(null);
+
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
+      // Backstop: a session for a non-allowlisted email (e.g. a stale
+      // token, or a Google account outside the company domain) is
+      // signed out before any data loads.
+      if (firebaseUser && !isEmailAllowed(firebaseUser.email)) {
+        setAuthError(`${firebaseUser.email} isn't authorized. ${allowlistDescription()}`);
+        try { await signOut(auth); } catch { /* ignore */ }
+        return;
+      }
       // Partition all browser-local IndexedDB reads/writes by user
       // before any consumer hook starts loading data.
       try {
@@ -57,6 +66,21 @@ export function AuthProvider({ children }) {
       } catch (err) {
         console.warn('Failed to set IndexedDB user scope', err);
       }
+      // Same partitioning for localStorage-backed stores (deals roster,
+      // commissions, AgentsView overrides, HubSpot activity cache, etc.).
+      try {
+        const { setUserLsUserId } = await import('../utils/userLs');
+        setUserLsUserId(firebaseUser?.uid || null);
+      } catch (err) {
+        console.warn('Failed to set localStorage user scope', err);
+      }
+      // Partition encrypted token storage (Outlook OAuth tokens, etc.).
+      try {
+        const { setSecureUserId } = await import('../utils/secureStorage');
+        setSecureUserId(firebaseUser?.uid || null);
+      } catch (err) {
+        console.warn('Failed to set secure storage user scope', err);
+      }
       setUser(firebaseUser);
       await resolveRole(firebaseUser);
       setLoading(false);
@@ -64,7 +88,6 @@ export function AuthProvider({ children }) {
     return unsub;
   }, []);
 
-  const [authError, setAuthError] = useState(null);
   const googleSignInPendingRef = useRef(false);
 
   async function signInWithGoogle() {
@@ -73,6 +96,11 @@ export function AuthProvider({ children }) {
     try {
       setAuthError(null);
       const result = await signInWithPopup(auth, googleProvider);
+      if (!isEmailAllowed(result.user.email)) {
+        setAuthError(`${result.user.email} isn't authorized. ${allowlistDescription()}`);
+        await signOut(auth);
+        return;
+      }
       await logAction(result.user, 'login', { method: 'google' });
     } catch (err) {
       // Benign — a new popup opened while an old one was pending. Don't show.
@@ -87,6 +115,10 @@ export function AuthProvider({ children }) {
   }
 
   async function signInWithEmail(email, password) {
+    if (!isEmailAllowed(email)) {
+      setAuthError(`That email isn't authorized. ${allowlistDescription()}`);
+      return;
+    }
     try {
       setAuthError(null);
       const result = await signInWithEmailAndPassword(auth, email, password);
@@ -97,6 +129,10 @@ export function AuthProvider({ children }) {
   }
 
   async function createAccount(email, password, cdmName) {
+    if (!isEmailAllowed(email)) {
+      setAuthError(`That email isn't authorized. ${allowlistDescription()}`);
+      return;
+    }
     try {
       setAuthError(null);
       const result = await createUserWithEmailAndPassword(auth, email, password);

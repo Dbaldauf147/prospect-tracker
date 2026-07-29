@@ -1,10 +1,14 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
 import { getHubspotContacts } from './utils/hubspotContactsCache';
 import { useAuth } from './contexts/AuthContext';
 import { useProspects } from './hooks/useProspects';
+import { userLsGet, userLsSet } from './utils/userLs';
+import { runProspectBackfill, formatBackfillReport, BACKFILL_PASSES } from './utils/peOwnerBackfill';
+import { migrateIdKeyedSettings } from './utils/dedupeSettingsMigration';
 import { useSheetSync } from './hooks/useSheetSync';
 import { useFilters } from './hooks/useFilters';
 import { useUserSettings } from './hooks/useUserSettings';
+import { useIssues } from './hooks/useIssues';
 import { Sidebar } from './components/Sidebar';
 import { SettingsBackupsModal } from './components/SettingsBackupsModal';
 import { CdmNameModal } from './components/CdmNameModal';
@@ -22,71 +26,72 @@ import { OppsView } from './components/OppsView/OppsView';
 import { OppsView2 } from './components/OppsView2/OppsView2';
 import { DropdownsView } from './components/DropdownsView/DropdownsView';
 import { ClientsView } from './components/ClientsView/ClientsView';
+import { IssuesView } from './components/IssuesView/IssuesView';
 import { ActivityView } from './components/ActivityView/ActivityView';
 import { AgentsView } from './components/AgentsView/AgentsView';
 import { loadTargetAccountsFromDB } from './components/TargetAccountsView/TargetAccountsView';
 import { DraftEmailsPage } from './components/DraftEmailView/DraftEmailsPage';
 import { VibeProspecting } from './components/VibeProspecting/VibeProspecting';
-import { ProgressView } from './components/ProgressView/ProgressView';
 import { ListsView } from './components/ListsView/ListsView';
 import { PEPortfolioView } from './components/PEPortfolioView/PEPortfolioView';
-import { PricingView } from './components/PricingView/PricingView';
-import { PipelineView } from './components/PipelineView/PipelineView';
+// Charts host: YOY / Progress / Pipeline as sub-tabs. Its YOY + Progress
+// sub-views stay code-split inside ChartsView.
+import { ChartsView } from './components/ChartsView/ChartsView';
+// Chart-heavy views (recharts ~250 KB gz, plus their own xlsx usage)
+// are split out of the main chunk; each load on first navigation.
+const PricingView = lazy(() => import('./components/PricingView/PricingView').then(m => ({ default: m.PricingView })));
 import { BFOActivityView } from './components/BFOActivityView/BFOActivityView';
+import { EmailTrackingView } from './components/EmailTrackingView/EmailTrackingView';
 import { DailySuccessManager } from './components/DailySuccess/DailySuccessManager';
 import { DailySuccessLogModal } from './components/DailySuccess/DailySuccessLogModal';
-import { SERVICE_CATEGORIES } from './data/enums';
 import './App.css';
 
 const EMPTY_OBJ = Object.freeze({});
 
-// CSV column name -> enum service item name mapping for mismatched names
-const CSV_TO_ENUM = {
-  'Climate risk SUCON': 'Climate risk disclosure SUCON',
-  'Climate risk Scenario Analysis SUCON': 'Climate risk Scenario Analysis',
-  'Climate risk & opportunity assessment SUCON': 'Climate risk & opportunity assessment',
-  'BPS Reporting': 'BPS reporting',
-  'Peak alerts': 'Peak Alerts',
-};
-const ENUM_LOWER = new Map(SERVICE_CATEGORIES.flatMap(c => c.items).map(i => [i.toLowerCase(), i]));
-function mapCsvToEnum(n) { return CSV_TO_ENUM[n] || ENUM_LOWER.get(n.toLowerCase()) || null; }
-function mapCsvVal(v) {
-  const t = (v || '').trim();
-  if (t === 'N/A') return 'N/A';
-  if (t === 'Sold') return 'Sold';
-  if (t === 'Not Sold') return 'Not Sold';
-  if (t === 'Renewal' || t === 'Tracking/Renewal') return 'Renewal';
-  if (t === 'in progress') return 'In Progress';
-  return null;
-}
-function csvCompMatch(a, b) {
-  const na = (a || '').toLowerCase().trim(), nb = (b || '').toLowerCase().trim();
-  if (!na || !nb) return false;
-  if (na === nb) return true;
-  const longer = na.length >= nb.length ? na : nb, shorter = na.length >= nb.length ? nb : na;
-  if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
-  return false;
-}
-function parseCsvRow(line) {
-  const v = []; let f = '', q = false;
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i];
-    if (q) { if (c === '"') { if (line[i+1] === '"') { f += '"'; i++; } else q = false; } else f += c; }
-    else { if (c === '"') q = true; else if (c === ',') { v.push(f); f = ''; } else f += c; }
-  }
-  v.push(f); return v;
-}
-
 function App() {
-  const { user, loading: authLoading, authError, signInWithEmail, createAccount, resetPassword, logout } = useAuth();
-  const { prospects, loading: dataLoading, addProspect, updateProspect, deleteProspect, replaceAll } = useProspects(user);
-  const { settings, updateSettings, updateSettingsPath } = useUserSettings(user);
+  const { user, isAdmin, loading: authLoading, authError, signInWithEmail, createAccount, resetPassword, logout } = useAuth();
+  const { settings, loaded: settingsLoaded, updateSettings, updateSettingsPath } = useUserSettings(user);
+
+  // Live ref to settings so the de-dupe migration callback — which can fire
+  // asynchronously well after this render — reads the current maps instead
+  // of a value captured in a stale closure.
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+
+  // When the auto/manual de-dupe collapses duplicate accounts, move the
+  // removed copies' account-id-keyed settings (Target Account mappings,
+  // divisions, HQ regions) onto the surviving account so a hand-set mapping
+  // isn't orphaned to a deleted id and lost.
+  const handleDuplicatesCollapsed = useCallback((remaps) => {
+    const patch = migrateIdKeyedSettings(settingsRef.current, remaps);
+    if (patch) {
+      console.log('Migrated account-keyed settings after de-dupe:', Object.keys(patch));
+      updateSettings(patch);
+    }
+  }, [updateSettings]);
+
+  const { prospects, loading: dataLoading, addProspect, updateProspect, deleteProspect, replaceAll, findDuplicates, dedupe } =
+    useProspects(user, { settingsLoaded, onDuplicatesCollapsed: handleDuplicatesCollapsed });
 
   // The CDM name to filter and default new-prospect ownership against.
   // Stored per-user in userSettings.cdmName; the admin account falls back
   // to "Dan Baldauf" so existing data keeps matching even before a value
   // is written. Other accounts pick this at signup.
   const cdmName = settings.cdmName || (user?.email === 'baldaufdan@gmail.com' ? 'Dan Baldauf' : (user?.displayName || ''));
+
+  // Daily Success features can be toggled off from the Settings menu.
+  // Default to on (treat an absent setting as enabled) so existing
+  // admins keep the morning prompt and log they had before — but only
+  // once settings have actually loaded. Before the Firestore snapshot
+  // arrives `settings` is an empty object, so `!== false` would read as
+  // enabled and pop the morning prompt for a beat even when the user has
+  // saved it off. Gate on `settingsLoaded` so a saved "off" is respected
+  // from the first render instead of flashing on every page load.
+  const dailyLogEnabled = settingsLoaded && settings.dailyLogEnabled !== false;
+  const whatToDoTodayEnabled = settingsLoaded && settings.whatToDoTodayEnabled !== false;
+  // Open (non-snoozed) issue count for the sidebar badge. Shares the same
+  // hook the Issues tab uses so the badge and the tab never disagree.
+  const { openCount: openIssuesCount } = useIssues({ prospects, cdmName, user, marketingLeads: settings.marketingLeads, serviceOverrides: settings.serviceOverrides });
   useSheetSync(user);
   const {
     filtered, searchTerm, setSearchTerm,
@@ -129,17 +134,21 @@ function App() {
     };
   }, []);
 
-  const [view, setView] = useState('accounts');
+  const [view, setView] = useState('opps2');
   const [modal, setModal] = useState(null); // null | { prospect, isNew }
   const [showSync, setShowSync] = useState(false);
   const [showBackups, setShowBackups] = useState(false);
   const [showCdmName, setShowCdmName] = useState(false);
   const [showDailyLog, setShowDailyLog] = useState(false);
-  const [migrating, setMigrating] = useState(false);
-  const [migrateResult, setMigrateResult] = useState(null);
   const [hubspotContacts, setHubspotContacts] = useState([]);
 
   // Load HubSpot contacts from IndexedDB and refresh on cache updates.
+  // Keyed on the user's uid because IndexedDB reads return nothing until
+  // AuthContext calls setDbUserId(uid) (db scopes every key by uid). On a
+  // fresh load this effect first runs before auth resolves — getHubspotContacts
+  // reads an unscoped store and gets []. Re-running once user.uid is known
+  // re-reads the now-scoped cache so the persisted contacts reappear instead
+  // of waiting for a manual "Refresh HubSpot Contacts".
   useEffect(() => {
     let cancelled = false;
     const refresh = () => {
@@ -148,7 +157,7 @@ function App() {
     refresh();
     window.addEventListener('hubspot-cache-updated', refresh);
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
-  }, []);
+  }, [user?.uid]);
 
   // Apply per-contact local overrides on top of the cached HubSpot
   // contacts before passing them down. Specifically, _companyOverride
@@ -170,50 +179,6 @@ function App() {
     });
   }, [hubspotContacts, settings?.contactLocalFields]);
 
-  async function migrateClientsServices() {
-    if (migrating) return;
-    if (!confirm('Import service statuses (N/A, Sold, Not Sold, etc.) from the Clients tab into all matching prospects? This only fills in values that are not already set.')) return;
-    setMigrating(true);
-    setMigrateResult(null);
-    try {
-      const res = await fetch('https://docs.google.com/spreadsheets/d/1ee0OREqA25jzDaR6xRDSrj_ZIZDymQjf1k2Z2_ajVKw/gviz/tq?tqx=out:csv&sheet=Clients');
-      const csv = await res.text();
-      const lines = csv.split('\n').filter(l => l.trim());
-      const headers = parseCsvRow(lines[0]);
-      const scopeIdx = headers.findIndex(h => h.includes('Explored Scope'));
-      const svcStart = scopeIdx + 1;
-      const svcCols = [];
-      for (let i = svcStart; i < headers.length; i++) {
-        const h = headers[i].trim();
-        if (h && h !== 'x') { const en = mapCsvToEnum(h); if (en) svcCols.push({ idx: i, enumName: en }); }
-      }
-      let updated = 0;
-      for (let r = 1; r < lines.length; r++) {
-        const row = parseCsvRow(lines[r]);
-        const clientName = (row[0] || '').trim();
-        if (!clientName) continue;
-        const services = {};
-        for (const col of svcCols) {
-          const val = mapCsvVal(row[col.idx]);
-          if (val) services[col.enumName] = val;
-        }
-        if (Object.keys(services).length === 0) continue;
-        const prospect = prospects.find(p => csvCompMatch(p.company, clientName));
-        if (!prospect) continue;
-        const existing = prospect.servicesExplored || {};
-        const merged = { ...existing };
-        let changed = false;
-        for (const [svc, status] of Object.entries(services)) {
-          if (!existing[svc] || existing[svc] === '-') { merged[svc] = status; changed = true; }
-        }
-        if (changed) { await updateProspect(prospect.id, { servicesExplored: merged }); updated++; }
-      }
-      setMigrateResult(`Done! Updated ${updated} prospects.`);
-    } catch (err) {
-      setMigrateResult(`Error: ${err.message}`);
-    }
-    setMigrating(false);
-  }
   const [targetAccountsData, setTargetAccountsData] = useState(null);
 
   // Load Target Accounts from Firestore/IndexedDB on startup
@@ -223,6 +188,27 @@ function App() {
       if (data) setTargetAccountsData(data);
     });
   }, [user]);
+
+  // One-time prospect backfills (see utils/peOwnerBackfill.js): each
+  // pass stamps fixed field values onto a list of Table View companies
+  // the first time prospects load for this user/browser, then reports
+  // the result — including any names that matched no record.
+  useEffect(() => {
+    if (!user || dataLoading || prospects.length === 0) return;
+    const pending = BACKFILL_PASSES.filter(pass => !userLsGet(pass.flag));
+    if (pending.length === 0) return;
+    for (const pass of pending) userLsSet(pass.flag, new Date().toISOString());
+    (async () => {
+      for (const pass of pending) {
+        try {
+          const result = await runProspectBackfill(prospects, updateProspect, pass);
+          window.alert(formatBackfillReport(pass, result));
+        } catch (err) {
+          window.alert(`Company update failed: ${err?.message || err}`);
+        }
+      }
+    })();
+  }, [user, dataLoading, prospects, updateProspect]);
 
   const handleModalSave = useCallback(async (data, { close = true } = {}) => {
     try {
@@ -260,8 +246,23 @@ function App() {
     setModal({ prospect: null, isNew: true });
   }
 
-  function handleSelect(prospect) {
-    setModal({ prospect, isNew: false });
+  function handleSelect(prospect, editContact) {
+    setModal({ prospect, isNew: false, editContact: editContact || null });
+  }
+
+  // Open a contact picked from the sidebar search. A contact is edited inside
+  // its company's account popup, so resolve the contact to its prospect by
+  // company name (respecting a pinned _companyOverride) and open that modal
+  // focused on the contact. When the company isn't in the Table View roster,
+  // still open the contact editor against a lightweight company-only record so
+  // the person is always reachable.
+  function handleSelectContact(contact) {
+    if (!contact) return;
+    const companyName = String(contact._companyOverride || contact.company || '').trim().toLowerCase();
+    const prospect = companyName
+      ? prospects.find(p => String(p?.company || '').trim().toLowerCase() === companyName)
+      : null;
+    setModal({ prospect: prospect || { company: contact.company || '' }, isNew: false, editContact: contact });
   }
 
   return (
@@ -275,9 +276,42 @@ function App() {
         onOpenBackups={() => setShowBackups(true)}
         onOpenCdmName={() => setShowCdmName(true)}
         onOpenDailyLog={() => setShowDailyLog(true)}
-        userEmail={user?.email}
+        isAdmin={isAdmin}
+        dailyLogEnabled={dailyLogEnabled}
+        whatToDoTodayEnabled={whatToDoTodayEnabled}
+        onToggleDailyLog={() => updateSettings({ dailyLogEnabled: !dailyLogEnabled })}
+        onToggleWhatToDoToday={() => updateSettings({ whatToDoTodayEnabled: !whatToDoTodayEnabled })}
+        issuesCount={openIssuesCount}
+        prospects={prospects}
+        contacts={effectiveHubspotContacts}
+        onSelectProspect={handleSelect}
+        onSelectContact={handleSelectContact}
       />
       <div className="main">
+        {(view === 'accounts' || view === 'table' || view === 'kanban') && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, borderBottom: '1px solid #E2E8F0', padding: '0 0.25rem' }}>
+            {[
+              { key: 'accounts', label: 'My Accounts', active: view === 'accounts' },
+              // Pipeline (kanban) is a mode of the Table experience, so the
+              // Table subtab stays highlighted for both.
+              { key: 'table', label: 'Table', active: view === 'table' || view === 'kanban' },
+            ].map(t => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setView(t.key)}
+                style={{
+                  background: 'none', border: 'none', padding: '0.55rem 0.9rem',
+                  fontFamily: 'inherit', fontSize: '0.82rem',
+                  fontWeight: t.active ? 700 : 500,
+                  color: t.active ? '#1D4ED8' : '#475569',
+                  borderBottom: t.active ? '2px solid #1D4ED8' : '2px solid transparent',
+                  cursor: 'pointer', marginBottom: -1,
+                }}
+              >{t.label}</button>
+            ))}
+          </div>
+        )}
         {(view === 'table' || view === 'kanban') && (
           <FilterBar
             searchTerm={searchTerm}
@@ -302,24 +336,26 @@ function App() {
             <div className="loading">Loading prospects...</div>
           ) : view === 'drafts' || view === 'campaigns' ? (
             <DraftEmailsPage prospects={prospects} settings={settings} updateSettings={updateSettings} initialTab={view === 'campaigns' ? 'campaigns' : 'drafts'} />
-          ) : view === 'progress' ? (
-            <ProgressView prospects={prospects} settings={settings} cdmName={cdmName} />
+          ) : view === 'charts' ? (
+            <ChartsView prospects={prospects} settings={settings} cdmName={cdmName} onSelectProspect={handleSelect} />
           ) : view === 'vibe' ? (
             <VibeProspecting prospects={prospects} onUpdate={updateProspect} cdmName={cdmName} />
           ) : view === 'pricing' ? (
-            <PricingView />
-          ) : view === 'pipeline' ? (
-            <PipelineView />
+            <Suspense fallback={<div className="loading">Loading view…</div>}>
+              <PricingView settings={settings} />
+            </Suspense>
           ) : view === 'bfo' ? (
-            <BFOActivityView />
+            <BFOActivityView prospects={prospects} />
+          ) : view === 'tracking' ? (
+            <EmailTrackingView />
           ) : view === 'privacy' ? (
             <PrivacyPolicy />
           ) : view === 'activity' ? (
             <ActivityView prospects={prospects} settings={settings} updateSettings={updateSettings} />
           ) : view === 'agents' ? (
-            <AgentsView />
+            <AgentsView prospects={prospects} settings={settings} updateProspect={updateProspect} updateSettings={updateSettings} />
           ) : view === 'pe' ? (
-            <PEPortfolioView prospects={prospects} onSelectProspect={handleSelect} />
+            <PEPortfolioView prospects={prospects} onSelectProspect={handleSelect} metInPersonMap={settings.contactMetInPerson || {}} onUpdateProspect={updateProspect} onAddProspect={addProspect} settings={settings} updateSettings={updateSettings} />
           ) : view === 'contacts' ? (
             <ContactsView
               prospects={prospects}
@@ -330,17 +366,20 @@ function App() {
               settings={settings}
               updateSettings={updateSettings}
               targetAccountsData={targetAccountsData}
+              onNavigate={setView}
             />
           ) : view === 'lists' ? (
-            <ListsView onTargetAccountsLoaded={setTargetAccountsData} prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} />
+            <ListsView onTargetAccountsLoaded={setTargetAccountsData} prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} updateProspect={updateProspect} />
           ) : view === 'clients' ? (
-            <ClientsView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />
+            <ClientsView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} user={user} targetAccountsData={targetAccountsData} addProspect={addProspect} />
+          ) : view === 'issues' ? (
+            <IssuesView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />
           ) : view === 'opps' ? (
             <OppsView settings={settings} updateSettings={updateSettings} />
           ) : view === 'opps2' ? (
-            <OppsView2 settings={settings} updateSettings={updateSettings} prospects={prospects} updateProspect={updateProspect} />
+            <OppsView2 settings={settings} updateSettings={updateSettings} prospects={prospects} updateProspect={updateProspect} addProspect={addProspect} onSelectProspect={handleSelect} />
           ) : view === 'dropdowns' ? (
-            <DropdownsView />
+            <DropdownsView settings={settings} updateSettings={updateSettings} />
           ) : view === 'accounts' ? (
             <MyAccountsView
               prospects={prospects}
@@ -348,6 +387,8 @@ function App() {
               onUpdate={updateProspect}
               onDelete={deleteProspect}
               onAdd={addProspect}
+              onFindDuplicates={findDuplicates}
+              onDedupe={dedupe}
               targetAccountsData={targetAccountsData}
               settings={settings}
               updateSettings={updateSettings}
@@ -382,6 +423,7 @@ function App() {
           prospect={modal.prospect}
           prospects={prospects}
           isNew={modal.isNew}
+          initialEditContact={modal.editContact}
           onSave={handleModalSave}
           onClose={handleModalClose}
           onDeleteProspect={deleteProspect}
@@ -403,7 +445,8 @@ function App() {
         open={showCdmName}
         onClose={() => setShowCdmName(false)}
         currentName={cdmName}
-        onSave={(next) => updateSettings({ cdmName: next })}
+        currentWorkEmail={settings.workEmail || ''}
+        onSave={(next) => updateSettings(next)}
       />
       <SettingsBackupsModal
         open={showBackups}
@@ -415,25 +458,11 @@ function App() {
         }}
       />
       <DailySuccessLogModal
-        open={showDailyLog}
+        open={showDailyLog && dailyLogEnabled}
         onClose={() => setShowDailyLog(false)}
         user={user}
       />
-      <DailySuccessManager user={user} />
-      {/* One-time migration button */}
-      {!settings.clientsServicesMigrated && (
-        <div style={{ position: 'fixed', bottom: '1rem', right: '1rem', zIndex: 300, background: '#fff', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '0.75rem 1rem', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', maxWidth: '320px' }}>
-          <div style={{ fontSize: '0.75rem', fontWeight: 700, marginBottom: '0.3rem' }}>Import Services from Clients Tab</div>
-          <div style={{ fontSize: '0.68rem', color: '#64748B', marginBottom: '0.5rem' }}>One-time import of N/A, Sold, Not Sold, Renewal, and In Progress statuses into Services Explored for all matching prospects.</div>
-          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-            <button onClick={migrateClientsServices} disabled={migrating} style={{ padding: '0.3rem 0.7rem', border: 'none', borderRadius: '5px', background: '#3B82F6', color: '#fff', fontSize: '0.7rem', fontWeight: 600, cursor: migrating ? 'wait' : 'pointer', fontFamily: 'inherit' }}>
-              {migrating ? 'Importing...' : 'Run Import'}
-            </button>
-            <button onClick={() => updateSettings({ clientsServicesMigrated: true })} style={{ padding: '0.3rem 0.7rem', border: '1px solid #E2E8F0', borderRadius: '5px', background: '#fff', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit', color: '#64748B' }}>Dismiss</button>
-          </div>
-          {migrateResult && <div style={{ marginTop: '0.4rem', fontSize: '0.68rem', color: migrateResult.startsWith('Error') ? '#EF4444' : '#059669', fontWeight: 600 }}>{migrateResult}</div>}
-        </div>
-      )}
+      {isAdmin && whatToDoTodayEnabled && <DailySuccessManager user={user} />}
       <UpdateBanner />
     </div>
   );

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { apiFetch } from '../../utils/apiFetch';
 import styles from './DailySuccess.module.css';
 import {
   loadGoals,
@@ -13,6 +14,7 @@ import {
 } from './goalsStore';
 import { upsertEntry, getEntry, todayKey, newBullet } from './dailySuccessStore';
 import { dbGet } from '../../utils/db';
+import { loadOppsFromCache } from '../../utils/oppsCache';
 import { subscribeToCoachingRules, DEFAULT_COACHING_RULES } from './coachingRulesStore';
 
 // Goals panel — long-running ambitions the user wants Claude to help
@@ -27,7 +29,7 @@ async function buildPipelineSummary() {
   try {
     const pipeline = await dbGet('pipeline-dashboard', 'current');
     const bfo = await dbGet('bfo-activity', 'current');
-    const opps = await dbGet('opps-cache', 'data');
+    const opps = await loadOppsFromCache();
     const lines = [];
     if (pipeline) {
       const fmt = (v) => typeof v === 'number'
@@ -160,7 +162,7 @@ export function GoalsPanel({ user }) {
     setStatus('Asking Claude to prioritize and draft tasks…');
     try {
       const pipelineSummary = await buildPipelineSummary();
-      const resp = await fetch('/api/prioritize-goals', {
+      const resp = await apiFetch('/api/prioritize-goals', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

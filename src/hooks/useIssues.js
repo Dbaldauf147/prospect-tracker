@@ -1,0 +1,113 @@
+import { useMemo, useState, useEffect } from 'react';
+import { loadDealsList, DEALS_LIST_EVENT } from '../utils/dealsStore';
+import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../utils/dealClientMap';
+import { loadClientUntrackedMap, CLIENT_UNTRACKED_EVENT, loadClientStatusMap, CLIENT_STATUS_EVENT } from '../utils/clientManagerStore';
+import { loadIssueSnoozedMap, ISSUE_SNOOZED_EVENT } from '../utils/issueSnoozeStore';
+import { loadMyAccountsFlags, MY_ACCOUNTS_FLAGS_EVENT, MY_ACCOUNTS_FLAGS_KEY } from '../utils/myAccountsFlagsStore';
+import { dbGet } from '../utils/db';
+import { loadOppsFromCache } from '../utils/oppsCache';
+import { computeIssues } from '../utils/clientIssues';
+
+// BFO Activity rows are pasted on the BFO Activity tab and persisted in this
+// IndexedDB store; the Opps cache backs the "not tagged to an opp" check.
+const BFO_ACTIVITY_STORE = 'bfo-activity';
+const BFO_ACTIVITY_KEY = 'current';
+
+// Single source of truth for the Issues tab, shared by IssuesView (which
+// renders the rows) and the Sidebar badge (which counts them). Reads the
+// same uploaded deals + client mappings the Clients tab uses, the
+// "Don't Track" overrides, and the per-issue snooze overrides — then
+// re-reads on the matching cross-tab events so an upload, a tracking
+// toggle, or a snooze anywhere refreshes both consumers.
+//
+// `user` matters for the sidebar badge: App mounts (and runs the useState
+// initializers below) before auth resolves, so the first read happens
+// while localStorage is still unscoped and returns nothing. Once the user
+// id is known the per-user store is scoped, so we re-read everything when
+// the uid changes — otherwise the badge would stay stuck at the empty
+// pre-login snapshot. (IssuesView mounts after login, so it reads correct
+// data straight away; the re-read is a harmless no-op there.)
+//
+// Each returned issue carries a `snoozed` flag. `openCount` is the number
+// of issues that are NOT snoozed — that's the number shown on the sidebar.
+export function useIssues({ prospects = [], cdmName, user, marketingLeads = [], serviceOverrides = {} }) {
+  const [dealsList, setDealsList] = useState(() => loadDealsList().data);
+  const [clientMap, setClientMap] = useState(() => loadDealClientMap());
+  const [untrackedMap, setUntrackedMap] = useState(() => loadClientUntrackedMap());
+  const [clientStatusMap, setClientStatusMap] = useState(() => loadClientStatusMap());
+  const [snoozedMap, setSnoozedMap] = useState(() => loadIssueSnoozedMap());
+  const [myAccountsFlags, setMyAccountsFlags] = useState(() => loadMyAccountsFlags());
+  // BFO Activity rows + Opps cache (both IndexedDB) drive the "BFO
+  // Opportunity Name not tagged to an opp" issue. Loaded async below.
+  const [bfoActivity, setBfoActivity] = useState(null);
+  const [oppsCache, setOppsCache] = useState(null);
+
+  // Re-read once the per-user localStorage scope is established (and on any
+  // later account switch), since the initial reads above may have run
+  // before login under the unscoped/anon prefix.
+  useEffect(() => {
+    setDealsList(loadDealsList().data);
+    setClientMap(loadDealClientMap());
+    setUntrackedMap(loadClientUntrackedMap());
+    setClientStatusMap(loadClientStatusMap());
+    setSnoozedMap(loadIssueSnoozedMap());
+    setMyAccountsFlags(loadMyAccountsFlags());
+    dbGet(BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY).then(d => setBfoActivity(d || null)).catch(() => {});
+    loadOppsFromCache().then(o => setOppsCache(o)).catch(() => {});
+  }, [user?.uid]);
+
+  useEffect(() => {
+    function onStorage(e) {
+      if (e.key === 'deals-list-override') setDealsList(loadDealsList().data);
+      if (e.key === 'deals-client-map') setClientMap(loadDealClientMap());
+      if (e.key === 'clients-untracked-map') setUntrackedMap(loadClientUntrackedMap());
+      if (e.key === 'clients-status-map') setClientStatusMap(loadClientStatusMap());
+      if (e.key === 'issues-snoozed-map') setSnoozedMap(loadIssueSnoozedMap());
+      if (e.key === MY_ACCOUNTS_FLAGS_KEY) setMyAccountsFlags(loadMyAccountsFlags());
+    }
+    function onDealsList() { setDealsList(loadDealsList().data); }
+    function onClientMap() { setClientMap(loadDealClientMap()); }
+    function onUntracked() { setUntrackedMap(loadClientUntrackedMap()); }
+    function onClientStatus() { setClientStatusMap(loadClientStatusMap()); }
+    function onSnoozed() { setSnoozedMap(loadIssueSnoozedMap()); }
+    function onMaFlags() { setMyAccountsFlags(loadMyAccountsFlags()); }
+    // BFO Activity (IndexedDB) + Opps cache (IndexedDB): refresh on window
+    // focus (a fresh paste on either tab) and on the opps2 cache-updated
+    // event, mirroring how the BFO Activity / Agents pages reload them.
+    function refreshBfo() { dbGet(BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY).then(d => setBfoActivity(d || null)).catch(() => {}); }
+    function refreshOpps() { loadOppsFromCache().then(o => setOppsCache(o)).catch(() => {}); }
+    refreshBfo();
+    refreshOpps();
+    window.addEventListener('focus', refreshBfo);
+    window.addEventListener('focus', refreshOpps);
+    window.addEventListener('opps2-cache-updated', refreshOpps);
+    window.addEventListener('storage', onStorage);
+    window.addEventListener(DEALS_LIST_EVENT, onDealsList);
+    window.addEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
+    window.addEventListener(CLIENT_UNTRACKED_EVENT, onUntracked);
+    window.addEventListener(CLIENT_STATUS_EVENT, onClientStatus);
+    window.addEventListener(ISSUE_SNOOZED_EVENT, onSnoozed);
+    window.addEventListener(MY_ACCOUNTS_FLAGS_EVENT, onMaFlags);
+    return () => {
+      window.removeEventListener('focus', refreshBfo);
+      window.removeEventListener('focus', refreshOpps);
+      window.removeEventListener('opps2-cache-updated', refreshOpps);
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener(DEALS_LIST_EVENT, onDealsList);
+      window.removeEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
+      window.removeEventListener(CLIENT_UNTRACKED_EVENT, onUntracked);
+      window.removeEventListener(CLIENT_STATUS_EVENT, onClientStatus);
+      window.removeEventListener(ISSUE_SNOOZED_EVENT, onSnoozed);
+      window.removeEventListener(MY_ACCOUNTS_FLAGS_EVENT, onMaFlags);
+    };
+  }, []);
+
+  const issues = useMemo(() => {
+    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides });
+    return rows.map((r) => ({ ...r, snoozed: !!snoozedMap[r.id] }));
+  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides]);
+
+  const openCount = useMemo(() => issues.reduce((n, r) => n + (r.snoozed ? 0 : 1), 0), [issues]);
+
+  return { issues, openCount };
+}

@@ -3,10 +3,15 @@
  * POST /api/vibe-prospect
  */
 
+import { withAuth } from './_lib/http.js';
+import { enforceRateLimit } from './_lib/rateLimit.js';
+
 const APOLLO_BASE = 'https://api.apollo.io/api/v1';
 
-export default async function handler(req, res) {
+async function handler(req, res, auth) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  if (!(await enforceRateLimit(res, auth.uid, 'vibe-prospect', 30, 5 * 60 * 1000))) return;
 
   const apiKey = process.env.APOLLO_API_KEY;
   if (!apiKey) return res.status(500).json({ error: 'Apollo API key not configured' });
@@ -115,3 +120,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: err.message || 'Apollo search failed' });
   }
 }
+
+export default withAuth(handler);

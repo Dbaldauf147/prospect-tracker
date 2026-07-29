@@ -1,8 +1,23 @@
+import { withAuth } from './_lib/http.js';
+
 const BASE = 'https://api.hubapi.com';
 
 async function hubspotFetch(path, token) {
   const res = await fetch(`${BASE}${path}`, {
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`HubSpot API ${res.status}: ${text.slice(0, 200)}`);
+  }
+  return res.json();
+}
+
+async function hubspotPost(path, token, body) {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -82,6 +97,15 @@ async function getAllContacts(token) {
   for (const c of contacts) {
     const id = c.properties?.associatedcompanyid;
     const name = id ? (companyNames.get(String(id)) || '') : '';
+    // Preserve the contact's own typed company text in a separate field
+    // before replacing `company` with the canonical association name.
+    // `company` stays the association name (the Table View tie-in relies on
+    // that), but name-based matching like the PE Overview "Key Contacts"
+    // column can fall back to what the user actually typed on the contact —
+    // important when the contact has no Company association (so `company`
+    // would be blank) or the association points at a rebranded record.
+    const typed = (c.properties?.company || '').trim();
+    if (typed) c.properties.companyText = typed;
     c.properties.company = name;
   }
   return contacts;
@@ -216,6 +240,130 @@ async function setContactPrimaryCompany(token, contactId, companyId) {
   }
 }
 
+// Point a contact's primary Company association at the Company record
+// matching a free-text company name — finding an existing record by
+// exact name, or creating one when there's no match. This is the piece
+// that makes a typed `company` value stick: getAllContacts() rewrites
+// every contact's `company` text from its associated Company's name on
+// each sync, so without a real association the value is blanked on the
+// next refresh and the contact vanishes from the company popup. Returns
+// a companyAssignment summary the client can use to keep its local
+// override when the matched Company's name differs from what was typed,
+// or null when there's no name to assign.
+async function assignContactPrimaryCompanyByName(token, contactId, rawName) {
+  const companyName = (rawName || '').trim();
+  if (!companyName) return null;
+  let match = await findCompanyByName(token, companyName);
+  let companyId = match?.id || null;
+  let matchedName = match?.name || '';
+  let created = false;
+  let createError = null;
+  if (!companyId) {
+    const createRes = await createCompanyByName(token, companyName);
+    if (createRes.ok) {
+      companyId = createRes.id;
+      matchedName = companyName;
+      created = true;
+    } else {
+      createError = createRes;
+    }
+  }
+  if (companyId) {
+    const result = await setContactPrimaryCompany(token, contactId, companyId);
+    return {
+      companyId,
+      created,
+      matchedName,
+      requestedName: companyName,
+      nameDiffers: !!matchedName && matchedName.trim().toLowerCase() !== companyName.trim().toLowerCase(),
+      ...result,
+    };
+  }
+  return {
+    ok: false,
+    status: createError?.status || 0,
+    errorText: createError?.errorText || 'Failed to find or create Company record',
+    requestedName: companyName,
+  };
+}
+
+// Apply a contact's edited company name by RENAMING the Company record the
+// contact is already linked to — the behavior we want: the canonical
+// Company object in HubSpot takes the new name, so it cascades to every
+// contact associated with that company and survives the next sync (which
+// derives each contact's company from its associated Company's name).
+//
+// This deliberately avoids writing the contact↔company association, which
+// is the step that was failing with "couldn't pin the Company association".
+// We only READ the contact's primary company id (mirrored on the contact as
+// `associatedcompanyid`, the same field getAllContacts() uses) and PATCH
+// that company's name.
+//
+// Falls back to find-or-create + associate only when the contact has no
+// company linked yet (nothing to rename) — e.g. a freshly created contact.
+//
+// Returns a summary the client uses to decide whether it still needs a local
+// override: on a successful rename the override is cleared, because HubSpot
+// now holds the typed name. `mode` is one of renamed | unchanged | rename-
+// failed, or the assign summary's shape when it falls back.
+async function renameContactCompany(token, contactId, rawName) {
+  const newName = (rawName || '').trim();
+  if (!newName) return null;
+
+  // The primary associated Company id is mirrored onto the contact as the
+  // `associatedcompanyid` property.
+  let companyId = '';
+  try {
+    const res = await fetch(`${BASE}/crm/v3/objects/contacts/${contactId}?properties=associatedcompanyid`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      companyId = String(data.properties?.associatedcompanyid || '').trim();
+    }
+  } catch { /* fall through to the associate path */ }
+
+  // No company linked yet → nothing to rename. Find or create one and pin it,
+  // same path a brand-new contact takes.
+  if (!companyId) {
+    return assignContactPrimaryCompanyByName(token, contactId, newName);
+  }
+
+  // Read the current name so we can no-op when it already matches and report
+  // the before/after in the response.
+  let oldName = '';
+  try {
+    const res = await fetch(`${BASE}/crm/v3/objects/companies/${companyId}?properties=name`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      oldName = String(data.properties?.name || '').trim();
+    }
+  } catch { /* unknown current name — attempt the rename anyway */ }
+
+  if (oldName && oldName.toLowerCase() === newName.toLowerCase()) {
+    return { ok: true, mode: 'unchanged', companyId, oldName, newName, requestedName: newName, nameDiffers: false };
+  }
+
+  // Rename the Company record itself.
+  try {
+    const res = await fetch(`${BASE}/crm/v3/objects/companies/${companyId}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ properties: { name: newName } }),
+    });
+    if (res.ok) {
+      return { ok: true, mode: 'renamed', companyId, oldName, newName, requestedName: newName, nameDiffers: false };
+    }
+    let errorText = '';
+    try { errorText = (await res.text()).slice(0, 300); } catch { /* noop */ }
+    return { ok: false, mode: 'rename-failed', companyId, oldName, requestedName: newName, status: res.status, errorText };
+  } catch (err) {
+    return { ok: false, mode: 'rename-failed', companyId, oldName, requestedName: newName, status: 0, errorText: String(err?.message || err).slice(0, 300) };
+  }
+}
+
 // Normalize the semicolon-separated `dans_tags` string before we hand
 // it to HubSpot. The frontend displays and stores tags with natural
 // spacing (e.g. "Efficiency / Renewables"), but the HubSpot enumeration
@@ -231,10 +379,17 @@ const DANS_TAGS_ALIASES = {
 function normalizeDansTagsForHubSpot(raw) {
   if (raw == null) return raw;
   const parts = String(raw).split(';').map(s => s.trim()).filter(Boolean);
-  const out = parts.map(t => {
-    const key = t.replace(/\s+/g, ' ');
-    return DANS_TAGS_ALIASES[key] || DANS_TAGS_ALIASES[key.toLowerCase()] || t;
-  });
+  const out = parts
+    // "Met In Person" is tracked locally in Prospect Tracker (a checkbox on
+    // the contact editor), not in HubSpot — it was removed from the
+    // `dans_tags` enumeration, so writing it back triggers a 400. Drop it
+    // from every contact write so legacy-tagged contacts save cleanly and
+    // the value is never (re-)recorded in HubSpot.
+    .filter(t => t.replace(/\s+/g, ' ').toLowerCase() !== 'met in person')
+    .map(t => {
+      const key = t.replace(/\s+/g, ' ');
+      return DANS_TAGS_ALIASES[key] || DANS_TAGS_ALIASES[key.toLowerCase()] || t;
+    });
   const seen = new Set();
   const deduped = [];
   for (const t of out) {
@@ -250,6 +405,47 @@ function normalizeContactPropertiesForHubSpot(props) {
   const next = { ...props };
   if ('dans_tags' in next) next.dans_tags = normalizeDansTagsForHubSpot(next.dans_tags);
   return next;
+}
+
+// HubSpot rejects a contact write with a 400 when a `dans_tags` value
+// isn't one of the enumeration's registered options (e.g. the curated
+// "Met In Person" tag the UI offers but that was never added to the
+// property). Detect that specific failure so the caller can register
+// the missing option and retry instead of surfacing a dead-end error.
+function isDansTagsOptionError(status, text) {
+  if (status !== 400 || !text) return false;
+  return /was not one of the allowed options/i.test(text) && /dans_tags/i.test(text);
+}
+
+// Register any `dans_tags` values that aren't already options on the
+// property, appending them so the subsequent contact write validates.
+// Values are matched case-insensitively against existing option values
+// to avoid creating near-duplicate options.
+async function ensureDansTagsOptions(token, tagsStr) {
+  const wanted = String(tagsStr || '').split(';').map(s => s.trim()).filter(Boolean);
+  if (!wanted.length) return;
+  const prop = await hubspotFetch('/crm/v3/properties/contacts/dans_tags', token);
+  const existing = (prop.options || []).map(o => ({ label: o.label, value: o.value, displayOrder: o.displayOrder, hidden: o.hidden }));
+  const existingLower = new Set(existing.map(o => String(o.value).toLowerCase()));
+  const toAdd = [];
+  const seen = new Set();
+  for (const tag of wanted) {
+    const key = tag.toLowerCase();
+    if (existingLower.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    toAdd.push(tag);
+  }
+  if (!toAdd.length) return;
+  const newOptions = toAdd.map((t, i) => ({ label: t, value: t, displayOrder: existing.length + i, hidden: false }));
+  const res = await fetch(`${BASE}/crm/v3/properties/contacts/dans_tags`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ options: [...existing, ...newOptions] }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to register tag option(s) [${toAdd.join(', ')}]: ${text.slice(0, 200)}`);
+  }
 }
 
 async function getContactsByCompany(token, companyName) {
@@ -310,12 +506,7 @@ async function getEmailCampaigns(token) {
   }
 }
 
-export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') return res.status(200).end();
-
+async function handler(req, res) {
   const token = process.env.HUBSPOT_ACCESS_TOKEN;
   if (!token) {
     return res.status(500).json({ error: 'HubSpot access token not configured' });
@@ -394,35 +585,115 @@ export default async function handler(req, res) {
     }
 
     if (action === 'activity') {
-      // Paginated: fetch one type at a time, one page at a time
+      // Paginated: fetch one type at a time, one page at a time.
+      //
+      // We use the CRM *search* endpoint rather than the plain object-list
+      // endpoint. The list endpoint (/crm/v3/objects/emails) silently
+      // ignores `sort` and returns objects oldest-first by creation order,
+      // so a client-side record cap would drop the *newest* activity. Search
+      // honours `sorts`, so a DESCENDING hs_timestamp sort puts the newest
+      // records first — the client walks every page to keep the full
+      // history, newest-first, and any safety truncation drops the oldest.
+      //
+      // Search has one hard limit: it refuses to page past 10,000 results
+      // (offset + limit > 10000). To walk an unbounded history we roll into
+      // a new "window" as we approach that ceiling — continuing below the
+      // oldest hs_timestamp seen so far via an LTE filter with the offset
+      // reset to 0. The `after` cursor we hand back encodes both the
+      // in-window offset and the current window boundary as `offset~before`.
+      // The boundary is LTE (not LT) so records sharing the boundary
+      // millisecond aren't skipped; the client dedupes by id to drop the
+      // handful of overlap rows that reappear at each window seam.
       const type = req.query.type || 'email'; // email | call | meeting
-      const after = req.query.after || '';
+      const rawAfter = req.query.after || '';
       const limit = 100;
+      // Below this the next search page is safely inside the 10k ceiling;
+      // at or above it we roll the window instead of paging further.
+      const WINDOW_ROLL_AT = 9900;
+
+      let offset = 0;
+      let before = ''; // epoch-ms upper bound (exclusive-of-newer) for the window
+      if (rawAfter) {
+        const tilde = rawAfter.indexOf('~');
+        if (tilde >= 0) {
+          offset = parseInt(rawAfter.slice(0, tilde), 10) || 0;
+          before = rawAfter.slice(tilde + 1);
+        } else {
+          offset = parseInt(rawAfter, 10) || 0;
+        }
+      }
 
       const propsMap = {
-        email: 'hs_email_subject,hs_email_status,hs_email_direction,hs_timestamp,hs_email_to_email,hs_email_from_email,hs_email_to_firstname,hs_email_to_lastname,hs_email_from_firstname,hs_email_from_lastname',
+        email: 'hs_email_subject,hs_email_status,hs_email_direction,hs_timestamp,hs_email_to_email,hs_email_from_email,hs_email_to_firstname,hs_email_to_lastname,hs_email_from_firstname,hs_email_from_lastname,hs_email_cc_email,hs_email_cc_firstname,hs_email_cc_lastname',
         call: 'hs_call_title,hs_call_status,hs_call_direction,hs_call_duration,hs_timestamp,hs_call_to_number,hs_call_from_number,hs_call_disposition',
         meeting: 'hs_meeting_title,hs_meeting_start_time,hs_meeting_end_time,hs_meeting_outcome,hs_timestamp,hs_attendee_owner_ids,hs_meeting_external_url,hs_internal_meeting_notes,hs_meeting_body',
       };
       const objectMap = { email: 'emails', call: 'calls', meeting: 'meetings' };
       const objectType = objectMap[type] || 'emails';
-      const props = propsMap[type] || propsMap.email;
+      const props = (propsMap[type] || propsMap.email).split(',');
 
-      const params = new URLSearchParams({ limit: String(limit), properties: props, sort: '-hs_timestamp' });
-      if (after) params.set('after', after);
-      // Request contact associations for meetings
-      if (type === 'meeting') params.set('associations', 'contacts');
+      const body = {
+        limit,
+        sorts: [{ propertyName: 'hs_timestamp', direction: 'DESCENDING' }],
+        properties: props,
+      };
+      if (offset) body.after = String(offset);
+      if (before) {
+        body.filterGroups = [{ filters: [{ propertyName: 'hs_timestamp', operator: 'LTE', value: before }] }];
+      }
 
-      const data = await hubspotFetch(`/crm/v3/objects/${objectType}?${params}`, token);
-      const results = (data.results || []).map(r => {
-        const item = { id: r.id, type, ...r.properties };
-        // Include associated contact IDs for meetings
-        if (type === 'meeting' && r.associations?.contacts?.results) {
-          item._contactIds = r.associations.contacts.results.map(a => a.id);
+      const data = await hubspotPost(`/crm/v3/objects/${objectType}/search`, token, body);
+      const objects = data.results || [];
+
+      // The search endpoint doesn't return associations, so recover the
+      // associated contact IDs with a batch association read. Meetings need
+      // these for attendee names; emails use them to recover recipients on
+      // one-to-many / sequence sends that log with a blank hs_email_to_email;
+      // calls use them for the contact name / phone fallback.
+      const idToContactIds = new Map();
+      const ids = objects.map(o => o.id).filter(Boolean);
+      if (ids.length) {
+        try {
+          const assoc = await hubspotPost(
+            `/crm/v4/associations/${objectType}/contacts/batch/read`,
+            token,
+            { inputs: ids.map(id => ({ id })) },
+          );
+          for (const r of (assoc.results || [])) {
+            const fromId = r.from?.id;
+            const toIds = (r.to || []).map(t => t.toObjectId).filter(Boolean);
+            if (fromId && toIds.length) idToContactIds.set(String(fromId), toIds.map(String));
+          }
+        } catch (err) {
+          // Non-fatal: fall back to whatever the object's own fields carry.
+          console.warn('activity association read failed:', err?.message || err);
         }
+      }
+
+      const results = objects.map(r => {
+        const item = { id: r.id, type, ...r.properties };
+        const cids = idToContactIds.get(String(r.id));
+        if (cids?.length) item._contactIds = cids;
         return item;
       });
-      const nextAfter = data.paging?.next?.after || null;
+
+      // Compute the next cursor, rolling to a new hs_timestamp window before
+      // we hit search's 10k paging ceiling.
+      let nextAfter = null;
+      const rawNext = data.paging?.next?.after || null; // in-window offset (string)
+      if (rawNext) {
+        const nextOffset = parseInt(rawNext, 10) || 0;
+        if (nextOffset + limit > WINDOW_ROLL_AT) {
+          // Approaching the ceiling — start a fresh window below the oldest
+          // timestamp on this page. Fall back to stopping if we can't read
+          // a usable boundary (rather than risk a malformed filter).
+          const lastTs = objects.length ? objects[objects.length - 1].properties?.hs_timestamp : '';
+          const ms = lastTs ? new Date(lastTs).getTime() : NaN;
+          nextAfter = Number.isFinite(ms) ? `0~${ms}` : null;
+        } else {
+          nextAfter = `${nextOffset}~${before}`;
+        }
+      }
 
       return res.json({ results, nextAfter, total: data.total || null });
     }
@@ -454,14 +725,37 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Email is required to create a contact' });
       }
       const cleanProps = normalizeContactPropertiesForHubSpot(properties);
-      const createRes = await fetch(`${BASE}/crm/v3/objects/contacts`, {
+      const postContact = () => fetch(`${BASE}/crm/v3/objects/contacts`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ properties: cleanProps }),
       });
+      let createRes = await postContact();
+      // Self-heal a missing dans_tags option (e.g. "Met In Person") the
+      // same way update-contact does: register it, then retry once.
+      if (!createRes.ok && typeof cleanProps.dans_tags === 'string') {
+        const peekText = await createRes.clone().text();
+        if (isDansTagsOptionError(createRes.status, peekText)) {
+          await ensureDansTagsOptions(token, cleanProps.dans_tags);
+          createRes = await postContact();
+        }
+      }
       if (createRes.ok) {
         const created = await createRes.json();
-        return res.json({ success: true, contact: { id: created.id, ...created.properties } });
+        // Establish the primary Company association just like update-contact
+        // does. The free-text `company` property alone doesn't survive: the
+        // canonical-name sync in getAllContacts() reads the association, not
+        // the text, so an unassociated new contact has its `company` blanked
+        // on the next refresh and disappears from the company popup.
+        let companyAssignment = null;
+        if (typeof cleanProps.company === 'string') {
+          try {
+            companyAssignment = await assignContactPrimaryCompanyByName(token, created.id, cleanProps.company);
+          } catch (err) {
+            companyAssignment = { ok: false, status: 0, errorText: String(err?.message || err).slice(0, 300), requestedName: (cleanProps.company || '').trim() };
+          }
+        }
+        return res.json({ success: true, contact: { id: created.id, ...created.properties }, companyAssignment });
       }
       // HubSpot returns 409 CONFLICT when a contact with that email already
       // exists. Recover by fetching the existing contact and returning it so
@@ -498,64 +792,38 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'contactId is required' });
       }
       const cleanProps = normalizeContactPropertiesForHubSpot(properties);
-      // If `company` is being set, also reassign the contact's primary
-      // Company association so the canonical-name sync (getAllContacts)
-      // doesn't revert the edit on next refresh. Find an existing
-      // Company record by exact name; create one if there's no match,
-      // since otherwise the typed value would silently disappear on the
-      // next sync.
+      // If `company` is being set, rename the Company record the contact is
+      // linked to (see renameContactCompany). That pushes the new name onto
+      // the canonical Company object so it cascades to every linked contact
+      // and survives the next sync, instead of trying to re-pin an
+      // association (the step that was failing). When the contact has no
+      // company yet it falls back to find-or-create + associate.
       let companyAssignment = null;
       if (typeof cleanProps.company === 'string') {
-        const companyName = cleanProps.company.trim();
-        if (companyName) {
-          let match = await findCompanyByName(token, companyName);
-          let companyId = match?.id || null;
-          let matchedName = match?.name || '';
-          let created = false;
-          let createError = null;
-          if (!companyId) {
-            const createRes = await createCompanyByName(token, companyName);
-            if (createRes.ok) {
-              companyId = createRes.id;
-              matchedName = companyName;
-              created = true;
-            } else {
-              createError = createRes;
-            }
-          }
-          if (companyId) {
-            const result = await setContactPrimaryCompany(token, contactId, companyId);
-            // Surface the existing Company's actual name back to the
-            // client. When matchedName !== companyName the next sync
-            // will overwrite the contact's `company` text with the
-            // matched name, so the client needs to know to keep its
-            // local override of the user-requested value.
-            companyAssignment = {
-              companyId,
-              created,
-              matchedName,
-              requestedName: companyName,
-              nameDiffers: !!matchedName && matchedName.trim().toLowerCase() !== companyName.trim().toLowerCase(),
-              ...result,
-            };
-          } else {
-            companyAssignment = {
-              ok: false,
-              status: createError?.status || 0,
-              errorText: createError?.errorText || 'Failed to find or create Company record',
-              requestedName: companyName,
-            };
-          }
-        }
+        companyAssignment = await renameContactCompany(token, contactId, cleanProps.company);
       }
-      const updateRes = await fetch(`${BASE}/crm/v3/objects/contacts/${contactId}`, {
+      const patchContact = () => fetch(`${BASE}/crm/v3/objects/contacts/${contactId}`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ properties: cleanProps }),
       });
+      let updateRes = await patchContact();
       if (!updateRes.ok) {
         const text = await updateRes.text();
-        throw new Error(`Update failed ${updateRes.status}: ${text.slice(0, 300)}`);
+        // Self-heal the "tag was not one of the allowed options" case:
+        // register the missing dans_tags option(s) on the property, then
+        // retry the write once. Lets curated UI tags (e.g. "Met In
+        // Person") save without a manual HubSpot property edit.
+        if (typeof cleanProps.dans_tags === 'string' && isDansTagsOptionError(updateRes.status, text)) {
+          await ensureDansTagsOptions(token, cleanProps.dans_tags);
+          updateRes = await patchContact();
+          if (!updateRes.ok) {
+            const retryText = await updateRes.text();
+            throw new Error(`Update failed ${updateRes.status}: ${retryText.slice(0, 300)}`);
+          }
+        } else {
+          throw new Error(`Update failed ${updateRes.status}: ${text.slice(0, 300)}`);
+        }
       }
       const updated = await updateRes.json();
       return res.json({ success: true, contact: { id: updated.id, ...updated.properties }, companyAssignment });
@@ -779,3 +1047,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: err.message });
   }
 }
+
+export default withAuth(handler);
