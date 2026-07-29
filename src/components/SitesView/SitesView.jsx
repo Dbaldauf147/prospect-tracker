@@ -11365,6 +11365,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       </div>
 
       {showDataSources && (
+      <>
       <div className={styles.utilityBar}>
         <input
           ref={utilityFileRef}
@@ -11447,6 +11448,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           </span>
         )}
       </div>
+      </>
       )}
 
       {sitesData.length > 0 && (
