@@ -34,6 +34,11 @@ import { BuildingComplianceScreening } from './BuildingComplianceScreening';
 import { ComplianceRoadmap } from './ComplianceRoadmap';
 import CorporateCompliance from './CorporateCompliance';
 import { screenSites, CATEGORIES, totalPenalty, bpsPrioritization } from '../../utils/complianceMandates';
+import {
+  JURISDICTION_QUESTIONS, REGULATIONS_BY_JURISDICTION,
+  deriveRegulationVerdict, parseRevenueUsd,
+} from '../../data/corporateComplianceScreening';
+import { normalizeCompany } from '../../utils/companyNorm';
 import { exportComplianceReportXlsx, buildCorporateComplianceSheet, buildComplianceMethodologySheet } from '../../utils/complianceReportXlsx';
 import { saveIndicativeAnalysis, deleteIndicativeAnalysis, getIndicativeAnalysisMeta } from '../../utils/firestoreSync';
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
@@ -3608,6 +3613,87 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // and collapse the leftover whitespace.
   function sanitizeFileNamePart(s) {
     return String(s).replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
+  // Company-level Corporate Compliance rollup for the export's Summary tab.
+  // Mirrors the Corporate Compliance page: group sites by the canonical
+  // company key, read that company's six jurisdiction answers and its
+  // researched revenue, and derive which reporting regimes are triggered.
+  // Screening answers key off the canonical key while revenue research keys
+  // off a plain slug of the display name — same split the page uses.
+  function corporateComplianceSummary() {
+    const screening = settings?.corporateComplianceScreening || {};
+    const revenueResearch = settings?.companyRevenueResearch || {};
+    const keyOf = (name) => {
+      const norm = normalizeCompany(name);
+      return norm ? norm.replace(/\s+/g, '-') : '';
+    };
+    const revSlug = (name) => String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
+    const isCA = (s) => {
+      const x = String(s || '').trim().toLowerCase();
+      return x === 'ca' || x === 'california';
+    };
+
+    const byKey = new Map();
+    for (const site of complianceSites) {
+      const rawName = String(site.company || '').trim();
+      if (!rawName) continue; // unnamed sites carry no company to screen
+      const key = keyOf(rawName);
+      const mapKey = key || rawName.toLowerCase();
+      if (!byKey.has(mapKey)) byKey.set(mapKey, { key, california: 0, total: 0, names: new Map() });
+      const e = byKey.get(mapKey);
+      e.total += 1;
+      e.names.set(rawName, (e.names.get(rawName) || 0) + 1);
+      if (isCA(site.state)) e.california += 1;
+    }
+
+    const out = [];
+    for (const e of byKey.values()) {
+      // Display name = most common raw spelling, matching the page.
+      let name = '';
+      let best = -1;
+      for (const [n, c] of e.names) {
+        if (c > best || (c === best && (n.length > name.length || (n.length === name.length && n < name)))) {
+          name = n; best = c;
+        }
+      }
+      const answers = screening[e.key] || {};
+      const yesJurisdictions = JURISDICTION_QUESTIONS
+        .filter(q => answers[q.key] === 'Yes')
+        .map(q => q.jurisdiction);
+
+      // Revenue: the researched figure, else the matched prospect record —
+      // the same fallback order the page's cards use.
+      const researched = revenueResearch[revSlug(name)]?.revenue;
+      const fromProspect = (prospects || []).find(p => keyOf(p?.company) === e.key)?.revenue;
+      const revenueLabel = String(researched || fromProspect || '').trim();
+      const revenueUsd = parseRevenueUsd(revenueLabel);
+
+      const regulations = [];
+      for (const q of JURISDICTION_QUESTIONS) {
+        for (const reg of (REGULATIONS_BY_JURISDICTION[q.key] || [])) {
+          const derived = deriveRegulationVerdict(reg, {
+            revenueUsd,
+            revenueLabel,
+            jurisdictionAnswer: answers[q.key],
+            jurisdictionLabel: q.jurisdiction,
+          });
+          // Regimes without a revenue gate apply on the jurisdiction answer
+          // alone; gated ones need deriveRegulationVerdict to return Yes.
+          const applies = derived
+            ? derived.verdict === 'Yes'
+            : (reg.revenueThresholdUsd == null && answers[q.key] === 'Yes');
+          if (applies) regulations.push({ regulation: reg.regulation, timeline: reg.timeline });
+        }
+      }
+      out.push({ name, california: e.california, total: e.total, yesJurisdictions, regulations, revenueLabel });
+    }
+    return out.sort(
+      (a, b) => b.regulations.length - a.regulations.length
+        || b.california - a.california
+        || b.total - a.total
+        || a.name.localeCompare(b.name)
+    );
   }
 
   async function exportIndicativeSavings({ returnBuffer = false, companyName = null, targetWb = null } = {}) {
@@ -7760,6 +7846,127 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             summarySheet.getRow(rowNum).height = 18;
           }
           summarySheet.getRow(sumRow++).height = 6; // spacer
+        }
+
+        // Section 3: Corporate Compliance Screening — the company-level
+        // disclosure view from the Corporate Compliance tab. Mirrors that
+        // page's derivation: companies grouped by canonical key, the six
+        // jurisdiction gating answers, and the regulations those answers
+        // plus the researched revenue trigger.
+        {
+          const ccCompanies = corporateComplianceSummary();
+          if (ccCompanies.length) {
+            const anyYes = ccCompanies.filter(c => c.yesJurisdictions.length).length;
+            const regCount = new Set(
+              ccCompanies.flatMap(c => c.regulations.map(r => r.regulation))
+            ).size;
+            const ccCA = ccCompanies.reduce((s, c) => s + c.california, 0);
+
+            sumSection(sumRow++, 'Corporate Compliance Screening');
+            const ccKpis = [
+              { v: String(ccCompanies.length), l: 'Companies Screened', c: SE_GREEN_DARK },
+              { v: String(anyYes), l: 'With a Jurisdiction Hit', c: 'FF3DCD58' },
+              { v: String(regCount), l: 'Reporting Regimes Triggered', c: 'FF29ABE2' },
+              { v: String(ccCA), l: 'California Sites', c: 'FFF7941E' },
+            ];
+            const ccNumRowNum = sumRow++;
+            const ccLblRowNum = sumRow++;
+            const ccNumRow = summarySheet.getRow(ccNumRowNum);
+            const ccLblRow = summarySheet.getRow(ccLblRowNum);
+            ccKpis.forEach((k, i) => {
+              const c0 = i * 2 + 1;
+              summarySheet.mergeCells(ccNumRowNum, c0, ccNumRowNum, c0 + 1);
+              summarySheet.mergeCells(ccLblRowNum, c0, ccLblRowNum, c0 + 1);
+              const num = ccNumRow.getCell(c0);
+              num.value = k.v;
+              num.font = { name: 'Nunito Sans', bold: true, size: 22, color: { argb: SE_TEXT_DARK } };
+              num.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+              num.border = {
+                top: { style: 'medium', color: { argb: k.c } },
+                left: { style: 'thin', color: { argb: SE_BORDER } },
+                right: { style: 'thin', color: { argb: SE_BORDER } },
+              };
+              const lbl = ccLblRow.getCell(c0);
+              lbl.value = k.l.toUpperCase();
+              lbl.font = { name: 'Nunito Sans', bold: true, size: 9, color: { argb: SE_SLATE } };
+              lbl.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+              lbl.border = {
+                bottom: { style: 'thin', color: { argb: SE_BORDER } },
+                left: { style: 'thin', color: { argb: SE_BORDER } },
+                right: { style: 'thin', color: { argb: SE_BORDER } },
+              };
+            });
+            ccNumRow.height = 30;
+            ccLblRow.height = 16;
+            summarySheet.getRow(sumRow++).height = 6; // spacer
+
+            // Per-company table: revenue + which jurisdictions screened Yes
+            // and which regulations that triggers.
+            const ccHdrRowNum = sumRow++;
+            const ccHdrs = [
+              { c: 1, t: 'Company' },
+              { c: 2, t: 'Revenue' },
+              { c: 3, t: 'CA Sites' },
+              { c: 4, span: 2, t: 'Jurisdictions = Yes' },
+              { c: 6, span: 3, t: 'Reporting Regimes That Apply' },
+            ];
+            ccHdrs.forEach(h => {
+              if (h.span) summarySheet.mergeCells(ccHdrRowNum, h.c, ccHdrRowNum, h.c + h.span - 1);
+              const cell = summarySheet.getCell(ccHdrRowNum, h.c);
+              cell.value = h.t;
+              cell.font = { name: 'Nunito Sans', bold: true, size: 9, color: { argb: SE_SLATE } };
+              cell.alignment = { vertical: 'middle', horizontal: h.c === 3 ? 'center' : 'left', indent: h.c === 3 ? 0 : 1, wrapText: true };
+              cell.border = { bottom: { style: 'thin', color: { argb: SE_BORDER } } };
+            });
+            summarySheet.getRow(ccHdrRowNum).height = 20;
+
+            for (const c of ccCompanies) {
+              const rowNum = sumRow++;
+              summarySheet.mergeCells(rowNum, 4, rowNum, 5);
+              summarySheet.mergeCells(rowNum, 6, rowNum, 8);
+              const nameCell = summarySheet.getCell(rowNum, 1);
+              nameCell.value = c.name;
+              nameCell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_TEXT_DARK } };
+              nameCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+
+              const revCell = summarySheet.getCell(rowNum, 2);
+              revCell.value = c.revenueLabel || '—';
+              revCell.font = { name: 'Nunito Sans', size: 10, color: { argb: c.revenueLabel ? SE_TEXT_DARK : SE_SLATE } };
+              revCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+
+              const caCell = summarySheet.getCell(rowNum, 3);
+              caCell.value = c.california;
+              caCell.numFmt = '#,##0';
+              caCell.font = { name: 'Nunito Sans', size: 10, color: { argb: c.california > 0 ? SE_GREEN_DARK : SE_SLATE } };
+              caCell.alignment = { vertical: 'middle', horizontal: 'center' };
+
+              const jCell = summarySheet.getCell(rowNum, 4);
+              jCell.value = c.yesJurisdictions.join(', ') || '—';
+              jCell.font = { name: 'Nunito Sans', size: 10, color: { argb: c.yesJurisdictions.length ? SE_TEXT_DARK : SE_SLATE } };
+              jCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+
+              const rCell = summarySheet.getCell(rowNum, 6);
+              rCell.value = c.regulations.length
+                ? c.regulations.map(r => `${r.regulation} (${r.timeline})`).join('; ')
+                : 'None triggered';
+              rCell.font = {
+                name: 'Nunito Sans', size: 10,
+                bold: c.regulations.length > 0,
+                color: { argb: c.regulations.length ? SE_GREEN_DARK : SE_SLATE },
+              };
+              rCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+              summarySheet.getRow(rowNum).height = 18;
+            }
+
+            const ccNoteRowNum = sumRow++;
+            summarySheet.mergeCells(ccNoteRowNum, 1, ccNoteRowNum, SUM_NCOLS);
+            const ccNote = summarySheet.getCell(ccNoteRowNum, 1);
+            ccNote.value = 'Company-level disclosure screening from the Corporate Compliance tab. A regime is listed when its jurisdiction screened Yes and the researched annual revenue meets that regime’s threshold; blank jurisdictions mean nobody has screened them yet.';
+            ccNote.font = { name: 'Nunito Sans', italic: true, size: 9.5, color: { argb: SE_SLATE } };
+            ccNote.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
+            summarySheet.getRow(ccNoteRowNum).height = 30;
+            summarySheet.getRow(sumRow++).height = 6; // spacer
+          }
         }
       }
     }
