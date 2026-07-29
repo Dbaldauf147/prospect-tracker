@@ -431,7 +431,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             updateSettingsPath={updateSettingsPath}
           />
         )}
-        {subtab === 'sites' && <SitesView settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} prospects={prospects} updateProspect={updateProspect} />}
+        {subtab === 'sites' && <SitesView settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} prospects={prospects} updateProspect={updateProspect} onSelectProspect={onSelectProspect} />}
         {subtab === 'mastersites' && <MasterSiteListView prospects={prospects} />}
         {subtab === 'csrd' && (
           <UploadedListView

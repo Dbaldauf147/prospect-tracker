@@ -332,7 +332,7 @@ function companySlug(name) {
 // settings.companySiteLists, keyed by the company-name slug, and are
 // uploaded from the company popup. This is a read-only convenience so the
 // user doesn't have to open each company to check.
-function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCompany, activeCompany = '' }) {
+function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCompany, activeCompany = '', onSelectProspect }) {
   // Seed the lookup from an already-mapped portfolio company so its name and
   // status show on load without re-searching.
   const [query, setQuery] = useState(activeCompany || '');
@@ -403,7 +403,7 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
     const slug = companySlug(picked);
     const entry = bySlug.get(slug) || null;
     const prospect = prospectBySlug.get(slug) || null;
-    return { company: picked, entry, revenue: String(prospect?.revenue || '').trim() };
+    return { company: picked, entry, prospect, revenue: String(prospect?.revenue || '').trim() };
   }, [picked, bySlug, prospectBySlug]);
 
   function choose(name) {
@@ -487,9 +487,21 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
 
       {result && (
         <div style={{ marginTop: '0.55rem' }}>
-          {/* Mapped company name */}
+          {/* Mapped company name — clickable to open the company popup when a
+              matching Table View record exists. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#0F172A' }}>{result.company}</span>
+            {onSelectProspect && result.prospect ? (
+              <button
+                type="button"
+                onClick={() => onSelectProspect(result.prospect)}
+                title={`Open ${result.company}'s company page`}
+                style={{ padding: 0, border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.85rem', fontWeight: 700, color: '#005A9E', textDecoration: 'underline', textUnderlineOffset: '2px' }}
+              >
+                {result.company}
+              </button>
+            ) : (
+              <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#0F172A' }}>{result.company}</span>
+            )}
             {onUseCompany && (result.company === activeCompany ? (
               <span style={{ padding: '0.05rem 0.45rem', borderRadius: 999, background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534', fontSize: '0.62rem', fontWeight: 700 }}>
                 ✓ Portfolio company
@@ -546,7 +558,7 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
   );
 }
 
-export function SitesView({ settings, updateSettings, updateSettingsPath, prospects = [], updateProspect } = {}) {
+export function SitesView({ settings, updateSettings, updateSettingsPath, prospects = [], updateProspect, onSelectProspect } = {}) {
   // Top-level toggle between the Utility Lookup page and the nested
   // Utility Mapping view (interval-data availability by utility).
   const [mainTab, setMainTab] = useState('lookup'); // 'lookup' | 'mapping' | 'compliance'
@@ -11239,6 +11251,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         companySiteLists={settings?.companySiteLists || {}}
         onUseCompany={setPortfolioCompanyName}
         activeCompany={portfolioCompanyName}
+        onSelectProspect={onSelectProspect}
       />
 
       {savePickerSearch !== null && createPortal(
