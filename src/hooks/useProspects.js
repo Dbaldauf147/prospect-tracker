@@ -1,18 +1,37 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { subscribeToProspects, addProspect as addDoc, updateProspect as updateDoc, deleteProspect as deleteDoc, seedProspects, replaceAllProspects, setProspectsUser } from '../utils/firestoreSync';
+import { subscribeToProspects, addProspect as addDoc, updateProspect as updateDoc, deleteProspect as deleteDoc, seedProspects, replaceAllProspects, setProspectsUser, findDuplicateProspects, dedupeProspects, groupDuplicateProspects, collapseDuplicateGroups, companyDedupeKey } from '../utils/firestoreSync';
 import seedData from '../data/seedProspects';
 
-export function useProspects(user) {
+// Local calendar date as YYYY-MM-DD. Used to stamp when a firm entered
+// its current PE Stage (the PE Portfolio "Days in Stage" board diffs this
+// against today). A plain date string keeps it easy to parse/compare with
+// the shared oppsCallIn date helpers.
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+export function useProspects(user, { settingsLoaded = true, onDuplicatesCollapsed } = {}) {
   const [prospects, setProspects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const seededRef = useRef(false);
   const pausedRef = useRef(false);
   const unsubRef = useRef(null);
+  const dedupeRanRef = useRef(false);
+  // Keep the collapse callback in a ref so wiring it doesn't re-run (and
+  // re-arm) the one-time auto-dedupe effect below.
+  const onCollapseRef = useRef(onDuplicatesCollapsed);
+  onCollapseRef.current = onDuplicatesCollapsed;
+  // Always-current view of the loaded prospects so addProspect can check
+  // for an existing record without a Firestore read.
+  const prospectsRef = useRef([]);
+  prospectsRef.current = prospects;
 
   useEffect(() => {
     if (!user) { setProspects([]); setLoading(false); setProspectsUser(null, null); return; }
     setProspectsUser(user.uid, user.email);
+    dedupeRanRef.current = false; // re-arm the one-time cleanup for this user
 
     async function init() {
       try {
@@ -42,12 +61,75 @@ export function useProspects(user) {
     return () => { if (unsubRef.current) unsubRef.current(); };
   }, [user]);
 
+  // any duplicate prospect documents (same company stored twice).
+  // Detection runs against the already-subscribed list, so when the data
+  // is clean (the normal case) this does ZERO Firestore reads/writes —
+  // just an in-memory grouping. It only touches Firestore when actual
+  // duplicates are found, and those deletions stream back through the
+  // live subscription so every page self-heals without a manual step.
+  //
+  // Gate on settingsLoaded as well: collapsing a duplicate has to migrate
+  // the loser's account-id-keyed settings (Target Account mappings, etc.)
+  // onto the keeper, and that migration needs the loaded settings. Running
+  // before settings arrive would delete the copy and drop its mapping with
+  // no chance to move it.
+  useEffect(() => {
+    if (loading || !settingsLoaded || dedupeRanRef.current || !user) return;
+    dedupeRanRef.current = true;
+    const groups = groupDuplicateProspects(prospectsRef.current);
+    if (groups.length === 0) return; // clean: no I/O
+    (async () => {
+      try {
+        const result = await collapseDuplicateGroups(groups);
+        if (result.removed > 0) {
+          console.log(`Auto-removed ${result.removed} duplicate prospect(s) across ${result.groups} compan${result.groups === 1 ? 'y' : 'ies'}`);
+        }
+        if (result.remaps?.length && onCollapseRef.current) onCollapseRef.current(result.remaps);
+      } catch (err) {
+        console.warn('Auto de-dupe failed:', err.message);
+      }
+    })();
+  }, [loading, settingsLoaded, user]);
+
   async function addProspect(prospect) {
+    // Idempotent by company name, checked against the in-memory list (no
+    // extra read): if a prospect with the same dedupe key already exists,
+    // return it instead of minting a duplicate. Uses companyDedupeKey so a
+    // regional variant like "Brookfield (Dubai)" is NOT treated as the same
+    // company as "Brookfield (NAM Multifamily)" or a bare "Brookfield".
+    const key = companyDedupeKey(prospect?.company);
+    if (key) {
+      const existing = prospectsRef.current.find(p => companyDedupeKey(p?.company) === key);
+      if (existing) return existing.id;
+    }
     return addDoc(prospect);
   }
 
   async function updateProspect(id, updates) {
-    return updateDoc(id, updates);
+    let patch = updates;
+    // When a firm's PE Stage changes, stamp the date it entered the new
+    // stage so the PE Portfolio "Days in Stage" board can measure how long
+    // it's been there. Only re-stamp on an actual change (comparing against
+    // the last-synced value) — the prospect modal auto-saves the whole
+    // record every edit, so most updates carry an unchanged peStage (and a
+    // stale peStageEnteredAt echoed from the record) that must pass through
+    // untouched. On a real change we overwrite peStageEnteredAt regardless
+    // of what the caller folded in. Clearing the stage clears the date.
+    if (patch && Object.prototype.hasOwnProperty.call(patch, 'peStage')) {
+      const current = prospectsRef.current.find(p => p.id === id);
+      const nextStage = String(patch.peStage || '').trim();
+      const prevStage = String(current?.peStage || '').trim();
+      if (nextStage !== prevStage) {
+        patch = { ...patch, peStageEnteredAt: nextStage ? todayISO() : '' };
+      } else if (Object.prototype.hasOwnProperty.call(patch, 'peStageEnteredAt')) {
+        // Stage unchanged: drop any peStageEnteredAt the caller folded in
+        // (the modal echoes the record's — possibly stale — value on every
+        // auto-save) so it can't overwrite the authoritative stored date.
+        patch = { ...patch };
+        delete patch.peStageEnteredAt;
+      }
+    }
+    return updateDoc(id, patch);
   }
 
   async function deleteProspect(id) {
@@ -67,5 +149,18 @@ export function useProspects(user) {
     }
   }, [prospects]);
 
-  return { prospects, loading, error, addProspect, updateProspect, deleteProspect, replaceAll };
+  // Preview duplicate prospects (grouped by normalized company name)
+  // without changing anything — used to confirm before cleanup.
+  const findDuplicates = useCallback(() => findDuplicateProspects(), []);
+
+  // Collapse duplicate prospects, keeping the richest record. The
+  // onSnapshot listener stays live so the UI reflects the deletions as
+  // they stream in.
+  const dedupe = useCallback(async () => {
+    const result = await dedupeProspects();
+    if (result?.remaps?.length && onCollapseRef.current) onCollapseRef.current(result.remaps);
+    return result;
+  }, []);
+
+  return { prospects, loading, error, addProspect, updateProspect, deleteProspect, replaceAll, findDuplicates, dedupe };
 }

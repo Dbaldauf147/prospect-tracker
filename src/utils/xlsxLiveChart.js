@@ -9,8 +9,6 @@
 // stacked area chart (for "fill between curves" effects) plus a line
 // chart. Both share the same category and value axes.
 
-import JSZip from 'jszip';
-
 const XML_HEADER = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 
 const NS = {
@@ -87,7 +85,7 @@ function areaSeriesXml(s, idx, catRef) {
   </c:ser>`;
 }
 
-function buildChartXml({ title, catRef, lineSeries = [], areaSeries = [], yMin, yMax, hideLegendIndices = [], numFmt }) {
+function buildChartXml({ title, catRef, lineSeries = [], areaSeries = [], yMin, yMax, yMajorUnit, hideLegendIndices = [], numFmt }) {
   // Series indices are global across chart types. Areas come first
   // (drawn underneath) so they get the leading indices.
   let idx = 0;
@@ -169,6 +167,7 @@ function buildChartXml({ title, catRef, lineSeries = [], areaSeries = [], yMin, 
         <c:crossAx val="111111111"/>
         <c:crosses val="autoZero"/>
         <c:crossBetween val="between"/>
+        ${yMajorUnit != null ? `<c:majorUnit val="${yMajorUnit}"/>` : ''}
       </c:valAx>
     </c:plotArea>
     <c:legend>
@@ -264,11 +263,13 @@ export async function injectLiveLineChart(buffer, options) {
         areaSeries: options.areaSeries ?? [],
         yMin: options.yMin,
         yMax: options.yMax,
+        yMajorUnit: options.yMajorUnit,
         hideLegendIndices: options.hideLegendIndices ?? [],
         numFmt: options.numFmt,
         anchor: options.anchor,
       }];
   try {
+    const { default: JSZip } = await import('jszip');
     const zip = await JSZip.loadAsync(buffer);
 
     const workbookXml = await zip.file('xl/workbook.xml').async('string');
@@ -314,6 +315,7 @@ export async function injectLiveLineChart(buffer, options) {
         areaSeries: c.areaSeries ?? [],
         yMin: c.yMin,
         yMax: c.yMax,
+        yMajorUnit: c.yMajorUnit,
         hideLegendIndices: c.hideLegendIndices ?? [],
         numFmt: c.numFmt,
       }));

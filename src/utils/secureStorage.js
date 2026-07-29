@@ -12,6 +12,16 @@
 
 const SESSION_KEY_NAME = '__secure_storage_key__';
 
+// Per-user key prefix so two accounts on the same browser can't read
+// each other's encrypted tokens. Set on auth state changes.
+let currentUserId = null;
+export function setSecureUserId(uid) {
+  currentUserId = uid || null;
+}
+function scopedKey(key) {
+  return currentUserId ? `u:${currentUserId}:${key}` : `u:_anon:${key}`;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
@@ -56,8 +66,9 @@ async function getSessionKey() {
  * localStorage.  The ciphertext and a random IV are stored together.
  */
 export async function secureSet(key, value) {
+  const sk = scopedKey(key);
   if (!cryptoAvailable()) {
-    localStorage.setItem(key, JSON.stringify(value));
+    localStorage.setItem(sk, JSON.stringify(value));
     return;
   }
 
@@ -72,10 +83,10 @@ export async function secureSet(key, value) {
       iv: btoa(String.fromCharCode(...iv)),
       ct: btoa(String.fromCharCode(...new Uint8Array(ciphertext))),
     };
-    localStorage.setItem(key, JSON.stringify(payload));
+    localStorage.setItem(sk, JSON.stringify(payload));
   } catch {
     // If encryption fails for any reason, fall back to plain storage.
-    localStorage.setItem(key, JSON.stringify(value));
+    localStorage.setItem(sk, JSON.stringify(value));
   }
 }
 
@@ -85,7 +96,7 @@ export async function secureSet(key, value) {
  * decryption fails (e.g. stale key from a previous session).
  */
 export async function secureGet(key) {
-  const raw = localStorage.getItem(key);
+  const raw = localStorage.getItem(scopedKey(key));
   if (raw === null) return null;
 
   if (!cryptoAvailable()) {
@@ -113,5 +124,5 @@ export async function secureGet(key) {
  * Remove `key` from localStorage.
  */
 export function secureClear(key) {
-  localStorage.removeItem(key);
+  localStorage.removeItem(scopedKey(key));
 }

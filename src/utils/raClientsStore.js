@@ -1,12 +1,14 @@
-// Loads the effective RA Clients list — user-uploaded override (localStorage)
-// takes precedence over the bundled default in src/data/raClients.json.
+// Loads the effective RA Clients list — user-uploaded override (localStorage,
+// scoped per user) takes precedence over the bundled default in
+// src/data/raClients.json.
 import defaultRaClients from '../data/raClients.json';
+import { userLsGet, userLsSet, userLsRemove, userLsHas } from './userLs';
 
 const KEY = 'ra-clients-override';
 
 export function loadEffectiveRaClients() {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = userLsGet(KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
@@ -21,16 +23,16 @@ export function loadEffectiveRaClients() {
 
 export function saveRaClientsOverride(arr) {
   if (!Array.isArray(arr) || arr.length === 0) throw new Error('Override must be a non-empty array');
-  localStorage.setItem(KEY, JSON.stringify(arr));
+  userLsSet(KEY, JSON.stringify(arr));
 }
 
 export function clearRaClientsOverride() {
-  localStorage.removeItem(KEY);
+  userLsRemove(KEY);
 }
 
 export function hasRaClientsOverride() {
   try {
-    return !!localStorage.getItem(KEY);
+    return userLsHas(KEY);
   } catch {
     return false;
   }

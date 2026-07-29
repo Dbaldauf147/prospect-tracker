@@ -12,12 +12,19 @@ import {
 } from '../common/columnLinks';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { loadDealsList, saveDealsOverride, clearDealsOverride } from '../../utils/dealsStore';
-import { loadCommissions, COMMISSION_MONTH_NAMES } from '../../utils/commissionsStore';
+import { loadCommissions } from '../../utils/commissionsStore';
+import { loadOpps2Newest } from '../../utils/opps2Store';
+import {
+  loadSoldWarningIgnore, setSoldWarningIgnore, clearSoldWarningIgnore,
+  SOLD_WARNING_IGNORE_EVENT,
+} from '../../utils/soldWarningIgnore';
+import { DEAL_BFO_KEY, normBfo, indexCommissionsByBfo } from '../../utils/dealCommissions';
 import {
   asNumber, asDate, fmtCurrency, fmtPercent, fmtDate,
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
 } from '../../utils/dealsFormat';
 import { matchesCdm } from '../../utils/cdmMatch';
+import { STATUSES } from '../../data/enums';
 import {
   loadDealClientMap, setDealClientMapping,
   loadDealClientIgnore, setDealClientIgnore,
@@ -25,6 +32,7 @@ import {
   DEALS_CLIENT_MAP_EVENT,
 } from '../../utils/dealClientMap';
 import { PasteImportModal } from './PasteImportModal';
+import { DealCommissionBreakdownModal } from './DealCommissionBreakdownModal';
 
 const MAPPED_COL_KEY = '__mappedToClient__';
 const MAPPED_COL_LABEL = 'Mapped to Client';
@@ -46,10 +54,11 @@ const PROGRESS_FIELDS = [
   { key: 'Commission Sheet Sent to Kathy', label: 'Commission Sheet Sent to Kathy' },
   { key: 'Paperwork completed', label: 'Paperwork' },
   { key: 'Billing information collected', label: 'Billing Letter' },
-  { key: 'Closed Won', label: 'Closed Won' },
+  { key: 'Closed Won', label: 'Closed Won', href: 'https://servicedesk.ems.schneider-electric.com/servicedesk/customer/portal/35/create/3562' },
   { key: 'Setup', label: 'Setup' },
   { key: 'Recurring Revenue', label: 'Recurring' },
   { key: 'Commission', label: 'Commission' },
+  { key: '__siaUploadedToBFO', label: 'SIA line items uploaded to BFO?', yesno: true },
 ];
 
 function normClient(s) { return String(s || '').toLowerCase().trim(); }
@@ -68,6 +77,15 @@ function isFilled(v) {
   return true;
 }
 
+// Completion test for a single handoff field. Yes/No fields only count
+// as done when the answer is an explicit "Yes" — a "No" is a real
+// answer but still an outstanding handoff step. Every other field
+// counts as done once it carries any real value.
+function isFieldDone(row, field) {
+  if (field?.yesno) return String(row[field.key] ?? '').trim().toLowerCase() === 'yes';
+  return isFilled(row[field.key]);
+}
+
 // Days/Paid on stores a per-row "hide" flag under a double-underscore
 // key so the column is filtered out of the visible header set but the
 // value still round-trips through the regular dealsStore.
@@ -75,100 +93,9 @@ const DAYS_PAID_ON_HIDDEN_KEY = '__daysPaidOnHidden';
 
 // The Deal column that holds the BFO opportunity name. Labeled
 // "BFO opp name" everywhere user-facing; the underlying key is the
-// long string the user originally pasted from their tracker. Used to
-// look the deal up against the Commissions tab's BFO Name column so
-// the Revenue Recorded / Paid to Date cells can auto-populate from
-// the matching commission roster rows.
-const DEAL_BFO_KEY = 'BFO - Close after contract execution email has been sent';
-
-// Commissions tab stores monthly cells under year-agnostic month names:
-// "January" for the commission $ and "January Revenue" for the
-// underlying project revenue. Lookups here run against those keys.
-const COMMISSION_MONTH_NAME_SET = new Set(COMMISSION_MONTH_NAMES);
-function isCommissionMonthlyRevenueKey(k) {
-  const s = String(k || '').trim();
-  if (!s.endsWith(' Revenue')) return false;
-  return COMMISSION_MONTH_NAME_SET.has(s.slice(0, s.length - ' Revenue'.length));
-}
-function isCommissionMonthlyKey(k) { return COMMISSION_MONTH_NAME_SET.has(String(k || '').trim()); }
-
-// Normalize a BFO opp name for matching across Deals ↔ Commissions —
-// the user copies and pastes the same identifier on both tabs so a
-// loose compare (trimmed, lowercased, internal whitespace collapsed)
-// shouldn't drop matches over trivial typing differences.
-function normBfo(v) {
-  return String(v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
-}
-
-// Mirror of the Commissions tab's Payment Status logic, run against the
-// per-BFO aggregate so a deal that maps to multiple commission rows
-// gets a single Active / Stopped read-out. Prefers the latest Comm End
-// Date across matching rows; falls back to the latest non-zero
-// commission month versus today when no end date is on file.
-function computePaymentStatus(info) {
-  if (info.endDate) {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const e = new Date(info.endDate); e.setHours(0, 0, 0, 0);
-    if (e.getTime() < today.getTime()) {
-      return { state: 'stopped', label: 'Stopped', title: `Comm End Date ${fmtDate(info.endDate)} is in the past` };
-    }
-    return { state: 'active', label: 'Active', title: `Comm End Date ${fmtDate(info.endDate)}` };
-  }
-  let lastIdx = -1;
-  for (let m = 0; m < 12; m++) if (info.monthlyComm[m] !== 0) lastIdx = m;
-  if (lastIdx === -1) return { state: 'unknown', label: '—', title: 'No Comm End Date and no commission entries on file' };
-  const todayMonthIdx = new Date().getMonth();
-  if (lastIdx >= todayMonthIdx - 1) {
-    return { state: 'active', label: 'Active', title: `Most recent commission: ${COMMISSION_MONTH_NAMES[lastIdx]}` };
-  }
-  return { state: 'stopped', label: 'Stopped', title: `Most recent commission: ${COMMISSION_MONTH_NAMES[lastIdx]} — no payments since` };
-}
-
-// Roll the Commissions roster into a map keyed by normalized BFO Name,
-// summing each project's monthly revenue / commission cells. Multiple
-// commission rows that share a BFO Name (different project lines of
-// the same opp) accumulate into a single total, and the latest Comm
-// End Date across them feeds the Payment Status read-out. Returns an
-// empty Map when nothing is on file so callers can treat the lookup
-// uniformly.
-function indexCommissionsByBfo(rows) {
-  const map = new Map();
-  for (const row of (rows || [])) {
-    const key = normBfo(row?.['BFO Name']);
-    if (!key) continue;
-    let revenue = 0;
-    let commission = 0;
-    const monthlyComm = new Array(12).fill(0);
-    const endDate = asDate(row?.['Comm End Date']);
-    for (const [k, v] of Object.entries(row)) {
-      const n = asNumber(v);
-      if (n == null) continue;
-      if (isCommissionMonthlyRevenueKey(k)) {
-        revenue += n;
-        continue;
-      }
-      if (isCommissionMonthlyKey(k)) {
-        commission += n;
-        const idx = COMMISSION_MONTH_NAMES.indexOf(String(k).trim());
-        if (idx >= 0) monthlyComm[idx] += n;
-      }
-    }
-    const prev = map.get(key);
-    if (prev) {
-      prev.revenue += revenue;
-      prev.commission += commission;
-      prev.rows += 1;
-      for (let i = 0; i < 12; i++) prev.monthlyComm[i] += monthlyComm[i];
-      if (endDate && (!prev.endDate || endDate.getTime() > prev.endDate.getTime())) {
-        prev.endDate = endDate;
-      }
-    } else {
-      map.set(key, { revenue, commission, rows: 1, monthlyComm, endDate: endDate || null });
-    }
-  }
-  for (const info of map.values()) info.paymentStatus = computePaymentStatus(info);
-  return map;
-}
+// long string the user originally pasted from their tracker. The BFO
+// matching helpers (DEAL_BFO_KEY / normBfo / indexCommissionsByBfo) live
+// in utils/dealCommissions so the YOY Commissions chart can reuse them.
 
 // Whole-day delta between a Due Date cell and today. Returns null when
 // the cell can't be parsed as a date. Both sides are flattened to local
@@ -369,12 +296,14 @@ function ProgressTextEditor({ value, onCommit }) {
 // (Single / Multi select) or left it as free text.
 function ProgressPopoverRow({ row, field, columnLinks, listRegistry, onSave }) {
   const raw = row[field.key];
-  const filled = isFilled(raw);
+  const filled = isFieldDone(row, field);
   const link = resolveColumnLink(field.key, columnLinks);
   const onChange = (v) => onSave?.(row.id, field.key, v);
 
   let editor;
-  if (link) {
+  if (field.yesno) {
+    editor = <SelectCell value={raw} onChange={onChange} options={['Yes', 'No']} />;
+  } else if (link) {
     const opts = listRegistry?.get(link.listKey)?.options || [];
     editor = link.mode === 'multi'
       ? <MultiSelectCell value={raw} onChange={onChange} options={opts} />
@@ -391,7 +320,18 @@ function ProgressPopoverRow({ row, field, columnLinks, listRegistry, onSave }) {
       >
         {filled ? '✓' : ''}
       </span>
-      <span style={{ flex: 1, fontSize: '0.72rem', color: filled ? '#1E293B' : '#475569', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={field.label}>{field.label}</span>
+      {field.href ? (
+        <a
+          href={field.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          style={{ flex: 1, fontSize: '0.72rem', color: '#2563EB', textDecoration: 'underline', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          title={`${field.label} — open the Service Desk ticket form in a new tab`}
+        >{field.label}</a>
+      ) : (
+        <span style={{ flex: 1, fontSize: '0.72rem', color: filled ? '#1E293B' : '#475569', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={field.label}>{field.label}</span>
+      )}
       <div style={{ flex: '0 0 130px', minWidth: 0 }}>
         {editor}
       </div>
@@ -415,7 +355,7 @@ function ProgressCell({ row, columnLinks, listRegistry, onSave, onDelete }) {
   const btnRef = useRef(null);
 
   const ignored = isFilled(row[PROGRESS_IGNORED_KEY]);
-  const done = PROGRESS_FIELDS.filter(f => isFilled(row[f.key])).length;
+  const done = PROGRESS_FIELDS.filter(f => isFieldDone(row, f)).length;
   const total = PROGRESS_FIELDS.length;
   const pct = total === 0 ? 0 : done / total;
   // Greyed-out pill when the user has opted this deal out of the
@@ -563,6 +503,125 @@ function statusPillStyle(status) {
   return { background: '#F1F5F9', color: '#475569' };
 }
 
+// The ⚠ shown on a Client Name that matches no company in the Table
+// View roster. Clicking it opens a small popover with a one-click
+// "Add to Table View" button (plus a Status picker that defaults to
+// Client, since a deal implies an active relationship, and stamps the
+// current CDM so the new company lands as the user's account). Adding
+// goes through the shared, idempotent addProspect — a double-click
+// can't mint a duplicate — and once the company lands in Table View
+// the roster updates and this warning clears on its own. An "Ignore"
+// link drops the name into the same per-name ignore set the Mapped to
+// Client column uses, for names that shouldn't ever be added.
+function ClientNameWarning({ name, cdmName, onAdd, onIgnore }) {
+  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState(null);
+  const [status, setStatus] = useState('Client');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const btnRef = useRef(null);
+
+  function openPopover(e) {
+    e.stopPropagation();
+    setError(null);
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (rect) {
+      const margin = 8;
+      const width = 260;
+      const estimatedH = 190;
+      const viewportH = window.innerHeight || document.documentElement.clientHeight;
+      const spaceBelow = viewportH - rect.bottom - margin;
+      const placeAbove = spaceBelow < estimatedH && rect.top > spaceBelow;
+      setAnchor({
+        left: Math.max(margin, rect.right - width),
+        top: placeAbove
+          ? Math.max(margin, rect.top - margin - estimatedH)
+          : rect.bottom + 4,
+        width,
+      });
+    }
+    setOpen(true);
+  }
+
+  async function handleAdd() {
+    if (busy || !onAdd) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onAdd({ company: name, status: status || 'Client', cdm: cdmName || '' });
+      setOpen(false);
+    } catch (err) {
+      setError(err?.message || 'Could not add the company. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={openPopover}
+        onDoubleClick={(e) => e.stopPropagation()}
+        title={`"${name}" isn't a company in Table View — click to add it`}
+        style={{ flex: '0 0 auto', background: 'transparent', border: 'none', color: '#B45309', fontSize: '0.85rem', lineHeight: 1, cursor: 'pointer', padding: 0 }}
+      >⚠</button>
+      {open && createPortal(
+        <>
+          <div
+            onClick={() => setOpen(false)}
+            style={{ position: 'fixed', inset: 0, zIndex: 4999, background: 'transparent' }}
+          />
+          <div
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            style={{ position: 'fixed', left: anchor?.left ?? 0, top: anchor?.top ?? 0, width: anchor?.width ?? 260, maxWidth: 'calc(100vw - 16px)', zIndex: 5000, background: '#fff', border: '1px solid #FCD34D', borderRadius: 8, boxShadow: '0 10px 30px rgba(15, 23, 42, 0.18)', padding: '0.6rem 0.7rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}
+          >
+            <div style={{ fontSize: '0.72rem', color: '#92400E', lineHeight: 1.35 }}>
+              <strong>{name}</strong> isn&apos;t a company in Table View.
+            </div>
+            {onAdd ? (
+              <>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.7rem', color: '#475569' }}>
+                  <span style={{ flex: '0 0 auto' }}>Status</span>
+                  <select
+                    value={status}
+                    onChange={(e) => setStatus(e.target.value)}
+                    style={{ flex: 1, minWidth: 0, padding: '0.2rem 0.3rem', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.7rem', fontFamily: 'inherit', background: '#fff', color: '#1E293B' }}
+                  >
+                    {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  onClick={handleAdd}
+                  disabled={busy}
+                  style={{ padding: '0.35rem 0.6rem', border: '1px solid #16A34A', background: busy ? '#86EFAC' : '#16A34A', color: '#fff', borderRadius: 6, fontSize: '0.72rem', fontWeight: 700, fontFamily: 'inherit', cursor: busy ? 'default' : 'pointer' }}
+                >{busy ? 'Adding…' : '+ Add to Table View'}</button>
+              </>
+            ) : (
+              <div style={{ fontSize: '0.68rem', color: '#94A3B8', fontStyle: 'italic' }}>
+                Adding companies isn&apos;t available here.
+              </div>
+            )}
+            {error && <div style={{ fontSize: '0.68rem', color: '#B91C1C' }}>{error}</div>}
+            {onIgnore && (
+              <button
+                type="button"
+                onClick={() => { onIgnore(name, true); setOpen(false); }}
+                title="Stop warning about this name — it won't count against the unmapped tally either"
+                style={{ padding: 0, background: 'none', border: 'none', color: '#64748B', textDecoration: 'underline', fontSize: '0.68rem', fontFamily: 'inherit', cursor: 'pointer', alignSelf: 'flex-start' }}
+              >Ignore this name</button>
+            )}
+          </div>
+        </>,
+        document.body
+      )}
+    </>
+  );
+}
+
 // Render the helper column as a lazy editor. We were previously
 // mounting a full <select> with every client option (often 100+) for
 // every unmapped row — 250 rows × 130 options = 30k+ DOM nodes just
@@ -692,6 +751,14 @@ const COLUMN_ORDER = [
   'Follow Up On Sale',
 ];
 
+// The Year column is derived, not stored — it always shows the calendar
+// year of the deal's Original Contract Start date so the two can't drift
+// apart. Returns '' when that date is missing or unparseable.
+function dealYear(row) {
+  const d = asDate(row?.['Original Contract Start']);
+  return d ? String(d.getFullYear()) : '';
+}
+
 function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
   if (!rows.length) return [];
   const keys = new Set();
@@ -701,6 +768,9 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
     if (k === 'id' || k.startsWith('__')) continue;
     keys.add(k);
   }
+  // Year is always present since it's computed from Original Contract
+  // Start — surface the column even when no workbook cell populated it.
+  keys.add('Year');
   // Empty new-row case: nothing in the data has populated keys yet
   // (the user just clicked New Deal on a clean slate). Seed with the
   // canonical lineup so they have somewhere to type instead of staring
@@ -723,6 +793,7 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
     const isPaidToDate = k === 'Paid to Date';
     const isDaysPaidOn = k === 'Days/Paid on';
     const isCurrentlyBeingPaid = k === 'Currently being paid';
+    const isYear = k === 'Year';
     const kind = isCheck ? 'check'
       : isCurrency ? 'currency'
       : isPercent ? 'percent'
@@ -767,7 +838,7 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
       return isRevenueRecorded ? hit.revenue : hit.commission;
     }
 
-    function renderCompound(row, v) {
+    function renderCompound(row, v, linked = false) {
       const ignoreKey = isRevenueRecorded ? '__revenueRecordedIgnored' : '__paidToDateIgnored';
       const ignored = isFilled(row[ignoreKey]);
       // Prefer the live Commissions roll-up over whatever was pasted /
@@ -810,12 +881,21 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
 
       const primary = commNumerator != null ? fmtCurrency(commNumerator) : currencyOrZero(v);
       const denomText = fmtCurrency(denominator);
+      // Only the auto-populated (linked) cells have Commissions rows to break
+      // down, so only those get the double-click affordance.
+      const metricKey = isRevenueRecorded ? 'revenue' : 'paid';
+      const openBreakdown = linked
+        ? (e) => { e.stopPropagation(); row.__onShowCommissionBreakdown?.(row.id, metricKey); }
+        : undefined;
       const fullTitle = commNumerator != null
-        ? `Auto-populated from Commissions for "${String(row?.[DEAL_BFO_KEY] || '').trim()}" — ${stateTitle}`
+        ? `Auto-populated from Commissions for "${String(row?.[DEAL_BFO_KEY] || '').trim()}" — ${stateTitle}. Double-click for the mapped breakdown.`
         : stateTitle;
       return (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, width: '100%' }} title={fullTitle}>
-          <span style={{ flex: 1, padding: '1px 8px', borderRadius: 4, background: bg, color: fg, fontVariantNumeric: 'tabular-nums', fontWeight: 600, textAlign: 'left', textDecoration: ignored ? 'line-through' : 'none' }}>
+          <span
+            onDoubleClick={openBreakdown}
+            style={{ flex: 1, padding: '1px 8px', borderRadius: 4, background: bg, color: fg, fontVariantNumeric: 'tabular-nums', fontWeight: 600, textAlign: 'left', textDecoration: ignored ? 'line-through' : 'none', cursor: linked ? 'zoom-in' : 'default' }}
+          >
             {primary}/{denomText}
           </span>
           <button
@@ -851,6 +931,17 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
       // fully-paid / no-due-date rows come through as null and fall to
       // the bottom of the sort either direction.
       ...(isDaysPaidOn ? { getSortValue: (row) => effectiveDaysPaidOn(row) } : {}),
+      // Year renders a value derived from Original Contract Start (see the
+      // isYear render branch), so the filter, sort, and export must read
+      // that same derived value — not the raw stored 'Year' cell. Without
+      // this a deal shows e.g. "2026" from its contract date but a Year
+      // filter (which would otherwise fall back to the blank stored cell)
+      // silently skips it.
+      ...(isYear ? {
+        getFilterValue: (row) => dealYear(row),
+        getSortValue: (row) => { const y = dealYear(row); return y ? Number(y) : null; },
+        exportValue: (row) => dealYear(row),
+      } : {}),
       ...(sticky ? { sticky: true } : {}),
       ...(closedWonHeaderUrl ? {
         renderHeader: (label) => (
@@ -867,6 +958,15 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
       render: (row) => {
         if (isDaysPaidOn) {
           return <DaysPaidOnCell row={row} />;
+        }
+        // Year is derived from Original Contract Start — render it
+        // read-only so it always tracks that date instead of drifting to
+        // a hand-typed value.
+        if (isYear) {
+          const year = dealYear(row);
+          return year
+            ? <span style={{ color: '#334155', fontVariantNumeric: 'tabular-nums' }}>{year}</span>
+            : <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
         }
         // Currently being paid mirrors the Commissions tab's Payment
         // Status pill — pulled by the deal's BFO opp name so the user
@@ -908,7 +1008,7 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
         // wouldn't display anyway. Source-of-truth edits happen on
         // the Commissions tab.
         if ((isRevenueRecorded || isPaidToDate) && lookupCommissionNumerator(row) != null) {
-          return renderCompound(row, row[k]);
+          return renderCompound(row, row[k], true);
         }
         const cellRender = (isRevenueRecorded || isPaidToDate)
           ? (v) => renderCompound(row, v)
@@ -932,6 +1032,7 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
         );
       },
       exportValue: (row) => {
+        if (isYear) return dealYear(row);
         const v = row[k];
         if (v == null) return '';
         if (isCurrency || isPercent) {
@@ -944,8 +1045,16 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
   });
 }
 
-export function DealsView({ settings, updateSettings, prospects = [], cdmName }) {
+export function DealsView({ settings, updateSettings, prospects = [], cdmName, user, addProspect }) {
   const [{ data, source }, setStore] = useState(() => loadDealsList());
+  // Opps 2 records, loaded once so the page can flag Sold opps that have
+  // no matching deal here (see soldMissingDeals below). Picks the newest
+  // of the local cache and the synced Firestore copy so the warning
+  // reflects what the Opps 2 tab would show, even on a fresh device.
+  const [opps2Records, setOpps2Records] = useState([]);
+  // Per-opp dismissals for the "Sold opp has no matching deal" banner, so
+  // the user can silence a flagged opp they've decided not to track here.
+  const [soldIgnore, setSoldIgnore] = useState(() => loadSoldWarningIgnore());
   // Commissions roster feeds the Revenue Recorded / Paid to Date auto-
   // population. Re-hydrated on the storage event so a paste on the
   // Commissions tab in another window flows through here without a
@@ -954,6 +1063,11 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
   const [search, setSearch] = useState('');
   const [uploadError, setUploadError] = useState(null);
   const [showPaste, setShowPaste] = useState(false);
+  // Which deal cell's commission breakdown popup is open: { rowId, metric }
+  // where metric is 'revenue' (Revenue Recorded) or 'paid' (Paid to Date).
+  // Opened by double-clicking an auto-populated Revenue Recorded / Paid to
+  // Date cell.
+  const [breakdown, setBreakdown] = useState(null);
   const [clientMap, setClientMap] = useState(() => loadDealClientMap());
   const [ignoreSet, setIgnoreSet] = useState(() => loadDealClientIgnore());
   const [onlyUnmapped, setOnlyUnmapped] = useState(false);
@@ -997,13 +1111,32 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
       setClientMap(loadDealClientMap());
       setIgnoreSet(loadDealClientIgnore());
     }
+    function onSoldIgnore() {
+      setSoldIgnore(loadSoldWarningIgnore());
+    }
     window.addEventListener('storage', onStorage);
     window.addEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
+    window.addEventListener(SOLD_WARNING_IGNORE_EVENT, onSoldIgnore);
     return () => {
       window.removeEventListener('storage', onStorage);
       window.removeEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
+      window.removeEventListener(SOLD_WARNING_IGNORE_EVENT, onSoldIgnore);
     };
   }, []);
+
+  // Pull the Opps 2 records so we can warn about Sold opps that aren't
+  // represented on the Deals page. A cancelled flag guards against a
+  // late resolve writing state after unmount / a user change.
+  useEffect(() => {
+    let cancelled = false;
+    loadOpps2Newest(user?.uid)
+      .then((d) => {
+        if (cancelled) return;
+        setOpps2Records(Array.isArray(d?.records) ? d.records : []);
+      })
+      .catch(() => { if (!cancelled) setOpps2Records([]); });
+    return () => { cancelled = true; };
+  }, [user?.uid]);
 
   // Active + Old Client roster the helper-column dropdown picks from.
   // CDM-matching Client / Old Client prospects come first, but any
@@ -1052,9 +1185,15 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
     return out;
   }, [prospects]);
 
+  // Normalized set a deal's Client Name auto-maps against. Built from
+  // EVERY company in the Table View roster (companySuggestions), not just
+  // the CDM/status-filtered client pool — so an exact name match auto-maps
+  // regardless of who owns the account or whether it's tagged Client / Old
+  // Client. The Mapped-to-Client dropdown still offers the narrower
+  // clientOptions pool for manual assignment.
   const clientNameSet = useMemo(
-    () => new Set(clientOptions.map(n => normClient(n))),
-    [clientOptions]
+    () => new Set(companySuggestions.map(n => normClient(n))),
+    [companySuggestions]
   );
 
   // Lookup from normalized company name to prospect, so the Client
@@ -1101,6 +1240,25 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
       due.setDate(due.getDate() + 60);
       const dueDateStr = due.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
       const next = [{ 'Due Date': dueDateStr }, ...prev.data];
+      try { saveDealsOverride(next); } catch (err) { console.warn('Save deal failed', err); }
+      return { data: next, source: 'override' };
+    });
+  }
+
+  // Add a new deal seeded from a flagged Sold opp. Carries over the BFO
+  // opp name (so the row immediately matches the opp and clears the
+  // warning) plus the Account → Client Name and the opp's GM. Mirrors
+  // addNewDeal's Due Date seed so Days/Paid on renders right away.
+  function addDealFromOpp(opp) {
+    setStore(prev => {
+      const due = new Date();
+      due.setDate(due.getDate() + 60);
+      const dueDateStr = due.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
+      const row = { 'Due Date': dueDateStr };
+      if (opp.bfo) row[DEAL_BFO_KEY] = opp.bfo;
+      if (opp.account) row['Client Name'] = opp.account;
+      if (opp.gm) row['GM'] = opp.gm;
+      const next = [row, ...prev.data];
       try { saveDealsOverride(next); } catch (err) { console.warn('Save deal failed', err); }
       return { data: next, source: 'override' };
     });
@@ -1174,15 +1332,78 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
     });
   }
 
+  // Open the commission breakdown popup for a deal's Revenue Recorded /
+  // Paid to Date cell. Wired to a double-click on the auto-populated pill;
+  // stores the raw row index + metric so the modal reads the live deal.
+  function showCommissionBreakdown(rowId, metric) {
+    const idx = Number(rowId);
+    if (!Number.isFinite(idx)) return;
+    setBreakdown({ rowId: idx, metric });
+  }
+
   const rows = useMemo(
     // A row counts as the freshly-added "new" row (and gets autofocused
     // on its Client Name cell) as long as the top row hasn't been given
     // a Client Name yet. Anchoring this to Client Name rather than the
     // raw key count lets addNewDeal seed defaults like Due Date without
     // disabling the autofocus behavior.
-    () => data.map((r, i) => ({ ...r, id: i, __onUpdate: updateCell, __newRow: i === 0 && !isFilled(r['Client Name']) })),
+    () => data.map((r, i) => ({ ...r, id: i, __onUpdate: updateCell, __onShowCommissionBreakdown: showCommissionBreakdown, __newRow: i === 0 && !isFilled(r['Client Name']) })),
     [data]
   );
+  // Sold Opps 2 opps that don't line up with any deal here. The link
+  // between the two is the BFO opportunity name — "BFO Link" on an opp,
+  // DEAL_BFO_KEY on a deal — so a Sold opp is flagged when it has no BFO
+  // name at all, or its BFO name matches no deal row. Surfaces as a
+  // warning banner so the user can add the missing deal (or assign the
+  // opp's BFO name) before it slips through the cracks.
+  const soldMissingDeals = useMemo(() => {
+    // Treat dash / #N/A placeholders as "no BFO name", matching the Opps 2
+    // import dedup so a "-" cell doesn't read as a real, matchable name.
+    const realBfo = (v) => {
+      const n = normBfo(v);
+      return n === '-' || n === '#n/a' ? '' : n;
+    };
+    const sold = opps2Records.filter(
+      (r) => String(r?.['Stage'] ?? '').trim().toLowerCase() === 'sold'
+    );
+    if (sold.length === 0) return [];
+    const dealBfoNames = new Set();
+    for (const r of data) {
+      const n = realBfo(r?.[DEAL_BFO_KEY]);
+      if (n) dealBfoNames.add(n);
+    }
+    return sold
+      .filter((r) => {
+        const n = realBfo(r?.['BFO Link']);
+        return !n || !dealBfoNames.has(n);
+      })
+      .map((r) => {
+        const account = String(r?.['Account'] ?? '').trim();
+        const scope = String(r?.['Scope'] ?? '').trim();
+        const bfo = String(r?.['BFO Link'] ?? '').trim();
+        // Stable dismissal key: prefer the opp's _id; fall back to an
+        // account/scope/BFO composite so opps without an _id still
+        // persist their own ignore state.
+        const ignoreKey = r?._id != null
+          ? `id:${r._id}`
+          : `k:${account}|${scope}|${bfo}`.toLowerCase();
+        // GM to carry onto a new deal. Sold opps record their margin as
+        // "Final Margin" (the close-out field); fall back to a plain GM /
+        // Margin column if the data uses one of those names instead.
+        const gm = String(r?.['GM'] ?? r?.['Final Margin'] ?? r?.['Margin'] ?? '').trim();
+        return { id: r?._id, account, scope, bfo, ignoreKey, gm };
+      });
+  }, [opps2Records, data]);
+
+  // Split the flagged opps into the ones still showing and the ones the
+  // user has dismissed, so the banner can hide dismissals while still
+  // offering a Reset to bring them all back.
+  const visibleSoldMissing = useMemo(
+    () => soldMissingDeals.filter((o) => !soldIgnore.has(o.ignoreKey)),
+    [soldMissingDeals, soldIgnore]
+  );
+  const ignoredSoldCount = soldMissingDeals.length - visibleSoldMissing.length;
+
   // Rolled-up Commissions data, keyed by normalized BFO opp name. Feeds
   // the Revenue Recorded / Paid to Date auto-population in buildColumns.
   const commissionsByBfo = useMemo(
@@ -1243,15 +1464,51 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
       ),
       exportValue: (row) => {
         if (isFilled(row[PROGRESS_IGNORED_KEY])) return 'Ignored';
-        const done = PROGRESS_FIELDS.filter(f => isFilled(row[f.key])).length;
+        const done = PROGRESS_FIELDS.filter(f => isFieldDone(row, f)).length;
         return `${done}/${PROGRESS_FIELDS.length}`;
       },
       getFilterValue: () => '',
     };
     // Drop sticky from the original first column (Client Name) — only
-    // one column can be left-anchored at a time.
-    const clientNameCol = { ...baseColumns[0], sticky: false };
-    if (clientOptions.length === 0) {
+    // one column can be left-anchored at a time. Also decorate the cell
+    // with a ⚠ warning when the deal's Client Name matches no company
+    // in the Table View roster — directly or through a hand-mapping to
+    // a client. This is broader than the "Mapped to Client" helper,
+    // which only checks the active-client subset: a name can be a real
+    // Table View company that just isn't tagged as a client (that shows
+    // the yellow "Map to client…" prompt), versus a name that matches
+    // nothing in Table View at all (a typo, or an account never added)
+    // — only the latter gets the ⚠. Stays silent when the roster hasn't
+    // loaded (prospectByName empty) so there's nothing to match against,
+    // and respects the same per-name ignore set as the mapping column.
+    const clientNameBaseRender = baseColumns[0].render;
+    const clientNameCol = {
+      ...baseColumns[0],
+      sticky: false,
+      render: (row) => {
+        const raw = String(row['Client Name'] || '').trim();
+        const norm = normClient(raw);
+        const mapped = clientMap[norm];
+        const unknownToTableView = !!raw
+          && prospectByName.size > 0
+          && !ignoreSet.has(norm)
+          && !prospectByName.has(norm)
+          && !(mapped && prospectByName.has(normClient(mapped)));
+        if (!unknownToTableView) return clientNameBaseRender(row);
+        return (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%' }}>
+            <span style={{ flex: 1, minWidth: 0 }}>{clientNameBaseRender(row)}</span>
+            <ClientNameWarning
+              name={raw}
+              cdmName={cdmName}
+              onAdd={addProspect || null}
+              onIgnore={setDealClientIgnore}
+            />
+          </span>
+        );
+      },
+    };
+    if (clientNameSet.size === 0) {
       return [selectCol, progressCol, clientNameCol, ...baseColumns.slice(1)];
     }
     const helperCol = {
@@ -1267,7 +1524,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
         const ignored = ignoreSet.has(norm);
         if (auto) {
           return (
-            <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: '#DCFCE7', color: '#166534' }} title="Client Name matches an active client">
+            <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: '#DCFCE7', color: '#166534' }} title="Client Name matches a company in Table View">
               ✓ Matches
             </span>
           );
@@ -1334,7 +1591,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
     };
     // Order: select · progress · client name · mapped-to-client · status · rest.
     return [selectCol, progressCol, clientNameCol, helperCol, statusCol, ...baseColumns.slice(1)];
-  }, [baseColumns, clientOptions, clientNameSet, clientMap, ignoreSet, prospectByName, columnLinks, listRegistry, selectedIds]);
+  }, [baseColumns, clientOptions, clientNameSet, clientMap, ignoreSet, prospectByName, columnLinks, listRegistry, selectedIds, cdmName, addProspect]);
   const tableId = useMemo(
     () => 'deals:' + columns.map(c => c.key).sort().join('|'),
     [columns]
@@ -1353,7 +1610,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
   );
 
   function isRowUnmapped(row) {
-    if (clientOptions.length === 0) return false;
+    if (clientNameSet.size === 0) return false;
     const raw = String(row['Client Name'] || '').trim();
     if (!raw) return false;
     const norm = normClient(raw);
@@ -1369,7 +1626,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
   // column so the filter button stays in lockstep with the badge.
   const incompleteCount = useMemo(
     () => rows.filter(r => !isFilled(r[PROGRESS_IGNORED_KEY])
-      && PROGRESS_FIELDS.some(f => !isFilled(r[f.key]))).length,
+      && PROGRESS_FIELDS.some(f => !isFieldDone(r, f))).length,
     [rows]
   );
 
@@ -1384,7 +1641,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
     if (onlyUnmapped) out = out.filter(isRowUnmapped);
     if (onlyIncomplete) {
       out = out.filter(r => !isFilled(r[PROGRESS_IGNORED_KEY])
-        && PROGRESS_FIELDS.some(f => !isFilled(r[f.key])));
+        && PROGRESS_FIELDS.some(f => !isFieldDone(r, f)));
     }
     return out;
   }, [search, rows, onlyUnmapped, onlyIncomplete, clientNameSet, clientMap, ignoreSet, clientOptions]);
@@ -1447,7 +1704,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
   // hasn't been hand-mapped, and hasn't been explicitly ignored.
   // Surfaces the work the user still has to do after a paste import.
   const unmappedCount = useMemo(() => {
-    if (clientOptions.length === 0) return 0;
+    if (clientNameSet.size === 0) return 0;
     let n = 0;
     for (const r of rows) {
       const raw = String(r['Client Name'] || '').trim();
@@ -1459,7 +1716,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
       n++;
     }
     return n;
-  }, [rows, clientNameSet, clientMap, ignoreSet, clientOptions]);
+  }, [rows, clientNameSet, clientMap, ignoreSet]);
 
   // Distinct unmapped source-name strings drive bulk actions: ignoring
   // or assigning happens per source name, so each "Brookfield (BPREP
@@ -1563,6 +1820,71 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
         </div>
       )}
 
+      {visibleSoldMissing.length > 0 && (
+        <div style={{ margin: '0 1.25rem 0.5rem', padding: '0.6rem 0.85rem', background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: 6, color: '#92400E', fontSize: '0.8rem', flexShrink: 0 }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>
+            ⚠ {visibleSoldMissing.length} Sold {visibleSoldMissing.length === 1 ? 'opp has' : 'opps have'} no matching deal here
+          </div>
+          <div style={{ fontSize: '0.74rem', marginBottom: 6 }}>
+            These opportunities are marked <strong>Sold</strong> in Opps but their BFO opp name isn&apos;t on the Deals page. Add the deal (or set the opp&apos;s BFO Opportunity Name) so it shows up here.
+          </div>
+          <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: 3 }}>
+            {visibleSoldMissing.map((o) => (
+              <li key={o.ignoreKey} style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                <span>
+                  <strong>{o.account || 'Unknown account'}</strong>
+                  {o.scope ? <> &middot; {o.scope}</> : null}
+                  {o.bfo
+                    ? <span style={{ color: '#B45309' }}> — BFO opp name &ldquo;{o.bfo}&rdquo; not found on Deals</span>
+                    : <span style={{ color: '#B45309' }}> — no BFO opp name set</span>}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => addDealFromOpp(o)}
+                  title="Create a new deal seeded with this opp's BFO opp name, Client Name, and GM"
+                  style={{
+                    flex: '0 0 auto', padding: '0 0.45rem', background: '#92400E',
+                    border: '1px solid #92400E', borderRadius: 4, color: '#fff',
+                    fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                  }}
+                >Add to new deal</button>
+                <button
+                  type="button"
+                  onClick={() => setSoldWarningIgnore(o.ignoreKey, true)}
+                  title="Stop warning about this opp"
+                  style={{
+                    flex: '0 0 auto', padding: '0 0.4rem', background: 'transparent',
+                    border: '1px solid #FCD34D', borderRadius: 4, color: '#92400E',
+                    fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                  }}
+                >Ignore</button>
+              </li>
+            ))}
+          </ul>
+          {ignoredSoldCount > 0 && (
+            <div style={{ fontSize: '0.7rem', marginTop: 6 }}>
+              {ignoredSoldCount} ignored ·{' '}
+              <button
+                type="button"
+                onClick={() => clearSoldWarningIgnore()}
+                style={{ padding: 0, background: 'none', border: 'none', color: '#92400E', textDecoration: 'underline', fontSize: '0.7rem', fontFamily: 'inherit', cursor: 'pointer' }}
+              >Reset</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {visibleSoldMissing.length === 0 && ignoredSoldCount > 0 && (
+        <div style={{ margin: '0 1.25rem 0.5rem', fontSize: '0.7rem', color: '#94A3B8', flexShrink: 0 }}>
+          {ignoredSoldCount} Sold-opp {ignoredSoldCount === 1 ? 'warning' : 'warnings'} ignored ·{' '}
+          <button
+            type="button"
+            onClick={() => clearSoldWarningIgnore()}
+            style={{ padding: 0, background: 'none', border: 'none', color: '#64748B', textDecoration: 'underline', fontSize: '0.7rem', fontFamily: 'inherit', cursor: 'pointer' }}
+          >Reset</button>
+        </div>
+      )}
+
       <div style={{ padding: '0 1.25rem 0.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', flexShrink: 0, flexWrap: 'wrap' }}>
         <input
           type="text"
@@ -1574,7 +1896,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
         <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
           {filtered.length} of {rows.length}
         </span>
-        {clientOptions.length > 0 && (
+        {clientNameSet.size > 0 && (
           <button
             type="button"
             onClick={() => setOnlyUnmapped(v => !v)}
@@ -1785,7 +2107,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
             defaultSort={{ key: 'Days/Paid on', direction: 'desc' }}
             alwaysVisible={alwaysVisible}
             rowStyle={(row) => {
-              if (clientOptions.length === 0) return undefined;
+              if (clientNameSet.size === 0) return undefined;
               const raw = String(row['Client Name'] || '').trim();
               if (!raw) return undefined;
               const norm = normClient(raw);
@@ -1796,6 +2118,11 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
             }}
             emptyMessage={search ? `No deals match "${search}"` : 'No deals to display'}
             enableColumnFilters
+            // Name the downloaded workbook "Deal Export - <date>.xlsx".
+            exportFileName="Deal Export"
+            // Always include Commission and the derived Year in the Excel
+            // export, even when the user has hidden them on screen.
+            exportExtraColumnKeys={['Commission', 'Year']}
             settings={settings}
             updateSettings={updateSettings}
           />
@@ -1815,6 +2142,14 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
           availableLists={availableLists}
           onChange={updateColumnLinks}
           onClose={() => setLinkModalOpen(false)}
+        />
+      )}
+      {breakdown && data[breakdown.rowId] && (
+        <DealCommissionBreakdownModal
+          deal={data[breakdown.rowId]}
+          metric={breakdown.metric}
+          commissionsRows={commissionsData}
+          onClose={() => setBreakdown(null)}
         />
       )}
     </div>
