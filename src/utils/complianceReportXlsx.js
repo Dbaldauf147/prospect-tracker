@@ -846,6 +846,7 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
         `${co.total} ${co.total === 1 ? 'site' : 'sites'}`,
         co.california ? `${co.california} in CA` : '',
         co.revenueLabel ? `Revenue ${co.revenueLabel}${co.revenueFiscalYear ? ` (${co.revenueFiscalYear})` : ''}` : '',
+        co.employees ? `${Number(co.employees).toLocaleString()} employees` : '',
       ].filter(Boolean).join('  ·  ');
       nameCell.value = `${co.name}    ${bits}`;
       nameCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_LIGHT } };

@@ -168,10 +168,10 @@ function RevenueSection({ data, loading, error, disabled, onResearch }) {
   // The detail that used to render inline (ownership / employees, the
   // summary, and when it was researched) rides on the hover title instead,
   // so it stays reachable without crowding the figure.
+  // Employees moved out to its own card row, so it's no longer repeated here.
   const detail = data
     ? [
-        [data.ownership, data.ticker, data.employees ? `${Number(data.employees).toLocaleString()} employees` : '']
-          .filter(Boolean).join(' · '),
+        [data.ownership, data.ticker].filter(Boolean).join(' · '),
         data.summary,
         data.savedAt ? `researched ${fmtStamp(data.savedAt)}` : '',
       ].filter(Boolean).join('\n\n')
@@ -200,6 +200,32 @@ function RevenueSection({ data, loading, error, disabled, onResearch }) {
       )}
       {error && (
         <span style={{ color: '#B91C1C', fontSize: '0.65rem' }}>{error}</span>
+      )}
+    </div>
+  );
+}
+
+// Total employees, from the same research blob the revenue row reads. Kept
+// as its own row because headcount gates regimes independently of revenue
+// (CSRD's 1,000-employee test, for one). No button of its own — the figure
+// arrives with the revenue run, so "Re-run research" up there refreshes it.
+function EmployeesSection({ data, loading }) {
+  const count = Number(data?.employees);
+  const has = Number.isFinite(count) && count > 0;
+  return (
+    <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', display: 'flex', alignItems: 'baseline', gap: '0.5rem', flexWrap: 'wrap' }}>
+      {has ? (
+        <span style={{ fontWeight: 700, color: 'var(--color-text)', fontSize: 'var(--font-size-sm)' }}>
+          {count.toLocaleString()}
+        </span>
+      ) : (
+        <span style={{ fontStyle: 'italic' }}>
+          {loading
+            ? 'Researching employees…'
+            : data
+              ? 'Not reported'
+              : 'Employees: pending research'}
+        </span>
       )}
     </div>
   );
@@ -842,6 +868,17 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                         error={revState[c.name]?.error || null}
                         disabled={c.name === UNNAMED}
                         onResearch={() => researchRevenue(c.name)}
+                      />
+                    </CardRow>
+
+                    {/* Employees — its own row rather than buried in the
+                        Revenue hover, since headcount gates regimes in its
+                        own right (e.g. CSRD's 1,000-employee threshold).
+                        Comes from the same revenue-research run. */}
+                    <CardRow label="Employees">
+                      <EmployeesSection
+                        data={revenueResearch[revenueSlug(c.name)] || null}
+                        loading={!!revState[c.name]?.loading}
                       />
                     </CardRow>
 

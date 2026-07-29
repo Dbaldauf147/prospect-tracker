@@ -3763,6 +3763,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         yesJurisdictions, regulations, revenueLabel,
         revenueFiscalYear: revData?.fiscalYear || '',
         revenueSummary: revData?.summary || '',
+        employees: Number.isFinite(Number(revData?.employees)) && Number(revData.employees) > 0
+          ? Number(revData.employees)
+          : null,
         summary: research?.summary || '',
         sources: Array.isArray(research?.sources) ? research.sources : [],
         answeredAt: research?.savedAt || null,
