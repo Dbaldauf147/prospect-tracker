@@ -28,6 +28,100 @@
   margin-top: 2px;
 }
 
+/* Predictive company search in the sidebar header. */
+.searchWrap {
+  position: relative;
+  margin-top: 8px;
+}
+
+.searchInput {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  outline: none;
+}
+
+.searchInput::placeholder {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.searchInput:focus {
+  border-color: rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.searchDropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 200;
+  max-height: 320px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 6px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  padding: 4px;
+}
+
+.searchGroup {
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+  padding: 0.35rem 0.5rem 0.2rem;
+}
+
+.searchItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  color: #1e293b;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchItem:hover,
+.searchItemActive {
+  background: #eff6ff;
+  color: #1e40af;
+}
+
+.searchItemSub {
+  display: block;
+  font-size: 0.66rem;
+  color: #64748b;
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchItemActive .searchItemSub { color: #3b82f6; }
+
+.searchEmpty {
+  padding: 0.5rem;
+  font-size: var(--font-size-xs);
+  color: #64748b;
+  font-style: italic;
+}
+
 .nav {
   flex: 1;
   padding: 0.75rem 0.5rem;
@@ -67,6 +161,24 @@
   font-size: 1.1rem;
   width: 1.25rem;
   text-align: center;
+}
+
+/* Count badge on a nav item (e.g. open Issues). Pushed to the far edge so
+   the number lines up regardless of label length. */
+.navBadge {
+  margin-left: auto;
+  min-width: 1.25rem;
+  padding: 0 0.35rem;
+  height: 1.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #DC2626;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .userSection {
@@ -193,4 +305,26 @@
 .settingsItemActive {
   background: var(--color-sidebar-active);
   color: #fff;
+}
+
+/* On/Off pill pushed to the trailing edge of a toggle menu item. */
+.toggleStateOn,
+.toggleStateOff {
+  margin-left: auto;
+  min-width: 2rem;
+  padding: 1px 0.4rem;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-align: center;
+  line-height: 1.4;
+}
+.toggleStateOn {
+  background: #16A34A;
+  color: #fff;
+}
+.toggleStateOff {
+  background: rgba(255,255,255,0.12);
+  color: var(--color-sidebar-text);
 }

@@ -1,15 +1,19 @@
 import { useState, useEffect } from 'react';
+import { apiFetch } from '../utils/apiFetch';
 import { collection, writeBatch, doc, getDocs, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import { userLsGet, userLsSet } from '../utils/userLs';
+import { getOppsSheetDisplayUrl } from '../utils/oppsSheetUrl';
+import { useAuth } from '../contexts/AuthContext';
 import styles from './SyncPanel.module.css';
 
 const SYNC_SETTINGS_KEY = 'prospect-sync-settings';
 
 function loadSettings() {
-  try { return JSON.parse(localStorage.getItem(SYNC_SETTINGS_KEY)) || {}; } catch { return {}; }
+  try { return JSON.parse(userLsGet(SYNC_SETTINGS_KEY)) || {}; } catch { return {}; }
 }
 function saveSettings(s) {
-  localStorage.setItem(SYNC_SETTINGS_KEY, JSON.stringify(s));
+  userLsSet(SYNC_SETTINGS_KEY, JSON.stringify(s));
 }
 
 function extractSpreadsheetId(url) {
@@ -47,10 +51,13 @@ function csvFromProspects(prospects) {
   return rows.join('\n');
 }
 
-const OPPS_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1ee0OREqA25jzDaR6xRDSrj_ZIZDymQjf1k2Z2_ajVKw/edit?gid=0#gid=0';
-
 export function SyncPanel({ prospects, onClose }) {
+  const { isAdmin } = useAuth();
   const [settings, setSettings] = useState(loadSettings);
+  // The OppsView/AgentsView/ProgressView Opps sheet URL is resolved
+  // via getOppsSheetCsvUrl elsewhere — here we just display it so the
+  // user can see what's being pulled.
+  const oppsSheetDisplayUrl = getOppsSheetDisplayUrl({ isAdmin, settings });
   const [url, setUrl] = useState(settings.sheetsUrl || '');
   const [sheetName, setSheetName] = useState(settings.sheetName || 'Accounts');
   const [status, setStatus] = useState(null);
@@ -80,15 +87,15 @@ export function SyncPanel({ prospects, onClose }) {
       freq: settings.mainFreq ?? 5,
       paused: !!settings.mainPaused,
     }] : []),
-    {
-      label: 'Opps',
-      url: OPPS_SHEET_URL,
+    ...(oppsSheetDisplayUrl ? [{
+      label: 'Opps - Old',
+      url: oppsSheetDisplayUrl,
       sheetName: 'Opps',
-      lastSync: localStorage.getItem('opps-cache') ? (() => { try { return JSON.parse(localStorage.getItem('opps-cache'))?.fetchedAt; } catch { return null; } })() : null,
+      lastSync: userLsGet('opps-cache') ? (() => { try { return JSON.parse(userLsGet('opps-cache'))?.fetchedAt; } catch { return null; } })() : null,
       type: 'opps',
       freq: settings.oppsFreq ?? 5,
       paused: !!settings.oppsPaused,
-    },
+    }] : []),
     ...(settings.extraSheets || []).map(s => ({ ...s, type: 'extra' })),
   ];
 
@@ -179,7 +186,7 @@ export function SyncPanel({ prospects, onClose }) {
 
     try {
       // 1. Read from Google Sheets
-      const readRes = await fetch(`/api/sheets-sync?spreadsheetId=${spreadsheetId}&sheetName=${encodeURIComponent(sheetName)}&_t=${Date.now()}`);
+      const readRes = await apiFetch(`/api/sheets-sync?spreadsheetId=${spreadsheetId}&sheetName=${encodeURIComponent(sheetName)}&_t=${Date.now()}`);
       if (!readRes.ok) {
         const text = await readRes.text();
         throw new Error(`Sheets API returned ${readRes.status}: ${text.slice(0, 200)}`);
@@ -242,7 +249,7 @@ export function SyncPanel({ prospects, onClose }) {
       // pulling from Sheets into Firestore on its own schedule. Writing 4000+
       // docs in batch triggers the real-time listener and freezes the browser.
       setStatus({ type: 'loading', message: `Step 3/3: Writing ${mergedList.length} prospects back to Google Sheets...` });
-      const writeRes = await fetch('/api/sheets-sync', {
+      const writeRes = await apiFetch('/api/sheets-sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -284,7 +291,7 @@ export function SyncPanel({ prospects, onClose }) {
     setStatus({ type: 'loading', message: 'Pushing website data to Google Sheets...' });
 
     try {
-      const res = await fetch('/api/sheets-sync', {
+      const res = await apiFetch('/api/sheets-sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -319,7 +326,7 @@ export function SyncPanel({ prospects, onClose }) {
     setStatus({ type: 'loading', message: 'Pulling data from Google Sheets...' });
 
     try {
-      const res = await fetch(`/api/sheets-sync?spreadsheetId=${spreadsheetId}&sheetName=${encodeURIComponent(sheetName)}&_t=${Date.now()}`);
+      const res = await apiFetch(`/api/sheets-sync?spreadsheetId=${spreadsheetId}&sheetName=${encodeURIComponent(sheetName)}&_t=${Date.now()}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
@@ -413,7 +420,7 @@ export function SyncPanel({ prospects, onClose }) {
                           ))}
                         </select>
                         {sheet.type === 'main' && <span className={styles.badgeMain}>Main</span>}
-                        {sheet.type === 'opps' && <span className={styles.badgeOpps}>Opps</span>}
+                        {sheet.type === 'opps' && <span className={styles.badgeOpps}>Opps - Old</span>}
                         {sheet.type === 'extra' && (
                           <button className={styles.sheetRemoveBtn} onClick={() => removeExtraSheet(extraIdx)} title="Remove">&times;</button>
                         )}

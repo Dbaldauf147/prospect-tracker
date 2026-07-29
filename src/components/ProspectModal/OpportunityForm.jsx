@@ -3,6 +3,7 @@ import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { ScopingNotesEditor } from './ScopingNotesEditor';
 import { SERVICE_CATEGORIES } from '../../data/enums';
+import { SERVICE_QUESTIONS, SERVICE_THEIR_QUESTIONS } from '../../data/serviceQuestions';
 import * as MsgReaderModule from '@kenjiuno/msgreader';
 // CJS default-export interop: depending on how Vite resolves the package,
 // the class can land at either MsgReaderModule.default or one extra level
@@ -66,7 +67,7 @@ export const DEFAULT_FORM_TEMPLATE = {
       smartAgenda: true, // unlocks speaker picker + time-balance behavior
       columns: [
         { key: 'subject', label: 'Subject' },
-        { key: 'speaker', label: 'Speaker(s)', attendeePicker: true, multi: true },
+        { key: 'speaker', label: 'Subject Owner(s)', attendeePicker: true, multi: true },
         { key: 'startTime', label: 'Time' },
         { key: 'duration', label: 'Minutes', numeric: true, numFmt: '0' },
         { key: 'slides', label: 'Slides / Software' },
@@ -133,6 +134,14 @@ function buildFirstRowSeeds(cdmName) {
   };
 }
 
+// Seed values for the CLOSING (last) row of certain tables so a fresh form
+// always ends with a fixed wrap-up line. Keyed by table.key. The agenda
+// always closes with a 5-minute "Determine next steps" slot that carries no
+// Subject Owner — mirroring the seeded "Introductions" opener.
+const LAST_ROW_SEEDS = {
+  agenda: { subject: 'Determine next steps', duration: '5' },
+};
+
 function emptyFormData(template = DEFAULT_FORM_TEMPLATE, cdmName) {
   const fieldValues = {};
   for (const f of template.fields) fieldValues[f.key] = '';
@@ -140,15 +149,17 @@ function emptyFormData(template = DEFAULT_FORM_TEMPLATE, cdmName) {
   const firstRowSeeds = buildFirstRowSeeds(cdmName);
   for (const t of template.tables) {
     const seed = firstRowSeeds[t.key] || null;
-    tables[t.key] = Array.from({ length: 2 }, (_, idx) => {
-      const row = Object.fromEntries(t.columns.map(c => [c.key, '']));
-      if (idx === 0 && seed) {
-        for (const [k, v] of Object.entries(seed)) {
-          if (k in row) row[k] = v;
-        }
-      }
+    const lastSeed = LAST_ROW_SEEDS[t.key] || null;
+    const makeRow = () => Object.fromEntries(t.columns.map(c => [c.key, '']));
+    const applySeed = (row, s) => {
+      for (const [k, v] of Object.entries(s)) if (k in row) row[k] = v;
       return row;
-    });
+    };
+    // Opening row (seeded for some tables) plus a blank working row, then a
+    // closing row appended at the end for tables that carry a wrap-up seed.
+    const rows = [seed ? applySeed(makeRow(), seed) : makeRow(), makeRow()];
+    if (lastSeed) rows.push(applySeed(makeRow(), lastSeed));
+    tables[t.key] = rows;
   }
   return { fieldValues, tables, linkedBfoLink: null, linkedOppName: null, meeting: null };
 }
@@ -421,6 +432,26 @@ function displayAttendeeName(a, nicknames = {}) {
   return `${base} - Goes by ${nick}`;
 }
 
+// Fields we snapshot from a matched HubSpot contact onto the saved
+// attendee. Mirrors every match.* field read by displayAttendeeName,
+// renderAttendee and the Excel export so the Attendees section keeps
+// rendering names, titles, company, location, notes and LinkedIn even
+// when the live HubSpot contact pool hasn't been (re)loaded this session.
+const ATTENDEE_SNAPSHOT_FIELDS = [
+  'id', 'vid', 'firstname', 'lastname', 'email', 'jobtitle', 'company',
+  'city', 'country', 'notes', 'hs_content_membership_notes', 'message',
+  'hs_linkedin_url', 'linkedin_url', 'hs_linkedinid',
+];
+function snapshotFromMatch(match) {
+  if (!match) return null;
+  const snap = {};
+  for (const k of ATTENDEE_SNAPSHOT_FIELDS) {
+    const v = match[k];
+    if (v !== undefined && v !== null && v !== '') snap[k] = v;
+  }
+  return Object.keys(snap).length ? snap : null;
+}
+
 function matchProspectByName(name, prospects) {
   if (!name || !prospects?.length) return null;
   const strip = s => String(s || '').toLowerCase().replace(/\b(inc|llc|ltd|corp|co|lp|gmbh)\b\.?/g, '').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
@@ -536,62 +567,130 @@ function meetingTemplateFor(rawStage) {
   return null;
 }
 
-// Canned 'Questions to Ask Them' for each service. When the user puts a
-// service in the 'Scope Being Explored' field, these questions are
-// auto-added to the ourQuestions table (skipping duplicates).
-const SERVICE_QUESTIONS = {
-  'bill payment': [
-    'Can you tell us a bit more about our current bill payment program?',
-    'How many utility accounts are you managing each month?',
-    "How often do you catch billing errors, and what's your process when you do?",
-    'Have you ever been hit with late fees or service disruptions? How did that come about?',
-    'What does your approval workflow look like, and where does it tend to get stuck?',
-  ],
-  'budgets': [
-    'How do you build your energy budget today? Is it based on prior year actuals, a rate forecast, or something else?',
-    "How do you account for weather variability, rate changes, or new sites when you're forecasting?",
-    'How close did your actuals come to budget last year, and where were the biggest misses?',
-    'How many reforecasts do you do per year?',
-  ],
-  'rate optimization': [
-    'How often do you screen for new regulated rate opportunities?',
-    'What kind of regulated rate savings have you seen over the past several years?',
-  ],
-  'microgrid advisor': [
-    'Do they already have batteries in place? If so, where?',
-    'What is their main objective they are trying to solve for?',
-    "If they don't have batteries in place, what are they looking for? Just BESS or any sort of MG?",
-    'How do they plan to fund?',
-    'What is their lead time objective?',
-  ],
-};
+// Prominent picker for importing a previous Notes page's Call Context
+// into the active one. Replaces the original tiny inline <select> next
+// to the field label — that picker was easy to miss, this one shows a
+// labeled button with the candidate count and a click-to-import panel
+// of each source note (title + last-edited + preview).
+function CallContextImportPicker({ candidates, onImport }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (wrapRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
 
-// Canned 'Questions They Might Ask' per service, paired with a suggested
-// 'Our Response'. Auto-added to the theirQuestions table when the service
-// appears in Scope Being Explored. Responses may be blank — those rows
-// seed the prompt but leave the answer for Dan to craft in the moment.
-const SERVICE_THEIR_QUESTIONS = {
-  'bill payment': [
-    { question: "What's your process for onboarding new sites or accounts?", response: '' },
-    { question: 'Do you integrate with our ERP/AP system, or will we need to manually import data?', response: '' },
-    { question: 'What does the approval workflow look like on our end — can we customize it?', response: '' },
-    { question: 'How do you handle exceptions, disputes, and bills that fall outside normal parameters?', response: '' },
-  ],
-  'budgets': [
-    { question: "What's your forecasting methodology, and how accurate have you been historically?", response: '' },
-    { question: 'How do you handle weather normalization and rate volatility?', response: '' },
-    { question: 'How do you factor in our operational changes — new sites, closures, expansions?', response: '' },
-    { question: 'Can you model "what-if" scenarios for us?', response: '' },
-  ],
-  'rate optimization': [
-    { question: 'Do you scan all sites and rate schedules?', response: "With our hunting license approach, we only go after utilities where we have a good chance of finding savings. You would not want to pay us to search where it doesn't make sense." },
-    { question: 'How often do you scan for new rates?', response: '' },
-    { question: "What's a typical savings percentage you find for companies like ours?", response: '' },
-    { question: 'Who handles the actual rate switch — you or us?', response: '' },
-  ],
-};
+  const formatWhen = (ts) => {
+    if (!ts) return '';
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return '';
+    const now = Date.now();
+    const diff = Math.max(0, now - ts);
+    const day = 86400000;
+    if (diff < day) return 'today';
+    if (diff < 2 * day) return 'yesterday';
+    if (diff < 7 * day) return `${Math.floor(diff / day)}d ago`;
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
+  };
 
-export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, contactReportsTo = {}, contactNicknames = {}, prospects = [], onCreateContact, importableNotes = [], cdmName, competitorOptions = [], onMentionCompetitor }) {
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        title="Pull the Call Context from a previous Notes page on this company"
+        style={{
+          fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+          padding: '0.3rem 0.65rem',
+          color: '#fff', background: '#0078D4',
+          border: '1px solid #0078D4', borderRadius: 4,
+          cursor: 'pointer',
+          display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
+        }}
+      >
+        <span aria-hidden="true">⤓</span>
+        <span>Import Call Context</span>
+        <span style={{
+          fontSize: '0.7rem', fontWeight: 700,
+          padding: '0 0.4rem', borderRadius: 999,
+          background: 'rgba(255,255,255,0.25)',
+        }}>{candidates.length}</span>
+      </button>
+      {open && (
+        <div
+          style={{
+            position: 'absolute', top: 'calc(100% + 4px)', right: 0,
+            zIndex: 50, width: 380, maxWidth: '92vw',
+            background: '#fff', border: '1px solid var(--color-border)',
+            borderRadius: 6, boxShadow: '0 8px 24px rgba(15, 23, 42, 0.18)',
+            overflow: 'hidden',
+          }}
+        >
+          <div style={{
+            padding: '0.5rem 0.7rem',
+            borderBottom: '1px solid var(--color-border-light)',
+            background: 'var(--color-bg)',
+            fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-text-muted)',
+            textTransform: 'uppercase', letterSpacing: '0.03em',
+          }}>
+            Pick a previous Notes page
+          </div>
+          <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+            {candidates.map(n => {
+              const ctx = (n.context || '').trim();
+              const preview = ctx.length > 160 ? `${ctx.slice(0, 160).trimEnd()}…` : ctx;
+              return (
+                <button
+                  key={n.id}
+                  type="button"
+                  onClick={() => { onImport(n); setOpen(false); }}
+                  style={{
+                    display: 'block', width: '100%', textAlign: 'left',
+                    padding: '0.55rem 0.7rem',
+                    border: 'none', borderBottom: '1px solid var(--color-border-light)',
+                    background: '#fff', cursor: 'pointer', fontFamily: 'inherit',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = '#fff'; }}
+                >
+                  <div style={{
+                    display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+                    gap: '0.5rem',
+                  }}>
+                    <span style={{
+                      fontWeight: 600, color: 'var(--color-text)', fontSize: '0.82rem',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>{n.title || 'Untitled'}</span>
+                    <span style={{
+                      flex: '0 0 auto',
+                      fontSize: '0.68rem', color: 'var(--color-text-muted)',
+                    }}>{formatWhen(n.updatedAt)} · {ctx.length} chars</span>
+                  </div>
+                  {preview && (
+                    <div style={{
+                      marginTop: '0.2rem',
+                      fontSize: '0.75rem', color: 'var(--color-text-muted)',
+                      whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                      display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                      overflow: 'hidden',
+                    }}>{preview}</div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, contactReportsTo = {}, contactNicknames = {}, prospects = [], onCreateContact, onOpenContact, importableNotes = [], cdmName, competitorOptions = [], onMentionCompetitor, companyBackground = null, serviceQuestionsOverride = null, serviceTheirQuestionsOverride = null }) {
   const template = DEFAULT_FORM_TEMPLATE;
 
   // Local mirror of the persisted value. All edits update localValue
@@ -657,6 +756,12 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       linkedBfoLink: src.linkedBfoLink || null,
       linkedOppName: src.linkedOppName || null,
       meeting: src.meeting || null,
+      // Carry the per-form seed record through so the question auto-fill
+      // effects can tell which services were already imported. Without
+      // this, formData.seededScopeServices is always undefined and the
+      // effects fall back to inferring seeds from populated rows — which
+      // resurrects questions the user deleted after a page refresh.
+      seededScopeServices: src.seededScopeServices || null,
     };
   }, [localValue, template, cdmName]);
 
@@ -780,7 +885,9 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     for (const svc of services) {
       const key = svc.toLowerCase();
       if (prior.has(key)) continue;
-      const canned = SERVICE_QUESTIONS[key];
+      // Prefer the user's edited template (Dropdowns → Questions) for this
+      // service; fall back to the hardcoded default when untouched.
+      const canned = (Array.isArray(serviceQuestionsOverride?.[key]) ? serviceQuestionsOverride[key] : SERVICE_QUESTIONS[key]);
       if (!canned) continue;
       for (const q of canned) {
         const k = `${key}::${q}`;
@@ -839,7 +946,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     for (const svc of services) {
       const key = svc.toLowerCase();
       if (prior.has(key)) continue;
-      const canned = SERVICE_THEIR_QUESTIONS[key];
+      const canned = (Array.isArray(serviceTheirQuestionsOverride?.[key]) ? serviceTheirQuestionsOverride[key] : SERVICE_THEIR_QUESTIONS[key]);
       if (!canned) continue;
       for (const pair of canned) {
         const qText = (pair.question || '').trim();
@@ -870,19 +977,29 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     set(patch);
   }, [formData.fieldValues?.scope]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Always keep at least one empty row at the bottom of Questions to
-  // Ask Them so the user can always type a new question without having
-  // to go find an 'add row' button.
-  useEffect(() => {
-    const rows = formData.tables?.ourQuestions || [];
-    const last = rows[rows.length - 1];
-    const lastIsEmpty = !last || (!(last.service || '').trim() && !(last.question || '').trim());
-    if (lastIsEmpty) return;
-    const def = template.tables.find(t => t.key === 'ourQuestions');
+  // Always keep at least one empty row at the bottom of the Questions
+  // tables so the user can always type a new question without having to
+  // go find an 'add row' button — including after every row is cleared.
+  const ensureTrailingEmptyRow = (key) => {
+    const def = template.tables.find(t => t.key === key);
     if (!def) return;
+    const rows = formData.tables?.[key] || [];
+    const isRowEmpty = (r) => def.columns.every(c => !(r?.[c.key] || '').toString().trim());
+    const last = rows[rows.length - 1];
+    // Append a fresh empty row when the table is empty or the last row
+    // already has content; do nothing if a trailing empty row exists.
+    if (rows.length > 0 && isRowEmpty(last)) return;
     const empty = Object.fromEntries(def.columns.map(c => [c.key, '']));
-    set({ tables: { ...formData.tables, ourQuestions: [...rows, empty] } });
+    set({ tables: { ...formData.tables, [key]: [...rows, empty] } });
+  };
+
+  useEffect(() => {
+    ensureTrailingEmptyRow('ourQuestions');
   }, [formData.tables?.ourQuestions]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    ensureTrailingEmptyRow('theirQuestions');
+  }, [formData.tables?.theirQuestions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateTableCell = (tableKey, rowIdx, colKey, val) => {
     const rows = [...(formData.tables[tableKey] || [])];
@@ -1013,6 +1130,41 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 {agendaSum < meetingTotalMinutes && ` · ${meetingTotalMinutes - agendaSum} min unassigned`}
               </span>
             )}
+            {(t.key === 'ourQuestions' || t.key === 'theirQuestions') && (() => {
+              const rowCount = (formData.tables?.[t.key] || []).filter(r => {
+                if (!r) return false;
+                for (const c of t.columns) if ((r[c.key] || '').toString().trim()) return true;
+                return false;
+              }).length;
+              return (
+                <button
+                  type="button"
+                  disabled={rowCount === 0}
+                  onClick={() => {
+                    if (rowCount === 0) return;
+                    if (!window.confirm(`Clear all ${rowCount} row${rowCount === 1 ? '' : 's'} from "${t.label}"? The auto-fill will not re-add canned questions for services already in Scope.`)) return;
+                    // Mark every current Scope service as already seeded
+                    // so the canned-question auto-fill effect doesn't
+                    // immediately re-populate the table after the clear.
+                    const scope = (formData.fieldValues?.scope || '').trim();
+                    const services = scope ? scope.split(',').map(s => s.trim()).filter(Boolean) : [];
+                    const priorSeed = new Set((formData.seededScopeServices?.[t.key] || []).map(s => String(s).toLowerCase()));
+                    for (const svc of services) priorSeed.add(svc.toLowerCase());
+                    set({
+                      tables: { ...formData.tables, [t.key]: [] },
+                      seededScopeServices: {
+                        ...(formData.seededScopeServices || {}),
+                        [t.key]: [...priorSeed],
+                      },
+                    });
+                  }}
+                  title={rowCount === 0
+                    ? 'Already empty'
+                    : `Remove every row from ${t.label} and stop the auto-fill from re-seeding canned questions for the current Scope services.`}
+                  style={{ marginLeft: 'auto', fontSize: '0.68rem', padding: '0.15rem 0.5rem', border: '1px solid #FCA5A5', background: rowCount === 0 ? '#F8FAFC' : '#FEF2F2', color: rowCount === 0 ? '#94A3B8' : '#B91C1C', borderRadius: 4, cursor: rowCount === 0 ? 'not-allowed' : 'pointer', fontWeight: 600, fontFamily: 'inherit' }}
+                >Clear all{rowCount > 0 ? ` (${rowCount})` : ''}</button>
+              );
+            })()}
             {t.key === 'meetingNotes' && importableNotes.some(n => (n.rows?.length || 0) > 0) && (
               <select
                 defaultValue=""
@@ -1813,7 +1965,10 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       const key = em || `name:${(a.name || '').toLowerCase().trim()}`;
       if (seen.has(key)) continue; // dedupe if same email/name on both sides
       seen.add(key);
-      const match = em ? byEmail.get(em) : null;
+      // Prefer the live HubSpot contact, but fall back to the snapshot
+      // persisted on the attendee so the section still populates when the
+      // contact pool hasn't been loaded/refreshed this session.
+      const match = (em ? byEmail.get(em) : null) || a.matchSnapshot || null;
       const matchedCompany = (match?.company || '').trim();
       const matchedOtherCompany = !!matchedCompany && matchedCompany.toLowerCase() !== thisCompany;
       const enriched = { ...a, match, matchedCompany, matchedOtherCompany };
@@ -1854,6 +2009,38 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
 
   const totalAttendees = (seAttendees?.length || 0) + (customerAttendees?.length || 0);
 
+  // Persist a snapshot of each attendee's matched HubSpot contact onto the
+  // saved meeting so the Attendees section still populates (name, title,
+  // company, location, notes, LinkedIn) without re-loading the HubSpot
+  // contact pool. Only runs when the live pool is present and only writes
+  // when a snapshot actually changed, so it can't loop. When no live pool
+  // is loaded we leave any existing snapshots untouched.
+  useEffect(() => {
+    const mt = formData.meeting;
+    if (!mt) return;
+    const pool = (allHubspotContacts && allHubspotContacts.length > 0) ? allHubspotContacts : companyContacts;
+    if (!pool || pool.length === 0) return;
+    const byEmail = new Map();
+    for (const c of pool) {
+      const em = (c.email || '').toLowerCase().trim();
+      if (em && !byEmail.has(em)) byEmail.set(em, c);
+    }
+    let changed = false;
+    const sync = (list) => (list || []).map(a => {
+      const em = (a.email || '').toLowerCase().trim();
+      const live = em ? byEmail.get(em) : null;
+      if (!live) return a; // no live match — keep whatever snapshot is already there
+      const snap = snapshotFromMatch(live);
+      if (JSON.stringify(a.matchSnapshot || null) === JSON.stringify(snap)) return a;
+      changed = true;
+      return { ...a, matchSnapshot: snap };
+    });
+    const attendees = sync(mt.attendees);
+    const manualAttendees = sync(mt.manualAttendees);
+    if (changed) set({ meeting: { ...mt, attendees, manualAttendees } });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.meeting, allHubspotContacts, companyContacts]);
+
   // --- Manual attendees -------------------------------------------------
   // Users can add attendees on top of those imported from Outlook. Stored
   // under meeting.manualAttendees so they survive ICS re-imports (re-import
@@ -1867,6 +2054,13 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   // Optional sub-sections (and within a sub-section).
   const [seDragKey, setSeDragKey] = useState(null);   // unique id of the row being dragged
   const [seDragOverIdx, setSeDragOverIdx] = useState(null); // current drop target index in the displayed SE list
+  // Customer-side drag state. Custom groups live on the meeting object
+  // under `customerGroups: string[]`; each attendee may carry a free-
+  // text `group` field that places them under that custom group. Empty
+  // group falls back to Required / Optional bucketing.
+  const [custDragKey, setCustDragKey] = useState(null);
+  const [newGroupOpen, setNewGroupOpen] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
   // Once the user picks a contact from the dropdown we hide the list until
   // they edit the name again — avoids re-showing the suggestion they just
   // selected.
@@ -1958,6 +2152,52 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     const next = [...(mt[found.source] || [])];
     next[found.index] = { ...next[found.index], required: !!required };
     set({ meeting: { ...mt, [found.source]: next } });
+  }
+
+  // Move an attendee to a different customer-side bucket. `group` is a
+  // free-text custom group label, or '' to fall back to Required /
+  // Optional. `required` overrides the required flag when supplied.
+  function setAttendeeCustomGroup(a, group, required) {
+    const mt = formData.meeting || {};
+    const found = findAttendeeIn(mt, a);
+    if (!found) return;
+    const next = [...(mt[found.source] || [])];
+    const patch = { group: group || '' };
+    if (typeof required === 'boolean') patch.required = required;
+    next[found.index] = { ...next[found.index], ...patch };
+    set({ meeting: { ...mt, [found.source]: next } });
+  }
+
+  function addCustomerGroup(name) {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return;
+    const mt = formData.meeting || {};
+    const existing = Array.isArray(mt.customerGroups) ? mt.customerGroups : [];
+    if (existing.some(g => g.toLowerCase() === trimmed.toLowerCase())) return;
+    set({ meeting: { ...mt, customerGroups: [...existing, trimmed] } });
+  }
+
+  function removeCustomerGroup(name) {
+    const mt = formData.meeting || {};
+    const existing = Array.isArray(mt.customerGroups) ? mt.customerGroups : [];
+    const trimmed = (name || '').trim();
+    const nextGroups = existing.filter(g => g.toLowerCase() !== trimmed.toLowerCase());
+    // Any attendees pointing at the removed group fall back to Required
+    // / Optional bucketing.
+    const stripGroup = (arr) => (arr || []).map(x => {
+      if (!x?.group) return x;
+      if (String(x.group).toLowerCase() === trimmed.toLowerCase()) {
+        const { group: _drop, ...rest } = x;
+        return rest;
+      }
+      return x;
+    });
+    set({ meeting: {
+      ...mt,
+      customerGroups: nextGroups,
+      attendees: stripGroup(mt.attendees),
+      manualAttendees: stripGroup(mt.manualAttendees),
+    } });
   }
 
   // Reorder a displayed list (the SE-only or Customer-only bucket, in
@@ -2173,7 +2413,10 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         if (!s) return 1;
         const explicit = s.split('\n');
         let lines = 0;
-        const perLine = Math.max(8, Math.floor(colUnits * 1.5));
+        // Slightly conservative chars-per-line (1.4 rather than 1.5) so
+        // text that wraps just past the column width is counted as the
+        // extra line it really takes, instead of being clipped.
+        const perLine = Math.max(8, Math.floor(colUnits * 1.4));
         for (const line of explicit) {
           const len = line.length;
           if (len === 0) { lines += 1; continue; }
@@ -2183,7 +2426,10 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       };
       // ~14pt per wrapped line of 10pt text (matches Excel's native
       // auto-fit), with a 16pt floor so single-line rows stay tight.
-      const rowHeightForLines = (lines) => Math.min(600, Math.max(16, lines * 14));
+      // Multi-line (wrapping) cells get a small cushion on top so the
+      // final line never clips when Excel wraps a touch tighter than
+      // estimated.
+      const rowHeightForLines = (lines) => (lines <= 1 ? 16 : Math.min(600, lines * 14 + 8));
 
       // Row 1: "SE ADVISORY SERVICES" wordmark. SE is green, the rest
       // is dark gray — rendered as a rich-text cell on a white background.
@@ -2273,8 +2519,9 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         row.height = 18;
       };
 
-      const addTable = (title, columns, rows /*, widths unused */) => {
+      const addTable = (title, columns, rows, _widths /* unused */, opts = {}) => {
         addSectionHeader(title);
+        const highlightRow = typeof opts.highlightRow === 'function' ? opts.highlightRow : null;
         // Distribute the SPAN worksheet columns across this table's columns
         // so the whole table fills the full page width. Columns can declare
         // a widthRatio (e.g. 0.25 for a Service column); any missing ratios
@@ -2333,10 +2580,13 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         hRow.height = 22;
 
         // Data rows
+        const HL_BG = 'FFFEF3C7';   // amber-100 — highlighted (top) row fill
+        const HL_TEXT = 'FF7C2D12'; // amber-900 — highlighted row text
         const dataRows = rows.length > 0 ? rows : [{}];
         dataRows.forEach((r, idx) => {
           const dRow = ws.addRow([]);
           const zebra = idx % 2 === 1;
+          const isHighlight = highlightRow ? highlightRow(r) : false;
           let maxLines = 1;
           slots.forEach((slot, i) => {
             const col = columns[i];
@@ -2348,20 +2598,55 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               c.value = (n != null && !isNaN(n)) ? n : null;
               if (col.numFmt) c.numFmt = col.numFmt;
             } else {
-              c.value = (raw === '' || raw == null) ? null : raw;
+              // Star the highlighted row's first column so the top issue
+              // reads as "★ …" while staying in the same table.
+              const text = (raw === '' || raw == null) ? '' : String(raw);
+              const display = (isHighlight && i === 0) ? `★ ${text}`.trim() : text;
+              c.value = display === '' ? null : display;
             }
-            c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            c.font = { name: 'Nunito Sans', size: 10, bold: isHighlight, color: { argb: isHighlight ? HL_TEXT : SE_TEXT_DARK } };
             c.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
             c.border = borderAll;
-            if (zebra) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
+            if (isHighlight) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HL_BG } };
+            else if (zebra) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
             if (slot.end > slot.start) {
               ws.mergeCells(dRow.number, slot.start, dRow.number, slot.end);
             }
-            maxLines = Math.max(maxLines, estimateWrappedLines(raw, slotUnits(slot)));
+            const measure = (isHighlight && i === 0 && (raw != null && raw !== '')) ? `★ ${raw}` : raw;
+            maxLines = Math.max(maxLines, estimateWrappedLines(measure, slotUnits(slot)));
           });
           dRow.height = rowHeightForLines(maxLines);
         });
       };
+
+      // --- Company Background (from saved Claude research) -------------
+      // Surfaces the prospect's Claude research at the very top of the
+      // export. Sources are intentionally omitted; Summary, Programs,
+      // Targets, Frameworks, and Reports (with clickable URLs) are
+      // included. Skipped entirely when no research has been run yet.
+      if (companyBackground) {
+        const d = companyBackground;
+        const hasSummary = typeof d.summary === 'string' && d.summary.trim().length > 0;
+        const hasPrograms = Array.isArray(d.programs) && d.programs.length > 0;
+        const hasTargets = Array.isArray(d.targets) && d.targets.length > 0;
+        const hasFrameworks = Array.isArray(d.frameworks) && d.frameworks.length > 0;
+        const hasReports = Array.isArray(d.reports) && d.reports.length > 0;
+        if (hasSummary || hasPrograms || hasTargets || hasFrameworks || hasReports) {
+          addBlankRow();
+          addSectionHeader('Company Background');
+          if (hasSummary) addFieldRow('Summary', d.summary.trim());
+          if (hasPrograms) addFieldRow('Programs', d.programs.map(p => `• ${p}`).join('\n'));
+          if (hasTargets) addFieldRow('Targets', d.targets.map(t => `• ${t}`).join('\n'));
+          if (hasFrameworks) addFieldRow('Frameworks', d.frameworks.join(', '));
+          if (hasReports) {
+            for (const r of d.reports) {
+              const title = r?.title || r?.url || '';
+              const year = r?.year ? ` (${r.year})` : '';
+              addFieldRow('Report', `${title}${year}`, r?.url || undefined);
+            }
+          }
+        }
+      }
 
       // --- Meeting (imported from .ics) --------------------------------
       if (formData.meeting) {
@@ -2379,9 +2664,6 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           addFieldRow('Duration', m === 0 ? `${h}h` : h === 0 ? `${m} min` : `${h}h ${m}m`);
         }
         if (formData.meeting.location) addFieldRow('Location', formData.meeting.location);
-        if (formData.meeting.organizer) addFieldRow('Organizer',
-          [formData.meeting.organizer.name, formData.meeting.organizer.email && `<${formData.meeting.organizer.email}>`].filter(Boolean).join(' ')
-        );
 
         // Side-by-side attendee tables mirroring the on-screen form. SE
         // uses cols 1-4 (Name, Required, Dan's Ask, filler); col 5 is the
@@ -2540,14 +2822,46 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         const href = raw ? (/^https?:\/\//i.test(raw) ? raw : `https://${raw}`) : '';
         addFieldRow('PPT Link', raw, href);
       }
-      addFieldRow('Call Context', formData.fieldValues.context || '');
+      // Call Context can be long — when a single cell exceeds Excel's
+      // per-row height limit (~409 pt) the trailing lines clip and the
+      // user has to expand the row by hand to see them. Render it as a
+      // subheading + one row per paragraph so each row stays well under
+      // the cap and the full text is visible by default.
+      {
+        const ctx = String(formData.fieldValues.context || '').trim();
+        if (ctx) {
+          addSubheading('Call Context');
+          const fullWidth = colWidths.reduce((a, b) => a + b, 0);
+          const paragraphs = ctx.split(/\n{2,}/);
+          for (const para of paragraphs) {
+            const text = para.replace(/\s+$/g, '');
+            if (!text) continue;
+            const row = ws.addRow([]);
+            ws.mergeCells(row.number, 1, row.number, SPAN);
+            const c = ws.getCell(row.number, 1);
+            c.value = text;
+            c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            c.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+            c.border = borderAll;
+            row.height = rowHeightForLines(estimateWrappedLines(text, fullWidth));
+          }
+        } else {
+          addFieldRow('Call Context', '');
+        }
+      }
       addFieldRow('Intent', formData.fieldValues.intent || '');
       addFieldRow('End In Mind', formData.fieldValues.endInMind || '');
 
       // --- Details (structured fields) --------------------------------
+      // "General Notes" and "Scoping Details Notes" are explicitly
+      // excluded from the export — they're surfaced inside the Notes
+      // page UI but the user doesn't want them duplicated into the
+      // structured Details block of the workbook.
+      const DETAILS_EXPORT_SKIP = new Set(['summary', 'scopingNotes']);
       addBlankRow();
       addSectionHeader('Details');
       for (const f of template.fields) {
+        if (DETAILS_EXPORT_SKIP.has(f.key)) continue;
         if (f.showWhenStatus && formData.fieldValues.status !== f.showWhenStatus) continue;
         const raw = (formData.fieldValues[f.key] || '').trim ? (formData.fieldValues[f.key] || '').trim() : (formData.fieldValues[f.key] || '');
         if (f.isLink && raw) {
@@ -2579,62 +2893,20 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
             return out;
           });
         }
-        // Key Issues: lift the single starred row out and render it as
-        // a "★ THEIR TOP ISSUE" callout block above the regular table,
-        // styled in an amber palette so the top issue is impossible to
-        // miss in the export. Remaining issues fall through to the
-        // standard Key Issues table.
+        // Key Issues: keep the starred "top issue" inside the Key Issues
+        // table rather than lifting it into a separate callout above.
+        // Float it to the first row and flag it so addTable renders it
+        // with the amber highlight / ★ styling — same table, different
+        // formatting.
+        let addTableOpts;
         if (t.key === 'meetingNotes') {
           const starred = tableRows.find(r => r?.starred);
           if (starred) {
-            const TOP_BG = 'FFFEF3C7';     // amber-100
-            const TOP_BG_SOFT = 'FFFFFBEB'; // amber-50
-            const TOP_TEXT = 'FF7C2D12';   // amber-900
-            const labelRow = ws.addRow([]);
-            const labelCell = ws.getCell(labelRow.number, 1);
-            labelCell.value = '★ THEIR TOP ISSUE';
-            labelCell.font = { name: 'Nunito Sans', bold: true, size: 13, color: { argb: TOP_TEXT } };
-            labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TOP_BG } };
-            labelCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-            labelCell.border = borderAll;
-            ws.mergeCells(labelRow.number, 1, labelRow.number, SPAN);
-            labelRow.height = 22;
-            for (const col of t.columns) {
-              const row = ws.addRow([]);
-              const lc = ws.getCell(row.number, 1);
-              // Trim long instructional column labels like
-              // "Issue - Capture all issues (What else is there?)"
-              // down to just "Issue" / "Evidence" / "Impact" for the
-              // callout block.
-              lc.value = String(col.label || '').split(/\s*-\s*/)[0];
-              lc.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: TOP_TEXT } };
-              lc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TOP_BG_SOFT } };
-              lc.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
-              lc.border = borderAll;
-              ws.mergeCells(row.number, 1, row.number, 2);
-              const vc = ws.getCell(row.number, 3);
-              vc.value = starred[col.key] || '';
-              vc.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-              vc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TOP_BG_SOFT } };
-              vc.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
-              vc.border = borderAll;
-              ws.mergeCells(row.number, 3, row.number, SPAN);
-              let mergedWidth = 0;
-              for (let k = 3; k <= SPAN; k++) mergedWidth += colWidths[k - 1] || 0;
-              row.height = rowHeightForLines(estimateWrappedLines(starred[col.key] || '', mergedWidth));
-            }
-            tableRows = tableRows.filter(r => r !== starred);
-            // No remaining rows → skip the empty Key Issues table
-            // entirely; the callout above already says everything.
-            if (tableRows.length === 0) {
-              colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
-              continue;
-            }
-            // Visual breathing room before the rest of the issues table
-            addBlankRow();
+            tableRows = [starred, ...tableRows.filter(r => r !== starred)];
+            addTableOpts = { highlightRow: (r) => r === starred };
           }
         }
-        addTable(t.label, t.columns, tableRows, widths);
+        addTable(t.label, t.columns, tableRows, widths, addTableOpts);
         // Restore defaults for next block
         colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
       }
@@ -2916,7 +3188,60 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               )}
             </div>
             {totalAttendees > 0 && (() => {
-              const GRID_COLS = 'auto minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1.4fr) auto';
+              const GRID_COLS = 'auto minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1.4fr) auto';
+              // Detect reporting lines *within* the customer attendee list:
+              // build an id→attendee map of the customer attendees, then for
+              // any attendee return the names of their managers who are also
+              // on the list. Lets us flag "reports to X" right on the row.
+              const custAttendeeById = new Map();
+              for (const a of customerAttendees) {
+                const id = a.match?.id || a.match?.vid;
+                if (id) custAttendeeById.set(String(id), a);
+              }
+              const managersAmongAttendees = (a) => {
+                const id = a.match?.id || a.match?.vid;
+                if (!id) return [];
+                const mgrIds = Array.isArray(contactReportsTo[id]) ? contactReportsTo[id] : [];
+                const out = [];
+                for (const mid of mgrIds) {
+                  const mgr = custAttendeeById.get(String(mid));
+                  if (mgr) out.push(displayAttendeeName(mgr, contactNicknames));
+                }
+                return out;
+              };
+              const attendeeId = (a) => { const id = a?.match?.id || a?.match?.vid; return id ? String(id) : null; };
+              // Reorder a bucket so managers sit above their reports, with
+              // each report nested (indented) under its manager. Hierarchy
+              // is scoped to the bucket: only a manager present in the same
+              // bucket pulls a report beneath them. Returns [{ attendee,
+              // depth }]; roots keep their existing order.
+              const orderByHierarchy = (members) => {
+                const ids = new Set(members.map(attendeeId).filter(Boolean));
+                const childrenByMgr = new Map();
+                const hasMgrInBucket = new Set();
+                for (const a of members) {
+                  const id = attendeeId(a);
+                  const mgrIds = (id && Array.isArray(contactReportsTo[id])) ? contactReportsTo[id].map(String) : [];
+                  const mgr = mgrIds.find(m => m !== id && ids.has(m));
+                  if (mgr) {
+                    hasMgrInBucket.add(a);
+                    if (!childrenByMgr.has(mgr)) childrenByMgr.set(mgr, []);
+                    childrenByMgr.get(mgr).push(a);
+                  }
+                }
+                const out = [];
+                const visited = new Set();
+                const visit = (a, depth) => {
+                  if (visited.has(a)) return; // cycle / dupe guard
+                  visited.add(a);
+                  out.push({ attendee: a, depth });
+                  const id = attendeeId(a);
+                  for (const kid of (id ? childrenByMgr.get(id) || [] : [])) visit(kid, depth + 1);
+                };
+                for (const a of members) if (!hasMgrInBucket.has(a)) visit(a, 0);
+                for (const a of members) if (!visited.has(a)) visit(a, 0); // safety net
+                return out;
+              };
               const renderAttendee = (a, i) => {
                 const matched = !!a.match;
                 const rawSummary = a.rawParams
@@ -2924,6 +3249,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   : '';
                 const tooltip = `${a.email}${a.role ? ' · ROLE=' + a.role : ''}${rawSummary ? ' · ' + rawSummary : ''}`;
                 const title = a.match?.jobtitle || '';
+                const company = (a.match?.company || '').trim();
                 const contactId = a.match?.id || a.match?.vid;
                 const contactNote = (contactId && contactNotes[contactId])
                   || a.match?.notes
@@ -2952,23 +3278,46 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                     }}
                   >
                     <span style={{ color: matched ? '#15803D' : '#B91C1C', fontWeight: 700, fontSize: '0.9rem', paddingTop: 2 }}>{matched ? '✓' : '✗'}</span>
-                    <div style={{ minWidth: 0 }}>
-                      {linkedinUrl ? (
-                        <a
-                          href={linkedinUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          style={{ fontWeight: 600, fontSize: '0.8rem', color: '#0A66C2', textDecoration: 'none', ...wrap }}
-                          title="Open LinkedIn profile"
+                    <div style={{ minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+                      {matched && onOpenContact ? (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); onOpenContact(a.match); }}
+                          style={{ background: 'transparent', border: 'none', padding: 0, fontFamily: 'inherit', fontWeight: 600, fontSize: '0.8rem', color: '#1D4ED8', cursor: 'pointer', textDecoration: 'underline', textAlign: 'left', ...wrap }}
+                          title="Open HubSpot contact details"
                         >
                           {displayAttendeeName(a, contactNicknames)}
-                        </a>
+                        </button>
                       ) : (
                         <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#1E293B', ...wrap }}>
                           {displayAttendeeName(a, contactNicknames)}
                         </span>
                       )}
+                      {linkedinUrl && (
+                        <a
+                          href={linkedinUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ fontSize: '0.7rem', color: '#0A66C2', textDecoration: 'none', fontWeight: 700 }}
+                          title="Open LinkedIn profile"
+                        >in↗</a>
+                      )}
+                      {(() => {
+                        const mgrs = managersAmongAttendees(a);
+                        if (mgrs.length === 0) return null;
+                        return (
+                          <span
+                            style={{ flexBasis: '100%', fontSize: '0.68rem', color: '#0F766E', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                            title={`Reports to ${mgrs.join(', ')} — also on this attendee list`}
+                          >
+                            <span aria-hidden="true">↳</span> Reports to {mgrs.join(', ')}
+                          </span>
+                        );
+                      })()}
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: '#475569', paddingTop: 3, ...wrap }}>
+                      {company || <span style={{ color: '#94A3B8' }}>—</span>}
                     </div>
                     <div style={{ fontSize: '0.72rem', color: '#475569', paddingTop: 3, ...wrap }}>
                       {title || <span style={{ fontStyle: 'italic', color: '#94A3B8' }}>{matched ? '—' : 'not in HubSpot'}</span>}
@@ -3010,7 +3359,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               const columnHeader = (
                 <div style={{
                   display: 'grid',
-                  gridTemplateColumns: 'auto minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1.4fr) auto',
+                  gridTemplateColumns: GRID_COLS,
                   columnGap: '0.5rem',
                   padding: '0 0.5rem 0.25rem',
                   fontSize: '0.62rem', fontWeight: 700,
@@ -3018,6 +3367,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 }}>
                   <span style={{ width: 12 }} />
                   <span>Name</span>
+                  <span>Company</span>
                   <span>Title</span>
                   <span>City, Country</span>
                   <span>Notes</span>
@@ -3237,37 +3587,164 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   </div>
                 );
               };
-              const renderGroupedList = (list) => {
-                const req = list.filter(a => a.required);
-                const opt = list.filter(a => !a.required);
-                const subHeader = (label, count, color, bg) => (
-                  <div style={{
+              const customerGroups = Array.isArray(formData.meeting?.customerGroups)
+                ? formData.meeting.customerGroups
+                : [];
+              const custKey = (a) => (a.email || '').toLowerCase() || (a.name || '');
+              // Make a customer attendee row draggable so it can be
+              // moved between custom groups / Required / Optional. The
+              // drop targets sit on the section headers.
+              const renderCustomerAttendee = (a, depth = 0) => {
+                const myKey = custKey(a);
+                return (
+                  <div
+                    key={myKey || JSON.stringify(a)}
+                    draggable
+                    onDragStart={() => setCustDragKey(myKey)}
+                    onDragEnd={() => setCustDragKey(null)}
+                    style={{
+                      opacity: custDragKey === myKey ? 0.5 : 1,
+                      cursor: 'grab',
+                      // Nest reports under their manager: indent + a left
+                      // rail echoing the Org Chart's connector styling.
+                      marginLeft: depth ? depth * 18 : 0,
+                      paddingLeft: depth ? 8 : 0,
+                      borderLeft: depth ? '2px solid #CBD5E1' : undefined,
+                    }}
+                  >
+                    {renderAttendee(a)}
+                  </div>
+                );
+              };
+              const dropOnGroupHeader = (e, targetGroup, targetRequired) => {
+                if (!custDragKey) return;
+                e.preventDefault();
+                const all = [...customerAttendees];
+                const dragged = all.find(x => custKey(x) === custDragKey);
+                if (!dragged) { setCustDragKey(null); return; }
+                setAttendeeCustomGroup(dragged, targetGroup || '', targetRequired);
+                setCustDragKey(null);
+              };
+              const groupHeader = (label, count, color, bg, opts = {}) => (
+                <div
+                  onDragOver={(e) => { if (custDragKey) { e.preventDefault(); try { e.dataTransfer.dropEffect = 'move'; } catch { /* ignore */ } } }}
+                  onDrop={(e) => dropOnGroupHeader(e, opts.targetGroup ?? '', opts.targetRequired)}
+                  style={{
                     marginTop: '0.35rem', marginBottom: '0.25rem',
                     fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.04em',
                     textTransform: 'uppercase',
                     color, background: bg, padding: '2px 8px', borderRadius: 4,
-                    display: 'inline-block',
-                  }}>{label} · {count}</div>
-                );
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    border: custDragKey ? '1px dashed #2563EB' : '1px solid transparent',
+                  }}
+                  title={custDragKey ? `Drop here to move into "${label}"` : undefined}
+                >
+                  <span>{label} · {count}</span>
+                  {opts.onRemove && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); opts.onRemove(); }}
+                      style={{ background: 'transparent', border: 'none', cursor: 'pointer', color, fontWeight: 700, fontSize: '0.75rem', lineHeight: 1, padding: 0 }}
+                      title={`Remove the "${label}" group`}
+                    >×</button>
+                  )}
+                </div>
+              );
+              const renderGroupedList = (list) => {
+                // Custom groups first (in user-defined order), then
+                // Required / Optional as the fallback buckets for
+                // attendees with no custom group.
+                const byGroupKey = new Map(); // lowerCase -> list
+                for (const g of customerGroups) byGroupKey.set(g.toLowerCase(), []);
+                const ungrouped = [];
+                for (const a of list) {
+                  const g = (a.group || '').trim();
+                  if (g && byGroupKey.has(g.toLowerCase())) {
+                    byGroupKey.get(g.toLowerCase()).push(a);
+                  } else if (g) {
+                    // Orphaned custom group label (group was removed
+                    // but the attendee still points at it) — surface a
+                    // bucket for it so the user can drag them out.
+                    if (!byGroupKey.has(g.toLowerCase())) byGroupKey.set(g.toLowerCase(), []);
+                    byGroupKey.get(g.toLowerCase()).push(a);
+                  } else {
+                    ungrouped.push(a);
+                  }
+                }
+                const req = ungrouped.filter(a => a.required);
+                const opt = ungrouped.filter(a => !a.required);
                 return (
                   <div>
                     {columnHeader}
-                    {req.length > 0 && (
+                    {Array.from(byGroupKey.entries()).map(([lcName, members]) => {
+                      // Preserve the original-case label by looking it
+                      // up in the meeting's list, falling back to the
+                      // first matching attendee's stored value.
+                      const displayName = customerGroups.find(g => g.toLowerCase() === lcName)
+                        || members[0]?.group
+                        || lcName;
+                      return (
+                        <div key={`grp-${lcName}`}>
+                          {groupHeader(
+                            displayName,
+                            members.length,
+                            '#0F766E',
+                            '#CCFBF1',
+                            { targetGroup: displayName, onRemove: () => removeCustomerGroup(displayName) },
+                          )}
+                          {members.length > 0 ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                              {orderByHierarchy(members).map(({ attendee, depth }) => renderCustomerAttendee(attendee, depth))}
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: '0.7rem', color: '#94A3B8', fontStyle: 'italic', padding: '0.2rem 0.5rem' }}>
+                              Drop attendees here.
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {(req.length > 0 || custDragKey) && (
                       <>
-                        {subHeader('Required', req.length, '#B91C1C', '#FEE2E2')}
+                        {groupHeader('Required', req.length, '#B91C1C', '#FEE2E2', { targetGroup: '', targetRequired: true })}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                          {req.map(renderAttendee)}
+                          {orderByHierarchy(req).map(({ attendee, depth }) => renderCustomerAttendee(attendee, depth))}
                         </div>
                       </>
                     )}
-                    {opt.length > 0 && (
+                    {(opt.length > 0 || custDragKey) && (
                       <>
-                        {subHeader('Optional', opt.length, '#3730A3', '#E0E7FF')}
+                        {groupHeader('Optional', opt.length, '#3730A3', '#E0E7FF', { targetGroup: '', targetRequired: false })}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                          {opt.map(renderAttendee)}
+                          {orderByHierarchy(opt).map(({ attendee, depth }) => renderCustomerAttendee(attendee, depth))}
                         </div>
                       </>
                     )}
+                    <div style={{ marginTop: '0.5rem' }}>
+                      {newGroupOpen ? (
+                        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                          <input
+                            autoFocus
+                            value={newGroupName}
+                            onChange={(e) => setNewGroupName(e.target.value)}
+                            placeholder="Group name"
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') { addCustomerGroup(newGroupName); setNewGroupName(''); setNewGroupOpen(false); }
+                              if (e.key === 'Escape') { setNewGroupName(''); setNewGroupOpen(false); }
+                            }}
+                            style={{ fontSize: '0.76rem', padding: '0.2rem 0.4rem', border: '1px solid #CBD5E1', borderRadius: 3 }}
+                          />
+                          <button type="button" style={{ ...sx.primaryBtn, fontSize: '0.7rem', padding: '0.2rem 0.55rem' }} onClick={() => { addCustomerGroup(newGroupName); setNewGroupName(''); setNewGroupOpen(false); }}>Add</button>
+                          <button type="button" style={{ ...sx.btn, fontSize: '0.7rem', padding: '0.2rem 0.55rem' }} onClick={() => { setNewGroupName(''); setNewGroupOpen(false); }}>Cancel</button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setNewGroupOpen(true)}
+                          style={{ ...sx.btn, fontSize: '0.68rem', padding: '0.2rem 0.5rem' }}
+                        >+ Add group</button>
+                      )}
+                    </div>
                   </div>
                 );
               };
@@ -3426,37 +3903,27 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       </div>
 
       <div>
-        <div style={{ ...sx.fieldLabel, display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
+        <div style={{ ...sx.fieldLabel, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <span>Call Context</span>
-          {importableNotes.some(n => (n.context || '').trim()) && (
-            <select
-              defaultValue=""
-              onChange={(e) => {
-                const sourceId = e.target.value;
-                e.target.value = '';
-                if (!sourceId) return;
-                const source = importableNotes.find(n => n.id === sourceId);
-                const incoming = (source?.context || '').trim();
-                if (!incoming) return;
-                // Append the source's Call Context, with a blank-line separator
-                // when the current field already has text. Replaces in place
-                // when the current field is empty.
-                const current = (formData.fieldValues.context || '').replace(/\s+$/, '');
-                const merged = current ? `${current}\n\n${incoming}` : incoming;
-                updateField('context', merged);
-              }}
-              title="Append the Call Context from another note for this company"
-              style={{ fontSize: '0.68rem', padding: '0.15rem 0.35rem', border: '1px solid var(--color-border)', borderRadius: 4, marginLeft: 'auto', cursor: 'pointer', background: '#fff' }}
-            >
-              <option value="">⤓ Import Call Context from…</option>
-              {importableNotes
-                .filter(n => (n.context || '').trim())
-                .map(n => {
-                  const len = (n.context || '').trim().length;
-                  return <option key={n.id} value={n.id}>{n.title} ({len} chars)</option>;
-                })}
-            </select>
-          )}
+          {(() => {
+            const candidates = importableNotes.filter(n => (n.context || '').trim());
+            if (candidates.length === 0) return null;
+            return (
+              <CallContextImportPicker
+                candidates={candidates}
+                onImport={(source) => {
+                  const incoming = (source?.context || '').trim();
+                  if (!incoming) return;
+                  // Append the source's Call Context, with a blank-line
+                  // separator when the current field already has text.
+                  // Replaces in place when the current field is empty.
+                  const current = (formData.fieldValues.context || '').replace(/\s+$/, '');
+                  const merged = current ? `${current}\n\n${incoming}` : incoming;
+                  updateField('context', merged);
+                }}
+              />
+            );
+          })()}
         </div>
         <CommitOnBlurInput
           multiline
@@ -3572,7 +4039,18 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               </div>
               {f.type === 'textarea' ? (
                 f.key === 'summary' ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                  // Wrap the General Notes editor in a visible box so
+                  // its nested Scoping Details Notes can sit inside it
+                  // as a second, lighter sub-box — the user wanted the
+                  // hierarchy to be obvious at a glance instead of two
+                  // textareas stacked with only a label between them.
+                  <div style={{
+                    display: 'flex', flexDirection: 'column', gap: '0.6rem',
+                    padding: '0.6rem',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 6,
+                    background: '#fff',
+                  }}>
                     <ScopingNotesEditor
                       value={formData.fieldValues[f.key] || ''}
                       onCommit={v => updateField(f.key, v)}
@@ -3582,8 +4060,13 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                       placeholder="General notes. Type @ for services or competitors (Services / Competitors are grouped in the dropdown). Bullet list: type - or * at the start of a line."
                       style={{ minHeight: '120px' }}
                     />
-                    <div>
-                      <div style={{ ...sx.fieldLabel, marginBottom: '0.2rem' }}>Scoping Details Notes</div>
+                    <div style={{
+                      padding: '0.5rem 0.6rem',
+                      border: '1px solid var(--color-border-light)',
+                      borderRadius: 6,
+                      background: 'var(--color-bg)',
+                    }}>
+                      <div style={{ ...sx.fieldLabel, marginBottom: '0.3rem' }}>Scoping Details Notes</div>
                       <ScopingNotesEditor
                         value={formData.fieldValues.scopingNotes || ''}
                         onCommit={v => updateField('scopingNotes', v)}

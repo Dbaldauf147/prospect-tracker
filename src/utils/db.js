@@ -14,10 +14,13 @@ const DB_NAME = 'prospect-tracker-db';
 const STORES = [
   { name: 'target-accounts',     keyPath: null },
   { name: 'opps-cache',          keyPath: null },
+  { name: 'opps2-cache',         keyPath: null },
+  { name: 'opps2-backups',       keyPath: null },
   { name: 'clients-cache',       keyPath: null },
   { name: 'settings-backups',    keyPath: null },
   { name: 'hubspot-contacts',    keyPath: null },
   { name: 'pricing-cache',       keyPath: null },
+  { name: 'pricing-source-files', keyPath: null },
   { name: 'daily-success-log',   keyPath: null },
   { name: 'daily-success-goals', keyPath: null },
   { name: 'pipeline-dashboard',  keyPath: null },

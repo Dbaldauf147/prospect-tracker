@@ -1,0 +1,725 @@
+.wrap {
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  height: 100%;
+  overflow: auto;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #0F172A;
+  margin: 0;
+}
+
+.dateline {
+  font-size: 0.85rem;
+  color: #64748B;
+  font-weight: 600;
+}
+
+.dateField {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #475569;
+}
+
+.hideActivityField {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #475569;
+  cursor: pointer;
+}
+
+.dateInput {
+  padding: 0.25rem 0.4rem;
+  font-size: 0.8rem;
+  font-family: inherit;
+  border: 1px solid #CBD5E1;
+  border-radius: 6px;
+  background: #FFFFFF;
+  color: #0F172A;
+}
+
+.dateInput:focus {
+  outline: 2px solid #93C5FD;
+  outline-offset: 1px;
+}
+
+.dateResetBtn {
+  padding: 0.2rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: #1E40AF;
+  background: #EFF6FF;
+  border: 1px solid #BFDBFE;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.dateResetBtn:hover {
+  background: #DBEAFE;
+}
+
+.refreshActivityBtn {
+  margin-left: auto;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: #1E40AF;
+  background: #EFF6FF;
+  border: 1px solid #BFDBFE;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.refreshActivityBtn:hover:not(:disabled) {
+  background: #DBEAFE;
+}
+
+.refreshActivityBtn:disabled {
+  cursor: wait;
+  opacity: 0.75;
+}
+
+.subnote {
+  margin: 0;
+  color: #64748B;
+  font-size: 0.85rem;
+}
+
+.tallies {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.tally {
+  background: #F8FAFC;
+  border: 1px solid #E2E8F0;
+  border-radius: 6px;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.78rem;
+  color: #475569;
+}
+
+.tally strong {
+  color: #0F172A;
+  font-size: 0.95rem;
+  margin-right: 0.3rem;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.sectionHeader {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #0F172A;
+  margin: 0.5rem 0 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sectionCount {
+  font-size: 0.75rem;
+  color: #64748B;
+  font-weight: 600;
+  background: #F1F5F9;
+  border: 1px solid #E2E8F0;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border: 1px solid #E2E8F0;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.table th {
+  text-align: left;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #475569;
+  background: #F8FAFC;
+  padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid #E2E8F0;
+  white-space: nowrap;
+}
+
+.table td {
+  font-size: 0.82rem;
+  color: #1E293B;
+  padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid #F1F5F9;
+  vertical-align: top;
+}
+
+.table tr:last-child td {
+  border-bottom: none;
+}
+
+.muted {
+  color: #94A3B8;
+}
+
+.missing {
+  background: #FEE2E2;
+  color: #991B1B;
+  font-weight: 600;
+}
+
+.emptyRow td {
+  text-align: center;
+  color: #64748B;
+  font-style: italic;
+  padding: 0.85rem;
+}
+
+.empty {
+  padding: 1.25rem;
+  text-align: center;
+  background: #F8FAFC;
+  border: 1px dashed #CBD5E1;
+  border-radius: 6px;
+  color: #64748B;
+  font-size: 0.85rem;
+}
+
+.staleBanner {
+  padding: 0.55rem 0.8rem;
+  background: #FEF3C7;
+  border: 1px solid #FDE68A;
+  color: #92400E;
+  border-radius: 6px;
+  font-size: 0.78rem;
+}
+
+/* Red error banner — data the AI prompts need is missing (e.g. New BFO
+   Opp rows with no Product Line / Region / BFO Company Name). */
+.errorBanner {
+  padding: 0.55rem 0.8rem;
+  background: #FEE2E2;
+  border: 1px solid #FCA5A5;
+  color: #991B1B;
+  border-radius: 6px;
+  font-size: 0.78rem;
+}
+
+.pill {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.pillOutbound {
+  background: #DCFCE7;
+  color: #166534;
+  border: 1px solid #86EFAC;
+}
+
+.pillInbound {
+  background: #DBEAFE;
+  color: #1E40AF;
+  border: 1px solid #93C5FD;
+}
+
+.pickerWrap {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+}
+
+.pickerTrigger {
+  font-size: 0.7rem;
+  color: #2563EB;
+  border: 1px dashed #93C5FD;
+  background: #EFF6FF;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pickerTrigger:hover {
+  background: #DBEAFE;
+}
+
+.pickerInput {
+  width: 100%;
+  font-size: 0.78rem;
+  border: 1px solid #93C5FD;
+  border-radius: 5px;
+  padding: 0.25rem 0.45rem;
+  font-family: inherit;
+  background: #fff;
+  color: #0F172A;
+}
+
+.pickerInput:focus {
+  outline: none;
+  border-color: #2563EB;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.pickerMenu {
+  /* Rendered in a portal with fixed positioning (top/left/width set
+     inline) so it floats above the page and isn't clipped by the
+     table's scroll wrapper. */
+  z-index: 1000;
+  background: #fff;
+  border: 1px solid #CBD5E1;
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.12);
+  overflow-y: auto;
+  padding: 0.2rem 0;
+}
+
+.pickerOption {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.76rem;
+  color: #1E293B;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.3;
+}
+
+.pickerOption:hover,
+.pickerOption:focus {
+  background: #EFF6FF;
+  outline: none;
+}
+
+.pickerOptionAccount {
+  display: block;
+  font-size: 0.66rem;
+  color: #64748B;
+  margin-top: 1px;
+}
+
+.pickerEmpty {
+  padding: 0.5rem 0.6rem;
+  font-size: 0.72rem;
+  color: #94A3B8;
+  font-style: italic;
+}
+
+.overrideValue {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.overrideClear {
+  font-size: 0.65rem;
+  color: #94A3B8;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0 0.2rem;
+  font-family: inherit;
+}
+
+.overrideClear:hover {
+  color: #DC2626;
+}
+
+.ignoreBtn {
+  font-size: 0.75rem;
+  color: #94A3B8;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0 0.3rem;
+  font-family: inherit;
+}
+
+.ignoreBtn:hover {
+  color: #DC2626;
+}
+
+.ignoreBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ignoreBtn:disabled:hover {
+  color: #94A3B8;
+}
+
+.actionsCell {
+  white-space: nowrap;
+}
+
+.linkBtn {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--color-accent, #2563eb);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.bfoLink {
+  color: var(--color-accent, #2563eb);
+  text-decoration: underline;
+  font-size: var(--font-size-xs);
+}
+
+.bfoLink:hover {
+  text-decoration: none;
+}
+
+.aiPromptInput {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+  resize: vertical;
+  min-height: 12rem;
+}
+
+.aiPromptInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.aiPromptControls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.aiPromptBtn {
+  padding: 0.4rem 0.85rem;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: #fff;
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.aiPromptBtn:hover {
+  filter: brightness(0.95);
+}
+
+.aiPromptBtnGhost {
+  padding: 0.4rem 0.85rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.aiPromptBtnGhost:hover {
+  border-color: var(--color-accent);
+}
+
+.copyFlash {
+  font-size: var(--font-size-xs);
+  color: #16a34a;
+  font-weight: 600;
+}
+
+.aiPromptPreview {
+  margin-top: 0.75rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background: #f8fafc;
+  color: var(--color-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 24rem;
+  overflow: auto;
+}
+
+/* "BFO Opportunity Name not tagged to an opp on Opps" warning — mirrored
+   from the BFO Activity page so the same tagging widget shows here. */
+.bfoAssignFlash {
+  padding: 0.35rem 0.6rem;
+  border-radius: var(--radius-sm);
+  background: #d1fae5;
+  border: 1px solid #34d399;
+  color: #065f46;
+  font-size: var(--font-size-xs);
+}
+
+.warning {
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-sm);
+  background: #fef3c7;
+  border: 1px solid #f59e0b;
+  color: #92400e;
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.warningHint {
+  margin-top: 0.2rem;
+  color: #b45309;
+  opacity: 0.9;
+}
+
+.warnList {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 16rem;
+  overflow-y: auto;
+}
+
+.warnItem {
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(180, 83, 9, 0.25);
+}
+
+.warnName {
+  margin-bottom: 0.3rem;
+}
+
+.warnNameText {
+  font-weight: 600;
+}
+
+.warnAcct {
+  color: #b45309;
+  font-weight: 500;
+}
+
+.warnNone {
+  font-style: italic;
+  color: #b45309;
+  opacity: 0.85;
+}
+
+.warnChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.assignChip {
+  border: 1px solid #f59e0b;
+  background: #fffbeb;
+  color: #92400e;
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.assignChip:hover:not(:disabled) {
+  background: #fde68a;
+}
+
+.assignChip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* --- Agents page sub-tab nav (Automations / Prompt Library) --- */
+.subTabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid #E2E8F0;
+  margin-bottom: 0.25rem;
+}
+
+.subTab,
+.subTabActive {
+  padding: 0.45rem 0.9rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-family: inherit;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #64748B;
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+
+.subTab:hover {
+  color: #1E40AF;
+}
+
+.subTabActive {
+  color: #1E40AF;
+  border-bottom-color: #2563EB;
+}
+
+/* --- Prompt Library sub-tab --- */
+.promptLib {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.promptLibToolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.promptSearch {
+  flex: 1 1 14rem;
+  max-width: 22rem;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.85rem;
+  font-family: inherit;
+  border: 1px solid #CBD5E1;
+  border-radius: 6px;
+  background: #fff;
+  color: #0F172A;
+}
+
+.promptSearch:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.promptCard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid #E2E8F0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.promptCardHead {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.promptCardTitle {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #0F172A;
+  margin: 0;
+  flex: 1 1 auto;
+}
+
+.promptCardActions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.promptReorder {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.promptMoveBtn {
+  padding: 0 0.4rem;
+  line-height: 1.2;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg, #fff);
+  color: var(--color-text, #0F172A);
+  font-size: 0.6rem;
+  cursor: pointer;
+}
+
+.promptMoveBtn:hover:not(:disabled) {
+  border-color: var(--color-accent);
+}
+
+.promptMoveBtn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.promptForm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.promptTitleInput {
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-family: inherit;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.promptTitleInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.copyFlashErr {
+  font-size: var(--font-size-xs);
+  color: #dc2626;
+  font-weight: 600;
+}

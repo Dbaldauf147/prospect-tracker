@@ -21,7 +21,7 @@ function normalizeCompany(name) {
 }
 
 function pickNameKey(headers) {
-  const key = headers.find(k => /company|name|organi[sz]ation|signatory|entity/i.test(k));
+  const key = headers.find(k => /company|name|organi[sz]ation|signatory|entity|\bfirm\b/i.test(k));
   return key || headers[0];
 }
 
