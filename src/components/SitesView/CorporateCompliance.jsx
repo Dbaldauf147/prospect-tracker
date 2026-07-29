@@ -155,7 +155,7 @@ function RevenueSection({ data, loading, error, disabled, onResearch, linked, co
   );
 
   return (
-    <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginTop: '0.4rem' }}>
+    <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>
       {data && (data.revenue || data.summary) ? (
         <div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', flexWrap: 'wrap' }}>
@@ -243,12 +243,9 @@ function answerSelectStyle(val) {
 // in; `research` holds the last run's per-question rationale + sources.
 function JurisdictionScreening({ answers, caSiteCount = 0, onSet, disabled, onResearch, researching, researchError, research }) {
   return (
-    <div style={{ marginTop: '0.6rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.5rem' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem', marginBottom: '0.35rem' }}>
-        <span style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)' }}>
-          Jurisdiction screening
-        </span>
-        {!disabled && (
+    <div>
+      {!disabled && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.35rem' }}>
           <button
             type="button"
             onClick={onResearch}
@@ -263,8 +260,8 @@ function JurisdictionScreening({ answers, caSiteCount = 0, onSet, disabled, onRe
           >
             {researching ? 'Researching…' : (research ? 'Re-run answers' : 'Research answers')}
           </button>
-        )}
-      </div>
+        </div>
+      )}
       {disabled ? (
         <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
           Add a company name to screen jurisdictions.
@@ -386,6 +383,28 @@ function RegulationReference() {
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+// One aligned label / value row of a company "card table". The label sits
+// in a fixed-width left gutter (top-aligned) so every section — Sites,
+// Revenue, Jurisdiction, Lists, CA sites — lines up as table rows instead
+// of stacked blocks. A top border draws the row separators.
+function CardRow({ label, children, first }) {
+  return (
+    <div style={{
+      display: 'grid', gridTemplateColumns: '84px minmax(0, 1fr)', gap: '0.6rem',
+      padding: '0.5rem 0', alignItems: 'start',
+      borderTop: first ? 'none' : '1px solid var(--color-border)',
+    }}>
+      <div style={{
+        fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase',
+        letterSpacing: '0.04em', color: 'var(--color-text-muted)', paddingTop: '0.1rem',
+      }}>
+        {label}
+      </div>
+      <div style={{ minWidth: 0 }}>{children}</div>
     </div>
   );
 }
@@ -672,17 +691,14 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                   border: '1px solid var(--color-border)', borderRadius: 8,
                   background: 'var(--color-surface)', padding: '0.75rem 0.9rem',
                 }}>
-                  <div style={{ fontWeight: 700, color: 'var(--color-text)', fontSize: 'var(--font-size-sm)' }}>
-                    {c.name}
-                  </div>
-                  <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginTop: '0.25rem' }}>
-                    {c.total} {c.total === 1 ? 'site' : 'sites'}
-                    {c.california > 0 && (
-                      <>
-                        {' · '}
-                        <strong style={{ color: '#166534' }}>{c.california} in CA</strong>
-                      </>
-                    )}
+                  {/* Card header — company name + one-click research. */}
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.5rem' }}>
+                    <div
+                      title={c.name}
+                      style={{ fontWeight: 700, color: 'var(--color-text)', fontSize: 'var(--font-size-sm)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    >
+                      {c.name}
+                    </div>
                   </div>
 
                   {/* One-click: revenue research + all six jurisdiction
@@ -704,81 +720,100 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                     {anyResearching ? 'Researching…' : '🔎 Research everything'}
                   </button>
 
-                  <RevenueSection
-                    data={revenueResearch[revenueSlug(c.name)] || null}
-                    loading={!!revState[c.name]?.loading}
-                    error={revState[c.name]?.error || null}
-                    disabled={c.name === UNNAMED}
-                    onResearch={() => researchRevenue(c.name)}
-                    linked={!!(c.key && prospectByKey.get(c.key))}
-                    companyRevenue={String(prospectByKey.get(c.key)?.revenue || '').trim()}
-                  />
+                  {/* Everything below reads as an aligned label / value
+                      table: one CardRow per section instead of stacked
+                      blocks. */}
+                  <div style={{ marginTop: '0.6rem' }}>
+                    <CardRow label="Sites" first>
+                      <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>
+                        {c.total} {c.total === 1 ? 'site' : 'sites'}
+                        {c.california > 0 && (
+                          <>
+                            {' · '}
+                            <strong style={{ color: '#166534' }}>{c.california} in CA</strong>
+                          </>
+                        )}
+                      </span>
+                    </CardRow>
 
-                  {/* Jurisdiction screening — the six gating questions.
-                      Keyed by the canonical company identity (c.key) so
-                      answers save against the matched company from the
-                      uploaded file, not a raw-name slug. */}
-                  <JurisdictionScreening
-                    answers={screening[c.key] || null}
-                    caSiteCount={c.california}
-                    disabled={!c.key}
-                    onSet={(qKey, value) => setScreeningAnswer(c.key, qKey, value)}
-                    onResearch={() => researchCompliance(c.name, c.key)}
-                    researching={!!screenState[c.key]?.loading}
-                    researchError={screenState[c.key]?.error || null}
-                    research={complianceResearch[c.key] || null}
-                  />
+                    <CardRow label="Revenue">
+                      <RevenueSection
+                        data={revenueResearch[revenueSlug(c.name)] || null}
+                        loading={!!revState[c.name]?.loading}
+                        error={revState[c.name]?.error || null}
+                        disabled={c.name === UNNAMED}
+                        onResearch={() => researchRevenue(c.name)}
+                        linked={!!(c.key && prospectByKey.get(c.key))}
+                        companyRevenue={String(prospectByKey.get(c.key)?.revenue || '').trim()}
+                      />
+                    </CardRow>
 
-                  {/* Framework / List matches */}
-                  <div style={{ marginTop: '0.6rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.5rem' }}>
-                    <div style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)', marginBottom: '0.35rem' }}>
-                      Framework / List matches
-                      {c.name !== UNNAMED && matches.length > 0 && <span> ({matches.length})</span>}
-                    </div>
-                    {c.name === UNNAMED ? (
-                      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
-                        Add a company name to match against lists.
-                      </div>
-                    ) : scanning && matches.length === 0 ? (
-                      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>Scanning…</div>
-                    ) : matches.length === 0 ? (
-                      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>No list matches</div>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-                        {matches.map((m, i) => {
-                          const color = chipColor(m.list);
-                          const pct = Math.round((m.score || 0) * 100);
-                          return (
-                            <div key={`${m.storageKey}::${i}`} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0 }}>
-                              <span style={{
-                                flexShrink: 0, fontSize: '0.62rem', fontWeight: 700, padding: '0.1rem 0.4rem',
-                                borderRadius: 4, background: color.bg, color: color.text,
-                              }}>{m.list}</span>
-                              <span style={{ flex: 1, minWidth: 0, fontSize: 'var(--font-size-xs)', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={m.rawName}>
-                                {m.rawName || <em style={{ color: 'var(--color-text-muted)' }}>(unnamed row)</em>}
-                              </span>
-                              <span style={{ flexShrink: 0, fontSize: '0.62rem', fontWeight: 700, color: m.state === 'mapped' ? '#166534' : 'var(--color-text-muted)' }}>
-                                {m.state === 'mapped' ? 'mapped' : `${pct}%`}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
+                    {/* Jurisdiction screening — the six gating questions.
+                        Keyed by the canonical company identity (c.key) so
+                        answers save against the matched company from the
+                        uploaded file, not a raw-name slug. */}
+                    <CardRow label="Jurisdiction">
+                      <JurisdictionScreening
+                        answers={screening[c.key] || null}
+                        caSiteCount={c.california}
+                        disabled={!c.key}
+                        onSet={(qKey, value) => setScreeningAnswer(c.key, qKey, value)}
+                        onResearch={() => researchCompliance(c.name, c.key)}
+                        researching={!!screenState[c.key]?.loading}
+                        researchError={screenState[c.key]?.error || null}
+                        research={complianceResearch[c.key] || null}
+                      />
+                    </CardRow>
+
+                    {/* Framework / List matches */}
+                    <CardRow label={`Lists${c.name !== UNNAMED && matches.length > 0 ? ` (${matches.length})` : ''}`}>
+                      {c.name === UNNAMED ? (
+                        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
+                          Add a company name to match against lists.
+                        </div>
+                      ) : scanning && matches.length === 0 ? (
+                        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>Scanning…</div>
+                      ) : matches.length === 0 ? (
+                        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>No list matches</div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                          {matches.map((m, i) => {
+                            const color = chipColor(m.list);
+                            const pct = Math.round((m.score || 0) * 100);
+                            return (
+                              <div key={`${m.storageKey}::${i}`} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0 }}>
+                                <span style={{
+                                  flexShrink: 0, fontSize: '0.62rem', fontWeight: 700, padding: '0.1rem 0.4rem',
+                                  borderRadius: 4, background: color.bg, color: color.text,
+                                }}>{m.list}</span>
+                                <span style={{ flex: 1, minWidth: 0, fontSize: 'var(--font-size-xs)', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={m.rawName}>
+                                  {m.rawName || <em style={{ color: 'var(--color-text-muted)' }}>(unnamed row)</em>}
+                                </span>
+                                <span style={{ flexShrink: 0, fontSize: '0.62rem', fontWeight: 700, color: m.state === 'mapped' ? '#166534' : 'var(--color-text-muted)' }}>
+                                  {m.state === 'mapped' ? 'mapped' : `${pct}%`}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </CardRow>
+
+                    {c.caSites.length > 0 && (
+                      <CardRow label="CA sites">
+                        <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: 'var(--font-size-xs)', color: 'var(--color-text)' }}>
+                          {c.caSites.slice(0, 5).map((label, i) => (
+                            <li key={i}>{label}</li>
+                          ))}
+                          {c.caSites.length > 5 && (
+                            <li style={{ color: 'var(--color-text-muted)', listStyle: 'none', marginLeft: '-1.1rem' }}>
+                              +{c.caSites.length - 5} more
+                            </li>
+                          )}
+                        </ul>
+                      </CardRow>
                     )}
                   </div>
-
-                  {c.caSites.length > 0 && (
-                    <ul style={{ margin: '0.6rem 0 0', paddingLeft: '1.1rem', fontSize: 'var(--font-size-xs)', color: 'var(--color-text)' }}>
-                      {c.caSites.slice(0, 5).map((label, i) => (
-                        <li key={i}>{label}</li>
-                      ))}
-                      {c.caSites.length > 5 && (
-                        <li style={{ color: 'var(--color-text-muted)', listStyle: 'none', marginLeft: '-1.1rem' }}>
-                          +{c.caSites.length - 5} more
-                        </li>
-                      )}
-                    </ul>
-                  )}
                 </div>
               );
             })}
