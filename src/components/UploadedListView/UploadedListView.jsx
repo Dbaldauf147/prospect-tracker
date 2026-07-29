@@ -3,8 +3,9 @@ import { createPortal } from 'react-dom';
 import { DataTable } from '../common/DataTable';
 import { saveList as saveListToIDB, loadList as loadListFromIDB, clearList as clearListFromIDB } from '../../utils/uploadedListStore';
 import { parseBestSheet } from '../../utils/xlsxParse';
-import { matchesCdm } from '../../utils/cdmMatch';
+import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import { normalizeCompany, pickNameKey } from '../../utils/companyNorm';
+import { dbGet } from '../../utils/db';
 import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
 import styles from './UploadedListView.module.css';
 
@@ -289,7 +290,8 @@ function buildColumns(data, ctx) {
           textColumn, textValues, onTextChange,
           onPick, onDismiss,
           selectedKeys, onToggleSelect, shortDateColumns,
-          prospectFieldFill, onFillProspectField } = ctx;
+          prospectFieldFill, onFillProspectField,
+          accountLabel = 'My Accounts', accountSource = 'myAccounts' } = ctx;
   const keys = new Set();
   for (const row of data) for (const k of Object.keys(row)) if (k !== 'id' && k !== '__matchKey__') keys.add(k);
   // Headers (case-insensitive) whose values should render as short dates.
@@ -339,7 +341,7 @@ function buildColumns(data, ctx) {
     : [];
   const myAccountsCol = {
     key: '__myAccountsList__',
-    label: 'My Accounts',
+    label: accountLabel,
     defaultWidth: 220,
     // Filter by the company name actually displayed in the cell — either
     // the confirmed mapping or, if none, the live yellow suggestion.
@@ -395,6 +397,34 @@ function buildColumns(data, ctx) {
             <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>
           )}
         </span>
+      );
+    },
+  };
+  // CDM / salesperson who owns the matched Target Account. Only added
+  // when this list matches against the Target Accounts workbook — the
+  // matched entry carries its own `cdm`. Mirrors the confirmed-then-
+  // suggested resolution used by the info/owner columns.
+  const resolveAccountEntry = (row) => {
+    const mk = row.__matchKey__;
+    const confirmed = myAccountMapping[mk];
+    if (confirmed) return { entry: myAccountsByNorm.get(normalizeCompany(confirmed)), fromSuggestion: false };
+    if (myAccountDismissed[mk]) return { entry: null, fromSuggestion: false };
+    const s = row.__rawName__ ? myAccountSuggestionFor(row.__rawName__) : null;
+    return { entry: s?.prospect || null, fromSuggestion: !!s?.prospect };
+  };
+  const accountCdmCol = {
+    key: '__accountCdm__',
+    label: 'CDM',
+    defaultWidth: 150,
+    getFilterValue: (row) => resolveAccountEntry(row).entry?.cdm || '',
+    render: (row) => {
+      const { entry, fromSuggestion } = resolveAccountEntry(row);
+      if (!entry || !entry.cdm) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
+      return (
+        <span
+          title={fromSuggestion ? `CDM for suggested match "${entry.company}" — confirm to lock it in` : `CDM for ${entry.company}`}
+          style={{ fontSize: '0.72rem', color: fromSuggestion ? '#92400E' : 'var(--color-text-secondary)', fontStyle: fromSuggestion ? 'italic' : 'normal' }}
+        >{entry.cdm}</span>
       );
     },
   };
@@ -514,7 +544,8 @@ function buildColumns(data, ctx) {
         ),
       }]
     : [];
-  return [selectCol, ...baseCols, ...textCol, myAccountsCol, myAccountsInfoCol, portfolioCol, portfolioInfoCol, matchPctCol, ...prospectFillCol];
+  const accountCdmCols = accountSource === 'targetAccounts' ? [accountCdmCol] : [];
+  return [selectCol, ...baseCols, ...textCol, myAccountsCol, myAccountsInfoCol, ...accountCdmCols, portfolioCol, portfolioInfoCol, matchPctCol, ...prospectFillCol];
 }
 
 export function UploadedListView({
@@ -526,6 +557,13 @@ export function UploadedListView({
   prospects = [],
   onSelectProspect,
   cdmName,
+  // Which set the account-match column fuzzy-matches against:
+  // 'myAccounts' (default — the current user's My Accounts / CDM pool)
+  // or 'targetAccounts' (the full Target Accounts workbook, across every
+  // CDM). When 'targetAccounts', the column is relabeled via accountLabel
+  // and a CDM column is added showing which salesperson owns the match.
+  accountSource = 'myAccounts',
+  accountLabel = 'My Accounts',
   textColumn, // { key: string, label: string, placeholder?: string }
   shortDateColumns, // array of header names to render as M/D/YYYY
   defaultHideWhere, // { column, values: string[], label } — default-on row exclusion
@@ -642,8 +680,25 @@ export function UploadedListView({
   // to every currently selected row in the given scope.
   const [bulkPicker, setBulkPicker] = useState(null); // { scope, query }
   const [selectedKeys, setSelectedKeys] = useState(() => new Set());
+  // Manual "Add row" modal — { [header]: draftValue }, or null when closed.
+  const [addRowDraft, setAddRowDraft] = useState(null);
   const fileInputRef = useRef(null);
   const { data, source } = store;
+
+  // Column names offered in the Add-row form: the union of headers across
+  // the current list (document order). When the list is still empty there
+  // are no headers yet, so seed a single company-name field the matching
+  // logic understands.
+  const manualHeaders = useMemo(() => {
+    const hs = [];
+    const seen = new Set();
+    for (const row of data) {
+      for (const k of Object.keys(row)) {
+        if (!seen.has(k)) { seen.add(k); hs.push(k); }
+      }
+    }
+    return hs.length ? hs : ['Company Name'];
+  }, [data]);
 
   // Load list from IDB whenever the tab (storageKey) changes.
   useEffect(() => {
@@ -855,10 +910,64 @@ export function UploadedListView({
     };
   }, []);
 
-  // Build the fuzzy-match index for the My Accounts column + filter.
+  // When this list matches against the Target Accounts workbook instead
+  // of My Accounts, load that workbook straight from IndexedDB (the same
+  // 'data' record the Target Accounts page writes). Self-contained so the
+  // Largest tab works even if the user never opened the Target tab.
+  const [targetAccountData, setTargetAccountData] = useState(null);
+  useEffect(() => {
+    if (accountSource !== 'targetAccounts') { setTargetAccountData(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const payload = await dbGet('target-accounts', 'data');
+        if (!cancelled) setTargetAccountData(payload || null);
+      } catch { if (!cancelled) setTargetAccountData(null); }
+    })();
+    return () => { cancelled = true; };
+  }, [accountSource]);
+
+  // Flatten the Target Accounts workbook into { company, tier, cdm }
+  // entries — every row across every sheet, with NO CDM/tier filter, so
+  // the Largest list can match against the full target universe and the
+  // CDM column can show whose account each firm is. Mirrors the column
+  // resolution used on the My Accounts page (company/tier keyword scan,
+  // CDM via the user-mapped column).
+  const targetAccountEntries = useMemo(() => {
+    if (accountSource !== 'targetAccounts' || !targetAccountData?.sheets) return [];
+    const findCol = (r, keywords) => {
+      for (const key of Object.keys(r)) {
+        const lower = key.toLowerCase();
+        for (const kw of keywords) {
+          if (lower.includes(kw.toLowerCase())) return String(r[key] || '').trim();
+        }
+      }
+      return '';
+    };
+    const out = [];
+    let idx = 0;
+    for (const sheetName of targetAccountData.sheetNames || []) {
+      const sheet = targetAccountData.sheets[sheetName];
+      if (!sheet?.records) continue;
+      for (const r of sheet.records) {
+        const company = findCol(r, ['Account Name', 'Account', 'Company', 'Client', 'Name']);
+        if (!company) continue;
+        const cdm = resolveTargetAccountCdm(r, settings?.targetCdmColumn);
+        let tierRaw = findCol(r, ['Tier', 'Account Tier', 'Tier Level', 'Target']);
+        if (!tierRaw) tierRaw = String(Object.values(r).find(v => /Tier\s*[123]/i.test(String(v || ''))) || '');
+        const tier = /1/.test(tierRaw) ? 'Tier 1' : /2/.test(tierRaw) ? 'Tier 2' : (/3/.test(tierRaw) ? 'Tier 3' : tierRaw);
+        out.push({ company: company.trim(), tier, status: '', cdm: cdm || '', id: `ta::${idx++}` });
+      }
+    }
+    return out;
+  }, [accountSource, targetAccountData, settings?.targetCdmColumn]);
+
+  // Build the fuzzy-match index for the account-match column + filter.
   // Prefer the resolved list when MyAccountsView has published it
   // (exact 132 companies); fall back to the Baldauf-CDM prospect pool
   // so the first-ever visit still works before My Accounts is opened.
+  // When accountSource is 'targetAccounts', index the Target Accounts
+  // workbook entries instead.
   const { myAccountsByNorm, myAccountNorms } = useMemo(() => {
     const byNorm = new Map();
     const norms = [];
@@ -872,7 +981,11 @@ export function UploadedListView({
       if (!byNorm.has(norm)) byNorm.set(norm, prospect || { company: trimmed });
       norms.push({ norm, prospect: prospect || { company: trimmed } });
     };
-    if (Array.isArray(myAccountNames) && myAccountNames.length > 0) {
+    if (accountSource === 'targetAccounts') {
+      // Index the Target Accounts workbook; each entry carries its own
+      // company / tier / cdm, so no prospect lookup is needed.
+      for (const e of targetAccountEntries) add(e.company, e);
+    } else if (Array.isArray(myAccountNames) && myAccountNames.length > 0) {
       // Prefer resolving to a full prospect when we have one (so the
       // picker surfaces tier / CDM metadata); fall back to a minimal
       // { company } object when the prospect isn't in the current pool.
@@ -892,7 +1005,7 @@ export function UploadedListView({
       }
     }
     return { myAccountsByNorm: byNorm, myAccountNorms: norms };
-  }, [prospects, myAccountNames, blockedAccountNames, cdmName]);
+  }, [prospects, myAccountNames, blockedAccountNames, cdmName, accountSource, targetAccountEntries]);
 
   // Returns { prospect, score } where score is 0–1. Score is 1 for exact
   // normalized matches, and the shorter/longer length ratio for substring
@@ -1233,9 +1346,10 @@ export function UploadedListView({
       onPick: openPicker, onDismiss: dismissSuggestion,
       selectedKeys, onToggleSelect: toggleSelectKey, shortDateColumns,
       prospectFieldFill, onFillProspectField: fillProspectField,
+      accountLabel, accountSource,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, prospectsByNorm, myAccountsByNorm, portfolioByNorm, prospectSuggestionFor, myAccountSuggestionFor, portfolioSuggestionFor, mapping, dismissed, myAccountMapping, myAccountDismissed, portfolioMapping, portfolioDismissed, textColumn, textValues, selectedKeys, shortDateColumns, prospectFieldFill]
+    [rows, prospectsByNorm, myAccountsByNorm, portfolioByNorm, prospectSuggestionFor, myAccountSuggestionFor, portfolioSuggestionFor, mapping, dismissed, myAccountMapping, myAccountDismissed, portfolioMapping, portfolioDismissed, textColumn, textValues, selectedKeys, shortDateColumns, prospectFieldFill, accountLabel, accountSource]
   );
   const tableId = useMemo(
     () => `${tableIdPrefix}:` + columns.map(c => c.key).sort().join('|'),
@@ -1416,6 +1530,29 @@ export function UploadedListView({
     setStore({ data: [], source: 'empty' });
   }
 
+  // Append a manually entered row to the list and persist it. The new row
+  // carries every current header (blank where unspecified) so it lines up
+  // with the rest of the table; existing name-keyed mappings re-attach to
+  // it automatically via the shared `rows` memo.
+  async function handleAddRow() {
+    const fields = manualHeaders;
+    const nameKey = pickNameKey(fields);
+    const newRow = {};
+    for (const h of fields) newRow[h] = String(addRowDraft?.[h] ?? '').trim();
+    if (!String(newRow[nameKey] || '').trim()) return;
+    const next = [...data, newRow];
+    try {
+      await saveListToIDB(storageKey, next);
+      setStore({ data: next, source: 'override' });
+      setUploadError(null);
+      setAddRowDraft(null);
+    } catch (err) {
+      setUploadError(err?.name === 'QuotaExceededError'
+        ? 'Adding the row exceeded the browser storage quota.'
+        : (err?.message || 'Failed to add the row'));
+    }
+  }
+
   const matchStats = useMemo(() => {
     // Only count mappings whose row is actually in the current list —
     // an older mapping for a company that's no longer uploaded should
@@ -1441,7 +1578,13 @@ export function UploadedListView({
     // Build the My Accounts set — prefer the resolved MyAccountsView
     // list, fall back to the Baldauf-CDM prospect pool.
     let accountSet;
-    if (Array.isArray(myAccountNames) && myAccountNames.length > 0) {
+    if (accountSource === 'targetAccounts') {
+      accountSet = new Set(
+        targetAccountEntries
+          .map(e => (e.company || '').toLowerCase().trim())
+          .filter(k => k && !blockedAccountNames.has(k))
+      );
+    } else if (Array.isArray(myAccountNames) && myAccountNames.length > 0) {
       accountSet = new Set(
         myAccountNames
           .map(n => String(n || '').toLowerCase().trim())
@@ -1490,7 +1633,7 @@ export function UploadedListView({
       pct,
       totalAccounts,
     };
-  }, [rows, myAccountNames, prospects, myAccountMapping, myAccountDismissed, myAccountSuggestionFor, blockedAccountNames, cdmName]);
+  }, [rows, myAccountNames, prospects, myAccountMapping, myAccountDismissed, myAccountSuggestionFor, blockedAccountNames, cdmName, accountSource, targetAccountEntries]);
 
   // Portfolio Companies mapping progress — same denominator /
   // numerator shape as myAccountsCoverage, but counted against the
@@ -1544,7 +1687,9 @@ export function UploadedListView({
     const q = (picker.query || '').toLowerCase().trim();
     let source;
     if (picker.scope === 'myAccounts') {
-      if (Array.isArray(myAccountNames) && myAccountNames.length > 0) {
+      if (accountSource === 'targetAccounts') {
+        source = targetAccountEntries.filter(e => !blockedAccountNames.has((e.company || '').toLowerCase().trim()));
+      } else if (Array.isArray(myAccountNames) && myAccountNames.length > 0) {
         const nameSet = new Set(
           myAccountNames
             .map(n => String(n || '').toLowerCase().trim())
@@ -1581,7 +1726,7 @@ export function UploadedListView({
       if (out.length >= 30) break;
     }
     return out;
-  }, [picker, prospects, allPortfolioCompanies, prospectSuggestionFor, myAccountSuggestionFor, portfolioSuggestionFor, myAccountNames, blockedAccountNames]);
+  }, [picker, prospects, allPortfolioCompanies, prospectSuggestionFor, myAccountSuggestionFor, portfolioSuggestionFor, myAccountNames, blockedAccountNames, accountSource, targetAccountEntries]);
 
   // Search results for the bulk-mapping picker. Same source rules as
   // the per-row picker, just driven off `bulkPicker.query` instead.
@@ -1590,7 +1735,9 @@ export function UploadedListView({
     const q = (bulkPicker.query || '').toLowerCase().trim();
     let source;
     if (bulkPicker.scope === 'myAccounts') {
-      if (Array.isArray(myAccountNames) && myAccountNames.length > 0) {
+      if (accountSource === 'targetAccounts') {
+        source = targetAccountEntries.filter(e => !blockedAccountNames.has((e.company || '').toLowerCase().trim()));
+      } else if (Array.isArray(myAccountNames) && myAccountNames.length > 0) {
         const nameSet = new Set(
           myAccountNames
             .map(n => String(n || '').toLowerCase().trim())
@@ -1618,7 +1765,7 @@ export function UploadedListView({
       if (out.length >= 30) break;
     }
     return out;
-  }, [bulkPicker, prospects, allPortfolioCompanies, myAccountNames, blockedAccountNames, cdmName]);
+  }, [bulkPicker, prospects, allPortfolioCompanies, myAccountNames, blockedAccountNames, cdmName, accountSource, targetAccountEntries]);
 
   return (
     <div className={styles.wrapper}>
@@ -1639,7 +1786,7 @@ export function UploadedListView({
                     {' '}<strong style={{ color: myAccountsCoverage.pct === 100 ? '#166534' : '#1E3A8A' }}>
                       {myAccountsCoverage.mapped}/{myAccountsCoverage.touched}
                     </strong>{' '}
-                    My Accounts mapped (
+                    {accountLabel} mapped (
                     <strong style={{ color: myAccountsCoverage.pct === 100 ? '#166534' : '#1E3A8A' }}>
                       {myAccountsCoverage.pct}%
                     </strong>
@@ -1684,6 +1831,14 @@ export function UploadedListView({
             style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
           >
             Upload Excel
+          </button>
+          <button
+            type="button"
+            onClick={() => setAddRowDraft({})}
+            title={`Manually add one ${singular} to the ${title} list`}
+            style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
+          >
+            + Add row
           </button>
           {source === 'override' && (
             <button
@@ -2216,6 +2371,64 @@ export function UploadedListView({
               style={{ marginTop: '0.4rem', padding: '0.35rem 0.5rem', background: 'none', border: '1px solid var(--color-border)', borderRadius: 4, cursor: 'pointer', fontSize: '0.72rem', fontFamily: 'inherit' }}
             >Cancel</button>
           </div>
+        </div>,
+        document.body
+      )}
+      {addRowDraft && createPortal(
+        <div
+          onClick={() => setAddRowDraft(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.35)', zIndex: 9998, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: '10vh' }}
+        >
+          {(() => {
+            const nameKey = pickNameKey(manualHeaders);
+            const canAdd = String(addRowDraft[nameKey] || '').trim().length > 0;
+            return (
+              <div
+                onClick={e => e.stopPropagation()}
+                style={{ width: 420, maxWidth: '92vw', background: '#fff', border: '1px solid #e2e8f0', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.18)', padding: '0.9rem', display: 'flex', flexDirection: 'column', maxHeight: '80vh' }}
+              >
+                <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B', marginBottom: '0.2rem' }}>
+                  Add {singular} to {title}
+                </div>
+                <div style={{ fontSize: '0.72rem', color: '#64748B', marginBottom: '0.6rem' }}>
+                  Fill in the fields below. The <strong>{nameKey}</strong> is required; other columns are optional.
+                </div>
+                <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {manualHeaders.map((h, i) => (
+                    <label key={h} style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                      <span style={{ fontSize: '0.68rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#64748B' }}>
+                        {h}{h === nameKey ? ' *' : ''}
+                      </span>
+                      <input
+                        autoFocus={i === 0}
+                        type="text"
+                        value={addRowDraft[h] || ''}
+                        onChange={e => setAddRowDraft(d => ({ ...d, [h]: e.target.value }))}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && canAdd) handleAddRow();
+                          if (e.key === 'Escape') setAddRowDraft(null);
+                        }}
+                        style={{ width: '100%', padding: '0.4rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.8rem', fontFamily: 'inherit', boxSizing: 'border-box' }}
+                      />
+                    </label>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.8rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => setAddRowDraft(null)}
+                    style={{ padding: '0.4rem 0.8rem', background: 'none', border: '1px solid var(--color-border)', borderRadius: 6, cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit' }}
+                  >Cancel</button>
+                  <button
+                    type="button"
+                    onClick={handleAddRow}
+                    disabled={!canAdd}
+                    style={{ padding: '0.4rem 0.9rem', background: canAdd ? 'var(--color-accent, #2563eb)' : '#CBD5E1', color: '#fff', border: 'none', borderRadius: 6, cursor: canAdd ? 'pointer' : 'default', fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit' }}
+                  >Add row</button>
+                </div>
+              </div>
+            );
+          })()}
         </div>,
         document.body
       )}

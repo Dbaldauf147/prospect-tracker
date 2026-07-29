@@ -16,6 +16,8 @@ const SERVICE_TABLE_COLUMNS = [
   { key: 'productLine',      label: 'Product Line',      width: 260,    editable: true  },
   { key: 'serviceType',      label: 'Service Type',      width: 110,    editable: true  },
   { key: 'localProjectName', label: 'Local Project Name', width: 200,   editable: true  },
+  { key: 'timelineDriven',   label: 'Timeline Driven',   width: 120,    editable: true  },
+  { key: 'rolloutTime',      label: 'Rollout Time',      width: 160,    editable: true  },
 ];
 
 // Inline cell editor for the Services subtab. Renders the current
@@ -70,6 +72,36 @@ function ServiceCell({ value, onCommit }) {
         boxSizing: 'border-box',
       }}
     />
+  );
+}
+
+// Yes/No dropdown for the Services subtab's "Timeline Driven" column.
+// Renders as a compact <select>; an empty value ("—") means the user
+// hasn't set it yet and clears the override so the cell falls back to
+// the seed value (currently none).
+function ServiceYesNoCell({ value, onCommit }) {
+  return (
+    <select
+      value={value || ''}
+      onChange={(e) => {
+        const next = e.target.value;
+        if (next === (value || '')) return;
+        onCommit(next);
+      }}
+      title="Is this service timeline driven?"
+      style={{
+        width: '100%',
+        padding: '3px 4px',
+        border: '1px solid transparent', borderRadius: 4,
+        fontSize: '0.75rem', fontFamily: 'inherit',
+        background: 'transparent', color: 'var(--color-text)',
+        cursor: 'pointer', boxSizing: 'border-box',
+      }}
+    >
+      <option value="">—</option>
+      <option value="Yes">Yes</option>
+      <option value="No">No</option>
+    </select>
   );
 }
 
@@ -156,6 +188,8 @@ function ServiceRow({ name, meta, url, onSaveUrl, onSaveField }) {
       <td><ServiceCell value={meta?.productLine || ''}      onCommit={(v) => onSaveField(name, 'productLine', v)} /></td>
       <td><ServiceCell value={meta?.serviceType || ''}      onCommit={(v) => onSaveField(name, 'serviceType', v)} /></td>
       <td><ServiceCell value={meta?.localProjectName || ''} onCommit={(v) => onSaveField(name, 'localProjectName', v)} /></td>
+      <td><ServiceYesNoCell value={meta?.timelineDriven || ''} onCommit={(v) => onSaveField(name, 'timelineDriven', v)} /></td>
+      <td><ServiceCell value={meta?.rolloutTime || ''}      onCommit={(v) => onSaveField(name, 'rolloutTime', v)} /></td>
     </tr>
   );
 }
@@ -551,7 +585,7 @@ export function DropdownsView({ settings, updateSettings }) {
     return serviceRows.filter(({ name, meta }) => {
       if (name.toLowerCase().includes(term)) return true;
       if (!meta) return false;
-      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.localProjectName]
+      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.localProjectName, meta.timelineDriven, meta.rolloutTime]
         .some(v => String(v || '').toLowerCase().includes(term));
     });
   }, [serviceRows, serviceSearch]);

@@ -2,14 +2,16 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
-import { setOppField } from '../../utils/opps2Store';
-import { dbGet, dbPut } from '../../utils/db';
+import { setOppField, setOppBfoLink, loadOpps2Cache, loadOpps2FromFirestore, mergeOpps2Datasets } from '../../utils/opps2Store';
+import { normalizeCompany as canonCompany } from '../../utils/companyNorm';
+import { dbGet } from '../../utils/db';
 import { userLsGet, userLsSet } from '../../utils/userLs';
-import { getOppsSheetCsvUrl } from '../../utils/oppsSheetUrl';
 import { apiFetch } from '../../utils/apiFetch';
 import { useAuth } from '../../contexts/AuthContext';
 import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
 import { lookupCloseNotSold } from '../../data/closeNotSoldRules';
+import { computeNewBfoOpps, computeNewBfoMissingData } from '../../utils/newBfoOpps';
+import { resolveSfUrl } from '../../utils/salesforceLeads';
 import { OppInfoModal } from '../OppsView2/OppsView2';
 import styles from './AgentsView.module.css';
 
@@ -34,12 +36,19 @@ const STAGE_CHANGE_PROMPT_STORAGE_KEY = 'agents-ai-prompt-stage-change';
 const CLOSE_NOT_SOLDS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-close-not-solds';
 const UPDATE_BFO_ACTIVITY_PROMPT_STORAGE_KEY = 'agents-ai-prompt-update-bfo-activity';
 const BFO_PREP_PROMPT_STORAGE_KEY = 'agents-ai-prompt-bfo-prep';
+const MARKETING_LEADS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-marketing-leads';
+const MARKETING_LEAD_STATUS_UPDATE_PROMPT_STORAGE_KEY = 'agents-ai-prompt-marketing-lead-status-update';
 
 // IndexedDB store + key the BFO Activity tab persists its pasted rows
 // into. The Close Dates + Amount Updates prompts read it so each row's
 // BFO Sales Stage + Amount can be joined to the Opps tab data.
 const BFO_ACTIVITY_STORE = 'bfo-activity';
 const BFO_ACTIVITY_KEY = 'current';
+// The BFO Activity page's "Leads" subtab (pasted Salesforce Leads
+// printable view) persists under its own key in the same store. The
+// Marketing Lead Status Update agent reads it to compare each lead's
+// current Salesforce status against the Marketing Leads source of truth.
+const BFO_LEADS_KEY = 'leads-current';
 
 const DEFAULT_AI_PROMPT = `1.  I am logged into BFO.  Open the first BFO Address in the list below.
 2.  Choose the New Tast (green button) under the Activity menu on the righthand side of the screen.
@@ -120,12 +129,18 @@ const DEFAULT_AI_PROMPT_CLOSE_NOT_SOLDS = `1.  Reference the BFO links below.
 const DEFAULT_AI_PROMPT_BFO_PREP = `1.  I am logged on to this website https://se.lightning.force.com/lightning/o/Opportunity/list?filterName=00B8V00000B0XsD&0.sfdcIFrameOrigin=https%3A%2F%2Fse.lightning.force.com
 2.  Reference the BFO Opportunity names below.  My goal is to have you open their websites and copy and paste the BFO website Address to the BFO address table here on the Agents tab of this website https://prospect-tracker-ashen.vercel.app/ in the AI BFO Prep table.`;
 
-// Opps 2 (Competition, Reason Not Sold) → corresponding BFO Status +
-// Reason. Lives in data/closeNotSoldRules.js so the Opps 2 Not Sold
-// popup can offer only the Reason Not Sold options valid for the
-// chosen Competition. Used by the Close Not Solds prompt so the AI
-// assistant can advance each BFO opp through the close-out flow
-// without the user picking values by hand.
+const DEFAULT_AI_PROMPT_MARKETING_LEADS = `1.  Go to this Salesforce Leads list: https://se.lightning.force.com/lightning/o/Lead/list?filterName=00BKj00000QYbyfMAD
+2.  For each lead listed below (by Name), click the lead's name in Salesforce to open their record page.
+3.  Copy the record page's URL from the browser address bar.
+4.  Paste that URL into the Salesforce Link cell for that lead in the table below (on the Agents tab of this website https://prospect-tracker-ashen.vercel.app/). It saves straight to the Marketing Leads subtab on the Contacts page, and the row drops off this list once the link is set.
+5.  Repeat for every lead listed below.`;
+
+const DEFAULT_AI_PROMPT_MARKETING_LEAD_STATUS_UPDATE = `1.  Go to this Salesforce Leads list: https://se.lightning.force.com/lightning/o/Lead/list?filterName=00BKj00000QYbyfMAD
+2.  For each lead listed below (by Name), find the matching lead in the Salesforce list and compare its Status in Salesforce against the Marketing Leads Status shown below. The Marketing Leads Status (from this website's Marketing Leads page) is the source of truth.
+3.  If the two statuses already match, do nothing and move on to the next lead.
+4.  If they differ, click the lead's Name to open their record page, go to the Assessment tab, set the Status to the Marketing Leads Status listed below, and Save.
+5.  Repeat for every lead listed below.`;
+
 
 function readOverrides() {
   try {
@@ -190,6 +205,236 @@ function writeHideActivityOnDate(on) {
   try { userLsSet(HIDE_ACTIVITY_ON_DATE_STORAGE_KEY, on ? '1' : '0'); } catch {}
 }
 
+// Which sub-tab of the Agents page is showing: 'automations' (the default
+// activity/BFO agent tables) or 'prompts' (the saved Prompt Library).
+// Persisted per user so the choice survives a reload.
+const SUBTAB_STORAGE_KEY = 'agents-active-subtab';
+function readActiveSubTab() {
+  try {
+    const raw = userLsGet(SUBTAB_STORAGE_KEY);
+    return raw === 'prompts' ? 'prompts' : 'automations';
+  } catch { return 'automations'; }
+}
+function writeActiveSubTab(tab) {
+  try { userLsSet(SUBTAB_STORAGE_KEY, tab); } catch {}
+}
+
+// Seed content for the Prompt Library sub-tab. These show immediately so
+// the user can copy them out of the box; they only persist to
+// settings.savedPrompts once the user edits/adds/deletes something.
+const DEFAULT_SAVED_PROMPTS = [
+  {
+    id: 'seed-contract-review',
+    title: 'Contract Review',
+    body: `Take the following energy contract documents and produce a FINAL Excel-ready dataset.
+
+----------------------------------------
+1) OUTPUT STRUCTURE (MANDATORY)
+----------------------------------------
+Create ONE ROW PER CONTRACT.
+
+Columns MUST appear in this exact order:
+
+Address | Customer | Commodity | Supplier | Product Type | Contract Name / Notes | Price | Coverage Start | Coverage End | Term | Number of Accounts | Annual Consumption
+
+----------------------------------------
+2) PRODUCT TYPE (NEW — REQUIRED)
+----------------------------------------
+For each contract, classify the Product Type using the rules below:
+
+- Fixed:
+  → Fully fixed price contracts (e.g., fixed $/kWh or $/MMBtu)
+
+- Hedged:
+  → Any hedge structure, including:
+     - Percent of load hedges (e.g., 50% hedge)
+     - Layered/structured hedges
+  → MUST include hedge % in the label
+     Example formats:
+     - "Hedged – 50% Fixed"
+     - "Hedged – 50% Fixed + 50% Floating" (if applicable)
+
+- Variable / Index:
+  → NYMEX + Adder, load-following, or market-based pricing
+
+- Block / Slice:
+  → Fixed volume contracts (if explicitly stated)
+
+If unclear:
+- Use best classification based on contract language
+- If still unclear → "Other / Unspecified"
+
+----------------------------------------
+3) FULL ACCOUNT EXTRACTION (MANDATORY — NO PARTIAL LISTS)
+----------------------------------------
+For EACH contract, you MUST capture EVERY UNIQUE utility account number.
+
+You must scan ALL sections of the document, including:
+- Exhibit A / Pricing Attachments
+- Account tables
+- Service Location schedules
+- Appendices / addenda
+- Any column labeled:
+  "Account Number", "Utility Account", "UDC Account", "LDC Account"
+
+RULES:
+1) Scan the ENTIRE document (all pages — do not stop early)
+2) Extract account numbers exactly (preserve leading zeros)
+3) De-duplicate to UNIQUE account numbers
+4) Compute:
+   - Number of Accounts = COUNT of UNIQUE account numbers
+
+CRITICAL:
+- If accounts repeat across rows → count only once
+- Do NOT rely on "No. of Accounts" fields alone → independently verify
+- If the table continues across pages → capture all rows before counting
+
+----------------------------------------
+4) DATA EXTRACTION + COMPLETION
+----------------------------------------
+
+Address:
+- Use SERVICE ADDRESS (not billing HQ)
+- Normalize across rows for same site
+
+Customer:
+- Exact legal entity name
+
+Commodity:
+- Electricity or Natural Gas
+
+Supplier:
+- Extract supplier entity
+
+Contract Name / Notes:
+- Short, clean descriptor (e.g., "50% Hedge RTT", "NG Fixed Renewal")
+
+Price:
+- Extract explicitly
+- Electricity: $/kWh or ¢/kWh
+- Gas: $/MMBtu or $/Ccf
+- If missing → "N/A"
+
+Coverage Start / End:
+- Format MM/DD/YYYY
+- If enrollment-based → estimate if clearly stated
+- If unknown → "N/A"
+
+Term:
+- Calculate duration in months
+- Format: "XX Months"
+- If open-ended → "Open"
+
+Annual Consumption:
+- Extract or calculate:
+   → Electricity = kWh
+   → Gas = MMBtu or Ccf
+- If monthly values exist → SUM to annual
+- If partial → estimate clearly
+- If not available → "N/A"
+
+----------------------------------------
+5) CRITICAL VALIDATION RULES
+----------------------------------------
+
+A. DO NOT MISS ROWS
+- If a table spans multiple pages → treat as ONE continuous dataset
+
+B. ACCOUNT RECONCILIATION
+- Ensure:
+   → Account count matches extracted unique accounts
+   → No duplicates inflate totals
+
+C. SITE CONSISTENCY
+- For same Address:
+   → Account counts and consumption must reconcile logically
+   → Flag mismatches internally and correct
+
+D. DO NOT COLLAPSE CONTRACTS
+- Each contract stays its own row even if:
+   → Same supplier
+   → Same address
+   → Same commodity
+
+----------------------------------------
+6) FORMATTING RULES
+----------------------------------------
+
+- Dates → MM/DD/YYYY
+- Term → always include "Months"
+- Consumption → include units
+- Price → consistent formatting
+- Missing values → "N/A"
+
+----------------------------------------
+7) OUTPUT REQUIREMENTS
+----------------------------------------
+
+Return:
+1) FINAL Excel-ready table only
+2) No commentary before or after
+3) Ensure:
+   → Product Type is populated for every row
+   → Number of Accounts is accurate and complete
+
+----------------------------------------
+
+DATA:
+[PASTE CONTRACT FILES OR TEXT HERE]`,
+  },
+  {
+    id: 'seed-deep-research-site-list',
+    title: 'Deep Research - Building a site list for a PC',
+    body: `Populate the file attached in this project (or an Excel file with the standard schema below) with the detailed site/buildings that this company owns or operates.
+Buildings can be owned or rented.
+Ensure this is a global search. Please leverage the company website provided as well as other public sources of data about the company.
+Include all site types (e.g., headquarters, offices, manufacturing plants, R&D, warehouses, etc.).
+Include the zip / postal code for each site wherever it is available from public sources.
+Provide the final deliverable in Excel format — in the template attached to this project.
+Do this for {COMPANY_NAME}.
+Property Type must match one of the following categories as closely as possible (controlled vocabulary — do not invent new categories):
+
+
+University / College Campus
+Industrial (Heavy Manufacturing)
+Data Center
+Hospital / Healthcare
+Office - High-Rise
+Shopping Mall / Retail Center
+Multifamily High-Rise
+Hotel / Lodging
+Industrial (Light Manufacturing)
+Industrial - Other
+Mixed Use
+Laboratory / R&D
+Office - Mid-Rise
+Multifamily Mid-Rise
+Industrial Flex / R&D
+Medical Office
+Refrigerated Warehouse
+School (K-12)
+Senior Housing
+Retail - Neighborhood Retail
+BTR Residential
+Retail - High Street
+Office - Small (Low-Rise)
+Retail - Other
+Non-Refrigerated Warehouse
+Multifamily Low-Rise
+Restaurant (Full-Service)
+Self-Storage (Climate Controlled)
+Office Occupier
+Retail - Outparcel
+Restaurant (Quick-Service)
+Self-Storage (Non-Climate Controlled)`,
+  },
+  {
+    id: 'seed-pe-portfolio-analysis',
+    title: 'PE Portfolio Analysis',
+    body: `https://docs.google.com/document/d/1WoypQRaFrowZ8cK-r_akA7PdgWS2wODoFTQq_XnZcp8/edit?tab=t.0`,
+  },
+];
+
 // Toggleable columns on the Activity table (merged Sent emails + Called
 // + Meetings), in render order. The Actions column is always shown and
 // is not part of this list.
@@ -228,6 +473,29 @@ function writeHiddenActivityCols(set) {
 // space on either side doesn't drop the match.
 function normalizeBfoOppName(s) {
   return String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+// Values an Opps "BFO Link" (BFO Opportunity Name) cell can hold that
+// mean "no name yet" — a dash placeholder on new opps, #N/A on sheet
+// imports. Neither counts as "already tagged". Mirrors the BFO Activity
+// page so the two views agree on which opps still need a tag.
+const BFO_BLANK_SENTINELS = new Set(['', '-', '#n/a', 'n/a']);
+
+// The opp's BFO Opportunity Name, or '' when it holds only a blank
+// placeholder. Use this everywhere we decide whether an opp is tagged.
+function bfoOppNameOf(r) {
+  const v = String(r?.['BFO Link'] || '').trim();
+  return BFO_BLANK_SENTINELS.has(v.toLowerCase()) ? '' : v;
+}
+
+// Readable label for an Opps opp shown as an assignment target — Scope
+// plus Stage / Open Year context, falling back to the row id. Mirrors
+// the BFO Activity page's oppTargetLabel.
+function bfoOppTargetLabel(r) {
+  const scope = String(r?.Scope || '').trim();
+  const meta = [r?.Stage, r?.['Open Year']].map(v => String(v || '').trim()).filter(Boolean).join(' · ');
+  const base = scope || `Opp ${r?._id}`;
+  return meta ? `${base} (${meta})` : base;
 }
 
 function readAiPrompt() {
@@ -334,6 +602,61 @@ function writeBfoPrepPrompt(next) {
   try { userLsSet(BFO_PREP_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
 }
 
+function readMarketingLeadsPrompt() {
+  try {
+    const raw = userLsGet(MARKETING_LEADS_PROMPT_STORAGE_KEY);
+    return raw == null ? DEFAULT_AI_PROMPT_MARKETING_LEADS : raw;
+  } catch {
+    return DEFAULT_AI_PROMPT_MARKETING_LEADS;
+  }
+}
+
+function writeMarketingLeadsPrompt(next) {
+  try { userLsSet(MARKETING_LEADS_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
+}
+
+function readMarketingLeadStatusUpdatePrompt() {
+  try {
+    const raw = userLsGet(MARKETING_LEAD_STATUS_UPDATE_PROMPT_STORAGE_KEY);
+    return raw == null ? DEFAULT_AI_PROMPT_MARKETING_LEAD_STATUS_UPDATE : raw;
+  } catch {
+    return DEFAULT_AI_PROMPT_MARKETING_LEAD_STATUS_UPDATE;
+  }
+}
+
+function writeMarketingLeadStatusUpdatePrompt(next) {
+  try { userLsSet(MARKETING_LEAD_STATUS_UPDATE_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
+}
+
+// Small editable cell for the Marketing Leads agent's Salesforce Link
+// column. Commits the trimmed value verbatim (a full record URL or a
+// Lead id) — unlike BfoAddressCell it does NOT force an https:// prefix,
+// so a bare Lead id round-trips intact.
+function MarketingLeadSfCell({ value, onCommit }) {
+  const initial = String(value ?? '');
+  const commit = (el) => {
+    const next = el.value.trim();
+    if (next !== initial.trim()) onCommit(next);
+  };
+  return (
+    <input
+      key={initial}
+      type="text"
+      defaultValue={initial}
+      placeholder="Paste Salesforce record link…"
+      onBlur={(e) => commit(e.currentTarget)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+        else if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.value = initial; e.currentTarget.blur(); }
+      }}
+      style={{
+        width: '100%', boxSizing: 'border-box', padding: '3px 6px',
+        border: '1px solid var(--color-border)', borderRadius: 4, font: 'inherit',
+      }}
+    />
+  );
+}
+
 // Pull the leading stage digit from BFO Sales Stage values like
 // "6 - Negotiate to Win" / "4 - Influence and Develop". Same shape
 // PipelineView.matchStage uses so the two views agree on what "Stage
@@ -386,48 +709,10 @@ function fmtMoney(n) {
   return `$${Math.round(n).toLocaleString('en-US')}`;
 }
 
-// Same client-keyword test PipelineView + YOY's Annual Sales use on the
-// Opps Lead Source — keeps "is this a current customer?" consistent
-// across views.
-const CURRENT_CUSTOMER_LEAD_SOURCE_RE = /client|existing|renewal|cross[\s-]?sell|expansion|upsell/i;
-
 // Same localStorage key the Activity tab caches its HubSpot pull into.
 // We piggy-back on that cache instead of doing our own fetch so the two
 // views never disagree about what happened today.
 const ACTIVITY_CACHE_KEY = 'hubspot-activity-cache';
-
-// Resolved at fetch time via getOppsSheetCsvUrl below — admin falls
-// back to the legacy bundled sheet so existing behavior is unchanged;
-// other users opt in by setting settings.oppsSheetUrl.
-const OPPS_DB_STORE = 'opps-cache';
-
-// Same CSV parser OppsView uses — handles quoted fields, escaped quotes,
-// and CRLF / LF line endings.
-function parseOppsCsv(text) {
-  const rows = [];
-  let current = [];
-  let field = '';
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') { field += '"'; i++; }
-        else inQuotes = false;
-      } else field += ch;
-    } else {
-      if (ch === '"') inQuotes = true;
-      else if (ch === ',') { current.push(field); field = ''; }
-      else if (ch === '\n' || (ch === '\r' && text[i + 1] === '\n')) {
-        current.push(field); field = '';
-        if (ch === '\r') i++;
-        rows.push(current); current = [];
-      } else field += ch;
-    }
-  }
-  if (field || current.length > 0) { current.push(field); rows.push(current); }
-  return rows;
-}
 
 // "Did I send this?" is keyed off the per-user work email on HubSpot,
 // not the Google auth address — the user signs in (e.g.) with a Gmail
@@ -679,6 +964,29 @@ function normalizeCompany(name) {
     .trim();
 }
 
+// Order-insensitive name key so the Marketing Leads page's "First Last"
+// matches the Salesforce Leads printable view's "Last, First". Drops
+// punctuation (the comma) and sorts the remaining tokens, so both
+// orderings collapse to the same key ("Victor Blancarte" and
+// "Blancarte, Victor" → "blancarte victor").
+function leadNameKey(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .sort()
+    .join(' ');
+}
+
+// Loose status key for comparing a Marketing Lead's Status against the
+// Leads subtab's Status. Lower-cases and strips everything but letters
+// and digits so hyphen/en-dash/spacing differences ("Closed-Recycle" vs
+// "Closed–Recycle", "1 - New" vs "1 – New") don't read as a mismatch.
+function leadStatusKey(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 // Best-effort company guess from a recipient's email domain — used
 // only when neither an Opps-tab row nor a HubSpot contact carries a
 // company so the Company column doesn't render empty.
@@ -882,8 +1190,181 @@ function NewBfoCompanyNameCell({ prospect, value, onCommit }) {
   );
 }
 
-export function AgentsView({ prospects = [], settings, updateProspect }) {
-  const { isAdmin, user } = useAuth();
+// Prompt Library sub-tab: a simple store of reusable AI prompts the user
+// can title, edit, and copy with one click. Prompts persist through
+// settings.savedPrompts (Firestore-backed, so they sync across devices);
+// until the user touches anything, DEFAULT_SAVED_PROMPTS is shown.
+function PromptLibrary({ prompts, onChange }) {
+  // editingId: a prompt id being edited, 'new' for the add form, or null.
+  const [editingId, setEditingId] = useState(null);
+  const [draftTitle, setDraftTitle] = useState('');
+  const [draftBody, setDraftBody] = useState('');
+  const [copyFlashId, setCopyFlashId] = useState(null);
+  const [query, setQuery] = useState('');
+  // Prompt bodies are hidden by default — the library is a pick-and-copy
+  // list, so a wall of prompt text just gets in the way. Each id in this
+  // set has been expanded via its "Show" toggle.
+  const [expandedIds, setExpandedIds] = useState(() => new Set());
+
+  const toggleExpand = (id) => setExpandedIds(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  // Reorder a prompt within the saved list by swapping it with its
+  // neighbor, then persist the new order via onChange. Only offered when
+  // no search filter is active (moving within a filtered subset would be
+  // ambiguous about where the item lands in the full list).
+  const move = (id, dir) => {
+    const idx = prompts.findIndex(p => p.id === id);
+    const swapWith = idx + dir;
+    if (idx < 0 || swapWith < 0 || swapWith >= prompts.length) return;
+    const next = prompts.slice();
+    [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
+    onChange(next);
+  };
+
+  const startNew = () => { setEditingId('new'); setDraftTitle(''); setDraftBody(''); };
+  const startEdit = (p) => { setEditingId(p.id); setDraftTitle(p.title); setDraftBody(p.body); };
+  const cancel = () => { setEditingId(null); setDraftTitle(''); setDraftBody(''); };
+
+  const save = () => {
+    const title = draftTitle.trim() || 'Untitled prompt';
+    const body = draftBody;
+    if (editingId === 'new') {
+      const id = `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      onChange([...prompts, { id, title, body }]);
+    } else {
+      onChange(prompts.map(p => (p.id === editingId ? { ...p, title, body } : p)));
+    }
+    cancel();
+  };
+
+  const remove = (id) => {
+    if (typeof window !== 'undefined' && !window.confirm('Delete this saved prompt?')) return;
+    onChange(prompts.filter(p => p.id !== id));
+    if (editingId === id) cancel();
+  };
+
+  const copy = async (p) => {
+    try {
+      await navigator.clipboard.writeText(p.body);
+      setCopyFlashId(p.id);
+    } catch {
+      setCopyFlashId(`err:${p.id}`);
+    }
+    window.setTimeout(() => setCopyFlashId(null), 1500);
+  };
+
+  const q = query.trim().toLowerCase();
+  const visible = q
+    ? prompts.filter(p =>
+        p.title.toLowerCase().includes(q) || (p.body || '').toLowerCase().includes(q))
+    : prompts;
+
+  const renderForm = () => (
+    <div className={styles.promptForm}>
+      <input
+        type="text"
+        className={styles.promptTitleInput}
+        placeholder="Prompt name (e.g. Contract Review)"
+        value={draftTitle}
+        onChange={(e) => setDraftTitle(e.target.value)}
+        autoFocus
+      />
+      <textarea
+        className={styles.aiPromptInput}
+        placeholder="Paste or type the prompt text here…"
+        value={draftBody}
+        onChange={(e) => setDraftBody(e.target.value)}
+        rows={12}
+        spellCheck={false}
+      />
+      <div className={styles.aiPromptControls}>
+        <button type="button" className={styles.aiPromptBtn} onClick={save} disabled={!draftBody.trim()}>
+          Save prompt
+        </button>
+        <button type="button" className={styles.aiPromptBtnGhost} onClick={cancel}>Cancel</button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className={styles.promptLib}>
+      <p className={styles.subnote}>
+        Save prompts you reuse often and copy any of them with one click. Use the arrows to reorder, and click <strong>Show</strong> to reveal a prompt&rsquo;s text. Prompts sync across your devices.
+      </p>
+      <div className={styles.promptLibToolbar}>
+        <input
+          type="search"
+          className={styles.promptSearch}
+          placeholder="Search prompts…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        {editingId !== 'new' && (
+          <button type="button" className={styles.aiPromptBtn} onClick={startNew}>+ New prompt</button>
+        )}
+      </div>
+
+      {editingId === 'new' && (
+        <section className={styles.promptCard}>
+          <h2 className={styles.sectionHeader}>New prompt</h2>
+          {renderForm()}
+        </section>
+      )}
+
+      {prompts.length === 0 && editingId !== 'new' && (
+        <div className={styles.empty}>No saved prompts yet. Click &ldquo;New prompt&rdquo; to add one.</div>
+      )}
+
+      {prompts.length > 0 && visible.length === 0 && (
+        <div className={styles.empty}>No prompts match &ldquo;{query}&rdquo;.</div>
+      )}
+
+      {visible.map((p, i) => {
+        const expanded = expandedIds.has(p.id);
+        // Reordering is disabled while a search filter is active (see move()).
+        const canReorder = !q;
+        return (
+        <section key={p.id} className={styles.promptCard}>
+          {editingId === p.id ? (
+            <>
+              <h2 className={styles.sectionHeader}>Edit prompt</h2>
+              {renderForm()}
+            </>
+          ) : (
+            <>
+              <div className={styles.promptCardHead}>
+                {canReorder && (
+                  <div className={styles.promptReorder}>
+                    <button type="button" className={styles.promptMoveBtn} onClick={() => move(p.id, -1)} disabled={i === 0} title="Move up" aria-label="Move up">▲</button>
+                    <button type="button" className={styles.promptMoveBtn} onClick={() => move(p.id, 1)} disabled={i === visible.length - 1} title="Move down" aria-label="Move down">▼</button>
+                  </div>
+                )}
+                <h2 className={styles.promptCardTitle}>{p.title}</h2>
+                <div className={styles.promptCardActions}>
+                  <button type="button" className={styles.aiPromptBtnGhost} onClick={() => toggleExpand(p.id)} aria-expanded={expanded}>{expanded ? 'Hide' : 'Show'}</button>
+                  <button type="button" className={styles.aiPromptBtn} onClick={() => copy(p)}>Copy</button>
+                  <button type="button" className={styles.aiPromptBtnGhost} onClick={() => startEdit(p)}>Edit</button>
+                  <button type="button" className={styles.aiPromptBtnGhost} onClick={() => remove(p.id)}>Delete</button>
+                  {copyFlashId === p.id && <span className={styles.copyFlash}>Copied!</span>}
+                  {copyFlashId === `err:${p.id}` && <span className={styles.copyFlashErr}>Copy failed</span>}
+                </div>
+              </div>
+              {expanded && <pre className={styles.aiPromptPreview}>{p.body}</pre>}
+            </>
+          )}
+        </section>
+        );
+      })}
+    </div>
+  );
+}
+
+export function AgentsView({ prospects = [], settings, updateProspect, updateSettings }) {
+  const { user } = useAuth();
   // Configured per-user via Settings → CDM Name. The Sent emails section
   // matches HubSpot's hs_email_from_email against this address; blank
   // means "no outbound to show yet — set your work email in Settings".
@@ -930,8 +1411,17 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
   const [closeNotSoldsPrompt, setCloseNotSoldsPrompt] = useState(readCloseNotSoldsPrompt);
   const [updateBfoActivityPrompt, setUpdateBfoActivityPrompt] = useState(readUpdateBfoActivityPrompt);
   const [bfoPrepPrompt, setBfoPrepPrompt] = useState(readBfoPrepPrompt);
+  const [marketingLeadsPrompt, setMarketingLeadsPrompt] = useState(readMarketingLeadsPrompt);
+  const [marketingLeadStatusUpdatePrompt, setMarketingLeadStatusUpdatePrompt] = useState(readMarketingLeadStatusUpdatePrompt);
   const [bfoActivity, setBfoActivity] = useState(null);
+  const [bfoLeads, setBfoLeads] = useState(null);
+  // Tagging state for the "BFO Opportunity Name not tagged to an opp"
+  // warning mirrored from the BFO Activity page.
+  const [assigningBfo, setAssigningBfo] = useState(false);
+  const [bfoAssignFlash, setBfoAssignFlash] = useState('');
   const [copyFlash, setCopyFlash] = useState('');
+  const [marketingLeadsCopyFlash, setMarketingLeadsCopyFlash] = useState('');
+  const [marketingLeadStatusUpdateCopyFlash, setMarketingLeadStatusUpdateCopyFlash] = useState('');
   const [newBfoOppCopyFlash, setNewBfoOppCopyFlash] = useState('');
   const [closeDatesCopyFlash, setCloseDatesCopyFlash] = useState('');
   const [amountUpdatesCopyFlash, setAmountUpdatesCopyFlash] = useState('');
@@ -955,6 +1445,20 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
   const [revealedPrompts, setRevealedPrompts] = useState({});
   const togglePrompt = (key) =>
     setRevealedPrompts(prev => ({ ...prev, [key]: !prev[key] }));
+
+  // Agents page sub-tab: 'automations' (the default agent tables) or
+  // 'prompts' (the saved Prompt Library).
+  const [activeSubTab, setActiveSubTab] = useState(readActiveSubTab);
+  const selectSubTab = (tab) => { setActiveSubTab(tab); writeActiveSubTab(tab); };
+
+  // Saved prompts for the Prompt Library. Falls back to the seed list
+  // until the user edits anything, then persists via settings.savedPrompts.
+  const savedPrompts = Array.isArray(settings?.savedPrompts)
+    ? settings.savedPrompts
+    : DEFAULT_SAVED_PROMPTS;
+  const handleSavedPromptsChange = (next) => {
+    if (updateSettings) updateSettings({ savedPrompts: next });
+  };
 
   const ignoredEmailIds = useMemo(() => new Set(ignoredEmails), [ignoredEmails]);
   const ignoredMeetingIds = useMemo(() => new Set(ignoredMeetings), [ignoredMeetings]);
@@ -1007,6 +1511,93 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
     writeBfoPrepPrompt(next);
   };
   const resetBfoPrepPrompt = () => updateBfoPrepPrompt(DEFAULT_AI_PROMPT_BFO_PREP);
+  const updateMarketingLeadsPrompt = (next) => {
+    setMarketingLeadsPrompt(next);
+    writeMarketingLeadsPrompt(next);
+  };
+  const resetMarketingLeadsPrompt = () => updateMarketingLeadsPrompt(DEFAULT_AI_PROMPT_MARKETING_LEADS);
+  const updateMarketingLeadStatusUpdatePrompt = (next) => {
+    setMarketingLeadStatusUpdatePrompt(next);
+    writeMarketingLeadStatusUpdatePrompt(next);
+  };
+  const resetMarketingLeadStatusUpdatePrompt = () => updateMarketingLeadStatusUpdatePrompt(DEFAULT_AI_PROMPT_MARKETING_LEAD_STATUS_UPDATE);
+
+  // Leads the user hid on the Contacts → Marketing Leads page
+  // (settings.marketingLeadsHiddenLeads holds their ids). Hidden leads are
+  // set aside, so the Marketing Leads agents ignore them entirely.
+  const hiddenMarketingLeadIds = useMemo(() => {
+    const arr = settings?.marketingLeadsHiddenLeads;
+    return new Set(Array.isArray(arr) ? arr.map(String) : []);
+  }, [settings?.marketingLeadsHiddenLeads]);
+
+  // Marketing Leads that still need a Salesforce Link — sourced live from
+  // the Marketing Leads subtab's store (settings.marketingLeads). A lead
+  // qualifies when it has a Name but an empty Salesforce Link (sfUrl).
+  // Leads hidden on the Contacts page are skipped.
+  const marketingLeadsMissing = useMemo(() => {
+    const arr = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
+    return arr.filter(r => String(r?.name || '').trim() && !String(r?.sfUrl || '').trim()
+      && !hiddenMarketingLeadIds.has(String(r?.id)));
+  }, [settings, hiddenMarketingLeadIds]);
+
+  // Index of the BFO Activity "Leads" subtab: order-insensitive name key
+  // → the lead's current Salesforce Status from that paste. Detects the
+  // Name and Status columns from the pasted headers (the printable view
+  // labels them "Name" and "Status"). Empty until the user pastes the
+  // Leads subtab, which leaves the agent's discrepancy list empty.
+  const leadsSubtabStatusByName = useMemo(() => {
+    const map = new Map();
+    const headers = Array.isArray(bfoLeads?.headers) ? bfoLeads.headers : [];
+    const rows = Array.isArray(bfoLeads?.rows) ? bfoLeads.rows : [];
+    if (!headers.length || !rows.length) return map;
+    const norm = (h) => String(h || '').trim().toLowerCase();
+    const nameCol = headers.find(h => norm(h) === 'name')
+      || headers.find(h => /\bname\b/i.test(h) && !/company|account/i.test(h));
+    const statusCol = headers.find(h => norm(h) === 'status')
+      || headers.find(h => /status/i.test(h));
+    if (!nameCol || !statusCol) return map;
+    for (const r of rows) {
+      const key = leadNameKey(r[nameCol]);
+      if (!key || map.has(key)) continue;
+      map.set(key, String(r[statusCol] || '').trim());
+    }
+    return map;
+  }, [bfoLeads]);
+
+  // Marketing Leads whose Status (the source of truth on the Marketing
+  // Leads page) DIFFERS from the same lead's status on the BFO Activity
+  // "Leads" subtab — the only ones the status-update agent needs to act
+  // on. A lead qualifies when it has a Name + Status, has a matching row
+  // in the Leads subtab, and the two statuses don't match. Leads with no
+  // matching Leads-subtab row are hidden (we can't confirm a diff), as are
+  // leads the user hid on the Contacts → Marketing Leads page.
+  const marketingLeadStatusRows = useMemo(() => {
+    const arr = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
+    const out = [];
+    for (const r of arr) {
+      if (hiddenMarketingLeadIds.has(String(r?.id))) continue; // hidden on Contacts → skip
+      const name = String(r?.name || '').trim();
+      const status = String(r?.status || '').trim();
+      if (!name || !status) continue;
+      const key = leadNameKey(name);
+      if (!leadsSubtabStatusByName.has(key)) continue; // no match → hide
+      const bfoStatus = leadsSubtabStatusByName.get(key);
+      if (leadStatusKey(status) === leadStatusKey(bfoStatus)) continue; // same → hide
+      out.push({ ...r, bfoStatus });
+    }
+    return out;
+  }, [settings, leadsSubtabStatusByName, hiddenMarketingLeadIds]);
+
+  // Write a Salesforce Link back onto the matching lead in
+  // settings.marketingLeads so it saves through the same settings →
+  // Firestore pipeline and shows up on the Marketing Leads page.
+  const updateMarketingLeadSfUrl = (leadId, value) => {
+    if (!updateSettings || !leadId) return;
+    const arr = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
+    const v = String(value || '').trim();
+    const next = arr.map(r => (r?.id != null && String(r.id) === String(leadId) ? { ...r, sfUrl: v } : r));
+    updateSettings({ marketingLeads: next });
+  };
 
   // The "Update BFO Activity" prompt is appended to the end of every
   // individual prompt copy (and the Copy-all bundle). Helper keeps that
@@ -1101,10 +1692,12 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
   }, []);
 
   // Pull the latest HubSpot activity (emails, calls, meetings) AND
-  // re-fetch the Opps Google Sheet so the BFO tagging and the Called
+  // re-sync the Opps 2 store so the BFO tagging and the Called
   // section both reflect the latest data. The HubSpot pull writes to
   // the shared localStorage cache that ActivityView reads from; the
-  // Opps pull writes to the same IndexedDB key OppsView uses. Each
+  // Opps half reconciles the local Opps 2 cache against Firestore
+  // (Opps 2 is the canonical opps store — the legacy Google Sheet is
+  // a read-only backup that no longer feeds anything here). Each
   // half runs independently so a failure on one doesn't block the
   // other.
   async function refreshActivityCache() {
@@ -1129,39 +1722,28 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
       return all;
     }
     async function fetchOpps() {
-      const url = getOppsSheetCsvUrl({ isAdmin, settings });
-      if (!url) {
-        // No sheet configured for this user — leave the existing
-        // oppsCache (if any) untouched and skip the Opps refresh half.
+      // Opps 2 is the canonical opps store. Reconcile the local cache
+      // against the Firestore copy with the same merge the Opps 2 tab
+      // uses, so the values here always match the current Opps data —
+      // including edits made on another device since the last visit.
+      const [fromIdb, fromFs] = await Promise.all([
+        loadOpps2Cache(),
+        user?.uid ? loadOpps2FromFirestore(user.uid) : Promise.resolve(null),
+      ]);
+      const next = (fromIdb && fromFs)
+        ? mergeOpps2Datasets(fromIdb, fromFs)
+        : (fromIdb || fromFs);
+      if (!next) {
+        // Nothing cached locally or in the cloud yet — leave the
+        // existing oppsCache (if any) untouched.
         return;
       }
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`Opps HTTP ${res.status}`);
-      const csvText = await res.text();
-      const rows = parseOppsCsv(csvText);
-      if (rows.length < 2) throw new Error('Opps sheet returned no data');
-      const headers = rows[0].map(h => h.trim());
-      const records = [];
-      for (let i = 1; i < rows.length; i++) {
-        const row = rows[i];
-        const record = { _id: i };
-        let hasData = false;
-        for (let j = 0; j < headers.length; j++) {
-          const h = headers[j];
-          if (!h) continue;
-          const val = (row[j] || '').trim();
-          if (record[h] !== undefined && record[h] !== '' && record[h] !== '-' && record[h] !== '#N/A') continue;
-          record[h] = val;
-          if (val && val !== '-' && val !== '#N/A') hasData = true;
-        }
-        // Mirror the Opps tab's filter — keep every row with at least
-        // one populated cell. Earlier we required an Account too, which
-        // silently dropped sheet rows whose Account was blank.
-        if (hasData) records.push(record);
-      }
-      const result = { headers, records, fetchedAt: new Date().toISOString() };
-      setActivityRefreshProgress(prev => ({ ...prev, opps: records.length }));
-      await dbPut(OPPS_DB_STORE, result, 'data');
+      const result = {
+        headers: Array.isArray(next.headers) ? next.headers : [],
+        records: Array.isArray(next.records) ? next.records : [],
+        fetchedAt: next.fetchedAt || null,
+      };
+      setActivityRefreshProgress(prev => ({ ...prev, opps: result.records.length }));
       setOppsCache(result);
       return result;
     }
@@ -1258,6 +1840,23 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
     return () => { cancelled = true; window.removeEventListener('focus', refresh); };
   }, []);
 
+  // Leads subtab rows — pasted on the BFO Activity page's "Leads" tab
+  // (Salesforce Leads printable view), persisted under BFO_LEADS_KEY.
+  // Read here so the Marketing Lead Status Update agent can surface only
+  // the leads whose Salesforce status differs from the Marketing Leads
+  // source of truth. Refresh on focus so a fresh paste shows up live.
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      dbGet(BFO_ACTIVITY_STORE, BFO_LEADS_KEY)
+        .then(d => { if (!cancelled) setBfoLeads(d || null); })
+        .catch(() => {});
+    };
+    refresh();
+    window.addEventListener('focus', refresh);
+    return () => { cancelled = true; window.removeEventListener('focus', refresh); };
+  }, []);
+
   // email → company map from the HubSpot contacts cache.
   const companyByEmail = useMemo(() => {
     const map = new Map();
@@ -1327,6 +1926,26 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
     return null;
   };
 
+  // Marketing Leads (Contacts tab) indexed by lower-cased email → the
+  // lead's resolvable Salesforce record link. Lets the Activity table
+  // recognise when an outbound email's external recipient is a known
+  // lead, so the same activity can be logged on that lead's Salesforce
+  // record in addition to any matched Opp. Only leads whose Salesforce
+  // Link resolves to a real URL are indexed — there's nothing to open
+  // (or log against) otherwise.
+  const leadSfByEmail = useMemo(() => {
+    const map = new Map();
+    const leads = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
+    for (const lead of leads) {
+      const email = String(lead?.email || '').toLowerCase().trim();
+      if (!email || map.has(email)) continue;
+      const url = resolveSfUrl(lead?.sfUrl);
+      if (!url) continue;
+      map.set(email, { url, name: String(lead?.name || '').trim() });
+    }
+    return map;
+  }, [settings?.marketingLeads]);
+
   const { todaysOutbound, todaysMeetings } = useMemo(() => {
     const bounds = boundsForDate(referenceDate);
     const inToday = (ts) => {
@@ -1379,6 +1998,14 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
           matchedOpp = findOppForRecipient(addr, companyCandidate);
           if (matchedOpp) break;
         }
+        // If any external recipient is a known Marketing Lead, capture
+        // that lead's Salesforce record link so the activity can also be
+        // logged on the lead. First matching recipient wins.
+        let leadMatch = null;
+        for (const addr of recipients) {
+          const m = leadSfByEmail.get(String(addr).toLowerCase());
+          if (m) { leadMatch = m; break; }
+        }
         // Override key — keyed by the first external recipient so a
         // future email to the same person reuses the manual tag.
         const overrideKey = recipients[0] || '';
@@ -1419,6 +2046,8 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
           company,
           bfoOpp,
           bfoUrl,
+          leadSfUrl: leadMatch?.url || '',
+          leadName: leadMatch?.name || '',
           nextStepsType,
           overrideKey,
           isManual: Boolean(override),
@@ -1498,7 +2127,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
     // dependency set as cache + hubspotCache + oppIndex + overrides,
     // so they don't need their own entries here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cache, hubspotCache, oppIndex, overrides, ignoredEmailIds, ignoredMeetingIds, excludedRecipientSet, referenceDate, senderEmail]);
+  }, [cache, hubspotCache, oppIndex, overrides, ignoredEmailIds, ignoredMeetingIds, excludedRecipientSet, referenceDate, senderEmail, leadSfByEmail]);
 
   // Opps that count as "called" in the activity window. Two signals:
   //   • An explicit mark from the Opps tab's Called button (`_calledOn`
@@ -1624,117 +2253,19 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
     return '';
   };
 
-  const newBfoOpps = useMemo(() => {
-    const records = oppsCache?.records || [];
-    const EXCLUDED_STAGES = new Set(['Not Started', 'Not Sold', 'Sold']);
-    const overrides = settings?.serviceOverrides || {};
-    const rows = [];
-    for (const r of records) {
-      const stage = String(r.Stage || '').trim();
-      if (!stage || EXCLUDED_STAGES.has(stage)) continue;
-      // Only list opps whose BFO Opportunity Name is exactly "-" — the
-      // deliberate placeholder for "needs a BFO opp created". Blank and
-      // "#N/A" do not qualify.
-      const bfoLink = String(r['BFO Link'] ?? '').trim();
-      if (bfoLink !== '-') continue;
-      const callInRaw = String(r['Call In'] ?? '').trim();
-      const account = String(r.Account || '').trim();
-      const leadSource = String(r['Lead Source'] || r['Source'] || '').trim();
-      // A Scope can list several comma-joined services (e.g. "Remote
-      // assessments, Audits"). The New BFO Opp flow only creates an opp
-      // for the first one, so use just the first listed scope item for
-      // the Scope column, the metadata lookup, and the Project Name.
-      const rawScope = String(r.Scope || '').trim();
-      const scope = rawScope.includes(',')
-        ? rawScope.split(',')[0].trim()
-        : rawScope;
-      const followUp = String(r['Follow Up'] ?? '').trim();
-      const bfoCompanyName = bfoCompanyByNorm.get(normalizeCompany(account)) || '';
-      // Look up the per-service metadata from the Dropdowns › Services
-      // subtab. Scope is the canonical service name; the catalog
-      // supplies Product Line, Type, Region, Class (= BFO Tag), and
-      // Local Project Name. User overrides on the Services tab win
-      // over the seed values.
-      const svcMeta = getEffectiveServiceMetadata(scope, overrides);
-      const productLine = svcMeta?.productLine || '';
-      const type = svcMeta?.serviceType || '';
-      const region = svcMeta?.region || '';
-      const klass = svcMeta?.bfoTag || '';
-      // Local Project Name picks up the seed / override value. When
-      // the opp's Lead Source is "PE Partner" (the PE-firm referral
-      // bucket), append "#PE PRACTICE" so the BFO opp is tagged into
-      // the PE practice book of business.
-      const baseLpn = svcMeta?.localProjectName || '';
-      const isPePartner = /^pe partner$/i.test(leadSource);
-      const localProjectName = isPePartner
-        ? (baseLpn ? `${baseLpn} #PE PRACTICE` : '#PE PRACTICE')
-        : baseLpn;
-      // Years is fixed: every new BFO opp starts at Year 1. The
-      // catalog's "X years" value represents contract duration, which
-      // BFO doesn't surface in the opp name.
-      const years = 'YEAR1';
-      // Combined Project Name the user pastes into BFO's Project Name
-      // box. Format:
-      //   SB - {ProductLine code} - New - {Type} - {Region} - YEAR1 - {Scope}
-      // {ProductLine code} is the first segment of the Product Line
-      // before " - " (e.g. "SUSUP" from "SUSUP - SUPPLY & SUST
-      // SERVICES"). Falls back to the raw productLine when the code
-      // can't be parsed.
-      const plCode = productLine.includes(' - ')
-        ? productLine.split(' - ')[0].trim()
-        : productLine.trim();
-      const projectNameParts = ['SB', plCode, 'New', type, region, years, scope].filter(Boolean);
-      const projectName = projectNameParts.join(' - ');
-      rows.push({
-        id: r._id ?? `${account}|${scope}`,
-        // Raw Opps-tab record, so the table can open the same Opp info
-        // modal Opps 2 uses (read-only here).
-        raw: r,
-        company: account || '—',
-        bfoCompanyName,
-        leadSource: leadSource || '—',
-        currentCustomer: CURRENT_CUSTOMER_LEAD_SOURCE_RE.test(leadSource),
-        scope: scope || '—',
-        stage,
-        followUp,
-        callIn: callInRaw,
-        productLine,
-        localProjectName,
-        projectName,
-        type,
-        region,
-        class: klass,
-        years,
-      });
-    }
-    rows.sort((a, b) => a.company.localeCompare(b.company));
-    return rows;
-  }, [oppsCache, bfoCompanyByNorm, settings?.serviceOverrides]);
+  // Opps that don't yet exist in BFO and need a fresh Guided Opportunity
+  // created. Computed by the shared util so the Agents table, the red
+  // banner, and the Issues tab all agree on the same set (and the same
+  // "what's missing" check). See utils/newBfoOpps.js.
+  const newBfoOpps = useMemo(
+    () => computeNewBfoOpps({ oppsCache, prospects, serviceOverrides: settings?.serviceOverrides }),
+    [oppsCache, prospects, settings?.serviceOverrides]
+  );
 
-  // Missing data the New BFO Opp AI prompt needs. The prompt emits
-  // "BFO Company Name | Project Name | Product Line | Local Project Name"
-  // per opp, with Project Name composed from the Product Line code, Type,
-  // Region and Scope — so any blank among those fields leaves a hole in
-  // the prompt. One entry per affected opp, listing its blank fields;
-  // drives the red banner at the top of the page.
-  const newBfoMissingData = useMemo(() => {
-    const blank = (v) => {
-      const s = String(v ?? '').trim();
-      return !s || s === '—' || s === '-';
-    };
-    const out = [];
-    for (const o of newBfoOpps) {
-      const missing = [];
-      if (blank(o.bfoCompanyName)) missing.push('BFO Company Name');
-      if (blank(o.productLine)) missing.push('Product Line');
-      if (blank(o.type)) missing.push('Type');
-      if (blank(o.region)) missing.push('Region');
-      if (blank(o.scope)) missing.push('Scope');
-      if (blank(o.localProjectName)) missing.push('Local Project Name');
-      if (missing.length) out.push({ company: o.company, missing });
-    }
-    return out;
-  }, [newBfoOpps]);
+  // Missing data the New BFO Opp AI prompt needs. One entry per affected
+  // opp, listing its blank fields; drives the red banner at the top of
+  // the page (and the matching row on the Issues tab).
+  const newBfoMissingData = useMemo(() => computeNewBfoMissingData(newBfoOpps), [newBfoOpps]);
 
   // BFO Opportunity Name → Last Activity date from the BFO Activity tab.
   // Lets the Called and Sent emails tables show how long it's been since
@@ -1804,6 +2335,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
         rowKey: `email:${e.id}`, type: 'email', ts: e.ts, endTs: null,
         title: e.subject, to: e.to, rawTo: e.rawTo, recipients: e.recipients || [],
         company: e.company, bfoOpp: e.bfoOpp, bfoUrl: e.bfoUrl,
+        leadSfUrl: e.leadSfUrl || '', leadName: e.leadName || '',
         outcome: e.status || '', location: '', overrideKey: e.overrideKey,
         isManual: e.isManual, editable: true, emailId: e.id,
       });
@@ -2089,6 +2621,105 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
     }
   };
 
+  // ---- BFO Opportunity Names not tagged to an opp on Opps ----
+  // Mirrors the warning on the BFO Activity page: any Opportunity Name in
+  // the pasted BFO Activity data that has no matching opp on the Opps tab
+  // is surfaced up top so it can be tagged onto an untagged opp.
+
+  // Set of BFO Opportunity Names that already exist on the Opps tab
+  // (keyed by "BFO Link", lower-cased + trimmed).
+  const taggedBfoOppNameKeys = useMemo(() => {
+    const set = new Set();
+    for (const r of (oppsCache?.records || [])) {
+      const k = bfoOppNameOf(r).toLowerCase();
+      if (k) set.add(k);
+    }
+    return set;
+  }, [oppsCache]);
+
+  // BFO Activity Opportunity Names with no matching opp on the Opps tab,
+  // paired with the BFO Account they came from. Suppressed until the Opps
+  // cache has loaded (taggedBfoOppNameKeys empty) so we don't flag every
+  // row before there's anything to match against.
+  const untaggedBfoOppNames = useMemo(() => {
+    if (!bfoActivity?.headers?.length || taggedBfoOppNameKeys.size === 0) return [];
+    const oppCol = bfoActivity.headers.find(h => /opportunity\s*name/i.test(h));
+    if (!oppCol) return [];
+    const acctCol = bfoActivity.headers.find(h => /^account(\s*name)?$/i.test(h.trim()))
+      || bfoActivity.headers.find(h => /account/i.test(h));
+    const seen = new Set();
+    const missing = [];
+    for (const r of bfoActivity.rows) {
+      const raw = String(r[oppCol] || '').trim();
+      if (!raw) continue;
+      const k = raw.toLowerCase();
+      if (taggedBfoOppNameKeys.has(k) || seen.has(k)) continue;
+      seen.add(k);
+      missing.push({ name: raw, account: acctCol ? String(r[acctCol] || '').trim() : '' });
+    }
+    return missing;
+  }, [bfoActivity, taggedBfoOppNameKeys]);
+
+  // Normalized company → that company's BFO Company Name, sourced from the
+  // Table View prospect records. Keyed with the canonical companyNorm so
+  // it lines up with the BFO Activity page's matching.
+  const bfoCompanyByAccountCanon = useMemo(() => {
+    const map = new Map();
+    for (const p of (prospects || [])) {
+      const key = canonCompany(p?.company || '');
+      const bfo = String(p?.bfoCompanyName || '').trim();
+      if (key && bfo) map.set(key, bfo);
+    }
+    return map;
+  }, [prospects]);
+
+  // Opps that have NO BFO Opportunity Name yet, indexed by every key we
+  // might match a BFO Activity row on: the normalized Account, the opp's
+  // own normalized BFO Company Name, and the normalized BFO Company Name
+  // carried on the matching Table View company. Closed opps excluded.
+  const untaggedOppsByCanonKey = useMemo(() => {
+    const map = new Map();
+    const add = (key, opp) => {
+      if (!key) return;
+      let list = map.get(key);
+      if (!list) { list = []; map.set(key, list); }
+      if (!list.some(o => o._id === opp._id)) list.push(opp);
+    };
+    for (const r of (oppsCache?.records || [])) {
+      if (bfoOppNameOf(r) !== '') continue;
+      if (CLOSED_OPP_STAGES.has(String(r.Stage || '').trim().toLowerCase())) continue;
+      const acctKey = canonCompany(r.Account || '');
+      add(acctKey, r);
+      add(canonCompany(r['BFO Company Name'] || ''), r);
+      const bfo = bfoCompanyByAccountCanon.get(acctKey);
+      if (bfo) add(canonCompany(bfo), r);
+    }
+    return map;
+  }, [oppsCache, bfoCompanyByAccountCanon]);
+
+  // Tag the chosen Opps opp with the BFO Opportunity Name, persist through
+  // the shared Opps 2 store, then refresh the local cache so the warning
+  // reflects the new tag. Optimistically drops the opp off the candidate
+  // lists immediately.
+  async function assignBfoOppName(oppId, bfoName) {
+    if (assigningBfo) return;
+    setAssigningBfo(true);
+    setOppsCache(prev => (prev && Array.isArray(prev.records))
+      ? { ...prev, records: prev.records.map(r => (String(r._id) === String(oppId) ? { ...r, 'BFO Link': bfoName } : r)) }
+      : prev);
+    try {
+      await setOppBfoLink(user?.uid, oppId, bfoName);
+      const refreshed = await loadOppsFromCache();
+      if (refreshed) setOppsCache(refreshed);
+      setBfoAssignFlash(`Tagged an Opps opp with "${bfoName}".`);
+    } catch (err) {
+      setBfoAssignFlash(`Could not tag opp: ${err?.message || err}`);
+    } finally {
+      setAssigningBfo(false);
+      window.setTimeout(() => setBfoAssignFlash(''), 3500);
+    }
+  }
+
   const dateLabel = useMemo(() => parseIsoDate(referenceDate).toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
   }), [referenceDate]);
@@ -2125,6 +2756,14 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
         activityLines.push(`${e.bfoUrl}: Type ${e.nextStepsType}`);
         seen.add(e.bfoUrl);
       }
+      // Log the same email touch on any matched Marketing Lead's
+      // Salesforce record too. Lead links live on their own SF records,
+      // so they never collide with the opp BFO addresses above.
+      for (const e of todaysOutbound) {
+        if (!e.leadSfUrl || seen.has(e.leadSfUrl)) continue;
+        activityLines.push(`${e.leadSfUrl}: Type ${e.nextStepsType}`);
+        seen.add(e.leadSfUrl);
+      }
     }
     const activityBlock = activityLines.join('\n');
 
@@ -2155,6 +2794,10 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
 
     const bfoPrepBlock = ['BFO Opportunity Names', ...bfoPrepOpps.map(o => o.name)].join('\n');
 
+    const marketingLeadsBlock = ['Name\tCompany', ...marketingLeadsMissing.map(l => `${(l.name || '').trim()}\t${(l.company || '').trim()}`)].join('\n');
+
+    const marketingLeadStatusBlock = ['Name\tCompany\tMarketing Leads Status', ...marketingLeadStatusRows.map(l => `${(l.name || '').trim()}\t${(l.company || '').trim()}\t${(l.status || '').trim()}`)].join('\n');
+
     const sections = [
       { title: 'BFO Prep', prompt: bfoPrepPrompt, block: bfoPrepBlock, hasData: bfoPrepOpps.length > 0 },
       { title: 'Activity', prompt: aiPrompt, block: activityBlock, hasData: activityLines.length > 1 },
@@ -2163,15 +2806,22 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
       { title: 'Amount Updates', prompt: amountUpdatesPrompt, block: amountBlock, hasData: amountUpdateOpps.length > 0 },
       { title: 'Stage Change', prompt: stageChangePrompt, block: stageBlock, hasData: stageChangeOpps.length > 0 },
       { title: 'Close Not Solds', prompt: closeNotSoldsPrompt, block: closeNotSoldBlock, hasData: closeNotSoldLines.length > 1 },
+      // Marketing Leads always rides along in the bundle, even with no leads
+      // missing a Salesforce Link — its prompt stands alone as a reusable
+      // instruction, so `always` keeps it in every copy regardless of data.
+      { title: 'Marketing Leads', prompt: marketingLeadsPrompt, block: marketingLeadsBlock, hasData: marketingLeadsMissing.length > 0, always: true },
+      { title: 'Marketing Lead Status Update', prompt: marketingLeadStatusUpdatePrompt, block: marketingLeadStatusBlock, hasData: marketingLeadStatusRows.length > 0, always: true },
     ];
     // Skip sections that carry no data — when a section is just its prompt
     // with an empty data block (no BFO links, names, or opportunities to
     // act on), there's nothing for the assistant to do, so leave it out of
     // the bundle. hasData checks the underlying rows (the header-only line
     // count for the deduped / filtered blocks) rather than the prompt text.
+    // `always` sections stay in even when empty, dropping just their data
+    // block so only the prompt itself carries through.
     const base = sections
-      .filter(s => s.hasData)
-      .map(s => `===== ${s.title} =====\n${s.prompt}\n\n${s.block}`)
+      .filter(s => s.hasData || s.always)
+      .map(s => s.hasData ? `===== ${s.title} =====\n${s.prompt}\n\n${s.block}` : `===== ${s.title} =====\n${s.prompt}`)
       .join('\n\n');
     // Update BFO Activity closes out the bundle (no data block of its own).
     const bfoSuffix = (updateBfoActivityPrompt || '').trim();
@@ -2183,6 +2833,8 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
     stageChangePrompt, closeNotSoldsPrompt, updateBfoActivityPrompt,
     bfoPrepPrompt, todaysOutbound, calledOpps, markedMeetingOpps, newBfoOpps, closeDateOpps,
     amountUpdateOpps, stageChangeOpps, closeNotSoldOpps, bfoPrepOpps,
+    marketingLeadsPrompt, marketingLeadsMissing,
+    marketingLeadStatusUpdatePrompt, marketingLeadStatusRows,
   ]);
 
   const [copyAllFlash, setCopyAllFlash] = useState('');
@@ -2196,65 +2848,155 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
     window.setTimeout(() => setCopyAllFlash(''), 1500);
   };
 
+  // One-click copy of the standard deal-folder setup command, ready to
+  // paste into a terminal to scaffold the folder structure.
+  const FOLDER_SETUP_COMMAND = 'md Presentations PRW.SIA.Proposal Agreement "Other Docs.NDA" "Final Paperwork" PCs "Old" "Compliance Screening"';
+  const [foldersFlash, setFoldersFlash] = useState('');
+  const onCopyFolders = async () => {
+    try {
+      await navigator.clipboard.writeText(FOLDER_SETUP_COMMAND);
+      setFoldersFlash('Copied!');
+    } catch {
+      setFoldersFlash('Copy failed');
+    }
+    window.setTimeout(() => setFoldersFlash(''), 1500);
+  };
+
   return (
     <div className={styles.wrap}>
       <div className={styles.header}>
         <h1 className={styles.title}>Agents</h1>
-        <span className={styles.dateline}>{dateLabel}</span>
-        <label className={styles.dateField} title="Pick the date the activity sections (sent emails, meetings, called opps) should reference.">
-          Activity date
-          <input
-            type="date"
-            className={styles.dateInput}
-            value={referenceDate}
-            max={todayIso()}
-            onChange={(e) => setReferenceDate(e.target.value || todayIso())}
-          />
-          {!isToday && (
+        <button
+          type="button"
+          className={styles.refreshActivityBtn}
+          onClick={onCopyFolders}
+          title={`Copy the folder-setup command to your clipboard:\n${FOLDER_SETUP_COMMAND}`}
+        >Copy folders</button>
+        {foldersFlash && <span className={styles.copyFlash}>{foldersFlash}</span>}
+        {activeSubTab === 'automations' && (
+          <>
+            <span className={styles.dateline}>{dateLabel}</span>
+            <label className={styles.dateField} title="Pick the date the activity sections (sent emails, meetings, called opps) should reference.">
+              Activity date
+              <input
+                type="date"
+                className={styles.dateInput}
+                value={referenceDate}
+                max={todayIso()}
+                onChange={(e) => setReferenceDate(e.target.value || todayIso())}
+              />
+              {!isToday && (
+                <button
+                  type="button"
+                  className={styles.dateResetBtn}
+                  onClick={() => setReferenceDate(todayIso())}
+                  title="Jump back to today"
+                >Today</button>
+              )}
+            </label>
+            <label
+              className={styles.hideActivityField}
+              title="Hide rows in the Called and Sent tables whose Last Activity falls within the past 2 business days (the selected Activity date or the previous business day)."
+            >
+              <input
+                type="checkbox"
+                checked={hideActivityOnDate}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  setHideActivityOnDate(on);
+                  writeHideActivityOnDate(on);
+                }}
+              />
+              Hide rows last active in the past 2 business days
+            </label>
             <button
               type="button"
-              className={styles.dateResetBtn}
-              onClick={() => setReferenceDate(todayIso())}
-              title="Jump back to today"
-            >Today</button>
-          )}
-        </label>
-        <label
-          className={styles.hideActivityField}
-          title="Hide rows in the Called and Sent tables whose Last Activity falls within the past 2 business days (the selected Activity date or the previous business day)."
-        >
-          <input
-            type="checkbox"
-            checked={hideActivityOnDate}
-            onChange={(e) => {
-              const on = e.target.checked;
-              setHideActivityOnDate(on);
-              writeHideActivityOnDate(on);
-            }}
-          />
-          Hide rows last active in the past 2 business days
-        </label>
-        <button
-          type="button"
-          className={styles.refreshActivityBtn}
-          onClick={refreshActivityCache}
-          disabled={activityRefreshing}
-          title="Re-pull every HubSpot email, call, and meeting AND re-fetch the Opps Google Sheet. Updates the shared activity cache (same as the Activity tab's Refresh) and the Opps cache (same as the Opps - Old tab's Refresh)."
-        >
-          {activityRefreshing
-            ? (activityRefreshProgress
-                ? `Refreshing… ${activityRefreshProgress.email || 0} email · ${activityRefreshProgress.call || 0} call · ${activityRefreshProgress.meeting || 0} meeting · ${activityRefreshProgress.opps || 0} opps`
-                : 'Refreshing…')
-            : 'Refresh Activity & Opps'}
-        </button>
-        <button
-          type="button"
-          className={styles.refreshActivityBtn}
-          onClick={onCopyAll}
-          title="Copy every AI Prompt section on this page into one master prompt, ready to paste into an assistant."
-        >Copy all prompts</button>
-        {copyAllFlash && <span className={styles.copyFlash}>{copyAllFlash}</span>}
+              className={styles.refreshActivityBtn}
+              onClick={refreshActivityCache}
+              disabled={activityRefreshing}
+              title="Re-pull every HubSpot email, call, and meeting AND re-sync Opps from the Opps tab's store (local cache reconciled against the cloud copy). Updates the shared activity cache (same as the Activity tab's Refresh)."
+            >
+              {activityRefreshing
+                ? (activityRefreshProgress
+                    ? `Refreshing… ${activityRefreshProgress.email || 0} email · ${activityRefreshProgress.call || 0} call · ${activityRefreshProgress.meeting || 0} meeting · ${activityRefreshProgress.opps || 0} opps`
+                    : 'Refreshing…')
+                : 'Refresh Activity & Opps'}
+            </button>
+            <button
+              type="button"
+              className={styles.refreshActivityBtn}
+              onClick={onCopyAll}
+              title="Copy every AI Prompt section on this page into one master prompt, ready to paste into an assistant."
+            >Copy all prompts</button>
+            {copyAllFlash && <span className={styles.copyFlash}>{copyAllFlash}</span>}
+          </>
+        )}
       </div>
+
+      <div className={styles.subTabs}>
+        <button
+          type="button"
+          className={activeSubTab === 'automations' ? styles.subTabActive : styles.subTab}
+          onClick={() => selectSubTab('automations')}
+        >Automations</button>
+        <button
+          type="button"
+          className={activeSubTab === 'prompts' ? styles.subTabActive : styles.subTab}
+          onClick={() => selectSubTab('prompts')}
+        >Prompt Library</button>
+      </div>
+
+      {activeSubTab === 'prompts' && (
+        <PromptLibrary prompts={savedPrompts} onChange={handleSavedPromptsChange} />
+      )}
+
+      {activeSubTab === 'automations' && (<>
+      {bfoAssignFlash && (
+        <div className={styles.bfoAssignFlash}>{bfoAssignFlash}</div>
+      )}
+      {untaggedBfoOppNames.length > 0 && (
+        <div className={styles.warning}>
+          <strong>
+            ⚠ {untaggedBfoOppNames.length} BFO Opportunity Name{untaggedBfoOppNames.length === 1 ? '' : 's'} not tagged to an opp on Opps
+          </strong>
+          <div className={styles.warningHint}>
+            Click an Opps opp below to tag it with the BFO Opportunity Name. Only opps that don&apos;t already have a BFO Opportunity Name are listed.
+          </div>
+          <ul className={styles.warnList}>
+            {untaggedBfoOppNames.map(({ name, account }) => {
+              const candidates = untaggedOppsByCanonKey.get(canonCompany(account)) || [];
+              return (
+                <li key={name} className={styles.warnItem}>
+                  <div className={styles.warnName}>
+                    <span className={styles.warnNameText}>{name}</span>
+                    {account && <span className={styles.warnAcct}> · {account}</span>}
+                  </div>
+                  {candidates.length === 0 ? (
+                    <div className={styles.warnNone}>
+                      No untagged Opps opps{account ? ` for “${account}”` : ''} to assign.
+                    </div>
+                  ) : (
+                    <div className={styles.warnChips}>
+                      {candidates.map(c => (
+                        <button
+                          key={c._id}
+                          type="button"
+                          className={styles.assignChip}
+                          disabled={assigningBfo}
+                          title={`Tag this opp's BFO Opportunity Name as "${name}"`}
+                          onClick={() => assignBfoOppName(c._id, name)}
+                        >
+                          + {bfoOppTargetLabel(c)}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
       {newBfoMissingData.length > 0 && (
         <div className={styles.errorBanner}>
           <strong>New BFO Opp prompt is missing data for {newBfoMissingData.length} opp{newBfoMissingData.length === 1 ? '' : 's'}:</strong>{' '}
@@ -2406,13 +3148,26 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
                   {isActivityColVisible('lastActivity') && <td className={lastActivity ? '' : styles.muted}>{lastActivity || '—'}</td>}
                   {isActivityColVisible('bfoLink') && (
                     <td>
-                      {r.bfoUrl ? (
-                        <a
-                          href={r.bfoUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className={styles.bfoLink}
-                        >Open</a>
+                      {(r.bfoUrl || r.leadSfUrl) ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                          {r.bfoUrl && (
+                            <a
+                              href={r.bfoUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={styles.bfoLink}
+                            >Open</a>
+                          )}
+                          {r.leadSfUrl && (
+                            <a
+                              href={r.leadSfUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={styles.bfoLink}
+                              title={`Log this activity on the matched Marketing Lead${r.leadName ? ` (${r.leadName})` : ''} in Salesforce`}
+                            >Lead ↗</a>
+                          )}
+                        </span>
                       ) : (
                         <span className={styles.muted}>—</span>
                       )}
@@ -2543,6 +3298,157 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
         </div>
       </section>
 
+      <section className={styles.section}>
+        <h2 className={styles.sectionHeader}>
+          Marketing Leads
+          <span className={styles.sectionCount}>{marketingLeadsMissing.length}</span>
+        </h2>
+        <p className={styles.subnote}>
+          Leads from the Marketing Leads subtab on the Contacts page that don&rsquo;t have a Salesforce Link yet. Copy the prompt to have your AI assistant open each lead in Salesforce and grab its record URL, then paste it into the Salesforce Link column below &mdash; it saves straight to the Marketing Leads page and the row drops off this list once set.
+        </p>
+        {revealedPrompts.marketingLeads && (
+          <textarea
+            className={styles.aiPromptInput}
+            value={marketingLeadsPrompt}
+            onChange={(e) => updateMarketingLeadsPrompt(e.target.value)}
+            rows={10}
+            spellCheck={false}
+          />
+        )}
+        <div className={styles.aiPromptControls}>
+          <button
+            type="button"
+            className={styles.aiPromptBtn}
+            onClick={async () => {
+              // With no leads missing a link there's no data block to append,
+              // so copy the prompt on its own — it's still useful standalone.
+              const fullPrompt = marketingLeadsMissing.length === 0
+                ? marketingLeadsPrompt
+                : `${marketingLeadsPrompt}\n\n${['Name\tCompany', ...marketingLeadsMissing.map(l => `${(l.name || '').trim()}\t${(l.company || '').trim()}`)].join('\n')}`;
+              try {
+                await navigator.clipboard.writeText(fullPrompt);
+                setMarketingLeadsCopyFlash('Copied!');
+              } catch {
+                setMarketingLeadsCopyFlash('Copy failed');
+              }
+              window.setTimeout(() => setMarketingLeadsCopyFlash(''), 1500);
+            }}
+          >Copy full prompt</button>
+          <button type="button" className={styles.aiPromptBtnGhost} onClick={() => togglePrompt('marketingLeads')}>
+            {revealedPrompts.marketingLeads ? 'Hide prompt' : 'Edit prompt'}
+          </button>
+          {revealedPrompts.marketingLeads && (
+            <button type="button" className={styles.aiPromptBtnGhost} onClick={resetMarketingLeadsPrompt}>Reset to default</button>
+          )}
+          {marketingLeadsCopyFlash && <span className={styles.copyFlash}>{marketingLeadsCopyFlash}</span>}
+        </div>
+        <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Company</th>
+                <th style={{ minWidth: 280 }}>Salesforce Link</th>
+              </tr>
+            </thead>
+            <tbody>
+              {marketingLeadsMissing.length === 0 ? (
+                <tr className={styles.emptyRow}>
+                  <td colSpan={3}>No marketing leads are missing a Salesforce Link.</td>
+                </tr>
+              ) : marketingLeadsMissing.map((l, i) => (
+                <tr key={l.id || `${l.name}-${i}`}>
+                  <td>{l.name || '—'}</td>
+                  <td className={l.company ? '' : styles.muted}>{l.company || '—'}</td>
+                  <td>
+                    <MarketingLeadSfCell
+                      value={l.sfUrl}
+                      onCommit={(v) => updateMarketingLeadSfUrl(l.id, v)}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className={styles.section}>
+        <h2 className={styles.sectionHeader}>
+          Marketing Lead Status Update
+          <span className={styles.sectionCount}>{marketingLeadStatusRows.length}</span>
+        </h2>
+        <p className={styles.subnote}>
+          Only lists leads whose Marketing Leads Status (the source of truth on the Contacts page) differs from that lead&rsquo;s status on the BFO Activity page&rsquo;s <strong>Leads</strong> subtab &mdash; the ones that actually need updating. Leads that match, or that aren&rsquo;t on the Leads subtab, are hidden. Copy the prompt to have your AI assistant open each lead by name, go to the Assessment tab, and update the status to the Marketing Leads Status. Paste the Salesforce Leads printable view into the BFO Activity page&rsquo;s Leads subtab to feed this comparison. The prompt is always part of &ldquo;Copy all prompts.&rdquo;
+        </p>
+        {revealedPrompts.marketingLeadStatusUpdate && (
+          <textarea
+            className={styles.aiPromptInput}
+            value={marketingLeadStatusUpdatePrompt}
+            onChange={(e) => updateMarketingLeadStatusUpdatePrompt(e.target.value)}
+            rows={10}
+            spellCheck={false}
+          />
+        )}
+        <div className={styles.aiPromptControls}>
+          <button
+            type="button"
+            className={styles.aiPromptBtn}
+            onClick={async () => {
+              // With no leads carrying a Status there's nothing to reconcile,
+              // so copy the prompt on its own — it's still useful standalone.
+              const fullPrompt = marketingLeadStatusRows.length === 0
+                ? marketingLeadStatusUpdatePrompt
+                : `${marketingLeadStatusUpdatePrompt}\n\n${['Name\tCompany\tMarketing Leads Status', ...marketingLeadStatusRows.map(l => `${(l.name || '').trim()}\t${(l.company || '').trim()}\t${(l.status || '').trim()}`)].join('\n')}`;
+              try {
+                await navigator.clipboard.writeText(fullPrompt);
+                setMarketingLeadStatusUpdateCopyFlash('Copied!');
+              } catch {
+                setMarketingLeadStatusUpdateCopyFlash('Copy failed');
+              }
+              window.setTimeout(() => setMarketingLeadStatusUpdateCopyFlash(''), 1500);
+            }}
+          >Copy full prompt</button>
+          <button type="button" className={styles.aiPromptBtnGhost} onClick={() => togglePrompt('marketingLeadStatusUpdate')}>
+            {revealedPrompts.marketingLeadStatusUpdate ? 'Hide prompt' : 'Edit prompt'}
+          </button>
+          {revealedPrompts.marketingLeadStatusUpdate && (
+            <button type="button" className={styles.aiPromptBtnGhost} onClick={resetMarketingLeadStatusUpdatePrompt}>Reset to default</button>
+          )}
+          {marketingLeadStatusUpdateCopyFlash && <span className={styles.copyFlash}>{marketingLeadStatusUpdateCopyFlash}</span>}
+        </div>
+        <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Company</th>
+                <th>Leads Subtab Status</th>
+                <th>Marketing Leads Status (apply)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {marketingLeadStatusRows.length === 0 ? (
+                <tr className={styles.emptyRow}>
+                  <td colSpan={4}>
+                    {leadsSubtabStatusByName.size === 0
+                      ? 'Paste the Salesforce Leads printable view into the BFO Activity page’s Leads subtab to compare statuses.'
+                      : 'No status discrepancies — every matched lead already agrees with the Leads subtab.'}
+                  </td>
+                </tr>
+              ) : marketingLeadStatusRows.map((l, i) => (
+                <tr key={l.id || `${l.name}-${i}`}>
+                  <td>{l.name || '—'}</td>
+                  <td className={l.company ? '' : styles.muted}>{l.company || '—'}</td>
+                  <td className={l.bfoStatus ? '' : styles.muted}>{l.bfoStatus || '—'}</td>
+                  <td className={l.status ? '' : styles.muted}>{l.status || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       {(() => {
         // Build the BFO Address block from today's outbound emails, the
         // Called section, AND meetings marked on the Opps tab so the AI
@@ -2567,6 +3473,13 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
           lines.push(`${e.bfoUrl}: Type ${e.nextStepsType}`);
           seen.add(e.bfoUrl);
         }
+        // Log the same email touch on any matched Marketing Lead's
+        // Salesforce record too (see the master bundle for rationale).
+        for (const e of todaysOutbound) {
+          if (!e.leadSfUrl || seen.has(e.leadSfUrl)) continue;
+          lines.push(`${e.leadSfUrl}: Type ${e.nextStepsType}`);
+          seen.add(e.leadSfUrl);
+        }
         const addressBlock = lines.join('\n');
         const fullPrompt = `${aiPrompt}\n\n${addressBlock}`;
         const onCopy = async () => {
@@ -2582,7 +3495,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
           <section className={styles.section}>
             <h2 className={styles.sectionHeader}>AI Prompt (Activity)</h2>
             <p className={styles.subnote}>
-              The past 2 business days&rsquo; BFO addresses (sent emails, calls, and meetings marked on the Opps tab) are appended automatically. Click Copy to grab the full prompt for your AI assistant, or Edit prompt to tweak the wording.
+              The past 2 business days&rsquo; BFO addresses (sent emails, calls, and meetings marked on the Opps tab) are appended automatically. When an email&rsquo;s external recipient matches a Marketing Lead (Contacts tab), that lead&rsquo;s Salesforce Link is appended too so the touch is logged on the lead as well. Click Copy to grab the full prompt for your AI assistant, or Edit prompt to tweak the wording.
             </p>
             {revealedPrompts.activity && (
               <textarea
@@ -3139,6 +4052,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
           </section>
         );
       })()}
+      </>)}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
+import { sanitizeExcelWorkbook, sanitizeSheetJsWorkbook } from '../../utils/exportSanitize.js';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer } from 'recharts';
 import styles from './PricingView.module.css';
 import { useAuth } from '../../contexts/AuthContext';
@@ -11,11 +12,14 @@ import { PricingConversions } from './PricingConversions';
 import { CompareTab } from './CompareTab';
 import { BrokerFeesTab } from './BrokerFeesTab';
 import { S2CTab } from './S2CTab';
+import { CalculatorTab } from './CalculatorTab';
 import { buildPricingOptionSnapshot } from '../../utils/pricingOptionCalc';
 import { setOppPricingSnapshot } from '../../utils/oppsPricingSnapshot';
+import { saveOppSourceFile, sourceFileMeta } from '../../utils/oppPricingSourceFile';
 import {
   loadOptionLinks,
   setOppOptionLink,
+  dropOptionFromLinks,
   OPTION_LINKS_EVENT,
 } from '../../utils/pricingOptionLinks';
 
@@ -1545,6 +1549,11 @@ const LINE_ITEM_IGNORED_KEY = 'lineItemIgnored';
 // needing to walk the workbook itself.
 const OPTION_SERVICES_KEY = 'pricingOptionServices';
 const OPTION_SERVICES_EVENT = 'pricing:optionServicesChanged';
+// Raw bytes of the most-recently uploaded SIA workbook so that
+// "Save to Opp" can attach the source file to the opp without
+// requiring the user to re-upload. Stored as a Blob so reload
+// rehydrates it cleanly.
+const WORKBOOK_SOURCE_KEY = 'workbookSourceBlob';
 // Bump this whenever the parser output shape changes — older cached
 // parses are silently discarded on hydration so the user re-uploads
 // against the current parser.
@@ -1611,13 +1620,15 @@ export function PricingView({ settings } = {}) {
   const [chartTag, setChartTag] = useState(''); // selected line-item / tag for the breakdown chart
   const [chartView, setChartView] = useState('chart'); // 'chart' | 'table'
   const [chartVisible, setChartVisible] = useState(false); // "Line item year-over-year" panel — hidden by default, user opts in via Show
+  const [chartUnitCounts, setChartUnitCounts] = useState({}); // per-line-item unit count (keyed by lowercased tag) for the Fee / Unit column
   const [techDeprPct, setTechDeprPct] = useState(0.04);
   const [colVisibility, setColVisibility] = useState({}); // upper table: { [colKey]: bool, default true }
+  const [hideEmptyCtsRows, setHideEmptyCtsRows] = useState(true); // upper table: hide line items with no CTS value by default; user opts in to show them
   const [summaryColWidths, setSummaryColWidths] = useState({});
   const [summaryColVisibility, setSummaryColVisibility] = useState({});
   const [colMenuOpen, setColMenuOpen] = useState(false);
   const [summaryMenuOpen, setSummaryMenuOpen] = useState(false);
-  const [pageSubtab, setPageSubtab] = useState('pricing'); // 'pricing' | 'linkedTo' | 'options' | 'compare' | 'brokerFees' | 's2c'
+  const [pageSubtab, setPageSubtab] = useState('pricing'); // 'pricing' | 'linkedTo' | 'options' | 'compare' | 'brokerFees' | 's2c' | 'calculator'
   const [optionsTabData, setOptionsTabData] = useState(null); // OptionsTab state: array of { name, years, escPct, rows: [...] }
   const [compareTabData, setCompareTabData] = useState(null); // CompareTab state: { currentLabel, nextLabel, current: [...], next: [...] }
   const [brokerFeesData, setBrokerFeesData] = useState(null); // BrokerFeesTab state: array of { company, loadEp, feeEp, rfps, loadNg, feeNg }
@@ -1633,6 +1644,12 @@ export function PricingView({ settings } = {}) {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
   const hydratedRef = useRef(false);
+  // Raw Blob of the uploaded SIA workbook. Kept alive in a ref so
+  // "Save to Opp" can attach it without re-reading the file input.
+  // Also persisted to IndexedDB (see WORKBOOK_SOURCE_KEY) so a page
+  // reload doesn't lose it as long as the parsed workbook is still
+  // hydrated.
+  const workbookSourceRef = useRef(null);
 
   // Hydrate from IndexedDB on first mount.
   useEffect(() => {
@@ -1718,15 +1735,25 @@ export function PricingView({ settings } = {}) {
         if (typeof saved.chartTag === 'string') setChartTag(saved.chartTag);
         if (saved.chartView === 'chart' || saved.chartView === 'table') setChartView(saved.chartView);
         if (typeof saved.chartVisible === 'boolean') setChartVisible(saved.chartVisible);
+        if (saved.chartUnitCounts && typeof saved.chartUnitCounts === 'object') setChartUnitCounts(saved.chartUnitCounts);
         if (typeof saved.techDeprPct === 'number') setTechDeprPct(saved.techDeprPct);
         if (saved.colVisibility) setColVisibility(saved.colVisibility);
+        if (typeof saved.hideEmptyCtsRows === 'boolean') setHideEmptyCtsRows(saved.hideEmptyCtsRows);
         if (saved.summaryColWidths) setSummaryColWidths(saved.summaryColWidths);
         if (saved.summaryColVisibility) setSummaryColVisibility(saved.summaryColVisibility);
-        if (saved.pageSubtab === 'pricing' || saved.pageSubtab === 'linkedTo' || saved.pageSubtab === 'options' || saved.pageSubtab === 'compare' || saved.pageSubtab === 'brokerFees' || saved.pageSubtab === 's2c') setPageSubtab(saved.pageSubtab);
+        if (saved.pageSubtab === 'pricing' || saved.pageSubtab === 'linkedTo' || saved.pageSubtab === 'options' || saved.pageSubtab === 'compare' || saved.pageSubtab === 'brokerFees' || saved.pageSubtab === 's2c' || saved.pageSubtab === 'calculator') setPageSubtab(saved.pageSubtab);
         if (Array.isArray(saved.s2cTabData)) setS2cTabData(saved.s2cTabData);
         if (Array.isArray(saved.optionsTabData)) setOptionsTabData(saved.optionsTabData);
         if (saved.compareTabData && typeof saved.compareTabData === 'object') setCompareTabData(saved.compareTabData);
         if (Array.isArray(saved.brokerFeesData)) setBrokerFeesData(saved.brokerFeesData);
+        // Rehydrate the uploaded SIA workbook bytes so "Save to Opp"
+        // can still attach the source file after a page reload.
+        try {
+          const sourceBlob = await dbGet(STORE, WORKBOOK_SOURCE_KEY);
+          if (!cancelled && sourceBlob instanceof Blob) {
+            workbookSourceRef.current = sourceBlob;
+          }
+        } catch { /* ignore */ }
       } catch (err) {
         console.warn('Failed to load pricing cache:', err);
       } finally {
@@ -1739,9 +1766,9 @@ export function PricingView({ settings } = {}) {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
 
   // Mirror Linked-To defaults under their dedicated key so they
   // outlive the main cache (parser-version bumps, Clear button,
@@ -1876,6 +1903,49 @@ export function PricingView({ settings } = {}) {
     // of spreading it monthly.
     if (startMonth > termMonths) return 0;
     if (startMonth >= yearStart && startMonth <= yearEnd) return baseCost;
+    return 0;
+  }
+
+  // Per-year revenue (marked-up price) from a single upper-table CTS
+  // item — the price mirror of ctsItemYearCost. Setup / One Time land
+  // upfront in the year containing their start month; Recurring
+  // (monthly) bills 12 months per year; Rolled variants amortize their
+  // billing evenly across the term. Recurring / Rolled revenue escalates
+  // with the revenue escalator (annualEscalator), matching how term
+  // price is projected elsewhere. Used by the line-item year-over-year
+  // table so a tag with linked CTS rows but no Alternative Fee row still
+  // shows the Fee and Margin from the prices the customer actually pays.
+  function ctsItemYearRevenue(item, yearIndex) {
+    if (typeof item.cts !== 'number') return 0;
+    const { price } = priceFor(item);
+    if (typeof price !== 'number' || !Number.isFinite(price)) return 0;
+    const t = effectiveType(item);
+    const isRecurring = /recurring.*monthly|monthly.*recurring|^recurring/i.test(t);
+    const isRolled = /\brolled\b/i.test(t);
+    const yearStart = (yearIndex - 1) * 12 + 1;
+    const yearEnd = yearIndex * 12;
+    const startMonth = Math.max(1, Math.round(Number(item.startMonth) || 1));
+    if (isRecurring) {
+      const billStart = Math.max(yearStart, startMonth);
+      const billEnd = Math.min(yearEnd, termMonths);
+      if (billEnd < billStart) return 0;
+      const months = billEnd - billStart + 1;
+      const esc = Math.pow(1 + annualEscalator, yearIndex - 1);
+      return price * months * esc;
+    }
+    if (isRolled && termMonths > 0) {
+      // Cost books upfront (ctsItemYearCost) but billing is amortized
+      // across the term on the revenue side, so spread the price evenly
+      // over every month of the term and escalate it annually.
+      const billStart = Math.max(yearStart, startMonth);
+      const billEnd = Math.min(yearEnd, termMonths);
+      if (billEnd < billStart) return 0;
+      const months = billEnd - billStart + 1;
+      const esc = Math.pow(1 + annualEscalator, yearIndex - 1);
+      return (price / termMonths) * months * esc;
+    }
+    if (startMonth > termMonths) return 0;
+    if (startMonth >= yearStart && startMonth <= yearEnd) return price;
     return 0;
   }
 
@@ -2234,8 +2304,10 @@ export function PricingView({ settings } = {}) {
     if (typeof s.chartTag === 'string') setChartTag(s.chartTag);
     if (s.chartView === 'chart' || s.chartView === 'table') setChartView(s.chartView);
     if (typeof s.chartVisible === 'boolean') setChartVisible(s.chartVisible);
+    if (s.chartUnitCounts && typeof s.chartUnitCounts === 'object') setChartUnitCounts(s.chartUnitCounts);
     if (typeof s.techDeprPct === 'number') setTechDeprPct(s.techDeprPct);
     setColVisibility(s.colVisibility || {});
+    if (typeof s.hideEmptyCtsRows === 'boolean') setHideEmptyCtsRows(s.hideEmptyCtsRows);
     setSummaryColWidths(s.summaryColWidths || {});
     setSummaryColVisibility(s.summaryColVisibility || {});
   }
@@ -2250,6 +2322,19 @@ export function PricingView({ settings } = {}) {
         return;
       }
       const parsed = parsePricingWorkbook(buf);
+      // Stash the raw bytes so "Save to Opp" can attach them later.
+      // Use a Blob (not the raw ArrayBuffer) so IndexedDB rehydrates
+      // it as a downloadable file on next mount.
+      const sourceBlob = new Blob([buf], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      workbookSourceRef.current = sourceBlob;
+      dbPut(STORE, sourceBlob, WORKBOOK_SOURCE_KEY).catch(err => {
+        console.warn('Failed to cache workbook source blob:', err);
+      });
+      // A new SIA replaces the one on screen, so unlink any Opp the
+      // outgoing workbook was "Saved to" before we swap it out.
+      clearLoadedWorkbookOptionLinks(workbook);
       setWorkbook({
         fileName: file.name,
         options: parsed.options,
@@ -2278,8 +2363,6 @@ export function PricingView({ settings } = {}) {
         if (/^one\s*time/i.test(t)) return 'One Time';
         return t;
       };
-      const altMatchKey = (item, type) =>
-        `${String(item || '').trim().toLowerCase()}|${normAltType(type).toLowerCase()}`;
 
       const seeded = {};
       for (const opt of parsed.options) {
@@ -2294,57 +2377,51 @@ export function PricingView({ settings } = {}) {
           firstItemByTag.set(tag, item);
         }
         const tags = Array.from(firstItemByTag.keys()).sort((a, b) => a.localeCompare(b));
-        const rows = tags.map(tag => {
-          const item = firstItemByTag.get(tag);
-          const unitKey = linkedToDefaultKey(item.description, item.type || '');
-          const unit = linkedToUnitDefaults[unitKey] || '';
-          let unitCount = 1;
-          if (unit === 'Per Site' && typeof opt.siteCount === 'number' && opt.siteCount > 0) {
-            unitCount = opt.siteCount;
-          } else if (unit === 'Per Account' && typeof opt.accountCount === 'number' && opt.accountCount > 0) {
-            unitCount = opt.accountCount;
-          }
-          // Map the cost item's type into one of the alt-fee dropdown
-          // values so the seeded row renders as selected. Rolled
-          // variants normalize to their base (Setup Rolled → Setup,
-          // One Time Rolled → One Time) since the alt-fee table doesn't
-          // expose Rolled types — the user can refine if needed.
-          const rawType = String(item.type || '').trim();
-          let type = '';
-          if (/recurring/i.test(rawType)) type = 'Recurring (monthly)';
-          else if (/^setup/i.test(rawType)) type = 'Setup';
-          else if (/^one\s*time/i.test(rawType)) type = 'One Time';
-          // Leave startMonth null so autoStartMonthFor derives it from
-          // the linked CTS rows; the user can type a value to override.
-          return { altItem: tag, type, fee: null, unit, unitCount, startMonth: null };
-        });
-        // If the uploaded SIA already has fees filled into its own
-        // Alternative Fee Structure/Schedule table, pull them in: fill the
-        // fee (and unit/start-month details) onto a matching seeded row,
-        // and append the rest as new rows. The parser only yields real
-        // rows; we limit to ones carrying an actual fee so blank template
-        // rows don't add noise.
+        // If the uploaded SIA already has its own Alternative Fee
+        // Structure/Schedule filled in, treat the file as the source of
+        // truth: use its fee rows verbatim and skip the auto-seeded
+        // Linked-To rows entirely, so the file's fees REPLACE the fees
+        // this tool would otherwise build (instead of stacking on top of
+        // them). The parser only yields real rows; we keep the ones
+        // carrying an actual fee so blank template rows don't add noise.
         const wbAltRows = (opt.altFees || []).filter(a => a && a.fee != null);
-        const consumed = new Set();
-        for (const wb of wbAltRows) {
-          const key = altMatchKey(wb.altItem, wb.type);
-          const hit = rows.find(rw => rw.altItem && altMatchKey(rw.altItem, rw.type) === key);
-          if (!hit) continue;
-          if (hit.fee == null) hit.fee = wb.fee;
-          if (!hit.unit && wb.unit) hit.unit = wb.unit;
-          if ((hit.unitCount == null || hit.unitCount === 1) && wb.unitCount != null) hit.unitCount = wb.unitCount;
-          if (hit.startMonth == null && wb.startMonth != null) hit.startMonth = wb.startMonth;
-          consumed.add(wb);
-        }
-        for (const wb of wbAltRows) {
-          if (consumed.has(wb)) continue;
-          rows.push({
+        let rows;
+        if (wbAltRows.length > 0) {
+          rows = wbAltRows.map(wb => ({
             altItem: wb.altItem,
             type: normAltType(wb.type),
             fee: wb.fee,
             unit: wb.unit || '',
             unitCount: wb.unitCount == null ? 1 : wb.unitCount,
             startMonth: wb.startMonth == null ? null : wb.startMonth,
+          }));
+        } else {
+          // No alt-fee table in the file → seed the schedule from the
+          // cost rows' Linked To tags so the user has a starting grid to
+          // fill in.
+          rows = tags.map(tag => {
+            const item = firstItemByTag.get(tag);
+            const unitKey = linkedToDefaultKey(item.description, item.type || '');
+            const unit = linkedToUnitDefaults[unitKey] || '';
+            let unitCount = 1;
+            if (unit === 'Per Site' && typeof opt.siteCount === 'number' && opt.siteCount > 0) {
+              unitCount = opt.siteCount;
+            } else if (unit === 'Per Account' && typeof opt.accountCount === 'number' && opt.accountCount > 0) {
+              unitCount = opt.accountCount;
+            }
+            // Map the cost item's type into one of the alt-fee dropdown
+            // values so the seeded row renders as selected. Rolled
+            // variants normalize to their base (Setup Rolled → Setup,
+            // One Time Rolled → One Time) since the alt-fee table doesn't
+            // expose Rolled types — the user can refine if needed.
+            const rawType = String(item.type || '').trim();
+            let type = '';
+            if (/recurring/i.test(rawType)) type = 'Recurring (monthly)';
+            else if (/^setup/i.test(rawType)) type = 'Setup';
+            else if (/^one\s*time/i.test(rawType)) type = 'One Time';
+            // Leave startMonth null so autoStartMonthFor derives it from
+            // the linked CTS rows; the user can type a value to override.
+            return { altItem: tag, type, fee: null, unit, unitCount, startMonth: null };
           });
         }
         while (rows.length < 9) rows.push({ altItem: '', type: '', fee: null, unit: '', unitCount: 1, startMonth: null });
@@ -2375,8 +2452,25 @@ export function PricingView({ settings } = {}) {
     setDragOver(false);
   }
 
+  // Drop any "Saved to:" Opp links that point at the workbook currently
+  // loaded in the Pricing tab. Called when the SIA is cleared or replaced
+  // so the chip (and the Opps 2 "Pricing Option" column it feeds) doesn't
+  // dangle against a workbook that's no longer on screen.
+  function clearLoadedWorkbookOptionLinks(wb) {
+    const labels = new Set(
+      (wb?.options || [])
+        .map(o => (o.sheetName || '').trim())
+        .filter(Boolean)
+    );
+    for (const label of labels) {
+      dropOptionFromLinks(label).catch(() => {});
+    }
+  }
+
   function clearAll() {
     if (!confirm('Clear the loaded workbook, markup overrides, and the Alternative Fee schedule? Saved Linked-To defaults are kept.')) return;
+    // The SIA is going away, so unlink any Opp it was "Saved to".
+    clearLoadedWorkbookOptionLinks(workbook);
     setWorkbook(null);
     setOverrides({});
     setActiveOption(null);
@@ -2385,6 +2479,12 @@ export function PricingView({ settings } = {}) {
     // Linked-To defaults live under their own key (LINKED_TO_DEFAULTS_KEY)
     // and are intentionally preserved across Clear / file changes.
     dbDelete(STORE, KEY).catch(() => {});
+    // The source-file blob is tied to the loaded workbook — drop it
+    // alongside. Per-opp copies already saved via "Save to Opp" are
+    // kept (they live in the pricing-source-files store keyed by oppId
+    // so they survive the Pricing tab being cleared).
+    workbookSourceRef.current = null;
+    dbDelete(STORE, WORKBOOK_SOURCE_KEY).catch(() => {});
   }
 
   // Clone the active option in-place on the loaded workbook. The new
@@ -2834,7 +2934,7 @@ export function PricingView({ settings } = {}) {
       parserVersion: PARSER_VERSION,
       workbook, globalGmPct, overrides, activeOption, colWidths,
       altFees, linkedToDefaults, termMonths, annualEscalator, costEscalator,
-      chartTag, chartView, chartVisible, techDeprPct, colVisibility,
+      chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility,
       summaryColWidths, summaryColVisibility,
     };
     const json = JSON.stringify(snapshot);
@@ -2844,6 +2944,7 @@ export function PricingView({ settings } = {}) {
     const stateWs = XLSX.utils.aoa_to_sheet(stateRows);
     XLSX.utils.book_append_sheet(wb, stateWs, STATE_SHEET_NAME);
 
+    sanitizeSheetJsWorkbook(wb);
     XLSX.writeFile(wb, `pricing-markup-${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
@@ -2945,6 +3046,7 @@ export function PricingView({ settings } = {}) {
     const sheetName = (`Monthly Costs ${opt.sheetName || `Option ${opt.optionNumber}`}`).slice(0, 31);
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
     const slug = (opt.sheetName || `Option-${opt.optionNumber}`).replace(/[^a-zA-Z0-9-]+/g, '-');
+    sanitizeSheetJsWorkbook(wb);
     XLSX.writeFile(wb, `Monthly-Costs-${slug}-${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
@@ -3169,6 +3271,7 @@ export function PricingView({ settings } = {}) {
       row += 3;
     });
 
+    sanitizeExcelWorkbook(wb);
     const buf = await wb.xlsx.writeBuffer();
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
@@ -3413,6 +3516,13 @@ export function PricingView({ settings } = {}) {
         >
           S2C
         </button>
+        <button
+          type="button"
+          className={pageSubtab === 'calculator' ? styles.subtabActive : styles.subtab}
+          onClick={() => setPageSubtab('calculator')}
+        >
+          Calculator
+        </button>
       </div>
 
       {pageSubtab === 'linkedTo' && (
@@ -3455,6 +3565,7 @@ export function PricingView({ settings } = {}) {
           workbook={workbook}
           resolvedLinkedTo={resolvedLinkedTo}
           effectiveType={effectiveType}
+          techDeprPct={techDeprPct}
         />
       )}
 
@@ -3471,6 +3582,8 @@ export function PricingView({ settings } = {}) {
           setRows={setS2cTabData}
         />
       )}
+
+      {pageSubtab === 'calculator' && <CalculatorTab />}
 
       <div className={styles.body} style={pageSubtab !== 'pricing' ? { display: 'none' } : undefined}>
         {!workbook && (
@@ -3599,6 +3712,26 @@ export function PricingView({ settings } = {}) {
                       hiddenFn={colHidden}
                       onItemToggle={toggleColVisible}
                     />
+                    {(() => {
+                      const emptyCtsCount = opt.sections
+                        .flatMap(s => s.items)
+                        .filter(i => typeof i.cts !== 'number').length;
+                      if (emptyCtsCount === 0) return null;
+                      return (
+                        <button
+                          type="button"
+                          className={styles.actionBtn}
+                          onClick={() => setHideEmptyCtsRows(v => !v)}
+                          title={hideEmptyCtsRows
+                            ? `${emptyCtsCount} line item${emptyCtsCount === 1 ? '' : 's'} with no CTS value ${emptyCtsCount === 1 ? 'is' : 'are'} hidden. Click to show them.`
+                            : `Showing ${emptyCtsCount} line item${emptyCtsCount === 1 ? '' : 's'} with no CTS value. Click to hide them.`}
+                        >
+                          {hideEmptyCtsRows
+                            ? `Show empty-CTS rows (${emptyCtsCount})`
+                            : `Hide empty-CTS rows (${emptyCtsCount})`}
+                        </button>
+                      );
+                    })()}
                     {t && (
                       <div className={styles.optionSummary}>
                         <span>Cost: <span className={styles.summaryNum}>{fmtMoney(t.cost)}</span></span>
@@ -3780,7 +3913,7 @@ export function PricingView({ settings } = {}) {
                           </tr>
                         </thead>
                         <tbody>
-                          {flatItems.map(item => {
+                          {flatItems.filter(item => !hideEmptyCtsRows || typeof item.cts === 'number').map(item => {
                             const { gm, source, price } = priceFor(item);
                             const overrideVal = overrides[item.id]?.gmPct;
                             const passThrough = isPassThrough(item);
@@ -4294,11 +4427,38 @@ export function PricingView({ settings } = {}) {
                         const matchingAltRows = target
                           ? (altFees[opt.optionNumber] || []).filter(r => (r.altItem || '').trim().toLowerCase() === target)
                           : [];
-                        const chartData = years.map(y => {
+                        // Fee comes from Alternative Fee rows sharing the
+                        // tag. When the tag has none (it was only tagged on
+                        // CTS rows' Linked To for cost), fall back to the
+                        // marked-up-price revenue of those linked CTS rows so
+                        // the Fee and Margin still populate. Decide the source
+                        // once for the whole line item — never mix alt-fee and
+                        // CTS revenue across years — so a one-time alt fee in
+                        // Y1 doesn't leak CTS revenue into later years.
+                        const altRevenueByYear = years.map(y => matchingAltRows.reduce((s, r) => s + altFeeYearRevenue(r, y), 0));
+                        const useAltRevenue = altRevenueByYear.some(v => v > 0);
+                        const chartData = years.map((y, i) => {
                           const cost = linkedItems.reduce((s, it) => s + ctsItemYearCost(it, y), 0);
-                          const fee = matchingAltRows.reduce((s, r) => s + altFeeYearRevenue(r, y), 0);
+                          const fee = useAltRevenue
+                            ? altRevenueByYear[i]
+                            : linkedItems.reduce((s, it) => s + ctsItemYearRevenue(it, y), 0);
                           return { year: `Y${y}`, Cost: Math.round(cost), Fee: Math.round(fee) };
                         });
+                        // Unit count for the Fee / Unit column. Use the value
+                        // the user typed for this line item; if they haven't
+                        // typed one, fall back to the total unit count on the
+                        // matching Alternative Fee rows so the column is
+                        // populated out of the box when that data exists.
+                        const storedUnits = chartUnitCounts[target];
+                        const typedUnits = Number(storedUnits);
+                        const hasTypedUnits = storedUnits != null && storedUnits !== ''
+                          && Number.isFinite(typedUnits) && typedUnits > 0;
+                        const autoUnits = matchingAltRows.reduce((s, r) => {
+                          const uc = Number(r.unitCount);
+                          return s + (Number.isFinite(uc) ? uc : 0);
+                        }, 0);
+                        const unitCount = hasTypedUnits ? typedUnits : autoUnits;
+                        const hasUnits = Number.isFinite(unitCount) && unitCount > 0;
                         return (
                           <div className={styles.chartPanel}>
                             <div className={styles.chartHeader}>
@@ -4330,6 +4490,23 @@ export function PricingView({ settings } = {}) {
                                         {tagOptions.map(t => <option key={t} value={t}>{t}</option>)}
                                       </select>
                                     </label>
+                                    <label className={styles.chartTagLabel} title="Number of units for this line item. The Fee / Unit column divides each year's fee by this count.">
+                                      Units:{' '}
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="any"
+                                        className={styles.chartTagSelect}
+                                        style={{ width: '5.5rem' }}
+                                        value={target ? (chartUnitCounts[target] ?? '') : ''}
+                                        placeholder={autoUnits > 0 ? String(autoUnits) : '—'}
+                                        disabled={!target}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          setChartUnitCounts(m => ({ ...m, [target]: v }));
+                                        }}
+                                      />
+                                    </label>
                                   </>
                                 )}
                                 <button
@@ -4348,6 +4525,7 @@ export function PricingView({ settings } = {}) {
                                       <th>Year</th>
                                       <th className={styles.numCell}>Cost</th>
                                       <th className={styles.priceCell}>Fee</th>
+                                      <th className={styles.priceCell} title={hasUnits ? `Fee ÷ ${unitCount.toLocaleString('en-US')} units` : 'Enter a unit count above to see fee per unit'}>Fee / Unit</th>
                                       <th className={styles.priceCell}>Margin</th>
                                     </tr>
                                   </thead>
@@ -4359,6 +4537,7 @@ export function PricingView({ settings } = {}) {
                                           <td>{d.year}</td>
                                           <td className={styles.numCell}>{fmtMoney(d.Cost)}</td>
                                           <td className={styles.priceCell}>{fmtMoney(d.Fee)}</td>
+                                          <td className={styles.priceCell}>{hasUnits ? fmtMoney(d.Fee / unitCount) : ''}</td>
                                           <td className={styles.priceCell}>{margin === null ? '' : `${(margin * 100).toFixed(1)}%`}</td>
                                         </tr>
                                       );
@@ -4367,6 +4546,7 @@ export function PricingView({ settings } = {}) {
                                       <td>Total</td>
                                       <td className={styles.numCell}>{fmtMoney(chartData.reduce((s, d) => s + d.Cost, 0))}</td>
                                       <td className={styles.priceCell}>{fmtMoney(chartData.reduce((s, d) => s + d.Fee, 0))}</td>
+                                      <td className={styles.priceCell}>{hasUnits ? fmtMoney(chartData.reduce((s, d) => s + d.Fee, 0) / unitCount) : ''}</td>
                                       <td className={styles.priceCell}>{(() => {
                                         const tc = chartData.reduce((s, d) => s + d.Cost, 0);
                                         const tf = chartData.reduce((s, d) => s + d.Fee, 0);
@@ -4446,6 +4626,17 @@ export function PricingView({ settings } = {}) {
                 services: (opt && pricingOptionServices) ? (pricingOptionServices[opt.sheetName] || []) : [],
                 rows,
               });
+              // Attach a copy of the uploaded SIA workbook to this opp
+              // so the Opps 2 popup can offer a download later — even
+              // after the Pricing tab has been cleared or a different
+              // workbook loaded. Metadata (fileName, size) rides on the
+              // snapshot; the bytes live in their own IDB store keyed
+              // by oppId.
+              const sourceBlob = workbookSourceRef.current;
+              const sourceName = workbook?.fileName || 'workbook.xlsx';
+              if (sourceBlob) {
+                snapshot.sourceFile = sourceFileMeta(sourceName, sourceBlob);
+              }
               try {
                 // Await both writes so the picker doesn't close before
                 // Firestore has the snapshot — otherwise Opps 2's next
@@ -4453,6 +4644,13 @@ export function PricingView({ settings } = {}) {
                 // Firestore copy and the user sees only the link.
                 await setOppOptionLink(oppId, label);
                 await setOppPricingSnapshot(user?.uid, oppId, snapshot);
+                if (sourceBlob) {
+                  // Best-effort source-file copy. Failure here doesn't
+                  // invalidate the snapshot — the user just won't see a
+                  // Download button on the opp until they re-save.
+                  try { await saveOppSourceFile(oppId, sourceBlob, sourceName); }
+                  catch (err) { console.warn('Save source file failed:', err); }
+                }
                 setPricingPickerOpen(false);
               } catch (err) {
                 console.error('Save to Opp (Pricing): snapshot save failed', { err, uid: user?.uid, oppId });

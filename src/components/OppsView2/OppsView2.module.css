@@ -194,6 +194,19 @@
   padding: 0 1.25rem 0.75rem;
 }
 
+/* Opportunities tab: keep the search / count / Mass Edit controls on the
+   same line as the Show / history / hidden controls instead of wrapping
+   below. Children don't shrink, so the strip scrolls horizontally on a
+   narrow window rather than squashing the search box or wrapping a
+   button's label. */
+.filterRowInline {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+.filterRowInline > * {
+  flex-shrink: 0;
+}
+
 .filterLabel {
   display: flex;
   flex-direction: column;

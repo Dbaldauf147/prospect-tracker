@@ -11,6 +11,50 @@ import { useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import styles from './ActivityView.module.css';
 
 const CACHE_KEY = 'hubspot-activity-cache';
+// Compact email/phone → {tsMs, ts, type} index derived from the full feed.
+// The raw activity feed (up to 5k emails + 5k calls) routinely blows the
+// ~5MB localStorage quota, in which case saveCache below silently drops it
+// and the All Contacts "Last Outreach" column has nothing to read. This
+// index is a few KB — keyed by the handful of distinct addresses/numbers
+// rather than every record — so it always persists and reliably drives
+// that column.
+const OUTREACH_INDEX_KEY = 'hubspot-outreach-index';
+
+function normalizeOutreachPhone(p) {
+  const digits = String(p || '').replace(/\D/g, '');
+  return digits.length >= 10 ? digits.slice(-10) : '';
+}
+
+function buildOutreachIndex(data) {
+  const emails = {};
+  const phones = {};
+  const consider = (bucket, key, ts, type) => {
+    if (!key || !ts) return;
+    const tsMs = new Date(ts).getTime();
+    if (!Number.isFinite(tsMs)) return;
+    const prev = bucket[key];
+    if (!prev || tsMs > prev.tsMs) bucket[key] = { tsMs, ts, type };
+  };
+  for (const e of (data?.emails || [])) {
+    const subj = String(e.hs_email_subject || '').toLowerCase();
+    if (subj.includes('(sample email)')) continue;
+    for (const field of ['hs_email_to_email', 'hs_email_from_email']) {
+      const raw = e[field];
+      if (!raw) continue;
+      for (const part of String(raw).split(/[;,]/)) {
+        const em = part.trim().toLowerCase();
+        if (em) consider(emails, em, e.hs_timestamp, 'email');
+      }
+    }
+  }
+  for (const c of (data?.calls || [])) {
+    for (const field of ['hs_call_to_number', 'hs_call_from_number']) {
+      const ph = normalizeOutreachPhone(c[field]);
+      if (ph) consider(phones, ph, c.hs_timestamp, 'call');
+    }
+  }
+  return { emails, phones, fetchedAt: data?.fetchedAt };
+}
 
 // Stages that mean an opportunity has been closed out (won OR lost) and
 // shouldn't count as "active". Same set the contact-gap pages use.
@@ -38,10 +82,16 @@ function loadCache() {
 function saveCache(data) {
   try {
     userLsSet(CACHE_KEY, JSON.stringify(data));
-    // Notify in-tab consumers (e.g. the Last Outreach column on
-    // KeyContactsView) since the `storage` event only fires across tabs.
-    window.dispatchEvent(new CustomEvent('hubspot-activity-cache-updated'));
   } catch (err) { console.warn('ActivityView cache write skipped (quota):', err?.message || err); }
+  // Always persist the compact outreach index, even when the full feed
+  // above couldn't fit — it's what the All Contacts "Last Outreach" column
+  // actually reads.
+  try {
+    userLsSet(OUTREACH_INDEX_KEY, JSON.stringify(buildOutreachIndex(data)));
+  } catch (err) { console.warn('ActivityView outreach-index write skipped:', err?.message || err); }
+  // Notify in-tab consumers (e.g. the Last Outreach column on
+  // KeyContactsView) since the `storage` event only fires across tabs.
+  window.dispatchEvent(new CustomEvent('hubspot-activity-cache-updated'));
 }
 
 function fmtDate(dateStr) {
@@ -86,21 +136,33 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
 
   async function fetchAllPages(type) {
     const all = [];
+    const seenIds = new Set();
     let after = '';
     while (true) {
-      const url = `/api/hubspot?action=activity&type=${type}${after ? `&after=${after}` : ''}`;
+      const url = `/api/hubspot?action=activity&type=${type}${after ? `&after=${encodeURIComponent(after)}` : ''}`;
       const res = await apiFetch(url);
       const json = await res.json();
       if (json.error) throw new Error(json.error);
-      all.push(...(json.results || []));
+      // Dedup by id: the server rolls into a new hs_timestamp window when it
+      // hits HubSpot search's 10k paging ceiling, and the window boundary
+      // (LTE) can re-return a few records we've already collected.
+      for (const r of (json.results || [])) {
+        if (r.id) {
+          if (seenIds.has(r.id)) continue;
+          seenIds.add(r.id);
+        }
+        all.push(r);
+      }
       setProgress(prev => ({ ...prev, [type]: all.length }));
       if (json.nextAfter) {
         after = json.nextAfter;
       } else {
         break;
       }
-      // Safety limit
-      if (all.length > 5000) break;
+      // Runaway guard only — the full activity history is expected to sit
+      // well under this. Records come newest-first, so if this ever trips
+      // it drops the oldest tail, never recent activity.
+      if (all.length > 100000) { console.warn(`Activity ${type} fetch hit 100k safety cap`); break; }
     }
     return all;
   }
@@ -293,9 +355,21 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
         // outbound; everything else with a sender is inbound.
         const from = (e.hs_email_from_email || '').toLowerCase();
         const workEmail = (settings?.workEmail || '').toLowerCase();
+        // When the sender is known, it decides direction. When the email
+        // object has a blank sender (common for one-to-many / sequence
+        // sends that HubSpot logs as a contact association), fall back to
+        // HubSpot's own hs_email_direction: INCOMING_EMAIL = received,
+        // everything else (EMAIL / FORWARDED_EMAIL) = a user-sent outbound.
+        const rawDir = String(e.hs_email_direction || '').toUpperCase();
         const direction = from.includes('@se.com') || (workEmail && from === workEmail)
           ? 'Outbound'
-          : from ? 'Inbound' : e.hs_email_direction || '';
+          : from
+            ? 'Inbound'
+            : rawDir === 'INCOMING_EMAIL'
+              ? 'Inbound'
+              : rawDir
+                ? 'Outbound'
+                : '';
         // Look up phone from associated contacts or email match
         let emailPhone = '';
         const emailContactIds = e._contactIds || [];
@@ -322,6 +396,8 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
           _toName: [e.hs_email_to_firstname, e.hs_email_to_lastname].filter(Boolean).join(' '),
           _from: e.hs_email_from_email || '',
           _fromName: [e.hs_email_from_firstname, e.hs_email_from_lastname].filter(Boolean).join(' '),
+          _cc: e.hs_email_cc_email || '',
+          _ccName: [e.hs_email_cc_firstname, e.hs_email_cc_lastname].filter(Boolean).join(' '),
           _direction: direction,
           _status: e.hs_email_status || '',
           _duration: null,
@@ -517,7 +593,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     if (search.trim()) {
       const term = search.toLowerCase();
       result = result.filter(a =>
-        [a._subject, a._to, a._toName, a._from, a._fromName, a._status, a._company]
+        [a._subject, a._to, a._toName, a._from, a._fromName, a._cc, a._ccName, a._status, a._company]
           .filter(Boolean).join(' ').toLowerCase().includes(term)
       );
     }
@@ -625,10 +701,25 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
         const externals = tos.filter(t => !t.toLowerCase().endsWith('@se.com'));
         // Mixed to-line (se.com + non-se.com) stays in; fully
         // internal blasts drop.
-        if (externals.length === 0) continue;
-        recipients = externals
-          .map(em => recipientFor(em, a._toName))
-          .filter(Boolean);
+        if (externals.length > 0) {
+          recipients = externals
+            .map(em => recipientFor(em, a._toName))
+            .filter(Boolean);
+        } else {
+          // No usable To-line on the email object. HubSpot often logs a
+          // send (one-to-many / sequence) with a blank hs_email_to_email
+          // and only a contact association, so recover the recipients from
+          // the associated contacts instead — mirroring the call branch.
+          // Fully internal (@se.com-only) sends still drop.
+          for (const id of (a._contactIds || [])) {
+            const ct = contactIdMap.get(id);
+            const em = String(ct?.email || '').toLowerCase().trim();
+            if (!em || em.endsWith('@se.com')) continue;
+            const name = [ct?.firstname, ct?.lastname].filter(Boolean).join(' ').trim();
+            recipients.push({ name, email: em });
+          }
+          if (recipients.length === 0) continue;
+        }
       } else {
         const cids = a._contactIds || [];
         for (const id of cids) {
@@ -805,6 +896,29 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     { key: '_subject', label: 'Subject / Title', defaultWidth: 250, render: (a) => <span className={styles.subject}>{a._subject || '—'}</span> },
     { key: '_to', label: 'To', defaultWidth: 200, render: (a) => a._toName ? <span><button className={styles.contactLink} onClick={e => { e.stopPropagation(); openContactPopup(a._toName, a._to, a._company, a._phone); }}>{a._toName}</button> <span className={styles.metaText}>{a._to}</span></span> : a._to ? <button className={styles.contactLink} onClick={e => { e.stopPropagation(); openContactPopup('', a._to, a._company, a._phone); }}>{a._to}</button> : <span className={styles.metaText}>—</span> },
     { key: '_from', label: 'From', defaultWidth: 200, render: (a) => a._fromName ? <span><button className={styles.contactLink} onClick={e => { e.stopPropagation(); openContactPopup(a._fromName, a._from, a._company, ''); }}>{a._fromName}</button> <span className={styles.metaText}>{a._from}</span></span> : a._from ? <button className={styles.contactLink} onClick={e => { e.stopPropagation(); openContactPopup('', a._from, a._company, ''); }}>{a._from}</button> : <span className={styles.metaText}>—</span> },
+    { key: '_cc', label: 'CC', defaultWidth: 220, render: (a) => {
+      // Contacts CC'd on the email. Parse the cc address list, resolve each
+      // to a HubSpot contact name where we have one (falling back to the
+      // email's cc-name for a single recipient, else just the address).
+      const emails = String(a._cc || '').split(/[;,]/).map(s => s.trim()).filter(Boolean);
+      if (emails.length === 0) return <span className={styles.metaText}>—</span>;
+      return (
+        <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 1, lineHeight: 1.25 }}>
+          {emails.map((em, i) => {
+            const ct = contactByEmail.get(em.toLowerCase());
+            const name = ct
+              ? [ct.firstname, ct.lastname].filter(Boolean).join(' ').trim()
+              : (emails.length === 1 ? (a._ccName || '') : '');
+            return (
+              <span key={em + i} title={name ? `${name} <${em}>` : em}>
+                {name && <span style={{ fontWeight: 600, marginRight: 4 }}>{name}</span>}
+                <span style={{ color: name ? '#94A3B8' : 'var(--color-text)' }}>{em}</span>
+              </span>
+            );
+          })}
+        </span>
+      );
+    } },
     { key: '_attendees', label: 'Attendees', defaultWidth: 200, render: (a) => a._attendees ? <span className={styles.contactText}>{a._attendees}</span> : <span className={styles.metaText}>—</span> },
     { key: '_status', label: 'Status', defaultWidth: 110 },
     { key: '_duration', label: 'Duration', defaultWidth: 80, render: (a) => <span className={styles.duration}>{fmtDuration(a._duration)}</span> },

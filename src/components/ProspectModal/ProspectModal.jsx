@@ -1,22 +1,32 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
+import { stripDashes, sanitizeExcelWorkbook } from '../../utils/exportSanitize.js';
 import { createPortal } from 'react-dom';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { OpportunityForm, DEFAULT_FORM_TEMPLATE } from './OpportunityForm';
 import { ScopingNotesEditor, harvestCompetitors } from './ScopingNotesEditor';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
-import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
+import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
 import { CITY_OPTIONS, matchCities, getStateForCity, lookupStateForCity } from '../../data/cities';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { useAuth } from '../../contexts/AuthContext';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB, renameSourceFile as renamePortfolioSourceFile } from '../../utils/portfolioSourceFileStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { splitPeOwners } from '../../utils/peOwners';
+import { loadOpps2Newest, bulkSetOppField } from '../../utils/opps2Store';
+import { buildCompanyRenamePlan, planHasWork, summarizeRenamePlan, applyListMappingWrites } from '../../utils/companyRenameCascade';
+import { countClientsSubtabRename, clientsSubtabRenameTotal, summarizeClientsSubtabRename, applyClientsSubtabRename } from '../../utils/clientsRename';
+import { loadTargetAccountsFromDB, saveTargetAccountsToDB, renameTargetAccountRows, countBlockedAccountRename, renameBlockedAccountName } from '../TargetAccountsView/TargetAccountsView';
 import { computePortfolioFitScore, industrySector, sectorScoreFor, tierForScoreValue, industryTier, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
+import { SiteListPasteModal } from './SiteListPasteModal';
 import { isContactInEvent, toggleContactInEvents } from '../../utils/eventsStore';
+import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
+import { TagMultiSelect } from '../common/TagMultiSelect';
+import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions, buildCdmOptions } from '../../utils/prospectOptions';
+import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
-import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCache } from '../../utils/hubspotContactsCache';
+import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
 import { userLsGet } from '../../utils/userLs';
 import { dbGet } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
@@ -32,6 +42,24 @@ async function loadOppsFromIndexedDB() {
 async function loadClientsFromIndexedDB() {
   try { return (await dbGet('clients-cache', 'data')) || null; }
   catch { return null; }
+}
+
+// Client Manager assigned on the Clients page lives in the shared
+// clients-manager-map (keyed by the company name lowercased + trimmed,
+// the same normalization ClientsView uses). Resolve it for a company so
+// the modal can auto-populate the read-only Client Manager field. Falls
+// back to a fuzzy companiesMatch scan so slight name drift (e.g.
+// "Blue Owl" vs "Blue Owl Capital") still resolves. Returns null when
+// the company has no manager assigned on the Clients page.
+function resolveClientManagerFromMap(company) {
+  if (!company) return null;
+  const map = loadClientManagerMap();
+  const key = String(company).trim().toLowerCase();
+  if (map[key]) return map[key];
+  for (const [k, v] of Object.entries(map)) {
+    if (v && companiesMatch(k, company)) return v;
+  }
+  return null;
 }
 
 // Inline editable input rendered in place of a form tab's title span
@@ -391,15 +419,15 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
 
 const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
-  assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', tier: 'Tier 2',
-  hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', servicesExplored: {}, serviceNotes: {}, competitors: {}, portfolioCompanies: [],
-  peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '',
+  assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', tier: 'Tier 3',
+  hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, competitors: {}, portfolioCompanies: [],
+  peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', contractingEntity: '', strategies: [], revenue: '',
 };
 
 // Company-name normalizer shared with the list tabs so fuzzy matching
 // lines up: lowercased, accent-stripped, punctuation removed, common
 // corporate suffixes dropped.
-const PORTFOLIO_CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
+const PORTFOLIO_CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holding|holdings|group|grp)\b\.?/g;
 function normalizePortfolioCompany(name) {
   return String(name || '')
     .toLowerCase()
@@ -523,7 +551,7 @@ function enrichOverviewFromPortfolio(overview, portfolioRows) {
 // up checked automatically and the PE Portfolio "Met in Person" counts keep
 // working); the checkbox just reads/writes that one value.
 const MET_IN_PERSON_TAG = 'Met In Person';
-const TAG_OPTIONS = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Efficiency / Renewables', 'Dan Key Target', 'Decision Maker', 'Test', 'EU', 'Hide', 'Left'];
+const TAG_OPTIONS = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Efficiency / Renewables', 'Dan Key Target', 'Decision Maker', 'Primary Point of Contact', 'Test', 'EU', 'Hide', 'Left'];
 
 // Portfolio-company sector scoring. Each sector has a 1-10 fit score; the tier
 // bucket (High/Medium/Low) is derived from the score for color-coding only.
@@ -566,7 +594,7 @@ const PORTFOLIO_FIELD_OPTIONS = [
 // fallback) now lives in ../../data/cities so the All Contacts table
 // can share the exact same auto-fill behavior as this modal.
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, events = [], onToggleContactEvent, companyContacts = [], emailDomains = [], companyNames = [] }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, events = [], onToggleContactEvent, companyContacts = [], emailDomains = [], companyNames = [] }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -579,6 +607,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   const cid = contact.id || contact.vid;
   const savedNote = (cid && contactNotes[cid]) || contact.notes || contact.hs_content_membership_notes || contact.message || '';
   const savedOldEmails = (cid && contactOldEmails[cid]) || '';
+  const savedOldCompany = (cid && contactOldCompany[cid]) || '';
   const savedNickname = (cid && contactNicknames[cid]) || '';
   const savedTeamName = (cid && contactTeamNames[cid]) || '';
   const savedFamily = (cid && contactFamilies[cid]) || { partner: '', kids: '' };
@@ -614,6 +643,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     teamName: savedTeamName,
     notes: savedNote,
     oldEmails: savedOldEmails,
+    oldCompany: savedOldCompany,
     partner: savedFamily.partner || '',
     kids: savedFamily.kids || '',
   });
@@ -665,6 +695,40 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   const [mergeQuery, setMergeQuery] = useState('');
   const [mergeProcessing, setMergeProcessing] = useState(false);
   const [mergeError, setMergeError] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  async function performDelete() {
+    const targetId = contact.id || contact.vid;
+    if (!targetId) return;
+    const name = `${f.firstname} ${f.lastname}`.trim() || f.email || 'this contact';
+    if (!window.confirm(`Delete ${name}? This permanently removes the contact from HubSpot. This cannot be undone.`)) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      const isLocalOnly = typeof targetId === 'string' && targetId.startsWith('local-');
+      // Local-only contacts were never pushed to HubSpot — just drop them
+      // from the cache. Everyone else goes through the HubSpot delete API.
+      if (!isLocalOnly) {
+        const res = await apiFetch('/api/hubspot?action=delete-contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contactId: targetId }),
+        });
+        const json = await res.json();
+        if (!res.ok || json.error) throw new Error(json.error || `HubSpot ${res.status}`);
+      }
+      // Remove from the local cache so the contact disappears immediately.
+      try {
+        await updateHubspotCache(draft => {
+          draft.contacts = (draft.contacts || []).filter(c => String(c.id || c.vid) !== String(targetId));
+        });
+      } catch (err) { console.warn('Delete cache update failed', err); }
+      onClose();
+    } catch (err) {
+      setError(err?.message || 'Delete failed');
+    } finally {
+      setDeleting(false);
+    }
+  }
   async function performMerge(secondaryId, secondaryLabel) {
     const primaryId = contact.id || contact.vid;
     if (!primaryId || !secondaryId || String(primaryId) === String(secondaryId)) return;
@@ -719,6 +783,11 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     return () => document.removeEventListener('mousedown', onDown);
   }, [companyOpen]);
   const [error, setError] = useState(null);
+  // Surfaced after a save when the Company edit was kept as a local
+  // override because HubSpot linked the contact to a differently-named
+  // Company record (or couldn't pin the association). Mirrors the note
+  // the HubSpot Contacts page shows.
+  const [companyNote, setCompanyNote] = useState('');
   const [tagsOpen, setTagsOpen] = useState(false);
   const tagsRef = useRef(null);
 
@@ -897,12 +966,14 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   async function handleSave() {
     setSaving(true);
     setError(null);
+    setCompanyNote('');
     try {
       const allProps = { ...f, dans_tags: buildTagsString() };
       // HubSpot doesn't have these local-only fields — save them separately via settings.
-      const { notes, oldEmails, nickname, teamName, partner, kids, ...hsProps } = allProps;
+      const { notes, oldEmails, oldCompany, nickname, teamName, partner, kids, ...hsProps } = allProps;
       const noteValue = notes || '';
       const oldEmailsValue = oldEmails || '';
+      const oldCompanyValue = oldCompany || '';
       const nicknameValue = nickname || '';
       const teamNameValue = teamName || '';
       const familyValue = { partner: partner || '', kids: kids || '' };
@@ -940,13 +1011,34 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
         }
       }
       if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
-      // Include notes in the saved contact (stored locally)
-      const savedContact = isNew ? { id: json.id, ...allProps } : { ...contact, ...allProps };
+      // Include notes in the saved contact (stored locally). create-contact
+      // returns the new record under json.contact (id + properties), not a
+      // top-level json.id — reading json.id left new contacts with an
+      // undefined id, so they never got a companyContactLinks pin and their
+      // per-contact metadata (notes/team/etc.) saved under an empty key.
+      const newId = json?.contact?.id ?? json?.id;
+      // create-contact recovers from a duplicate-email collision by returning
+      // the existing HubSpot contact (HTTP 200 + alreadyExisted) instead of
+      // forging a second record. Recognize that so we attach/link the existing
+      // contact rather than minting a phantom "Manual" row that shares the real
+      // contact's id (which a later delete-by-id would then wipe alongside it).
+      const alreadyExisted = isNew && json?.alreadyExisted === true && !!newId;
+      const savedContact = isNew ? { id: newId, ...allProps } : { ...contact, ...allProps };
       // Update HubSpot cache (exclude notes/oldEmails — those live in Firestore settings)
       try {
         await updateHubspotCache(draft => {
           const cacheProps = { ...hsProps };
-          if (isNew) {
+          if (isNew && alreadyExisted) {
+            // The contact already lived in HubSpot — the server handed back the
+            // existing record. Don't stamp a phantom _source:'manual' duplicate
+            // (it shares the real record's id, so deleting it later would take
+            // the real one with it), and don't overwrite the richer existing
+            // fields with this often-sparse form. Just make sure the real record
+            // is present so linking it to this company (via onSave below)
+            // surfaces it; leave its _source and fields untouched if it's there.
+            const exists = draft.contacts.some(c => String(c.id || c.vid) === String(savedContact.id));
+            if (!exists) draft.contacts.push({ id: savedContact.id, ...cacheProps });
+          } else if (isNew) {
             // If this was promoted from a local-only contact, remove the old local entry so we don't duplicate
             if (isLocalOnly && existingId) {
               draft.contacts = draft.contacts.filter(c => String(c.id || c.vid) !== String(existingId));
@@ -968,6 +1060,9 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       if (savedCid && onSaveOldEmails) {
         onSaveOldEmails(savedCid, oldEmailsValue);
       }
+      if (savedCid && onSaveOldCompany) {
+        onSaveOldCompany(savedCid, oldCompanyValue);
+      }
       if (savedCid && onSaveNickname) {
         onSaveNickname(savedCid, nicknameValue);
       }
@@ -982,6 +1077,32 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       }
       if (savedCid && onSaveInvitedToLouisville) {
         onSaveInvitedToLouisville(savedCid, invitedToLouisville);
+      }
+      // Company edits behave the same here as on the HubSpot Contacts
+      // page: the API renames the Company record this contact is linked to,
+      // so the new name lands in HubSpot and cascades to every contact at
+      // that company. If the rename fails (or the contact had no company and
+      // HubSpot linked it to a differently-named record), keep the typed
+      // value as a local _companyOverride; otherwise clear any stale
+      // override now that HubSpot holds the name.
+      if (savedCid && onSaveCompanyOverride && typeof hsProps.company === 'string') {
+        const ca = json.companyAssignment;
+        // Always pin the typed value locally so it survives a refresh
+        // regardless of HubSpot sync/association timing; the API also renamed
+        // the linked Company record, so the pin stays consistent with HubSpot.
+        // (Empty string → clear the override instead.)
+        onSaveCompanyOverride(savedCid, hsProps.company || null);
+        if (ca && ca.ok === false) {
+          const detail = ca.errorText ? ` · ${ca.errorText}` : '';
+          const what = ca.mode === 'rename-failed' ? 'rename the Company record' : 'pin the Company association';
+          setCompanyNote(`Saved "${hsProps.company}" locally. HubSpot couldn't ${what}${ca.status ? ` (HTTP ${ca.status})` : ''}${detail} — Prospect Tracker will keep your value through future syncs.`);
+        } else if (ca && ca.ok === true) {
+          if (ca.mode === 'renamed') {
+            setCompanyNote(`Renamed the HubSpot Company "${ca.oldName || '—'}" → "${hsProps.company}". This updates it for every contact linked to that company.`);
+          } else if (ca.nameDiffers && ca.matchedName) {
+            setCompanyNote(`Saved "${hsProps.company}". This contact had no linked company, so HubSpot linked it to an existing record named "${ca.matchedName}".`);
+          }
+        }
       }
       // Persist CC / To Also maps keyed by the contact's primary
       // email — Draft Emails reads these on every campaign preview to
@@ -1053,7 +1174,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           </div>
           <div><label style={labelStyle}>Work Phone Number</label><input style={inputStyle} value={f.phone} onChange={e => set('phone', e.target.value)} /></div>
           <div><label style={labelStyle}>Cell Phone Number</label><input style={inputStyle} value={f.mobilephone} onChange={e => set('mobilephone', e.target.value)} /></div>
-          <div><label style={labelStyle}>Nickname <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label><input style={inputStyle} value={f.nickname} onChange={e => set('nickname', e.target.value)} placeholder="e.g. Bob" /></div>
+          <div><label style={labelStyle}>Goes By <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label><input style={inputStyle} value={f.nickname} onChange={e => set('nickname', e.target.value)} placeholder="e.g. Bob" /></div>
           <div><label style={labelStyle}>Team Name <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label><input style={inputStyle} value={f.teamName} onChange={e => set('teamName', e.target.value)} placeholder="e.g. FP&A" /></div>
           <div><label style={labelStyle}>Partner&apos;s name <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label><input style={inputStyle} value={f.partner} onChange={e => set('partner', e.target.value)} placeholder="e.g. Jane" /></div>
           <div><label style={labelStyle}>Kids&apos; names <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label><input style={inputStyle} value={f.kids} onChange={e => set('kids', e.target.value)} placeholder="e.g. Sam (12), Riley (9)" /></div>
@@ -1179,6 +1300,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               );
             })()}
           </div>
+          <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Old Company <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(previous employer)</span></label><input style={inputStyle} value={f.oldCompany} onChange={e => set('oldCompany', e.target.value)} placeholder="Previous company name" /></div>
           <div style={{ gridColumn: 'span 2' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
               <label style={labelStyle}>LinkedIn URL</label>
@@ -1571,6 +1693,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           </div>
         </div>
         {error && <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: '#FEF2F2', borderRadius: '6px', fontSize: '0.75rem', color: '#DC2626' }}>{error}</div>}
+        {companyNote && <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: '6px', fontSize: '0.75rem', color: '#166534' }}>{companyNote}</div>}
         {mergeOpen && (() => {
           const allCandidates = (companyContacts || [])
             .concat((contact && Array.isArray(contact.__allContacts)) ? contact.__allContacts : [])
@@ -1649,12 +1772,21 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
         })()}
         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.25rem' }}>
           {(contact.id || contact.vid) ? (
-            <button
-              type="button"
-              onClick={() => setMergeOpen(o => !o)}
-              title="Merge another HubSpot contact INTO this one — keeps this contact, deletes the other after consolidating its history."
-              style={{ padding: '0.5rem 1rem', border: '1px solid #FDE68A', borderRadius: 6, background: mergeOpen ? '#FEF3C7' : '#FFFBEB', color: '#92400E', fontSize: '0.78rem', fontFamily: 'inherit', cursor: 'pointer', fontWeight: 600 }}
-            >{mergeOpen ? 'Cancel merge' : 'Merge…'}</button>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button
+                type="button"
+                onClick={() => setMergeOpen(o => !o)}
+                title="Merge another HubSpot contact INTO this one — keeps this contact, deletes the other after consolidating its history."
+                style={{ padding: '0.5rem 1rem', border: '1px solid #FDE68A', borderRadius: 6, background: mergeOpen ? '#FEF3C7' : '#FFFBEB', color: '#92400E', fontSize: '0.78rem', fontFamily: 'inherit', cursor: 'pointer', fontWeight: 600 }}
+              >{mergeOpen ? 'Cancel merge' : 'Merge…'}</button>
+              <button
+                type="button"
+                onClick={performDelete}
+                disabled={deleting || saving}
+                title="Permanently delete this contact from HubSpot."
+                style={{ padding: '0.5rem 1rem', border: '1px solid #FCA5A5', borderRadius: 6, background: '#FEF2F2', color: '#B91C1C', fontSize: '0.78rem', fontFamily: 'inherit', cursor: (deleting || saving) ? 'not-allowed' : 'pointer', fontWeight: 600, opacity: (deleting || saving) ? 0.6 : 1 }}
+              >{deleting ? 'Deleting…' : 'Delete Contact'}</button>
+            </div>
           ) : <span />}
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             <button onClick={onClose} style={{ padding: '0.5rem 1rem', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer', color: '#64748B' }}>Cancel</button>
@@ -1686,7 +1818,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     e.id, e.name, (e.attendees || []).some(a => a.contactId && String(a.contactId) === String(id)),
   ]));
   const eventsEqual = eventSig(prev.events, prevId) === eventSig(next.events, nextId);
-  return prevId === nextId && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions && prev.onSaveNote === next.onSaveNote && prev.onSaveOldEmails === next.onSaveOldEmails && prev.onSaveNickname === next.onSaveNickname && prev.onSaveReportsTo === next.onSaveReportsTo && prevMgrs === nextMgrs && companyContactsEqual && domainsEqual && eventsEqual;
+  return prevId === nextId && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions && prev.onSaveNote === next.onSaveNote && prev.onSaveOldEmails === next.onSaveOldEmails && prev.onSaveOldCompany === next.onSaveOldCompany && prev.onSaveNickname === next.onSaveNickname && prev.onSaveReportsTo === next.onSaveReportsTo && prevMgrs === nextMgrs && companyContactsEqual && domainsEqual && eventsEqual;
 });
 
 function SearchableSelect({ options, value, onChange, placeholder = 'Select…', allowCustom = true }) {
@@ -1816,7 +1948,19 @@ function SearchableSelect({ options, value, onChange, placeholder = 'Select…',
   );
 }
 
-function MultiSelectDropdown({ options, selected, onToggle }) {
+// Provenance badges for how a Framework landed on a company: auto-mapped
+// from a confirmed Lists-page mapping, manually picked in this popup, or
+// pulled in from Claude sustainability research.
+const FRAMEWORK_SOURCE_BADGES = {
+  auto:   { label: 'Auto',   bg: '#E0E7FF', text: '#3730A3', title: 'Mapped automatically from a confirmed Lists-page mapping' },
+  manual: { label: 'Manual', bg: '#F1F5F9', text: '#475569', title: 'Manually added in this company popup' },
+  claude: { label: 'Claude', bg: '#DCFCE7', text: '#15803D', title: 'Added from Claude sustainability research' },
+};
+
+// `sourceOf(value)` is optional — when supplied (the Frameworks field), each
+// selected pill shows a small provenance badge and auto-mapped pills drop
+// the × since they're managed on the Lists page, not here.
+function MultiSelectDropdown({ options, selected, onToggle, sourceOf = null }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0, width: 0, up: false });
   const ref = useRef(null);
@@ -1860,16 +2004,28 @@ function MultiSelectDropdown({ options, selected, onToggle }) {
         }}
       >
         {selected.length === 0 && <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>Select...</span>}
-        {selected.map(v => (
-          <span key={v} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.1rem 0.5rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '999px', fontSize: '0.7rem', color: '#1E40AF', fontWeight: 500 }}>
+        {selected.map(v => {
+          const src = sourceOf ? sourceOf(v) : null;
+          const badge = src ? FRAMEWORK_SOURCE_BADGES[src] : null;
+          return (
+          <span key={v} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', padding: '0.1rem 0.5rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '999px', fontSize: '0.7rem', color: '#1E40AF', fontWeight: 500 }}>
             {v}
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); onToggle(v); }}
-              style={{ background: 'none', border: 'none', color: '#93C5FD', fontSize: '0.8rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
-            >&times;</button>
+            {badge && (
+              <span
+                title={badge.title}
+                style={{ display: 'inline-block', padding: '0 5px', borderRadius: 999, fontSize: '0.56rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', background: badge.bg, color: badge.text }}
+              >{badge.label}</span>
+            )}
+            {src !== 'auto' && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onToggle(v); }}
+                style={{ background: 'none', border: 'none', color: '#93C5FD', fontSize: '0.8rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
+              >&times;</button>
+            )}
           </span>
-        ))}
+          );
+        })}
         <span style={{ marginLeft: 'auto', fontSize: '0.6rem', color: 'var(--color-text-muted)' }}>{open ? '\u25B2' : '\u25BC'}</span>
       </div>
       {open && createPortal(
@@ -2016,8 +2172,8 @@ function SustainabilityResearchPanel({ state, onClear, onUseTargets, onMergeFram
   );
 }
 
-export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, onDeleteProspect, onUpdateProspect, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, updateSettingsPath = () => {}, targetAccountsData = null, cdmName = '' }) {
-  const { isAdmin } = useAuth();
+export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, onDeleteProspect, onUpdateProspect, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, updateSettingsPath = () => {}, targetAccountsData = null, cdmName = '', initialEditContact = null }) {
+  const { isAdmin, user } = useAuth();
   const [fields, setFields] = useState(() => {
     if (prospect) return { ...EMPTY, ...prospect };
     return { ...EMPTY };
@@ -2084,7 +2240,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       const d = email.slice(at + 1).toLowerCase().trim();
       return (d && !FREE.has(d)) ? d : '';
     };
-    return hubspotContacts
+    const matched = hubspotContacts
       .filter(c => {
         // The "Show hidden" toggle on the contacts panel below
         // flips this gate off so hide-tagged people resurface — the
@@ -2092,13 +2248,63 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         if (!showHiddenContacts && contactIsHidden(c)) return false;
         if (companiesMatch(c.company, fields.company)) return true;
         const d = contactDomain(c.email);
-        if (d && domains.has(d)) return true;
+        if (d && domains.has(d)) {
+          // Domain match only fills in contacts whose own Company text
+          // is blank. A shared parent domain (e.g. blackstone.com)
+          // otherwise drags every portfolio company's people onto each
+          // entity's popup — a contact whose Company already reads
+          // "Blackstone" shouldn't surface under "BRE Hotels & Resorts".
+          // Contacts that genuinely belong here but carry a mismatched
+          // Company text can still be pinned via "link" (companyContactLinks).
+          if (!(c.company || '').trim()) return true;
+        }
         return false;
       });
-  }, [fields.company, fields.emailDomain, fields.website, hubspotContacts, isNew, showHiddenContacts]);
+    // Explicitly linked contacts: ids the user associated with this
+    // company on the popup (stored in settings.companyContactLinks).
+    // They always appear — subject to the hidden toggle — even when the
+    // contact's HubSpot Company text / email domain doesn't match, so
+    // linking an existing contact sticks without a HubSpot refresh.
+    const key = String(fields.company).trim().toLowerCase();
+    const links = (settings.companyContactLinks || {})[key] || [];
+    if (links.length) {
+      const present = new Set(matched.map(c => String(c.id || c.vid)));
+      const linkSet = new Set(links.map(String));
+      for (const c of hubspotContacts) {
+        const id = String(c.id || c.vid || '');
+        if (!id || present.has(id) || !linkSet.has(id)) continue;
+        if (!showHiddenContacts && contactIsHidden(c)) continue;
+        matched.push(c);
+        present.add(id);
+      }
+    }
+    // Per-company exclusions: ids the user explicitly removed from this
+    // company's roster (settings.companyContactExclusions) without
+    // deleting them from HubSpot. They're dropped here so a shared-domain
+    // or fuzzy-name false positive stays gone across syncs. The "Show
+    // hidden" toggle surfaces them again so the user can re-add them.
+    const exIds = new Set(((settings.companyContactExclusions || {})[key] || []).map(String));
+    if (exIds.size) {
+      if (showHiddenContacts) {
+        const present = new Set(matched.map(c => String(c.id || c.vid)));
+        for (const c of hubspotContacts) {
+          const id = String(c.id || c.vid || '');
+          if (id && exIds.has(id) && !present.has(id)) { matched.push(c); present.add(id); }
+        }
+      } else {
+        return matched.filter(c => !exIds.has(String(c.id || c.vid || '')));
+      }
+    }
+    return matched;
+  }, [fields.company, fields.emailDomain, fields.website, hubspotContacts, isNew, showHiddenContacts, settings.companyContactLinks, settings.companyContactExclusions]);
 
   const [localContacts, setLocalContacts] = useState(baseContacts);
   useEffect(() => { setLocalContacts(baseContacts); }, [baseContacts]);
+  // Mirror localContacts into a ref so handleContactSaved can tell a brand-
+  // new association (a contact that wasn't already on this company) from an
+  // edit to one already shown, without recreating the callback each render.
+  const localContactsRef = useRef(localContacts);
+  localContactsRef.current = localContacts;
   const companyContacts = localContacts;
 
   // Per-contact sent / received email counts sourced from the
@@ -2209,7 +2415,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         const company = findCol(rec, ['Account Name', 'Company Name', 'Account', 'Company', 'Client Name', 'Client', 'Name']);
         if (!company) continue;
         const key = company.toLowerCase();
-        const rep = findCol(rec, ['CDM', 'Salesperson', 'Sales Rep', 'Account Owner', 'Owner', 'Rep', 'Assigned', 'Team Member']);
+        // Use the salesperson/CDM column mapped on the Target Accounts
+        // page (settings.targetCdmColumn), falling back to a keyword scan.
+        const rep = resolveTargetAccountCdm(rec, settings?.targetCdmColumn);
         if (rep && !repMap.has(key)) repMap.set(key, rep);
         let tierRaw = findCol(rec, ['Account Tier', 'Tier Level', 'Tier']);
         if (!tierRaw) {
@@ -2220,7 +2428,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       }
     }
     return [repMap, tierMap];
-  }, [targetAccountsData]);
+  }, [targetAccountsData, settings?.targetCdmColumn]);
   const repForTarget = useCallback((targetAccount) => {
     if (!targetAccount) return '';
     return targetAccountRepMap.get(targetAccount.toLowerCase()) || '';
@@ -2247,18 +2455,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return [...tagSet].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   }, [hubspotContacts]);
 
-  // Unique CDM names across all prospects, alphabetized — feeds the
-  // searchable dropdown on the CDM field. Includes the current value
-  // even if it hasn't been used elsewhere yet.
+  // CDM options for the searchable dropdown, driven by the "CDM"
+  // Dropdowns-tab list (managed on the Dropdowns page) unioned with the
+  // names already in use — so the Dropdowns list is the source of truth.
+  // The current value is always kept so an unsaved typed CDM still shows.
   const cdmOptions = useMemo(() => {
-    const set = new Set();
-    for (const p of (prospects || [])) {
-      const v = (p?.cdm || '').trim();
-      if (v) set.add(v);
-    }
-    if (fields.cdm) set.add(String(fields.cdm).trim());
-    return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
-  }, [prospects, fields.cdm]);
+    const base = buildCdmOptions(prospects, settings);
+    const cur = String(fields.cdm || '').trim();
+    if (cur && !base.some(o => o.toLowerCase() === cur.toLowerCase())) return [...base, cur];
+    return base;
+  }, [prospects, settings, fields.cdm]);
 
   // Competitor name suggestions for the @-mention dropdown in the
   // notes editors. Harvested across every prospect's competitorsNotes
@@ -2266,6 +2472,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // so a name typed once on any record is suggested everywhere
   // afterwards.
   const competitorOptions = useMemo(() => harvestCompetitors(prospects), [prospects]);
+
+  // Asset Types vocabulary, managed on the Dropdowns tab (plus any value
+  // already in use), so the pop-up offers exactly what Table View does.
+  const assetTypeOptions = useMemo(() => buildAssetTypeOptions(prospects, settings), [prospects, settings]);
 
   const [contactView, setContactView] = useState('table'); // 'table' | 'orgchart'
   // (showHiddenContacts state is declared earlier — above
@@ -2299,7 +2509,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     }
     return n;
   }, [hubspotContacts, fields.company, fields.emailDomain, fields.website]);
-  const [editingContact, setEditingContact] = useState(null);
+  // Seed the contact editor when the modal was opened by clicking a specific
+  // contact (e.g. a Decision Maker on the Pipeline renewals table).
+  const [editingContact, setEditingContact] = useState(initialEditContact);
   const [addingContact, setAddingContact] = useState(false);
   const [showSaved, setShowSaved] = useState(false);
   const [deletingContact, setDeletingContact] = useState(null);
@@ -2318,6 +2530,41 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [mergeQuery, setMergeQuery] = useState('');
   const [listsMatchOpen, setListsMatchOpen] = useState(false);
   const listsMatchBtnRef = useRef(null);
+  // Fuzzy-match this company's name against the RA Clients list (Lists →
+  // RA Clients tab). Surfaces a warning in the modal so the user doesn't
+  // prospect a company that's already a live RA client. Uses the same
+  // normalization + substring-ratio scoring the list tabs use, and reads
+  // the effective list (user-uploaded override or bundled default).
+  const raClientMatches = useMemo(() => {
+    const company = (fields.company || '').trim();
+    if (!company) return [];
+    const target = normalizePortfolioCompany(company);
+    if (!target) return [];
+    const raClientsData = loadEffectiveRaClients().data || [];
+    const seen = new Set();
+    const out = [];
+    for (const ra of raClientsData) {
+      const name = raClientName(ra);
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      const norm = normalizePortfolioCompany(name);
+      if (!norm) continue;
+      let score = 0;
+      if (norm === target) score = 1;
+      else if (norm.length >= 3 && target.length >= 3 && (norm.includes(target) || target.includes(norm))) {
+        const shorter = Math.min(norm.length, target.length);
+        const longer = Math.max(norm.length, target.length);
+        score = longer > 0 ? shorter / longer : 0;
+      }
+      if (score >= 0.5) {
+        seen.add(key);
+        out.push({ name, cm: raClientCm(ra), score, exact: score === 1 });
+      }
+    }
+    out.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+    return out.slice(0, 5);
+  }, [fields.company]);
   const [pastePortfolio, setPastePortfolio] = useState('');
   // Slug used as the Firestore path segment for persisted research
   // results — same shape as companySlug below; declared earlier here
@@ -2465,7 +2712,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         hs_sequences_is_enrolled: c.hs_sequences_is_enrolled,
         notes_last_contacted: c.notes_last_contacted,
       }));
-      await setHubspotCache({ ...json, contacts: slimContacts, syncedAt: new Date().toISOString() });
+      await setHubspotCachePreservingManual({ ...json, contacts: slimContacts, syncedAt: new Date().toISOString() });
     } catch (err) {
       setRefreshHubspotError(err?.message || 'Refresh failed');
     } finally {
@@ -2513,6 +2760,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [peOwnerPickerOpen]);
+  // Site List — a per-company spreadsheet of physical sites/locations the
+  // user uploads. Stored under settings.companySiteLists[slug] (slug keyed
+  // off the company name, same convention as companyOpportunities/Deals).
+  // The Email Drafts page reads these back to build a combined Site List
+  // Overview for every company that has a contact in the draft.
+  const [siteListOpen, setSiteListOpen] = useState(false);
+  const [siteListDragActive, setSiteListDragActive] = useState(false);
+  const [siteListPasteOpen, setSiteListPasteOpen] = useState(false);
+  const siteListInputRef = useRef(null);
+
   // Portfolio Companies upload preview — shows detected column mapping before applying
   const [portfolioUpload, setPortfolioUpload] = useState(null); // { fileName, headers: string[], rows: object[], mapping: { [header]: fieldKey|'' }, file?: File }
   const [portfolioDragActive, setPortfolioDragActive] = useState(false);
@@ -2554,6 +2811,87 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
   // Shared file -> mapping-preview parser. Used by both the Upload Excel button
   // and the drag-and-drop handler on the Portfolio Companies section.
+  // Slug used to key this company's site list in settings. Mirrors the
+  // slugify in migrateCompanyData so renames carry the list along.
+  const siteListSlug = (fields.company || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
+  const currentSiteList = (settings.companySiteLists || {})[siteListSlug] || null;
+
+  // Parse an uploaded .xlsx/.xls/.csv into { headers, rows } and stash it
+  // under settings.companySiteLists[slug]. Rows are plain header→cell
+  // objects with Firestore-safe (string/number) values.
+  const openSiteListFile = useCallback(async (file) => {
+    if (!file) return;
+    if (!/\.(xlsx|xls|csv)$/i.test(file.name)) {
+      alert('Please upload an Excel or CSV file (.xlsx, .xls, or .csv).');
+      return;
+    }
+    const slug = (fields.company || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
+    if (!slug) { alert('Add a company name before uploading a site list.'); return; }
+    try {
+      const XLSX = await import('xlsx');
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf);
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const data = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      if (!data.length) { alert('Uploaded file has no rows.'); return; }
+      const safeCell = (v) => {
+        if (v == null) return '';
+        if (v instanceof Date) return v.toISOString();
+        if (typeof v === 'object') return String(v);
+        return v;
+      };
+      // Union of headers across all rows so sparse columns aren't dropped.
+      const headers = [];
+      const seen = new Set();
+      for (const r of data) {
+        for (const h of Object.keys(r)) {
+          if (!seen.has(h)) { seen.add(h); headers.push(h); }
+        }
+      }
+      const rows = data.map(r => {
+        const o = {};
+        for (const h of headers) o[h] = safeCell(r[h]);
+        return o;
+      });
+      updateSettingsPath({
+        [`companySiteLists.${slug}`]: {
+          company: fields.company || '',
+          fileName: file.name,
+          headers,
+          rows,
+          uploadedAt: new Date().toISOString(),
+        },
+      });
+      setSiteListOpen(true);
+    } catch (err) {
+      alert('Failed to parse file: ' + (err.message || 'Unknown error'));
+    }
+  }, [fields.company, updateSettingsPath]);
+
+  // Persist a site list built from the paste-and-map modal. `headers` is the
+  // canonical column subset; `rows` are header→value objects.
+  function saveSiteListFromPaste({ headers, rows }) {
+    const slug = (fields.company || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
+    if (!slug) { alert('Add a company name before adding a site list.'); return; }
+    updateSettingsPath({
+      [`companySiteLists.${slug}`]: {
+        company: fields.company || '',
+        fileName: 'Pasted from Excel',
+        headers,
+        rows,
+        uploadedAt: new Date().toISOString(),
+      },
+    });
+    setSiteListPasteOpen(false);
+    setSiteListOpen(true);
+  }
+
+  function removeSiteList() {
+    if (!siteListSlug) return;
+    if (!window.confirm('Remove the uploaded site list for this company?')) return;
+    updateSettingsPath({ [`companySiteLists.${siteListSlug}`]: null });
+  }
+
   const openPortfolioMappingForFile = useCallback(async (file) => {
     if (!file) return;
     try {
@@ -2677,14 +3015,36 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       if (idbData?.records) {
         setOppsCache(idbData.records);
       }
-      // Load clients and find CM
-      const clientsData = await loadClientsFromIndexedDB();
-      if (clientsData?.records && fields.company) {
-        const match = clientsData.records.find(r => companiesMatch(r.Client || r.client, fields.company));
-        if (match) setClientManager(match.CM || match.cm || null);
+      // Client Manager: prefer the value assigned on the Clients page
+      // (the shared clients-manager-map) so it auto-populates here when
+      // the company is a tracked client. Fall back to the CM column on
+      // the legacy clients-cache import only when nothing's assigned.
+      if (fields.company) {
+        const fromClientsPage = resolveClientManagerFromMap(fields.company);
+        if (fromClientsPage) {
+          setClientManager(fromClientsPage);
+        } else {
+          const clientsData = await loadClientsFromIndexedDB();
+          if (clientsData?.records) {
+            const match = clientsData.records.find(r => companiesMatch(r.Client || r.client, fields.company));
+            if (match) setClientManager(match.CM || match.cm || null);
+          }
+        }
       }
     })();
   }, [isNew]);
+
+  // Keep the Client Manager in sync if it's edited on the Clients page
+  // while this modal is open.
+  useEffect(() => {
+    if (isNew || !fields.company) return undefined;
+    function refresh() {
+      const fromClientsPage = resolveClientManagerFromMap(fields.company);
+      if (fromClientsPage) setClientManager(fromClientsPage);
+    }
+    window.addEventListener(CLIENT_MANAGER_EVENT, refresh);
+    return () => window.removeEventListener(CLIENT_MANAGER_EVENT, refresh);
+  }, [isNew, fields.company]);
 
   // Load opps scope+stage pairs matching this company
   const oppsRecords = useMemo(() => {
@@ -2720,18 +3080,72 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return matched;
   }, [oppsRecords]);
 
+  // Pin a contact to this company so it always shows on the popup,
+  // regardless of whether its HubSpot Company text matches. Persisted in
+  // settings (Firestore) so the association survives reloads / syncs
+  // without a HubSpot refresh.
+  const linkContactToCompany = useCallback((contactId) => {
+    const id = String(contactId || '');
+    const key = String(fields.company || '').trim().toLowerCase();
+    if (!id || !key) return;
+    const cur = settings.companyContactLinks || {};
+    const list = Array.isArray(cur[key]) ? cur[key] : [];
+    if (list.map(String).includes(id)) return;
+    updateSettings({ companyContactLinks: { ...cur, [key]: [...list, id] } });
+  }, [fields.company, settings.companyContactLinks, updateSettings]);
+
+  // Ids the user removed from THIS company's popup without deleting them
+  // from HubSpot (settings.companyContactExclusions, keyed by company
+  // name). baseContacts drops these; the row render uses the set to show
+  // a "re-add" affordance for excluded contacts surfaced via "Show hidden".
+  const excludedContactIds = useMemo(() => {
+    const key = String(fields.company || '').trim().toLowerCase();
+    return new Set(((settings.companyContactExclusions || {})[key] || []).map(String));
+  }, [fields.company, settings.companyContactExclusions]);
+
+  // Remove a contact from this company's roster only. Non-destructive —
+  // the contact stays in HubSpot and on every other company it matches.
+  const excludeContactFromCompany = useCallback((contactId) => {
+    const id = String(contactId || '');
+    const key = String(fields.company || '').trim().toLowerCase();
+    if (!id || !key) return;
+    const cur = settings.companyContactExclusions || {};
+    const list = Array.isArray(cur[key]) ? cur[key].map(String) : [];
+    if (list.includes(id)) return;
+    updateSettings({ companyContactExclusions: { ...cur, [key]: [...list, id] } });
+  }, [fields.company, settings.companyContactExclusions, updateSettings]);
+
+  // Undo an exclusion so the contact can match this company again.
+  const unexcludeContactFromCompany = useCallback((contactId) => {
+    const id = String(contactId || '');
+    const key = String(fields.company || '').trim().toLowerCase();
+    if (!id || !key) return;
+    const cur = settings.companyContactExclusions || {};
+    const list = Array.isArray(cur[key]) ? cur[key].map(String) : [];
+    if (!list.includes(id)) return;
+    const nextList = list.filter(x => x !== id);
+    const next = { ...cur };
+    if (nextList.length) next[key] = nextList; else delete next[key];
+    updateSettings({ companyContactExclusions: next });
+  }, [fields.company, settings.companyContactExclusions, updateSettings]);
+
   const handleContactSaved = useCallback((updated, options = {}) => {
+    const updatedId = String(updated.id || updated.vid || '');
+    // A contact not already on this company's roster is a fresh
+    // association — remember it so it sticks without a HubSpot refresh.
+    const wasPresent = localContactsRef.current.some(c => String(c.id || c.vid) === updatedId);
     setLocalContacts(prev => {
-      const existing = prev.find(c => String(c.id || c.vid) === String(updated.id || updated.vid));
+      const existing = prev.find(c => String(c.id || c.vid) === updatedId);
       if (existing) {
-        return prev.map(c => (String(c.id || c.vid) === String(updated.id || updated.vid) ? { ...c, ...updated } : c));
+        return prev.map(c => (String(c.id || c.vid) === updatedId ? { ...c, ...updated } : c));
       }
       return [...prev, updated];
     });
+    if (!wasPresent && updatedId) linkContactToCompany(updatedId);
     if (options.silent) return; // e.g. inline autosaves shouldn't close the modal
     setAddingContact(false);
     setEditingContact(null);
-  }, []);
+  }, [linkContactToCompany]);
 
   const handleSaveContactNote = useCallback((contactId, note) => {
     const current = settings.contactNotes || {};
@@ -2748,6 +3162,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     else delete next[contactId];
     updateSettings({ contactOldEmails: next });
   }, [settings.contactOldEmails, updateSettings]);
+
+  const handleSaveContactOldCompany = useCallback((contactId, oldCompany) => {
+    const current = settings.contactOldCompany || {};
+    const next = { ...current };
+    if (oldCompany && oldCompany.trim()) next[contactId] = oldCompany;
+    else delete next[contactId];
+    updateSettings({ contactOldCompany: next });
+  }, [settings.contactOldCompany, updateSettings]);
 
   const handleSaveContactNickname = useCallback((contactId, nickname) => {
     const current = settings.contactNicknames || {};
@@ -3073,7 +3495,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       .replace(/<li\s+data-list="checked">([^<]+)<\/li>/g, '<p>☑ $1</p>')
       .replace(/<li\s+data-list="unchecked">([^<]+)<\/li>/g, '<p>☐ $1</p>')
       .replace(/<ol>(\s*(?:<p>[☑☐][^<]*<\/p>\s*)+)<\/ol>/g, '$1');
-    const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Opportunity Template</title></head><body><h1>Opportunity Template</h1>${bodyHtml}</body></html>`;
+    const fullHtml = stripDashes(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Opportunity Template</title></head><body><h1>Opportunity Template</h1>${bodyHtml}</body></html>`);
     try {
       const { asBlob: htmlToDocxBlob } = await import('html-docx-js-typescript');
       const result = await htmlToDocxBlob(fullHtml);
@@ -3312,7 +3734,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const htmlContent = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">\n<head>\n<!--[if gte mso 9]><xml><w:WordDocument><w:DontHyphenate/><w:DoNotHyphenateCaps/></w:WordDocument></xml><![endif]-->\n<style>\nul,ol{margin:0;padding-left:1.5em;}\n</style>\n</head>\n<body style="margin:0;padding:0;">\n<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;">\n${body}\n</div>${sigBlock}\n</body>\n</html>`;
 
     const toHeader = recipients.join(', ');
-    const eml = [
+    // De-dash the whole message: strip literal em dashes (subject/body) and
+    // the &mdash; HTML entity so the exported .eml carries only hyphens.
+    const eml = stripDashes([
       'MIME-Version: 1.0',
       `Subject: ${subject}`,
       toHeader ? `To: ${toHeader}` : null,
@@ -3321,7 +3745,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       'Content-Transfer-Encoding: 8bit',
       '',
       htmlContent,
-    ].filter(Boolean).join('\r\n');
+    ].filter(Boolean).join('\r\n')).replace(/&mdash;|&#8212;|&#x2014;/gi, '-');
 
     const safeName = (selectedOpp.title || fields.company || 'follow-up')
       .replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60) || 'follow-up';
@@ -3341,7 +3765,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const safeTitle = (selectedOpp.title || 'opportunity').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80) || 'opportunity';
     const safeCompany = (fields.company || 'company').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60);
     const bodyHtml = oppNoteDraft && oppNoteDraft.trim() ? oppNoteDraft : '<p></p>';
-    const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${safeTitle}</title></head><body><h1>${safeCompany} — ${safeTitle}</h1>${bodyHtml}</body></html>`;
+    const fullHtml = stripDashes(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${safeTitle}</title></head><body><h1>${safeCompany} — ${safeTitle}</h1>${bodyHtml}</body></html>`);
     try {
       const { asBlob: htmlToDocxBlob } = await import('html-docx-js-typescript');
       const result = await htmlToDocxBlob(fullHtml);
@@ -3478,29 +3902,62 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return () => { cancelled = true; };
   }, [fields.portfolioCompanies, portfolioFlagVersion, prospects]);
 
-  // Frameworks dropdown shows the union of the prospect's manual
-  // frameworks array and any Lists-page confirmed mappings. Editing
-  // the dropdown writes only to fields.frameworks; Lists-page flags
-  // come through computeListFlags. The two surfaces stay consistent
-  // without a migration.
+  // Frameworks that come from a *confirmed Lists-page mapping* for this
+  // company (My Accounts or Portfolio scope). This is the ONLY source we
+  // treat as "Auto". Deliberately computed WITHOUT passing `prospects`:
+  // computeListFlags also folds a prospect's own frameworks array into its
+  // result, and if we included that here every manually- or Claude-added
+  // framework (once saved on the prospect) would masquerade as an
+  // auto-mapping. Manual / Claude provenance is tracked separately in
+  // fields.frameworkSources.
   const [companyFrameworkFlags, setCompanyFrameworkFlags] = useState(() => new Set());
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const name = fields.company;
       if (!name) { if (!cancelled) setCompanyFrameworkFlags(new Set()); return; }
-      const flags = await computeListFlags([name], { prospects });
+      const flags = await computeListFlags([name]);
       if (cancelled) return;
       const set = flags.get(name.toLowerCase().trim()) || new Set();
       setCompanyFrameworkFlags(set);
     })();
     return () => { cancelled = true; };
-  }, [fields.company, portfolioFlagVersion, prospects, fields.frameworks]);
+  }, [fields.company, portfolioFlagVersion]);
   const effectiveFrameworks = useMemo(() => {
     const out = new Set(fields.frameworks || []);
     for (const f of companyFrameworkFlags) out.add(f);
     return [...out];
   }, [fields.frameworks, companyFrameworkFlags]);
+
+  // How each framework landed on this company. A confirmed Lists-page
+  // mapping (companyFrameworkFlags) is authoritative → 'auto'; otherwise
+  // the per-framework provenance stored in fields.frameworkSources marks
+  // Claude-research additions, with everything else treated as a manual
+  // pick in this popup.
+  const frameworkSourceOf = useCallback((label) => {
+    if (companyFrameworkFlags.has(label)) return 'auto';
+    return (fields.frameworkSources || {})[label] === 'claude' ? 'claude' : 'manual';
+  }, [companyFrameworkFlags, fields.frameworkSources]);
+
+  // Toggle a framework from the dropdown, recording provenance alongside
+  // the array so the badge can distinguish manual picks from Claude/auto.
+  // Removing a framework also drops its stored source.
+  const toggleFramework = useCallback((value) => {
+    setFields(prev => {
+      const arr = prev.frameworks || [];
+      const has = arr.includes(value);
+      const nextArr = has ? arr.filter(v => v !== value) : [...arr, value];
+      const sources = { ...(prev.frameworkSources || {}) };
+      if (has) delete sources[value];
+      else sources[value] = 'manual';
+      return { ...prev, frameworks: nextArr, frameworkSources: sources };
+    });
+  }, []);
+
+  // Strategy-tag vocabulary: built-ins + every tag already in use + the
+  // user's custom additions, so the dropdown matches what the PE Firm
+  // sub-tab offers.
+  const strategyOptions = useMemo(() => buildStrategyOptions(prospects, settings), [prospects, settings]);
 
   const updateDeal = useCallback((dealId, patch) => {
     writeCompanyDeals(companyDeals.map(d => d.id === dealId ? { ...d, ...patch, updatedAt: Date.now() } : d));
@@ -3706,6 +4163,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const newResearch = (settings.companyResearch || {})[newSlug];
     if (oldResearch && !newResearch) patches[`companyResearch.${newSlug}`] = oldResearch;
 
+    const oldSiteList = (settings.companySiteLists || {})[oldSlug];
+    const newSiteList = (settings.companySiteLists || {})[newSlug];
+    if (oldSiteList && !newSiteList) patches[`companySiteLists.${newSlug}`] = oldSiteList;
+
     // Drop the old slug entries when no other prospect still maps to
     // the old company name — otherwise leave them so the other record
     // keeps working.
@@ -3717,12 +4178,182 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       if (hasOldOpps) patches[`companyOpportunities.${oldSlug}`] = null;
       if (Array.isArray(oldDeals) && oldDeals.length > 0) patches[`companyDeals.${oldSlug}`] = null;
       if (oldResearch) patches[`companyResearch.${oldSlug}`] = null;
+      if (oldSiteList) patches[`companySiteLists.${oldSlug}`] = null;
     }
 
     if (Object.keys(patches).length > 0) updateSettingsPath(patches);
     // Rename the IDB portfolio source file in step. Fire-and-forget;
     // load paths fall back gracefully if it hasn't landed yet.
     renamePortfolioSourceFile(oldName, newName).catch(() => {});
+  }
+
+  // Repoint every name-keyed cross-reference (opp Account, portfolio
+  // companies' PE Owner, dismissed suggestions, confirmed list mappings)
+  // from the old company name onto the new one, so a rename doesn't
+  // silently detach opps/portfolio/flags. Loads the opps store, builds a
+  // plan, and applies it only after the user confirms a summary of what
+  // will change. HubSpot is deliberately not touched. Fire-and-forget
+  // from the Company field commit; failures are logged, not surfaced
+  // mid-edit.
+  async function cascadeCompanyRenameLinks(oldName, newName) {
+    try {
+      const uid = user?.uid;
+      let oppsRecords = [];
+      if (uid) {
+        try {
+          const data = await loadOpps2Newest(uid);
+          if (Array.isArray(data?.records)) oppsRecords = data.records;
+        } catch { /* opps not loaded — skip the opps leg, still migrate the rest */ }
+      }
+      const plan = buildCompanyRenamePlan({
+        oldName, newName, prospects, currentProspectId: prospect?.id, settings, oppsRecords,
+      });
+      // HubSpot contacts that belong to the old company name: every contact
+      // whose company text matches (same matcher the popup uses), plus any
+      // explicitly pinned to the old name. These move onto the new name so
+      // they stay mapped to the renamed company and display it everywhere.
+      const cleanNew = String(newName || '').trim();
+      const oldKey = String(oldName || '').trim().toLowerCase();
+      const newKey = cleanNew.toLowerCase();
+      const links = settings.companyContactLinks || {};
+      const pinnedIds = Array.isArray(links[oldKey]) ? links[oldKey].map(String) : [];
+      const contactTargets = (hubspotContacts || []).filter(c => companiesMatch(c.company, oldName));
+      const contactCount = contactTargets.length;
+
+      // Clients-view subtabs (Deals / Commissions rows, plus the typed
+      // Clients-tab fields and deal→client mappings) key off the company
+      // name string, so they need to move onto the new name too.
+      const clientCounts = countClientsSubtabRename(oldName, newName);
+      const clientTotal = clientsSubtabRenameTotal(clientCounts);
+
+      // Target Accounts: the uploaded workbook rows (name = leftmost column)
+      // plus the blocked-suggestions set, both keyed by the account name.
+      let taData = null;
+      if (uid) { try { taData = await loadTargetAccountsFromDB(uid); } catch { /* skip the TA leg */ } }
+      const taPlan = renameTargetAccountRows(taData, oldName, newName);
+      const blockedCount = countBlockedAccountRename(oldName, newName);
+
+      if (!planHasWork(plan) && contactCount === 0 && pinnedIds.length === 0
+        && clientTotal === 0 && taPlan.count === 0 && blockedCount === 0) return;
+      const summaryLines = summarizeRenamePlan(plan);
+      if (contactCount > 0) summaryLines.push(`• ${contactCount} HubSpot contact${contactCount === 1 ? '' : 's'} (Company)`);
+      summaryLines.push(...summarizeClientsSubtabRename(clientCounts));
+      if (taPlan.count > 0) summaryLines.push(`• ${taPlan.count} Target Account row${taPlan.count === 1 ? '' : 's'}`);
+      if (blockedCount > 0) summaryLines.push('• 1 blocked-account entry');
+      const ok = window.confirm(
+        `Renamed to "${newName}".\n\nAlso update these references to "${oldName}"?\n\n${summaryLines.join('\n')}`
+      );
+      if (!ok) return;
+      if (clientTotal > 0) applyClientsSubtabRename(oldName, newName);
+      if (taPlan.count > 0 && uid) {
+        try { await saveTargetAccountsToDB(uid, taPlan.data); }
+        catch (err) { console.error('Company rename: target accounts update failed', err); }
+      }
+      if (blockedCount > 0) renameBlockedAccountName(oldName, newName);
+      if (plan.oppIds.length && uid) {
+        try { await bulkSetOppField(uid, plan.oppIds, 'Account', newName); }
+        catch (err) { console.error('Company rename: opps Account update failed', err); }
+      }
+      for (const u of plan.peOwnerUpdates) {
+        try { onUpdateProspect?.(u.id, { peOwner: u.peOwner }); }
+        catch (err) { console.error('Company rename: peOwner update failed', u.id, err); }
+      }
+      // PE firms' own portfolio-company lists naming the renamed company.
+      for (const u of plan.portfolioUpdates) {
+        try { onUpdateProspect?.(u.id, { portfolioCompanies: u.portfolioCompanies }); }
+        catch (err) { console.error('Company rename: portfolioCompanies update failed', u.id, err); }
+      }
+      if (plan.savedPortfolioMappings) updateSettings({ savedPortfolioMappings: plan.savedPortfolioMappings });
+      if (plan.events) updateSettings({ events: plan.events });
+      if (plan.dismissed) updateSettings({ dismissedPortfolioGuesses: plan.dismissed });
+      applyListMappingWrites(plan);
+
+      // ── HubSpot contacts leg ──
+      const settingsPatch = {};
+      // Move the pin key so explicitly-linked contacts follow the rename.
+      if (pinnedIds.length && oldKey !== newKey) {
+        const mergedPins = Array.from(new Set([...((links[newKey] || []).map(String)), ...pinnedIds]));
+        const nextLinks = { ...links, [newKey]: mergedPins };
+        delete nextLinks[oldKey];
+        settingsPatch.companyContactLinks = nextLinks;
+      }
+      // Move the exclusion key too, otherwise contacts the user hid from the
+      // company's roster reappear under the new name on rename.
+      const exclusions = settings.companyContactExclusions || {};
+      const oldExcluded = Array.isArray(exclusions[oldKey]) ? exclusions[oldKey].map(String) : [];
+      if (oldExcluded.length && oldKey !== newKey) {
+        const mergedEx = Array.from(new Set([...((exclusions[newKey] || []).map(String)), ...oldExcluded]));
+        const nextEx = { ...exclusions, [newKey]: mergedEx };
+        delete nextEx[oldKey];
+        settingsPatch.companyContactExclusions = nextEx;
+      }
+      // Durable local override so the new name sticks across HubSpot refreshes
+      // even when the server-side Company reassignment lags or resolves to a
+      // different canonical name.
+      if (contactCount > 0) {
+        const localFields = { ...(settings.contactLocalFields || {}) };
+        for (const c of contactTargets) {
+          const id = String(c.id || c.vid || '');
+          if (!id) continue;
+          localFields[id] = { ...(localFields[id] || {}), _companyOverride: cleanNew };
+        }
+        settingsPatch.contactLocalFields = localFields;
+      }
+      if (Object.keys(settingsPatch).length) updateSettings(settingsPatch);
+
+      if (contactCount > 0) {
+        // Rewrite the cached company text immediately so every view shows the
+        // new name without waiting for a HubSpot refresh.
+        try {
+          await updateHubspotCache(draft => {
+            draft.contacts = draft.contacts.map(c =>
+              companiesMatch(c.company, oldName) ? { ...c, company: cleanNew } : c
+            );
+          });
+        } catch (err) { console.warn('Company rename: contact cache update failed', err?.message || err); }
+        // Best-effort: push the rename to HubSpot, which also reassigns each
+        // contact's primary Company association so the CRM stays in sync. On
+        // failure the local override + cache rewrite remain as the fallback.
+        for (const c of contactTargets) {
+          const id = c.id || c.vid;
+          if (!id) continue;
+          try {
+            await apiFetch('/api/hubspot?action=update-contact', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ contactId: id, properties: { company: cleanNew } }),
+            });
+          } catch { /* fallback already in place */ }
+        }
+      }
+    } catch (err) {
+      console.error('Company rename cascade failed', err);
+    }
+  }
+
+  // A prospect's company name lives on each prospect record independently,
+  // so renaming the company here only touches THIS record. When other
+  // prospects carry the exact same company name, offer to rename them all
+  // in one action. We match on the trimmed, case-insensitive old name so a
+  // rename never silently sweeps up a differently-named company; declining
+  // leaves the other records untouched. Fired alongside migrateCompanyData
+  // when the Company field commits to a new value.
+  function renameCompanyAcrossProspects(oldName, newName) {
+    if (!onUpdateProspect) return;
+    const norm = (s) => (s || '').trim().toLowerCase();
+    const oldNorm = norm(oldName);
+    if (!oldNorm) return;
+    const others = (prospects || []).filter(
+      p => p && p.id !== prospect?.id && norm(p.company) === oldNorm
+    );
+    if (others.length === 0) return;
+    const isOne = others.length === 1;
+    const ok = window.confirm(
+      `${others.length} other prospect${isOne ? '' : 's'} ${isOne ? 'is' : 'are'} also named "${oldName}". `
+      + `Rename ${isOne ? 'it' : 'them all'} to "${newName}" too?`
+    );
+    if (!ok) return;
+    others.forEach(p => { onUpdateProspect(p.id, { company: newName }); });
   }
 
   function toggleArrayField(key, value) {
@@ -3810,6 +4441,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         <div class="info-item"><div class="info-label">RE AUM</div><div class="info-val">${f.reAum != null ? '$' + f.reAum + 'B' : '—'}</div></div>
         <div class="info-item"><div class="info-label">PE AUM</div><div class="info-val">${f.peAum != null ? '$' + f.peAum + 'B' : '—'}</div></div>
         <div class="info-item"><div class="info-label">Sites</div><div class="info-val">${f.numberOfSites ?? '—'}</div></div>
+        <div class="info-item"><div class="info-label">Revenue</div><div class="info-val">${f.revenue || '—'}</div></div>
         <div class="info-item"><div class="info-label">HQ Region</div><div class="info-val">${f.hqRegion || '—'}</div></div>
         <div class="info-item"><div class="info-label">Website</div><div class="info-val">${f.website ? `<a href="${f.website.startsWith('http') ? f.website : 'https://' + f.website}">${f.website}</a>` : '—'}</div></div>
         <div class="info-item"><div class="info-label">Email Domain</div><div class="info-val">${f.emailDomain || '—'}</div></div>
@@ -3920,6 +4552,45 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           />
         )}
         <div className={styles.body}>
+          {raClientMatches.length > 0 && (
+            <div style={{
+              marginBottom: '0.8rem',
+              padding: '0.6rem 0.8rem',
+              background: '#FFFBEB',
+              border: '1px solid #FDE68A',
+              borderRadius: 6,
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '0.6rem',
+            }}>
+              <div style={{ fontSize: '1rem', lineHeight: 1.2 }}>⚠️</div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  {raClientMatches.some(m => m.exact) ? 'Matches an RA Client' : 'Possible RA Client match'}
+                </div>
+                <div style={{ fontSize: '0.75rem', color: '#78350F', marginTop: '0.2rem' }}>
+                  This company looks like {raClientMatches.length === 1 ? 'an existing RA Client' : 'existing RA Clients'} on the Lists → RA Clients tab. Double-check before prospecting.
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginTop: '0.4rem' }}>
+                  {raClientMatches.map(m => (
+                    <span
+                      key={m.name}
+                      title={m.cm ? `Client Manager: ${m.cm}` : undefined}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
+                        padding: '0.15rem 0.5rem', background: '#FEF3C7', border: '1px solid #FDE68A',
+                        borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, color: '#92400E',
+                      }}
+                    >
+                      {m.name}
+                      <span style={{ fontWeight: 700, color: '#B45309' }}>{m.exact ? 'exact' : `${Math.round(m.score * 100)}%`}</span>
+                      {m.cm && <span style={{ fontWeight: 400, color: '#A16207' }}>· {m.cm}</span>}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
           {indicativeAnalysis && (
             <div style={{
               marginBottom: '0.8rem',
@@ -3977,6 +4648,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   const newName = (v || '').trim();
                   if (oldName && newName && oldName.trim() !== newName) {
                     migrateCompanyData(oldName, newName);
+                    renameCompanyAcrossProspects(oldName, newName);
+                    cascadeCompanyRenameLinks(oldName, newName);
                   }
                   set('company', v);
                 }}
@@ -4066,6 +4739,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
 
             <div>
+              <label className={styles.label}>Revenue</label>
+              <CommitOnBlurInput className={styles.input} value={fields.revenue ?? ''} onCommit={v => set('revenue', v)} placeholder="e.g. $1.5B" />
+            </div>
+
+            <div>
               <label className={styles.label}>Rank</label>
               <CommitOnBlurInput className={styles.input} value={fields.rank} onCommit={v => set('rank', v)} />
             </div>
@@ -4087,6 +4765,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div>
               <label className={styles.label}>BFO Company Name</label>
               <CommitOnBlurInput className={styles.input} value={fields.bfoCompanyName ?? ''} onCommit={v => set('bfoCompanyName', v)} placeholder="Name as it appears in BFO" />
+            </div>
+
+            <div>
+              <label className={styles.label}>Contracting Entity</label>
+              <CommitOnBlurInput className={styles.input} value={fields.contractingEntity ?? ''} onCommit={v => set('contractingEntity', v)} placeholder="Legal entity on the contract" />
             </div>
 
             <div>
@@ -4183,6 +4866,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   <input
                     type="radio"
                     name={`caseStudyCreated-${fields.id || 'new'}`}
+                    checked={fields.caseStudyCreated === 'in-progress'}
+                    onChange={() => set('caseStudyCreated', 'in-progress')}
+                    style={{ accentColor: '#F59E0B' }}
+                  />
+                  In Progress
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', color: '#1E293B', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name={`caseStudyCreated-${fields.id || 'new'}`}
                     checked={!fields.caseStudyCreated}
                     onChange={() => set('caseStudyCreated', false)}
                     style={{ accentColor: '#94A3B8' }}
@@ -4232,8 +4925,58 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
 
             <div style={{ gridColumn: 'span 2' }}>
+              <label className={styles.label}>Also Known As <span style={{ fontWeight: 400, color: 'var(--color-text-muted)' }}>(former names / rebrands)</span></label>
+              {(() => {
+                const aliases = (fields.aliases || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
+                return (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.4rem', border: '1px solid var(--color-border)', borderRadius: '6px', minHeight: '36px', alignItems: 'center' }}>
+                    {aliases.map((a, i) => (
+                      <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.15rem 0.5rem', background: '#F5F3FF', border: '1px solid #DDD6FE', borderRadius: '999px', fontSize: '0.72rem', color: '#5B21B6' }}>
+                        {a}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = aliases.filter((_, j) => j !== i);
+                            set('aliases', next.join('\n'));
+                          }}
+                          style={{ background: 'none', border: 'none', color: '#C4B5FD', fontSize: '0.8rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
+                        >&times;</button>
+                      </span>
+                    ))}
+                    <input
+                      type="text"
+                      placeholder={aliases.length === 0 ? 'e.g. Andmore' : '+ Add former name'}
+                      title="Other names this company has gone by (e.g. after a rebrand). Decision-maker contacts whose HubSpot Company matches one of these will surface as Key Contacts for this company."
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && e.target.value.trim()) {
+                          e.preventDefault();
+                          const val = e.target.value.trim();
+                          if (!aliases.includes(val)) {
+                            set('aliases', [...aliases, val].join('\n'));
+                          }
+                          e.target.value = '';
+                        }
+                      }}
+                      onBlur={e => {
+                        // Commit a typed-but-not-Entered value on blur too, so
+                        // clicking away or closing the modal still saves it
+                        // (the form autosaves fields, but only what's committed).
+                        const val = e.target.value.trim();
+                        if (val && !aliases.includes(val)) {
+                          set('aliases', [...aliases, val].join('\n'));
+                        }
+                        e.target.value = '';
+                      }}
+                      style={{ border: 'none', outline: 'none', fontSize: '0.78rem', fontFamily: 'inherit', color: 'var(--color-text)', padding: '0.15rem 0', minWidth: '140px', flex: '1 1 140px', background: 'none' }}
+                    />
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div style={{ gridColumn: 'span 2' }}>
               <label className={styles.label}>Asset Types</label>
-              <MultiSelectDropdown options={ASSET_TYPES} selected={fields.assetTypes || []} onToggle={(val) => toggleArrayField('assetTypes', val)} />
+              <MultiSelectDropdown options={assetTypeOptions} selected={fields.assetTypes || []} onToggle={(val) => toggleArrayField('assetTypes', val)} />
             </div>
 
             {/* Competitors — same width as Asset Types (span 2), one
@@ -4256,7 +4999,26 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
             <div style={{ gridColumn: 'span 2' }}>
               <label className={styles.label}>Frameworks</label>
-              <MultiSelectDropdown options={FRAMEWORKS} selected={effectiveFrameworks} onToggle={(val) => toggleArrayField('frameworks', val)} />
+              <MultiSelectDropdown options={FRAMEWORKS} selected={effectiveFrameworks} onToggle={toggleFramework} sourceOf={frameworkSourceOf} />
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', marginTop: 4, fontSize: '0.6rem', color: 'var(--color-text-muted)' }}>
+                {Object.entries(FRAMEWORK_SOURCE_BADGES).map(([k, b]) => (
+                  <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }} title={b.title}>
+                    <span style={{ display: 'inline-block', padding: '0 5px', borderRadius: 999, fontSize: '0.56rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', background: b.bg, color: b.text }}>{b.label}</span>
+                    <span>{k === 'auto' ? 'from Lists mapping' : k === 'claude' ? 'from Claude research' : 'added here'}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ gridColumn: 'span 2' }}>
+              <label className={styles.label}>Strategies</label>
+              <TagMultiSelect
+                options={strategyOptions}
+                selected={fields.strategies || []}
+                onToggle={(val) => toggleArrayField('strategies', val)}
+                onAddNew={(val) => persistCustomStrategy(val, settings, updateSettings)}
+                placeholder="Tag this firm's investment strategies…"
+              />
             </div>
 
             <div className={styles.fieldFull}>
@@ -4298,9 +5060,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 onMergeFrameworks={() => {
                   const found = sustainResearch.data?.frameworks || [];
                   if (!found.length) return;
-                  const existing = new Set(fields.frameworks || []);
-                  for (const f of found) existing.add(f);
-                  set('frameworks', [...existing]);
+                  setFields(prev => {
+                    const existing = new Set(prev.frameworks || []);
+                    const sources = { ...(prev.frameworkSources || {}) };
+                    for (const f of found) {
+                      // Only newly-added frameworks are tagged 'claude'; ones
+                      // the user already had keep their existing provenance.
+                      if (!existing.has(f)) { existing.add(f); sources[f] = 'claude'; }
+                    }
+                    return { ...prev, frameworks: [...existing], frameworkSources: sources };
+                  });
                 }}
               />
             </div>
@@ -4914,6 +5683,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: headers.length } };
                       colWidths.forEach((w, idx) => { ws.getColumn(idx + 1).width = w; });
 
+                      sanitizeExcelWorkbook(wb);
                       const buf = await wb.xlsx.writeBuffer();
                       const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
                       const url = URL.createObjectURL(blob);
@@ -5035,6 +5805,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             if (manualStatus === '-' && oppStage) {
                               effectiveStatus = oppStage;
                             }
+                            // A real value in servicesExplored is a manual
+                            // override of the automatic (opp-derived) status.
+                            // When set, surface a one-click "revert to auto"
+                            // affordance so the user can drop back to the
+                            // normal logic at the service level.
+                            const isManualOverride = manualStatus !== '-';
                             const statusColors = {
                               'Sold': { bg: '#DCFCE7', color: '#166534' },
                               'Renewal': { bg: '#F1F5F9', color: '#94A3B8' },
@@ -5118,14 +5894,31 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                       if (e.target.value === '-') delete next[item];
                                       set('servicesExplored', next);
                                     }}
+                                    title={isManualOverride
+                                      ? `Manual override: ${manualStatus}.${oppStage ? ` Automatic status from a matching opp would be: ${oppStage}.` : ' No matching opp, so the automatic status is blank.'} Pick "— (auto)" or click ↺ to revert to the automatic status.`
+                                      : oppStage ? `Automatic status from a matching opp: ${oppStage}. Pick a status to set a manual override.` : 'No manual override and no matching opp.'}
                                     style={{
-                                      fontSize: '0.62rem', padding: '1px 2px', border: '1px solid var(--color-border)',
+                                      fontSize: '0.62rem', padding: '1px 2px', border: `1px solid ${isManualOverride ? 'var(--color-accent)' : 'var(--color-border)'}`,
                                       borderRadius: '3px', background: colors.bg || 'var(--color-surface)', color: colors.color || 'var(--color-text)',
                                       cursor: 'pointer', minWidth: '65px', fontFamily: 'inherit', fontWeight: 600,
                                     }}
                                   >
-                                    {SERVICE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                                    {SERVICE_STATUSES.map(s => <option key={s} value={s}>{s === '-' ? '— (auto)' : s}</option>)}
                                   </select>
+                                  {isManualOverride && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const next = { ...(fields.servicesExplored || {}) };
+                                        delete next[item];
+                                        set('servicesExplored', next);
+                                      }}
+                                      title="Clear manual override — revert this service to the automatic (opp-based) status"
+                                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '0.72rem', padding: '0 1px', lineHeight: 1, flexShrink: 0 }}
+                                      onMouseEnter={e => { e.currentTarget.style.color = 'var(--color-accent)'; }}
+                                      onMouseLeave={e => { e.currentTarget.style.color = '#94A3B8'; }}
+                                    >↺</button>
+                                  )}
                                 </div>
                                 {isNoteOpen && (
                                   <div style={{ padding: '0.15rem 0.35rem 0.25rem 1.2rem' }}>
@@ -5189,6 +5982,143 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 );
               })()}
             </div>
+          )}
+
+          {/* Site List — uploaded spreadsheet of this company's physical
+              sites/locations. Surfaces on the Email Drafts page as part of
+              the combined Site List Overview. */}
+          {!isNew && (
+            <div
+              style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem', position: 'relative', borderRadius: 8, transition: 'background 0.15s, outline 0.15s', outline: siteListDragActive ? '2px dashed var(--color-accent)' : '2px dashed transparent', outlineOffset: siteListDragActive ? '4px' : '0px', background: siteListDragActive ? 'rgba(59, 125, 221, 0.06)' : 'transparent' }}
+              onDragOver={e => {
+                if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'copy';
+                  if (!siteListDragActive) setSiteListDragActive(true);
+                }
+              }}
+              onDragEnter={e => {
+                if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+                  e.preventDefault();
+                  setSiteListDragActive(true);
+                }
+              }}
+              onDragLeave={e => {
+                if (e.currentTarget === e.target) setSiteListDragActive(false);
+              }}
+              onDrop={e => {
+                e.preventDefault();
+                setSiteListDragActive(false);
+                const file = e.dataTransfer?.files?.[0];
+                if (file) openSiteListFile(file);
+              }}
+            >
+              {siteListDragActive && (
+                <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'var(--color-accent)', color: '#fff', padding: '0.5rem 1rem', borderRadius: 6, fontSize: '0.85rem', fontWeight: 600, pointerEvents: 'none', zIndex: 5, boxShadow: '0 4px 12px rgba(0,0,0,0.2)' }}>
+                  Drop a spreadsheet to set the Site List
+                </div>
+              )}
+              <div
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', userSelect: 'none' }}
+                onClick={() => setSiteListOpen(o => !o)}
+              >
+                <label className={styles.label} style={{ margin: 0, cursor: 'pointer' }}>
+                  Site List
+                </label>
+                <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', transform: siteListOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>&#9660;</span>
+                {currentSiteList && (currentSiteList.rows || []).length > 0 && (
+                  <span style={{ fontSize: '0.68rem', color: '#64748B' }}>
+                    {currentSiteList.rows.length} {currentSiteList.rows.length === 1 ? 'site' : 'sites'}
+                  </span>
+                )}
+              </div>
+              {siteListOpen && (
+                <div style={{ marginTop: '0.6rem' }}>
+                  <input
+                    ref={siteListInputRef}
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    style={{ display: 'none' }}
+                    onChange={e => {
+                      const file = e.target.files?.[0];
+                      if (file) openSiteListFile(file);
+                      e.target.value = '';
+                    }}
+                  />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                    <button
+                      type="button"
+                      onClick={() => setSiteListPasteOpen(true)}
+                      style={{ fontSize: '0.75rem', padding: '0.35rem 0.7rem', borderRadius: 6, border: 'none', background: 'var(--color-accent)', color: '#fff', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      {currentSiteList ? 'Replace via paste' : 'Paste from Excel'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => siteListInputRef.current?.click()}
+                      style={{ fontSize: '0.75rem', padding: '0.35rem 0.7rem', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface)', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      {currentSiteList ? 'Replace via file' : 'Upload file'}
+                    </button>
+                    {currentSiteList && (
+                      <>
+                        <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
+                          {currentSiteList.fileName}
+                          {currentSiteList.uploadedAt ? ` · ${new Date(currentSiteList.uploadedAt).toLocaleDateString()}` : ''}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={removeSiteList}
+                          style={{ fontSize: '0.75rem', padding: '0.35rem 0.7rem', borderRadius: 6, border: '1px solid #FCA5A5', color: '#B91C1C', background: '#FEF2F2', cursor: 'pointer', fontWeight: 600 }}
+                        >
+                          Remove
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  {!currentSiteList && (
+                    <p style={{ fontSize: '0.72rem', color: '#94A3B8', margin: 0 }}>
+                      Copy the site rows in Excel and click “Paste from Excel” to map columns, drag a spreadsheet here, or use “Upload file”.
+                    </p>
+                  )}
+                  {currentSiteList && (currentSiteList.rows || []).length > 0 && (
+                    <div style={{ maxHeight: 260, overflow: 'auto', border: '1px solid var(--color-border-light)', borderRadius: 6 }}>
+                      <table style={{ borderCollapse: 'collapse', fontSize: '0.72rem', width: '100%' }}>
+                        <thead>
+                          <tr>
+                            {(currentSiteList.headers || []).map(h => (
+                              <th key={h} style={{ position: 'sticky', top: 0, background: '#F8FAFC', textAlign: 'left', padding: '0.3rem 0.5rem', borderBottom: '1px solid var(--color-border-light)', whiteSpace: 'nowrap', fontWeight: 600 }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {currentSiteList.rows.slice(0, 50).map((r, i) => (
+                            <tr key={i}>
+                              {(currentSiteList.headers || []).map(h => (
+                                <td key={h} style={{ padding: '0.3rem 0.5rem', borderBottom: '1px solid var(--color-border-light)', whiteSpace: 'nowrap' }}>{String(r[h] ?? '')}</td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {currentSiteList.rows.length > 50 && (
+                        <div style={{ padding: '0.35rem 0.5rem', fontSize: '0.68rem', color: '#94A3B8' }}>
+                          Showing first 50 of {currentSiteList.rows.length} rows.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {siteListPasteOpen && (
+            <SiteListPasteModal
+              companyName={fields.company || ''}
+              onClose={() => setSiteListPasteOpen(false)}
+              onImport={saveSiteListFromPaste}
+            />
           )}
 
           {/* Portfolio Companies */}
@@ -6384,8 +7314,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     const SE_TEXT_DARK = 'FF1E293B';
                     const SE_ZEBRA = 'FFF6F9F4';
                     const SE_BORDER = 'FFD4DDE1';
-                    const headers = ['First Name', 'Last Name', 'Name', 'Full Name', 'Title', 'Team Name', 'Tags', 'Role', 'Email', 'Phone', 'City', 'State', 'Country', 'LinkedIn', 'Notes'];
-                    const colWidths = [18, 18, 22, 26, 28, 20, 24, 14, 32, 18, 18, 10, 14, 32, 40];
+                    const headers = ['First Name', 'Last Name', 'Name', 'Full Name', 'Title', 'Reports To', 'Team Name', 'Tags', 'Role', 'Email', 'Phone', 'City', 'State', 'Country', 'LinkedIn', 'Notes'];
+                    const colWidths = [18, 18, 22, 26, 28, 24, 20, 24, 14, 32, 18, 18, 10, 14, 32, 40];
                     const sorted = [...companyContacts].sort((a, b) => {
                       const aLeft = contactHasTag(a, 'left') ? 1 : 0;
                       const bLeft = contactHasTag(b, 'left') ? 1 : 0;
@@ -6395,6 +7325,24 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     const nicknames = settings.contactNicknames || {};
                     const teamNames = settings.contactTeamNames || {};
                     const contactNotes = settings.contactNotes || {};
+                    // Coerce a stored LinkedIn value (full URL, bare
+                    // linkedin.com path, or vanity slug) into a clickable
+                    // https URL; returns '' when there's nothing to link.
+                    const toLinkedInUrl = (raw) => {
+                      const v = String(raw || '').trim();
+                      if (!v) return '';
+                      if (/^https?:\/\//i.test(v)) return v;
+                      if (/linkedin\.com/i.test(v)) return `https://${v.replace(/^\/+/, '')}`;
+                      return `https://www.linkedin.com/in/${v.replace(/^\/+/, '')}`;
+                    };
+                    // Resolve each contact's "Reports To" manager ids (stored
+                    // in settings.contactReportsTo) to display names, using
+                    // the full contact pool since a manager may not be in
+                    // this company's roster.
+                    const reportsToMap = settings.contactReportsTo || {};
+                    const contactById = new Map();
+                    for (const c of hubspotContacts) { const id = c.id || c.vid; if (id) contactById.set(String(id), c); }
+                    const contactName = (c) => [(c.firstname || '').trim(), (c.lastname || '').trim()].filter(Boolean).join(' ') || (c.email || '');
                     const data = sorted.map(c => {
                       const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || '';
                       const nick = c.id && nicknames[c.id] ? nicknames[c.id] : '';
@@ -6405,9 +7353,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         : contactHasTag(c, 'hide') ? 'Hide' : '';
                       const note = (c.id && contactNotes[c.id]) || c.notes || c.hs_content_membership_notes || '';
                       const linkedin = c.hs_linkedin_url || c.linkedin_url || c.hs_linkedinid || '';
+                      const mgrIds = (c.id && Array.isArray(reportsToMap[c.id])) ? reportsToMap[c.id] : [];
+                      const reportsTo = mgrIds
+                        .map(id => { const m = contactById.get(String(id)); return m ? contactName(m) : ''; })
+                        .filter(Boolean)
+                        .join(', ');
                       return [
                         c.firstname || '', c.lastname || '',
-                        name, fullName, c.jobtitle || '', (c.id && teamNames[c.id]) || '',
+                        name, fullName, c.jobtitle || '', reportsTo, (c.id && teamNames[c.id]) || '',
                         tags, role, c.email || '', c.phone || '',
                         c.city || '', c.state || '', c.country || '',
                         linkedin, note,
@@ -6447,9 +7400,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         const zebra = idx % 2 === 1;
                         vals.forEach((v, i) => {
                           const cell = row.getCell(i + 1);
-                          cell.value = v === '' || v == null ? null : v;
-                          cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-                          cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: i === 14 /* Notes */ };
+                          // Full Name (col 3) links to the contact's LinkedIn
+                          // (col 14) when available, rendered as a blue link.
+                          const liUrl = i === 3 ? toLinkedInUrl(vals[14]) : '';
+                          if (i === 3 && v && liUrl) {
+                            cell.value = { text: v, hyperlink: liUrl };
+                            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: 'FF0563C1' }, underline: true };
+                          } else {
+                            cell.value = v === '' || v == null ? null : v;
+                            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+                          }
+                          cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: i === 15 /* Notes */ };
                           cell.border = {
                             bottom: { style: 'thin', color: { argb: SE_BORDER } },
                             left: { style: 'thin', color: { argb: SE_BORDER } },
@@ -6463,6 +7424,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: headers.length } };
                       colWidths.forEach((w, idx) => { ws.getColumn(idx + 1).width = w; });
 
+                      sanitizeExcelWorkbook(wb);
                       const buf = await wb.xlsx.writeBuffer();
                       const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
                       const url = URL.createObjectURL(blob);
@@ -6506,6 +7468,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         cell.font = { name: 'Nunito Sans', size: 10, italic: true, color: { argb: 'FF94A3B8' } };
                       });
                       ws.views = [{ state: 'frozen', ySplit: 1 }];
+                      sanitizeExcelWorkbook(wb);
                       const buf = await wb.xlsx.writeBuffer();
                       const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
                       const url = URL.createObjectURL(blob);
@@ -6673,8 +7636,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           ? { bg: '#DBEAFE', color: '#1D4ED8', label: 'Bulk' }
                           : { bg: '#FFEDD5', color: '#9A3412', label: 'HubSpot' };
                         const counts = getContactEmailCounts(c);
+                        const isExcluded = excludedContactIds.has(String(c.id || c.vid || ''));
                         return (
-                          <tr key={c.id || i} onClick={() => setEditingContact(c)} style={{ borderBottom: '1px solid #F1F5F9', cursor: 'pointer', background: isDM ? '#FEFCE8' : '', borderLeft: isDM ? '3px solid #F59E0B' : '' }} onMouseEnter={e => e.currentTarget.style.background = isDM ? '#FEF9C3' : '#F8FAFC'} onMouseLeave={e => e.currentTarget.style.background = isDM ? '#FEFCE8' : ''}>
+                          <tr key={c.id || i} onClick={() => setEditingContact(c)} style={{ borderBottom: '1px solid #F1F5F9', cursor: 'pointer', background: isDM ? '#FEFCE8' : '', borderLeft: isDM ? '3px solid #F59E0B' : '', opacity: isExcluded ? 0.5 : 1 }} onMouseEnter={e => e.currentTarget.style.background = isDM ? '#FEF9C3' : '#F8FAFC'} onMouseLeave={e => e.currentTarget.style.background = isDM ? '#FEFCE8' : ''}>
                             <td style={{ padding: '0.35rem 0.4rem', textAlign: 'center', width: '34px' }} onClick={e => e.stopPropagation()}>
                               {(() => {
                                 const cid = String(c.id || c.vid || '');
@@ -6769,11 +7733,30 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               })()}
                             </td>
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.68rem' }}>{(settings.contactNotes || {})[c.id || c.vid] || c.notes || c.hs_content_membership_notes || c.message || '—'}</td>
-                            <td style={{ padding: '0.35rem 0.3rem', textAlign: 'center' }}>
+                            <td style={{ padding: '0.35rem 0.3rem', textAlign: 'center', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
+                              {(() => {
+                                const cid = String(c.id || c.vid || '');
+                                if (!cid) return null;
+                                return isExcluded ? (
+                                  <button
+                                    onClick={e => { e.stopPropagation(); unexcludeContactFromCompany(cid); }}
+                                    title="Re-add this contact to this company"
+                                    style={{ background: 'none', border: 'none', color: '#059669', fontSize: '0.66rem', fontWeight: 700, cursor: 'pointer', padding: '0 4px', lineHeight: 1, fontFamily: 'inherit' }}
+                                  >＋ Re-add</button>
+                                ) : (
+                                  <button
+                                    onClick={e => { e.stopPropagation(); excludeContactFromCompany(cid); }}
+                                    title="Remove from this company only (keeps the contact in HubSpot)"
+                                    style={{ background: 'none', border: 'none', color: '#CBD5E1', fontSize: '0.9rem', cursor: 'pointer', padding: '0 3px', lineHeight: 1, fontFamily: 'inherit' }}
+                                    onMouseEnter={e => e.currentTarget.style.color = '#F59E0B'}
+                                    onMouseLeave={e => e.currentTarget.style.color = '#CBD5E1'}
+                                  >⊘</button>
+                                );
+                              })()}
                               <button
                                 onClick={e => { e.stopPropagation(); handleDeleteContact(c); }}
                                 disabled={deletingContact === (c.id || c.vid)}
-                                title="Delete contact"
+                                title="Delete contact from HubSpot (permanent)"
                                 style={{ background: 'none', border: 'none', color: '#CBD5E1', fontSize: '0.85rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1, fontFamily: 'inherit' }}
                                 onMouseEnter={e => e.target.style.color = '#EF4444'}
                                 onMouseLeave={e => e.target.style.color = '#CBD5E1'}
@@ -6982,6 +7965,27 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           onSaveNote={handleSaveContactNote}
           contactOldEmails={settings.contactOldEmails || {}}
           onSaveOldEmails={handleSaveContactOldEmails}
+          contactOldCompany={settings.contactOldCompany || {}}
+          onSaveOldCompany={handleSaveContactOldCompany}
+          onSaveCompanyOverride={(contactId, value) => {
+            // value === null clears the override; a string pins it. Stored
+            // in settings.contactLocalFields, the same map App.jsx reads to
+            // make _companyOverride win over the HubSpot-synced company text
+            // everywhere the contact is shown.
+            const cur = settings.contactLocalFields || {};
+            const merged = { ...(cur[contactId] || {}) };
+            if (value === null) {
+              if (merged._companyOverride === undefined) return;
+              delete merged._companyOverride;
+            } else {
+              if (merged._companyOverride === value) return;
+              merged._companyOverride = value;
+            }
+            const next = { ...cur };
+            if (Object.keys(merged).length === 0) delete next[contactId];
+            else next[contactId] = merged;
+            updateSettings({ contactLocalFields: next });
+          }}
           contactNicknames={settings.contactNicknames || {}}
           onSaveNickname={handleSaveContactNickname}
           contactTeamNames={settings.contactTeamNames || {}}

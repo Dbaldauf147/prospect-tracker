@@ -12,13 +12,204 @@ import { dbGet } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { loadCommissions } from '../../utils/commissionsStore';
 import { loadDealsList } from '../../utils/dealsStore';
-import { indexCommissionsByBfo, normBfo, DEAL_BFO_KEY } from '../../utils/dealCommissions';
+import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
+import { asNumber, dealYear } from '../../utils/dealsFormat';
 import { loadQuotedProjections, saveQuotedProjections, QUOTED_FIELDS } from '../../utils/quotedProjectionsStore';
+import { loadYoyOverrides, saveYoyOverrides } from '../../utils/yoyOverridesStore';
+import { loadHiddenCharts, saveHiddenCharts } from '../../utils/yoyHiddenChartsStore';
 import styles from './YOYView.module.css';
 
 const PIPELINE_STORE = 'pipeline-dashboard';
 const PIPELINE_KEY = 'current';
 const DEFAULT_ANNUAL_TARGET = 1325000;
+
+// Lets any ChartHeader open the shared data editor for its chart without
+// threading a callback through every card. Provided by YOYView around the
+// chart grid; value is `openEditor(chartId)`.
+const EditChartContext = createContext(null);
+
+// Lets any ChartHeader hide its own chart without threading a callback
+// through every card. Provided by YOYView around the chart grid; value is
+// `hideChart(chartId)`.
+const HideChartContext = createContext(null);
+
+// Display names for the hidden-chart restore chips, keyed by the same id
+// each ChartHeader hides under.
+const YOY_CHART_TITLES = {
+  leads: 'Leads',
+  quotedProjections: 'Quoted Projections',
+  closeRate: 'Close Rate',
+  leadSources: 'Lead Sources 2020+',
+  quotedByYear: 'Quoted (Thousands)',
+  notSolds: 'Not Solds',
+  topAccounts: 'Top Accounts',
+  annualSales: 'Annual Sales',
+  dealSize: 'Deal Size',
+  commissions: 'Commissions',
+};
+
+// Describes which plotted fields of each chart the "Edit data" popup can
+// overwrite. keyField identifies a row (its x-axis category); fields are
+// the plotted numbers, each with a display label and a kind that drives
+// formatting of the computed-value placeholder. `recompute(row, fields,
+// ctx)` optionally re-derives dependent fields (totals / %s) after an
+// override is applied so on-chart labels stay consistent. Quoted
+// Projections is intentionally absent — it already has its own editor.
+const YOY_CHART_EDITS = {
+  leads: {
+    title: 'Leads', keyField: 'year', keyLabel: 'Year',
+    fields: [{ key: 'count', label: 'Leads', kind: 'int' }],
+  },
+  closeRate: {
+    title: 'Close Rate', keyField: 'year', keyLabel: 'Open Year',
+    fields: [
+      { key: 'totalNotSold', label: 'Total Not Sold %', kind: 'pct' },
+      { key: 'totalSold', label: 'Total Sold %', kind: 'pct' },
+      { key: 'inProgress', label: 'In Progress %', kind: 'pct' },
+      { key: 'quotedCR', label: 'Quoted C/R %', kind: 'pct' },
+      { key: 'totalCR', label: 'Total C/R %', kind: 'pct' },
+    ],
+  },
+  leadSources: {
+    title: 'Lead Sources 2020+', keyField: 'source', keyLabel: 'Lead Source',
+    fields: [
+      { key: 'inProgress', label: 'In Progress', kind: 'int' },
+      { key: 'notSold', label: 'Not Sold', kind: 'int' },
+      { key: 'sold', label: 'Sold', kind: 'int' },
+      { key: 'closeRate', label: 'Close Rate %', kind: 'ratioPct' },
+    ],
+    // Total (used for sorting) and the row-end close-rate label are derived
+    // from the counts — unless the close-rate data label was overridden.
+    recompute: (r, _fields, _ctx, ov) => {
+      const sold = Number(r.sold) || 0;
+      const notSold = Number(r.notSold) || 0;
+      const inProgress = Number(r.inProgress) || 0;
+      const decided = sold + notSold;
+      return {
+        ...r,
+        total: inProgress + notSold + sold,
+        closeRate: ov && ov.has('closeRate') ? r.closeRate : (decided ? sold / decided : null),
+      };
+    },
+  },
+  quotedByYear: {
+    title: 'Quoted (Thousands)', keyField: 'year', keyLabel: 'Quoted Year',
+    fields: [{ key: 'thousands', label: 'Quoted ($k)', kind: 'int' }],
+  },
+  notSolds: {
+    title: 'Not Solds', keyField: 'year', keyLabel: 'Open Year',
+    fields: [
+      { key: 'notSold', label: 'Not Solds', kind: 'int' },
+      { key: 'avgOppLife', label: 'Avg Opp Life (days)', kind: 'int' },
+      { key: 'ageNotQuoted', label: 'Age of not Quoted (days)', kind: 'int' },
+      { key: 'quoteToClose', label: 'Quote to Close (days)', kind: 'int' },
+    ],
+  },
+  topAccounts: {
+    title: 'Top Accounts', keyField: 'year', keyLabel: 'Year',
+    // Columns are the top-account names + Remaining, so they're supplied
+    // per-render from the data rather than fixed here.
+    dynamic: true,
+    // _total is the bar-top data label = sum of the account stacks +
+    // Remaining, unless the user overrode the Total directly.
+    recompute: (r, fields, _ctx, ov) => {
+      if (ov && ov.has('_total')) return { ...r, _total: Math.round(Number(r._total) || 0) };
+      let total = 0;
+      for (const f of fields) { if (f.key === '_total') continue; total += Number(r[f.key]) || 0; }
+      return { ...r, _total: Math.round(total) };
+    },
+  },
+  annualSales: {
+    title: 'Annual Sales', keyField: 'year', keyLabel: 'Year',
+    fields: [
+      { key: 'currentClient', label: 'Current Client ($)', kind: 'money' },
+      { key: 'newClient', label: 'New Client ($)', kind: 'money' },
+      { key: '_total', label: 'Total ($)', kind: 'money' },
+      { key: 'pctQuota', label: '% Quota', kind: 'pct' },
+    ],
+    // Total and % Quota are the bar-top data labels. Each derives from the
+    // two client segments (and the annual target) unless overridden.
+    recompute: (r, _fields, ctx, ov) => {
+      const total = (ov && ov.has('_total'))
+        ? (Number(r._total) || 0)
+        : (Number(r.currentClient) || 0) + (Number(r.newClient) || 0);
+      const tgt = ctx?.annualTarget || 0;
+      const pctQuota = (ov && ov.has('pctQuota'))
+        ? r.pctQuota
+        : (tgt > 0 ? Math.round((total / tgt) * 100) : r.pctQuota);
+      return { ...r, _total: Math.round(total), pctQuota };
+    },
+  },
+  dealSize: {
+    title: 'Deal Size', keyField: 'year', keyLabel: 'Year',
+    fields: [
+      { key: 'deals', label: 'Deals (Sold)', kind: 'int' },
+      { key: 'quoted', label: 'Quoted mean ($)', kind: 'money' },
+      { key: 'dealSize', label: 'Deal Size avg ($)', kind: 'money' },
+    ],
+  },
+  commissions: {
+    title: 'Commissions', keyField: 'year', keyLabel: 'Year',
+    fields: [{ key: 'total', label: 'Commissions ($)', kind: 'money' }],
+  },
+};
+
+// Apply a chart's saved overrides onto its computed rows. Only the fields
+// present in a row's override patch are replaced (with finite numbers);
+// everything else stays as computed. When a row is touched, the chart's
+// optional recompute() re-derives dependent fields. Returns the original
+// array reference untouched when the chart has no overrides.
+function applyYoyOverrides(rows, cfg, table, ctx, fieldsOverride) {
+  if (!table || !rows || rows.length === 0) return rows;
+  const fields = fieldsOverride || cfg.fields || [];
+  let changed = false;
+  const out = rows.map((r) => {
+    const patch = table[String(r[cfg.keyField])];
+    if (!patch) return r;
+    let next = { ...r };
+    const overridden = new Set();
+    for (const f of fields) {
+      const v = patch[f.key];
+      if (v != null && Number.isFinite(Number(v))) { next[f.key] = Number(v); overridden.add(f.key); }
+    }
+    if (overridden.size === 0) return r;
+    // recompute re-derives dependent fields, but must leave any field the
+    // user overrode directly (e.g. an edited Total / % Quota data label)
+    // untouched — so it's told which keys were explicitly set.
+    if (cfg.recompute) next = cfg.recompute(next, fields, ctx, overridden);
+    changed = true;
+    return next;
+  });
+  return changed ? out : rows;
+}
+
+// Drop empty ($0 / blank) years from the leading and trailing edges of a
+// year-series so the chart doesn't open or close on bare axis ticks (e.g.
+// 2015–2017 before the first commission). Interior empty years are kept —
+// blanking a gap year would misleadingly slide two real years together.
+// `field` is the plotted value that defines "empty"; returns the same
+// array reference when nothing needs trimming.
+function trimEmptyEdgeYears(rows, field = 'total') {
+  if (!Array.isArray(rows) || rows.length === 0) return rows;
+  let start = 0;
+  let end = rows.length - 1;
+  const hasValue = (r) => Number(r?.[field]) > 0;
+  while (start <= end && !hasValue(rows[start])) start++;
+  while (end >= start && !hasValue(rows[end])) end--;
+  return (start === 0 && end === rows.length - 1) ? rows : rows.slice(start, end + 1);
+}
+
+// Format a computed value for the editor's placeholder, so the user sees
+// what the live number is before typing a replacement.
+function fmtOverrideValue(v, kind) {
+  if (v == null || v === '' || !Number.isFinite(Number(v))) return '';
+  const n = Number(v);
+  if (kind === 'money') return `$${Math.round(n).toLocaleString('en-US')}`;
+  if (kind === 'pct') return `${n}%`;
+  // A 0–1 ratio the chart draws as a whole-number percent (e.g. close rate).
+  if (kind === 'ratioPct') return `${Math.round(n * 100)}%`;
+  return n.toLocaleString('en-US');
+}
 // BFO Activity cache — pasted BFO pipeline rows, used to total the live
 // "BFO Pipe Total" for the current Quoted Projections month.
 const BFO_ACTIVITY_STORE = 'bfo-activity';
@@ -86,6 +277,10 @@ function parseDateYear(v) {
 }
 
 const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+// June 2026 was never captured before the month-end auto-persist existed,
+// leaving a gap on the chart. It's backfilled once with today's live values.
+const JUNE_2026_KEY = '2026-06';
 
 // Quoted Projections runs on a Dec-to-Nov fiscal year, starting in
 // December of the previous calendar year and ending in November of the
@@ -175,6 +370,51 @@ export function YOYView() {
   // (seeded with the supplied Dec–May history) rather than a live compute.
   const [quotedTable, setQuotedTable] = useState(loadQuotedProjections);
   const updateQuotedTable = (next) => { setQuotedTable(next); saveQuotedProjections(next); };
+  // User overrides for every chart's data points (per-user localStorage).
+  // Applied on top of the live-computed rows so a corrected value wins.
+  const [overrides, setOverrides] = useState(loadYoyOverrides);
+  // Which chart's data editor is open (chartId | null).
+  const [editingChart, setEditingChart] = useState(null);
+  // Charts the user has hidden (per-user localStorage). A Set backs the
+  // per-render lookups; the stored form is a plain array.
+  const [hiddenCharts, setHiddenCharts] = useState(loadHiddenCharts);
+  const hiddenSet = useMemo(() => new Set(hiddenCharts), [hiddenCharts]);
+  const hideChart = useCallback((chartId) => {
+    setHiddenCharts((prev) => {
+      if (prev.includes(chartId)) return prev;
+      const next = [...prev, chartId];
+      saveHiddenCharts(next);
+      return next;
+    });
+  }, []);
+  const showChart = useCallback((chartId) => {
+    setHiddenCharts((prev) => {
+      if (!prev.includes(chartId)) return prev;
+      const next = prev.filter((id) => id !== chartId);
+      saveHiddenCharts(next);
+      return next;
+    });
+  }, []);
+  const showAllCharts = useCallback(() => {
+    setHiddenCharts([]);
+    saveHiddenCharts([]);
+  }, []);
+  // Persist a chart's override table; an empty table clears it entirely.
+  const saveChartOverrides = useCallback((chartId, table) => {
+    setOverrides((prev) => {
+      const next = { ...prev };
+      if (table && Object.keys(table).length) next[chartId] = table;
+      else delete next[chartId];
+      saveYoyOverrides(next);
+      return next;
+    });
+    setEditingChart(null);
+  }, []);
+  // Fiscal target that the Annual Sales % Quota override recompute needs.
+  const editCtx = useMemo(
+    () => ({ annualTarget: target > 0 ? target : DEFAULT_ANNUAL_TARGET }),
+    [target],
+  );
   useEffect(() => {
     function onStorage(e) {
       if (!e || e.key === 'commissions-list-override') {
@@ -238,7 +478,7 @@ export function YOYView() {
   // Leads — count of opps by Open Year. Bars go from earliest non-empty
   // year through the current year, then a separate "Projected" bar that
   // annualizes the current year's YTD count.
-  const leadsData = useMemo(() => {
+  const leadsBase = useMemo(() => {
     if (records.length === 0) return [];
     const byYear = new Map();
     let minYear = currentYear;
@@ -263,6 +503,10 @@ export function YOYView() {
     rows.push({ year: 'Projected', count: projected, isProjected: true, _ytd: ytdCount, _frac: frac });
     return rows;
   }, [records, currentYear]);
+  const leadsData = useMemo(
+    () => applyYoyOverrides(leadsBase, YOY_CHART_EDITS.leads, overrides.leads, editCtx),
+    [leadsBase, overrides, editCtx],
+  );
 
   // Quoted Projections — month-end snapshots the user records (editable
   // via "Edit values"), plotted across the Dec→Nov fiscal year. Values
@@ -312,10 +556,16 @@ export function YOYView() {
     return fiscalMonths(currentYear).map((m) => {
       const key = `${m.year}-${String(m.monthIdx + 1).padStart(2, '0')}`;
       // Manually-recorded values win; otherwise the current month falls
-      // back to the live Opps 2 / BFO computation.
-      const saved = quotedTable[key] || null;
-      const isLive = !saved && key === liveKey && liveCurrentMonth != null;
-      const v = saved || (isLive ? liveCurrentMonth : null);
+      // back to the live Opps 2 / BFO computation. An `_auto` entry is the
+      // persisted copy of a live snapshot (written by the auto-capture
+      // effect below) — while it's still the current month we keep showing
+      // the freshly-computed live values, and once the month rolls over the
+      // persisted copy becomes the fixed month-end figure so it doesn't
+      // vanish. A manual save clears `_auto` and always wins.
+      const rawSaved = quotedTable[key] || null;
+      const manualSaved = rawSaved && !rawSaved._auto ? rawSaved : null;
+      const isLive = !manualSaved && key === liveKey && liveCurrentMonth != null;
+      const v = manualSaved || (isLive ? liveCurrentMonth : rawSaved);
       const weak = v ? num(v.weak) : null;
       const ok = v ? num(v.ok) : null;
       const expected = v ? num(v.expected) : null;
@@ -326,9 +576,56 @@ export function YOYView() {
     });
   }, [quotedTable, currentYear, liveCurrentMonth]);
 
+  // Persist the live current-month snapshot so it survives the calendar
+  // roll-over, and one-time backfill the June 2026 gap. Previously the
+  // in-progress month was only ever computed live and never written, so on
+  // the 1st of the next month it reverted to a gap — that's how June's
+  // figures vanished once July began. Both writes are batched into a single
+  // update to avoid one clobbering the other.
+  useEffect(() => {
+    if (!liveCurrentMonth) return;
+    // Round the live snapshot to whole $K, matching what "Edit values"
+    // stores. Returns null when nothing computed.
+    const liveSnap = () => {
+      const snap = {};
+      let any = false;
+      for (const f of QUOTED_FIELDS) {
+        const val = liveCurrentMonth[f];
+        if (val != null && Number.isFinite(val)) { snap[f] = Math.round(val); any = true; }
+      }
+      return any ? snap : null;
+    };
+    const patch = {};
+    // 1) Mirror the live current month under an `_auto` flag. The flag keeps
+    //    the month "live" — still recomputed for display and overwritable —
+    //    until it rolls over into a fixed month-end figure. A manual save
+    //    clears it and always wins.
+    const curKey = currentMonthKey();
+    const curExisting = quotedTable[curKey];
+    if (!curExisting || curExisting._auto) {
+      const snap = liveSnap();
+      const unchanged = snap && curExisting && curExisting._auto &&
+        QUOTED_FIELDS.every(f => (curExisting[f] ?? null) === (snap[f] ?? null));
+      if (snap && !unchanged) patch[curKey] = { ...snap, _auto: true };
+    }
+    // 2) One-time backfill: June 2026 predates the auto-persist above, so
+    //    its point is a gap and its real month-end values are unrecoverable.
+    //    Fill it with today's live values (a deliberate stand-in) as a fixed
+    //    recorded entry the user can correct via "Edit values". Scoped to the
+    //    2026 fiscal year — the only time June 2026 is on the chart — and
+    //    self-limiting: once written it persists and won't be re-filled.
+    if (currentYear === 2026 && !quotedTable[JUNE_2026_KEY]) {
+      const snap = liveSnap();
+      if (snap) patch[JUNE_2026_KEY] = snap; // no `_auto` → fixed, editable
+    }
+    if (Object.keys(patch).length === 0) return;
+    updateQuotedTable({ ...quotedTable, ...patch });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveCurrentMonth]);
+
   // Close Rate — stacked bar of In Progress / Sold / Not Sold per Open
   // Year (percentages summing to 100), plus two C/R lines.
-  const closeRateData = useMemo(() => {
+  const closeRateBase = useMemo(() => {
     if (records.length === 0) return [];
     // Group records by year.
     const byYear = new Map();
@@ -382,13 +679,17 @@ export function YOYView() {
     }
     return rows;
   }, [records, currentYear]);
+  const closeRateData = useMemo(
+    () => applyYoyOverrides(closeRateBase, YOY_CHART_EDITS.closeRate, overrides.closeRate, editCtx),
+    [closeRateBase, overrides, editCtx],
+  );
 
   // Lead Sources 2020+ — horizontal stacked bars per source value with
   // counts of In Progress / Not Sold / Sold plus the Sold-count and
   // close-rate (Sold / (Sold + Not Sold)) label at the end of each row.
   // `Lead Source` is preferred; we fall back to `Source` per the column
   // names already used elsewhere (PipelineView).
-  const leadSourcesData = useMemo(() => {
+  const leadSourcesBase = useMemo(() => {
     if (records.length === 0) return [];
     const byKey = new Map();
     for (const r of records) {
@@ -416,12 +717,16 @@ export function YOYView() {
     rows.sort((a, b) => b.total - a.total);
     return rows;
   }, [records]);
+  const leadSourcesData = useMemo(
+    () => applyYoyOverrides(leadSourcesBase, YOY_CHART_EDITS.leadSources, overrides.leadSources, editCtx),
+    [leadSourcesBase, overrides, editCtx],
+  );
 
   // Quoted (Thousands) — sum of Quoted Amount bucketed by the calendar
   // year of each opp's Quoted On date (any stage), displayed in $k. Opps
   // without a parseable Quoted On date are excluded since they have no
   // quote year to attribute. Includes a Projected bar for the current year.
-  const quotedByYearData = useMemo(() => {
+  const quotedByYearBase = useMemo(() => {
     if (records.length === 0) return [];
     const byYear = new Map();
     let minYear = currentYear;
@@ -457,6 +762,10 @@ export function YOYView() {
     });
     return rows;
   }, [records, currentYear]);
+  const quotedByYearData = useMemo(
+    () => applyYoyOverrides(quotedByYearBase, YOY_CHART_EDITS.quotedByYear, overrides.quotedByYear, editCtx),
+    [quotedByYearBase, overrides, editCtx],
+  );
 
   // Not Solds — count of Stage=Not Sold per Open Year + Projected, with
   // three day-count lines on the same axis:
@@ -465,7 +774,7 @@ export function YOYView() {
   //                       (Lead / Not Started / Qualifying / Quoting).
   //   Quote to Close    — mean (Close Date − Quoted On) for closed opps
   //                       that have a parseable Quoted On / Quoted Date.
-  const notSoldsData = useMemo(() => {
+  const notSoldsBase = useMemo(() => {
     if (records.length === 0) return [];
     const NOT_QUOTED_STAGES = new Set(['Lead', 'Not Started', 'Qualifying', 'Quoting']);
     const byYear = new Map();
@@ -531,11 +840,16 @@ export function YOYView() {
     });
     return rows;
   }, [records, currentYear]);
+  const notSoldsData = useMemo(
+    () => applyYoyOverrides(notSoldsBase, YOY_CHART_EDITS.notSolds, overrides.notSolds, editCtx),
+    [notSoldsBase, overrides, editCtx],
+  );
 
-  // Year range shared by Top Accounts / Annual Sales / Deal Size — use
-  // the same min-year-with-data → max(currentYear, maxYearInData) span
-  // as the other charts so future-dated Open Years (e.g. 2026 entered
-  // while the browser clock still reads 2025) still get a bar.
+  // Year range for the Top Accounts chart — min-year-with-data →
+  // max(currentYear, maxYearInData) span by Open Year so future-dated
+  // Open Years (e.g. 2026 entered while the browser clock still reads
+  // 2025) still get a bar. (Annual Sales and Deal Size derive their own
+  // spans from Close Date years.)
   const yearRange = useMemo(() => {
     if (records.length === 0) return [];
     let minYear = currentYear;
@@ -559,7 +873,7 @@ export function YOYView() {
   // "Remaining" bucket. The Projected bar for the current year adds
   // YTD Sold $ + the in-progress pipeline (opps opened this year that
   // haven't closed yet) using the same per-account breakdown.
-  const topAccountsData = useMemo(() => {
+  const topAccountsBase = useMemo(() => {
     if (records.length === 0 || yearRange.length === 0) return { years: [], topAccounts: [], colors: {} };
     const lifetimeSold = new Map();
     for (const r of records) {
@@ -632,6 +946,17 @@ export function YOYView() {
     rows.push(projected);
     return { years: rows, topAccounts, colors };
   }, [records, yearRange, currentYear]);
+  // The overridable columns for Top Accounts are the per-account stacks +
+  // Remaining, discovered from the computed data.
+  const topAccountsFields = useMemo(() => ([
+    ...(topAccountsBase.topAccounts || []).map(a => ({ key: a, label: a, kind: 'money' })),
+    { key: 'Remaining', label: 'Remaining', kind: 'money' },
+    { key: '_total', label: 'Total ($)', kind: 'money' },
+  ]), [topAccountsBase]);
+  const topAccountsData = useMemo(() => {
+    const years = applyYoyOverrides(topAccountsBase.years, YOY_CHART_EDITS.topAccounts, overrides.topAccounts, editCtx, topAccountsFields);
+    return years === topAccountsBase.years ? topAccountsBase : { ...topAccountsBase, years };
+  }, [topAccountsBase, topAccountsFields, overrides, editCtx]);
 
   // Annual Sales — Sold Quoted Amount per *Close Date* year split into
   // Current Client vs New Client buckets. Current Client classification
@@ -639,7 +964,7 @@ export function YOYView() {
   // cross-sell|expansion|upsell on the Lead Source value). Each bar also
   // carries the list of deals that make up its total (`_deals`) so the
   // hover panel can show — and the user can export — the contributors.
-  const annualSalesData = useMemo(() => {
+  const annualSalesBase = useMemo(() => {
     if (records.length === 0) return [];
     const CLIENT_RE = /client|existing|renewal|cross[\s-]?sell|expansion|upsell/i;
     const annualTarget = target > 0 ? target : DEFAULT_ANNUAL_TARGET;
@@ -725,43 +1050,77 @@ export function YOYView() {
     });
     return rows;
   }, [records, currentYear, target]);
+  const annualSalesData = useMemo(
+    () => applyYoyOverrides(annualSalesBase, YOY_CHART_EDITS.annualSales, overrides.annualSales, editCtx),
+    [annualSalesBase, overrides, editCtx],
+  );
 
-  // Deal Size — composed chart per Open Year:
-  //   Deals (gray bars)     = count of closed opps (Sold + Not Sold)
-  //   Quoted (red line)     = mean Quoted Amount across closed opps
-  //   Deal Size (blue line) = mean Quoted Amount of Sold opps only
-  // Projected bar treats still-active pipeline opps as if they were
-  // future closes, so the Projected count/Quoted average reflect the
-  // pipeline as well as YTD actuals.
-  const dealSizeData = useMemo(() => {
-    if (records.length === 0 || yearRange.length === 0) return [];
-    const stats = new Map();
-    for (const y of yearRange) {
-      stats.set(y, { closedCount: 0, quotedSum: 0, quotedCount: 0, soldSum: 0, soldCount: 0 });
-    }
+  // Deal Size — composed chart. The bars and blue line are bucketed by
+  // Closed Year (calendar year of Close Date, falling back to Open Year
+  // when Close Date is missing/unparseable); the red line is bucketed
+  // independently by the year each opp was quoted (its Quoted On date):
+  //   Deals (gray bars)     = count of Sold opps (won deals), by Closed Year
+  //   Deal Size (blue line) = avg Quoted Amount of Sold opps, by Closed Year
+  //   Quoted (red line)     = avg Quoted Amount of opps quoted that year,
+  //                           by Quoted Year (Quoted On date)
+  // The year span covers both the closed years (bars/blue) and the quoted
+  // years (red) so neither series is clipped. The Projected bar counts
+  // this year's Sold deals plus opps in the Agreement Sent stage, treated
+  // as expected future wins.
+  const dealSizeBase = useMemo(() => {
+    if (records.length === 0) return [];
+    // Closed opps feed the bars + blue line (by Closed Year); quoted opps
+    // feed the red line (by Quoted Year). Track the combined min→max span.
+    let minYear = currentYear, maxYear = currentYear, any = false;
+    const bump = (y) => {
+      if (y == null) return;
+      any = true;
+      if (y < minYear) minYear = y;
+      if (y > maxYear) maxYear = y;
+    };
+    const closed = []; // { cy, stage, amt|null }
+    const quoted = []; // { qy, amt }
     for (const r of records) {
-      const y = parseYear(r['Open Year']);
-      if (y === null || !stats.has(y)) continue;
+      const amt = parseMoney(r['Quoted Amount']);
+      const hasAmt = typeof amt === 'number' && amt > 0;
+      // Red line: any opp quoted (has a Quoted On date + positive amount),
+      // regardless of stage — an average of every quote written that year.
+      const qy = hasAmt ? parseDateYear(r['Quoted On'] || r['Quoted Date'] || '') : null;
+      if (qy != null) { quoted.push({ qy, amt }); bump(qy); }
+      // Bars + blue line: closed opps only, by Closed Year.
       const stage = String(r.Stage || '').trim();
       if (stage !== 'Sold' && stage !== 'Not Sold') continue;
-      const s = stats.get(y);
-      s.closedCount += 1;
-      const amt = parseMoney(r['Quoted Amount']);
-      if (typeof amt === 'number' && amt > 0) {
-        s.quotedSum += amt;
-        s.quotedCount += 1;
-        if (stage === 'Sold') {
-          s.soldSum += amt;
-          s.soldCount += 1;
-        }
+      const cy = parseDateYear(r['Close Date']) ?? parseYear(r['Open Year']);
+      if (cy === null) continue;
+      closed.push({ cy, stage, amt: hasAmt ? amt : null });
+      bump(cy);
+    }
+    if (!any) return [];
+    const stats = new Map();
+    for (let y = minYear; y <= maxYear; y++) {
+      stats.set(y, { soldOppCount: 0, quotedSum: 0, quotedCount: 0, soldSum: 0, soldCount: 0 });
+    }
+    for (const { cy, stage, amt } of closed) {
+      const s = stats.get(cy);
+      if (!s) continue;
+      // Grey bars count won deals — every Sold opp, regardless of amount.
+      if (stage === 'Sold') {
+        s.soldOppCount += 1;
+        if (amt != null) { s.soldSum += amt; s.soldCount += 1; }
       }
     }
+    for (const { qy, amt } of quoted) {
+      const s = stats.get(qy);
+      if (!s) continue;
+      s.quotedSum += amt;
+      s.quotedCount += 1;
+    }
     const rows = [];
-    for (const y of yearRange) {
+    for (let y = minYear; y <= maxYear; y++) {
       const s = stats.get(y);
       rows.push({
         year: String(y),
-        deals: s.closedCount,
+        deals: s.soldOppCount,
         quoted: s.quotedCount > 0 ? Math.round(s.quotedSum / s.quotedCount) : null,
         dealSize: s.soldCount > 0 ? Math.round(s.soldSum / s.soldCount) : null,
         _isProjected: false,
@@ -770,69 +1129,71 @@ export function YOYView() {
         _soldCount: s.soldCount,
       });
     }
-    // Projected — active-pipeline opps for the current year are added
-    // to deals count and Quoted mean (treated as future closes). Deal
-    // Size is reused from Sold actuals (no Sold $ to project on yet
-    // for still-open opps).
-    let projClosed = 0, projQuotedSum = 0, projQuotedCount = 0;
-    let projSoldSum = 0, projSoldCount = 0;
+    // Projected — deals Sold this year (by Closed Year) plus every opp
+    // still in the Agreement Sent stage, counted as expected future wins.
+    // Not Sold opps and earlier-stage pipeline are excluded from the bar
+    // count. The red Quoted point is the average of every opp quoted this
+    // calendar year; the blue Deal Size point is the average Sold $ closed
+    // this year.
+    // Projected point: the Deals bar counts this year's Sold deals plus
+    // every Agreement Sent opp (expected future wins). The Quoted point is
+    // the mean Quoted Amount across *only* those same opps — this year's
+    // Sold deals and the active Agreement Sent pipeline — deliberately
+    // excluding opps in any other stage. Deal Size is intentionally not
+    // projected, so its point is left blank (null) for this bar.
+    let projWon = 0, projPipeline = 0, projQuotedSum = 0, projQuotedCount = 0;
     for (const r of records) {
-      const y = parseYear(r['Open Year']);
-      if (y !== currentYear) continue;
+      const amt = parseMoney(r['Quoted Amount']);
+      const hasAmt = typeof amt === 'number' && amt > 0;
       const stage = String(r.Stage || '').trim();
       const isClosed = (stage === 'Sold' || stage === 'Not Sold');
-      const isPipeline = !isClosed; // any non-closed stage
-      const amt = parseMoney(r['Quoted Amount']);
-      if (isClosed) projClosed += 1;
-      else if (isPipeline) projClosed += 1; // counted toward "expected deals"
-      if (typeof amt === 'number' && amt > 0) {
-        projQuotedSum += amt;
-        projQuotedCount += 1;
+      if (isClosed) {
+        const y = parseDateYear(r['Close Date']) ?? parseYear(r['Open Year']);
+        if (y !== currentYear) continue;
         if (stage === 'Sold') {
-          projSoldSum += amt;
-          projSoldCount += 1;
+          projWon += 1;
+          if (hasAmt) { projQuotedSum += amt; projQuotedCount += 1; }
         }
+      } else if (stage === 'Agreement Sent') {
+        projPipeline += 1;
+        if (hasAmt) { projQuotedSum += amt; projQuotedCount += 1; }
       }
     }
     rows.push({
       year: 'Projected',
-      deals: projClosed,
+      deals: projWon + projPipeline,
       quoted: projQuotedCount > 0 ? Math.round(projQuotedSum / projQuotedCount) : null,
-      dealSize: projSoldCount > 0 ? Math.round(projSoldSum / projSoldCount) : null,
+      dealSize: null,
       _isProjected: true,
       _quotedCount: projQuotedCount,
-      _soldCount: projSoldCount,
+      _soldCount: 0,
     });
     return rows;
-  }, [records, yearRange, currentYear]);
+  }, [records, currentYear]);
+  const dealSizeData = useMemo(
+    () => applyYoyOverrides(dealSizeBase, YOY_CHART_EDITS.dealSize, overrides.dealSize, editCtx),
+    [dealSizeBase, overrides, editCtx],
+  );
 
   const hasOpps = records.length > 0;
 
-  // Commissions — total Paid to Date per year, sourced from the Deals
-  // tab (Clients page). Each deal is bucketed by the calendar year of its
-  // Current Term Start Date, and its Paid to Date amount is summed in.
-  // Paid to Date mirrors what the Deals grid shows: the matching
-  // Commissions roster total when the deal's BFO opp name maps to one,
-  // otherwise the amount stored on the deal row. Years between the
-  // earliest and latest are kept even if blank so a missing year shows
-  // as a $0 bar instead of a gap.
-  const commissionsData = useMemo(() => {
-    const commByBfo = indexCommissionsByBfo(commissions || []);
+  // Commissions — the Deals tab's Commission column summed by year. Each
+  // deal row is bucketed by its Year — the same value the Deals tab shows,
+  // derived from Original Contract Start (dealYear), NOT the raw stored
+  // 'Year' cell, which is often blank even when the deal clearly falls in a
+  // year. Its "Commission" dollar amount is added to that year's total.
+  // Rows without a usable year are skipped; a blank/zero Commission still
+  // counts its row (so the year is represented) but adds nothing. Years
+  // between the earliest and latest are kept even when empty so a missing
+  // year shows as a $0 bar instead of a gap in the axis.
+  const commissionsBase = useMemo(() => {
     const byYear = new Map();
     const countByYear = new Map();
     for (const row of (deals || [])) {
-      const ts = Date.parse(row?.['Current Term Start Date']);
-      if (Number.isNaN(ts)) continue;
-      const year = new Date(ts).getFullYear();
+      const year = Number(dealYear(row));
       if (!Number.isFinite(year) || year < 1900 || year > 2100) continue;
-      // Match the Deals grid's Paid to Date numerator: auto-populate from
-      // the Commissions roster when the BFO name matches, else fall back
-      // to the value stored on the deal row.
-      const bfo = normBfo(row?.[DEAL_BFO_KEY]);
-      const hit = bfo ? commByBfo.get(bfo) : null;
-      const paid = hit ? hit.commission : (parseMoney(row?.['Paid to Date']) ?? 0);
-      if (!paid) continue;
-      byYear.set(year, (byYear.get(year) || 0) + paid);
+      const commission = asNumber(row?.['Commission']) || 0;
+      byYear.set(year, (byYear.get(year) || 0) + commission);
       countByYear.set(year, (countByYear.get(year) || 0) + 1);
     }
     if (byYear.size === 0) return [];
@@ -844,7 +1205,11 @@ export function YOYView() {
       rows.push({ year: String(y), total: byYear.get(y) || 0, _rowCount: countByYear.get(y) || 0 });
     }
     return rows;
-  }, [deals, commissions]);
+  }, [deals]);
+  const commissionsData = useMemo(
+    () => trimEmptyEdgeYears(applyYoyOverrides(commissionsBase, YOY_CHART_EDITS.commissions, overrides.commissions, editCtx)),
+    [commissionsBase, overrides, editCtx],
+  );
   const hasCommissions = commissionsData.length > 0;
 
   // Per-chart underlying records. Each entry mirrors the filter used by
@@ -1003,12 +1368,33 @@ export function YOYView() {
     // (`_deals`, bucketed by Close Date), so they aren't rebuilt here.
     for (const r of records) {
       const oy = parseYear(r['Open Year']);
-      if (oy === null) continue;
       const account = String(r.Account || '').trim();
       const stage = String(r.Stage || '').trim();
       const closedStage = (stage === 'Sold' || stage === 'Not Sold');
       const amt = parseMoney(r['Quoted Amount']);
-      if (stage === 'Sold') {
+      const hasAmt = typeof amt === 'number' && amt > 0;
+      const quotedOn = r['Quoted On'] || r['Quoted Date'] || '';
+      const closeDate = r['Close Date'] || '';
+      // Bucketing keys: bars/blue use Closed Year, the red line uses Quoted
+      // Year — mirror the same fallbacks dealSizeBase applies.
+      const closedYear = closedStage ? (parseDateYear(closeDate) ?? oy) : null;
+      const quotedYear = hasAmt ? parseDateYear(quotedOn) : null;
+      // Agreement Sent opps (with a real amount) feed the Projected point:
+      // they count toward its Deals bar as expected wins and toward its
+      // Quoted average alongside this year's Sold deals. Tie them to the
+      // current year so a pinned Projected export pulls them in — mirrors
+      // the Projected branch in dealSizeBase, which filters Agreement Sent
+      // by stage only (no date filter).
+      const feedsProjected = stage === 'Agreement Sent' && hasAmt;
+      const projectedYear = feedsProjected ? currentYear : null;
+      // The Projected Quoted average is the mean Quoted Amount across this
+      // year's Sold deals plus every Agreement Sent opp — the same
+      // population the Projected bar counts. Flag both so the export ties
+      // back to that number.
+      const inProjectedQuoted = hasAmt && (
+        (stage === 'Sold' && closedYear === currentYear) || stage === 'Agreement Sent'
+      );
+      if (oy !== null && stage === 'Sold') {
         topAccountsRecs.push({
           Account: account,
           'Open Year': oy,
@@ -1016,25 +1402,99 @@ export function YOYView() {
           'Top-4 Bucket': topSet.has(account) ? account : 'Remaining',
         });
       }
-      if (closedStage) {
+      // Deal Size contributors — every closed opp (bars + blue Deal Size
+      // line, by Closed Year), every quoted opp (red Quoted line, by Quoted
+      // Year), and every Agreement Sent opp that feeds the Projected point.
+      // An opp filling more than one role appears once with each year set.
+      if (closedStage || quotedYear != null || feedsProjected) {
         dealSizeRecs.push({
           Account: account,
-          'Open Year': oy,
           Stage: stage,
+          'Closed Year': closedYear ?? '',
+          'Close Date': closeDate,
+          'Open Year': oy ?? '',
+          'Quoted Year': quotedYear ?? '',
+          'Quoted Date': quotedOn,
+          'Projected Year': projectedYear ?? '',
           'Quoted Amount': amt ?? '',
-          'Counts in Deals': 'Yes',
-          'Counts in Quoted avg': (amt && amt > 0) ? 'Yes' : 'No',
-          'Counts in Deal Size avg': (stage === 'Sold' && amt && amt > 0) ? 'Yes' : 'No',
+          'Counts in Deals (Sold)': stage === 'Sold' ? 'Yes' : 'No',
+          'Counts in Quoted avg': quotedYear != null ? 'Yes' : 'No',
+          'Counts in Deal Size avg': (stage === 'Sold' && hasAmt) ? 'Yes' : 'No',
+          'Counts in Projected Quoted avg': inProjectedQuoted ? 'Yes' : 'No',
         });
       }
     }
     topAccountsRecs.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
-    dealSizeRecs.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
+    const dsSortYear = (r) => Number(r['Closed Year'] || r['Quoted Year'] || r['Projected Year'] || 0);
+    dealSizeRecs.sort((a, b) => dsSortYear(a) - dsSortYear(b) || a.Account.localeCompare(b.Account));
+    // Commissions contributors — one row per deal that fed a year's total.
+    // Mirrors commissionsBase exactly: bucketed by the deal's derived year
+    // (dealYear, from Original Contract Start) and carrying its Commission
+    // column value, so the rows tie back to each bar.
+    const commissionsRecs = [];
+    for (const row of (deals || [])) {
+      const year = Number(dealYear(row));
+      if (!Number.isFinite(year) || year < 1900 || year > 2100) continue;
+      const commission = asNumber(row?.['Commission']) || 0;
+      commissionsRecs.push({
+        'Client Name': String(row?.['Client Name'] || '').trim(),
+        'BFO Name': String(row?.[DEAL_BFO_KEY] || '').trim(),
+        Year: year,
+        'Commission ($)': Math.round(commission),
+      });
+    }
+    commissionsRecs.sort((a, b) => a.Year - b.Year || a['Client Name'].localeCompare(b['Client Name']));
     return {
       leads, quoted, closeRate, leadSources, quotedByYear, notSolds,
       topAccounts: topAccountsRecs, dealSize: dealSizeRecs,
+      commissions: commissionsRecs,
     };
-  }, [records, currentYear, topAccountsData]);
+  }, [records, currentYear, topAccountsData, deals, commissions]);
+
+  // Download just the opportunity rows behind one pinned chart point, so a
+  // pinned bar/line can be deep-dived in Excel. Each chart's contributing
+  // set already carries the point's key (Open Year / Closed Year / Quoted
+  // Year / Lead Source), so we filter that set to the pinned row. A
+  // "Projected" bar
+  // annualizes the current year, so its raw opps are the current year's.
+  function exportPinnedOpps(chartId, row) {
+    if (!row) return;
+    const CONF = {
+      leads: { list: contributingRecords.leads, keyCol: 'Open Year', sheet: 'Leads' },
+      closeRate: { list: contributingRecords.closeRate, keyCol: 'Open Year', sheet: 'Close Rate' },
+      leadSources: { list: contributingRecords.leadSources, keyCol: 'Lead Source', sheet: 'Lead Sources' },
+      quotedByYear: { list: contributingRecords.quotedByYear, keyCol: 'Quoted Year', sheet: 'Quoted' },
+      notSolds: { list: contributingRecords.notSolds, keyCol: 'Open Year', sheet: 'Not Solds' },
+      topAccounts: { list: contributingRecords.topAccounts, keyCol: 'Open Year', sheet: 'Top Accounts' },
+      // Deal Size conflates two year dimensions per point (bars/blue by
+      // Closed Year, red by Quoted Year), so a pinned year pulls opps that
+      // match on either.
+      dealSize: {
+        list: contributingRecords.dealSize,
+        match: (rec, key) => String(rec['Closed Year']) === key
+          || String(rec['Quoted Year']) === key
+          || String(rec['Projected Year']) === key,
+        sheet: 'Deal Size',
+      },
+      commissions: { list: contributingRecords.commissions, keyCol: 'Year', sheet: 'Commissions' },
+    };
+    const conf = CONF[chartId];
+    if (!conf) return;
+    const rawKey = chartId === 'leadSources'
+      ? String(row.source ?? '')
+      : (row.isProjected || row.year === 'Projected') ? String(currentYear) : String(row.year);
+    const rows = (conf.list || []).filter(
+      conf.match ? (rec) => conf.match(rec, rawKey) : (rec) => String(rec[conf.keyCol]) === rawKey
+    );
+    if (rows.length === 0) {
+      window.alert('No opportunity rows are tied to this point.');
+      return;
+    }
+    const wb = XLSX.utils.book_new();
+    appendSheet(wb, `${conf.sheet} ${rawKey}`, rows);
+    const tag = rawKey.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'point';
+    XLSX.writeFile(wb, `yoy-${chartId}-${tag}-${todayStamp()}.xlsx`);
+  }
 
   function downloadLeads() {
     const summary = leadsData.map(r => ({
@@ -1168,16 +1628,17 @@ export function YOYView() {
     }));
     const wb = XLSX.utils.book_new();
     appendSheet(wb, 'Commissions by Year', summary);
+    appendSheet(wb, 'Contributing Deals', contributingRecords.commissions);
     XLSX.writeFile(wb, `yoy-commissions-${todayStamp()}.xlsx`);
   }
 
   function downloadDealSize() {
     const summary = dealSizeData.map(r => ({
       Year: r.year,
-      Type: r._isProjected ? 'Projected (YTD + active pipeline)' : 'Actual',
-      Deals: r.deals,
-      'Quoted (mean of closed, $)': r.quoted == null ? '' : r.quoted,
-      'Deal Size (mean of Sold, $)': r.dealSize == null ? '' : r.dealSize,
+      Type: r._isProjected ? 'Projected (YTD Sold + Agreement Sent)' : 'Actual',
+      'Deals (Sold count)': r.deals,
+      'Quoted (avg by Quoted Year, $)': r.quoted == null ? '' : r.quoted,
+      'Deal Size (avg, $)': r.dealSize == null ? '' : r.dealSize,
     }));
     const wb = XLSX.utils.book_new();
     appendSheet(wb, 'Deal Size', summary);
@@ -1216,6 +1677,23 @@ export function YOYView() {
   }, [pinned]);
   const stop = useCallback((e) => e.stopPropagation(), []);
 
+  // Data the editor reads for the open chart: the computed (pre-override)
+  // rows shown as placeholders, and the overridable field list. Top
+  // Accounts' columns are dynamic, so it supplies its own field list.
+  const editRegistry = {
+    leads: { rows: leadsBase, fields: YOY_CHART_EDITS.leads.fields },
+    closeRate: { rows: closeRateBase, fields: YOY_CHART_EDITS.closeRate.fields },
+    leadSources: { rows: leadSourcesBase, fields: YOY_CHART_EDITS.leadSources.fields },
+    quotedByYear: { rows: quotedByYearBase, fields: YOY_CHART_EDITS.quotedByYear.fields },
+    notSolds: { rows: notSoldsBase, fields: YOY_CHART_EDITS.notSolds.fields },
+    topAccounts: { rows: topAccountsBase.years, fields: topAccountsFields },
+    annualSales: { rows: annualSalesBase, fields: YOY_CHART_EDITS.annualSales.fields },
+    dealSize: { rows: dealSizeBase, fields: YOY_CHART_EDITS.dealSize.fields },
+    commissions: { rows: commissionsBase, fields: YOY_CHART_EDITS.commissions.fields },
+  };
+  const editReg = editingChart ? editRegistry[editingChart] : null;
+  const editCfg = editingChart ? YOY_CHART_EDITS[editingChart] : null;
+
   return (
     <div className={styles.wrapper}>
       <div className={styles.header}>
@@ -1226,9 +1704,33 @@ export function YOYView() {
             {opps?.fetchedAt ? ` Opps fetched ${new Date(opps.fetchedAt).toLocaleString()}.` : ' Open the Opps tab to load data.'}
           </div>
         </div>
+        <div className={styles.headerRight}>
+          <address className={styles.nomadworks}>
+            <span className={styles.nomadworksName}>Nomadworks</span>
+            1216 Broadway (Entrance on W 30th St)<br />
+            New York, NY 10001 — 3rd floor
+          </address>
+          {hiddenCharts.length > 0 && (
+            <div className={styles.hiddenBar}>
+              <span className={styles.hiddenBarLabel}>Hidden charts:</span>
+              {hiddenCharts.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={styles.hiddenChip}
+                  onClick={() => showChart(id)}
+                  title={`Show the ${YOY_CHART_TITLES[id] || id} chart`}
+                >{YOY_CHART_TITLES[id] || id} <span aria-hidden="true">＋</span></button>
+              ))}
+              <button type="button" className={styles.showAllBtn} onClick={showAllCharts}>Show all</button>
+            </div>
+          )}
+        </div>
       </div>
       <div className={styles.body} onClick={handleBodyClick}>
         <CalcPanelContext.Provider value={calcCtx}>
+        <EditChartContext.Provider value={setEditingChart}>
+        <HideChartContext.Provider value={hideChart}>
         <div
           ref={setCalcPanelEl}
           className={styles.calcPanel}
@@ -1239,31 +1741,53 @@ export function YOYView() {
             <CalcContent {...pinned} pinned onUnpin={() => setPinned(null)} />
           </div>
         ) : null}
-        <div className={styles.row}>
-          <LeadsCard data={leadsData} hasOpps={hasOpps} onDownload={downloadLeads} />
-          <QuotedProjectionsCard data={quotedData} quotedTable={quotedTable} onSaveTable={updateQuotedTable} onDownload={downloadQuoted} />
-          <CloseRateCard data={closeRateData} hasOpps={hasOpps} onDownload={downloadCloseRate} />
-        </div>
-        <div className={styles.row}>
-          <LeadSourcesCard data={leadSourcesData} hasOpps={hasOpps} onDownload={downloadLeadSources} />
-          <QuotedByYearCard data={quotedByYearData} hasOpps={hasOpps} onDownload={downloadQuotedByYear} />
-          <NotSoldsCard data={notSoldsData} hasOpps={hasOpps} onDownload={downloadNotSolds} />
-        </div>
-        <div className={styles.row}>
-          <TopAccountsCard data={topAccountsData} hasOpps={hasOpps} onDownload={downloadTopAccounts} />
-          <AnnualSalesCard data={annualSalesData} hasOpps={hasOpps} target={target} onDownload={downloadAnnualSales} onExportYear={downloadAnnualSalesYear} />
-          <DealSizeCard data={dealSizeData} hasOpps={hasOpps} onDownload={downloadDealSize} />
-        </div>
-        <div className={styles.row}>
-          <CommissionsCard data={commissionsData} hasCommissions={hasCommissions} onDownload={downloadCommissions} />
-          {/* Empty slots keep the Commissions card at one-third row width
-              so it matches the other charts above rather than stretching
-              to the full row. */}
-          <div style={{ flex: '1 1 0' }} aria-hidden="true" />
-          <div style={{ flex: '1 1 0' }} aria-hidden="true" />
-        </div>
+        {/* Charts flow three per row in a single ordered list. Hidden
+            charts drop out and the visible ones repack left-to-right so no
+            gaps are left behind; only the final row is padded with spacers
+            to keep every card at its one-third column width. */}
+        {(() => {
+          const charts = [
+            { id: 'leads', node: <LeadsCard key="leads" data={leadsData} hasOpps={hasOpps} onDownload={downloadLeads} onExportPoint={(row) => exportPinnedOpps('leads', row)} /> },
+            { id: 'quotedProjections', node: <QuotedProjectionsCard key="quotedProjections" data={quotedData} quotedTable={quotedTable} onSaveTable={updateQuotedTable} onDownload={downloadQuoted} /> },
+            { id: 'closeRate', node: <CloseRateCard key="closeRate" data={closeRateData} hasOpps={hasOpps} onDownload={downloadCloseRate} onExportPoint={(row) => exportPinnedOpps('closeRate', row)} /> },
+            { id: 'leadSources', node: <LeadSourcesCard key="leadSources" data={leadSourcesData} hasOpps={hasOpps} onDownload={downloadLeadSources} onExportPoint={(row) => exportPinnedOpps('leadSources', row)} /> },
+            { id: 'quotedByYear', node: <QuotedByYearCard key="quotedByYear" data={quotedByYearData} hasOpps={hasOpps} onDownload={downloadQuotedByYear} onExportPoint={(row) => exportPinnedOpps('quotedByYear', row)} /> },
+            { id: 'notSolds', node: <NotSoldsCard key="notSolds" data={notSoldsData} hasOpps={hasOpps} onDownload={downloadNotSolds} onExportPoint={(row) => exportPinnedOpps('notSolds', row)} /> },
+            { id: 'topAccounts', node: <TopAccountsCard key="topAccounts" data={topAccountsData} hasOpps={hasOpps} onDownload={downloadTopAccounts} onExportPoint={(row) => exportPinnedOpps('topAccounts', row)} /> },
+            { id: 'annualSales', node: <AnnualSalesCard key="annualSales" data={annualSalesData} hasOpps={hasOpps} target={target} onDownload={downloadAnnualSales} onExportYear={downloadAnnualSalesYear} /> },
+            { id: 'dealSize', node: <DealSizeCard key="dealSize" data={dealSizeData} hasOpps={hasOpps} onDownload={downloadDealSize} onExportPoint={(row) => exportPinnedOpps('dealSize', row)} /> },
+            { id: 'commissions', node: <CommissionsCard key="commissions" data={commissionsData} hasCommissions={hasCommissions} onDownload={downloadCommissions} onExportPoint={(row) => exportPinnedOpps('commissions', row)} /> },
+          ];
+          const visible = charts.filter((c) => !hiddenSet.has(c.id));
+          const rows = [];
+          for (let i = 0; i < visible.length; i += 3) rows.push(visible.slice(i, i + 3));
+          return rows.map((row, ri) => {
+            const slots = [...row];
+            while (slots.length < 3) slots.push(null);
+            return (
+              <div className={styles.row} key={ri}>
+                {slots.map((c, ci) => c
+                  ? c.node
+                  : <div key={`spacer-${ri}-${ci}`} style={{ flex: '1 1 0' }} aria-hidden="true" />)}
+              </div>
+            );
+          });
+        })()}
+        </HideChartContext.Provider>
+        </EditChartContext.Provider>
         </CalcPanelContext.Provider>
       </div>
+      {editReg && editCfg && (
+        <ChartDataEditor
+          chartId={editingChart}
+          cfg={editCfg}
+          rows={editReg.rows}
+          fields={editReg.fields}
+          table={overrides[editingChart]}
+          onClose={() => setEditingChart(null)}
+          onSave={saveChartOverrides}
+        />
+      )}
     </div>
   );
 }
@@ -1299,9 +1823,10 @@ function appendSheet(wb, name, rows) {
 // Makes a chart's <Legend> interactive: clicking a series label toggles
 // it on/off. Spread `legendProps` onto <Legend> and set `hide={hidden[key]}`
 // on each series (key = its dataKey). Hidden labels render struck-through
-// and greyed so it's clear what's currently filtered out.
-function useInteractiveLegend() {
-  const [hidden, setHidden] = useState({});
+// and greyed so it's clear what's currently filtered out. Pass
+// `initialHidden` (keyed by dataKey) to start a series toggled off.
+function useInteractiveLegend(initialHidden) {
+  const [hidden, setHidden] = useState(initialHidden ?? {});
   const legendProps = {
     wrapperStyle: { fontSize: 12, cursor: 'pointer' },
     onClick: (o) => {
@@ -1322,20 +1847,149 @@ function useInteractiveLegend() {
   return { hidden, legendProps };
 }
 
-function ChartHeader({ title, onDownload, canDownload }) {
+function ChartHeader({ title, onDownload, canDownload, chartId, hideId }) {
+  const openEditor = useContext(EditChartContext);
+  const hideChart = useContext(HideChartContext);
+  const hideKey = hideId || chartId;
   return (
     <div className={styles.chartHeader}>
       <h2 className={styles.chartTitle}>{title}</h2>
-      <button
-        type="button"
-        className={styles.downloadBtn}
-        onClick={onDownload}
-        disabled={!canDownload}
-        title={canDownload
-          ? `Download ${title} data as Excel (.xlsx)`
-          : 'No data to download'}
-      >Download .xlsx</button>
+      <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+        {chartId && openEditor && (
+          <button
+            type="button"
+            className={styles.downloadBtn}
+            onClick={() => openEditor(chartId)}
+            title={`View and overwrite the ${title} data points`}
+          >✎ Edit data</button>
+        )}
+        <button
+          type="button"
+          className={styles.downloadBtn}
+          onClick={onDownload}
+          disabled={!canDownload}
+          title={canDownload
+            ? `Download ${title} data as Excel (.xlsx)`
+            : 'No data to download'}
+        >Download .xlsx</button>
+        {hideKey && hideChart && (
+          <button
+            type="button"
+            className={styles.hideBtn}
+            onClick={() => hideChart(hideKey)}
+            title={`Hide the ${title} chart`}
+            aria-label={`Hide the ${title} chart`}
+          >✕</button>
+        )}
+      </div>
     </div>
+  );
+}
+
+// Generic "Edit data" popup for a YOY chart. Each row's computed value is
+// shown as the input placeholder; typing a replacement stores it as an
+// override that wins over the live number until cleared. A blank cell
+// keeps the computed value, and a value equal to the computed one is not
+// stored (so an override always represents a real change). "Clear
+// overrides" drops every saved value for the chart at once.
+function ChartDataEditor({ chartId, cfg, rows, fields, table, onClose, onSave }) {
+  const keyField = cfg.keyField;
+  const [draft, setDraft] = useState(() => {
+    const d = {};
+    for (const r of rows) {
+      const key = String(r[keyField]);
+      const saved = table?.[key] || {};
+      const cells = {};
+      for (const f of fields) {
+        const sv = saved[f.key];
+        // ratioPct is stored as a 0–1 ratio but edited as a whole percent.
+        cells[f.key] = sv != null
+          ? (f.kind === 'ratioPct' ? String(+(sv * 100).toFixed(2)) : String(sv))
+          : '';
+      }
+      d[key] = cells;
+    }
+    return d;
+  });
+  const setCell = (key, field, value) =>
+    setDraft(prev => ({ ...prev, [key]: { ...prev[key], [field]: value } }));
+
+  const handleSave = () => {
+    const next = {};
+    for (const r of rows) {
+      const key = String(r[keyField]);
+      const cells = draft[key] || {};
+      const out = {};
+      for (const f of fields) {
+        const raw = String(cells[f.key] ?? '').trim().replace(/[$,%\s]/g, '');
+        if (raw === '') continue;
+        const typed = Number(raw);
+        if (!Number.isFinite(typed)) continue;
+        // ratioPct cells are typed as a whole percent but stored as a ratio.
+        const value = f.kind === 'ratioPct' ? typed / 100 : typed;
+        const base = r[f.key];
+        if (base != null && Number(base) === value) continue; // no real change
+        out[f.key] = value;
+      }
+      if (Object.keys(out).length) next[key] = out;
+    }
+    onSave(chartId, next);
+  };
+
+  return createPortal(
+    <div className={styles.modalOverlay} onClick={onClose}>
+      <div className={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+        <div className={styles.modalHead}>
+          <div>
+            <div className={styles.modalTitle}>{cfg.title} — edit data</div>
+            <div className={styles.modalSub}>
+              Type a value to overwrite that data point; it wins over the live-computed
+              number until you clear it. Leave a cell blank to keep the computed value
+              (shown greyed as the placeholder).
+            </div>
+          </div>
+          <button type="button" className={styles.downloadBtn} onClick={onClose}>Close</button>
+        </div>
+        <div className={styles.modalBody}>
+          <table className={styles.editTable}>
+            <thead>
+              <tr>
+                <th>{cfg.keyLabel}</th>
+                {fields.map(f => <th key={f.key}>{f.label}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => {
+                const key = String(r[keyField]);
+                return (
+                  <tr key={key}>
+                    <td className={styles.editMonthCell}>{key}</td>
+                    {fields.map(f => (
+                      <td key={f.key}>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          className={styles.editInput}
+                          value={draft[key]?.[f.key] ?? ''}
+                          onChange={(e) => setCell(key, f.key, e.target.value)}
+                          placeholder={fmtOverrideValue(r[f.key], f.kind) || '—'}
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className={styles.modalFoot}>
+          <button type="button" className={styles.downloadBtn} onClick={() => onSave(chartId, {})}>Clear overrides</button>
+          <button type="button" className={styles.downloadBtn} onClick={onClose}>Cancel</button>
+          <button type="button" className={styles.saveBtn} onClick={handleSave}>Save</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -1360,6 +2014,14 @@ function CalcContent({ payload, label, labelText, valueFormat, explain, pinned, 
     <div className={styles.calcDock}>
       <div className={styles.calcDockLabel}>
         <span className={styles.calcDockHeading}>{heading}</span>
+        {pinned && typeof info?.exportOpps === 'function' ? (
+          <button
+            type="button"
+            className={styles.calcExportBtn}
+            onClick={info.exportOpps}
+            title="Download the opportunity rows behind this point to Excel"
+          >⬇ Excel</button>
+        ) : null}
         {pinned ? (
           <button type="button" className={styles.calcPinBtn} onClick={onUnpin} title="Unstick this panel">📌 Pinned ✕</button>
         ) : (
@@ -1423,10 +2085,19 @@ function CalcContent({ payload, label, labelText, valueFormat, explain, pinned, 
 // no panel is mounted (defensive), it falls back to a small floating box.
 function CalcTooltip({
   active, payload, label,
-  labelText, valueFormat, explain,
+  labelText, valueFormat, explain, onExportPoint,
 }) {
   const ctx = useContext(CalcPanelContext);
   const isActive = !!(active && payload && payload.length > 0);
+  // When the chart can export the opps behind a point, fold an `exportOpps`
+  // callback into whatever the chart's explain() returns, so the pinned
+  // panel can offer a per-point Excel download. Wrapped here (rather than in
+  // every card's explain) and captured in the pinned snapshot below.
+  const wrappedExplain = (onExportPoint && explain)
+    ? (row, ...rest) => ({ ...(explain(row, ...rest) || {}), exportOpps: () => onExportPoint(row) })
+    : (onExportPoint
+        ? (row) => ({ exportOpps: () => onExportPoint(row) })
+        : explain);
   // Report the currently-hovered point up to the page so a click anywhere
   // in the YOY body can pin (stick) this exact content. Runs in an effect
   // so we never setState/refs mid-render. Snapshot the payload (Recharts
@@ -1434,7 +2105,7 @@ function CalcTooltip({
   const reportHover = ctx?.reportHover;
   useEffect(() => {
     if (!reportHover) return;
-    reportHover(isActive ? { payload: payload.slice(), label, labelText, valueFormat, explain } : null);
+    reportHover(isActive ? { payload: payload.slice(), label, labelText, valueFormat, explain: wrappedExplain } : null);
   });
   if (!isActive) return null;
   // While a panel is pinned, the hover panel steps aside so it doesn't
@@ -1446,18 +2117,18 @@ function CalcTooltip({
       label={label}
       labelText={labelText}
       valueFormat={valueFormat}
-      explain={explain}
+      explain={wrappedExplain}
     />
   );
   if (ctx?.el) return createPortal(body, ctx.el);
   return <div className={styles.calcTip}>{body}</div>;
 }
 
-function LeadsCard({ data, hasOpps, onDownload }) {
+function LeadsCard({ data, hasOpps, onDownload, onExportPoint }) {
   const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
-      <ChartHeader title="Leads" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
+      <ChartHeader title="Leads" chartId="leads" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
       {!hasOpps ? (
         <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
       ) : data.length === 0 ? (
@@ -1470,6 +2141,7 @@ function LeadsCard({ data, hasOpps, onDownload }) {
             <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
+                onExportPoint={onExportPoint}
                 labelText={(label, row) => row.isProjected ? 'Projected (annualized YTD)' : `Open Year ${label}`}
                 valueFormat={(v) => (v == null ? '—' : v.toLocaleString('en-US'))}
                 explain={(row) => row.isProjected
@@ -1501,13 +2173,15 @@ function LeadsCard({ data, hasOpps, onDownload }) {
   );
 }
 
-function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload }) {
+function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload, onExportPoint }) {
   const [editing, setEditing] = useState(false);
   const hasAnyValues = data.some(r => r._hasData);
-  const { hidden, legendProps } = useInteractiveLegend();
+  // BFO Pipe Total starts hidden — it rides its own right-hand axis and
+  // overwhelms the quoted buckets, so surface it only on demand via the legend.
+  const { hidden, legendProps } = useInteractiveLegend({ bfoPipe: true });
   return (
     <div className={styles.chartCard}>
-      <ChartHeader title="Quoted Projections" onDownload={onDownload} canDownload={hasAnyValues} />
+      <ChartHeader title="Quoted Projections" hideId="quotedProjections" onDownload={onDownload} canDownload={hasAnyValues} />
       <div className={styles.quotedEditRow}>
         <span className={styles.quotedUnitNote}>values in $K</span>
         <button type="button" className={styles.editValuesBtn} onClick={() => setEditing(true)}>Edit values</button>
@@ -1532,6 +2206,7 @@ function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload }) {
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
+                onExportPoint={onExportPoint}
                 labelText={(label, row) => `${label} ${row.year}`}
                 valueFormat={(v) => (v == null ? '—' : fmtKLabel(v))}
                 explain={(row) => ({
@@ -1681,11 +2356,11 @@ function QuotedProjectionsEditor({ rows, table, onClose, onSave }) {
   );
 }
 
-function CloseRateCard({ data, hasOpps, onDownload }) {
+function CloseRateCard({ data, hasOpps, onDownload, onExportPoint }) {
   const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
-      <ChartHeader title="Close Rate" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
+      <ChartHeader title="Close Rate" chartId="closeRate" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
       {!hasOpps ? (
         <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
       ) : data.length === 0 ? (
@@ -1710,6 +2385,7 @@ function CloseRateCard({ data, hasOpps, onDownload }) {
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
+                onExportPoint={onExportPoint}
                 labelText={(label) => `Open Year ${label}`}
                 valueFormat={(v) => (v == null ? '—' : `${v.toFixed(0)}%`)}
                 explain={(row) => ({
@@ -1726,17 +2402,10 @@ function CloseRateCard({ data, hasOpps, onDownload }) {
             } />
             <Legend {...legendProps} />
             <Bar yAxisId="pct" dataKey="totalNotSold" stackId="cr" name="Total Not Sold" fill="#ef4444" isAnimationActive={false} hide={hidden.totalNotSold} />
-            <Bar yAxisId="pct" dataKey="totalSold" stackId="cr" name="Total Sold (OY)" fill="#facc15" isAnimationActive={false} hide={hidden.totalSold}>
-              <LabelList
-                dataKey="totalSold"
-                position="insideTop"
-                style={{ fontSize: 10, fontWeight: 600, fill: '#1f2937' }}
-                formatter={(v) => v >= 3 ? `${Math.round(v)}%` : ''}
-              />
-            </Bar>
+            <Bar yAxisId="pct" dataKey="totalSold" stackId="cr" name="Total Sold (OY)" fill="#facc15" isAnimationActive={false} hide={hidden.totalSold} />
             <Bar yAxisId="pct" dataKey="inProgress" stackId="cr" name="In Progress (OY)" fill="#3b82f6" isAnimationActive={false} hide={hidden.inProgress} />
-            <Line yAxisId="cr" dataKey="quotedCR" name="Quoted C/R" stroke="#f97316" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls hide={hidden.quotedCR}>
-              <LabelList dataKey="quotedCR" position="top" style={{ fontSize: 10, fontWeight: 600, fill: '#c2410c' }} formatter={(v) => v == null ? '' : `${Math.round(v)}%`} />
+            <Line yAxisId="cr" dataKey="quotedCR" name="Quoted C/R" stroke="#374151" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls hide={hidden.quotedCR}>
+              <LabelList dataKey="quotedCR" position="top" style={{ fontSize: 10, fontWeight: 600, fill: '#1f2937' }} formatter={(v) => v == null ? '' : `${Math.round(v)}%`} />
             </Line>
             <Line yAxisId="cr" dataKey="totalCR" name="Total C/R" stroke="#16a34a" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls hide={hidden.totalCR}>
               <LabelList dataKey="totalCR" position="bottom" style={{ fontSize: 10, fontWeight: 600, fill: '#15803d' }} formatter={(v) => v == null ? '' : `${Math.round(v)}%`} />
@@ -1748,7 +2417,7 @@ function CloseRateCard({ data, hasOpps, onDownload }) {
   );
 }
 
-function LeadSourcesCard({ data, hasOpps, onDownload }) {
+function LeadSourcesCard({ data, hasOpps, onDownload, onExportPoint }) {
   const { hidden, legendProps } = useInteractiveLegend();
   // Per-row height keeps the chart legible even when source values
   // accumulate (e.g. opps tagged with novel sources over time). Pad
@@ -1759,7 +2428,7 @@ function LeadSourcesCard({ data, hasOpps, onDownload }) {
   const height = Math.max(minHeight, data.length * rowHeight + 80);
   return (
     <div className={styles.chartCard}>
-      <ChartHeader title="Lead Sources 2020+" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
+      <ChartHeader title="Lead Sources 2020+" chartId="leadSources" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
       {!hasOpps ? (
         <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
       ) : data.length === 0 ? (
@@ -1782,6 +2451,7 @@ function LeadSourcesCard({ data, hasOpps, onDownload }) {
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
+                onExportPoint={onExportPoint}
                 labelText={(label) => `Lead Source: ${label}`}
                 valueFormat={(v) => (v == null ? '—' : v.toLocaleString('en-US'))}
                 explain={(row) => ({
@@ -1821,11 +2491,11 @@ function LeadSourcesCard({ data, hasOpps, onDownload }) {
   );
 }
 
-function QuotedByYearCard({ data, hasOpps, onDownload }) {
+function QuotedByYearCard({ data, hasOpps, onDownload, onExportPoint }) {
   const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
-      <ChartHeader title="Quoted (Thousands)" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
+      <ChartHeader title="Quoted (Thousands)" chartId="quotedByYear" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
       {!hasOpps ? (
         <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
       ) : data.length === 0 ? (
@@ -1841,6 +2511,7 @@ function QuotedByYearCard({ data, hasOpps, onDownload }) {
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
+                onExportPoint={onExportPoint}
                 labelText={(label, row) => row.isProjected ? 'Projected (annualized YTD)' : `Quoted ${label}`}
                 valueFormat={(v) => (v == null ? '—' : `$${v.toLocaleString('en-US')}k`)}
                 explain={(row) => row.isProjected
@@ -1877,11 +2548,11 @@ function QuotedByYearCard({ data, hasOpps, onDownload }) {
   );
 }
 
-function NotSoldsCard({ data, hasOpps, onDownload }) {
+function NotSoldsCard({ data, hasOpps, onDownload, onExportPoint }) {
   const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
-      <ChartHeader title="Not Solds" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
+      <ChartHeader title="Not Solds" chartId="notSolds" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
       {!hasOpps ? (
         <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
       ) : data.length === 0 ? (
@@ -1894,6 +2565,7 @@ function NotSoldsCard({ data, hasOpps, onDownload }) {
             <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
+                onExportPoint={onExportPoint}
                 labelText={(label, row) => row.isProjected ? 'Projected (annualized YTD)' : `Open Year ${label}`}
                 valueFormat={(v, name) => {
                   if (v == null) return '—';
@@ -1980,13 +2652,13 @@ function fmtThousandsLabel(v) {
   return `$${Math.trunc(v / 1000).toLocaleString('en-US')}k`;
 }
 
-function TopAccountsCard({ data, hasOpps, onDownload }) {
+function TopAccountsCard({ data, hasOpps, onDownload, onExportPoint }) {
   const { years = [], topAccounts = [], colors = {} } = data || {};
   const hasAny = years.some(r => r._total > 0);
   const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
-      <ChartHeader title="Top Accounts" onDownload={onDownload} canDownload={hasOpps && hasAny} />
+      <ChartHeader title="Top Accounts" chartId="topAccounts" onDownload={onDownload} canDownload={hasOpps && hasAny} />
       {!hasOpps ? (
         <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
       ) : !hasAny ? (
@@ -2002,6 +2674,7 @@ function TopAccountsCard({ data, hasOpps, onDownload }) {
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
+                onExportPoint={onExportPoint}
                 labelText={(label, row) => row._isProjected ? 'Projected (YTD + active pipeline)' : `Year ${label}`}
                 valueFormat={(v) => (v ? fmtMoneyLabel(v) : '$0')}
                 explain={(row) => ({
@@ -2048,7 +2721,7 @@ function TopAccountsCard({ data, hasOpps, onDownload }) {
   );
 }
 
-function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
+function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear, onExportPoint }) {
   const hasAny = data.some(r => r._total > 0);
   const annualTarget = target > 0 ? target : DEFAULT_ANNUAL_TARGET;
   const { hidden, legendProps } = useInteractiveLegend();
@@ -2098,7 +2771,7 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
   };
   return (
     <div className={styles.chartCard}>
-      <ChartHeader title="Annual Sales" onDownload={onDownload} canDownload={hasOpps && hasAny} />
+      <ChartHeader title="Annual Sales" chartId="annualSales" onDownload={onDownload} canDownload={hasOpps && hasAny} />
       {!hasOpps ? (
         <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
       ) : !hasAny ? (
@@ -2116,6 +2789,7 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
+                onExportPoint={onExportPoint}
                 labelText={(label, row) => row._isProjected ? 'Projected (Sold + Agreement Sent + Contracting)' : `Sold in ${label}`}
                 valueFormat={(v, name) => (name === '% Quota' ? `${v}%` : (v ? fmtMoneyLabel(v) : '$0'))}
                 explain={(row) => ({
@@ -2168,19 +2842,19 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
   );
 }
 
-function DealSizeCard({ data, hasOpps, onDownload }) {
+function DealSizeCard({ data, hasOpps, onDownload, onExportPoint }) {
   const hasAny = data.some(r => r.deals > 0);
   const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
-      <ChartHeader title="Deal Size" onDownload={onDownload} canDownload={hasOpps && hasAny} />
+      <ChartHeader title="Deal Size" chartId="dealSize" onDownload={onDownload} canDownload={hasOpps && hasAny} />
       {!hasOpps ? (
         <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
       ) : !hasAny ? (
-        <div className={styles.empty}>No closed opps yet.</div>
+        <div className={styles.empty}>No sold opps yet.</div>
       ) : (
         <ResponsiveContainer width="100%" height={320}>
-          <ComposedChart data={data} margin={{ top: 20, right: 16, left: 16, bottom: 4 }}>
+          <ComposedChart data={data} margin={{ top: 20, right: 2, left: 0, bottom: 4 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
             <XAxis dataKey="year" interval={0} tick={{ fontSize: 12 }} />
             <YAxis
@@ -2196,20 +2870,21 @@ function DealSizeCard({ data, hasOpps, onDownload }) {
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
-                labelText={(label, row) => row._isProjected ? 'Projected (YTD + active pipeline)' : `Year ${label}`}
+                onExportPoint={onExportPoint}
+                labelText={(label, row) => row._isProjected ? 'Projected (YTD Sold + Agreement Sent)' : `Year ${label}`}
                 valueFormat={(v, name) => {
                   if (v == null) return '—';
                   if (name === 'Deals') return v.toLocaleString('en-US');
                   return v ? fmtMoneyLabel(v) : '$0';
                 }}
                 explain={(row) => ({
-                  formula: 'Deals = count of closed opps (Sold + Not Sold). Quoted = mean Quoted Amount across closed opps. Deal Size = mean Quoted Amount of Sold opps only.',
+                  formula: 'Deals = count of Sold opps (won deals), by Closed Year. Quoted = mean Quoted Amount of opps quoted that year, by Quoted On date. Deal Size = average deal size (mean Quoted Amount of Sold opps), by Closed Year.',
                   inputs: [
-                    { label: 'Deals (closed)', value: (row.deals ?? 0).toLocaleString('en-US') },
-                    { label: 'Quoted mean', value: row.quoted == null ? '—' : `${fmtMoneyLabel(row.quoted)} (n=${row._quotedCount ?? 0})` },
+                    { label: 'Deals (Sold)', value: (row.deals ?? 0).toLocaleString('en-US') },
+                    { label: row._isProjected ? 'Quoted mean (Sold + Agreement Sent)' : 'Quoted mean (by Quoted Year)', value: row.quoted == null ? '—' : `${fmtMoneyLabel(row.quoted)} (n=${row._quotedCount ?? 0})` },
                     { label: 'Deal Size mean', value: row.dealSize == null ? '—' : `${fmtMoneyLabel(row.dealSize)} (n=${row._soldCount ?? 0})` },
                   ],
-                  note: row._isProjected ? 'Projected counts active pipeline opps as expected future closes.' : null,
+                  note: row._isProjected ? 'Projected = this year’s Sold deals + every opp in the Agreement Sent stage, counted as expected future closes. Quoted is the mean Quoted Amount across only those Sold and Agreement Sent opps; Deal Size isn’t projected.' : null,
                 })}
               />
             } />
@@ -2231,7 +2906,7 @@ function DealSizeCard({ data, hasOpps, onDownload }) {
               connectNulls
               hide={hidden.quoted}
             >
-              <LabelList dataKey="quoted" position="top" style={{ fontSize: 10, fontWeight: 600, fill: '#991b1b' }} formatter={(v) => fmtMoneyLabel(v)} />
+              <LabelList dataKey="quoted" position="top" style={{ fontSize: 10, fontWeight: 600, fill: '#991b1b' }} formatter={(v) => fmtThousandsLabel(v)} />
             </Line>
             <Line
               yAxisId="dollars"
@@ -2244,7 +2919,7 @@ function DealSizeCard({ data, hasOpps, onDownload }) {
               connectNulls
               hide={hidden.dealSize}
             >
-              <LabelList dataKey="dealSize" position="bottom" style={{ fontSize: 10, fontWeight: 600, fill: '#1d4ed8' }} formatter={(v) => fmtMoneyLabel(v)} />
+              <LabelList dataKey="dealSize" position="bottom" style={{ fontSize: 10, fontWeight: 600, fill: '#1d4ed8' }} formatter={(v) => fmtThousandsLabel(v)} />
             </Line>
           </ComposedChart>
         </ResponsiveContainer>
@@ -2253,15 +2928,15 @@ function DealSizeCard({ data, hasOpps, onDownload }) {
   );
 }
 
-function CommissionsCard({ data, hasCommissions, onDownload }) {
+function CommissionsCard({ data, hasCommissions, onDownload, onExportPoint }) {
   const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
-      <ChartHeader title="Commissions" onDownload={onDownload} canDownload={hasCommissions && data.length > 0} />
+      <ChartHeader title="Commissions" chartId="commissions" onDownload={onDownload} canDownload={hasCommissions && data.length > 0} />
       {!hasCommissions ? (
-        <div className={styles.empty}>No deals with a Paid to Date amount — add deals on the Clients › Deals tab.</div>
+        <div className={styles.empty}>No deals with a Year value — add a Year and Commission on the Clients › Deals tab.</div>
       ) : data.length === 0 ? (
-        <div className={styles.empty}>No deals with a Current Term Start Date.</div>
+        <div className={styles.empty}>No deals with a Year value.</div>
       ) : (
         <ResponsiveContainer width="100%" height={320}>
           <BarChart data={data} margin={{ top: 22, right: 8, left: 16, bottom: 4 }}>
@@ -2273,10 +2948,11 @@ function CommissionsCard({ data, hasCommissions, onDownload }) {
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
+                onExportPoint={onExportPoint}
                 labelText={(label) => `Year ${label}`}
                 valueFormat={(v) => (v == null ? '—' : fmtMoneyFull(v))}
                 explain={(row) => ({
-                  formula: 'Sum of each deal’s Paid to Date amount, bucketed by the calendar year of its Current Term Start Date. Paid to Date mirrors the Deals tab — the matching Commissions roster total when the BFO name maps, else the value stored on the deal.',
+                  formula: 'Sum of the Deals tab’s Commission column for every deal whose Year column equals this year.',
                   inputs: [
                     { label: 'Deals counted', value: (row._rowCount ?? 0).toLocaleString('en-US') },
                     { label: 'Total', value: fmtMoneyFull(row.total) },

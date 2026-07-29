@@ -13,7 +13,8 @@ import styles from './ListsView.module.css';
 
 const SUBTABS = [
   { key: 'raclients', label: 'RA Clients' },
-  { key: 'targets', label: 'Target Accounts' },
+  { key: 'targets', label: 'Targets' },
+  { key: 'largest', label: 'Largest', storageKey: 'largest-list-override' },
   { key: 'strategic', label: 'Strategic Accounts', storageKey: 'strategic-accounts-override' },
   { key: 'sites', label: 'Utility Lookup' },
   { key: 'mastersites', label: 'Master Site List' },
@@ -41,7 +42,7 @@ function normalizeListCompany(name) {
 }
 function pickListNameKey(headers) {
   if (!headers?.length) return null;
-  return headers.find(k => /company|name|organi[sz]ation|signatory|entity/i.test(k)) || headers[0];
+  return headers.find(k => /company|name|organi[sz]ation|signatory|entity|\bfirm\b/i.test(k)) || headers[0];
 }
 function safeReadMap(key) {
   try {
@@ -190,6 +191,22 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
       window.removeEventListener('storage', bump);
     };
   }, []);
+
+  // When a brand-new Target Accounts list is uploaded, wipe every
+  // per-prospect tier-mismatch dismissal so the new list starts from a
+  // clean slate — any mismatch that was previously "Dismissed" on the My
+  // Accounts page will re-surface for re-review against the fresh tiers.
+  // Returns the number of prospects whose dismissal was cleared.
+  function clearTierMismatchIgnores() {
+    let cleared = 0;
+    for (const p of prospects) {
+      if (p.ignoreTierMismatch) {
+        if (updateProspect) updateProspect(p.id, { ignoreTierMismatch: false });
+        cleared++;
+      }
+    }
+    return cleared;
+  }
 
   const listDefinitions = useMemo(
     () => SUBTABS.filter(t => t.storageKey),
@@ -379,7 +396,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
       </div>
       <div className={styles.content}>
         {subtab === 'raclients' && <RAClientsView settings={settings} updateSettings={updateSettings} />}
-        {subtab === 'targets' && <TargetAccountsView onDataLoaded={onTargetAccountsLoaded} settings={settings} updateSettings={updateSettings} cdmName={cdmName} />}
+        {subtab === 'targets' && <TargetAccountsView onDataLoaded={onTargetAccountsLoaded} settings={settings} updateSettings={updateSettings} cdmName={cdmName} onListUploaded={clearTierMismatchIgnores} />}
         {subtab === 'recaclients' && <RECAClientsView prospects={prospects} onSelectProspect={onSelectProspect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} />}
         {subtab === 'ecoactclients' && <EcoActClientsView prospects={prospects} onSelectProspect={onSelectProspect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} />}
         {subtab === 'strategic' && (
@@ -397,8 +414,25 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             updateSettingsPath={updateSettingsPath}
           />
         )}
-        {subtab === 'sites' && <SitesView settings={settings} updateSettings={updateSettings} prospects={prospects} />}
-        {subtab === 'mastersites' && <MasterSiteListView />}
+        {subtab === 'largest' && (
+          <UploadedListView
+            storageKey="largest-list-override"
+            tableIdPrefix="largest-list"
+            title="Largest"
+            singular="company"
+            plural="companies"
+            accountSource="targetAccounts"
+            accountLabel="Target Accounts"
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
+            cdmName={cdmName}
+            settings={settings}
+            updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
+          />
+        )}
+        {subtab === 'sites' && <SitesView settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} prospects={prospects} updateProspect={updateProspect} />}
+        {subtab === 'mastersites' && <MasterSiteListView prospects={prospects} />}
         {subtab === 'csrd' && (
           <UploadedListView
             storageKey="csrd-list-override"

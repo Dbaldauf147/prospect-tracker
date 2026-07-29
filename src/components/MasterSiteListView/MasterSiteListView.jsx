@@ -4,6 +4,9 @@ import { saveList, loadList, clearList } from '../../utils/uploadedListStore';
 import { loadUtilityRates } from '../../utils/utilityRatesStore';
 import { parseBestSheet } from '../../utils/xlsxParse';
 import { lookupUtilityForZip } from '../../utils/utilityClassify';
+import { lookupIsoForZip, backfillIso } from '../../utils/isoLookup';
+import { buildCompanyIndex, hasMatchInIndex } from '../../utils/companyIndex';
+import { Badge } from '../common/Badge';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import {
   MASTER_FIELDS,
@@ -32,6 +35,7 @@ const ALL = '__all__';
 // row-number and delete columns are fixed and not part of this list.
 const COLUMNS = [
   ...MASTER_FIELDS.map(f => ({ key: f.key, label: f.label, kind: 'field' })),
+  { key: 'iso', label: 'ISO / RTO', kind: 'iso', title: 'Wholesale electricity market (ISO/RTO) resolved from the ZIP via EPA eGRID subregions. A badge flags when the ZIP straddles markets (seam) or the subregion is ambiguous (verify).' },
   { key: '__utility__', label: 'Indicative Utility', kind: 'utility', title: 'Indicative electric utility pulled from the Utility Lookup zip table' },
   { key: '__status__', label: 'Status', kind: 'status', title: 'Regulated vs Deregulated, derived from the indicative utility' },
 ];
@@ -40,8 +44,33 @@ const COLUMNS = [
 const DEFAULT_WIDTHS = {
   company: 180, propertyName: 180, subsector: 130, country: 120,
   address: 220, city: 130, state: 90, zip: 90,
-  __utility__: 200, __status__: 120,
+  iso: 130, __utility__: 200, __status__: 120,
 };
+
+// Badge colours for the low-confidence ISO cases.
+const ISO_BADGE_COLOR = { seam: '#D97706', verify: '#7C3AED' };
+
+// Stamp the stored ISO fields onto a row from its zip. Kept here so every
+// create / edit / import path assigns ISO consistently (and idempotently).
+function withIso(row) {
+  return { ...row, ...lookupIsoForZip(row?.zip) };
+}
+
+// Display/sortable/filterable text for a column on a given row. Field
+// columns read straight off the row; the three derived columns mirror
+// what their cells render so sorting and filtering match the eye.
+function isoText(row) {
+  const info = row.iso_confidence ? { iso: row.iso ?? null } : lookupIsoForZip(row.zip);
+  if (!info.iso) return '';
+  return info.iso.startsWith('None') ? 'None' : info.iso;
+}
+function cellText(key, row, look) {
+  if (key === 'iso') return isoText(row);
+  if (key === '__utility__') return look.utility || '';
+  if (key === '__status__') return look.status || '';
+  return String(row[key] || '');
+}
+
 const MIN_COL_WIDTH = 60;
 
 function colWidthOf(widths, key) {
@@ -135,7 +164,38 @@ function rowsFromMapping(dataRows, mapping) {
   }).filter(r => !isRowEmpty(r));
 }
 
-export function MasterSiteListView() {
+// One row in the "match unmapped companies" popup: an unmapped Master Site
+// List company + a predictive input to pick the Table View company to rename
+// its rows to. Match is enabled only once the typed value is an actual Table
+// View company (picked from the shared datalist).
+// One unmapped company + its Table View picker. The selection is staged
+// (held by the parent), not applied on the spot — the parent's "Save &
+// rename" button commits every pick at once. A green check marks a row
+// whose typed text resolves to a real Table View company.
+function UnmappedMatchRow({ name, count, value, canonical, onChange }) {
+  return (
+    <div className={styles.unmappedRow}>
+      <div className={styles.unmappedName} title={name}>
+        {name}<span className={styles.unmappedCount}> · {count} site{count === 1 ? '' : 's'}</span>
+      </div>
+      <span className={styles.unmappedArrow}>→</span>
+      <input
+        className={styles.unmappedInput}
+        list="msl-tableview-companies"
+        placeholder="Table View company…"
+        value={value}
+        onChange={e => onChange(name, e.target.value)}
+      />
+      <span
+        className={canonical ? styles.unmappedCheckOn : styles.unmappedCheck}
+        title={canonical ? `Will rename ${count} row${count === 1 ? '' : 's'} to “${canonical}”` : 'Pick a Table View company to stage this rename'}
+        aria-label={canonical ? 'Selection ready' : 'No selection yet'}
+      >{canonical ? '✓' : ''}</span>
+    </div>
+  );
+}
+
+export function MasterSiteListView({ prospects = [] }) {
   const [rows, setRows] = useState([]);
   const [zipMap, setZipMap] = useState(null);
   const [loaded, setLoaded] = useState(false);
@@ -148,6 +208,28 @@ export function MasterSiteListView() {
   const [colWidths, setColWidths] = useState(() => readJsonLs(WIDTHS_LS_KEY, {}));
   const [hiddenCols, setHiddenCols] = useState(() => new Set(readJsonLs(HIDDEN_LS_KEY, [])));
   const [showColMenu, setShowColMenu] = useState(false);
+  // Sort: { key, dir } while a column is sorted; key null = natural order.
+  const [sort, setSort] = useState({ key: null, dir: 'asc' });
+  // Per-column substring filters (keyed by column key) + a toggle for the
+  // in-header filter input row.
+  const [colFilters, setColFilters] = useState({});
+  const [showFilters, setShowFilters] = useState(false);
+  // When on, show only sites whose company isn't found among the Table View
+  // (prospects) companies — i.e. unmapped to the tracker.
+  const [unmappedOnly, setUnmappedOnly] = useState(false);
+  // Opens the popup that lists unmapped companies and lets you match each to
+  // a Table View company (renaming its rows).
+  const [showUnmapped, setShowUnmapped] = useState(false);
+  // Staged unmapped→Table View picks, keyed by the unmapped company name.
+  // Held here (not per-row) so the modal's "Save & rename" button can commit
+  // every selection in one pass.
+  const [matchPicks, setMatchPicks] = useState({});
+  // Bulk-rename prompt: { oldName, newName, count } after a company edit that
+  // leaves other rows still carrying the old name.
+  const [bulkRename, setBulkRename] = useState(null);
+  // Remembers the company value a cell held when focused, so a blur can tell
+  // whether (and from what) the name actually changed.
+  const companyEditRef = useRef(null);
   const fileInputRef = useRef(null);
   const colMenuRef = useRef(null);
   const resizeRef = useRef(null); // { key, startX, startW } during a drag
@@ -204,6 +286,29 @@ export function MasterSiteListView() {
     });
   }, []);
 
+  // Header click cycles the sort on that column: asc → desc → off.
+  const toggleSort = useCallback((key) => {
+    setSort(prev => {
+      if (prev.key !== key) return { key, dir: 'asc' };
+      if (prev.dir === 'asc') return { key, dir: 'desc' };
+      return { key: null, dir: 'asc' };
+    });
+  }, []);
+
+  const setColFilter = useCallback((key, value) => {
+    setColFilters(prev => ({ ...prev, [key]: value }));
+  }, []);
+
+  const clearSortAndFilters = useCallback(() => {
+    setSort({ key: null, dir: 'asc' });
+    setColFilters({});
+  }, []);
+
+  const hasActiveFilters = useMemo(
+    () => Object.values(colFilters).some(v => v && v.trim()),
+    [colFilters],
+  );
+
   const visibleColumns = useMemo(() => COLUMNS.filter(c => !hiddenCols.has(c.key)), [hiddenCols]);
 
   // Initial load: master rows + the zip→utility lookup table.
@@ -236,21 +341,159 @@ export function MasterSiteListView() {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [rows]);
 
+  // Distinct Table View (prospects) company names, sorted — powers both the
+  // predictive-search datalist on the Company cells and the mapping index.
+  const tableViewNames = useMemo(() => {
+    const names = [];
+    const seen = new Set();
+    for (const p of (prospects || [])) {
+      const c = String(p?.company || '').trim();
+      if (!c) continue;
+      const k = c.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      names.push(c);
+    }
+    return names.sort((a, b) => a.localeCompare(b));
+  }, [prospects]);
+
+  // Index of the Table View company names, using the app's shared fuzzy
+  // company matching so suffix / case / punctuation variants still count as
+  // "mapped".
+  const tableViewIndex = useMemo(() => buildCompanyIndex(tableViewNames), [tableViewNames]);
+
+  // Distinct Master Site List companies with no match among the Table View
+  // companies — the "unmapped" set the filter narrows to.
+  const unmappedCompanies = useMemo(() => {
+    const set = new Set();
+    for (const c of companies) {
+      if (!hasMatchInIndex(tableViewIndex, c)) set.add(c);
+    }
+    return set;
+  }, [companies, tableViewIndex]);
+
+  // The unmapped companies with their site counts, sorted — drives the
+  // match popup. Recomputes as rows are matched/renamed so matched
+  // companies drop off the list.
+  const unmappedList = useMemo(() => {
+    const counts = new Map();
+    for (const r of rows) {
+      const c = String(r.company || '').trim();
+      if (c && unmappedCompanies.has(c)) counts.set(c, (counts.get(c) || 0) + 1);
+    }
+    return [...counts.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [rows, unmappedCompanies]);
+
   // Visible rows carry their index in the full array so edits/deletes
-  // target the right row even while filtered.
+  // target the right row even while filtered or sorted. Each also carries
+  // its resolved utility lookup so filter, sort, and render agree and we
+  // only look it up once per row.
   const visible = useMemo(() => {
-    const idx = rows.map((r, i) => ({ r, i }));
-    if (companyFilter === ALL) return idx;
-    return idx.filter(({ r }) => String(r.company || '').trim() === companyFilter);
-  }, [rows, companyFilter]);
+    let idx = rows.map((r, i) => ({ r, i, look: lookupUtilityForZip(zipMap, r.zip) }));
+    if (companyFilter !== ALL) {
+      idx = idx.filter(({ r }) => String(r.company || '').trim() === companyFilter);
+    }
+    if (unmappedOnly) {
+      idx = idx.filter(({ r }) => unmappedCompanies.has(String(r.company || '').trim()));
+    }
+    const active = Object.entries(colFilters).filter(([, v]) => v && v.trim());
+    if (active.length) {
+      idx = idx.filter(({ r, look }) =>
+        active.every(([key, val]) =>
+          cellText(key, r, look).toLowerCase().includes(val.trim().toLowerCase())));
+    }
+    if (sort.key) {
+      const dir = sort.dir === 'desc' ? -1 : 1;
+      idx = idx.slice().sort((a, b) => {
+        const va = cellText(sort.key, a.r, a.look);
+        const vb = cellText(sort.key, b.r, b.look);
+        // Blanks always sort to the bottom regardless of direction.
+        if (!va && !vb) return 0;
+        if (!va) return 1;
+        if (!vb) return -1;
+        return dir * va.localeCompare(vb, undefined, { numeric: true, sensitivity: 'base' });
+      });
+    }
+    return idx;
+  }, [rows, companyFilter, unmappedOnly, unmappedCompanies, colFilters, sort, zipMap]);
 
   const updateCell = useCallback((index, key, value) => {
     setRows(prev => {
       const next = prev.slice();
-      next[index] = { ...next[index], [key]: value };
+      let row = { ...next[index], [key]: value };
+      // Re-derive the stored ISO fields whenever the zip changes.
+      if (key === 'zip') row = { ...row, ...lookupIsoForZip(value) };
+      next[index] = row;
       return next;
     });
   }, []);
+
+  // After editing a company cell, if other rows still carry the name it used
+  // to hold, offer to rename those too. `rows` is already current here (the
+  // edited row now shows the new name), so we count the stragglers directly.
+  function offerBulkRename(index, newValueRaw) {
+    const edit = companyEditRef.current;
+    companyEditRef.current = null;
+    if (!edit) return;
+    const oldName = String(edit.original || '').trim();
+    const newName = String(newValueRaw || '').trim();
+    if (!oldName || !newName || oldName === newName) return;
+    const count = rows.filter((r, idx) => idx !== index && String(r.company || '').trim() === oldName).length;
+    if (count > 0) setBulkRename({ oldName, newName, count });
+  }
+
+  // Apply the pending rename to every row still carrying the old name.
+  const applyBulkRename = useCallback(() => {
+    setBulkRename(current => {
+      if (!current) return null;
+      const target = current.oldName;
+      setRows(prev => prev.map(r =>
+        String(r.company || '').trim() === target ? { ...r, company: current.newName } : r
+      ));
+      return null;
+    });
+  }, []);
+
+  // Match an unmapped company to a Table View company: rename every row that
+  // carries the old name so it maps. Dropping that company off the unmapped
+  // list falls out of the rows change.
+  // Stage (or clear) one company's pick as the user types / picks.
+  const setMatchPick = useCallback((name, value) => {
+    setMatchPicks(prev => ({ ...prev, [name]: value }));
+  }, []);
+
+  // Resolve each staged pick to a canonical Table View company (exact,
+  // case-insensitive). Only picks that land on a real Table View company —
+  // and actually change the name — count as a selection.
+  const resolvedPicks = useMemo(() => {
+    const out = [];
+    for (const u of unmappedList) {
+      const raw = String(matchPicks[u.name] || '').trim();
+      if (!raw) continue;
+      const canonical = tableViewNames.find(n => n.toLowerCase() === raw.toLowerCase());
+      if (canonical && canonical.toLowerCase() !== u.name.toLowerCase()) {
+        out.push({ oldName: u.name, newName: canonical, count: u.count });
+      }
+    }
+    return out;
+  }, [matchPicks, unmappedList, tableViewNames]);
+
+  // Commit every staged pick at once: rename all matching rows so the
+  // companies map to Table View. Matched companies then drop off the list.
+  const applyMatchPicks = useCallback(() => {
+    if (!resolvedPicks.length) return;
+    const map = new Map(resolvedPicks.map(p => [p.oldName, p.newName]));
+    setRows(prev => prev.map(r => {
+      const c = String(r.company || '').trim();
+      return map.has(c) ? { ...r, company: map.get(c) } : r;
+    }));
+    const nCompanies = resolvedPicks.length;
+    const nRows = resolvedPicks.reduce((s, p) => s + p.count, 0);
+    setBusy(`Renamed ${nRows} row${nRows === 1 ? '' : 's'} across ${nCompanies} compan${nCompanies === 1 ? 'y' : 'ies'} to match Table View.`);
+    setMatchPicks({});
+  }, [resolvedPicks]);
 
   const deleteRow = useCallback((index) => {
     setRows(prev => prev.filter((_, i) => i !== index));
@@ -259,7 +502,7 @@ export function MasterSiteListView() {
   function addRow() {
     const seed = emptyRow();
     if (companyFilter !== ALL) seed.company = companyFilter;
-    setRows(prev => [...prev, seed]);
+    setRows(prev => [...prev, withIso(seed)]);
   }
 
   // Append rows, dropping any that duplicate an existing row by
@@ -274,7 +517,7 @@ export function MasterSiteListView() {
         const k = rowKey(r);
         if (seen.has(k)) continue;
         seen.add(k);
-        toAdd.push(r);
+        toAdd.push(withIso(r));
       }
       added = toAdd.length;
       return toAdd.length ? [...prev, ...toAdd] : prev;
@@ -423,6 +666,10 @@ export function MasterSiteListView() {
     const data = scopeRows.filter(r => !isRowEmpty(r)).map(r => {
       const o = {};
       MASTER_FIELDS.forEach((f, i) => { o[CANONICAL_HEADERS[i]] = r[f.key] || ''; });
+      const iso = r.iso_confidence ? { iso: r.iso ?? null, egrid_subregion: r.egrid_subregion ?? null, iso_confidence: r.iso_confidence } : lookupIsoForZip(r.zip);
+      o['ISO / RTO'] = iso.iso || '';
+      o['eGRID Subregion'] = iso.egrid_subregion || '';
+      o['ISO Confidence'] = iso.iso_confidence || '';
       const look = lookupUtilityForZip(zipMap, r.zip);
       o['Indicative Utility'] = look.utility || '';
       o['Regulated/Deregulated'] = look.status || '';
@@ -440,6 +687,20 @@ export function MasterSiteListView() {
     setRows([]);
     clearList(MASTER_STORAGE_KEY).catch(() => {});
     setBusy('Cleared.');
+  }
+
+  // Bulk (re)assign ISO to every row from its zip. Idempotent — running it
+  // again when nothing's changed is a no-op. Logs a full summary to the
+  // console and a short recap to the toolbar status line.
+  function backfillAllIso() {
+    if (rows.length === 0) { setBusy('No rows to backfill.'); return; }
+    const { rows: next, summary } = backfillIso(rows);
+    if (summary.updated > 0) setRows(next);
+    console.log('[Master Site List] ISO backfill summary:', summary);
+    setBusy(
+      `ISO backfill: ${summary.updated} updated, ${summary.unchanged} unchanged of ${summary.total} · ` +
+      `${summary.seam} seam / ${summary.verify} verify / ${summary.unknown} unknown.`
+    );
   }
 
   if (!loaded) return <div className={styles.empty}>Loading…</div>;
@@ -463,8 +724,27 @@ export function MasterSiteListView() {
           {companies.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
 
+        <button
+          className={unmappedOnly ? styles.btnActive : styles.btn}
+          onClick={() => setShowUnmapped(true)}
+          disabled={!prospects.length}
+          title={prospects.length
+            ? 'List companies not found among the Table View companies and match them to one'
+            : 'Table View companies are still loading'}
+        >
+          Unmapped to Table View{unmappedCompanies.size ? ` (${unmappedCompanies.size})` : ''}
+        </button>
+
         <button className={styles.btn} onClick={importFromUtilityLookup} title="Pull sites in from the Utility Lookup page">↙ From Utility Lookup</button>
         <button className={styles.btn} onClick={exportToUtilityLookup} title="Send the selected sites to the Utility Lookup page">↗ To Utility Lookup</button>
+
+        <button
+          className={showFilters || hasActiveFilters ? styles.btnActive : styles.btn}
+          onClick={() => setShowFilters(v => !v)}
+          title="Show a filter box under each column header"
+        >
+          Filter ▾
+        </button>
 
         <div className={styles.colMenuWrap} ref={colMenuRef}>
           <button className={styles.btn} onClick={() => setShowColMenu(v => !v)} title="Show or hide columns">
@@ -492,12 +772,26 @@ export function MasterSiteListView() {
 
         <span className={styles.spacer} />
 
+        {(sort.key || hasActiveFilters) && (
+          <button className={styles.clearLink} onClick={clearSortAndFilters} title="Clear all column sorting and filters">
+            Clear sort/filter
+          </button>
+        )}
         <span className={styles.count}>{visible.length} shown</span>
+        <button className={styles.btn} onClick={backfillAllIso} title="Assign ISO / RTO to every row from its zip (via EPA eGRID). Safe to re-run.">Backfill ISO</button>
         <button className={styles.btn} onClick={exportExcel}>Export Excel</button>
         <button className={styles.btnDanger} onClick={clearAll}>Clear</button>
       </div>
 
       {busy && <div className={styles.hint}>{busy}</div>}
+
+      {/* Predictive-search source for the Company cells: every Company input
+          references this one datalist of Table View company names. */}
+      {tableViewNames.length > 0 && (
+        <datalist id="msl-tableview-companies">
+          {tableViewNames.map(n => <option key={n} value={n} />)}
+        </datalist>
+      )}
 
       <div className={styles.tableWrap}>
         <table className={styles.table} style={{ tableLayout: 'fixed', width: 'auto' }}>
@@ -509,17 +803,38 @@ export function MasterSiteListView() {
           <thead>
             <tr>
               <th className={styles.rowNum}>#</th>
-              {visibleColumns.map(c => (
-                <th key={c.key} title={c.title || c.label}>
-                  <span className={styles.thLabel}>{c.label}</span>
-                  <span
-                    className={styles.resizer}
-                    title="Drag to resize"
-                    onMouseDown={(e) => startResize(c.key, e)}
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-              ))}
+              {visibleColumns.map(c => {
+                const sorted = sort.key === c.key;
+                return (
+                  <th key={c.key} title={c.title || c.label}>
+                    <span
+                      className={styles.thHead}
+                      onClick={() => toggleSort(c.key)}
+                      title={`Sort by ${c.label}`}
+                    >
+                      <span className={styles.thLabel}>{c.label}</span>
+                      <span className={sorted ? styles.sortArrowActive : styles.sortArrow}>
+                        {sorted ? (sort.dir === 'asc' ? '▲' : '▼') : '⇅'}
+                      </span>
+                    </span>
+                    {showFilters && (
+                      <input
+                        className={styles.filterInput}
+                        value={colFilters[c.key] || ''}
+                        placeholder="Filter…"
+                        onChange={(e) => setColFilter(c.key, e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    )}
+                    <span
+                      className={styles.resizer}
+                      title="Drag to resize"
+                      onMouseDown={(e) => startResize(c.key, e)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </th>
+                );
+              })}
               <th />
             </tr>
           </thead>
@@ -530,20 +845,56 @@ export function MasterSiteListView() {
                   No sites yet. Add a row, paste a list, import a file, or pull from the Utility Lookup page.
                 </td>
               </tr>
-            ) : visible.map(({ r, i }) => {
-              const look = lookupUtilityForZip(zipMap, r.zip);
+            ) : visible.map(({ r, i, look }) => {
               return (
                 <tr key={i}>
                   <td className={styles.rowNum}>{i + 1}</td>
                   {visibleColumns.map(c => {
                     if (c.kind === 'field') {
+                      // The Company cell offers predictive search against the
+                      // Table View company names via a shared <datalist>, plus
+                      // the bulk-rename prompt on blur.
+                      const isCompany = c.key === 'company';
                       return (
                         <td key={c.key}>
                           <input
                             className={styles.cellInput}
                             value={r[c.key] || ''}
                             onChange={e => updateCell(i, c.key, e.target.value)}
+                            list={isCompany && tableViewNames.length ? 'msl-tableview-companies' : undefined}
+                            autoComplete={isCompany ? 'off' : undefined}
+                            {...(isCompany ? {
+                              onFocus: e => { companyEditRef.current = { original: e.target.value }; },
+                              onBlur: e => offerBulkRename(i, e.target.value),
+                            } : {})}
                           />
+                        </td>
+                      );
+                    }
+                    if (c.kind === 'iso') {
+                      // Prefer the stored fields; fall back to a live lookup so
+                      // a row that predates the stamp still shows something.
+                      const info = r.iso_confidence
+                        ? { iso: r.iso ?? null, egrid_subregion: r.egrid_subregion ?? null, iso_confidence: r.iso_confidence }
+                        : lookupIsoForZip(r.zip);
+                      if (!info.iso) {
+                        return <td key={c.key} className={styles.derived}><span style={{ color: 'var(--color-text-muted)' }}>—</span></td>;
+                      }
+                      const isNone = info.iso.startsWith('None');
+                      const cellTitle = [
+                        isNone ? info.iso : `ISO / RTO: ${info.iso}`,
+                        info.egrid_subregion ? `eGRID subregion ${info.egrid_subregion}` : null,
+                        info.iso_confidence === 'seam' ? 'ZIP straddles two markets — primary market shown' : null,
+                        info.iso_confidence === 'verify' ? 'Subregion is ambiguous — verify' : null,
+                      ].filter(Boolean).join(' · ');
+                      return (
+                        <td key={c.key} className={styles.derived} title={cellTitle}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                            <span style={isNone ? { color: 'var(--color-text-muted)' } : undefined}>{isNone ? 'None' : info.iso}</span>
+                            {(info.iso_confidence === 'seam' || info.iso_confidence === 'verify') && (
+                              <Badge label={info.iso_confidence} color={ISO_BADGE_COLOR[info.iso_confidence]} />
+                            )}
+                          </span>
                         </td>
                       );
                     }
@@ -652,6 +1003,76 @@ export function MasterSiteListView() {
           </div>
         );
       })()}
+
+      {bulkRename && (
+        <div className={styles.modalBackdrop} onClick={() => setBulkRename(null)}>
+          <div className={styles.modal} onClick={e => e.stopPropagation()}>
+            <h3 className={styles.modalTitle}>Rename company across rows?</h3>
+            <p className={styles.modalText}>
+              You changed this row from “{bulkRename.oldName}” to “{bulkRename.newName}”.
+              {' '}{bulkRename.count} other row{bulkRename.count === 1 ? '' : 's'} still
+              {' '}list{bulkRename.count === 1 ? 's' : ''} “{bulkRename.oldName}”. Rename
+              {' '}{bulkRename.count === 1 ? 'it' : 'them'} to “{bulkRename.newName}” too?
+            </p>
+            <div className={styles.modalActions}>
+              <button className={styles.btn} onClick={() => setBulkRename(null)}>Keep just this row</button>
+              <button className={styles.btnPrimary} onClick={applyBulkRename}>
+                Rename all {bulkRename.count + 1} rows
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showUnmapped && (
+        <div className={styles.modalBackdrop} onClick={() => setShowUnmapped(false)}>
+          <div className={styles.modalWide} onClick={e => e.stopPropagation()}>
+            <h3 className={styles.modalTitle}>Unmapped to Table View ({unmappedList.length})</h3>
+            <p className={styles.modalText}>
+              These Master Site List companies don’t match any Table View company. Pick a
+              Table View company for each to rename its rows so they map — start typing to
+              search. Matched companies drop off the list.
+            </p>
+            <label className={styles.checkRow}>
+              <input type="checkbox" checked={unmappedOnly} onChange={e => setUnmappedOnly(e.target.checked)} />
+              Also filter the table below to these companies
+            </label>
+            {unmappedList.length === 0 ? (
+              <div className={styles.unmappedDone}>Every company is mapped to a Table View company. 🎉</div>
+            ) : (
+              <div className={styles.unmappedList}>
+                {unmappedList.map(u => {
+                  const raw = String(matchPicks[u.name] || '');
+                  const canonical = tableViewNames.find(n => n.toLowerCase() === raw.trim().toLowerCase()) || '';
+                  return (
+                    <UnmappedMatchRow
+                      key={u.name}
+                      name={u.name}
+                      count={u.count}
+                      value={raw}
+                      canonical={canonical}
+                      onChange={setMatchPick}
+                    />
+                  );
+                })}
+              </div>
+            )}
+            <div className={styles.modalActions}>
+              <button className={styles.btn} onClick={() => setShowUnmapped(false)}>Close</button>
+              <button
+                className={styles.btnPrimary}
+                disabled={!resolvedPicks.length}
+                onClick={applyMatchPicks}
+                title={resolvedPicks.length
+                  ? `Save ${resolvedPicks.length} selection${resolvedPicks.length === 1 ? '' : 's'} and rename the matched companies`
+                  : 'Pick a Table View company for at least one row first'}
+              >
+                Save &amp; rename{resolvedPicks.length ? ` (${resolvedPicks.length})` : ''}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -16,6 +16,7 @@ import {
   LinkColumnsModal,
 } from '../common/columnLinks';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
+import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
 import { dbGet } from '../../utils/db';
 import {
   OPPS2_FIRESTORE_COLLECTION,
@@ -30,14 +31,27 @@ import {
 import { pushOpps2Backup } from '../../utils/opps2Backup';
 import { loadOptionLinks, setOppOptionLink, OPTION_LINKS_EVENT } from '../../utils/pricingOptionLinks';
 import { OPPS_PRICING_SNAPSHOT_EVENT } from '../../utils/oppsPricingSnapshot';
+import { loadOppSourceFile } from '../../utils/oppPricingSourceFile';
 import { fmtMoneyWhole, toNum, unitCountOrOne, rowYearRevenue } from '../../utils/pricingOptionCalc';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
+import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
+import { loadTimelineTypeOptions, addTimelineTypeOption, TIMELINE_TYPE_OPTIONS_EVENT } from '../../utils/timelineTypeOptions';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { computeListFlags } from '../../utils/listFlags';
+import { isActiveOppStage } from '../../utils/targetAccountOpps';
 import { splitPeOwners, joinPeOwners } from '../../utils/peOwners';
 import { TYPES, FRAMEWORKS } from '../../data/enums';
 import { NewOppsScheduleModal } from './NewOppsScheduleModal';
+import {
+  TRACKED_STAGES,
+  TRACKED_STAGES_SET,
+  PULL_THROUGH_RE,
+  stageActionFor,
+  buildStageDaysRows,
+  groupStageDaysByStage,
+  StageDaysBoard,
+} from './daysInStage';
 import { downloadNewOppsOutlookDraft } from '../../utils/newOppsDigestEmail';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { reasonOptionsForCompetition } from '../../data/closeNotSoldRules';
@@ -73,6 +87,11 @@ const NFAT_SCHEDULES_KEY = 'opps2-nfat-schedules';
 // independent schedule (days of week + time of day).
 const NFAT_SCHEDULE_TYPES = ['check', 'x', 'any'];
 const NFAT_TYPE_LABELS = { check: '✓ Check marks', x: '✗ X marks', any: 'Any value' };
+
+// HQ Region choices offered when the New Opp modal creates a new Table
+// View company. Mirrors the option set the MyAccounts / PE Portfolio
+// cells use so regions stay consistent across views.
+const HQ_REGION_OPTIONS = ['North America', 'Outside of North America'];
 
 function defaultNfatSchedules() {
   const base = { enabled: false, days: [1, 2, 3, 4, 5], time: '06:00', lastRunAt: 0 };
@@ -130,6 +149,9 @@ const DEFAULT_HEADERS = [
   // Quote-stage detail columns. Captured via the QuotedFollowUpModal that
   // pops when an opp moves into the "Quoted" stage.
   'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date',
+  // Free-text note tracking where the deal sits with credit approval
+  // (e.g. "Pending", "Approved 6/24"). Shown as a line in the Opp details.
+  'Credit approval',
 ];
 
 // Key columns to show by default (the rest are available via Columns toggle)
@@ -234,42 +256,15 @@ function findCloseDerivedColumns(headers) {
   return { yearCols, monthCols };
 }
 
-// Stages the Days-in-Stage tab reports on. Ordered to mirror the
-// pipeline progression so a row stays under one bucket as it moves
-// forward. Closed stages (Sold / Not Sold) are intentionally excluded
-// — the tab tracks how long active opps are stalling in each step.
-const TRACKED_STAGES = ['Not Started', 'Lead', 'Qualifying', 'Quoting', 'Quoted', 'Contracting', 'Agreement Sent'];
-const TRACKED_STAGES_SET = new Set(TRACKED_STAGES);
+// Days-in-Stage constants + board live in ./daysInStage so the PE
+// Portfolio page can render the identical board over its PE-scoped opps.
+// TRACKED_STAGES, TRACKED_STAGES_SET, PULL_THROUGH_RE, stageActionFor,
+// buildStageDaysRows, groupStageDaysByStage, and StageDaysBoard are
+// imported at the top of the file.
 
 // Closed (won/lost) stages — an opp in one of these is no longer active.
 // Mirrors the in-component CLOSED_STAGES used by the activity filter.
 const CLOSED_STAGES_SET = new Set(['Sold', 'Not Sold']);
-
-// Stage-specific "stalled too long" thresholds. An opp that has sat in
-// one of these stages for more than `days` calendar days surfaces in the
-// Days-in-Stage "Needs action" buckets with the paired suggestion. Stages
-// not listed (Quoting, Contracting, Agreement Sent) have no threshold, so
-// they never raise an action prompt.
-const STAGE_ACTION_THRESHOLDS = {
-  'Not Started': { days: 120, suggestion: 'Qualify or kill' },
-  'Lead':        { days: 90,  suggestion: 'Qualify or kill' },
-  'Qualifying':  { days: 60,  suggestion: 'Quote or kill' },
-  'Quoted':      { days: 90,  suggestion: 'Contract or kill' },
-};
-
-// Pull-through opps ride along with a parent sale rather than running
-// their own pipeline, so they're excluded from the Days-in-Stage view.
-// Matched on the Scope text, mirroring PipelineView's close-rate filter.
-const PULL_THROUGH_RE = /pull[\s-]?through/i;
-
-// The stage-action rule an opp has tripped, or null if it's within the
-// limit (or its stage has no limit). Shared by the kanban so flagged opps
-// can render inline with their suggestion instead of in a separate list.
-function stageActionFor(stage, days) {
-  const rule = STAGE_ACTION_THRESHOLDS[stage];
-  if (!rule || days == null || days <= rule.days) return null;
-  return rule;
-}
 
 // Read-only columns whose value is derived from other cells.
 //   Call In    = calendar days from today to the Follow Up date
@@ -285,7 +280,242 @@ const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
 // it up — and its "Find out the Story" default lands somewhere
 // visible on the next new opp.
 const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'No Further Action Today', 'Sales Partner',
-  'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date', 'BFO Company Name', 'PE Owner'];
+  'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date', 'BFO Company Name', 'PE Owner', 'Credit approval'];
+
+// Strips zero-width / BOM characters. Built with fromCharCode so the
+// source stays pure ASCII — embedding the literal invisible characters
+// (or relying on \u escapes that tooling can mangle) is fragile.
+const ZERO_WIDTH_RE = new RegExp([0x200B, 0x200C, 0x200D, 0xFEFF].map(c => String.fromCharCode(c)).join('|'), 'g');
+
+// Normalize a cell value for matching: drop zero-width chars, trim, and
+// casefold. Imported or pasted opps sometimes carry invisible characters
+// or odd casing (e.g. a trailing zero-width space) that would otherwise
+// dodge an exact string match even though the cell *looks* right in the UI.
+function normCell(s) {
+  return String(s ?? '').replace(ZERO_WIDTH_RE, '').trim().toLowerCase();
+}
+
+// The Flags column carries the auto USD 🚩. Match the header tolerantly
+// (casing / whitespace / invisible chars, "Flag" or "Flags") so the
+// indicator still renders if the saved column name isn't an exact
+// "Flags" — otherwise the cell falls back to a plain text editor and the
+// flag never shows.
+function isFlagsColumn(h) {
+  const n = normCell(h);
+  return n === 'flags' || n === 'flag';
+}
+
+// Stages at or before Lead — these never warrant a USD value, so they
+// never flag. Everything else (Qualifying, Quoting, Quoted, Contracting,
+// Agreement Sent, Repricing, Sold, Not Sold, plus any future / legacy
+// stage label) counts as "past Lead". Using an exclusion list rather than
+// an allow list means an unexpected stage name still flags, matching the
+// rule "anything past a Lead stage".
+const STAGES_AT_OR_BEFORE_LEAD = new Set(['lead', 'not started', 'duplicate opp']);
+
+// True when a row has progressed past Lead but the (often hidden) `USD?`
+// column has no real value — blank, or just a dash / currency placeholder
+// like "-", "—", "$-", or " - ". Stripping zero-width chars, currency
+// symbols, commas, whitespace and every dash variant leaves an empty
+// string only when there's no actual number behind it; a real figure such
+// as "-500" or "$1,500" survives and won't flag. Surfaced as a 🚩 in the
+// Flags column so the gap is visible at a glance without unhiding USD?.
+function needsUsdFlag(row) {
+  if (!row) return false;
+  const stage = normCell(row['Stage']);
+  if (!stage || STAGES_AT_OR_BEFORE_LEAD.has(stage)) return false;
+  const usd = String(row['USD?'] ?? '')
+    .replace(ZERO_WIDTH_RE, '')
+    .replace(/[\s$,]/g, '')
+    .replace(/[-–—−]/g, '');
+  return usd === '';
+}
+
+// Look up a row value by header name, tolerant to casing / zero-width /
+// whitespace drift in the stored key — needed for user-added columns like
+// "Timeline?" whose key can arrive with odd casing from a paste.
+function rowValueByHeader(row, headerNorm) {
+  if (!row) return undefined;
+  for (const k in row) {
+    if (normCell(k) === headerNorm) return row[k];
+  }
+  return undefined;
+}
+
+// "Budget delivery timeline" flag: the opp has Budgets selected in its
+// Scope column but its "Timeline?" field is still empty, so there's no
+// target for when the budget needs to be delivered. Surfaced as a yellow
+// chip in the Flags column so the gap is obvious.
+function needsBudgetTimelineFlag(row) {
+  if (!row) return false;
+  const scope = normCell(rowValueByHeader(row, 'scope'));
+  if (!/\bbudgets?\b/.test(scope)) return false;
+  const timeline = String(rowValueByHeader(row, 'timeline?') ?? '')
+    .replace(ZERO_WIDTH_RE, '')
+    .replace(/[\s-–—−]/g, '');
+  return timeline === '';
+}
+
+// The timeline kinds offered in the "Timelines" dropdown inside the Notes and
+// Follow Up popups. Two presets ship by default; anything the user types is
+// remembered and joins the list (see utils/timelineTypeOptions). The user logs
+// one date/target per kind and can add as many rows as they need (e.g. one
+// Budget + one Compliance timeline).
+
+// Read the structured timelines off an opp. Newer records store an array of
+// { type, value, kickoff } rows under `_timelines`, each with its own Kickoff
+// Deadline. Older records only carry the free-text "Timeline?" column — we
+// surface that as a single untyped row so nothing is lost when the popup first
+// opens. Older-still records kept one per-opp kickoff under `_kickoffDeadline`;
+// we surface that on the first row so an existing deadline isn't dropped.
+function readTimelines(opp) {
+  const stored = Array.isArray(opp?._timelines) ? opp._timelines : null;
+  let list;
+  const legacyKickoff = String(opp?._kickoffDeadline ?? '').trim();
+  if (stored) {
+    list = stored.map(r => ({
+      type: String(r?.type ?? ''),
+      value: String(r?.value ?? ''),
+      kickoff: String(r?.kickoff ?? ''),
+    }));
+    // Migrate a pre-per-row single kickoff onto the first row when none of the
+    // rows carries its own yet.
+    if (legacyKickoff && list.length && !list.some(r => r.kickoff)) {
+      list[0] = { ...list[0], kickoff: legacyKickoff };
+    }
+  } else {
+    const legacy = String(rowValueByHeader(opp, 'timeline?') ?? '').trim();
+    list = legacy ? [{ type: '', value: legacy, kickoff: legacyKickoff }] : [];
+  }
+  return { list };
+}
+
+// The soonest (earliest) Kickoff Deadline across the timeline rows, as an ISO
+// yyyy-mm-dd string ('' when none is set). ISO dates sort lexically, so the
+// min string is the min date. This drives the opp-level `_kickoffDeadline`
+// mirror so the Flags column warns on whichever kickoff is most urgent.
+function earliestKickoff(list) {
+  const dates = (Array.isArray(list) ? list : [])
+    .map(r => String(r?.kickoff ?? '').trim())
+    .filter(Boolean);
+  return dates.length ? dates.reduce((a, b) => (a < b ? a : b)) : '';
+}
+
+// Collapse the structured timeline rows into the single human-readable string
+// stored in the legacy "Timeline?" column. Keeps table cells and the budget
+// timeline flag working off the same value they always have. Empty rows are
+// dropped; each kept row reads "Type: value" (or just the value when untyped).
+function summarizeTimelines(list) {
+  return (Array.isArray(list) ? list : [])
+    .map(r => ({ type: String(r?.type ?? '').trim(), value: String(r?.value ?? '').trim() }))
+    .filter(r => r.value)
+    .map(r => (r.type ? `${r.type}: ${r.value}` : r.value))
+    .join(' · ');
+}
+
+// Resolve a raw Scope token (e.g. "BBS") to a canonical Solutions name
+// (e.g. "BBS reporting") so the timeline-driven lookup works even when
+// the opp stores a shorthand. Matching, all case-insensitive:
+//   1. exact name match, else
+//   2. the token is a leading-word abbreviation of exactly one option
+//      (option starts with `token + " "`) — ambiguous prefixes (e.g.
+//      "RA" matching many "RA …" services) resolve to nothing so we
+//      never invent spurious rows.
+// Returns the canonical option string, or null when unresolved.
+function resolveScopeToSolution(token, options) {
+  const t = normCell(token);
+  if (!t) return null;
+  const opts = Array.isArray(options) ? options : [];
+  for (const o of opts) {
+    if (normCell(o) === t) return o;
+  }
+  const prefixed = opts.filter(o => normCell(o).startsWith(`${t} `));
+  return prefixed.length === 1 ? prefixed[0] : null;
+}
+
+// Canonical Solutions names in the opp's Scope flagged "Timeline Driven
+// = Yes" in Dropdowns › Services (seed catalog + settings.serviceOverrides).
+// These drive an auto-inserted timeline row in the Update Status / Notes
+// editors so every timeline-driven service always shows a table to fill
+// in. `solutionOptions` is the live Solutions list so shorthand Scope
+// values resolve to the real service name. Order follows Scope; dupes
+// collapse.
+function timelineDrivenServices(opp, solutionOptions, serviceOverrides) {
+  const tokens = parseMulti(rowValueByHeader(opp, 'scope'));
+  const out = [];
+  const seen = new Set();
+  for (const token of tokens) {
+    const name = resolveScopeToSolution(token, solutionOptions) || token;
+    const key = String(name).trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const meta = getEffectiveServiceMetadata(name, serviceOverrides);
+    if (meta && String(meta.timelineDriven || '').trim().toLowerCase() === 'yes') {
+      out.push(name);
+    }
+  }
+  return out;
+}
+
+// Merge an auto timeline row for each timeline-driven service into an
+// existing timeline list. A service already represented by a row whose
+// type matches its name (case-insensitive) is left untouched; missing
+// ones are appended as empty rows so the user just fills in the
+// date/detail. Empty auto rows never reach the Timeline? summary
+// (summarizeTimelines drops value-less rows), so seeding is side-effect
+// free until the user actually logs a date.
+function withServiceTimelines(list, services) {
+  const rows = Array.isArray(list) ? [...list] : [];
+  const present = new Set(
+    rows.map(r => String(r?.type ?? '').trim().toLowerCase()).filter(Boolean)
+  );
+  for (const name of services) {
+    const key = String(name).trim().toLowerCase();
+    if (!key || present.has(key)) continue;
+    rows.push({ type: name, value: '' });
+    present.add(key);
+  }
+  return rows;
+}
+
+// The Kickoff Deadline enters its Flags-column warning window when it's fewer
+// than this many days out (overdue deadlines are always in the window).
+const KICKOFF_WARN_DAYS = 10;
+
+// Whole days from today until an ISO yyyy-mm-dd date. Negative when the date
+// is in the past, 0 for today, null when blank/unparseable. Both ends are
+// snapped to local midnight so the count is a clean day difference.
+function daysUntilDateISO(iso) {
+  const raw = String(iso ?? '').trim();
+  if (!raw) return null;
+  const t = Date.parse(`${raw}T00:00:00`);
+  if (Number.isNaN(t)) return null;
+  const now = new Date();
+  const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return Math.round((t - todayMid) / 86400000);
+}
+
+// Days until the opp's soonest Kickoff Deadline (`_kickoffDeadline` mirrors the
+// earliest per-row kickoff), or null when unset.
+function kickoffDaysUntil(opp) {
+  return daysUntilDateISO(opp?._kickoffDeadline);
+}
+
+// Human countdown for a days-until value: "in 4 days", "due today",
+// "3 days overdue". Empty string when null.
+function kickoffCountdownLabel(days) {
+  if (days == null) return '';
+  if (days < 0) { const n = Math.abs(days); return `${n} day${n === 1 ? '' : 's'} overdue`; }
+  if (days === 0) return 'due today';
+  return `in ${days} day${days === 1 ? '' : 's'}`;
+}
+
+// Days-until value when the opp's Kickoff Deadline is inside the warning
+// window (under KICKOFF_WARN_DAYS out, including overdue); null otherwise.
+function kickoffDeadlineFlag(opp) {
+  const d = kickoffDaysUntil(opp);
+  return d != null && d < KICKOFF_WARN_DAYS ? d : null;
+}
 
 // Record-level merge lives in opps2Store as `mergeOpps2Datasets` so the
 // real-time listener, hydration reconcile, and the guarded flush all
@@ -359,12 +589,12 @@ function makeBlankOpp(id, headers, accountOverride, sourceOverride, peOwnerOverr
   row['Open Year'] = String(new Date().getFullYear());
   row['Stage'] = 'Not Started';
   row['Status'] = 'Client waiting on ESS team member';
-  // Default Scope to AEM (the most common service the user tags on a
-  // new opp) and seed the Next Steps column with the prompt the user
-  // always types first. Set unconditionally — even if a column was
-  // hidden via the columns toggle the value sticks around for when
-  // it's unhidden later.
-  row['Scope'] = 'AEM';
+  // Leave Scope blank so the cell renders "AEM" as a muted-italic
+  // placeholder (see MultiSelectCell) rather than an actual selected
+  // service — AEM stands in until the user picks real services. Seed the
+  // Next Steps column with the prompt the user always types first. Set
+  // unconditionally — even if a column was hidden via the columns toggle
+  // the value sticks around for when it's unhidden later.
   row['Next Steps'] = 'Find out the Story';
   // Seed the BFO Opportunity Name (BFO Link) column with a dash so a
   // brand-new opp reads as "BFO opp still needs to be created" — the
@@ -832,6 +1062,21 @@ function oppMissingMarginApproval(row) {
   return bfoFieldMissing(row?.['Margin Email Date - Sales Leader Review Date']);
 }
 
+// "Credit Approval Needed" flag: a larger deal (Deal Size / Quoted Amount
+// above $50,000) that has reached Contracting or Agreement Sent but still has
+// a blank Credit approval cell. Blank sentinels ("-", "#N/A", …) count as
+// missing. Deal Size that doesn't parse to a number (blank, "TBD", …) can't
+// clear the $50k bar, so it never raises this flag.
+const CREDIT_APPROVAL_STAGES_SET = new Set(['Contracting', 'Agreement Sent']);
+const CREDIT_APPROVAL_MIN_DEAL_SIZE = 50000;
+function oppNeedsCreditApproval(row) {
+  const stage = String(row?.['Stage'] || '').trim();
+  if (!CREDIT_APPROVAL_STAGES_SET.has(stage)) return false;
+  const dealSize = Number(String(row?.['Quoted Amount'] ?? '').replace(/[^0-9.-]/g, ''));
+  if (!Number.isFinite(dealSize) || dealSize <= CREDIT_APPROVAL_MIN_DEAL_SIZE) return false;
+  return bfoFieldMissing(row?.['Credit approval']);
+}
+
 // One-shot Call-In ascending sort used during initial hydration. Rows
 // without a resolvable Call In sink to the bottom. A stable tiebreaker
 // (original index) keeps the order deterministic when many rows share
@@ -902,6 +1147,71 @@ function ComputedCell({ value }) {
     >
       {isEmpty ? '—' : String(value)}
     </span>
+  );
+}
+
+// Small download button for the original SIA workbook attached to an
+// opp by the Pricing tab's "Save to Opp" flow. Bytes live in the
+// per-opp `pricing-source-files` IndexedDB store keyed by oppId.
+// Shows the file size next to the name; if the local IDB copy is
+// missing (e.g. the user is on a different browser than the one
+// where they clicked Save to Opp), the button surfaces a hint
+// instead of failing silently.
+function SourceFileDownloadButton({ oppId, fileName, sizeBytes }) {
+  const [busy, setBusy] = useState(false);
+  const sizeLabel = (() => {
+    if (typeof sizeBytes !== 'number' || !Number.isFinite(sizeBytes) || sizeBytes <= 0) return '';
+    if (sizeBytes >= 1024 * 1024) return `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`;
+    if (sizeBytes >= 1024) return `${Math.round(sizeBytes / 1024)} KB`;
+    return `${sizeBytes} B`;
+  })();
+  async function download() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const rec = await loadOppSourceFile(oppId);
+      if (!rec?.blob) {
+        window.alert(
+          'No source file saved on this device for this opp.\n\n' +
+          'The source workbook lives in this browser\'s IndexedDB. If you saved ' +
+          'this opp from a different browser or have cleared site data since, ' +
+          'go to the Pricing tab, load the workbook again, and click ' +
+          'Save to Opp on this opp to re-attach the file.'
+        );
+        return;
+      }
+      const url = URL.createObjectURL(rec.blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = rec.fileName || fileName || 'workbook.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={download}
+      disabled={busy}
+      title={`Download ${fileName || 'workbook.xlsx'}${sizeLabel ? ` (${sizeLabel})` : ''}`}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+        padding: '0.25rem 0.55rem',
+        border: '1px solid var(--color-border)', borderRadius: 4,
+        background: '#fff', cursor: busy ? 'progress' : 'pointer',
+        fontSize: '0.72rem', fontFamily: 'inherit', fontWeight: 600,
+        color: 'var(--color-text)', whiteSpace: 'nowrap',
+      }}
+    >
+      <span>{busy ? 'Loading…' : '⬇ Source file'}</span>
+      <span style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}>
+        {fileName || 'workbook.xlsx'}{sizeLabel ? ` · ${sizeLabel}` : ''}
+      </span>
+    </button>
   );
 }
 
@@ -1080,7 +1390,7 @@ function PricingOptionSnapshotView({ snapshot }) {
 // renders as a link to it, and a Pricing-Option snapshot still falls
 // back to the existing "open the Opp details popup" affordance when
 // no manual URL is set. All edits happen inside the popup.
-function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onChangeUrl, services }) {
+function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onChangeUrl, services, bfoName, bfoAddress }) {
   const [open, setOpen] = useState(false);
   const [draftAmount, setDraftAmount] = useState(value ?? '');
   const [draftUrl, setDraftUrl] = useState(url ?? '');
@@ -1218,6 +1528,41 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
                 style={{ padding: '0.4rem 0.55rem', border: '1px solid var(--color-border)', borderRadius: 4, fontFamily: 'inherit', fontSize: '0.82rem' }}
               />
             </label>
+            {(() => {
+              // Read-only BFO context for this opp: the BFO Opportunity Name
+              // ("BFO Link") and the BFO Address (live Salesforce URL).
+              const cleanBfo = (v) => bfoFieldMissing(v) ? '' : String(v).trim();
+              const nm = cleanBfo(bfoName);
+              const addr = cleanBfo(bfoAddress);
+              const addrIsUrl = /^https?:\/\//i.test(addr);
+              return (
+                <div style={{
+                  display: 'flex', flexDirection: 'column', gap: 6,
+                  padding: '0.5rem 0.6rem', background: '#F8FAFC',
+                  border: '1px solid var(--color-border-light)', borderRadius: 4,
+                  fontSize: '0.78rem', color: '#475569',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                    <span>BFO Opportunity Name</span>
+                    <strong style={{ color: '#1E293B', textAlign: 'right', wordBreak: 'break-word' }}>{nm || '—'}</strong>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                    <span>BFO Address</span>
+                    {addrIsUrl ? (
+                      <a
+                        href={addr}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        style={{ color: '#2563eb', textDecoration: 'underline', textAlign: 'right', wordBreak: 'break-all' }}
+                      >Open in BFO ↗</a>
+                    ) : (
+                      <strong style={{ color: '#1E293B', textAlign: 'right', wordBreak: 'break-word' }}>{addr || '—'}</strong>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
             {snapshot && snapStats && (
               <div style={{
                 display: 'flex', flexDirection: 'column', gap: 4,
@@ -1443,8 +1788,11 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel, ren
   const [hoverIdx, setHoverIdx] = useState(0);
   // Dropdown is portaled to <body> so the table cell's overflow:hidden
   // can't clip it; position is recomputed from the wrapper's bounding
-  // rect whenever the dropdown opens.
-  const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 });
+  // rect whenever the dropdown opens. `placement` flips to 'above'
+  // when the cell sits too close to the viewport bottom for the
+  // dropdown to fit underneath without clipping; in that case the
+  // render anchors to `bottom` instead of `top`.
+  const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0, maxHeight: 220, placement: 'below' });
   const wrapRef = useRef(null);
   const textareaRef = useRef(null);
   useEffect(() => { if (!editing) setDraft(value ?? ''); }, [value, editing]);
@@ -1524,7 +1872,32 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel, ren
   useLayoutEffect(() => {
     if (!open || !wrapRef.current) return;
     const rect = wrapRef.current.getBoundingClientRect();
-    setDropPos({ top: rect.bottom + 2, left: rect.left, width: rect.width });
+    const margin = 8;
+    const gap = 2;
+    const spaceBelow = window.innerHeight - rect.bottom - margin;
+    const spaceAbove = rect.top - margin;
+    // Prefer below — that's the cell's natural drop direction — unless
+    // there's more vertical room above and not enough below for at
+    // least a short list (~120px). Without this, opening the dropdown
+    // on a row near the bottom of the viewport clips the suggestions.
+    const placeBelow = spaceBelow >= 160 || spaceBelow >= spaceAbove;
+    if (placeBelow) {
+      setDropPos({
+        top: rect.bottom + gap,
+        left: rect.left,
+        width: rect.width,
+        maxHeight: Math.max(120, Math.min(280, spaceBelow)),
+        placement: 'below',
+      });
+    } else {
+      setDropPos({
+        bottom: window.innerHeight - rect.top + gap,
+        left: rect.left,
+        width: rect.width,
+        maxHeight: Math.max(120, Math.min(280, spaceAbove)),
+        placement: 'above',
+      });
+    }
   }, [open, draft]);
 
   if (!editing) {
@@ -1602,11 +1975,15 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel, ren
         <div
           onMouseDown={(e) => e.preventDefault()}
           style={{
-            position: 'fixed', top: dropPos.top, left: dropPos.left,
+            position: 'fixed',
+            ...(dropPos.placement === 'above'
+              ? { bottom: dropPos.bottom }
+              : { top: dropPos.top }),
+            left: dropPos.left,
             minWidth: Math.max(dropPos.width, 160),
             zIndex: 9999, background: '#fff', border: '1px solid var(--color-border)',
             borderRadius: 4, boxShadow: '0 8px 20px rgba(15, 23, 42, 0.12)',
-            maxHeight: 220, overflowY: 'auto', fontSize: '0.78rem',
+            maxHeight: dropPos.maxHeight, overflowY: 'auto', fontSize: '0.78rem',
           }}
         >
           {matches.map((m, i) => {
@@ -1805,6 +2182,22 @@ function BfoCompanyNameCell({ account, prospects, updateProspect }) {
   );
 }
 
+// A contact carrying a "Hide" tag (Dan's Tags, stored semicolon-separated in
+// `dans_tags`, with legacy `dan_s_tags` / `dans_tag` spellings) should be kept
+// out of the opp Contact-cell roster. "Hide" is the exact token the Key
+// Contacts hide action writes; the legacy "hidden" token is still honored.
+// Match on whole tokens so a tag like "hidden gem" doesn't accidentally
+// suppress the contact.
+function contactIsHidden(raw) {
+  const tags = String(raw?.dans_tags || raw?.dan_s_tags || raw?.dans_tag || '');
+  return tags
+    .split(/[;,]/)
+    .some(t => {
+      const s = t.trim().toLowerCase();
+      return s === 'hide' || s === 'hidden';
+    });
+}
+
 // `contactEmails` / `onChangeEmails` persist the tagged contacts' emails on
 // the opp row itself (hidden `_contactEmails` map, lowercased name → email),
 // captured at tag time. The HubSpot contacts cache is an IndexedDB cache
@@ -1903,6 +2296,8 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
     const out = [];
     const pushContact = (raw, source, company) => {
       if (!raw) return;
+      // Skip contacts flagged "hidden" so they never surface in the roster.
+      if (contactIsHidden(raw)) return;
       const name = [raw.firstname, raw.lastname].filter(Boolean).join(' ').trim()
         || String(raw.email || '').trim();
       if (!name) return;
@@ -2049,6 +2444,19 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
       delete next[key];
       onChangeEmails(next);
     }
+  }
+
+  // Star a contact as the primary point of contact. The top of the tag
+  // list *is* the primary — we don't persist a separate flag, we just move
+  // the starred name to the front of the comma-separated `value` so the
+  // ordering survives the same round-trip as everything else. The first
+  // row then renders a filled star; the rest render clickable outlines.
+  function makePrimary(name) {
+    const key = String(name || '').toLowerCase();
+    const promoted = selected.find(s => s.toLowerCase() === key);
+    if (!promoted) return;
+    const rest = selected.filter(s => s.toLowerCase() !== key);
+    onChange([promoted, ...rest].join(', '));
   }
 
   // Custom tag — used by the "not from this company" path. Just adds
@@ -2215,6 +2623,7 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
               <div style={{ maxHeight: 240, overflowY: 'auto' }}>
                 {taggedDetails.map((t, idx) => {
                   const key = `row-${idx}`;
+                  const isPrimary = idx === 0;
                   return (
                     <div
                       key={`${t.name}-${idx}`}
@@ -2224,6 +2633,23 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
                         borderBottom: '1px solid var(--color-border-light)',
                       }}
                     >
+                      <button
+                        type="button"
+                        onClick={() => { if (!isPrimary) makePrimary(t.name); }}
+                        title={isPrimary
+                          ? 'Primary point of contact'
+                          : `Make ${t.name} the primary point of contact`}
+                        aria-label={isPrimary ? 'Primary point of contact' : 'Set as primary point of contact'}
+                        aria-pressed={isPrimary}
+                        style={{
+                          flex: '0 0 auto',
+                          width: 22, height: 22, padding: 0, marginTop: 1,
+                          fontSize: '1rem', lineHeight: 1,
+                          color: isPrimary ? '#F59E0B' : '#CBD5E1',
+                          background: 'transparent', border: 'none',
+                          cursor: isPrimary ? 'default' : 'pointer',
+                        }}
+                      >{isPrimary ? '★' : '☆'}</button>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         {onOpenContact ? (
                           <button
@@ -2502,6 +2928,11 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
   const [typeInput, setTypeInput] = useState('');
   const [typeTouched, setTypeTouched] = useState(false);
   const [addToTableView, setAddToTableView] = useState(true);
+  // HQ Region is required when this flow creates a brand-new Table View
+  // company, so the record doesn't land missing a region (see the
+  // MyAccounts "HQ Region missing" flag). Same two-option set the
+  // MyAccounts / PE Portfolio cells use.
+  const [hqRegion, setHqRegion] = useState('');
 
   const trimmedCompany = company.trim();
   const matchedProspect = useMemo(
@@ -2512,6 +2943,10 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
   const companyType = String(matchedProspect?.type || '').trim();
   // Only meaningful when the Company is new (not yet in Table View).
   const canAddCompany = !!trimmedCompany && !companyExists;
+  // True when we're actually about to create a Table View company — that's
+  // the case where HQ Region is required.
+  const willAddCompany = canAddCompany && addToTableView;
+  const needsHqRegion = willAddCompany && !hqRegion;
   // Prefill the PE Owners from the matched Table View company until the
   // user edits the chips.
   const peOwners = peOwnerTouched ? peOwnersInput : splitPeOwners(matchedProspect?.peOwner || '');
@@ -2585,6 +3020,9 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
   const showCompanyInfo = !!trimmedCompany;
 
   function submit() {
+    // A new Table View company must have an HQ Region — block the submit
+    // and let the field's required styling flag the gap.
+    if (needsHqRegion) return;
     // Fold in a typed-but-uncommitted draft so an owner the user didn't
     // chip (no Enter / suggestion pick) still lands on the opp.
     const owners = [...peOwners];
@@ -2598,7 +3036,8 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
       type: type.trim(),
       frameworks,
       frameworksEdited,
-      addToTableView: canAddCompany && addToTableView,
+      addToTableView: willAddCompany,
+      hqRegion: willAddCompany ? hqRegion : '',
     });
   }
 
@@ -2672,6 +3111,31 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
                 />
                 Add <strong>{trimmedCompany}</strong> to Table View (not found there yet)
               </label>
+            )}
+            {willAddCompany && (
+              <div style={{ marginTop: 8 }}>
+                <label style={labelStyle}>
+                  HQ Region <span style={{ color: '#dc2626' }}>*</span>
+                </label>
+                <select
+                  value={hqRegion}
+                  onChange={(e) => setHqRegion(e.target.value)}
+                  style={{
+                    ...fieldStyle,
+                    ...(needsHqRegion ? { border: '1px solid #dc2626' } : null),
+                  }}
+                >
+                  <option value="">— Select an HQ Region —</option>
+                  {HQ_REGION_OPTIONS.map(r => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                </select>
+                {needsHqRegion && (
+                  <div style={{ fontSize: '0.7rem', color: '#dc2626', marginTop: 4 }}>
+                    Required to add a new company to Table View.
+                  </div>
+                )}
+              </div>
             )}
             {showCompanyInfo && (
               <div style={{
@@ -2823,11 +3287,14 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
           <button
             type="button"
             onClick={submit}
+            disabled={needsHqRegion}
+            title={needsHqRegion ? 'Select an HQ Region to add this company to Table View' : undefined}
             style={{
               padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
               border: '1px solid var(--color-accent)', borderRadius: 4,
               fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
-              color: '#fff', cursor: 'pointer',
+              color: '#fff', cursor: needsHqRegion ? 'not-allowed' : 'pointer',
+              opacity: needsHqRegion ? 0.55 : 1,
             }}
           >Create opp</button>
         </div>
@@ -3267,23 +3734,54 @@ function LeadQuotedAmountModal({ opp, onSave, onClose }) {
 // Margin Email Date - Sales Leader Review Date). Pre-populated with the
 // opp's current values (with fallbacks to alternate key names) so it
 // doubles as a review screen. Mirrors the NotSoldFollowUpModal pattern.
-function QuotedFollowUpModal({ opp, chanceOptions, onSave, onClose }) {
+function QuotedFollowUpModal({ opp, chanceOptions, columnLinks, listRegistry, onSave, onClose }) {
+  // Resolve the dropdown options for a field the same way the Opp details
+  // popup (and the Agreement Sent prompt) do — via the user's column-link
+  // config against the shared list registry — so the "USD?" field shows
+  // the same menu it does elsewhere. Falls back to a same-named Dropdowns
+  // list when there's no explicit link.
+  const normName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const optionsFor = (field) => {
+    const link = columnLinks ? resolveColumnLink(field, columnLinks) : null;
+    if (link && listRegistry) return listRegistry.get(link.listKey)?.options || [];
+    if (listRegistry) {
+      const target = normName(field);
+      for (const list of listRegistry.values()) {
+        if (normName(list.label) === target && Array.isArray(list.options) && list.options.length) {
+          return list.options;
+        }
+      }
+    }
+    return null;
+  };
+
   // Read current values with fallbacks to the alternate key names other
   // views / imported sheets use, so existing data shows up here instead
   // of looking blank. The combined margin/review field also absorbs the
   // two legacy split columns if a row was saved before they merged.
   const curQuotedOn = opp?.['Quoted On'] ?? opp?.['Quoted Date'] ?? '';
+  const curUsd = opp?.['USD?'] ?? '';
   const curChance = opp?.['Chance?'] ?? opp?.['Chance'] ?? '';
   const curMarginReview = opp?.['Margin Email Date - Sales Leader Review Date']
     ?? opp?.['Margin Email Date'] ?? opp?.['Sales Leader Review Date'] ?? '';
 
-  const [quotedOn, setQuotedOn] = useState(toISODate(curQuotedOn) || '');
+  // Default the Quoted On date to today when the opp doesn't already have
+  // one — the opp just moved into the Quoted stage, so today is almost
+  // always the right answer and pre-filling it saves a click.
+  const [quotedOn, setQuotedOn] = useState(toISODate(curQuotedOn) || todayISO());
+  const [usd, setUsd] = useState(String(curUsd ?? ''));
   const [chance, setChance] = useState(String(curChance ?? ''));
   const [marginReviewDate, setMarginReviewDate] = useState(toISODate(curMarginReview) || '');
 
   function handleSave() {
-    onSave({ quotedOn, chance, marginReviewDate });
+    onSave({ quotedOn, usd, chance, marginReviewDate });
   }
+
+  // Render the USD? field as a dropdown when it has resolvable options
+  // (matching the Opp details popup), otherwise a free-text input. A
+  // stored value that isn't one of the configured options is kept
+  // selectable so legacy data doesn't silently drop off the menu.
+  const usdOptions = optionsFor('USD?');
 
   // Shows the value already stored on the opp so the user reviews what's
   // there rather than entering blind. Hidden when there's nothing yet.
@@ -3355,6 +3853,29 @@ function QuotedFollowUpModal({ opp, chanceOptions, onSave, onClose }) {
             {dateHint(curQuotedOn)}
           </div>
           <div>
+            <label style={labelStyle}>USD?</label>
+            {usdOptions ? (
+              <select
+                value={usd}
+                onChange={(e) => setUsd(e.target.value)}
+                style={inputStyle}
+              >
+                <option value="">— Select —</option>
+                {((!usd || usdOptions.includes(usd)) ? usdOptions : [usd, ...usdOptions]).map(o => (
+                  <option key={o} value={o}>{o}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={usd}
+                onChange={(e) => setUsd(e.target.value)}
+                style={inputStyle}
+              />
+            )}
+            {textHint(curUsd)}
+          </div>
+          <div>
             <label style={labelStyle}>Chance?</label>
             <select
               value={chance}
@@ -3415,13 +3936,324 @@ function QuotedFollowUpModal({ opp, chanceOptions, onSave, onClose }) {
   );
 }
 
+// Prompt shown whenever an opp moves into the "Agreement Sent" stage,
+// mirroring the QuotedFollowUpModal. Captures the approval / close-out
+// data points the team reviews at agreement time: the USD deal size,
+// the margin-email / sales-leader-review date, Chance?, whether multiple
+// invoices apply, the verbal-email status, and the two approval fields.
+// The linked Pricing Option is shown read-only (it's owned by the
+// Pricing tab). Cleared on Save or Skip.
+function AgreementSentFollowUpModal({
+  opp, columnLinks, listRegistry, pricingOptionName, onSave, onClose,
+}) {
+  // Resolve the dropdown options for a field the exact same way the Opp
+  // details popup does — via the user's column-link config against the
+  // shared list registry — so a field that edits as a dropdown there
+  // (USD?, Entity Outside the US Approval, COA Approval, …) shows the
+  // same menu here. When a field has no explicit link we also fall back
+  // to a Dropdowns-page list whose name matches the field (normalized, so
+  // a "USD" list backs the "USD?" column), which lets a column the user
+  // wired up by creating a same-named custom list resolve even without an
+  // explicit link. Failing all that, a couple of fields have an obvious
+  // canonical list / Yes-No answer; everything else is a plain text input.
+  const FALLBACK_LIST_KEYS = { 'Chance?': 'chance', 'Verbal': 'verbal' };
+  const FALLBACK_STATIC = { 'Multiple Invoices?': ['Yes', 'No'] };
+  const normName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const optionsFor = (field) => {
+    const link = columnLinks ? resolveColumnLink(field, columnLinks) : null;
+    if (link && listRegistry) return listRegistry.get(link.listKey)?.options || [];
+    if (listRegistry) {
+      const target = normName(field);
+      for (const list of listRegistry.values()) {
+        if (normName(list.label) === target && Array.isArray(list.options) && list.options.length) {
+          return list.options;
+        }
+      }
+    }
+    const fk = FALLBACK_LIST_KEYS[field];
+    if (fk && listRegistry) return listRegistry.get(fk)?.options || [];
+    return FALLBACK_STATIC[field] || null;
+  };
+
+  // Read current values with fallbacks to the alternate key names other
+  // views / imported sheets use, so existing data shows up here instead
+  // of looking blank. The combined margin/review field also absorbs the
+  // two legacy split columns if a row was saved before they merged.
+  const curUsd = opp?.['USD?'] ?? '';
+  const curMarginReview = opp?.['Margin Email Date - Sales Leader Review Date']
+    ?? opp?.['Margin Email Date'] ?? opp?.['Sales Leader Review Date'] ?? '';
+  const curChance = opp?.['Chance?'] ?? opp?.['Chance'] ?? '';
+  const curMultiInvoices = opp?.['Multiple Invoices?'] ?? '';
+  const curVerbal = opp?.['Verbal'] ?? '';
+  const curEntity = opp?.['Entity Outside the US Approval'] ?? '';
+  const curCoa = opp?.['COA Approval'] ?? '';
+
+  const [usd, setUsd] = useState(String(curUsd ?? ''));
+  const [marginReviewDate, setMarginReviewDate] = useState(toISODate(curMarginReview) || '');
+  const [chance, setChance] = useState(String(curChance ?? ''));
+  const [multiInvoices, setMultiInvoices] = useState(String(curMultiInvoices ?? ''));
+  const [verbal, setVerbal] = useState(String(curVerbal ?? ''));
+  const [entity, setEntity] = useState(String(curEntity ?? ''));
+  const [coa, setCoa] = useState(String(curCoa ?? ''));
+
+  function handleSave() {
+    onSave({ usd, marginReviewDate, chance, multiInvoices, verbal, entity, coa });
+  }
+
+  // Render a field as a dropdown when it has resolvable options (matching
+  // the Opp details popup), otherwise a free-text input. A stored value
+  // that isn't one of the configured options is kept selectable so legacy
+  // data doesn't silently drop off the menu — same as SelectCell.
+  const fieldInput = (field, val, setVal, { autoFocus = false, onEnter } = {}) => {
+    const opts = optionsFor(field);
+    if (opts) {
+      const cur = String(val ?? '');
+      const display = (!cur || opts.includes(cur)) ? opts : [cur, ...opts];
+      return (
+        <select
+          autoFocus={autoFocus}
+          value={cur}
+          onChange={(e) => setVal(e.target.value)}
+          style={inputStyle}
+        >
+          <option value="">— Select —</option>
+          {display.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+      );
+    }
+    return (
+      <input
+        type="text"
+        autoFocus={autoFocus}
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        onKeyDown={onEnter ? (e) => { if (e.key === 'Enter') { e.preventDefault(); onEnter(); } } : undefined}
+        style={inputStyle}
+      />
+    );
+  };
+
+  // Shows the value already stored on the opp so the user reviews what's
+  // there rather than entering blind. Hidden when there's nothing yet.
+  const hintStyle = { fontSize: '0.68rem', color: 'var(--color-text-muted)', marginTop: 3 };
+  const dateHint = (raw) => {
+    const v = (raw ?? '').toString().trim();
+    return v ? <div style={hintStyle}>Currently: {formatDateDisplay(v)}</div> : null;
+  };
+  const textHint = (raw) => {
+    const v = (raw ?? '').toString().trim();
+    return v ? <div style={hintStyle}>Currently: {v}</div> : null;
+  };
+
+  const labelStyle = { fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text)', display: 'block', marginBottom: 4 };
+  const inputStyle = {
+    width: '100%', boxSizing: 'border-box',
+    padding: '0.45rem 0.55rem',
+    border: '1px solid var(--color-border)', borderRadius: 4,
+    fontSize: '0.85rem', fontFamily: 'inherit',
+    background: '#fff', color: 'var(--color-text)',
+  };
+
+  // Only dismiss when the press *started* on the backdrop. Drag-selecting text
+  // in a field and releasing the mouse over the dimmed backdrop otherwise fires
+  // a click on the overlay that would close the popup mid-selection.
+  const backdropMouseDown = useRef(false);
+
+  return createPortal(
+    <div
+      onMouseDown={(e) => { backdropMouseDown.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && backdropMouseDown.current) onClose(); }}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
+        zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+        }}
+        style={{
+          width: 460, maxWidth: '92vw', maxHeight: '88vh',
+          background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}
+      >
+        <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
+            Agreement Sent details
+          </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+            <strong>{opp?.['Account'] || 'This opp'}</strong>
+            {opp?.['Scope'] ? <> &middot; {opp['Scope']}</> : null}
+            {' '}is now <strong>Agreement Sent</strong>. Enter or review the details below.
+          </div>
+          {String(opp?.['Sales Partner'] || '').trim() && (
+            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+              Sales Partner: <strong style={{ color: 'var(--color-text)' }}>{String(opp['Sales Partner']).trim()}</strong>
+            </div>
+          )}
+        </div>
+
+        <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem', overflowY: 'auto' }}>
+          <div>
+            <label style={labelStyle}>USD?</label>
+            {fieldInput('USD?', usd, setUsd, { autoFocus: true })}
+            {textHint(curUsd)}
+          </div>
+          <div>
+            <label style={labelStyle}>Margin Email Date - Sales Leader Review Date</label>
+            <input
+              type="date"
+              value={marginReviewDate}
+              onChange={(e) => setMarginReviewDate(e.target.value)}
+              style={inputStyle}
+            />
+            {dateHint(curMarginReview)}
+          </div>
+          <div>
+            <label style={labelStyle}>Chance?</label>
+            {fieldInput('Chance?', chance, setChance)}
+            {textHint(curChance)}
+          </div>
+          <div>
+            <label style={labelStyle}>Multiple Invoices?</label>
+            {fieldInput('Multiple Invoices?', multiInvoices, setMultiInvoices)}
+            {textHint(curMultiInvoices)}
+          </div>
+          <div>
+            <label style={labelStyle}>Verbal</label>
+            {fieldInput('Verbal', verbal, setVerbal)}
+            {textHint(curVerbal)}
+          </div>
+          <div>
+            <label style={labelStyle}>Entity Outside the US Approval</label>
+            {fieldInput('Entity Outside the US Approval', entity, setEntity)}
+            {textHint(curEntity)}
+          </div>
+          <div>
+            <label style={labelStyle}>COA Approval</label>
+            {fieldInput('COA Approval', coa, setCoa, { onEnter: handleSave })}
+            {textHint(curCoa)}
+          </div>
+          <div>
+            <label style={labelStyle}>Pricing Option</label>
+            <div style={{
+              ...inputStyle,
+              background: 'var(--color-bg)', color: 'var(--color-text-muted)',
+              cursor: 'default',
+            }}>
+              {pricingOptionName || '—'}
+            </div>
+            <div style={hintStyle}>Read-only — linked from the Pricing tab.</div>
+          </div>
+        </div>
+
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '0.6rem 1rem',
+          borderTop: '1px solid var(--color-border-light)', background: 'var(--color-bg)',
+        }}>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              padding: '0.35rem 0.7rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: 'var(--color-text-muted)', cursor: 'pointer',
+            }}
+          >Skip for now</button>
+          <button
+            type="button"
+            onClick={handleSave}
+            style={{
+              padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
+              border: '1px solid var(--color-accent)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: '#fff', cursor: 'pointer',
+            }}
+          >Save</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// Normalize a pasted ticket reference into an href. Full URLs pass
+// through; a bare "host/path" gets an https:// prefix so the Open link
+// works. Anything without a dot (e.g. a lone ticket number) yields no link.
+function ticketHref(raw) {
+  const v = String(raw || '').trim();
+  if (!v) return '';
+  if (/^https?:\/\//i.test(v)) return v;
+  if (/^[\w-]+(\.[\w-]+)+/.test(v)) return `https://${v}`;
+  return '';
+}
+
+// Two link fields — Contract Service Desk ticket + COA Approval ticket —
+// shared by the Follow-Up status popup and the Notes editor so both render
+// identically. `onChange*` updates the live value; `onCommit*` fires on blur
+// for editors (like Notes) that persist immediately.
+function TicketLinksFields({ labelStyle, inputStyle, contractUrl, coaUrl, onChangeContract, onChangeCoa, onCommitContract, onCommitCoa }) {
+  const field = (label, value, onChange, onCommit) => {
+    const href = ticketHref(value);
+    return (
+      <div style={{ flex: '1 1 240px', minWidth: 0 }}>
+        <label style={labelStyle}>{label}</label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <input
+            type="url"
+            value={value}
+            placeholder="Paste a link…"
+            onChange={(e) => onChange(e.target.value)}
+            onBlur={(e) => { if (onCommit) onCommit(e.target.value); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
+            style={{ ...inputStyle, flex: 1 }}
+          />
+          {href ? (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={value}
+              onClick={(e) => e.stopPropagation()}
+              style={{ flexShrink: 0, fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-accent)', textDecoration: 'none', whiteSpace: 'nowrap' }}
+            >Open ↗</a>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
+  return (
+    <div style={{ display: 'flex', gap: '0.7rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+      {field('Contract Service Desk Ticket', contractUrl, onChangeContract, onCommitContract)}
+      {field('COA Approval Ticket', coaUrl, onChangeCoa, onCommitCoa)}
+    </div>
+  );
+}
+
 // Prompt shown whenever an opp's Follow Up date changes, asking the user
 // to pick the new Status (Who is waiting) for that opp so it stays
 // current with each follow-up. Cleared on Save or Skip.
-function FollowUpStatusModal({ opp, statusOptions, onSave, onClose, onCancel }) {
+function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOptions, serviceOverrides, onSave, onClose, onCancel }) {
   const curStatus = opp?.['Status'] ?? '';
   const [status, setStatus] = useState(String(curStatus ?? ''));
   const [salesPartner, setSalesPartner] = useState(String(opp?.['Sales Partner'] ?? ''));
+  // Structured timelines: a list of { type, value, kickoff } rows, each with its
+  // own Kickoff Deadline, seeded from the opp (falling back to the legacy
+  // free-text Timeline? column). Any service in the opp's Scope flagged
+  // "Timeline Driven = Yes" also gets an auto row so its table always appears.
+  // Flattened back to a readable summary on Save.
+  const initialTimelines = useMemo(() => readTimelines(opp), [opp]);
+  const seededTimelines = useMemo(
+    () => withServiceTimelines(initialTimelines.list, timelineDrivenServices(opp, solutionOptions, serviceOverrides)),
+    [initialTimelines, opp, solutionOptions, serviceOverrides]
+  );
+  const [timelineList, setTimelineList] = useState(seededTimelines);
+  const [contractTicket, setContractTicket] = useState(String(opp?._contractTicketUrl ?? ''));
+  const [coaTicket, setCoaTicket] = useState(String(opp?._coaTicketUrl ?? ''));
 
   // Seed the Next Steps rows from the same source the standalone
   // NextStepsEditor uses so this popup edits them in the identical
@@ -3444,7 +4276,7 @@ function FollowUpStatusModal({ opp, statusOptions, onSave, onClose, onCancel }) 
     const kept = rows.filter(r => (r.note || '').trim() || (r.waitingOn || '').trim());
     const nextSteps = kept.map(r => encodeNoteLine(r.note)).join('\n');
     const nextStepsWaiting = kept.map(r => (r.waitingOn || '').trim());
-    onSave({ status, nextSteps, nextStepsWaiting, salesPartner: salesPartner.trim() });
+    onSave({ status, nextSteps, nextStepsWaiting, salesPartner: salesPartner.trim(), timelines: timelineList, contractTicket: contractTicket.trim(), coaTicket: coaTicket.trim() });
   }
 
   const hintStyle = { fontSize: '0.68rem', color: 'var(--color-text-muted)', marginTop: 3 };
@@ -3489,39 +4321,61 @@ function FollowUpStatusModal({ opp, statusOptions, onSave, onClose, onCancel }) 
       >
         <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)' }}>
           <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
-            Update Status
-          </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
-            <strong>{opp?.['Account'] || 'This opp'}</strong>
-            {opp?.['Scope'] ? <> &middot; {opp['Scope']}</> : null}
-            {' '}has a new <strong>Follow Up</strong> date. Pick the current Status and review the Notes below.
+            Update Status{opp?.['Account'] ? <> — {opp['Account']}</> : null}
           </div>
         </div>
 
         <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem', overflow: 'auto' }}>
-          <div>
-            <label style={labelStyle}>Status</label>
-            <select
-              autoFocus
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
-              style={inputStyle}
-            >
-              <option value="">— Select —</option>
-              {statusOptions.map(o => (
-                <option key={o} value={o}>{o}</option>
-              ))}
-            </select>
-            {textHint(curStatus)}
+          <div style={{ display: 'flex', gap: '0.7rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+              <label style={labelStyle}>Status</label>
+              <select
+                autoFocus
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+                style={inputStyle}
+              >
+                <option value="">— Select —</option>
+                {statusOptions.map(o => (
+                  <option key={o} value={o}>{o}</option>
+                ))}
+              </select>
+              {textHint(curStatus)}
+            </div>
+            {clientManager ? (
+              <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+                <label style={labelStyle}>Client Manager</label>
+                <div style={{
+                  padding: '0.45rem 0.55rem',
+                  border: '1px solid var(--color-border)', borderRadius: 4,
+                  fontSize: '0.85rem', background: 'var(--color-bg)', color: 'var(--color-text)',
+                }}>{clientManager}</div>
+              </div>
+            ) : null}
+            <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+              <label style={labelStyle}>Sales Partner</label>
+              <input
+                type="text"
+                value={salesPartner}
+                onChange={(e) => setSalesPartner(e.target.value)}
+                placeholder="—"
+                style={inputStyle}
+              />
+            </div>
           </div>
+          <TicketLinksFields
+            labelStyle={labelStyle}
+            inputStyle={inputStyle}
+            contractUrl={contractTicket}
+            coaUrl={coaTicket}
+            onChangeContract={setContractTicket}
+            onChangeCoa={setCoaTicket}
+          />
           <div>
-            <label style={labelStyle}>Sales Partner</label>
-            <input
-              type="text"
-              value={salesPartner}
-              onChange={(e) => setSalesPartner(e.target.value)}
-              placeholder="—"
-              style={inputStyle}
+            <label style={labelStyle}>Timelines</label>
+            <TimelinesEditor
+              list={timelineList}
+              onChangeList={setTimelineList}
             />
           </div>
           <div>
@@ -3691,6 +4545,7 @@ export function OppInfoModal({
             extraGroupsLabel="Add from Pricing Option"
             extraGroupsPlaceholder="— pick an option —"
             nowrap={h === 'Scope'}
+            placeholder={h === 'Scope' ? 'AEM' : undefined}
           />
         );
       }
@@ -3771,12 +4626,44 @@ export function OppInfoModal({
         </div>
 
         <div style={{ overflowY: 'auto', padding: '0.5rem 1rem 0.75rem' }}>
+          {needsUsdFlag(opp) && (
+            // Same rule as the Flags-column 🚩: deal is Qualifying or
+            // later but USD? has no real value. Surfaced here too so it's
+            // visible even when the Flags column is hidden in the table.
+            <div style={{
+              margin: '0.25rem 0 0.75rem',
+              padding: '0.6rem 0.8rem',
+              border: '1px solid #FCA5A5', borderRadius: 6,
+              background: '#FEF2F2', fontSize: '0.8rem',
+              color: '#991B1B', lineHeight: 1.4,
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <span style={{ fontSize: '1rem', flexShrink: 0 }}>🚩</span>
+              <span>
+                <strong>Missing USD value.</strong> This opp is at the{' '}
+                <strong>{String(opp['Stage'] || '').trim() || 'current'}</strong> stage but the{' '}
+                <strong>USD?</strong> field is blank or “-”. Fill it in to clear the flag.
+              </span>
+            </div>
+          )}
           {opp._pricingOption ? (
             <div style={{ margin: '0.25rem 0 0.75rem' }}>
               <div style={{
-                fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.03em',
-                color: 'var(--color-text-muted)', fontWeight: 600, marginBottom: '0.35rem',
-              }}>Pricing Option (saved snapshot)</div>
+                display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+                gap: '0.6rem', marginBottom: '0.35rem',
+              }}>
+                <div style={{
+                  fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.03em',
+                  color: 'var(--color-text-muted)', fontWeight: 600,
+                }}>Pricing Option (saved snapshot)</div>
+                {opp._pricingOption.sourceFile && (
+                  <SourceFileDownloadButton
+                    oppId={opp._id}
+                    fileName={opp._pricingOption.sourceFile.fileName}
+                    sizeBytes={opp._pricingOption.sourceFile.sizeBytes}
+                  />
+                )}
+              </div>
               <PricingOptionSnapshotView snapshot={opp._pricingOption} />
             </div>
           ) : pricingOptionLinkName ? (
@@ -4899,7 +5786,159 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onCommi
   );
 }
 
-function NextStepsEditor({ opp, onClose, updateOppField }) {
+// Shared "Timelines" editor used inside both the Notes and Follow Up popups.
+// Presentational only — the parent owns the `list` (array of
+// { type, value, kickoff }) and passes a change handler. Rows are laid out as a
+// table: each row types a timeline kind (the two presets are offered via a
+// datalist, but any custom type can be typed), logs a date or note, and carries
+// its own Kickoff Deadline in the right-hand column so every timeline gets its
+// own deadline.
+function TimelinesEditor({ list, onChangeList }) {
+  const rows = Array.isArray(list) ? list : [];
+  const updateRow = (idx, key, value) =>
+    onChangeList(rows.map((r, i) => (i === idx ? { ...r, [key]: value } : r)));
+  const addRow = () => onChangeList([...rows, { type: '', value: '', kickoff: '' }]);
+  const deleteRow = (idx) => onChangeList(rows.filter((_, i) => i !== idx));
+
+  // Dropdown options are the presets plus every custom type the user has
+  // typed before. Re-read on the in-tab "added" event and on cross-tab
+  // storage writes so a type added from one open popup shows up in the
+  // others without a reload.
+  const [typeOptions, setTypeOptions] = useState(loadTimelineTypeOptions);
+  useEffect(() => {
+    const refresh = () => setTypeOptions(loadTimelineTypeOptions());
+    window.addEventListener(TIMELINE_TYPE_OPTIONS_EVENT, refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener(TIMELINE_TYPE_OPTIONS_EVENT, refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, []);
+  // Persist a typed Timeline Type so it joins the dropdown. Called on commit
+  // (blur / Enter) rather than on every keystroke, so half-typed values don't
+  // pollute the list; addTimelineTypeOption ignores blanks and duplicates.
+  const commitType = (value) => {
+    if (addTimelineTypeOption(value)) setTypeOptions(loadTimelineTypeOptions());
+  };
+
+  const typeListId = 'timeline-type-options';
+  const cellInput = {
+    width: '100%', boxSizing: 'border-box', padding: '0.35rem 0.45rem',
+    border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.8rem',
+    fontFamily: 'inherit', background: '#fff', color: '#334155',
+  };
+  const th = {
+    textAlign: 'left', fontSize: '0.66rem', fontWeight: 700, textTransform: 'uppercase',
+    letterSpacing: '0.03em', color: '#64748B', padding: '0 0.4rem 0.3rem 0', whiteSpace: 'nowrap',
+  };
+  const td = { padding: '0 0.4rem 0.4rem 0', verticalAlign: 'top' };
+
+  // A per-row Kickoff Deadline field for the right-hand column. A live "days
+  // until" countdown sits beside it, turning amber inside the warning window
+  // and red once the deadline is overdue.
+  const renderKickoff = (row, idx) => {
+    const kickoff = String(row?.kickoff ?? '');
+    const kickoffDays = daysUntilDateISO(kickoff);
+    const countdownColor = kickoffDays == null ? '#64748B'
+      : kickoffDays < 0 ? '#991B1B'
+      : kickoffDays < KICKOFF_WARN_DAYS ? '#92400E'
+      : '#64748B';
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap' }}>
+        <input
+          type="date"
+          value={kickoff || ''}
+          onChange={(e) => updateRow(idx, 'kickoff', e.target.value)}
+          style={{ ...cellInput, width: 'auto' }}
+        />
+        {kickoffDays != null ? (
+          <span style={{ fontSize: '0.7rem', fontWeight: 700, color: countdownColor }}>
+            {kickoffCountdownLabel(kickoffDays)}
+          </span>
+        ) : null}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+      <datalist id={typeListId}>
+        {typeOptions.map(o => <option key={o} value={o} />)}
+      </datalist>
+      <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+        <thead>
+          <tr>
+            <th style={{ ...th, width: '32%' }}>Timeline Type</th>
+            <th style={th}>Details</th>
+            <th style={{ ...th, whiteSpace: 'nowrap' }}>Kickoff Deadline</th>
+            <th style={{ ...th, width: 1 }} aria-hidden="true" />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 ? (
+            <tr>
+              <td style={td} colSpan={4}>
+                <div style={{ fontSize: '0.72rem', color: '#94A3B8', padding: '0.2rem 0' }}>No timelines yet.</div>
+              </td>
+            </tr>
+          ) : (
+            rows.map((row, idx) => (
+              <tr key={idx}>
+                <td style={td}>
+                  <input
+                    type="text"
+                    list={typeListId}
+                    value={row.type || ''}
+                    onChange={(e) => updateRow(idx, 'type', e.target.value)}
+                    onBlur={(e) => commitType(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') commitType(e.currentTarget.value); }}
+                    placeholder="— Timeline type —"
+                    style={cellInput}
+                  />
+                </td>
+                <td style={td}>
+                  <input
+                    type="text"
+                    value={row.value || ''}
+                    onChange={(e) => updateRow(idx, 'value', e.target.value)}
+                    placeholder="Date or note (e.g. 2026-08-01, Q3)"
+                    style={cellInput}
+                  />
+                </td>
+                <td style={{ ...td, whiteSpace: 'nowrap' }}>{renderKickoff(row, idx)}</td>
+                <td style={{ ...td, textAlign: 'center' }}>
+                  <button
+                    type="button"
+                    onClick={() => deleteRow(idx)}
+                    aria-label="Delete timeline"
+                    title="Delete timeline"
+                    style={{
+                      background: 'transparent', border: 'none', cursor: 'pointer',
+                      color: '#94A3B8', fontSize: '1rem', padding: '0 4px', lineHeight: 1,
+                    }}
+                  >×</button>
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+      <div>
+        <button
+          type="button"
+          onClick={addRow}
+          style={{
+            padding: '0.3rem 0.65rem', border: '1px solid #BFDBFE', borderRadius: 4,
+            background: '#EFF6FF', color: '#1E40AF', fontSize: '0.72rem', fontWeight: 600,
+            cursor: 'pointer', fontFamily: 'inherit',
+          }}
+        >+ Add timeline</button>
+      </div>
+    </div>
+  );
+}
+
+function NextStepsEditor({ opp, clientManager, solutionOptions, serviceOverrides, onClose, updateOppField }) {
   const noteLines = useMemo(() => textToBulletItems(opp?.['Next Steps']), [opp]);
   const storedWaiting = Array.isArray(opp?._nextStepsWaiting) ? opp._nextStepsWaiting : [];
   const initialRows = useMemo(() => {
@@ -4939,6 +5978,57 @@ function NextStepsEditor({ opp, onClose, updateOppField }) {
   }
 
   const account = String(opp?.['Account'] || '').trim() || '(no account)';
+
+  // The "Timeline?" column is user-added, so its stored key can carry odd
+  // casing / zero-width drift (hence the tolerant read). Write back to
+  // whatever key already exists on the record, falling back to the
+  // canonical "Timeline?" when the opp doesn't have one yet.
+  const timelineKey = useMemo(() => {
+    for (const k in (opp || {})) {
+      if (normCell(k) === 'timeline?') return k;
+    }
+    return 'Timeline?';
+  }, [opp]);
+
+  // Structured timelines: a list of { type, value, kickoff } rows, each with
+  // its own Kickoff Deadline. Seeded from the opp (falling back to the legacy
+  // free-text Timeline? column) and persisted on every change — the list also
+  // writes a readable summary back into Timeline? so table cells / flags keep
+  // working.
+  // Any service in the opp's Scope flagged "Timeline Driven = Yes" also gets
+  // an auto row so its table always appears (empty auto rows aren't persisted
+  // until the user logs a date).
+  const initialTimelines = useMemo(() => readTimelines(opp), [opp]);
+  const seededTimelines = useMemo(
+    () => withServiceTimelines(initialTimelines.list, timelineDrivenServices(opp, solutionOptions, serviceOverrides)),
+    [initialTimelines, opp, solutionOptions, serviceOverrides]
+  );
+  const [timelineList, setTimelineList] = useState(seededTimelines);
+  const [contractTicket, setContractTicket] = useState(String(opp?._contractTicketUrl ?? ''));
+  const [coaTicket, setCoaTicket] = useState(String(opp?._coaTicketUrl ?? ''));
+
+  // Shared with FollowUpStatusModal so the Notes editor renders its fields
+  // with the same label / input chrome as the Update Status popup.
+  const labelStyle = { fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text)', display: 'block', marginBottom: 4 };
+  const inputStyle = {
+    width: '100%', boxSizing: 'border-box',
+    padding: '0.45rem 0.55rem',
+    border: '1px solid var(--color-border)', borderRadius: 4,
+    fontSize: '0.85rem', fontFamily: 'inherit',
+    background: '#fff', color: 'var(--color-text)',
+  };
+
+  function persistTimelines(nextList) {
+    updateOppField(opp._id, '_timelines', nextList);
+    // Mirror the soonest per-row kickoff to the opp-level field the Flags
+    // column reads, so the most urgent kickoff still drives the warning.
+    updateOppField(opp._id, '_kickoffDeadline', earliestKickoff(nextList));
+    updateOppField(opp._id, timelineKey, summarizeTimelines(nextList));
+  }
+  function changeTimelineList(nextList) {
+    setTimelineList(nextList);
+    persistTimelines(nextList);
+  }
 
   // One-click activity marks. Stamps today's date on `_calledOn` /
   // `_metOn` (clicking again the same day clears it). The Agents page
@@ -4987,35 +6077,16 @@ function NextStepsEditor({ opp, onClose, updateOppField }) {
     >
       <div
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } }}
         style={{
-          background: '#fff', borderRadius: 8, padding: '1rem 1.25rem',
-          width: 'min(1100px, 96vw)', maxHeight: '88vh', overflow: 'auto',
-          boxShadow: '0 18px 50px rgba(15, 23, 42, 0.32)',
+          width: 'min(820px, 94vw)', maxHeight: '88vh',
+          background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.6rem', gap: '1rem' }}>
-          <div style={{ overflow: 'hidden' }}>
-            <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              Notes — {account}
-            </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: '0.72rem', color: '#64748B' }}>
-              Sales Partner
-              <input
-                key={String(opp?.['Sales Partner'] ?? '')}
-                type="text"
-                defaultValue={String(opp?.['Sales Partner'] ?? '')}
-                placeholder="—"
-                onBlur={(e) => {
-                  const v = e.currentTarget.value.trim();
-                  if (v !== String(opp?.['Sales Partner'] ?? '').trim()) updateOppField(opp._id, 'Sales Partner', v);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
-                  else if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.value = String(opp?.['Sales Partner'] ?? ''); e.currentTarget.blur(); }
-                }}
-                style={{ padding: '2px 6px', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.78rem', fontFamily: 'inherit', color: '#334155', minWidth: 170 }}
-              />
-            </label>
+        <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            Notes — {account}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
             {markBtn('_calledOn', '📞', 'Called')}
@@ -5031,18 +6102,74 @@ function NextStepsEditor({ opp, onClose, updateOppField }) {
             >×</button>
           </div>
         </div>
-        <NextStepsRowsEditor
-          rows={rows}
-          onUpdateRow={updateRow}
-          onAddRow={addRow}
-          onDeleteRow={deleteRow}
-          onCommit={() => commit(rows)}
-          onQuickWaiting={(idx, value) => setRows(prev => {
-            const next = prev.map((r, i) => i === idx ? { ...r, waitingOn: value } : r);
-            commit(next);
-            return next;
-          })}
-        />
+
+        <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem', overflow: 'auto' }}>
+          <div style={{ display: 'flex', gap: '0.7rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            {clientManager ? (
+              <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+                <label style={labelStyle}>Client Manager</label>
+                <div style={{
+                  padding: '0.45rem 0.55rem',
+                  border: '1px solid var(--color-border)', borderRadius: 4,
+                  fontSize: '0.85rem', background: 'var(--color-bg)', color: 'var(--color-text)',
+                }}>{clientManager}</div>
+              </div>
+            ) : null}
+            <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+              <label style={labelStyle}>Sales Partner</label>
+              <input
+                key={String(opp?.['Sales Partner'] ?? '')}
+                type="text"
+                defaultValue={String(opp?.['Sales Partner'] ?? '')}
+                placeholder="—"
+                onBlur={(e) => {
+                  const v = e.currentTarget.value.trim();
+                  if (v !== String(opp?.['Sales Partner'] ?? '').trim()) updateOppField(opp._id, 'Sales Partner', v);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+                  else if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.value = String(opp?.['Sales Partner'] ?? ''); e.currentTarget.blur(); }
+                }}
+                style={inputStyle}
+              />
+            </div>
+          </div>
+
+          <TicketLinksFields
+            labelStyle={labelStyle}
+            inputStyle={inputStyle}
+            contractUrl={contractTicket}
+            coaUrl={coaTicket}
+            onChangeContract={setContractTicket}
+            onChangeCoa={setCoaTicket}
+            onCommitContract={(v) => updateOppField(opp._id, '_contractTicketUrl', v.trim())}
+            onCommitCoa={(v) => updateOppField(opp._id, '_coaTicketUrl', v.trim())}
+          />
+
+          <div>
+            <label style={labelStyle}>Timelines</label>
+            <TimelinesEditor
+              list={timelineList}
+              onChangeList={changeTimelineList}
+            />
+          </div>
+
+          <div>
+            <label style={labelStyle}>Notes</label>
+            <NextStepsRowsEditor
+              rows={rows}
+              onUpdateRow={updateRow}
+              onAddRow={addRow}
+              onDeleteRow={deleteRow}
+              onCommit={() => commit(rows)}
+              onQuickWaiting={(idx, value) => setRows(prev => {
+                const next = prev.map((r, i) => i === idx ? { ...r, waitingOn: value } : r);
+                commit(next);
+                return next;
+              })}
+            />
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -5166,8 +6293,122 @@ function NfatScheduleModal({ schedules, onSave, onClearNow, onClose }) {
   );
 }
 
+// Free-form "To do" scratchpad pinned to the top of the Opportunities
+// tab. Pressing Enter starts a new bullet so the box reads like a
+// checklist (Shift+Enter still inserts a plain newline inside a bullet).
+// The text and the collapsed state persist per-user in localStorage so
+// they survive reloads.
+function TodoBox() {
+  const BULLET = '• ';
+  const [text, setText] = useState(() => userLsGet('opps2:todo') ?? '');
+  const [collapsed, setCollapsed] = useState(() => userLsGet('opps2:todoCollapsed') === '1');
+  const taRef = useRef(null);
+  useEffect(() => { try { userLsSet('opps2:todo', text); } catch { /* quota — ignore */ } }, [text]);
+  useEffect(() => { try { userLsSet('opps2:todoCollapsed', collapsed ? '1' : '0'); } catch { /* ignore */ } }, [collapsed]);
+
+  // Grow the textarea to fit its content so there's no dead space below
+  // the last bullet — and it expands as bullets are added. Runs before
+  // paint (and whenever the text or expanded state changes) to avoid a
+  // visible resize flash on load or when expanding from collapsed.
+  useLayoutEffect(() => {
+    const el = taRef.current;
+    if (collapsed || !el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [text, collapsed]);
+
+  function handleKeyDown(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      // Enter = new bullet. Insert at the caret so it works mid-list too,
+      // then restore the cursor just after the inserted bullet.
+      e.preventDefault();
+      const el = e.currentTarget;
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      // Starting a bullet in an empty box shouldn't push a blank first line.
+      const insert = text.length === 0 ? BULLET : '\n' + BULLET;
+      setText(text.slice(0, start) + insert + text.slice(end));
+      requestAnimationFrame(() => {
+        const pos = start + insert.length;
+        try { el.selectionStart = el.selectionEnd = pos; } catch { /* ignore */ }
+      });
+    }
+  }
+  function handleChange(e) {
+    let v = e.target.value;
+    // Seed the first bullet when the user starts typing into an empty box.
+    if (text === '' && v && !v.startsWith(BULLET)) v = BULLET + v;
+    setText(v);
+  }
+
+  return (
+    <div style={{ margin: '0 1.25rem 0.75rem', border: '1px solid var(--color-border)', borderRadius: 8, background: 'var(--color-bg)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.4rem 0.6rem', borderBottom: collapsed ? 'none' : '1px solid var(--color-border-light)' }}>
+        <button
+          type="button"
+          onClick={() => setCollapsed(c => !c)}
+          title={collapsed ? 'Expand the To do list' : 'Collapse the To do list'}
+          style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '0.75rem', color: 'var(--color-text-muted)', padding: 0, width: 14, lineHeight: 1 }}
+        >{collapsed ? '▸' : '▾'}</button>
+        <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--color-text)', flex: 1 }}>To do</span>
+        {text.trim() && (
+          <button
+            type="button"
+            onClick={() => setText('')}
+            title="Clear the To do list"
+            style={{ border: '1px solid var(--color-border)', background: 'var(--color-bg)', borderRadius: 6, fontSize: '0.68rem', fontWeight: 600, color: 'var(--color-text-muted)', padding: '0.15rem 0.5rem', cursor: 'pointer', fontFamily: 'inherit' }}
+          >Clear</button>
+        )}
+      </div>
+      {!collapsed && (
+        <textarea
+          ref={taRef}
+          value={text}
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
+          placeholder="Jot a to-do and press Enter for a new bullet…"
+          rows={1}
+          style={{ display: 'block', width: '100%', boxSizing: 'border-box', border: 'none', borderRadius: '0 0 8px 8px', resize: 'none', overflow: 'hidden', padding: '0.5rem 0.6rem', fontSize: '0.8rem', fontFamily: 'inherit', color: 'var(--color-text)', background: 'transparent', lineHeight: 1.5, outline: 'none' }}
+        />
+      )}
+    </div>
+  );
+}
+
 export function OppsView2({ settings, updateSettings, prospects = [], updateProspect, addProspect, onSelectProspect } = {}) {
   const { user, isAdmin } = useAuth();
+
+  // Client Manager lookup for the status / notes popups. Managers are
+  // typed on the Clients tab and stored per-company (keyed by the
+  // lowercased/trimmed name). We only surface one for an opp whose
+  // account is a *current* client (prospect status "client"), matching
+  // what the user sees on the Clients tab.
+  const [clientManagerMap, setClientManagerMap] = useState(() => loadClientManagerMap());
+  useEffect(() => {
+    const refresh = () => setClientManagerMap(loadClientManagerMap());
+    window.addEventListener(CLIENT_MANAGER_EVENT, refresh);
+    const onStorage = (e) => { if (e.key === 'clients-manager-map') refresh(); };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(CLIENT_MANAGER_EVENT, refresh);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+  const currentClientKeys = useMemo(() => {
+    const set = new Set();
+    for (const p of prospects) {
+      if (String(p?.status || '').trim().toLowerCase() === 'client') {
+        set.add(String(p?.company || '').trim().toLowerCase());
+      }
+    }
+    return set;
+  }, [prospects]);
+  const clientManagerForAccount = useCallback((account) => {
+    const key = String(account || '').trim().toLowerCase();
+    if (!key || !currentClientKeys.has(key)) return '';
+    return String(clientManagerMap[key] || '').trim();
+  }, [currentClientKeys, clientManagerMap]);
+
   // Seeded with DEFAULT_HEADERS so the table renders columns immediately;
   // the hydration effect below replaces this with the user's saved
   // headers + records once Firestore / IndexedDB returns.
@@ -5401,6 +6642,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // Chance?, and Margin Email Date - Sales Leader Review Date. Cleared on
   // Save or Skip.
   const [quotedPromptId, setQuotedPromptId] = useState(null);
+  // _id of the opp that just moved into the "Agreement Sent" stage. When
+  // set, the AgreementSentFollowUpModal asks the user to enter / review
+  // USD?, the Margin Email / Sales Leader Review date, Chance?, Multiple
+  // Invoices?, Verbal, the Entity Outside the US Approval, and COA
+  // Approval (plus a read-only view of the linked Pricing Option).
+  // Cleared on Save or Skip.
+  const [agreementSentPromptId, setAgreementSentPromptId] = useState(null);
   // _id of the opp that just had its Stage flipped to "Sold". When set,
   // the SoldFollowUpModal asks the user to fill in Reason Not Sold,
   // Final Margin, and Competition. The Close Date is auto-stamped to the
@@ -5466,6 +6714,17 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       return next;
     });
   }, []);
+  // Row _id's in the exact order the table shows them (after column
+  // filters AND the active sort), kept in a ref so a shift-click can
+  // compute the range between two checkboxes without re-rendering on
+  // every scroll/sort. Fed by DataTable's onDisplayedRowsChange.
+  const displayedRowOrderRef = useRef([]);
+  const handleDisplayedRowsChange = useCallback((rows) => {
+    displayedRowOrderRef.current = (rows || []).map(r => r?._id).filter(id => id != null);
+  }, []);
+  // The last row toggled without Shift — the anchor a Shift-click ranges
+  // from. Reset when the selection is cleared / mass-edit is exited.
+  const selectionAnchorRef = useRef(null);
   // The HubSpot contact currently open in the rich ContactEditModal,
   // launched when the user clicks a tagged-contact name on the
   // Contact cell's popover. Null when no modal is open.
@@ -5753,6 +7012,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     if (val && val.trim()) next[cid] = val; else delete next[cid];
     updateSettings({ contactOldEmails: next });
   }, [settings?.contactOldEmails, updateSettings]);
+  const saveContactOldCompany = useCallback((cid, val) => {
+    const cur = settings?.contactOldCompany || {};
+    const next = { ...cur };
+    if (val && val.trim()) next[cid] = val; else delete next[cid];
+    updateSettings({ contactOldCompany: next });
+  }, [settings?.contactOldCompany, updateSettings]);
   const saveContactNickname = useCallback((cid, val) => {
     const cur = settings?.contactNicknames || {};
     const next = { ...cur };
@@ -6318,6 +7583,18 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         monthVal: d ? MONTH_FULL_NAMES[d.getMonth()] : '',
       };
     }
+    // When the Stage flips AWAY FROM "Not Sold" to any other stage, wipe
+    // the three close-out columns that only make sense for a lost opp —
+    // Reason Not Sold, Close Date, and Final Margin (plus the derived
+    // Close Year / Close Month columns kept in sync with Close Date) — so
+    // a re-opened opp doesn't drag stale not-sold data into the active
+    // pipeline and the downstream reporting tabs.
+    const prevStageNorm = String(row?.['Stage'] ?? '').trim().toLowerCase();
+    let closeClear = null;
+    if (stageChanged && prevStageNorm === 'not sold' && newStageNorm !== 'not sold') {
+      const { yearCols, monthCols } = findCloseDerivedColumns(dataRef.current?.headers);
+      closeClear = { yearCols, monthCols };
+    }
     if (row) {
       const snap = (f) => ({ field: f, hadField: f in row, prevValue: f in row ? row[f] : undefined });
       const fields = [snap(field)];
@@ -6345,6 +7622,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       // the Close Date edit restores them in the same step.
       if (closeDerived) {
         for (const c of [...closeDerived.yearCols, ...closeDerived.monthCols]) fields.push(snap(c));
+      }
+      // Snapshot the close-out columns wiped when a Stage moves away from
+      // "Not Sold" (see closeClear) so one undo of that Stage change
+      // brings Reason Not Sold / Close Date / Final Margin back too.
+      if (closeClear) {
+        fields.push(snap('Close Date'));
+        fields.push(snap('Reason Not Sold'));
+        fields.push(snap('Final Margin'));
+        for (const c of [...closeClear.yearCols, ...closeClear.monthCols]) fields.push(snap(c));
       }
       pushUndoEntry({ id, fields });
     }
@@ -6375,6 +7661,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             next['Close Date'] = closeStamp.date;
             for (const c of closeStamp.yearCols) next[c] = closeStamp.yearVal;
             for (const c of closeStamp.monthCols) next[c] = closeStamp.monthVal;
+          }
+          // Wipe the not-sold close-out columns when the Stage leaves
+          // "Not Sold" (see closeClear above).
+          if (closeClear) {
+            next['Close Date'] = '';
+            next['Reason Not Sold'] = '';
+            next['Final Margin'] = '';
+            for (const c of closeClear.yearCols) next[c] = '';
+            for (const c of closeClear.monthCols) next[c] = '';
           }
           // Stamp the stage-entry date whenever Stage flips to a new
           // value so Days-in-Stage measures "time since the last move"
@@ -6423,6 +7718,14 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     // flips TO "Quoted" so they can be entered or reviewed on the spot.
     if (stageChanged && String(value ?? '').trim().toLowerCase() === 'quoted') {
       setQuotedPromptId(id);
+    }
+    // Prompt for the agreement-stage approval data points (USD?, Margin
+    // Email / Sales Leader Review date, Chance?, Multiple Invoices?,
+    // Verbal, Entity Outside the US Approval, COA Approval) whenever the
+    // Stage flips TO "Agreement Sent" so they can be entered / reviewed
+    // on the spot.
+    if (stageChanged && String(value ?? '').trim().toLowerCase() === 'agreement sent') {
+      setAgreementSentPromptId(id);
     }
     // Prompt for the close-out details (Reason Not Sold / Final Margin /
     // Competition) whenever the Stage flips TO "Sold". The Close Date was
@@ -6530,6 +7833,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     setData(prev => {
       const records = prev?.records || [];
       const stamp = field === 'Stage' ? todayISO() : null;
+      const closeDerivedCols = field === 'Stage'
+        ? findCloseDerivedColumns(prev?.headers)
+        : { yearCols: [], monthCols: [] };
+      const newStageNorm = String(value ?? '').trim().toLowerCase();
       return {
         ...prev,
         records: records.map(r => {
@@ -6553,6 +7860,20 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               { stage: prevStage, enteredAt: prevEntered || '', exitedAt: stamp, days },
             ];
             next._stageEnteredAt = stamp;
+          }
+          // Mirror the single-row updater: a bulk Stage move away from
+          // "Not Sold" wipes the not-sold close-out columns (Reason Not
+          // Sold, Close Date, Final Margin + derived Close Year / Month).
+          if (
+            stamp
+            && String(r['Stage'] ?? '').trim().toLowerCase() === 'not sold'
+            && newStageNorm !== 'not sold'
+          ) {
+            next['Close Date'] = '';
+            next['Reason Not Sold'] = '';
+            next['Final Margin'] = '';
+            for (const c of closeDerivedCols.yearCols) next[c] = '';
+            for (const c of closeDerivedCols.monthCols) next[c] = '';
           }
           // Track when No-Further-Action-Today gets flipped via the
           // mass-edit bar, same as the single-row updater. The 2 PM
@@ -6760,6 +8081,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               .join('\n');
             return stacked || String(row[h] ?? '');
           }
+          if (isFlagsColumn(h)) {
+            // Expose the auto "needs USD" flag to the column filter /
+            // search so the user can isolate flagged rows by typing
+            // "needs USD" (or 🚩), on top of any manual flag text.
+            const manual = String(row[h] ?? '').trim();
+            return needsUsdFlag(row) ? `🚩 needs USD ${manual}`.trim() : manual;
+          }
           return row[h] ?? '';
         },
         // Sort by the same displayed value — without this, DataTable
@@ -6776,6 +8104,28 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         // re-clicks the header when they want a fresh ranking.
         freezeSortOrder: h === 'Call In' ? true : undefined,
         render: (row) => {
+          if (isFlagsColumn(h)) {
+            // Auto 🚩 when the deal is past Lead but the `USD?` field has
+            // no real value (blank or "-"). Stays editable so manual flag
+            // notes can sit alongside the auto indicator.
+            const auto = needsUsdFlag(row);
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                {auto && (
+                  <span
+                    title="Stage is Qualifying or later but the USD? field is blank or “-”"
+                    style={{ fontSize: '0.95rem', flexShrink: 0, lineHeight: 1 }}
+                  >🚩</span>
+                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <EditableCell
+                    value={row[h]}
+                    onChange={(v) => updateOppField(row._id, h, v)}
+                  />
+                </div>
+              </div>
+            );
+          }
           if (h === 'Call In') {
             // Click-to-clear / click-to-restore. The cell still
             // computes live from Follow Up by default; the user can
@@ -6832,6 +8182,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 url={row._quotedAmountUrl || ''}
                 onChangeUrl={(u) => updateOppField(row._id, '_quotedAmountUrl', u)}
                 services={cellServices}
+                bfoName={row['BFO Link']}
+                bfoAddress={row['BFO Address']}
               />
             );
           }
@@ -6872,6 +8224,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                   extraGroupsLabel="Add from Pricing Option"
                   extraGroupsPlaceholder="— pick an option —"
                   nowrap={h === 'Scope'}
+                  placeholder={h === 'Scope' ? 'AEM' : undefined}
                 />
               );
             }
@@ -7065,7 +8418,36 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         <input
           type="checkbox"
           checked={selectedIds.has(row._id)}
-          onClick={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            // Shift-click selects the whole range between the anchor
+            // (last row toggled without Shift) and this row, in the
+            // order the table is currently showing. We manage the state
+            // ourselves and preventDefault so the native toggle + the
+            // onChange single-toggle below don't also fire.
+            if (!e.shiftKey) return;
+            e.preventDefault();
+            const order = displayedRowOrderRef.current;
+            const anchor = selectionAnchorRef.current;
+            const to = order.indexOf(row._id);
+            const from = anchor == null ? -1 : order.indexOf(anchor);
+            // The range takes the state this checkbox is about to move
+            // to (its opposite of currently-selected), matching how file
+            // explorers / spreadsheets behave.
+            const makeSelected = !selectedIds.has(row._id);
+            const ids = (from !== -1 && to !== -1)
+              ? order.slice(Math.min(from, to), Math.max(from, to) + 1)
+              : [row._id];
+            setSelectedIds(prev => {
+              const next = new Set(prev);
+              for (const id of ids) {
+                if (makeSelected) next.add(id);
+                else next.delete(id);
+              }
+              return next;
+            });
+            selectionAnchorRef.current = row._id;
+          }}
           onChange={(e) => {
             const checked = e.target.checked;
             setSelectedIds(prev => {
@@ -7074,9 +8456,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               else next.delete(row._id);
               return next;
             });
+            selectionAnchorRef.current = row._id;
           }}
           style={{ margin: 0, cursor: 'pointer' }}
-          title="Select for mass edit"
+          title="Select for mass edit — hold Shift and click another row to select the range"
         />
       ),
     };
@@ -7114,11 +8497,22 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       display: 'inline-block', padding: '1px 8px', borderRadius: 999,
       fontSize: '0.65rem', fontWeight: 700, whiteSpace: 'nowrap',
     };
+    // Not Sold is a closed/lost deal — no point nagging about missing
+    // data or stalls on it, so the Flags column stays blank for those
+    // rows regardless of which individual flags would otherwise fire.
+    const flagsSuppressedForStage = (row) =>
+      String(row?.['Stage'] || '').trim() === 'Not Sold';
     const flagSummary = (row) => {
+      if (flagsSuppressedForStage(row)) return '';
       const parts = [];
+      if (needsUsdFlag(row)) parts.push('Missing USD value');
+      if (needsBudgetTimelineFlag(row)) parts.push('Budget delivery timeline');
       if (oppMissingBfoAddress(row)) parts.push('Missing BFO Address');
       if (oppMissingQuotedAmount(row)) parts.push('Deal Size Missing');
       if (oppMissingMarginApproval(row)) parts.push('Missing Margin Approval');
+      if (oppNeedsCreditApproval(row)) parts.push('Credit Approval Needed');
+      const kickoffDays = kickoffDeadlineFlag(row);
+      if (kickoffDays != null) parts.push(`Kickoff ${kickoffCountdownLabel(kickoffDays)}`);
       const stall = oppStageStall(row);
       if (stall && !row?._ignoreStallFlag) parts.push(`Stalled: ${stall.suggestion}`);
       return parts.join('; ');
@@ -7129,23 +8523,45 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       defaultWidth: 200,
       getFilterValue: (row) => flagSummary(row),
       getSortValue: (row) => {
+        if (flagsSuppressedForStage(row)) return 0;
         let n = 0;
+        if (needsUsdFlag(row)) n += 1;
+        if (needsBudgetTimelineFlag(row)) n += 1;
         if (oppMissingBfoAddress(row)) n += 1;
         if (oppMissingQuotedAmount(row)) n += 1;
         if (oppMissingMarginApproval(row)) n += 1;
+        if (oppNeedsCreditApproval(row)) n += 1;
+        if (kickoffDeadlineFlag(row) != null) n += 1;
         if (oppStageStall(row) && !row?._ignoreStallFlag) n += 1;
         return n;
       },
       exportValue: (row) => flagSummary(row),
       render: (row) => {
+        if (flagsSuppressedForStage(row)) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+        const missingUsd = needsUsdFlag(row);
+        const missingBudgetTimeline = needsBudgetTimelineFlag(row);
         const missingAddr = oppMissingBfoAddress(row);
         const missingQuote = oppMissingQuotedAmount(row);
         const missingMargin = oppMissingMarginApproval(row);
+        const needsCredit = oppNeedsCreditApproval(row);
+        const kickoffDays = kickoffDeadlineFlag(row);
         const stall = oppStageStall(row);
         const ignored = !!row?._ignoreStallFlag;
-        if (!missingAddr && !missingQuote && !missingMargin && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+        if (!missingUsd && !missingBudgetTimeline && !missingAddr && !missingQuote && !missingMargin && !needsCredit && kickoffDays == null && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
         return (
           <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
+            {missingUsd && (
+              <span
+                title="Stage is Qualifying or later but the USD? field is blank or “-” — fill in USD? to clear it."
+                style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
+              >⚠ Missing USD value</span>
+            )}
+            {missingBudgetTimeline && (
+              <span
+                title="Budgets is in Scope but the Timeline? field is empty — set the budget delivery timeline."
+                style={{ ...chipBase, background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}
+              >⚠ Budget delivery timeline?</span>
+            )}
             {missingAddr && (
               <span
                 title="Has a BFO Opportunity Name but no BFO Address — add the BFO Address."
@@ -7163,6 +8579,20 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 title={`Opp in "${String(row['Stage'] || '').trim()}" with no Margin Email Date - Sales Leader Review Date — get margin approval.`}
                 style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
               >⚠ Missing Margin Approval</span>
+            )}
+            {needsCredit && (
+              <span
+                title={`Deal Size over $50,000 in "${String(row['Stage'] || '').trim()}" with a blank Credit approval — get credit approval.`}
+                style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
+              >⚠ Credit Approval Needed</span>
+            )}
+            {kickoffDays != null && (
+              <span
+                title={`Kickoff Deadline is ${kickoffCountdownLabel(kickoffDays)} (warns under ${KICKOFF_WARN_DAYS} days out).`}
+                style={{ ...chipBase, ...(kickoffDays < 0
+                  ? { background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }
+                  : { background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }) }}
+              >⚠ Kickoff {kickoffCountdownLabel(kickoffDays)}</span>
             )}
             {stall && !ignored && (
               <>
@@ -7243,6 +8673,29 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
 
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);
 
+  // Recently-closed history the default view keeps visible: the 100
+  // most-recently-closed (Sold / Not Sold) opps that have no active Call
+  // In value. Without this they'd be swept away by the Hide-history gate
+  // below (which drops every Call-In-less row); surfacing the freshest
+  // 100 gives a rolling window of just-closed work alongside the active
+  // callback rows. Sorted by Close Date descending; rows with an
+  // unparseable / missing Close Date sink to the bottom and only make the
+  // cut when fewer than 100 dated rows exist.
+  const RECENT_CLOSED_HISTORY_LIMIT = 100;
+  const recentClosedHistoryIds = useMemo(() => {
+    const closedNoCallIn = records.filter(
+      r => CLOSED_STAGES.has((r['Stage'] || '').trim()) && resolveCallIn(r) == null,
+    );
+    closedNoCallIn.sort((a, b) => {
+      const da = parseCloseDate(a['Close Date']);
+      const db = parseCloseDate(b['Close Date']);
+      return (db ? db.getTime() : -Infinity) - (da ? da.getTime() : -Infinity);
+    });
+    return new Set(
+      closedNoCallIn.slice(0, RECENT_CLOSED_HISTORY_LIMIT).map(r => r._id),
+    );
+  }, [records, CLOSED_STAGES]);
+
   // Rows the current Date / Status / Show / Hide-history filters allow.
   // Always computed so `hiddenByFilterCount` stays accurate even when
   // the Show-hidden toggle is on.
@@ -7252,7 +8705,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return records.filter(r => {
       // History gate runs first so it short-circuits before the more
       // expensive date / stage checks for the bulk of dormant rows.
-      if (hideHistory && resolveCallIn(r) == null) return false;
+      // Call-In-less rows are history and hidden by default — except the
+      // 100 most-recently-closed ones, which stay visible alongside the
+      // active callback rows.
+      if (hideHistory && resolveCallIn(r) == null && !recentClosedHistoryIds.has(r._id)) return false;
       if (fromTs != null || toTs != null) {
         const raw = r['Start Date'];
         const ts = raw ? Date.parse(raw) : NaN;
@@ -7266,14 +8722,19 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       if (activityFilter === 'closed' && !CLOSED_STAGES.has(stage)) return false;
       return true;
     });
-  }, [records, dateFrom, dateTo, statusFilter, activityFilter, hideHistory, CLOSED_STAGES]);
+  }, [records, dateFrom, dateTo, statusFilter, activityFilter, hideHistory, CLOSED_STAGES, recentClosedHistoryIds]);
 
   // Standalone count of rows the Hide-history gate is suppressing, so
   // the toggle button can show "Show history (N)" without depending on
-  // the rest of the filter chain.
+  // the rest of the filter chain. The recently-closed 100 are already
+  // visible by default, so they don't count toward what "Show history"
+  // would reveal.
   const historyCount = useMemo(
-    () => records.reduce((n, r) => n + (resolveCallIn(r) == null ? 1 : 0), 0),
-    [records],
+    () => records.reduce(
+      (n, r) => n + (resolveCallIn(r) == null && !recentClosedHistoryIds.has(r._id) ? 1 : 0),
+      0,
+    ),
+    [records, recentClosedHistoryIds],
   );
 
   // When the user clicks "Show hidden", bypass the active filters and
@@ -7297,6 +8758,23 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     }
     return searched;
   }, [prefiltered, search, showOnlySelected, selectedIds]);
+
+  // "Waiting on Keith" subtab: opps where Keith appears in the Waiting On
+  // column. The displayed Waiting On value is the stacked per-step
+  // `_nextStepsWaiting` array (falling back to the legacy "Waiting On"
+  // field), so we match against the same text the Opportunities tab shows.
+  // Sourced from `prefiltered` so it honours the Date / Status / Show /
+  // Hide-history filters but stays independent of the Opportunities search.
+  const waitingOnKeith = useMemo(() => {
+    return prefiltered.filter(row => {
+      const stacked = (Array.isArray(row._nextStepsWaiting) ? row._nextStepsWaiting : [])
+        .map(s => String(s || '').trim())
+        .filter(Boolean)
+        .join('\n');
+      const text = stacked || String(row['Waiting On'] ?? '');
+      return text.toLowerCase().includes('keith');
+    });
+  }, [prefiltered]);
 
   // Mass Edit → "Email table": the selected opps to feed the preview/copy
   // modal (which lets the user pick columns and copies a plain bordered
@@ -7436,14 +8914,19 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       const stage = (r['Stage'] || '').trim();
       const isWin = stage === 'Sold';
       const isLoss = stage === 'Not Sold';
+      // Active = still in play (not yet won or lost, and a real stage).
+      // Uses the app-wide active-stage test so this agrees with the
+      // "active opps" counts shown elsewhere.
+      const isActive = isActiveOppStage(stage);
       const seen = new Set();
       for (const s of services) {
         if (seen.has(s)) continue;
         seen.add(s);
-        if (!stats[s]) stats[s] = { total: 0, wins: 0, losses: 0 };
+        if (!stats[s]) stats[s] = { total: 0, wins: 0, losses: 0, active: 0 };
         stats[s].total += 1;
         if (isWin) stats[s].wins += 1;
         else if (isLoss) stats[s].losses += 1;
+        if (isActive) stats[s].active += 1;
       }
     }
     const rows = Object.entries(stats)
@@ -7453,6 +8936,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           scope,
           count: s.total,
           wins: s.wins,
+          active: s.active,
           winRate: decided > 0 ? (s.wins / decided) * 100 : null,
           percent: totalOpps > 0 ? (s.total / totalOpps) * 100 : 0,
         };
@@ -7466,60 +8950,18 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     setDateFrom(''); setDateTo(''); setStatusFilter('all'); setActivityFilter('all');
   };
 
-  // Rows for the Days-in-Stage tab. Reads `_stageEnteredAt` (stamped by
-  // updateOppField when Stage flips) and falls back to Start Date so
-  // pre-existing opps that have never had a stage change still
-  // contribute something instead of showing blank. Sorted descending by
-  // days so the longest-stalling opps lead the list.
-  const stageDaysRows = useMemo(() => {
-    if (activeTab !== 'stageDays') return [];
-    const rows = [];
-    for (const r of records) {
-      const stage = String(r['Stage'] || '').trim();
-      if (!TRACKED_STAGES_SET.has(stage)) continue;
-      // Mirror the Opportunities tab's history gate — opps with no
-      // Call In aren't on a callback schedule, so they shouldn't crowd
-      // the kanban either.
-      if (resolveCallIn(r) == null) continue;
-      // Pull-through opps follow a parent sale, so keep them off the board.
-      if (PULL_THROUGH_RE.test(String(r['Scope'] || ''))) continue;
-      const enteredISO = toISODate(r._stageEnteredAt) || toISODate(r['Start Date']);
-      const days = enteredISO ? -daysFromToday(enteredISO) : null;
-      const scope = String(r['Scope'] ?? '').trim();
-      rows.push({
-        id: r._id,
-        Account: r['Account'] || '',
-        Stage: stage,
-        days,
-        enteredAt: enteredISO || '',
-        startDate: toISODate(r['Start Date']) || '',
-        scope: scope && scope !== '-' && scope !== '#N/A' ? scope : '',
-        _hasExplicitEntry: !!toISODate(r._stageEnteredAt),
-        ignoreStall: !!r._ignoreStallFlag,
-      });
-    }
-    rows.sort((a, b) => {
-      // Null days (no Start Date either) settle at the bottom so the
-      // top of the list always shows real numbers.
-      if (a.days == null && b.days == null) return 0;
-      if (a.days == null) return 1;
-      if (b.days == null) return -1;
-      return b.days - a.days;
-    });
-    return rows;
-  }, [activeTab, records]);
+  // Rows for the Days-in-Stage tab (built by the shared ./daysInStage
+  // helper so the PE Portfolio board stays byte-for-byte identical).
+  // Gated on the active tab so we don't walk every record until the
+  // board is on screen.
+  const stageDaysRows = useMemo(
+    () => (activeTab === 'stageDays' ? buildStageDaysRows(records) : []),
+    [activeTab, records],
+  );
 
   // Group Days-in-Stage rows by stage so the Kanban view can render one
-  // column per stage with its cards stacked beneath. stageDaysRows is
-  // pre-sorted descending by days, so each bucket's order falls out for
-  // free — longest-stalling firms lead each column.
-  const stageDaysByStage = useMemo(() => {
-    const map = new Map(TRACKED_STAGES.map(s => [s, []]));
-    for (const r of stageDaysRows) {
-      if (map.has(r.Stage)) map.get(r.Stage).push(r);
-    }
-    return map;
-  }, [stageDaysRows]);
+  // column per stage with its cards stacked beneath.
+  const stageDaysByStage = useMemo(() => groupStageDaysByStage(stageDaysRows), [stageDaysRows]);
 
   // Rows for the Stage History tab. Same gate as the Days-in-Stage tab
   // so the two tabs cover the same set of opps. For each row we sum
@@ -7609,6 +9051,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       key: 'winRate',
       label: 'Win Rate',
       defaultWidth: 110,
+      // Win Rate is Sold ÷ (Sold + Not Sold) — decided opps only. Active
+      // opps are excluded, so a service with wins but no losses reads 100%
+      // even while it still has opps in play (see the Active Opps column).
+      renderHeader: (label) => (
+        <span title="Wins ÷ decided opps (Sold + Not Sold). Active opps are not counted.">{label}</span>
+      ),
       render: (row) => (
         <div style={{ textAlign: 'right' }}>
           {row.winRate == null ? '—' : `${row.winRate.toFixed(1)}%`}
@@ -7626,6 +9074,17 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             <div className={styles.serviceBarFill} style={{ width: `${row.percent}%` }} />
           </div>
         </div>
+      ),
+    },
+    {
+      key: 'active',
+      label: 'Active Opps',
+      defaultWidth: 110,
+      renderHeader: (label) => (
+        <span title="Opps still in play — not yet Sold or Not Sold.">{label}</span>
+      ),
+      render: (row) => (
+        <div style={{ textAlign: 'right' }}>{row.active}</div>
       ),
     },
     {
@@ -7922,7 +9381,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           companySuggestions={companySuggestions}
           peOwnerSuggestions={peOwnerSuggestions}
           prospects={prospects}
-          onCreate={({ company, source, peOwner, type, frameworks, frameworksEdited, addToTableView }) => {
+          onCreate={({ company, source, peOwner, type, frameworks, frameworksEdited, addToTableView, hqRegion }) => {
             // Create the company on Table View first (when requested and
             // it isn't there yet) so the new opp's Account immediately
             // resolves to a real prospect record. addProspect is
@@ -7930,7 +9389,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             // existing company is harmless.
             if (addToTableView && company && addProspect) {
               try {
-                Promise.resolve(addProspect({ company, peOwner: peOwner || '', type: type || '', frameworks: frameworksEdited ? frameworks : [] }))
+                // New companies created from this flow default to the
+                // Qualifying status so they land in the active pipeline
+                // rather than statusless.
+                Promise.resolve(addProspect({ company, peOwner: peOwner || '', type: type || '', hqRegion: hqRegion || '', status: 'Qualifying', frameworks: frameworksEdited ? frameworks : [] }))
                   .catch(err => console.error('opps2: add company to Table View failed', err));
               } catch (err) {
                 console.error('opps2: add company to Table View failed', err);
@@ -8040,12 +9502,17 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           <QuotedFollowUpModal
             opp={opp}
             chanceOptions={listRegistry.get('chance')?.options || []}
-            onSave={({ quotedOn, chance, marginReviewDate }) => {
+            columnLinks={columnLinks}
+            listRegistry={listRegistry}
+            onSave={({ quotedOn, usd, chance, marginReviewDate }) => {
               // Only push fields whose value actually changed so the
               // undo stack stays uncluttered with no-op snapshots.
               const curQuotedOn = toISODate(opp['Quoted On'] ?? opp['Quoted Date']) || '';
               if (quotedOn !== curQuotedOn) {
                 updateOppField(opp._id, 'Quoted On', quotedOn);
+              }
+              if (usd !== String(opp['USD?'] ?? '')) {
+                updateOppField(opp._id, 'USD?', usd);
               }
               if (chance !== String(opp['Chance?'] ?? opp['Chance'] ?? '')) {
                 updateOppField(opp._id, 'Chance?', chance);
@@ -8064,6 +9531,50 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         );
       })()}
 
+      {agreementSentPromptId != null && (() => {
+        const opp = records.find(r => r._id === agreementSentPromptId);
+        if (!opp) return null;
+        return (
+          <AgreementSentFollowUpModal
+            opp={opp}
+            columnLinks={columnLinks}
+            listRegistry={listRegistry}
+            pricingOptionName={optionLinks[String(opp._id)] || ''}
+            onSave={({ usd, marginReviewDate, chance, multiInvoices, verbal, entity, coa }) => {
+              // Only push fields whose value actually changed so the
+              // undo stack stays uncluttered with no-op snapshots.
+              if (usd !== String(opp['USD?'] ?? '')) {
+                updateOppField(opp._id, 'USD?', usd);
+              }
+              const curMarginReview = toISODate(
+                opp['Margin Email Date - Sales Leader Review Date']
+                ?? opp['Margin Email Date'] ?? opp['Sales Leader Review Date']
+              ) || '';
+              if (marginReviewDate !== curMarginReview) {
+                updateOppField(opp._id, 'Margin Email Date - Sales Leader Review Date', marginReviewDate);
+              }
+              if (chance !== String(opp['Chance?'] ?? opp['Chance'] ?? '')) {
+                updateOppField(opp._id, 'Chance?', chance);
+              }
+              if (multiInvoices !== String(opp['Multiple Invoices?'] ?? '')) {
+                updateOppField(opp._id, 'Multiple Invoices?', multiInvoices);
+              }
+              if (verbal !== String(opp['Verbal'] ?? '')) {
+                updateOppField(opp._id, 'Verbal', verbal);
+              }
+              if (entity !== String(opp['Entity Outside the US Approval'] ?? '')) {
+                updateOppField(opp._id, 'Entity Outside the US Approval', entity);
+              }
+              if (coa !== String(opp['COA Approval'] ?? '')) {
+                updateOppField(opp._id, 'COA Approval', coa);
+              }
+              setAgreementSentPromptId(null);
+            }}
+            onClose={() => setAgreementSentPromptId(null)}
+          />
+        );
+      })()}
+
       {followUpStatusPromptId != null && (() => {
         const opp = records.find(r => r._id === followUpStatusPromptId);
         if (!opp) return null;
@@ -8073,7 +9584,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           <FollowUpStatusModal
             opp={opp}
             statusOptions={statusOpts}
-            onSave={({ status, nextSteps, nextStepsWaiting, salesPartner }) => {
+            clientManager={clientManagerForAccount(opp?.['Account'])}
+            solutionOptions={listRegistry.get('solutions')?.options || []}
+            serviceOverrides={settings?.serviceOverrides}
+            onSave={({ status, nextSteps, nextStepsWaiting, salesPartner, timelines, contractTicket, coaTicket }) => {
               if (status !== String(opp['Status'] ?? '')) {
                 updateOppField(opp._id, 'Status', status);
               }
@@ -8083,9 +9597,27 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               if (salesPartner !== String(opp['Sales Partner'] ?? '').trim()) {
                 updateOppField(opp._id, 'Sales Partner', salesPartner);
               }
+              // Persist the structured timelines, and mirror a readable summary
+              // back into the existing Timeline? column (whatever its casing) so
+              // table cells and the budget-timeline flag keep working.
+              const prevTimelines = readTimelines(opp);
+              if (JSON.stringify(timelines) !== JSON.stringify(prevTimelines.list)) {
+                updateOppField(opp._id, '_timelines', timelines);
+                const timelineKey = Object.keys(opp).find(k => normCell(k) === 'timeline?') || 'Timeline?';
+                updateOppField(opp._id, timelineKey, summarizeTimelines(timelines));
+                // Mirror the soonest per-row kickoff to the opp-level field the
+                // Flags column reads, so the most urgent kickoff still warns.
+                updateOppField(opp._id, '_kickoffDeadline', earliestKickoff(timelines));
+              }
               const curWaiting = Array.isArray(opp._nextStepsWaiting) ? opp._nextStepsWaiting : [];
               if (JSON.stringify(nextStepsWaiting) !== JSON.stringify(curWaiting)) {
                 updateOppField(opp._id, '_nextStepsWaiting', nextStepsWaiting);
+              }
+              if ((contractTicket || '') !== String(opp._contractTicketUrl ?? '')) {
+                updateOppField(opp._id, '_contractTicketUrl', contractTicket || '');
+              }
+              if ((coaTicket || '') !== String(opp._coaTicketUrl ?? '')) {
+                updateOppField(opp._id, '_coaTicketUrl', coaTicket || '');
               }
               setFollowUpStatusPromptId(null);
               setFollowUpStatusPrev(null);
@@ -8198,6 +9730,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           <NextStepsEditor
             key={opp._id}
             opp={opp}
+            clientManager={clientManagerForAccount(opp?.['Account'])}
+            solutionOptions={listRegistry.get('solutions')?.options || []}
+            serviceOverrides={settings?.serviceOverrides}
             onClose={() => setNextStepsPopupId(null)}
             updateOppField={updateOppField}
           />
@@ -8213,6 +9748,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           onSaveNote={saveContactNote}
           contactOldEmails={settings?.contactOldEmails || {}}
           onSaveOldEmails={saveContactOldEmails}
+          contactOldCompany={settings?.contactOldCompany || {}}
+          onSaveOldCompany={saveContactOldCompany}
           contactNicknames={settings?.contactNicknames || {}}
           onSaveNickname={saveContactNickname}
           contactTeamNames={settings?.contactTeamNames || {}}
@@ -8266,9 +9803,21 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           className={activeTab === 'stageHistory' ? styles.tabActive : styles.tab}
           onClick={() => setActiveTab('stageHistory')}
         >Stage History</button>
+        <button
+          className={activeTab === 'waitingKeith' ? styles.tabActive : styles.tab}
+          onClick={() => setActiveTab('waitingKeith')}
+        >Keith{waitingOnKeith.length ? ` (${waitingOnKeith.length})` : ''}</button>
       </div>
 
-      <div className={styles.filterRow}>
+      <div
+        // On the Opportunities tab the search box + result count + Mass
+        // Edit ride on this row too; the filterRowInline modifier keeps
+        // the whole strip on one line (inline with the Show controls)
+        // instead of letting it wrap below, scrolling horizontally on a
+        // narrow window rather than clipping. Other tabs keep the default
+        // wrapping behavior.
+        className={`${styles.filterRow}${activeTab === 'opps' ? ` ${styles.filterRowInline}` : ''}`}
+      >
         {/* Start Date range + Status filters intentionally hidden — the
             underlying state stays at its no-op defaults (empty range,
             status "all") so nothing is filtered out. */}
@@ -8313,27 +9862,29 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             ? 'Re-apply filters'
             : `Show hidden${hiddenByFilterCount ? ` (${hiddenByFilterCount})` : ''}`}
         </button>
-      </div>
-
-      {activeTab === 'opps' && (
-        <>
-          <div className={styles.searchRow}>
+        {/* Opps-tab search + result count + Mass Edit, hoisted up onto the
+            filter row so the whole control strip sits on one line. Guarded
+            to the Opportunities tab (the other tabs have no free-text
+            search). */}
+        {activeTab === 'opps' && (
+          <>
             <input
               className={styles.searchInput}
               type="text"
               placeholder="Search across all columns (Account, Stage, Scope, Notes, BFO Address, …)"
               value={search}
               onChange={e => setSearch(e.target.value)}
+              style={{ width: 260 }}
             />
             <span className={styles.resultCount}>{filtered.length} of {prefiltered.length}{filtersActive && prefiltered.length !== records.length ? ` (filtered from ${records.length})` : ''}</span>
             <button
               type="button"
               onClick={() => {
                 setMassEditOn(on => {
-                  // Leaving mass-edit mode clears any in-flight
-                  // selection so the bulk toolbar disappears and the
-                  // next time the user re-enters they start fresh.
-                  if (on) setSelectedIds(new Set());
+                  // Leaving mass-edit mode clears any in-flight selection
+                  // so the bulk toolbar disappears and the next time the
+                  // user re-enters they start fresh.
+                  if (on) { setSelectedIds(new Set()); selectionAnchorRef.current = null; }
                   return !on;
                 });
               }}
@@ -8341,7 +9892,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 ? 'Hide the selection checkboxes and exit mass-edit mode.'
                 : 'Show selection checkboxes so you can pick multiple rows to edit at once.'}
               style={{
-                marginLeft: '0.5rem',
                 padding: '0.3rem 0.7rem',
                 fontSize: '0.78rem',
                 fontWeight: 600,
@@ -8361,7 +9911,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                   ? 'Show every row again. Your selection is kept.'
                   : 'Hide every row that isn\'t currently selected.'}
                 style={{
-                  marginLeft: '0.5rem',
                   padding: '0.3rem 0.7rem',
                   fontSize: '0.78rem',
                   fontWeight: 600,
@@ -8374,7 +9923,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 }}
               >{showOnlySelected ? `Showing ${selectedIds.size} selected — Show all` : `Show ${selectedIds.size} selected only`}</button>
             )}
-          </div>
+          </>
+        )}
+      </div>
+
+      {activeTab === 'opps' && (
+        <>
+          <TodoBox />
 
           {massEditOn && selectedIds.size > 0 && (
             <MassEditBar
@@ -8384,7 +9939,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               listRegistry={listRegistry}
               onApply={(field, value) => updateManyOppFields(selectedIds, field, value)}
               onDelete={() => deleteManyOpps(selectedIds)}
-              onClear={() => setSelectedIds(new Set())}
+              onClear={() => { setSelectedIds(new Set()); selectionAnchorRef.current = null; }}
               onEmailTable={handleEmailTable}
             />
           )}
@@ -8405,6 +9960,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               // actually wants to triage by urgency.
               enableColumnFilters
               onFilteredRowsChange={handleFilteredRowsChange}
+              onDisplayedRowsChange={handleDisplayedRowsChange}
               emptyMessage="No opps yet — click + New Opp to create one."
               settings={settings}
               updateSettings={updateSettings}
@@ -8504,6 +10060,43 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               emptyMessage={`No active opps within ${NEW_OPPS_MAX_STAGE_AGE_DAYS} days in Lead/Qualifying/Quoting.`}
               settings={settings}
               updateSettings={updateSettings}
+            />
+          )}
+        </>
+      )}
+
+      {activeTab === 'waitingKeith' && (
+        <>
+          <div className={styles.searchRow}>
+            <span className={styles.resultCount}>
+              {waitingOnKeith.length} opp{waitingOnKeith.length === 1 ? '' : 's'} waiting on Keith
+            </span>
+          </div>
+          <div style={{ padding: '0 0 0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
+            Shows opps with “Keith” in the Waiting On column.
+          </div>
+          {loading && !data ? (
+            <div className={styles.loading}>Loading...</div>
+          ) : (
+            <DataTable
+              tableId="opps2-waiting-keith"
+              columns={columns}
+              rows={waitingOnKeith}
+              alwaysVisible={['Account', '_info']}
+              enableColumnFilters
+              variableRowHeight
+              emptyMessage="No opps are waiting on Keith."
+              settings={settings}
+              updateSettings={updateSettings}
+              rowStyle={(row) => {
+                const nfat = String(row?.['No Further Action Today'] || '').trim().toLowerCase();
+                if (nfat === 'yes') return { background: '#E5E7EB' };
+                if (nfat === 'no') return { background: '#FEF9C3' };
+                const stage = String(row?.Stage || '').trim();
+                if (stage === 'Sold') return { background: '#DCFCE7' };
+                if (stage === 'Not Sold') return { background: '#FEE2E2' };
+                return undefined;
+              }}
             />
           )}
         </>
@@ -8620,121 +10213,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       )}
 
       {activeTab === 'stageDays' && (
-        <>
-          <div className={styles.searchRow}>
-            <label className={styles.showHiddenLabel}>
-              <input
-                type="checkbox"
-                checked={hideNotStarted}
-                onChange={e => setHideNotStarted(e.target.checked)}
-              />
-              Hide Not Started ({(stageDaysByStage.get('Not Started') || []).length})
-            </label>
-            <span style={{ fontSize: '0.72rem', color: '#B45309', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-              <span style={{
-                width: 10, height: 10, borderRadius: 2,
-                background: '#FEF3C7', border: '1px solid #FCD34D', display: 'inline-block',
-              }} />
-              ⚠ flagged = stalled past its stage limit (hover for the suggested move)
-            </span>
-          </div>
-          <div style={{
-            display: 'flex', gap: 12, overflowX: 'auto',
-            padding: '12px 0', alignItems: 'flex-start',
-          }}>
-            {TRACKED_STAGES.filter(s => !(hideNotStarted && s === 'Not Started')).map(stage => {
-              const items = stageDaysByStage.get(stage) || [];
-              return (
-                <div key={stage} style={{
-                  flex: '0 0 220px', width: 220,
-                  background: '#F1F5F9', borderRadius: 6, padding: 8,
-                  display: 'flex', flexDirection: 'column', gap: 8,
-                }}>
-                  <div style={{
-                    display: 'flex', alignItems: 'baseline',
-                    justifyContent: 'space-between',
-                    padding: '2px 4px 6px',
-                    borderBottom: '1px solid #CBD5E1',
-                  }}>
-                    <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>{stage}</span>
-                    <span style={{ fontSize: '0.72rem', color: '#64748B' }}>{items.length}</span>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {items.length === 0 ? (
-                      <div style={{
-                        color: '#94A3B8', fontSize: '0.72rem',
-                        textAlign: 'center', padding: '8px 0',
-                      }}>—</div>
-                    ) : items.map(row => {
-                      const dayBadgeTitle = row.enteredAt
-                        ? `Stage entered ${formatDateDisplay(row.enteredAt)}${row._hasExplicitEntry ? '' : ' (fallback to Start Date)'}`
-                        : 'No entry date recorded.';
-                      // Flagged opps (stalled past the stage's limit) stay
-                      // in the same column but render in amber, with the
-                      // suggested move on the card and in the hover — so
-                      // the board doubles as the "needs action" list. Opps
-                      // the user ignored on the Opps tab don't flag here.
-                      const action = row.ignoreStall ? null : stageActionFor(row.Stage, row.days);
-                      // Account-name hover surfaces the row's Scope so
-                      // the kanban reads like a triage board — no need
-                      // to bounce back to the Opportunities tab to see
-                      // what the opp is actually selling.
-                      const accountTitle = action
-                        ? `Stalled ${row.days}d (> ${action.days}d) → ${action.suggestion}${row.scope ? `\nScope: ${row.scope}` : ''}`
-                        : (row.scope ? `Scope: ${row.scope}` : 'No scope set on this opp.');
-                      return (
-                        <div
-                          key={row.id}
-                          style={{
-                            background: action ? '#FEF3C7' : '#FFFFFF', borderRadius: 4,
-                            border: `1px solid ${action ? '#FCD34D' : '#E2E8F0'}`,
-                            padding: '6px 8px',
-                            display: 'flex', flexDirection: 'column', gap: 3,
-                          }}
-                        >
-                          <div style={{
-                            display: 'flex', alignItems: 'center',
-                            justifyContent: 'space-between', gap: 8,
-                          }}>
-                            <span
-                              title={accountTitle}
-                              style={{
-                                fontSize: '0.8rem', fontWeight: 500,
-                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                minWidth: 0, cursor: 'help',
-                              }}
-                            >
-                              {action && <span title="Stalled past its stage limit">⚠ </span>}
-                              {row.Account || <span style={{ color: '#94A3B8' }}>(no account)</span>}
-                            </span>
-                            <span
-                              title={dayBadgeTitle}
-                              style={{
-                                fontSize: '0.72rem', fontWeight: action ? 700 : 600,
-                                color: action ? '#B45309' : (row.days != null && row.days > 30 ? '#DC2626' : '#475569'),
-                                fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
-                              }}
-                            >
-                              {row.days == null ? '—' : `${row.days}d`}
-                            </span>
-                          </div>
-                          {action && (
-                            <span style={{
-                              fontSize: '0.68rem', fontWeight: 600, color: '#B45309',
-                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                            }}>
-                              {action.suggestion}
-                            </span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </>
+        <div style={{ padding: '0 1.25rem' }}>
+          <StageDaysBoard
+            byStage={stageDaysByStage}
+            hideNotStarted={hideNotStarted}
+            setHideNotStarted={setHideNotStarted}
+          />
+        </div>
       )}
 
       {activeTab === 'stageHistory' && (
@@ -8763,3 +10248,4 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     </div>
   );
 }
+

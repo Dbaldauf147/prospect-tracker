@@ -1,0 +1,331 @@
+.wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.header {
+  padding: 1rem 1.25rem 0.25rem;
+}
+
+.title {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.lastSync {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.searchRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 1.25rem 0.75rem;
+}
+
+.subtabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.5rem 1.25rem 0;
+  border-bottom: 1px solid var(--color-border-light);
+  margin-bottom: 0.25rem;
+}
+
+.subtab,
+.subtabActive {
+  padding: 0.4rem 0.85rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: inherit;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+
+.subtab:hover {
+  color: var(--color-text);
+}
+
+.subtabActive {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+.subtabCount {
+  margin-left: 0.35rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--color-border-light);
+  color: var(--color-text-muted);
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+.serviceTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.serviceTable th {
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary);
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.serviceTable td {
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--color-border-light);
+  color: var(--color-text);
+  vertical-align: middle;
+}
+
+.serviceTable tr:hover td {
+  background: var(--color-bg);
+}
+
+.serviceNameCell {
+  font-weight: 600;
+}
+
+.serviceMutedCell {
+  color: var(--color-text-muted);
+}
+
+.serviceRowMuted td {
+  color: var(--color-text-muted);
+  background: #FAFAFA;
+}
+
+.serviceLink {
+  color: var(--color-accent);
+  text-decoration: underline;
+  font-weight: 600;
+}
+
+.serviceLink:hover {
+  text-decoration: none;
+}
+
+.serviceLinkEditBtn {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  height: 20px;
+  line-height: 18px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.serviceLinkEditBtn:hover {
+  color: var(--color-accent);
+  border-color: var(--color-border);
+}
+
+.serviceEmpty {
+  padding: 1rem;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.searchInput {
+  width: 100%;
+  max-width: 320px;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+.searchInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.resultCount {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 0.25rem 1.25rem 1.25rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.cardHeader {
+  padding: 0.5rem 0.75rem;
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border-light);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.cardTitle {
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.cardCount {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.cardBody {
+  padding: 0.4rem 0.6rem 0.5rem;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.cardBodyTall {
+  max-height: 360px;
+}
+
+.option {
+  font-size: 0.78rem;
+  color: var(--color-text);
+  padding: 0.18rem 0.3rem;
+  border-radius: var(--radius-sm);
+}
+
+.option:hover {
+  background: var(--color-bg);
+}
+
+.optionEmpty {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  font-style: italic;
+  padding: 0.18rem 0.3rem;
+}
+
+/* Second "Presentation" column on the Solutions / Service Catalog card. */
+.optionLinkCell {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  width: 160px;
+}
+
+.listColHeader {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 0 4px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--color-border-light);
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary);
+}
+
+.listColHeaderName {
+  flex: 1;
+  min-width: 0;
+  padding-left: 6px;
+}
+
+.listColHeaderLink {
+  flex: 0 0 auto;
+  width: 160px;
+}
+
+.listColHeaderSpacer {
+  flex: 0 0 auto;
+  width: 20px;
+}
+
+.section {
+  padding-top: 0.75rem;
+}
+
+.sectionTitle {
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0 0 0.4rem;
+}
+
+.guidanceTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  max-width: 480px;
+}
+
+.guidanceTable th {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  background: var(--color-bg);
+  font-weight: 600;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.guidanceTable td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--color-border-light);
+  color: var(--color-text);
+}
+
+.guidanceTable tbody tr:last-child td {
+  border-bottom: none;
+}
