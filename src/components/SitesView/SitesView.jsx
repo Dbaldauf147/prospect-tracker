@@ -11341,16 +11341,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       {/* Collapsed by default: the data-source bars below are hidden until
           the user expands them. A compact summary keeps the loaded-state
           confirmation without the full Replace/Clear/Imported clutter. */}
-      <div className={styles.utilityBar} style={{ padding: '0.4rem 1.25rem' }}>
-        <button
-          type="button"
-          className={styles.utilityBarButton}
-          onClick={() => setShowDataSources(v => !v)}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
-        >
-          <span style={{ fontSize: '0.6rem', lineHeight: 1 }}>{showDataSources ? '▾' : '▸'}</span>
-          Data sources
-        </button>
+      <div className={styles.utilityBar} style={{ padding: '0.4rem 1.25rem', justifyContent: 'flex-end' }}>
         {!showDataSources && (
           <span style={{ color: '#94A3B8', fontSize: '0.7rem' }}>
             {utilMeta
@@ -11362,6 +11353,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
               : 'No fallback zips'}
           </span>
         )}
+        <button
+          type="button"
+          className={styles.utilityBarButton}
+          onClick={() => setShowDataSources(v => !v)}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+        >
+          <span style={{ fontSize: '0.6rem', lineHeight: 1 }}>{showDataSources ? '▾' : '▸'}</span>
+          Data sources
+        </button>
       </div>
 
       {showDataSources && (
