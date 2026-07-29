@@ -11024,7 +11024,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           type="button"
           className={mainTab === 'lookup' ? styles.subtabActive : styles.subtab}
           onClick={() => setMainTab('lookup')}
-        >Utility Lookup</button>
+        >Site List</button>
         <button
           type="button"
           className={mainTab === 'mapping' ? styles.subtabActive : styles.subtab}
