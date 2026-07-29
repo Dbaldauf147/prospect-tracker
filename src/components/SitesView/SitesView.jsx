@@ -562,6 +562,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   const [search, setSearch] = useState('');
   const [uploadError, setUploadError] = useState('');
   const [utilityBusy, setUtilityBusy] = useState(false);
+  // The utility-lookup / fallback-zip data-source bars are collapsed by
+  // default — once the files are loaded they're just noise, so we tuck
+  // them behind a toggle and show a one-line summary instead.
+  const [showDataSources, setShowDataSources] = useState(false);
   const [mappingModal, setMappingModal] = useState(null);
   // Column-mapping modal for the Fallback Zips upload — mirrors
   // mappingModal but only needs City / State / Zip.
@@ -11334,6 +11338,33 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         document.body
       )}
 
+      {/* Collapsed by default: the data-source bars below are hidden until
+          the user expands them. A compact summary keeps the loaded-state
+          confirmation without the full Replace/Clear/Imported clutter. */}
+      <div className={styles.utilityBar} style={{ padding: '0.4rem 1.25rem' }}>
+        <button
+          type="button"
+          className={styles.utilityBarButton}
+          onClick={() => setShowDataSources(v => !v)}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+        >
+          <span style={{ fontSize: '0.6rem', lineHeight: 1 }}>{showDataSources ? '▾' : '▸'}</span>
+          Data sources
+        </button>
+        {!showDataSources && (
+          <span style={{ color: '#94A3B8', fontSize: '0.7rem' }}>
+            {utilMeta
+              ? `Utility lookup: ${utilMeta.zipCount?.toLocaleString() || '?'} zips`
+              : 'No utility lookup'}
+            {' · '}
+            {zipFbMeta
+              ? `Fallback zips: ${zipFbMeta.entryCount?.toLocaleString() || '?'}`
+              : 'No fallback zips'}
+          </span>
+        )}
+      </div>
+
+      {showDataSources && (
       <div className={styles.utilityBar}>
         <input
           ref={utilityFileRef}
@@ -11416,6 +11447,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           </span>
         )}
       </div>
+      )}
 
       {sitesData.length > 0 && (
         <div className={styles.utilityBar} style={{ background: '#F1F5F9' }}>
