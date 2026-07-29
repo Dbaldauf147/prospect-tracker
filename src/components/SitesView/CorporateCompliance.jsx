@@ -139,12 +139,15 @@ function fmtStamp(ms) {
   catch { return ''; }
 }
 
-// Revenue block for one company card. Shows the persisted research when
-// present (headline figure + supporting detail + citations), otherwise a
-// "Research revenue" button that asks Claude (with web search) to find
-// the company's most recent annual revenue. `disabled` guards the
-// unnamed-company card, which has nothing to research.
-function RevenueSection({ data, loading, error, disabled, onResearch, linked, companyRevenue }) {
+// Revenue block for one company card. Deliberately just the headline
+// figure: the research still persists ownership, employee count, the
+// written summary and its citations, but rendering all of it buried the
+// one number this row exists for. The supporting detail moves to the
+// hover title so it stays reachable. With no research yet, a "Research
+// revenue" button asks Claude (with web search) for the company's most
+// recent annual revenue. `disabled` guards the unnamed-company card,
+// which has nothing to research.
+function RevenueSection({ data, loading, error, disabled, onResearch }) {
   const btn = (label) => (
     <button
       type="button"
@@ -159,66 +162,41 @@ function RevenueSection({ data, loading, error, disabled, onResearch, linked, co
     >{label}</button>
   );
 
+  // The detail that used to render inline (ownership / employees, the
+  // summary, and when it was researched) rides on the hover title instead,
+  // so it stays reachable without crowding the figure.
+  const detail = data
+    ? [
+        [data.ownership, data.ticker, data.employees ? `${Number(data.employees).toLocaleString()} employees` : '']
+          .filter(Boolean).join(' · '),
+        data.summary,
+        data.savedAt ? `researched ${fmtStamp(data.savedAt)}` : '',
+      ].filter(Boolean).join('\n\n')
+    : '';
+
   return (
-    <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>
+    <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', display: 'flex', alignItems: 'baseline', gap: '0.5rem', flexWrap: 'wrap' }}>
       {data && (data.revenue || data.summary) ? (
-        <div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', flexWrap: 'wrap' }}>
-            <span style={{ fontWeight: 700, color: 'var(--color-text)', fontSize: 'var(--font-size-sm)' }}>
-              {data.revenue || '—'}
-            </span>
-            {data.fiscalYear && <span style={{ fontSize: '0.65rem' }}>{data.fiscalYear}</span>}
-          </div>
-          {(data.ownership || data.ticker || data.employees) && (
-            <div style={{ marginTop: '0.15rem', fontSize: '0.65rem' }}>
-              {[data.ownership, data.ticker, data.employees ? `${Number(data.employees).toLocaleString()} employees` : '']
-                .filter(Boolean).join(' · ')}
-            </div>
-          )}
-          {/* maxWidth keeps the prose readable on a full-width card —
-              without it a summary runs the entire page width. */}
-          {data.summary && (
-            <div style={{ marginTop: '0.25rem', color: 'var(--color-text)', fontStyle: 'italic', maxWidth: READABLE_MAX }}>{data.summary}</div>
-          )}
-          {Array.isArray(data.sources) && data.sources.length > 0 && (
-            <div style={{ marginTop: '0.3rem', display: 'flex', flexWrap: 'wrap', gap: '0.3rem 0.5rem' }}>
-              {data.sources.slice(0, 6).map((s, i) => (
-                <a key={i} href={s.url} target="_blank" rel="noreferrer"
-                  title={s.url}
-                  style={{ fontSize: '0.62rem', color: 'var(--color-accent)', textDecoration: 'none', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  ↗ {s.title || s.url}
-                </a>
-              ))}
-            </div>
-          )}
-          <div style={{ marginTop: '0.35rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            {btn(loading ? 'Researching…' : 'Re-run research')}
-            {data.savedAt && !loading && (
-              <span style={{ fontSize: '0.6rem' }}>researched {fmtStamp(data.savedAt)}</span>
-            )}
-          </div>
-        </div>
+        <>
+          <span
+            title={detail || undefined}
+            style={{ fontWeight: 700, color: 'var(--color-text)', fontSize: 'var(--font-size-sm)' }}
+          >
+            {data.revenue || '—'}
+          </span>
+          {data.fiscalYear && <span style={{ fontSize: '0.65rem' }}>{data.fiscalYear}</span>}
+          {btn(loading ? 'Researching…' : 'Re-run research')}
+        </>
       ) : (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <>
           <span style={{ fontStyle: 'italic' }}>
             {loading ? 'Researching revenue…' : 'Revenue: pending research'}
           </span>
           {btn(loading ? 'Researching…' : 'Research revenue')}
-        </div>
-      )}
-      {!disabled && (
-        <div style={{ marginTop: '0.3rem', fontSize: '0.62rem', color: 'var(--color-text-muted)' }}>
-          {!linked ? (
-            <span style={{ fontStyle: 'italic' }}>No matching company record — add this company on the Table to save revenue to it.</span>
-          ) : companyRevenue ? (
-            <span>On company record: <strong style={{ color: '#166534' }}>{companyRevenue}</strong></span>
-          ) : (
-            <span style={{ fontStyle: 'italic' }}>Company record has no revenue yet — research to save it.</span>
-          )}
-        </div>
+        </>
       )}
       {error && (
-        <div style={{ marginTop: '0.25rem', color: '#B91C1C', fontSize: '0.65rem' }}>{error}</div>
+        <span style={{ color: '#B91C1C', fontSize: '0.65rem' }}>{error}</span>
       )}
     </div>
   );
@@ -753,8 +731,6 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                         error={revState[c.name]?.error || null}
                         disabled={c.name === UNNAMED}
                         onResearch={() => researchRevenue(c.name)}
-                        linked={!!(c.key && prospectByKey.get(c.key))}
-                        companyRevenue={String(prospectByKey.get(c.key)?.revenue || '').trim()}
                       />
                     </CardRow>
 
