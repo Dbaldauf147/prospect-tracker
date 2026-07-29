@@ -11054,13 +11054,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     >
       <div className={styles.header}>
         <div>
-          <h1 className={styles.title}>Utility Lookup</h1>
-          {cleanSitesData.length === 0 && (
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem', flexWrap: 'wrap' }}>
+            <h1 className={styles.title}>Utility Lookup</h1>
             <div className={styles.subtitle}>
-              Drop an Excel/CSV file or paste tab-separated rows (⌘V / Ctrl+V) anywhere on this page.
-            </div>
-          )}
-          <div className={styles.subtitle}>
             {cleanSitesData.length} {cleanSitesData.length === 1 ? 'site' : 'sites'}
             {sitesData.length > cleanSitesData.length && <span style={{ color: 'var(--color-text-muted)' }}> ({sitesData.length - cleanSitesData.length} blank-name row{sitesData.length - cleanSitesData.length === 1 ? '' : 's'} ignored)</span>}
             {matchStats && (
@@ -11084,7 +11080,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                 )}
               </>
             )}
+            </div>
           </div>
+          {cleanSitesData.length === 0 && (
+            <div className={styles.subtitle}>
+              Drop an Excel/CSV file or paste tab-separated rows (⌘V / Ctrl+V) anywhere on this page.
+            </div>
+          )}
           {missingStats.total > 0 && (
             <div style={{ marginTop: 4 }}>
               {missingStats.anyMissing > 0 ? (
