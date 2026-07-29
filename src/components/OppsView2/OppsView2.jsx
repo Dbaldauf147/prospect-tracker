@@ -9271,7 +9271,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         <div>
           <h2 className={styles.title}>Opps</h2>
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <AddCompanyCombobox
             suggestions={companySuggestions}
             onCommit={(name) => setPendingNewOpp({ account: name })}
@@ -9338,6 +9339,36 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               : 'No recent changes to undo'}
           >↶ Undo</button>
           <button className={styles.syncBtn} onClick={() => setPendingNewOpp({})}>+ New Opp</button>
+        </div>
+        {/* History / hidden toggles — sit on the right, under + New Opp. */}
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', justifyContent: 'flex-end' }}>
+          <button
+            className={styles.clearFiltersBtn}
+            onClick={() => setHideHistory(v => !v)}
+            disabled={hideHistory && historyCount === 0}
+            title={hideHistory
+              ? 'Rows with no Call In number are hidden as history. Click to include them.'
+              : 'Hide rows with no Call In number — they aren’t on a callback schedule.'}
+          >
+            {hideHistory
+              ? `Show history${historyCount ? ` (${historyCount})` : ''}`
+              : 'Hide history'}
+          </button>
+          <button
+            className={styles.clearFiltersBtn}
+            onClick={() => setShowHiddenByFilter(v => !v)}
+            disabled={!showHiddenByFilter && hiddenByFilterCount === 0}
+            title={showHiddenByFilter
+              ? 'Re-apply the Date / Status / Show filters above.'
+              : hiddenByFilterCount > 0
+                ? 'Temporarily reveal every row hidden by the current filters without changing the filter inputs.'
+                : 'No rows are currently hidden by the Date / Status / Show filters.'}
+          >
+            {showHiddenByFilter
+              ? 'Re-apply filters'
+              : `Show hidden${hiddenByFilterCount ? ` (${hiddenByFilterCount})` : ''}`}
+          </button>
+        </div>
         </div>
       </div>
 
@@ -9836,32 +9867,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         {filtersActive && (
           <button className={styles.clearFiltersBtn} onClick={clearFilters}>Clear filters</button>
         )}
-        <button
-          className={styles.clearFiltersBtn}
-          onClick={() => setHideHistory(v => !v)}
-          disabled={hideHistory && historyCount === 0}
-          title={hideHistory
-            ? 'Rows with no Call In number are hidden as history. Click to include them.'
-            : 'Hide rows with no Call In number — they aren’t on a callback schedule.'}
-        >
-          {hideHistory
-            ? `Show history${historyCount ? ` (${historyCount})` : ''}`
-            : 'Hide history'}
-        </button>
-        <button
-          className={styles.clearFiltersBtn}
-          onClick={() => setShowHiddenByFilter(v => !v)}
-          disabled={!showHiddenByFilter && hiddenByFilterCount === 0}
-          title={showHiddenByFilter
-            ? 'Re-apply the Date / Status / Show filters above.'
-            : hiddenByFilterCount > 0
-              ? 'Temporarily reveal every row hidden by the current filters without changing the filter inputs.'
-              : 'No rows are currently hidden by the Date / Status / Show filters.'}
-        >
-          {showHiddenByFilter
-            ? 'Re-apply filters'
-            : `Show hidden${hiddenByFilterCount ? ` (${hiddenByFilterCount})` : ''}`}
-        </button>
         {/* Opps-tab search + result count + Mass Edit, hoisted up onto the
             filter row so the whole control strip sits on one line. Guarded
             to the Opportunities tab (the other tabs have no free-text
