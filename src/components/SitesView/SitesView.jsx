@@ -333,9 +333,11 @@ function companySlug(name) {
 // uploaded from the company popup. This is a read-only convenience so the
 // user doesn't have to open each company to check.
 function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCompany, activeCompany = '' }) {
-  const [query, setQuery] = useState('');
+  // Seed the lookup from an already-mapped portfolio company so its name and
+  // status show on load without re-searching.
+  const [query, setQuery] = useState(activeCompany || '');
   const [open, setOpen] = useState(false);
-  const [picked, setPicked] = useState('');
+  const [picked, setPicked] = useState(activeCompany || '');
   const boxRef = useRef(null);
 
   useEffect(() => {
@@ -385,11 +387,24 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
     return [...starts, ...includes].slice(0, 30);
   }, [query, companyNames]);
 
+  // slug -> prospect (company) record, so a looked-up company can surface
+  // the revenue saved on its Table View record.
+  const prospectBySlug = useMemo(() => {
+    const m = new Map();
+    for (const p of prospects || []) {
+      const slug = companySlug(p?.company);
+      if (slug && !m.has(slug)) m.set(slug, p);
+    }
+    return m;
+  }, [prospects]);
+
   const result = useMemo(() => {
     if (!picked) return null;
-    const entry = bySlug.get(companySlug(picked)) || null;
-    return { company: picked, entry };
-  }, [picked, bySlug]);
+    const slug = companySlug(picked);
+    const entry = bySlug.get(slug) || null;
+    const prospect = prospectBySlug.get(slug) || null;
+    return { company: picked, entry, revenue: String(prospect?.revenue || '').trim() };
+  }, [picked, bySlug, prospectBySlug]);
 
   function choose(name) {
     setPicked(name);
@@ -397,7 +412,11 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
     setOpen(false);
   }
 
-  const mappedCount = bySlug.size;
+  function clearPick() {
+    setPicked('');
+    setQuery('');
+    if (onUseCompany && activeCompany) onUseCompany('');
+  }
 
   return (
     <div
@@ -408,29 +427,9 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
         maxWidth: 520,
       }}
     >
-      <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#0F172A', marginBottom: '0.1rem' }}>
-        Company site-list lookup
+      <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#0F172A', marginBottom: '0.45rem' }}>
+        Company Look Up
       </div>
-      <div style={{ fontSize: '0.68rem', color: '#64748B', marginBottom: '0.45rem' }}>
-        Check whether a company already has a site list mapped to it, or set it
-        as the company for this uploaded portfolio.
-        {mappedCount > 0 && <> {mappedCount} compan{mappedCount === 1 ? 'y has' : 'ies have'} one.</>}
-      </div>
-      {activeCompany && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.45rem', fontSize: '0.7rem', color: '#166534' }}>
-          <span>Portfolio company: <strong>{activeCompany}</strong></span>
-          {onUseCompany && (
-            <button
-              type="button"
-              onClick={() => onUseCompany('')}
-              title="Clear the portfolio company (sites fall back to any mapped Company Name column)"
-              style={{ padding: '0.05rem 0.4rem', border: '1px solid #CBD5E1', background: '#fff', color: '#64748B', borderRadius: 999, fontSize: '0.62rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700 }}
-            >
-              Clear
-            </button>
-          )}
-        </div>
-      )}
       <div style={{ position: 'relative' }}>
         <input
           type="text"
@@ -486,48 +485,62 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
         )}
       </div>
 
-      {result && onUseCompany && result.company !== activeCompany && (
-        <button
-          type="button"
-          onClick={() => onUseCompany(result.company)}
-          title="Apply this company to every uploaded site (shows on all Utility Lookup subtabs, including Corporate Compliance)"
-          style={{ marginTop: '0.5rem', padding: '0.35rem 0.7rem', border: '1px solid #009530', background: '#009530', color: '#fff', borderRadius: 6, fontSize: '0.74rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700 }}
-        >
-          Use “{result.company}” as the portfolio company
-        </button>
-      )}
-
       {result && (
-        result.entry ? (
-          <div style={{
-            marginTop: '0.5rem', padding: '0.5rem 0.65rem', borderRadius: 6,
-            background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534',
-            fontSize: '0.74rem',
-          }}>
-            <div style={{ fontWeight: 700 }}>
-              ✓ {result.company} has a site list mapped
+        <div style={{ marginTop: '0.55rem' }}>
+          {/* Mapped company name */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#0F172A' }}>{result.company}</span>
+            {onUseCompany && (result.company === activeCompany ? (
+              <span style={{ padding: '0.05rem 0.45rem', borderRadius: 999, background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534', fontSize: '0.62rem', fontWeight: 700 }}>
+                ✓ Portfolio company
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onUseCompany(result.company)}
+                title="Apply this company to every uploaded site (shows on all Utility Lookup subtabs, including Corporate Compliance)"
+                style={{ padding: '0.2rem 0.55rem', border: '1px solid #009530', background: '#009530', color: '#fff', borderRadius: 6, fontSize: '0.66rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700 }}
+              >
+                Map as portfolio company
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={clearPick}
+              title="Clear the looked-up company"
+              style={{ padding: '0.2rem 0.5rem', border: '1px solid #CBD5E1', background: '#fff', color: '#64748B', borderRadius: 6, fontSize: '0.66rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700 }}
+            >
+              Clear
+            </button>
+          </div>
+
+          {/* Two status items: site list mapped + company revenue */}
+          <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
+              <span style={{ flexShrink: 0, minWidth: 118, fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#94A3B8' }}>
+                Site list mapped
+              </span>
+              {result.entry ? (
+                <span style={{ fontSize: '0.74rem', color: '#166534', fontWeight: 600 }}>
+                  ✓ {result.entry.rows.length} site{result.entry.rows.length === 1 ? '' : 's'}
+                  {result.entry.fileName ? <span style={{ color: '#15803D', fontWeight: 400 }}> · {result.entry.fileName}</span> : null}
+                </span>
+              ) : (
+                <span style={{ fontSize: '0.74rem', color: '#94A3B8' }}>Not mapped</span>
+              )}
             </div>
-            <div style={{ marginTop: '0.15rem', color: '#15803D' }}>
-              {result.entry.rows.length} site{result.entry.rows.length === 1 ? '' : 's'}
-              {result.entry.fileName ? <> · {result.entry.fileName}</> : null}
-              {result.entry.uploadedAt ? <> · added {new Date(result.entry.uploadedAt).toLocaleDateString()}</> : null}
-            </div>
-            <div style={{ marginTop: '0.2rem', fontSize: '0.66rem', color: '#3F6212' }}>
-              Open this company from Table View to view or edit its site list.
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
+              <span style={{ flexShrink: 0, minWidth: 118, fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#94A3B8' }}>
+                Company revenue
+              </span>
+              {result.revenue ? (
+                <span style={{ fontSize: '0.74rem', color: '#0F172A', fontWeight: 700 }}>{result.revenue}</span>
+              ) : (
+                <span style={{ fontSize: '0.74rem', color: '#94A3B8' }}>Not set</span>
+              )}
             </div>
           </div>
-        ) : (
-          <div style={{
-            marginTop: '0.5rem', padding: '0.5rem 0.65rem', borderRadius: 6,
-            background: '#F1F5F9', border: '1px solid #CBD5E1', color: '#475569',
-            fontSize: '0.74rem',
-          }}>
-            <span style={{ fontWeight: 700 }}>No site list mapped</span> to <strong>{result.company}</strong> yet.
-            <div style={{ marginTop: '0.2rem', fontSize: '0.66rem', color: '#64748B' }}>
-              Open the company from Table View to upload or paste one.
-            </div>
-          </div>
-        )
+        </div>
       )}
     </div>
   );
