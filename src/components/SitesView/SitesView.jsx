@@ -446,18 +446,19 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
     <div
       ref={boxRef}
       style={{
-        marginTop: '0.6rem', padding: '0.6rem 0.75rem',
+        marginTop: '0.6rem', padding: '0.5rem 0.75rem',
         border: '1px solid var(--color-border)', borderRadius: 8, background: '#fff',
-        maxWidth: 1040,
+        // Everything sits on one horizontal line — title, search, the picked
+        // company, and every status. Never wraps; the row scrolls sideways
+        // instead of stacking when the viewport can't fit it.
+        display: 'flex', alignItems: 'center', gap: '0.85rem',
+        flexWrap: 'nowrap', overflowX: 'auto',
       }}
     >
-      <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#0F172A', marginBottom: '0.45rem' }}>
+      <div style={{ flexShrink: 0, fontSize: '0.75rem', fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap' }}>
         Company Look Up
       </div>
-      {/* Search on the left, the looked-up company's details to its right.
-          Wraps back to stacked on narrow viewports. */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1.25rem', flexWrap: 'wrap' }}>
-      <div style={{ position: 'relative', flex: '0 0 280px', minWidth: 220 }}>
+      <div style={{ position: 'relative', flex: '0 0 210px' }}>
         <input
           type="text"
           value={query}
@@ -513,10 +514,10 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
       </div>
 
       {result && (
-        <div style={{ flex: '1 1 380px', minWidth: 0 }}>
+        <>
           {/* Mapped company name — clickable to open the company popup when a
               matching Table View record exists. */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
+          <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>
             {onSelectProspect && result.prospect ? (
               <button
                 type="button"
@@ -553,48 +554,43 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
             </button>
           </div>
 
-          {/* Status items stack in this right-hand column so each label /
-              value pair stays on one line at the column's width. */}
-          <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-            {/* The saved site list and the Indicative Savings Analysis are
-                two stores behind one idea — the analysis is built from the
-                site list — so they report as a single status. Either one
-                present counts as mapped; whichever details exist are shown
-                (site count from the list, save date from the analysis). */}
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
-              <span style={{ flexShrink: 0, minWidth: 118, fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#94A3B8' }}>
-                Indicative savings
-              </span>
-              {(result.entry || analysisMeta) ? (
-                <span style={{ fontSize: '0.74rem', color: '#166534', fontWeight: 600 }}>
-                  ✓ Saved
-                  <span style={{ color: '#15803D', fontWeight: 400 }}>
-                    {result.entry
-                      ? ` · ${result.entry.rows.length} site${result.entry.rows.length === 1 ? '' : 's'}`
-                      : ''}
-                    {analysisMeta?.savedAt
-                      ? ` · ${new Date(analysisMeta.savedAt).toLocaleDateString()}`
-                      : ''}
-                  </span>
+          {/* The saved site list and the Indicative Savings Analysis are
+              two stores behind one idea — the analysis is built from the
+              site list — so they report as a single status. Either one
+              present counts as saved; whichever details exist are shown
+              (site count from the list, save date from the analysis). */}
+          <div style={{ flexShrink: 0, display: 'flex', alignItems: 'baseline', gap: '0.4rem', whiteSpace: 'nowrap' }}>
+            <span style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#94A3B8' }}>
+              Indicative savings
+            </span>
+            {(result.entry || analysisMeta) ? (
+              <span style={{ fontSize: '0.74rem', color: '#166534', fontWeight: 600 }}>
+                ✓ Saved
+                <span style={{ color: '#15803D', fontWeight: 400 }}>
+                  {result.entry
+                    ? ` · ${result.entry.rows.length} site${result.entry.rows.length === 1 ? '' : 's'}`
+                    : ''}
+                  {analysisMeta?.savedAt
+                    ? ` · ${new Date(analysisMeta.savedAt).toLocaleDateString()}`
+                    : ''}
                 </span>
-              ) : (
-                <span style={{ fontSize: '0.74rem', color: '#94A3B8' }}>Not saved</span>
-              )}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
-              <span style={{ flexShrink: 0, minWidth: 118, fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#94A3B8' }}>
-                Company revenue
               </span>
-              {result.revenue ? (
-                <span style={{ fontSize: '0.74rem', color: '#0F172A', fontWeight: 700 }}>{result.revenue}</span>
-              ) : (
-                <span style={{ fontSize: '0.74rem', color: '#94A3B8' }}>Not set</span>
-              )}
-            </div>
+            ) : (
+              <span style={{ fontSize: '0.74rem', color: '#94A3B8' }}>Not saved</span>
+            )}
           </div>
-        </div>
+          <div style={{ flexShrink: 0, display: 'flex', alignItems: 'baseline', gap: '0.4rem', whiteSpace: 'nowrap' }}>
+            <span style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#94A3B8' }}>
+              Company revenue
+            </span>
+            {result.revenue ? (
+              <span style={{ fontSize: '0.74rem', color: '#0F172A', fontWeight: 700 }}>{result.revenue}</span>
+            ) : (
+              <span style={{ fontSize: '0.74rem', color: '#94A3B8' }}>Not set</span>
+            )}
+          </div>
+        </>
       )}
-      </div>
     </div>
   );
 }
