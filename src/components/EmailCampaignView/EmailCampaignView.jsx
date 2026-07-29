@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { addQueuedRecipients } from '../../utils/draftRecipientsQueue';
+import { useEmailTracking, trackingByRecipient, normalizeTrackedEmail } from '../../hooks/useEmailTracking';
 
 export function EmailCampaignView() {
   const { user } = useAuth();
@@ -651,6 +652,47 @@ export function EmailCampaignView() {
   const displayResults = results;
   const { dupKeys, extraRows } = findDuplicates(displayResults?.contacts);
 
+  // Open/click tracking for this campaign. The campaign report never sends
+  // mail — HubSpot is the source of the sends — so tracking is joined in
+  // from the `emailTracking` docs written when the drafts were generated
+  // with "Track opens & clicks" on (Draft Emails). Matched on the campaign
+  // subject + recipient address. A contact row can list several addresses
+  // ("a@x; b@y"), so every address is checked and the best signal wins.
+  const { rows: trackingRows, error: trackingError } = useEmailTracking();
+  const trackingFor = useMemo(
+    () => trackingByRecipient(trackingRows, displayResults?.subject),
+    [trackingRows, displayResults?.subject],
+  );
+  const lookupTracking = useMemo(() => (contactEmail) => {
+    let best = null;
+    for (const part of String(contactEmail || '').split(';')) {
+      const hit = trackingFor.get(normalizeTrackedEmail(part));
+      if (!hit) continue;
+      if (!best || hit.openCount > best.openCount || hit.clickCount > best.clickCount) best = hit;
+    }
+    return best;
+  }, [trackingFor]);
+  // Campaign-level roll-up, counted over the contacts actually emailed so
+  // the rates line up with the existing Response Rate denominator.
+  const trackingStats = useMemo(() => {
+    const contacts = displayResults?.contacts || [];
+    let tracked = 0, opened = 0, clicked = 0;
+    for (const c of contacts) {
+      const t = lookupTracking(c.email);
+      if (!t) continue;
+      tracked++;
+      if (t.openCount > 0) opened++;
+      if (t.clickCount > 0) clicked++;
+    }
+    return {
+      tracked,
+      opened,
+      clicked,
+      openRate: tracked ? Math.round((opened / tracked) * 100) : 0,
+      clickRate: tracked ? Math.round((clicked / tracked) * 100) : 0,
+    };
+  }, [displayResults?.contacts, lookupTracking]);
+
   // Rows to render, carrying each contact's ORIGINAL index so the row actions
   // (remove, event status) keep pointing at the right entry in
   // results.contacts even after the display order changes. A stable sort falls
@@ -715,7 +757,9 @@ export function EmailCampaignView() {
       {displayResults && (
         <div>
           {/* Summary cards */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem', marginBottom: '0.75rem' }}>
+          {/* auto-fit so the Opened / Clicked tiles flow in alongside the
+              original four instead of forcing a ragged second row. */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.75rem', marginBottom: '0.75rem' }}>
             <div style={{ padding: '0.75rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', borderLeft: '3px solid var(--color-accent)' }}>
               <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Emails Sent</div>
               <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--color-text)' }}>{displayResults.sent}</div>
@@ -732,7 +776,33 @@ export function EmailCampaignView() {
               <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Total Contacts</div>
               <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--color-text)' }}>{displayResults.totalContacts ?? displayResults.contacts?.length ?? displayResults.totalEmails}</div>
             </div>
+            {/* Opens / clicks, joined from the tracked drafts. Only shown
+                once at least one send in this campaign carried tracking —
+                otherwise the tiles would read a misleading 0%. */}
+            {trackingStats.tracked > 0 && (
+              <>
+                <div style={{ padding: '0.75rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', borderLeft: '3px solid #F59E0B' }}>
+                  <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Opened</div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#F59E0B' }} title={`${trackingStats.opened} of ${trackingStats.tracked} tracked send${trackingStats.tracked === 1 ? '' : 's'} opened. Opens are directional — Apple Mail pre-loads the pixel and Outlook blocks it.`}>
+                    {trackingStats.opened} <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>({trackingStats.openRate}%)</span>
+                  </div>
+                </div>
+                <div style={{ padding: '0.75rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', borderLeft: '3px solid #0EA5E9' }}>
+                  <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Clicked</div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#0EA5E9' }} title={`${trackingStats.clicked} of ${trackingStats.tracked} tracked send${trackingStats.tracked === 1 ? '' : 's'} clicked a link. Clicks are the hard signal.`}>
+                    {trackingStats.clicked} <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>({trackingStats.clickRate}%)</span>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
+          {/* Nudge when nothing in this campaign was sent with tracking on. */}
+          {trackingStats.tracked === 0 && !trackingError && (
+            <div style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', marginBottom: '0.75rem' }}>
+              No open/click tracking for this subject. Tracking is added when you generate the drafts from{' '}
+              <strong>Draft Emails</strong> with “Track opens &amp; clicks” checked.
+            </div>
+          )}
 
           {/* Subject + Save button */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
@@ -892,6 +962,13 @@ export function EmailCampaignView() {
                     <SortHeader label="Sent To" sortKey="email" />
                     <SortHeader label="Sent Date" sortKey="sentDate" />
                     <SortHeader label="Status" sortKey="status" />
+                    {/* Only worth a column when something in this campaign
+                        was actually sent with tracking on. */}
+                    {trackingStats.tracked > 0 && (
+                      <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', borderBottom: '1px solid var(--color-border)', whiteSpace: 'nowrap' }}
+                        title="Opens are directional (Apple Mail pre-loads the pixel, Outlook blocks it); clicks are the hard signal."
+                      >Opens / Clicks</th>
+                    )}
                     <SortHeader label="Replied By" sortKey="repliedBy" />
                     <SortHeader label="Reply Date" sortKey="replyDate" />
                     <SortHeader label="Event Status" sortKey="eventStatus" />
@@ -919,6 +996,30 @@ export function EmailCampaignView() {
                             : <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#FEF3C7', color: '#92400E' }} title="In this campaign but not yet sent the email">Not Sent</span>
                         }
                       </td>
+                      {trackingStats.tracked > 0 && (
+                        <td style={{ padding: '0.4rem 0.6rem', whiteSpace: 'nowrap' }}>
+                          {(() => {
+                            const t = lookupTracking(c.email);
+                            if (!t) {
+                              return <span style={{ color: 'var(--color-text-muted)' }} title="This send didn't carry a tracking pixel">—</span>;
+                            }
+                            const openTitle = t.firstOpenAt ? `First opened ${new Date(t.firstOpenAt).toLocaleString()}` : 'No opens recorded';
+                            const clickTitle = t.lastClickAt ? `Last click ${new Date(t.lastClickAt).toLocaleString()}` : 'No clicks recorded';
+                            return (
+                              <span style={{ display: 'inline-flex', gap: '0.3rem', alignItems: 'center' }}>
+                                <span
+                                  title={openTitle}
+                                  style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: t.openCount ? '#FEF3C7' : '#F3F4F6', color: t.openCount ? '#92400E' : '#6B7280' }}
+                                >{t.openCount} open{t.openCount === 1 ? '' : 's'}</span>
+                                <span
+                                  title={clickTitle}
+                                  style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: t.clickCount ? '#E0F2FE' : '#F3F4F6', color: t.clickCount ? '#075985' : '#6B7280' }}
+                                >{t.clickCount} click{t.clickCount === 1 ? '' : 's'}</span>
+                              </span>
+                            );
+                          })()}
+                        </td>
+                      )}
                       <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)', fontWeight: c.replied ? 600 : 400 }}>{c.repliedBy || '—'}</td>
                       <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)' }}>{c.replied ? fmtDate(c.replyDate) : '—'}</td>
                       <td style={{ padding: '0.4rem 0.6rem' }}>

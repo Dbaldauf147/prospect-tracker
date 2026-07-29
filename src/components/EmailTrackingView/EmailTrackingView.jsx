@@ -8,11 +8,9 @@
 // pixel, Gmail proxies it, Outlook blocks images by default), while
 // clicks are a hard signal. Same limitations HubSpot has.
 
-import { useEffect, useMemo, useState } from 'react';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
-import { db } from '../../firebase';
-import { apiFetch } from '../../utils/apiFetch';
+import { useMemo, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useEmailTracking } from '../../hooks/useEmailTracking';
 
 function toDate(ts) {
   if (!ts) return null;
@@ -88,79 +86,13 @@ function Pill({ children, tone }) {
 
 export function EmailTrackingView() {
   const { user } = useAuth();
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  // Shared loader (realtime Firestore, falling back to /api/track-list
+  // when the emailTracking read rule isn't deployed) — the Email Campaign
+  // report reads the same rows through this hook.
+  const { rows, loading, error, fallback } = useEmailTracking();
   const [expanded, setExpanded] = useState(null);
   const [sortBy, setSortBy] = useState('sent'); // 'sent' | 'opens' | 'clicks'
   const [search, setSearch] = useState('');
-  // True when we loaded via the server fallback because the realtime
-  // client read was blocked (emailTracking rule not deployed yet).
-  const [fallback, setFallback] = useState(false);
-
-  useEffect(() => {
-    if (!user?.uid) return;
-    let cancelled = false;
-
-    // Server-side fallback: reads the same owner-scoped rows through the
-    // Admin SDK (which bypasses Firestore rules), so the dashboard still
-    // populates when the emailTracking read rule hasn't been deployed to
-    // the project yet. One-shot fetch — no realtime, but opens/clicks
-    // trickle in over hours, so a reload is enough until rules deploy.
-    const loadViaApi = async () => {
-      try {
-        const res = await apiFetch('/api/track-list');
-        if (!res.ok) throw new Error(`track-list ${res.status}`);
-        const data = await res.json();
-        if (cancelled) return;
-        setRows(Array.isArray(data.items) ? data.items : []);
-        setFallback(true);
-        setError(null);
-        setLoading(false);
-      } catch (e) {
-        if (cancelled) return;
-        console.error('track-list fallback failed:', e?.message || e);
-        setError('Failed to load tracking data');
-        setLoading(false);
-      }
-    };
-
-    // Filter by owner only; sort client-side by createdAt so we don't
-    // require a composite index the user would have to create by hand.
-    // `loading` starts true (useState) and the first snapshot clears it —
-    // no synchronous setState in the effect body.
-    const q = query(
-      collection(db, 'emailTracking'),
-      where('uid', '==', user.uid)
-    );
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        if (cancelled) return;
-        setRows(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        setFallback(false);
-        setLoading(false);
-        setError(null);
-      },
-      (err) => {
-        console.error('emailTracking snapshot error:', err);
-        // Most commonly the emailTracking read rule hasn't been deployed
-        // to the project yet -> permission-denied. Fall back to the
-        // authenticated server reader so the page still works instead of
-        // showing a raw "Missing or insufficient permissions" error.
-        if (err?.code === 'permission-denied') {
-          loadViaApi();
-          return;
-        }
-        // A missing composite index surfaces here with a console link to
-        // create it; show a readable hint rather than a blank screen.
-        if (cancelled) return;
-        setError(err?.message || 'Failed to load tracking data');
-        setLoading(false);
-      }
-    );
-    return () => { cancelled = true; unsub(); };
-  }, [user?.uid]);
 
   const stats = useMemo(() => {
     const trackedEmails = rows.length;
