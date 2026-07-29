@@ -263,6 +263,354 @@
   font-size: 0.82rem;
 }
 
+/* Horizontal scroll wrapper so wide / resized tables don't overflow
+   the detail pane. */
+.tableScroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+/* Resizable variant: fixed layout so the explicit column widths set via
+   the <colgroup> are honored, with clipped headers and a drag handle. */
+.resizable {
+  table-layout: fixed;
+}
+
+.resizable th {
+  position: relative;
+  vertical-align: top;
+  padding-right: 12px;
+}
+
+/* Header label that ellipsizes when its column is narrowed. */
+.thLabel {
+  display: block;
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.resizable td {
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.resizeHandle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+}
+
+.resizeHandle:hover,
+.resizeHandle:active {
+  background: var(--color-accent);
+  opacity: 0.45;
+}
+
+/* Email-domain chip + email-guessing controls */
+.domainChip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0.1rem 0.45rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #3730A3;
+  background: #EEF2FF;
+  border: 1px solid #C7D2FE;
+  border-radius: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.guessBtn {
+  padding: 0.12rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: #1E40AF;
+  background: #EFF6FF;
+  border: 1px dashed #93C5FD;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.guessBtn:hover {
+  background: #DBEAFE;
+}
+
+.guessTag {
+  margin-left: 6px;
+  padding: 0 5px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #92400E;
+  background: #FEF3C7;
+  border: 1px solid #FCD34D;
+  border-radius: 4px;
+  vertical-align: middle;
+}
+
+/* Column-mapping popup for the lookup importer */
+.mapHeaderToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.mapTable {
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  width: max-content;
+  min-width: 100%;
+}
+
+.mapTable th {
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--color-border);
+  border-right: 1px solid var(--color-border-light, #eef2f7);
+  background: var(--color-bg);
+  vertical-align: top;
+  min-width: 130px;
+}
+
+.mapTable td {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--color-border-light, #eef2f7);
+  border-right: 1px solid var(--color-border-light, #eef2f7);
+  color: var(--color-text);
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mapColName {
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin-bottom: 0.3rem;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mapSelect {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.25rem 0.35rem;
+  font-size: 0.76rem;
+  font-family: inherit;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.mapCellMapped {
+  background: var(--color-accent-soft, #EFF6FF);
+}
+
+.mapFooter {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.7rem 0.9rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.mapWarn {
+  font-size: 0.74rem;
+  color: #B45309;
+}
+
+.mapCancelBtn {
+  margin-left: auto;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.mapCancelBtn:hover {
+  background: var(--color-bg);
+}
+
+/* Decision-maker suggestion sub-row under a lookup company */
+.dmRow td {
+  padding: 0.3rem 0.5rem 0.45rem 1.4rem;
+  background: #F0FDF4;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dmWrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.dmLabel {
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #166534;
+}
+
+.dmChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.15rem 0.35rem 0.15rem 0.6rem;
+  background: var(--color-surface);
+  border: 1px solid #86EFAC;
+  border-radius: 999px;
+  font-size: 0.76rem;
+}
+
+.dmName {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.dmTitle {
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+}
+
+.dmAdd {
+  padding: 0.1rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: #166534;
+  background: #DCFCE7;
+  border: 1px solid #86EFAC;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.dmAdd:hover {
+  background: #BBF7D0;
+}
+
+.dmIgnore {
+  padding: 0.1rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: #64748B;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.dmIgnore:hover {
+  background: #FEF2F2;
+  border-color: #FECACA;
+  color: #B91C1C;
+}
+
+/* "Columns ▾" show/hide menu */
+.colsMenuWrap {
+  position: relative;
+  margin-left: 0.4rem;
+}
+
+.colsBtn {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.colsBtn:hover {
+  background: var(--color-bg);
+}
+
+.colsMenu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  z-index: 40;
+  min-width: 180px;
+  padding: 0.35rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.14);
+}
+
+.colsMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.45rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--color-text);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.colsMenuItem:hover {
+  background: var(--color-bg);
+}
+
+.colsMenuItem input {
+  cursor: pointer;
+}
+
+.colsMenuReset {
+  display: block;
+  width: 100%;
+  margin-top: 0.3rem;
+  padding: 0.35rem 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  text-align: left;
+  color: var(--color-accent);
+  background: none;
+  border: none;
+  border-top: 1px solid var(--color-border);
+  border-radius: 0 0 6px 6px;
+  cursor: pointer;
+}
+
+.colsMenuReset:hover {
+  background: var(--color-bg);
+}
+
 .attendeeTable th {
   text-align: left;
   font-size: 0.66rem;
@@ -607,4 +955,173 @@
   outline: none;
   border-color: var(--color-accent);
   background: var(--color-surface);
+}
+
+/* Clickable attendee name that opens the contact details popup. */
+.attendeeNameLink {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 600;
+  color: var(--color-accent);
+  cursor: pointer;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.attendeeNameLink:hover {
+  color: var(--color-accent-hover, #1d4ed8);
+}
+
+/* Label/value grid inside the attendee contact details popup. */
+.contactDetailTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.contactDetailTable th {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.3rem 0.7rem 0.3rem 0;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  width: 110px;
+}
+
+.contactDetailTable td {
+  padding: 0.3rem 0;
+  vertical-align: top;
+  color: var(--color-text);
+  word-break: break-word;
+}
+
+.contactDetailTable a {
+  color: var(--color-accent);
+}
+
+/* Bulk Dan's Tags editor toolbar above the attendee table. */
+.bulkTagBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0.35rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface-muted, #F8FAFC);
+}
+
+.bulkTagCount {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.bulkTagSelect {
+  font-size: 0.78rem;
+  font-family: inherit;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  min-width: 150px;
+}
+
+.bulkTagBtn {
+  font-size: 0.76rem;
+  font-family: inherit;
+  font-weight: 600;
+  padding: 0.3rem 0.65rem;
+  border: 1px solid #86EFAC;
+  border-radius: 6px;
+  background: #DCFCE7;
+  color: #166534;
+  cursor: pointer;
+}
+
+.bulkTagBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.bulkTagBtnRemove {
+  border-color: #FECACA;
+  background: #FEF2F2;
+  color: #B91C1C;
+}
+
+.bulkTagStatus {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+/* Always-visible type-to-filter row sitting directly under the headers. */
+.filterRow th {
+  padding: 0 0.4rem 0.4rem;
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: top;
+}
+
+.filterInput {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.2rem 0.35rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-family: inherit;
+  font-weight: 400;
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+
+.filterInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+/* Tag pill shown in the attendee Tags column and contact popup. */
+.tagChip {
+  display: inline-block;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: #EFF6FF;
+  border: 1px solid #BFDBFE;
+  color: #1E40AF;
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* "In HubSpot" status pills shown in the Attendees table. Green when the
+   contact is in the synced HubSpot cache, muted grey when it isn't. */
+.hsYes,
+.hsNo {
+  display: inline-block;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.hsYes {
+  background: #DCFCE7;
+  border: 1px solid #86EFAC;
+  color: #166534;
+}
+
+.hsNo {
+  background: #F1F5F9;
+  border: 1px solid #CBD5E1;
+  color: #64748B;
 }

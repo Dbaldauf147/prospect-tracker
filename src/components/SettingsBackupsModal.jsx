@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { listBackups, getBackup, deleteBackup } from '../utils/settingsBackup';
+import { OppsBackupPanel } from './OppsBackupPanel';
 
 function fmtTime(ts) {
   try { return new Date(ts).toLocaleString(); } catch { return String(ts); }
@@ -91,11 +92,28 @@ export function SettingsBackupsModal({ open, onClose, onRestore }) {
           boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
         }}
       >
-        <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700 }}>Settings Backups</h3>
-          <span style={{ fontSize: '0.75rem', color: '#64748B' }}>
-            Saved locally in this browser before every settings write.
-          </span>
+        <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700 }}>Backups</h3>
+          <div style={{ flex: 1 }} />
+          <button
+            onClick={onClose}
+            style={{ fontSize: '0.85rem', padding: '0.3rem 0.6rem', border: 'none', background: 'transparent', cursor: 'pointer', color: '#64748B' }}
+          >Close</button>
+        </div>
+        <div style={{ padding: '0.85rem 1.25rem', borderBottom: '1px solid #E2E8F0' }}>
+          <div style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: 2 }}>Opps data</div>
+          <div style={{ fontSize: '0.72rem', color: '#64748B', marginBottom: '0.6rem' }}>
+            Export, back up, and restore the Opps dataset.
+          </div>
+          <OppsBackupPanel />
+        </div>
+        <div style={{ padding: '0.85rem 1.25rem 0.25rem', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: '0.85rem', fontWeight: 700 }}>Settings backups</div>
+            <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
+              Saved locally in this browser before every settings write.
+            </span>
+          </div>
           <div style={{ flex: 1 }} />
           <button
             onClick={async () => {
@@ -120,10 +138,6 @@ export function SettingsBackupsModal({ open, onClose, onRestore }) {
             onClick={refresh}
             style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', border: '1px solid #CBD5E1', background: '#fff', borderRadius: 4, cursor: 'pointer' }}
           >Refresh</button>
-          <button
-            onClick={onClose}
-            style={{ fontSize: '0.85rem', padding: '0.3rem 0.6rem', border: 'none', background: 'transparent', cursor: 'pointer', color: '#64748B' }}
-          >Close</button>
         </div>
         <div style={{ overflow: 'auto', padding: '0.5rem 1.25rem 1.25rem' }}>
           {loading && <div style={{ padding: '1rem', color: '#64748B' }}>Loading…</div>}

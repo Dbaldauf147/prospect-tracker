@@ -103,22 +103,45 @@ export function subscribeToProspects(onChange) {
 export async function addProspect(prospect) {
   const ref = doc(getCol());
   await setDoc(ref, {
-    ...prospect,
+    ...sanitizeFirestoreData(prospect),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
   return ref.id;
 }
 
-export async function updateProspect(id, updates) {
-  // Firestore rejects undefined values outright (the whole write fails).
-  // Strip them so a stray undefined on one field can't block the rest of the save.
-  const clean = {};
-  for (const [k, v] of Object.entries(updates || {})) {
-    if (v !== undefined) clean[k] = v;
+// Firestore rejects writes that contain a field with an empty name
+// ("Document fields must not be empty") or an `undefined` value (the
+// whole write fails). Stray "" / whitespace-only keys can ride in from
+// imported docs — and merging two prospects folds the source's fields
+// in wholesale — so scrub them recursively (nested maps and array
+// elements included) before every write rather than trusting callers.
+function isPlainObject(v) {
+  if (!v || typeof v !== 'object') return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+function sanitizeFirestoreData(value) {
+  if (Array.isArray(value)) return value.map(sanitizeFirestoreData);
+  // Only descend into plain object maps. Special Firestore types
+  // (Timestamp, GeoPoint, DocumentReference, FieldValue) and Dates must
+  // pass through untouched — recursing would strip their prototype and
+  // corrupt the stored value.
+  if (isPlainObject(value)) {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (v === undefined) continue;
+      if (typeof k !== 'string' || k.trim() === '') continue;
+      out[k] = sanitizeFirestoreData(v);
+    }
+    return out;
   }
+  return value;
+}
+
+export async function updateProspect(id, updates) {
   await updateDoc(getDoc(id), {
-    ...clean,
+    ...sanitizeFirestoreData(updates || {}),
     updatedAt: serverTimestamp(),
   });
 }
@@ -242,6 +265,13 @@ export function groupDuplicateProspects(list) {
 export async function collapseDuplicateGroups(groups) {
   let removed = 0;
   const merged = [];
+  // loser-id → keeper-id for every removed duplicate. Prospect record
+  // fields are backfilled onto the keeper below, but ID-keyed maps that
+  // live in the *settings* doc (Target Account mappings, divisions, HQ
+  // regions) aren't reachable from here — callers use these remaps to move
+  // those entries onto the keeper so a mapping stored on a removed copy
+  // isn't silently orphaned.
+  const remaps = [];
   for (const { docs } of (groups || [])) {
     const keeper = docs[0];
     const losers = docs.slice(1);
@@ -254,6 +284,7 @@ export async function collapseDuplicateGroups(groups) {
       }
     }
     if (Object.keys(patch).length > 0) await updateProspect(keeper.id, patch);
+    for (const l of losers) remaps.push({ from: l.id, to: keeper.id });
     for (let i = 0; i < losers.length; i += 400) {
       const batch = writeBatch(db);
       losers.slice(i, i + 400).forEach(l => batch.delete(getDoc(l.id)));
@@ -262,7 +293,7 @@ export async function collapseDuplicateGroups(groups) {
     }
     merged.push({ company: keeper.company, removed: losers.length });
   }
-  return { groups: groups?.length || 0, removed, merged };
+  return { groups: groups?.length || 0, removed, merged, remaps };
 }
 
 // Read the live collection and return its duplicate groups. Used by the
@@ -282,31 +313,96 @@ export async function dedupeProspects() {
   return collapseDuplicateGroups(groups);
 }
 
-function getAnalysisDoc(prospectId) {
-  if (_useShared) return doc(db, SHARED_COL, prospectId, 'analyses', ANALYSIS_DOC_ID);
-  if (_userId) return doc(db, 'users', _userId, 'prospects', prospectId, 'analyses', ANALYSIS_DOC_ID);
-  return doc(db, SHARED_COL, prospectId, 'analyses', ANALYSIS_DOC_ID);
+function getAnalysisCol(prospectId) {
+  if (_useShared) return collection(db, SHARED_COL, prospectId, 'analyses');
+  if (_userId) return collection(db, 'users', _userId, 'prospects', prospectId, 'analyses');
+  return collection(db, SHARED_COL, prospectId, 'analyses');
 }
 
+// Base64 chars per chunk doc. Base64 is ASCII (1 byte/char) so this stays
+// comfortably under Firestore's ~1 MiB per-document cap with room for the
+// small field/metadata overhead.
+const ANALYSIS_CHUNK_SIZE = 900_000;
+
+const analysisChunkIndex = (id) => {
+  const m = /^chunk-(\d+)$/.exec(id);
+  return m ? Number(m[1]) : null;
+};
+
+// Persist an Indicative Savings XLSX (base64) against a prospect. The
+// payload is split across sibling `chunk-<i>` docs in the analyses
+// subcollection so it can exceed Firestore's ~1 MiB single-document cap;
+// the `main` doc holds only metadata + the chunk count. Chunk docs sit
+// alongside `main` (not nested under it) so they're covered by the same
+// /analyses/{analysisId} security rule — no rules change required.
 export async function saveIndicativeAnalysis(prospectId, { fileName, dataBase64, sizeBytes }) {
-  await setDoc(getAnalysisDoc(prospectId), {
+  const col = getAnalysisCol(prospectId);
+  const data = String(dataBase64 || '');
+  const chunks = [];
+  for (let i = 0; i < data.length; i += ANALYSIS_CHUNK_SIZE) {
+    chunks.push(data.slice(i, i + ANALYSIS_CHUNK_SIZE));
+  }
+  // Learn what's already stored so a shrinking save doesn't leave stale
+  // tail chunks behind that a reader would reassemble into corrupt data.
+  const existing = await getDocs(col);
+  // Write every chunk first, then the `main` metadata doc LAST, so a live
+  // subscriber only reassembles once all referenced chunks exist.
+  await Promise.all(chunks.map((c, i) => setDoc(doc(col, `chunk-${i}`), { i, data: c })));
+  await Promise.all(existing.docs
+    .filter((d) => { const idx = analysisChunkIndex(d.id); return idx != null && idx >= chunks.length; })
+    .map((d) => deleteDoc(d.ref)));
+  // setDoc without merge so any legacy inline `dataBase64` on the main doc
+  // is dropped when re-saving over an older single-doc analysis.
+  await setDoc(doc(col, ANALYSIS_DOC_ID), {
     fileName,
-    dataBase64,
     sizeBytes,
+    chunkCount: chunks.length,
     capturedAt: serverTimestamp(),
   });
 }
 
 export function subscribeIndicativeAnalysis(prospectId, onChange) {
-  return onSnapshot(getAnalysisDoc(prospectId), (snap) => {
-    onChange(snap.exists() ? snap.data() : null);
+  const col = getAnalysisCol(prospectId);
+  // Guards against out-of-order async chunk reads: only the newest
+  // snapshot's reassembly is allowed to call onChange.
+  let generation = 0;
+  return onSnapshot(doc(col, ANALYSIS_DOC_ID), async (snap) => {
+    const gen = ++generation;
+    if (!snap.exists()) { onChange(null); return; }
+    const meta = snap.data();
+    // Legacy single-doc format: the whole base64 lived on the main doc.
+    if (typeof meta.dataBase64 === 'string') { onChange(meta); return; }
+    const chunkCount = Number(meta.chunkCount) || 0;
+    if (chunkCount === 0) { onChange({ ...meta, dataBase64: '' }); return; }
+    try {
+      const all = await getDocs(col);
+      if (gen !== generation) return; // superseded by a newer snapshot
+      const parts = new Array(chunkCount).fill('');
+      all.forEach((d) => {
+        const idx = analysisChunkIndex(d.id);
+        if (idx != null && idx >= 0 && idx < chunkCount) parts[idx] = d.data()?.data || '';
+      });
+      onChange({
+        fileName: meta.fileName,
+        sizeBytes: meta.sizeBytes,
+        capturedAt: meta.capturedAt,
+        dataBase64: parts.join(''),
+      });
+    } catch (err) {
+      console.error('Firestore analysis chunk read failed:', err);
+    }
   }, (err) => {
     console.error('Firestore analysis subscription error:', err);
   });
 }
 
 export async function deleteIndicativeAnalysis(prospectId) {
-  await deleteDoc(getAnalysisDoc(prospectId));
+  const col = getAnalysisCol(prospectId);
+  const existing = await getDocs(col);
+  if (existing.empty) return;
+  const batch = writeBatch(db);
+  existing.forEach((d) => batch.delete(d.ref));
+  await batch.commit();
 }
 
 export async function seedProspects(prospects) {

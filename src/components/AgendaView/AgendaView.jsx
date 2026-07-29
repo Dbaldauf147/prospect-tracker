@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotContacts, updateHubspotCache } from '../../utils/hubspotContactsCache';
-import { matchesCdm } from '../../utils/cdmMatch';
+import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import { getQueuedContactIds, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
 import styles from './AgendaView.module.css';
@@ -707,7 +707,10 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
       for (const r of sheet.records) {
         const company = findCol(r, ['Account', 'Company', 'Account Name', 'Client', 'Name']);
         if (!company) continue;
-        const rep = findCol(r, ['CDM', 'Salesperson', 'Sales Rep', 'Account Owner', 'Owner', 'Rep', 'Assigned', 'Team Member']);
+        // Use the salesperson/CDM column mapped on the Target Accounts
+        // page (New Sales rep wins, then CDM), falling back to a keyword
+        // scan so this resolves a rep even without a mapping.
+        const rep = resolveTargetAccountCdm(r, settings?.targetRepColumn || settings?.targetCdmColumn);
         if (!rep) continue;
         // Skip the current user's own entries — those are "your"
         // accounts, not Other Reps.
@@ -716,7 +719,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
       }
     }
     return out;
-  }, [targetAccountsData, cdmName]);
+  }, [targetAccountsData, cdmName, settings?.targetRepColumn, settings?.targetCdmColumn]);
 
   // For each matched prospect, the list of Other Reps tied to the
   // confirmed Target Account name(s) for that prospect. Mirrors the

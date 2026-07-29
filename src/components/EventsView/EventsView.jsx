@@ -9,9 +9,10 @@
 // sync across devices the same way the per-contact Events log, contact
 // notes, and the other Contacts-page settings do.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { getHubspotCache } from '../../utils/hubspotContactsCache';
+import { apiFetch } from '../../utils/apiFetch';
+import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { attendeeFromContact, contactDisplayName } from '../../utils/eventsStore';
 import { companyDedupeKey } from '../../utils/firestoreSync';
 import { TYPES } from '../../data/enums';
@@ -50,6 +51,28 @@ function CdmCell({ prospect, onCommit }) {
       className={styles.cdmInput}
       value={val}
       placeholder="CDM…"
+      onChange={e => setVal(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
+    />
+  );
+}
+
+// Inline-editable Name cell for a lookup row. The name isn't usually in
+// the pasted title/company data, so this lets the user record the person
+// they find on LinkedIn. Commits on blur / Enter back onto the row.
+function LookupNameCell({ value, onCommit }) {
+  const [val, setVal] = useState(value || '');
+  useEffect(() => { setVal(value || ''); }, [value]);
+  const commit = () => {
+    const next = val.trim();
+    if (next !== String(value || '').trim()) onCommit(next);
+  };
+  return (
+    <input
+      className={styles.cdmInput}
+      value={val}
+      placeholder="Name…"
       onChange={e => setVal(e.target.value)}
       onBlur={commit}
       onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
@@ -150,6 +173,94 @@ function normalizeCompany(s) {
     .trim();
 }
 
+// Filterable columns for the two Events tables (keys map to the value
+// pulled for each row in the filter predicates below).
+const ATT_FILTER_KEYS = ['name', 'originalTitle', 'title', 'company', 'email', 'tags'];
+const LOOKUP_FILTER_KEYS = ['name', 'title', 'company', 'tableView', 'type', 'cdm'];
+
+// HubSpot stores Dan's Tags as a single semicolon-separated string.
+// Split it into a clean list of individual tags.
+function parseTags(str) {
+  return String(str || '').split(';').map(s => s.trim()).filter(Boolean);
+}
+
+// Pull the current Dan's Tags off a cached HubSpot contact record,
+// tolerating the property's a few historical field spellings.
+function contactTags(contact) {
+  return parseTags(contact?.dans_tags || contact?.dan_s_tags || contact?.dans_tag || '');
+}
+// A contact is a "decision maker" when its Dan's Tags include that tag —
+// the same convention the Prospect modal / Progress / PE views use.
+function isDecisionMaker(contact) {
+  return contactTags(contact).some(t => t.toLowerCase() === 'decision maker');
+}
+
+// ---- Email domain detection & guessing ---------------------------
+// Free / personal mail providers — these never count as a company's
+// email domain (and aren't used to guess a colleague's address).
+const FREE_EMAIL_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com', 'yahoo.com', 'ymail.com', 'hotmail.com', 'outlook.com',
+  'live.com', 'msn.com', 'aol.com', 'icloud.com', 'me.com', 'mac.com', 'protonmail.com',
+  'proton.me', 'gmx.com', 'mail.com', 'comcast.net', 'verizon.net', 'att.net', 'sbcglobal.net',
+]);
+
+function emailDomain(email) {
+  const m = /@([^@\s]+)$/.exec(String(email || '').trim().toLowerCase());
+  return m ? m[1] : '';
+}
+const cleanNamePart = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z]/g, '');
+
+// Infer the dominant local-part pattern (e.g. first.last) from sample
+// {email, first, last} records whose domain matches `domain`.
+function inferEmailPattern(samples, domain) {
+  const counts = new Map();
+  for (const s of samples) {
+    if (domain && emailDomain(s.email) !== domain) continue;
+    const local = s.email.split('@')[0];
+    const f = cleanNamePart(s.first);
+    const l = cleanNamePart(s.last);
+    if (!f || !l) continue;
+    const fi = f[0];
+    const li = l[0];
+    let pat = null;
+    if (local === `${f}.${l}`) pat = '{f}.{l}';
+    else if (local === `${f}${l}`) pat = '{f}{l}';
+    else if (local === `${fi}${l}`) pat = '{fi}{l}';
+    else if (local === `${fi}.${l}`) pat = '{fi}.{l}';
+    else if (local === `${f}.${li}`) pat = '{f}.{li}';
+    else if (local === `${f}_${l}`) pat = '{f}_{l}';
+    else if (local === `${l}.${f}`) pat = '{l}.{f}';
+    else if (local === `${l}${f}`) pat = '{l}{f}';
+    if (pat) counts.set(pat, (counts.get(pat) || 0) + 1);
+  }
+  let best = '{f}.{l}';
+  let bestN = 0;
+  for (const [p, n] of counts) if (n > bestN) { bestN = n; best = p; }
+  return best;
+}
+
+// Build a guessed address from a name + domain + inferred pattern.
+function buildGuessedEmail(first, last, domain, pattern) {
+  if (!domain) return '';
+  const f = cleanNamePart(first);
+  const l = cleanNamePart(last);
+  const fi = f.slice(0, 1);
+  const li = l.slice(0, 1);
+  let local;
+  switch (pattern) {
+    case '{f}{l}': local = `${f}${l}`; break;
+    case '{fi}{l}': local = `${fi}${l}`; break;
+    case '{fi}.{l}': local = fi && l ? `${fi}.${l}` : ''; break;
+    case '{f}.{li}': local = f && li ? `${f}.${li}` : ''; break;
+    case '{f}_{l}': local = f && l ? `${f}_${l}` : ''; break;
+    case '{l}.{f}': local = l && f ? `${l}.${f}` : ''; break;
+    case '{l}{f}': local = `${l}${f}`; break;
+    case '{f}.{l}':
+    default: local = f && l ? `${f}.${l}` : (f || l); break;
+  }
+  return local ? `${local}@${domain}` : '';
+}
+
 // Convert a search-list entry to a stored attendee. Manually-created
 // pseudo-contacts (flagged `_manual`) are saved back as manual
 // attendees (no contactId) so they de-dupe by name against the original
@@ -204,24 +315,60 @@ function splitLine(line) {
   return out.map(s => s.trim());
 }
 
-// Parse pasted / uploaded text into [{ title, company }] rows. Accepts
-// CSV or TSV with the first two columns as Title, Company; a leading
-// header row (containing "title"/"company") is skipped.
-function parseLookups(text) {
-  const lines = String(text || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  const rows = [];
-  lines.forEach((line, idx) => {
-    const cells = splitLine(line);
-    const title = (cells[0] || '').trim();
-    const company = (cells[1] || '').trim();
-    if (!title && !company) return;
-    if (idx === 0) {
-      const lc = `${title} ${company}`.toLowerCase();
-      if (lc.includes('title') && (lc.includes('company') || lc.includes('account'))) return;
-    }
-    rows.push({ title, company });
-  });
-  return rows;
+// Parse pasted / uploaded text into a grid of cells (rows × columns),
+// making no assumption about which column is which — the column-mapping
+// modal decides that. Accepts CSV or TSV.
+function parseGrid(text) {
+  return String(text || '')
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(Boolean)
+    .map(splitLine);
+}
+
+// Fields a lookup row can hold, in the order they're offered in the
+// column-mapping dropdowns.
+const LOOKUP_FIELDS = [
+  { key: 'name', label: 'Name' },
+  { key: 'title', label: 'Title' },
+  { key: 'company', label: 'Company' },
+];
+
+// Does this row look like a header (column names) rather than data?
+function looksLikeHeader(cells) {
+  const lc = (cells || []).map(c => String(c || '').toLowerCase());
+  const hasTitle = lc.some(c => /\b(title|role|position)\b/.test(c));
+  const hasCompany = lc.some(c => /company|account|organi[sz]ation|employer/.test(c));
+  const hasName = lc.some(c => /\bname\b/.test(c));
+  return hasTitle || hasCompany || hasName;
+}
+
+// Best-guess mapping of source columns → lookup fields. Uses header text
+// when present, then falls back to position (first column → Title,
+// second → Company) for any essential field still unmapped.
+function guessLookupMapping(headerCells, hasHeader, columnCount) {
+  const mapping = Array(columnCount).fill('');
+  const used = new Set();
+  if (hasHeader) {
+    (headerCells || []).forEach((h, idx) => {
+      if (idx >= columnCount) return;
+      const lc = String(h || '').toLowerCase();
+      if (!used.has('company') && /company|account|organi[sz]ation|employer/.test(lc)) {
+        mapping[idx] = 'company'; used.add('company');
+      } else if (!used.has('title') && /\b(title|role|position)\b/.test(lc)) {
+        mapping[idx] = 'title'; used.add('title');
+      } else if (!used.has('name') && /\bname\b/.test(lc)) {
+        mapping[idx] = 'name'; used.add('name');
+      }
+    });
+  }
+  // Fill essentials still unmapped by position (Title first, then Company).
+  for (const field of ['title', 'company']) {
+    if (used.has(field)) continue;
+    const idx = mapping.findIndex(m => m === '');
+    if (idx !== -1) { mapping[idx] = field; used.add(field); }
+  }
+  return mapping;
 }
 
 // Search box that surfaces matching HubSpot contacts and lets the user
@@ -367,7 +514,7 @@ function ContactPickerModal({ company, title, contacts, attendees, onAdd, onRemo
   function addManual() {
     const name = query.trim();
     if (!name) return;
-    onAdd({ contactId: '', name, email: '', company: company || '', title: title || '' });
+    onAdd({ contactId: '', name, email: '', company: company || '', title: title || '', originalTitle: title || '' });
     setQuery('');
   }
 
@@ -408,7 +555,7 @@ function ContactPickerModal({ company, title, contacts, attendees, onAdd, onRemo
                 key={String(c.id || c.vid)}
                 type="button"
                 className={styles.modalRow}
-                onClick={() => (att ? onRemove(att) : onAdd(contactToAttendee(c)))}
+                onClick={() => (att ? onRemove(att) : onAdd({ ...contactToAttendee(c), originalTitle: title || '' }))}
               >
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <div className={styles.optionName}>{contactDisplayName(c)}</div>
@@ -456,6 +603,389 @@ function RowContactAdder({ company, title, contacts, attendees, onAdd, onRemove 
   );
 }
 
+// Read-only details popup for a mapped attendee. Merges the stored
+// attendee fields (original title kept from the lookup row) with the
+// full cached HubSpot contact record when one was matched, so phone /
+// LinkedIn / location surface even though the attendee row only saves a
+// slim subset.
+function AttendeeContactModal({ attendee, contact, onClose }) {
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape') onClose(); }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const name = contact ? contactDisplayName(contact) : (attendee.name || 'Contact');
+  const contactTitle = contact?.jobtitle || attendee.title || '';
+  const company = contact?.company || attendee.company || '';
+  const email = contact?.email || attendee.email || '';
+  const phone = contact?.phone || '';
+  const linkedin = contact?.hs_linkedin_url || contact?.linkedin_url || contact?.hs_linkedinid || '';
+  const location = [contact?.city, contact?.state, contact?.country].filter(Boolean).join(', ');
+  const tags = contactTags(contact);
+
+  const rows = [
+    ['Original title', attendee.originalTitle || '—'],
+    ['Contact title', contactTitle || '—'],
+    ['Company', company || '—'],
+    ['Email', email ? <a href={`mailto:${email}`}>{email}</a> : '—'],
+    ['Phone', phone || '—'],
+    ['Location', location || '—'],
+    ['LinkedIn', linkedin ? <a href={linkedin} target="_blank" rel="noopener noreferrer">View profile</a> : '—'],
+    ['Tags', tags.length ? (
+      <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>
+        {tags.map(t => <span key={t} className={styles.tagChip}>{t}</span>)}
+      </span>
+    ) : '—'],
+  ];
+
+  return createPortal(
+    <div className={styles.modalOverlay} onMouseDown={onClose}>
+      <div className={styles.modalPanel} onMouseDown={e => e.stopPropagation()}>
+        <div className={styles.modalHeader}>
+          <span>
+            <strong>{name}</strong>
+            {!attendee.contactId && (
+              <span style={{ marginLeft: 6, fontSize: '0.7rem', fontWeight: 400, color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
+                (manual — not in HubSpot)
+              </span>
+            )}
+          </span>
+          <button type="button" className={styles.modalClose} onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <div style={{ padding: '0.7rem 0.9rem' }}>
+          <table className={styles.contactDetailTable}>
+            <tbody>
+              {rows.map(([label, value]) => (
+                <tr key={label}>
+                  <th>{label}</th>
+                  <td>{value}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!contact && attendee.contactId && (
+            <div style={{ marginTop: '0.6rem', fontSize: '0.74rem', color: 'var(--color-text-muted)' }}>
+              The full contact record isn't in the synced HubSpot cache right now — showing the details saved with this event.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// Column-mapping popup shown when data is dropped / pasted / uploaded
+// into the lookup list. The user maps each source column to a lookup
+// field (Title / Company / don't import); a preview reflects the choice
+// live. Company must be mapped before the rows can be added.
+function LookupMappingModal({ grid, onCancel, onConfirm }) {
+  const columnCount = useMemo(() => grid.reduce((n, r) => Math.max(n, r.length), 0), [grid]);
+  const [hasHeader, setHasHeader] = useState(() => looksLikeHeader(grid[0]));
+  const headerCells = grid[0] || [];
+  const [mapping, setMapping] = useState(() => guessLookupMapping(headerCells, hasHeader, columnCount));
+
+  // Re-guess when the header toggle flips — that changes which row is
+  // data and the available header text, so prior guesses no longer hold.
+  useEffect(() => {
+    setMapping(guessLookupMapping(grid[0] || [], hasHeader, columnCount));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasHeader]);
+
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape') onCancel(); }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+
+  const dataRows = hasHeader ? grid.slice(1) : grid;
+  const nameIdx = mapping.indexOf('name');
+  const titleIdx = mapping.indexOf('title');
+  const companyIdx = mapping.indexOf('company');
+  const builtRows = useMemo(() => dataRows
+    .map(cells => ({
+      name: nameIdx >= 0 ? String(cells[nameIdx] || '').trim() : '',
+      title: titleIdx >= 0 ? String(cells[titleIdx] || '').trim() : '',
+      company: companyIdx >= 0 ? String(cells[companyIdx] || '').trim() : '',
+    }))
+    .filter(r => r.name || r.title || r.company), [dataRows, nameIdx, titleIdx, companyIdx]);
+
+  // Each field may map to only one column — picking it for one column
+  // clears it from any other.
+  function setColumnField(colIdx, field) {
+    setMapping(prev => {
+      const next = prev.map((m, i) => (field && m === field && i !== colIdx ? '' : m));
+      next[colIdx] = field;
+      return next;
+    });
+  }
+
+  const colLabel = (idx) => (hasHeader && headerCells[idx] ? headerCells[idx] : `Column ${idx + 1}`);
+  const previewRows = dataRows.slice(0, 5);
+  const canConfirm = companyIdx >= 0 && builtRows.length > 0;
+
+  return createPortal(
+    <div className={styles.modalOverlay} onMouseDown={onCancel}>
+      <div className={styles.modalPanel} style={{ width: 720, maxWidth: '100%' }} onMouseDown={e => e.stopPropagation()}>
+        <div className={styles.modalHeader}>
+          <span>Map your columns</span>
+          <button type="button" className={styles.modalClose} onClick={onCancel} aria-label="Close">×</button>
+        </div>
+        <div style={{ padding: '0.7rem 0.9rem', overflow: 'auto', flex: 1, minHeight: 0 }}>
+          <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', marginBottom: '0.6rem' }}>
+            Choose which column holds the <strong>Title</strong> and which holds the <strong>Company</strong>. {columnCount} column{columnCount === 1 ? '' : 's'} · {dataRows.length} row{dataRows.length === 1 ? '' : 's'} detected.
+          </div>
+          <label className={styles.mapHeaderToggle}>
+            <input type="checkbox" checked={hasHeader} onChange={e => setHasHeader(e.target.checked)} />
+            First row is a header (column names, not data)
+          </label>
+          <div className={styles.tableScroll} style={{ marginTop: '0.6rem', border: '1px solid var(--color-border)', borderRadius: 8 }}>
+            <table className={styles.mapTable}>
+              <thead>
+                <tr>
+                  {Array.from({ length: columnCount }).map((_, idx) => (
+                    <th key={idx}>
+                      <div className={styles.mapColName} title={colLabel(idx)}>{colLabel(idx)}</div>
+                      <select
+                        className={styles.mapSelect}
+                        value={mapping[idx] || ''}
+                        onChange={e => setColumnField(idx, e.target.value)}
+                      >
+                        <option value="">Don't import</option>
+                        {LOOKUP_FIELDS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+                      </select>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {previewRows.length === 0 ? (
+                  <tr><td colSpan={columnCount} className={styles.tvMuted} style={{ padding: '0.5rem', textAlign: 'center' }}>No data rows to preview.</td></tr>
+                ) : previewRows.map((cells, r) => (
+                  <tr key={r}>
+                    {Array.from({ length: columnCount }).map((_, idx) => (
+                      <td key={idx} className={mapping[idx] ? styles.mapCellMapped : undefined}>
+                        {String(cells[idx] || '')}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {dataRows.length > previewRows.length && (
+            <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: '0.4rem' }}>
+              Showing first {previewRows.length} of {dataRows.length} rows.
+            </div>
+          )}
+        </div>
+        <div className={styles.mapFooter}>
+          {companyIdx < 0 && (
+            <span className={styles.mapWarn}>Map a column to <strong>Company</strong> to continue.</span>
+          )}
+          <button type="button" className={styles.mapCancelBtn} onClick={onCancel}>Cancel</button>
+          <button
+            type="button"
+            className={styles.newBtn}
+            disabled={!canConfirm}
+            onClick={() => onConfirm(builtRows)}
+          >
+            Add {builtRows.length} row{builtRows.length === 1 ? '' : 's'}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// ---- Configurable / resizable table columns ----------------------
+// Column visibility + widths are personal display prefs, so they live in
+// localStorage (keyed per table) rather than the synced Firestore event
+// settings — same approach the Key Contacts table uses.
+const LS_PREFIX = 'events-view';
+function colsLsGet(key) { try { return localStorage.getItem(`${LS_PREFIX}:${key}`); } catch { return null; } }
+function colsLsSet(key, val) { try { localStorage.setItem(`${LS_PREFIX}:${key}`, val); } catch { /* ignore */ } }
+
+// Manage which columns are shown and how wide they are for one table.
+// `columns` is the full ordered definition ([{ key, label, width }…]);
+// the returned `visible` is the subset to render (in definition order).
+function useTableColumns(tableKey, columns) {
+  const defaultVisible = columns.map(c => c.key);
+  const defaultWidths = Object.fromEntries(columns.map(c => [c.key, c.width]));
+
+  const [visibleKeys, setVisibleKeys] = useState(() => {
+    try {
+      const saved = JSON.parse(colsLsGet(`${tableKey}-visible`));
+      if (Array.isArray(saved)) {
+        // Keep only keys we still know about; if everything saved is
+        // stale, fall back to the defaults so the table isn't empty.
+        const knownSet = new Set(defaultVisible);
+        const filtered = saved.filter(k => knownSet.has(k));
+        if (filtered.length) {
+          // Surface columns the user has never been offered before
+          // (added in a later version) instead of silently hiding them.
+          // The "-known" record is what makes this precise; before it
+          // exists (first load after this shipped) every column reads as
+          // new, so a one-time re-show of any hidden column is expected.
+          // From then on, columns the user hides stay hidden.
+          let offered = [];
+          try { offered = JSON.parse(colsLsGet(`${tableKey}-known`)) || []; } catch { /* ignore */ }
+          const offeredSet = new Set(offered);
+          const result = [...filtered];
+          for (const k of defaultVisible) {
+            if (!offeredSet.has(k) && !result.includes(k)) result.push(k);
+          }
+          return result;
+        }
+      }
+    } catch { /* ignore */ }
+    return defaultVisible;
+  });
+  useEffect(() => { colsLsSet(`${tableKey}-visible`, JSON.stringify(visibleKeys)); }, [tableKey, visibleKeys]);
+  // Record the full set of columns we've now offered, so a column added
+  // in a future version can be detected as new (and shown) on next load.
+  const knownKeysStr = defaultVisible.join(',');
+  useEffect(() => { colsLsSet(`${tableKey}-known`, JSON.stringify(knownKeysStr.split(','))); }, [tableKey, knownKeysStr]);
+
+  const [widths, setWidths] = useState(() => {
+    try {
+      const saved = JSON.parse(colsLsGet(`${tableKey}-widths`)) || {};
+      return { ...defaultWidths, ...saved };
+    } catch { return defaultWidths; }
+  });
+  useEffect(() => { colsLsSet(`${tableKey}-widths`, JSON.stringify(widths)); }, [tableKey, widths]);
+
+  // Toggle a column on/off, but never let the user hide the last one.
+  function toggle(key) {
+    setVisibleKeys(prev => {
+      if (prev.includes(key)) return prev.length <= 1 ? prev : prev.filter(k => k !== key);
+      return [...prev, key];
+    });
+  }
+  function reset() { setVisibleKeys(defaultVisible); setWidths(defaultWidths); }
+
+  // Drag-to-resize a column. Start metrics are captured in local scope
+  // so a stray mousemove after mouseup can't throw on a null ref.
+  const resizingRef = useRef(null);
+  function startResize(key, e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startWidth = widths[key] || 120;
+    resizingRef.current = { key };
+    const onMove = (ev) => {
+      if (!resizingRef.current) return;
+      const next = Math.max(60, startWidth + (ev.clientX - startX));
+      setWidths(prev => ({ ...prev, [key]: next }));
+    };
+    const onUp = () => {
+      resizingRef.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  const visible = columns.filter(c => visibleKeys.includes(c.key));
+  return { visible, visibleKeys, widths, toggle, reset, startResize };
+}
+
+// "Columns ▾" dropdown: checkboxes to show/hide each column plus a reset.
+function ColumnsMenu({ columns, visibleKeys, onToggle, onReset }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e) { if (!ref.current?.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+  return (
+    <div ref={ref} className={styles.colsMenuWrap}>
+      <button type="button" className={styles.colsBtn} onClick={() => setOpen(o => !o)} title="Show or hide columns">
+        Columns ▾
+      </button>
+      {open && (
+        <div className={styles.colsMenu}>
+          {columns.map(c => {
+            const checked = visibleKeys.includes(c.key);
+            return (
+              <label key={c.key} className={styles.colsMenuItem}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={checked && visibleKeys.length <= 1}
+                  onChange={() => onToggle(c.key)}
+                />
+                {c.label}
+              </label>
+            );
+          })}
+          <button type="button" className={styles.colsMenuReset} onClick={onReset}>Reset to default</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Header for a resizable table: a <colgroup> drives the fixed column
+// widths and each <th> carries its label and a drag handle. When the
+// table is filterable a second row of always-visible type-to-filter
+// inputs sits directly beneath the headers. `leading` / `trailing` are
+// optional always-on columns (e.g. a select-all checkbox or row actions).
+function ResizableHead({ columns, widths, startResize, filters, onFilterChange, leading, trailing }) {
+  const showFilterRow = !!onFilterChange && columns.some(c => c.filterable);
+  return (
+    <>
+      <colgroup>
+        {leading && <col style={{ width: leading.width }} />}
+        {columns.map(c => <col key={c.key} style={{ width: widths[c.key] }} />)}
+        {trailing && <col style={{ width: trailing.width }} />}
+      </colgroup>
+      <thead>
+        <tr>
+          {leading && <th style={{ textAlign: 'center' }}>{leading.content}</th>}
+          {columns.map(c => (
+            <th key={c.key} title={c.label}>
+              <span className={styles.thLabel}>{c.label}</span>
+              <span
+                className={styles.resizeHandle}
+                onMouseDown={e => startResize(c.key, e)}
+                role="separator"
+                aria-label={`Resize ${c.label} column`}
+              />
+            </th>
+          ))}
+          {trailing && <th aria-label={trailing.label} />}
+        </tr>
+        {showFilterRow && (
+          <tr className={styles.filterRow}>
+            {leading && <th />}
+            {columns.map(c => (
+              <th key={c.key}>
+                {c.filterable && (
+                  <input
+                    className={styles.filterInput}
+                    value={filters?.[c.key] || ''}
+                    placeholder={`Filter ${c.label}…`}
+                    aria-label={`Filter by ${c.label}`}
+                    onChange={e => onFilterChange(c.key, e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Escape') onFilterChange(c.key, ''); }}
+                  />
+                )}
+              </th>
+            ))}
+            {trailing && <th />}
+          </tr>
+        )}
+      </thead>
+    </>
+  );
+}
+
 export function EventsView({
   settings = {},
   updateSettings = () => {},
@@ -472,6 +1002,8 @@ export function EventsView({
   const [selectedId, setSelectedId] = useState(null);
   // Draft text for the "Find people on LinkedIn" import box.
   const [lookupDraft, setLookupDraft] = useState('');
+  // Parsed grid awaiting column mapping (null = mapping popup closed).
+  const [lookupMapping, setLookupMapping] = useState(null);
   const lookupFileRef = useRef(null);
   // Active CDM filter for the lookup table ('' = show all).
   const [cdmFilter, setCdmFilter] = useState('');
@@ -479,6 +1011,20 @@ export function EventsView({
   // "+ Add" button can show progress until the prospects list updates.
   const [addingCompanies, setAddingCompanies] = useState(() => new Set());
   const [bulkAdding, setBulkAdding] = useState(false);
+  // Attendee whose contact details popup is open (null = closed).
+  const [contactPopup, setContactPopup] = useState(null);
+  // Bulk tag editor: which mapped contacts are selected (by HubSpot id),
+  // the tag being applied, and transient save state / status text.
+  const [selectedContactIds, setSelectedContactIds] = useState(() => new Set());
+  const [bulkTag, setBulkTag] = useState('');
+  const [tagSaving, setTagSaving] = useState(false);
+  const [tagStatus, setTagStatus] = useState('');
+  const [tagOptions, setTagOptions] = useState([]);
+  // Per-column type-to-filter drafts for the two tables (keyed by column).
+  const [attFilters, setAttFilters] = useState({});
+  const [lookupFilters, setLookupFilters] = useState({});
+  const setAttFilter = (key, v) => setAttFilters(prev => ({ ...prev, [key]: v }));
+  const setLookupFilter = (key, v) => setLookupFilters(prev => ({ ...prev, [key]: v }));
 
   // Index every Table View prospect by the app's canonical company
   // dedupe key so each lookup row can find its matching prospect the
@@ -562,6 +1108,69 @@ export function EventsView({
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
 
+  // Index the synced HubSpot contacts by id so a mapped attendee (which
+  // only stores a slim snapshot) can resolve back to its live record for
+  // its current Dan's Tags.
+  const contactsById = useMemo(() => {
+    const m = new Map();
+    for (const c of contacts) {
+      const id = String(c.id || c.vid || '');
+      if (id) m.set(id, c);
+    }
+    return m;
+  }, [contacts]);
+
+  // Email index over the synced HubSpot contacts, so a manual attendee
+  // (no contactId) that was later added to HubSpot under a matching
+  // address still reads as "in HubSpot" in the status column below.
+  const contactsByEmail = useMemo(() => {
+    const m = new Map();
+    for (const c of contacts) {
+      const email = String(c.email || c.properties?.email || '').trim().toLowerCase();
+      if (email && !m.has(email)) m.set(email, c);
+    }
+    return m;
+  }, [contacts]);
+
+  // Does this attendee exist in the synced HubSpot contacts? True when it
+  // carries a contactId we have cached, or (for manual attendees) when its
+  // email matches a cached contact.
+  function attendeeInHubspot(a) {
+    if (a.contactId && contactsById.has(String(a.contactId))) return true;
+    const email = String(a.email || '').trim().toLowerCase();
+    return !!email && contactsByEmail.has(email);
+  }
+
+  // Valid Dan's Tags options for the bulk editor — the same union the
+  // HubSpot Contacts tab uses: every tag already in the synced contacts,
+  // supplemented by the property's enumerated options from HubSpot.
+  useEffect(() => {
+    let cancelled = false;
+    const vals = new Set();
+    for (const c of contacts) for (const t of contactTags(c)) vals.add(t);
+    if (!cancelled && vals.size) setTagOptions([...vals].sort((a, b) => a.localeCompare(b)));
+    (async () => {
+      try {
+        const res = await apiFetch('/api/hubspot?action=properties');
+        const json = await res.json();
+        const prop = (json.properties || []).find(p =>
+          p.name === 'dans_tags' || p.name === 'dan_s_tags' || p.name === 'dans_tag' ||
+          ((p.label || '').toLowerCase().includes('dan') && (p.label || '').toLowerCase().includes('tag')));
+        if (!prop) return;
+        const dRes = await apiFetch(`/api/hubspot?action=property-detail&name=${prop.name}`);
+        const detail = await dRes.json();
+        if (detail.options?.length) {
+          for (const o of detail.options) {
+            const v = typeof o === 'string' ? o : (o.label || o.value || '');
+            if (v) vals.add(v);
+          }
+          if (!cancelled) setTagOptions([...vals].sort((a, b) => a.localeCompare(b)));
+        }
+      } catch { /* options stay as derived from the cache */ }
+    })();
+    return () => { cancelled = true; };
+  }, [contacts]);
+
   // Keep a valid selection: default to the first event, and recover if
   // the selected event is deleted.
   useEffect(() => {
@@ -634,6 +1243,93 @@ export function EventsView({
     updateEvent(selected.id, { attendees: next });
   }
 
+  // Resolve a mapped attendee back to its full cached contact record
+  // (by HubSpot id, else by name + company) and open the details popup.
+  function openAttendeeContact(att) {
+    const byId = att.contactId
+      ? searchableContacts.find(c => String(c.id || c.vid || '') === String(att.contactId))
+      : null;
+    const byName = !byId
+      ? searchableContacts.find(c =>
+          contactDisplayName(c).toLowerCase() === String(att.name || '').toLowerCase()
+          && normalizeCompany(c.company) === normalizeCompany(att.company))
+      : null;
+    setContactPopup({ attendee: att, contact: byId || byName || null });
+  }
+
+  // ---- Bulk Dan's Tags editing for mapped attendees ----------------
+  // Only attendees backed by a HubSpot contact (have a contactId that
+  // resolves in the synced cache) can be tag-edited; manual attendees
+  // have no HubSpot record to write to. (`taggableAttendees` /
+  // `allTaggableSelected` are derived below, once `attendees` exists.)
+  function toggleContactSelected(id) {
+    setSelectedContactIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  // Operates on the currently-visible taggable rows so it respects any
+  // active column filters.
+  function toggleSelectAll() {
+    setSelectedContactIds(prev => {
+      const ids = visibleTaggable.map(({ a }) => String(a.contactId));
+      const allSelected = ids.length > 0 && ids.every(id => prev.has(id));
+      const next = new Set(prev);
+      if (allSelected) ids.forEach(id => next.delete(id));
+      else ids.forEach(id => next.add(id));
+      return next;
+    });
+  }
+
+  // Add or remove `bulkTag` across every selected contact, writing each
+  // change to HubSpot and the local cache (which refreshes the table).
+  async function applyBulkTag(mode) {
+    const tag = bulkTag.trim();
+    const ids = [...selectedContactIds].filter(id => contactsById.has(String(id)));
+    if (!tag || ids.length === 0) return;
+    setTagSaving(true);
+    setTagStatus('');
+    let changed = 0;
+    let failed = 0;
+    for (const id of ids) {
+      const cur = contactTags(contactsById.get(String(id)));
+      const has = cur.some(t => t.toLowerCase() === tag.toLowerCase());
+      if (mode === 'add' && has) continue;
+      if (mode === 'remove' && !has) continue;
+      const next = mode === 'add' ? [...cur, tag] : cur.filter(t => t.toLowerCase() !== tag.toLowerCase());
+      const nextStr = next.join(';');
+      try {
+        const res = await apiFetch('/api/hubspot?action=update-contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contactId: id, properties: { dans_tags: nextStr } }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
+        await updateHubspotCache(draft => {
+          const idx = draft.contacts.findIndex(c => String(c.id || c.vid) === String(id));
+          if (idx !== -1) draft.contacts[idx] = { ...draft.contacts[idx], dans_tags: nextStr };
+        });
+        changed += 1;
+      } catch (err) {
+        console.error('[Events bulk tag] update failed for', id, err);
+        failed += 1;
+      }
+    }
+    setTagSaving(false);
+    const verb = mode === 'add' ? 'Added' : 'Removed';
+    setTagStatus(
+      failed
+        ? `${verb} "${tag}" on ${changed} — ${failed} failed`
+        : changed
+          ? `${verb} "${tag}" on ${changed} contact${changed === 1 ? '' : 's'}`
+          : 'No changes needed',
+    );
+    setTimeout(() => setTagStatus(''), 4000);
+  }
+
   function exportAttendeesCsv() {
     if (!selected) return;
     const list = Array.isArray(selected.attendees) ? selected.attendees : [];
@@ -641,8 +1337,11 @@ export function EventsView({
       const s = v === null || v === undefined ? '' : String(v);
       return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     };
-    const headers = ['Name', 'Title', 'Company', 'Email'];
-    const rows = list.map(a => [a.name, a.title, a.company, a.email].map(escape).join(','));
+    const headers = ['Name', 'Original Title', 'Contact Title', 'Company', 'Email', 'Tags'];
+    const rows = list.map(a => {
+      const tags = a.contactId ? contactTags(contactsById.get(String(a.contactId))).join('; ') : '';
+      return [a.name, a.originalTitle, a.title, a.company, a.email, tags].map(escape).join(',');
+    });
     const csv = headers.join(',') + '\n' + rows.join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -657,26 +1356,40 @@ export function EventsView({
   }
 
   // ---- LinkedIn lookup list ----------------------------------------
-  function addLookupsFromText(text) {
+  // Parse dropped / pasted / uploaded text into a grid and open the
+  // column-mapping popup so the user picks which column is which.
+  function openLookupMapping(text) {
     if (!selected) return;
-    const parsed = parseLookups(text);
-    if (parsed.length === 0) return;
+    const grid = parseGrid(text);
+    if (grid.length === 0) return;
+    setLookupMapping(grid);
+  }
+
+  // Commit the mapped rows ([{ name, title, company }]) to the lookup
+  // list, de-duping against existing rows (case-insensitive title|company).
+  function commitMappedLookups(rows) {
+    if (!selected) { setLookupMapping(null); return; }
     const cur = Array.isArray(selected.lookups) ? selected.lookups : [];
     const seen = new Set(cur.map(l => `${(l.title || '').toLowerCase()}|${(l.company || '').toLowerCase()}`));
     const merged = [...cur];
-    for (const row of parsed) {
-      const key = `${row.title.toLowerCase()}|${row.company.toLowerCase()}`;
+    for (const row of rows) {
+      const name = String(row.name || '').trim();
+      const title = String(row.title || '').trim();
+      const company = String(row.company || '').trim();
+      if (!name && !title && !company) continue;
+      const key = `${title.toLowerCase()}|${company.toLowerCase()}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      merged.push(row);
+      merged.push({ name, title, company });
     }
     updateEvent(selected.id, { lookups: merged });
     setLookupDraft('');
+    setLookupMapping(null);
   }
 
   function handleLookupFile(e) {
     const file = e.target.files && e.target.files[0];
-    if (file) file.text().then(addLookupsFromText).catch(() => {});
+    if (file) file.text().then(openLookupMapping).catch(() => {});
     e.target.value = '';
   }
 
@@ -696,6 +1409,22 @@ export function EventsView({
     if (!selected) return;
     if (!window.confirm('Clear the entire LinkedIn lookup list for this event?')) return;
     updateEvent(selected.id, { lookups: [] });
+  }
+
+  // Map a suggested decision maker to its company by saving them as an
+  // attendee (de-duped by HubSpot id), keeping the lookup row in place.
+  function addDecisionMaker(contact, lookupRow) {
+    addAttendee({ ...contactToAttendee(contact), originalTitle: lookupRow.title || '' });
+  }
+  // Hide a suggested decision maker for one lookup row without adding
+  // them. The ignore list is stored on the row so it persists.
+  function ignoreDecisionMaker(contactId, lookupIndex) {
+    const list = Array.isArray(selected?.lookups) ? selected.lookups : [];
+    const row = list[lookupIndex];
+    if (!row) return;
+    const cur = Array.isArray(row.ignoredContactIds) ? row.ignoredContactIds : [];
+    if (cur.includes(contactId)) return;
+    updateLookup(lookupIndex, { ignoredContactIds: [...cur, contactId] });
   }
 
   const existingIds = useMemo(() => {
@@ -724,7 +1453,314 @@ export function EventsView({
   }, [events]);
   const searchableContacts = useMemo(() => [...manualContacts, ...contacts], [manualContacts, contacts]);
 
-  const attendees = selected && Array.isArray(selected.attendees) ? selected.attendees : [];
+  // HubSpot contacts tagged "Decision Maker" — used to surface the
+  // decision maker(s) for each lookup company right under its row.
+  const decisionMakerContacts = useMemo(
+    () => (contacts || []).filter(isDecisionMaker),
+    [contacts],
+  );
+  // Decision-maker contacts whose company matches `company`, using the
+  // same fuzzy company match the roster popup uses.
+  function decisionMakersForCompany(company) {
+    const norm = normalizeCompany(company);
+    if (!norm) return [];
+    return decisionMakerContacts.filter(c => {
+      const cn = normalizeCompany(c.company);
+      return cn && (cn === norm || cn.includes(norm) || norm.includes(cn));
+    });
+  }
+
+  // HubSpot contacts grouped by normalized company name, so the email
+  // domain lookup below can find a company's contacts without scanning
+  // the whole cache on every call.
+  const contactsByCompanyNorm = useMemo(() => {
+    const map = new Map();
+    for (const c of (contacts || [])) {
+      const key = normalizeCompany(c.company);
+      if (!key) continue;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(c);
+    }
+    return map;
+  }, [contacts]);
+
+  // Email-domain info for a company, derived from its HubSpot contacts:
+  // the most common corporate domain (free providers excluded), how many
+  // contacts have any email, and the local-part pattern to guess with.
+  // Memoized with an internal cache keyed by normalized company name.
+  const companyEmailInfo = useMemo(() => {
+    const cache = new Map();
+    const contactsForCompany = (norm) => {
+      if (!norm) return [];
+      const exact = contactsByCompanyNorm.get(norm);
+      if (exact) return exact;
+      const out = [];
+      for (const [key, list] of contactsByCompanyNorm) {
+        if (key.includes(norm) || norm.includes(key)) out.push(...list);
+      }
+      return out;
+    };
+    return (company) => {
+      const norm = normalizeCompany(company);
+      if (!norm) return { domain: '', emailCount: 0, corporateCount: 0, pattern: '{f}.{l}' };
+      if (cache.has(norm)) return cache.get(norm);
+      const list = contactsForCompany(norm);
+      let emailCount = 0;
+      const domainCounts = new Map();
+      const samples = [];
+      for (const c of list) {
+        const email = String(c.email || '').trim().toLowerCase();
+        if (!email.includes('@')) continue;
+        emailCount += 1;
+        const dom = emailDomain(email);
+        if (!dom || FREE_EMAIL_DOMAINS.has(dom)) continue;
+        domainCounts.set(dom, (domainCounts.get(dom) || 0) + 1);
+        samples.push({ email, first: c.firstname, last: c.lastname });
+      }
+      let domain = '';
+      let corporateCount = 0;
+      for (const [dom, n] of domainCounts) if (n > corporateCount) { corporateCount = n; domain = dom; }
+      const info = { domain, emailCount, corporateCount, pattern: inferEmailPattern(samples, domain) };
+      cache.set(norm, info);
+      return info;
+    };
+  }, [contactsByCompanyNorm]);
+
+  // Patch one attendee in place (by original index).
+  function updateAttendeeAt(index, patch) {
+    if (!selected) return;
+    const list = Array.isArray(selected.attendees) ? selected.attendees : [];
+    updateEvent(selected.id, { attendees: list.map((a, i) => (i === index ? { ...a, ...patch } : a)) });
+  }
+
+  // Fill an attendee's missing email by guessing from the company's
+  // domain + inferred pattern, flagged so the UI can show it's a guess.
+  function guessAttendeeEmail(attendee, index) {
+    const info = resolveEmailDomain(attendee.company);
+    if (!info.domain) return;
+    let first = '';
+    let last = '';
+    const contact = attendee.contactId ? contactsById.get(String(attendee.contactId)) : null;
+    if (contact) { first = contact.firstname || ''; last = contact.lastname || ''; }
+    else {
+      const parts = String(attendee.name || '').trim().split(/\s+/).filter(Boolean);
+      first = parts[0] || '';
+      last = parts.length > 1 ? parts[parts.length - 1] : '';
+    }
+    const email = buildGuessedEmail(first, last, info.domain, info.pattern);
+    if (email) updateAttendeeAt(index, { email, emailGuessed: true });
+  }
+
+  const attendees = useMemo(
+    () => (selected && Array.isArray(selected.attendees) ? selected.attendees : []),
+    [selected],
+  );
+  // Mapped attendees that resolve to a synced HubSpot contact — the only
+  // ones the bulk tag editor can write to.
+  const taggableAttendees = useMemo(
+    () => attendees.filter(a => a.contactId && contactsById.has(String(a.contactId))),
+    [attendees, contactsById],
+  );
+
+  // ---- Add attendees to HubSpot ------------------------------------
+  // The email domain(s) a user has explicitly mapped on the matched
+  // Table View prospect record (bare domain, full address, or URL —
+  // normalized to a hostname). Defined here so both the Email Domain
+  // column and the add-to-HubSpot helpers below can reuse it.
+  const savedDomainsFor = (company) => {
+    const prospect = matchProspect(company);
+    const raw = prospect?.emailDomain;
+    if (!raw) return [];
+    const out = [];
+    for (const entry of String(raw).split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)) {
+      const at = entry.lastIndexOf('@');
+      let d = (at >= 0 ? entry.slice(at + 1) : entry).toLowerCase().trim();
+      d = d.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '');
+      if (d && !out.includes(d)) out.push(d);
+    }
+    return out;
+  };
+
+  // The domain + pattern used to guess a missing email address. The
+  // hand-mapped emailDomain wins (same precedence as the Email Domain
+  // column); fall back to the domain inferred from HubSpot contacts.
+  const resolveEmailDomain = (company) => {
+    const info = companyEmailInfo(company);
+    const saved = savedDomainsFor(company);
+    return { domain: saved[0] || info.domain, pattern: info.pattern || '{f}.{l}' };
+  };
+
+  const splitAttendeeName = (a) => {
+    const cid = a.contactId ? String(a.contactId) : '';
+    const live = cid ? contactsById.get(cid) : null;
+    if (live && (live.firstname || live.lastname)) {
+      return { first: live.firstname || '', last: live.lastname || '' };
+    }
+    const parts = String(a.name || '').trim().split(/\s+/).filter(Boolean);
+    return { first: parts[0] || '', last: parts.length > 1 ? parts.slice(1).join(' ') : '' };
+  };
+
+  const isValidEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e || '').trim());
+
+  // The address we'd create this attendee in HubSpot with: their existing
+  // email when valid, otherwise one guessed from the company's email
+  // domain + the contact's name — so manually-added attendees that only
+  // have a known domain (no typed email yet) can still be added. Returns
+  // { email, guessed }; email is '' when nothing usable can be built.
+  const effectiveAttendeeEmail = (a) => {
+    const existing = String(a.email || '').trim();
+    if (isValidEmail(existing)) return { email: existing, guessed: !!a.emailGuessed };
+    if (existing) return { email: '', guessed: false };
+    const { domain, pattern } = resolveEmailDomain(a.company);
+    if (!domain) return { email: '', guessed: false };
+    const { first, last } = splitAttendeeName(a);
+    const guessed = buildGuessedEmail(first, last, domain, pattern);
+    return isValidEmail(guessed) ? { email: guessed, guessed: true } : { email: '', guessed: false };
+  };
+
+  // Can this attendee be created in HubSpot? Only when it isn't already
+  // there (reuses the "In HubSpot" column's attendeeInHubspot check) and
+  // we can resolve an email for it — a typed one, or a guess from the
+  // company's email domain.
+  const canAddToHubSpot = (a) => {
+    if (attendeeInHubspot(a)) return false;
+    return !!effectiveAttendeeEmail(a).email;
+  };
+
+  const attendeesNeedingHubSpot = useMemo(
+    () => attendees.map((a, i) => ({ a, i })).filter(({ a }) => canAddToHubSpot(a)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [attendees, contactsById, contactsByEmail, prospects],
+  );
+
+  const [hubspotAddingIdx, setHubspotAddingIdx] = useState(() => new Set());
+  const [hubspotBulkAdding, setHubspotBulkAdding] = useState(false);
+  const [hubspotAddStatus, setHubspotAddStatus] = useState('');
+
+  // Create one attendee in HubSpot (or recover the existing contact on a
+  // 409). Uses the attendee's email or a domain-based guess. Returns the
+  // contact record { id, ... } on success, else throws.
+  const createHubSpotContact = async (a) => {
+    const { email } = effectiveAttendeeEmail(a);
+    if (!email) throw new Error('No email available to create this contact');
+    const { first, last } = splitAttendeeName(a);
+    const res = await apiFetch('/api/hubspot?action=create-contact', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        properties: {
+          email,
+          firstname: first,
+          lastname: last,
+          company: a.company || '',
+          jobtitle: a.title || a.originalTitle || '',
+        },
+      }),
+    });
+    const data = await res.json();
+    if (!data?.success || !data.contact?.id) {
+      throw new Error(data?.error || 'Failed to add contact');
+    }
+    return data.contact;
+  };
+
+  // Merge freshly created/looked-up contacts into the local HubSpot cache
+  // so the attendee immediately reads as "in HubSpot" without a full sync.
+  const mergeContactsIntoCache = async (list) => {
+    if (list.length === 0) return;
+    try {
+      await updateHubspotCache(draft => {
+        for (const c of list) {
+          const id = String(c.id || c.vid || '');
+          if (id && !draft.contacts.some(x => String(x.id || x.vid || '') === id)) {
+            draft.contacts.push({ ...c, _source: 'manual' });
+          }
+        }
+      });
+    } catch { /* cache merge is best-effort */ }
+  };
+
+  // Add a single attendee (by original index) to HubSpot and link the
+  // resulting contactId back onto the attendee row.
+  async function addAttendeeToHubSpot(index) {
+    if (!selected) return;
+    const list = Array.isArray(selected.attendees) ? selected.attendees : [];
+    const a = list[index];
+    if (!a || !canAddToHubSpot(a)) return;
+    setHubspotAddingIdx(prev => { const n = new Set(prev); n.add(index); return n; });
+    try {
+      const hadEmail = !!String(a.email || '').trim();
+      const contact = await createHubSpotContact(a);
+      const patch = { contactId: String(contact.id) };
+      // Persist the guessed address back onto the attendee so the row
+      // shows the email it was created with.
+      if (!hadEmail && contact.email) { patch.email = contact.email; patch.emailGuessed = true; }
+      updateAttendeeAt(index, patch);
+      await mergeContactsIntoCache([contact]);
+      setHubspotAddStatus(`Added ${a.name || contact.email || 'contact'} to HubSpot`);
+    } catch (err) {
+      setHubspotAddStatus(`Failed: ${err?.message || 'could not add contact'}`);
+    } finally {
+      setHubspotAddingIdx(prev => { const n = new Set(prev); n.delete(index); return n; });
+      setTimeout(() => setHubspotAddStatus(''), 4000);
+    }
+  }
+
+  // Add every attendee that isn't yet in HubSpot (and has a valid email)
+  // in one pass, then apply all new contactIds in a single settings write.
+  async function addAllAttendeesToHubSpot() {
+    if (!selected) return;
+    const list = Array.isArray(selected.attendees) ? selected.attendees : [];
+    const targets = list.map((a, i) => ({ a, i })).filter(({ a }) => canAddToHubSpot(a));
+    if (targets.length === 0) return;
+    setHubspotBulkAdding(true);
+    setHubspotAddStatus('');
+    const patchByIndex = new Map();
+    const created = [];
+    let failed = 0;
+    for (const { a, i } of targets) {
+      try {
+        const hadEmail = !!String(a.email || '').trim();
+        const contact = await createHubSpotContact(a);
+        const patch = { contactId: String(contact.id) };
+        if (!hadEmail && contact.email) { patch.email = contact.email; patch.emailGuessed = true; }
+        patchByIndex.set(i, patch);
+        created.push(contact);
+      } catch { failed += 1; }
+    }
+    if (patchByIndex.size > 0) {
+      // Re-read the latest attendees so a concurrent edit during the
+      // awaits isn't clobbered, then stamp the new contactIds (and any
+      // guessed email) on by index.
+      const latest = Array.isArray(selected.attendees) ? selected.attendees : list;
+      const next = latest.map((a, i) => (patchByIndex.has(i) ? { ...a, ...patchByIndex.get(i) } : a));
+      updateEvent(selected.id, { attendees: next });
+    }
+    await mergeContactsIntoCache(created);
+    setHubspotBulkAdding(false);
+    setHubspotAddStatus(`${created.length} added to HubSpot${failed ? `, ${failed} failed` : ''}`);
+    setTimeout(() => setHubspotAddStatus(''), 5000);
+  }
+
+  // Attendees that pass the active per-column filters, paired with their
+  // original index so Remove / checkboxes still target the right row.
+  const visibleAttendees = useMemo(() => {
+    const tagsOf = a => (a.contactId ? contactTags(contactsById.get(String(a.contactId))).join(' ') : '');
+    const matches = a => ATT_FILTER_KEYS.every(key => {
+      const q = String(attFilters[key] || '').trim().toLowerCase();
+      if (!q) return true;
+      const val = key === 'tags' ? tagsOf(a) : (a[key] || '');
+      return String(val).toLowerCase().includes(q);
+    });
+    return attendees.map((a, i) => ({ a, i })).filter(({ a }) => matches(a));
+  }, [attendees, attFilters, contactsById]);
+  // Taggable subset of the currently-visible rows, so select-all and the
+  // header checkbox operate on what the user can actually see.
+  const visibleTaggable = visibleAttendees.filter(
+    ({ a }) => a.contactId && contactsById.has(String(a.contactId)),
+  );
+  const allTaggableSelected = visibleTaggable.length > 0
+    && visibleTaggable.every(({ a }) => selectedContactIds.has(String(a.contactId)));
   const lookups = selected && Array.isArray(selected.lookups) ? selected.lookups : [];
   // Normalized companies that already have a contact on the attendee
   // list — their lookup rows are "done" and drop out of the worklist.
@@ -759,7 +1795,14 @@ export function EventsView({
     return [...set].sort((a, b) => a.localeCompare(b));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lookups, prospectByCompanyKey]);
-  useEffect(() => { setCdmFilter(''); }, [selectedId]);
+  useEffect(() => {
+    setCdmFilter('');
+    setSelectedContactIds(new Set());
+    setTagStatus('');
+    setAttFilters({});
+    setLookupFilters({});
+    setLookupMapping(null);
+  }, [selectedId]);
 
   // Unique, sorted Table View company names for the Suggested cell's
   // manual-search dropdown.
@@ -800,6 +1843,198 @@ export function EventsView({
       setAddingCompanies(prev => { const next = new Set(prev); names.forEach(n => next.delete(n)); return next; });
     }
   }
+
+  // Shared renderer for the "Email Domain" column on both tables: the
+  // company's dominant corporate domain as a chip (with a count tooltip),
+  // or a note when only personal emails / no emails are on file.
+  // (savedDomainsFor / resolveEmailDomain are defined earlier, alongside
+  // the add-to-HubSpot helpers that also use them.)
+  const renderDomainCell = (company) => {
+    const saved = savedDomainsFor(company);
+    if (saved.length > 0) {
+      const extra = saved.length - 1;
+      return (
+        <span
+          className={styles.domainChip}
+          title={saved.length > 1 ? `Saved email domains: ${saved.map(d => '@' + d).join(', ')}` : `Saved email domain @${saved[0]}`}
+        >
+          @{saved[0]}{extra > 0 ? ` +${extra}` : ''}
+        </span>
+      );
+    }
+    const info = companyEmailInfo(company);
+    if (info.domain) {
+      return (
+        <span className={styles.domainChip} title={`${info.corporateCount} contact${info.corporateCount === 1 ? '' : 's'} with @${info.domain}`}>
+          @{info.domain}
+        </span>
+      );
+    }
+    if (info.emailCount > 0) {
+      return (
+        <span className={styles.tvMuted} title="Only personal email domains on file for this company">
+          {info.emailCount} email{info.emailCount === 1 ? '' : 's'}
+        </span>
+      );
+    }
+    return <span className={styles.tvMuted}>—</span>;
+  };
+
+  // ---- Configurable columns for the two tables ---------------------
+  // Each column carries its default width, an optional `filterable` flag
+  // (renders a type-to-filter funnel, wired to the per-column filter
+  // state), and a render function for the body cell. The leading
+  // select-all checkbox and trailing "Actions" columns are always shown,
+  // so they live outside this set.
+  const attendeeColumns = [
+    { key: 'name', label: 'Name', width: 180, filterable: true, render: (a) => (
+      <>
+        <button
+          type="button"
+          className={styles.attendeeNameLink}
+          onClick={() => openAttendeeContact(a)}
+          title="View contact details"
+        >
+          {a.name}
+        </button>
+        {!a.contactId && (
+          <span style={{ marginLeft: 6, fontSize: '0.64rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
+            (manual)
+          </span>
+        )}
+      </>
+    ) },
+    { key: 'originalTitle', label: 'Original Title', width: 150, filterable: true, render: (a) => a.originalTitle || '—' },
+    { key: 'title', label: 'Contact Title', width: 150, filterable: true, render: (a) => a.title || '—' },
+    { key: 'company', label: 'Company', width: 160, filterable: true, render: (a) => {
+      const prospect = matchProspect(a.company);
+      if (prospect) {
+        return (
+          <button
+            type="button"
+            className={styles.tvLink}
+            title={`Open "${prospect.company}" in the Table View`}
+            onClick={() => onSelectProspect(prospect)}
+          >
+            {a.company}
+          </button>
+        );
+      }
+      return a.company || '—';
+    } },
+    { key: 'email', label: 'Email', width: 220, filterable: true, render: (a, { i }) => {
+      if (a.email) {
+        return (
+          <span>
+            {a.email}
+            {a.emailGuessed && (
+              <span className={styles.guessTag} title="Guessed from the company email domain — verify before using">guess</span>
+            )}
+          </span>
+        );
+      }
+      const info = resolveEmailDomain(a.company);
+      if (!info.domain) return <span className={styles.tvMuted}>—</span>;
+      return (
+        <button
+          type="button"
+          className={styles.guessBtn}
+          onClick={() => guessAttendeeEmail(a, i)}
+          title={`Guess an address at @${info.domain} from this contact's name`}
+        >
+          Guess @{info.domain}
+        </button>
+      );
+    } },
+    { key: 'emailDomain', label: 'Email Domain', width: 150, render: (a) => renderDomainCell(a.company) },
+    { key: 'inHubspot', label: 'In HubSpot', width: 110, render: (a) => (
+      attendeeInHubspot(a) ? (
+        <span className={styles.hsYes} title="This contact exists in the synced HubSpot contacts">In HubSpot</span>
+      ) : (
+        <span className={styles.hsNo} title="Not found in the synced HubSpot contacts">Not added</span>
+      )
+    ) },
+    { key: 'tags', label: 'Tags', width: 180, filterable: true, render: (a, { tags }) => (
+      tags.length ? (
+        <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>
+          {tags.map(t => <span key={t} className={styles.tagChip}>{t}</span>)}
+        </span>
+      ) : (
+        <span className={styles.tvMuted}>—</span>
+      )
+    ) },
+  ];
+  const ATTENDEE_ACTIONS = { key: 'actions', label: 'Actions', width: 200 };
+
+  const lookupColumns = [
+    { key: 'name', label: 'Name', width: 150, filterable: true, render: (l, { i }) => (
+      <LookupNameCell value={l.name} onCommit={v => updateLookup(i, { name: v })} />
+    ) },
+    { key: 'title', label: 'Title', width: 150, filterable: true, render: (l) => l.title || '—' },
+    { key: 'company', label: 'Company', width: 160, filterable: true, render: (l) => l.company || '—' },
+    { key: 'emailDomain', label: 'Email Domain', width: 150, render: (l) => renderDomainCell(l.company) },
+    { key: 'tableView', label: 'Table View', width: 160, filterable: true, render: (l, { prospect, adding }) => (
+      prospect ? (
+        <button
+          type="button"
+          className={styles.tvLink}
+          title={`Open "${prospect.company}" in the Table View`}
+          onClick={() => onSelectProspect(prospect)}
+        >
+          {prospect.company}
+        </button>
+      ) : (
+        <button
+          type="button"
+          className={styles.tvAdd}
+          disabled={adding || !String(l.company || '').trim()}
+          onClick={() => addCompanyToTableView(l.company)}
+          title="Add this company to the Table View as a new prospect"
+        >
+          {adding ? 'Adding…' : '+ Add'}
+        </button>
+      )
+    ) },
+    { key: 'suggested', label: 'Suggested', width: 190, render: (l, { i, prospect, suggestion }) => (
+      prospect ? (
+        <span className={styles.tvMuted}>—</span>
+      ) : (
+        <SuggestedCell
+          rejected={!!l.suggestRejected}
+          suggestion={suggestion}
+          prospectCompanies={prospectCompanies}
+          onAccept={company => updateLookup(i, { company, suggestRejected: false })}
+          onReject={() => updateLookup(i, { suggestRejected: true })}
+        />
+      )
+    ) },
+    { key: 'type', label: 'Type', width: 150, filterable: true, render: (l, { prospect }) => (
+      <TypeCell prospect={prospect} onCommit={v => onUpdateProspect(prospect.id, { type: v })} />
+    ) },
+    { key: 'cdm', label: 'CDM', width: 140, filterable: true, render: (l, { prospect }) => (
+      <CdmCell prospect={prospect} onCommit={v => onUpdateProspect(prospect.id, { cdm: v })} />
+    ) },
+    { key: 'addContact', label: 'Add Contact', width: 190, render: (l, { i }) => (
+      <RowContactAdder
+        company={l.company}
+        title={l.title}
+        contacts={searchableContacts}
+        attendees={attendees}
+        onAdd={att => addAttendeeFromLookup(att, i)}
+        onRemove={removeAttendeeObj}
+      />
+    ) },
+  ];
+  const LOOKUP_ACTIONS = { key: 'actions', label: 'Actions', width: 200 };
+
+  const attendeeCols = useTableColumns('attendees', attendeeColumns);
+  const lookupCols = useTableColumns('lookups', lookupColumns);
+  const ATTENDEE_SELECT = { width: 28 };
+  const attendeeTableWidth = ATTENDEE_SELECT.width + attendeeCols.visible.reduce((s, c) => s + (attendeeCols.widths[c.key] || 0), 0) + ATTENDEE_ACTIONS.width;
+  const lookupTableWidth = lookupCols.visible.reduce((s, c) => s + (lookupCols.widths[c.key] || 0), 0) + LOOKUP_ACTIONS.width;
+  // colSpan helpers for the full-width "no matches" / DM sub-rows.
+  const attendeeColSpan = 1 + attendeeCols.visible.length + 1;
+  const lookupColSpan = lookupCols.visible.length + 1;
 
   return (
     <div className={styles.wrapper}>
@@ -881,48 +2116,150 @@ export function EventsView({
                 Export CSV
               </button>
             )}
+            {attendeesNeedingHubSpot.length > 0 && (
+              <button
+                type="button"
+                className={styles.exportBtn}
+                style={{ background: '#FFF7ED', borderColor: '#FED7AA', color: '#C2410C' }}
+                onClick={addAllAttendeesToHubSpot}
+                disabled={hubspotBulkAdding}
+                title="Create a HubSpot contact for every attendee here who isn't already in HubSpot (requires an email)"
+              >
+                {hubspotBulkAdding ? 'Adding…' : `+ Add ${attendeesNeedingHubSpot.length} to HubSpot`}
+              </button>
+            )}
+            {hubspotAddStatus && (
+              <span style={{ fontSize: '0.72rem', fontWeight: 600, color: hubspotAddStatus.startsWith('Failed') ? '#B91C1C' : '#166534' }}>
+                {hubspotAddStatus}
+              </span>
+            )}
+            {attendees.length > 0 && (
+              <ColumnsMenu
+                columns={attendeeColumns}
+                visibleKeys={attendeeCols.visibleKeys}
+                onToggle={attendeeCols.toggle}
+                onReset={attendeeCols.reset}
+              />
+            )}
           </div>
 
           <AttendeePicker contacts={searchableContacts} existingIds={existingIds} onAdd={addAttendee} />
+
+          {taggableAttendees.length > 0 && (
+            <div className={styles.bulkTagBar}>
+              <span className={styles.bulkTagCount}>
+                {selectedContactIds.size} of {taggableAttendees.length} selected
+              </span>
+              <select
+                className={styles.bulkTagSelect}
+                value={bulkTag}
+                onChange={e => setBulkTag(e.target.value)}
+              >
+                <option value="">{tagOptions.length ? 'Choose a tag…' : 'No tags available'}</option>
+                {tagOptions.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <button
+                type="button"
+                className={styles.bulkTagBtn}
+                disabled={!bulkTag || selectedContactIds.size === 0 || tagSaving}
+                onClick={() => applyBulkTag('add')}
+              >
+                {tagSaving ? 'Saving…' : '+ Add to selected'}
+              </button>
+              <button
+                type="button"
+                className={`${styles.bulkTagBtn} ${styles.bulkTagBtnRemove}`}
+                disabled={!bulkTag || selectedContactIds.size === 0 || tagSaving}
+                onClick={() => applyBulkTag('remove')}
+              >
+                − Remove from selected
+              </button>
+              {tagStatus && <span className={styles.bulkTagStatus}>{tagStatus}</span>}
+            </div>
+          )}
 
           {attendees.length === 0 ? (
             <div className={styles.emptyAttendees}>
               No attendees saved yet. Use the search box above to add contacts.
             </div>
           ) : (
-            <table className={styles.attendeeTable}>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Title</th>
-                  <th>Company</th>
-                  <th>Email</th>
-                  <th aria-label="Actions" />
-                </tr>
-              </thead>
-              <tbody>
-                {attendees.map((a, i) => (
-                  <tr key={`${a.contactId || 'manual'}-${i}`}>
-                    <td>
-                      {a.name}
-                      {!a.contactId && (
-                        <span style={{ marginLeft: 6, fontSize: '0.64rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
-                          (manual)
-                        </span>
-                      )}
-                    </td>
-                    <td>{a.title || '—'}</td>
-                    <td>{a.company || '—'}</td>
-                    <td>{a.email || '—'}</td>
-                    <td style={{ textAlign: 'right' }}>
-                      <button type="button" className={styles.removeBtn} onClick={() => removeAttendee(i)}>
-                        Remove
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className={styles.tableScroll}>
+              <table
+                className={`${styles.attendeeTable} ${styles.resizable}`}
+                style={{ width: attendeeTableWidth, minWidth: attendeeTableWidth }}
+              >
+                <ResizableHead
+                  columns={attendeeCols.visible}
+                  widths={attendeeCols.widths}
+                  startResize={attendeeCols.startResize}
+                  filters={attFilters}
+                  onFilterChange={setAttFilter}
+                  leading={{
+                    width: ATTENDEE_SELECT.width,
+                    content: (
+                      <input
+                        type="checkbox"
+                        aria-label="Select all mapped contacts"
+                        title="Select all mapped contacts"
+                        disabled={taggableAttendees.length === 0}
+                        checked={allTaggableSelected}
+                        ref={el => { if (el) el.indeterminate = selectedContactIds.size > 0 && !allTaggableSelected; }}
+                        onChange={toggleSelectAll}
+                      />
+                    ),
+                  }}
+                  trailing={ATTENDEE_ACTIONS}
+                />
+                <tbody>
+                  {visibleAttendees.length === 0 ? (
+                    <tr>
+                      <td colSpan={attendeeColSpan} className={styles.tvMuted} style={{ padding: '0.6rem', textAlign: 'center' }}>
+                        No attendees match the current filters.
+                      </td>
+                    </tr>
+                  ) : visibleAttendees.map(({ a, i }) => {
+                    const cid = a.contactId ? String(a.contactId) : '';
+                    const taggable = cid && contactsById.has(cid);
+                    const tags = taggable ? contactTags(contactsById.get(cid)) : [];
+                    const ctx = { i, cid, taggable, tags };
+                    return (
+                      <tr key={`${a.contactId || 'manual'}-${i}`}>
+                        <td style={{ textAlign: 'center' }}>
+                          {taggable && (
+                            <input
+                              type="checkbox"
+                              aria-label={`Select ${a.name}`}
+                              checked={selectedContactIds.has(cid)}
+                              onChange={() => toggleContactSelected(cid)}
+                            />
+                          )}
+                        </td>
+                        {attendeeCols.visible.map(c => (
+                          <td key={c.key}>{c.render(a, ctx)}</td>
+                        ))}
+                        <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          {canAddToHubSpot(a) && (
+                            <button
+                              type="button"
+                              className={styles.guessBtn}
+                              style={{ marginRight: 6 }}
+                              disabled={hubspotAddingIdx.has(i)}
+                              onClick={() => addAttendeeToHubSpot(i)}
+                              title="Add this attendee to HubSpot as a new contact"
+                            >
+                              {hubspotAddingIdx.has(i) ? 'Adding…' : '+ HubSpot'}
+                            </button>
+                          )}
+                          <button type="button" className={styles.removeBtn} onClick={() => removeAttendee(i)}>
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
 
           <div className={styles.sectionTitle}>
@@ -958,9 +2295,17 @@ export function EventsView({
                 Clear list
               </button>
             )}
+            {lookups.length > 0 && (
+              <ColumnsMenu
+                columns={lookupColumns}
+                visibleKeys={lookupCols.visibleKeys}
+                onToggle={lookupCols.toggle}
+                onReset={lookupCols.reset}
+              />
+            )}
           </div>
           <div style={{ fontSize: '0.74rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
-            Paste or upload a list of <strong>titles and company names</strong> (two columns — CSV or tab-separated). Each row gets a LinkedIn people-search button, a <strong>Table View</strong> match (click to open, or <strong>+ Add</strong> a new prospect), and an editable <strong>CDM</strong>.
+            Paste, drop, or upload a list of <strong>titles and company names</strong> (CSV or tab-separated) — a <strong>column-mapping</strong> popup lets you pick which column is which. Each row gets a LinkedIn people-search button, a <strong>Table View</strong> match (click to open, or <strong>+ Add</strong> a new prospect), and an editable <strong>CDM</strong>.
             {lookups.length > 0 && (
               <span style={{ marginLeft: 6 }}>
                 <span style={{ color: '#166534', fontWeight: 600 }}>{lookupMatchCount} in Table View</span>
@@ -977,9 +2322,15 @@ export function EventsView({
               value={lookupDraft}
               placeholder={'Title, Company\nVP Finance, Acme Corp\nHead of Sustainability, Globex'}
               onChange={e => setLookupDraft(e.target.value)}
+              onDrop={e => {
+                // Dropping a CSV/text file onto the box jumps straight to
+                // the column-mapping popup instead of pasting a file path.
+                const file = e.dataTransfer?.files?.[0];
+                if (file) { e.preventDefault(); file.text().then(openLookupMapping).catch(() => {}); }
+              }}
             />
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-              <button type="button" className={styles.newBtn} onClick={() => addLookupsFromText(lookupDraft)} disabled={!lookupDraft.trim()}>
+              <button type="button" className={styles.newBtn} onClick={() => openLookupMapping(lookupDraft)} disabled={!lookupDraft.trim()}>
                 Add rows
               </button>
               <button type="button" className={styles.exportBtn} style={{ margin: 0 }} onClick={() => lookupFileRef.current?.click()}>
@@ -990,107 +2341,136 @@ export function EventsView({
           </div>
 
           {lookups.length > 0 && (
-            <table className={styles.attendeeTable}>
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th>Company</th>
-                  <th>Table View</th>
-                  <th style={{ width: 190 }}>Suggested</th>
-                  <th style={{ width: 150 }}>Type</th>
-                  <th style={{ width: 140 }}>CDM</th>
-                  <th style={{ width: 180 }}>Add Contact</th>
-                  <th aria-label="Actions" />
-                </tr>
-              </thead>
-              <tbody>
-                {lookups.map((l, i) => {
-                  const prospect = matchProspect(l.company);
-                  // Drop rows whose company already has a contact on the
-                  // attendee list — they're done. Reappears if removed.
-                  if (attendeeCompanies.has(normalizeCompany(l.company))) return null;
-                  // Apply the CDM filter (kept on original index i so
-                  // edit / remove still target the right row).
-                  if (cdmFilter && String(prospect?.cdm || '').trim() !== cdmFilter) return null;
-                  const suggestion = prospect ? null : suggestProspect(l.company);
-                  const adding = addingCompanies.has(String(l.company || '').trim());
-                  return (
-                    <tr key={`${l.title}-${l.company}-${i}`}>
-                      <td>{l.title || '—'}</td>
-                      <td>{l.company || '—'}</td>
-                      <td>
-                        {prospect ? (
-                          <button
-                            type="button"
-                            className={styles.tvLink}
-                            title={`Open "${prospect.company}" in the Table View`}
-                            onClick={() => onSelectProspect(prospect)}
-                          >
-                            {prospect.company}
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            className={styles.tvAdd}
-                            disabled={adding || !String(l.company || '').trim()}
-                            onClick={() => addCompanyToTableView(l.company)}
-                            title="Add this company to the Table View as a new prospect"
-                          >
-                            {adding ? 'Adding…' : '+ Add'}
-                          </button>
+            <div className={styles.tableScroll}>
+              <table
+                className={`${styles.attendeeTable} ${styles.resizable}`}
+                style={{ width: lookupTableWidth, minWidth: lookupTableWidth }}
+              >
+                <ResizableHead
+                  columns={lookupCols.visible}
+                  widths={lookupCols.widths}
+                  startResize={lookupCols.startResize}
+                  filters={lookupFilters}
+                  onFilterChange={setLookupFilter}
+                  trailing={LOOKUP_ACTIONS}
+                />
+                <tbody>
+                  {lookups.map((l, i) => {
+                    const prospect = matchProspect(l.company);
+                    // Drop rows whose company already has a contact on the
+                    // attendee list — they're done. Reappears if removed.
+                    if (attendeeCompanies.has(normalizeCompany(l.company))) return null;
+                    // Apply the CDM filter (kept on original index i so
+                    // edit / remove still target the right row).
+                    if (cdmFilter && String(prospect?.cdm || '').trim() !== cdmFilter) return null;
+                    // Apply the per-column type-to-filter drafts.
+                    const lookupVals = {
+                      name: l.name || '',
+                      title: l.title || '',
+                      company: l.company || '',
+                      tableView: prospect?.company || '',
+                      type: prospect?.type || '',
+                      cdm: prospect?.cdm || '',
+                    };
+                    if (!LOOKUP_FILTER_KEYS.every(key => {
+                      const q = String(lookupFilters[key] || '').trim().toLowerCase();
+                      return !q || String(lookupVals[key]).toLowerCase().includes(q);
+                    })) return null;
+                    const suggestion = prospect ? null : suggestProspect(l.company);
+                    const adding = addingCompanies.has(String(l.company || '').trim());
+                    const ctx = { i, prospect, suggestion, adding };
+                    // Decision maker(s) on file for this row's company that
+                    // haven't already been added as attendees or ignored.
+                    const ignoredIds = Array.isArray(l.ignoredContactIds) ? l.ignoredContactIds : [];
+                    const dmSuggestions = decisionMakersForCompany(l.company).filter(c => {
+                      const id = String(c.id || c.vid || '');
+                      if (!id) return false;
+                      if (attendees.some(a => a.contactId && String(a.contactId) === id)) return false;
+                      return !ignoredIds.includes(id);
+                    });
+                    return (
+                      <Fragment key={`${l.title}-${l.company}-${i}`}>
+                        <tr>
+                          {lookupCols.visible.map(c => (
+                            <td key={c.key} style={c.key === 'suggested' ? { verticalAlign: 'top' } : undefined}>
+                              {c.render(l, ctx)}
+                            </td>
+                          ))}
+                          <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            <a
+                              href={linkedInSearchUrl(l.title, l.company)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className={styles.exportBtn}
+                              style={{ margin: 0, display: 'inline-block', textDecoration: 'none' }}
+                              title={`Search LinkedIn for "${[l.title, l.company].filter(Boolean).join(' at ')}"`}
+                            >
+                              🔍 LinkedIn
+                            </a>
+                            <button type="button" className={styles.removeBtn} style={{ marginLeft: 6 }} onClick={() => removeLookup(i)}>
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                        {dmSuggestions.length > 0 && (
+                          <tr className={styles.dmRow}>
+                            <td colSpan={lookupColSpan}>
+                              <div className={styles.dmWrap}>
+                                <span className={styles.dmLabel}>
+                                  ★ Decision maker{dmSuggestions.length > 1 ? 's' : ''} at {l.company || 'this company'}
+                                </span>
+                                {dmSuggestions.map(c => {
+                                  const id = String(c.id || c.vid || '');
+                                  const name = contactDisplayName(c);
+                                  return (
+                                    <span key={id} className={styles.dmChip}>
+                                      <span className={styles.dmName}>{name}</span>
+                                      {c.jobtitle && <span className={styles.dmTitle}>{c.jobtitle}</span>}
+                                      <button
+                                        type="button"
+                                        className={styles.dmAdd}
+                                        onClick={() => addDecisionMaker(c, l)}
+                                        title={`Map ${name} to ${l.company || 'this company'} as an attendee`}
+                                      >
+                                        + Add
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className={styles.dmIgnore}
+                                        onClick={() => ignoreDecisionMaker(id, i)}
+                                        title="Hide this suggestion"
+                                      >
+                                        Ignore
+                                      </button>
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            </td>
+                          </tr>
                         )}
-                      </td>
-                      <td style={{ verticalAlign: 'top' }}>
-                        {prospect ? (
-                          <span className={styles.tvMuted}>—</span>
-                        ) : (
-                          <SuggestedCell
-                            rejected={!!l.suggestRejected}
-                            suggestion={suggestion}
-                            prospectCompanies={prospectCompanies}
-                            onAccept={company => updateLookup(i, { company, suggestRejected: false })}
-                            onReject={() => updateLookup(i, { suggestRejected: true })}
-                          />
-                        )}
-                      </td>
-                      <td>
-                        <TypeCell prospect={prospect} onCommit={v => onUpdateProspect(prospect.id, { type: v })} />
-                      </td>
-                      <td>
-                        <CdmCell prospect={prospect} onCommit={v => onUpdateProspect(prospect.id, { cdm: v })} />
-                      </td>
-                      <td>
-                        <RowContactAdder
-                          company={l.company}
-                          title={l.title}
-                          contacts={searchableContacts}
-                          attendees={attendees}
-                          onAdd={att => addAttendeeFromLookup(att, i)}
-                          onRemove={removeAttendeeObj}
-                        />
-                      </td>
-                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        <a
-                          href={linkedInSearchUrl(l.title, l.company)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={styles.exportBtn}
-                          style={{ margin: 0, display: 'inline-block', textDecoration: 'none' }}
-                          title={`Search LinkedIn for "${[l.title, l.company].filter(Boolean).join(' at ')}"`}
-                        >
-                          🔍 LinkedIn
-                        </a>
-                        <button type="button" className={styles.removeBtn} style={{ marginLeft: 6 }} onClick={() => removeLookup(i)}>
-                          Remove
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
+      )}
+      {contactPopup && (
+        <AttendeeContactModal
+          attendee={contactPopup.attendee}
+          contact={contactPopup.contact}
+          onClose={() => setContactPopup(null)}
+        />
+      )}
+      {lookupMapping && (
+        <LookupMappingModal
+          grid={lookupMapping}
+          onCancel={() => setLookupMapping(null)}
+          onConfirm={commitMappedLookups}
+        />
       )}
     </div>
   );

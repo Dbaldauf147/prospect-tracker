@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import { DraftEmailView } from './DraftEmailView';
 import { EmailCampaignView } from '../EmailCampaignView/EmailCampaignView';
+import { SiteListOverview } from './SiteListOverview';
 
 export function DraftEmailsPage({ prospects, settings, updateSettings, initialTab = 'drafts' }) {
   const [tab, setTab] = useState(initialTab === 'campaigns' ? 'campaigns' : 'drafts');
@@ -33,11 +34,14 @@ export function DraftEmailsPage({ prospects, settings, updateSettings, initialTa
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, borderBottom: '1px solid #E2E8F0', marginBottom: '0.75rem' }}>
         {tabBtn('drafts', 'Drafts')}
         {tabBtn('campaigns', 'Email Campaigns')}
+        {tabBtn('sitelists', 'Site List Overview')}
       </div>
-      {tab === 'drafts' ? (
+      {tab === 'drafts' && (
         <DraftEmailView prospects={prospects} settings={settings} updateSettings={updateSettings} />
-      ) : (
-        <EmailCampaignView />
+      )}
+      {tab === 'campaigns' && <EmailCampaignView />}
+      {tab === 'sitelists' && (
+        <SiteListOverview prospects={prospects} settings={settings} />
       )}
     </div>
   );
