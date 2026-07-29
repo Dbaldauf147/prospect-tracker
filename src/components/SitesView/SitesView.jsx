@@ -7920,6 +7920,28 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             });
             summarySheet.getRow(ccHdrRowNum).height = 20;
 
+            // Merged cells don't auto-fit in Excel, so a wrapped value in a
+            // fixed-height row just gets clipped — which is what buried the
+            // regimes list. Estimate the wrapped line count from the merged
+            // width and size each row to fit. `chars` is the usable width in
+            // characters (column width units ≈ characters, less the indent).
+            const wrapLines = (text, chars) => String(text == null ? '' : text)
+              .split('\n')
+              .reduce((total, line) => {
+                const words = line.split(/\s+/).filter(Boolean);
+                if (!words.length) return total + 1;
+                let lines = 1, len = 0;
+                for (const w of words) {
+                  const next = len ? len + 1 + w.length : w.length;
+                  if (next <= chars) { len = next; continue; }
+                  lines++; len = w.length;
+                }
+                return total + lines;
+              }, 0);
+            // Columns 4-5 and 6-8 are width 15 each; the indent costs ~2.
+            const JURIS_CHARS = 15 * 2 - 2;
+            const REGIME_CHARS = 15 * 3 - 2;
+
             for (const c of ccCompanies) {
               const rowNum = sumRow++;
               summarySheet.mergeCells(rowNum, 4, rowNum, 5);
@@ -7927,35 +7949,45 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
               const nameCell = summarySheet.getCell(rowNum, 1);
               nameCell.value = c.name;
               nameCell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_TEXT_DARK } };
-              nameCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+              nameCell.alignment = { vertical: 'top', horizontal: 'left', indent: 1 };
 
               const revCell = summarySheet.getCell(rowNum, 2);
               revCell.value = c.revenueLabel || '—';
               revCell.font = { name: 'Nunito Sans', size: 10, color: { argb: c.revenueLabel ? SE_TEXT_DARK : SE_SLATE } };
-              revCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+              revCell.alignment = { vertical: 'top', horizontal: 'left', indent: 1 };
 
               const caCell = summarySheet.getCell(rowNum, 3);
               caCell.value = c.california;
               caCell.numFmt = '#,##0';
               caCell.font = { name: 'Nunito Sans', size: 10, color: { argb: c.california > 0 ? SE_GREEN_DARK : SE_SLATE } };
-              caCell.alignment = { vertical: 'middle', horizontal: 'center' };
+              caCell.alignment = { vertical: 'top', horizontal: 'center' };
 
               const jCell = summarySheet.getCell(rowNum, 4);
               jCell.value = c.yesJurisdictions.join(', ') || '—';
               jCell.font = { name: 'Nunito Sans', size: 10, color: { argb: c.yesJurisdictions.length ? SE_TEXT_DARK : SE_SLATE } };
-              jCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+              jCell.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
 
               const rCell = summarySheet.getCell(rowNum, 6);
-              rCell.value = c.regulations.length
-                ? c.regulations.map(r => `${r.regulation} (${r.timeline})`).join('; ')
+              // One regime per line rather than a semicolon run — the old
+              // "SB 253 (2026 data (reporting starts 2027)); …" also nested
+              // parens inside parens, which read badly even unclipped.
+              const regimeText = c.regulations.length
+                ? c.regulations.map(r => `${r.regulation} — ${r.timeline}`).join('\n')
                 : 'None triggered';
+              rCell.value = regimeText;
               rCell.font = {
                 name: 'Nunito Sans', size: 10,
                 bold: c.regulations.length > 0,
                 color: { argb: c.regulations.length ? SE_GREEN_DARK : SE_SLATE },
               };
-              rCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
-              summarySheet.getRow(rowNum).height = 18;
+              rCell.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
+
+              const lines = Math.max(
+                wrapLines(regimeText, REGIME_CHARS),
+                wrapLines(jCell.value, JURIS_CHARS),
+                1,
+              );
+              summarySheet.getRow(rowNum).height = Math.max(18, lines * 14 + 4);
             }
 
             const ccNoteRowNum = sumRow++;
