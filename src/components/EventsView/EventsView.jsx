@@ -577,27 +577,14 @@ function ContactPickerModal({ company, title, contacts, attendees, onAdd, onRemo
   );
 }
 
-// Per-row Add Contact cell: shows the contacts already added for this
-// company as removable chips, plus a button that opens the roster popup.
+// Per-row Add Contact cell: a button that opens the company roster
+// popup. Once a contact for this company is added, the whole row drops
+// out of the worklist (handled by the parent), so no inline chips.
 function RowContactAdder({ company, title, contacts, attendees, onAdd, onRemove }) {
   const [open, setOpen] = useState(false);
 
-  // Attendees attributed to this row's company, surfaced inline so the
-  // user can see who they've added without opening the popup.
-  const companyNorm = useMemo(() => normalizeCompany(company), [company]);
-  const addedHere = useMemo(() => {
-    if (!companyNorm) return [];
-    return (attendees || []).filter(a => normalizeCompany(a.company) === companyNorm);
-  }, [attendees, companyNorm]);
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
-      {addedHere.map((a, idx) => (
-        <span key={`${a.contactId || a.name}-${idx}`} className={styles.contactChip} title={a.email || a.name}>
-          {a.name}
-          <button type="button" onClick={() => onRemove(a)} aria-label={`Remove ${a.name}`}>×</button>
-        </span>
-      ))}
       <button type="button" className={styles.addContactBtn} onClick={() => setOpen(true)}>
         + Add contact
       </button>
@@ -1775,6 +1762,20 @@ export function EventsView({
   const allTaggableSelected = visibleTaggable.length > 0
     && visibleTaggable.every(({ a }) => selectedContactIds.has(String(a.contactId)));
   const lookups = selected && Array.isArray(selected.lookups) ? selected.lookups : [];
+  // Normalized companies that already have a contact on the attendee
+  // list — their lookup rows are "done" and drop out of the worklist.
+  const attendeeCompanies = useMemo(() => {
+    const set = new Set();
+    for (const a of attendees) {
+      const n = normalizeCompany(a.company);
+      if (n) set.add(n);
+    }
+    return set;
+  }, [attendees]);
+  const lookupDoneCount = useMemo(
+    () => lookups.reduce((n, l) => n + (attendeeCompanies.has(normalizeCompany(l.company)) ? 1 : 0), 0),
+    [lookups, attendeeCompanies],
+  );
   const lookupMatchCount = useMemo(
     () => lookups.reduce((n, l) => n + (matchProspect(l.company) ? 1 : 0), 0),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2310,6 +2311,7 @@ export function EventsView({
                 <span style={{ color: '#166534', fontWeight: 600 }}>{lookupMatchCount} in Table View</span>
                 {' · '}
                 <span style={{ color: '#B45309', fontWeight: 600 }}>{lookups.length - lookupMatchCount} new</span>
+                {lookupDoneCount > 0 && <>{' · '}<span style={{ color: '#64748B', fontWeight: 600 }}>{lookupDoneCount} added (hidden)</span></>}
               </span>
             )}
           </div>
@@ -2355,6 +2357,9 @@ export function EventsView({
                 <tbody>
                   {lookups.map((l, i) => {
                     const prospect = matchProspect(l.company);
+                    // Drop rows whose company already has a contact on the
+                    // attendee list — they're done. Reappears if removed.
+                    if (attendeeCompanies.has(normalizeCompany(l.company))) return null;
                     // Apply the CDM filter (kept on original index i so
                     // edit / remove still target the right row).
                     if (cdmFilter && String(prospect?.cdm || '').trim() !== cdmFilter) return null;
