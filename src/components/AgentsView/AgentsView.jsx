@@ -8,6 +8,8 @@ import { dbGet } from '../../utils/db';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { apiFetch } from '../../utils/apiFetch';
 import { useAuth } from '../../contexts/AuthContext';
+import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
+import { lookupCloseNotSold } from '../../data/closeNotSoldRules';
 import { computeNewBfoOpps, computeNewBfoMissingData } from '../../utils/newBfoOpps';
 import { resolveSfUrl } from '../../utils/salesforceLeads';
 import { OppInfoModal } from '../OppsView2/OppsView2';
@@ -116,7 +118,7 @@ const OPPS_STAGE_TO_BFO_STAGE = {
 
 const DEFAULT_AI_PROMPT_CLOSE_NOT_SOLDS = `1.  Reference the BFO links below.
 2.  If the link's associated status is Lost, then click on the Competitors button and then select New
-3.  In the Competitor Name enter Unknown Competition and mark the box below Winner as checked.
+3.  In the Competitor Name enter the value from the Competition column below and mark the box below Winner as checked.
 4.  Click the save button and then navigate back to the BFO link for this opportunity.
 5.  When you are back on that page, update the opportunity to the stage Closed and then click the Select Closed Stage blue button.
 6.  The Edit Dependencies menu, choose the 0 - Closed option.
@@ -139,24 +141,6 @@ const DEFAULT_AI_PROMPT_MARKETING_LEAD_STATUS_UPDATE = `1.  Go to this Salesforc
 4.  If they differ, click the lead's Name to open their record page, go to the Assessment tab, set the Status to the Marketing Leads Status listed below, and Save.
 5.  Repeat for every lead listed below.`;
 
-// Opps 2 "Reason Not Sold" → corresponding BFO Status + Reason. Used by
-// the Close Not Solds prompt so the AI assistant can advance each BFO
-// opp through the close-out flow without the user picking values by
-// hand. Keys are lower-cased + trimmed for resilient matching.
-const REASON_NOT_SOLD_TO_BFO = {
-  'cancelled internally - no opp': { status: 'Cancelled by Schneider', reason: 'No real opportunity / out of SE strategy' },
-  'cancelled internally - not in targets': { status: 'Cancelled by Schneider', reason: 'No real opportunity / out of SE strategy' },
-  'current service delivery issues': { status: 'Lost', reason: 'Relationship Issue with SE' },
-  "customer didnt have enough pain": { status: 'Lost', reason: 'No acceptable Offer from SE' },
-  "customer didn't have enough pain": { status: 'Lost', reason: 'No acceptable Offer from SE' },
-  'duplicate opp': { status: 'Cancelled by Schneider', reason: 'No real opportunity / out of SE strategy' },
-  'free service': { status: 'Cancelled by Schneider', reason: 'No real opportunity / out of SE strategy' },
-  'ghosted - no response': { status: 'Cancelled by Customer', reason: 'No acceptable Offer from SE' },
-  'never connected': { status: 'Cancelled by Customer', reason: 'No acceptable Offer from SE' },
-  'price pain': { status: 'Lost', reason: 'No acceptable Offer from SE' },
-  "software or service doesn't meet need": { status: 'Lost', reason: 'No acceptable Offer from SE' },
-  'unknown': { status: 'Cancelled by Customer', reason: 'No acceptable Offer from SE' },
-};
 
 function readOverrides() {
   try {
@@ -2528,10 +2512,11 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   }, [bfoActivity, oppsCache]);
 
   // Not-Sold opps that still have a corresponding BFO row open. Each
-  // pulls its Reason Not Sold from Opps 2 and maps it to the Status +
-  // Reason values BFO expects when closing the opp out. Rows whose
-  // Reason Not Sold isn't in the mapping table fall through so the
-  // user can see them and either update the row or extend the table.
+  // pulls its Reason Not Sold + Competition from Opps 2 and maps the
+  // pair to the Status + Reason values BFO expects when closing the
+  // opp out. Rows whose combination isn't in the rules table fall
+  // through so the user can see them and either update the row or
+  // extend the table.
   const closeNotSoldOpps = useMemo(() => {
     const records = oppsCache?.records || [];
     if (!records.length) return [];
@@ -2569,7 +2554,14 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       // patch the Opps 2 row.
       const bfoUrl = detectBfoUrl(r);
       const reasonNotSold = String(r['Reason Not Sold'] || '').trim();
-      const map = REASON_NOT_SOLD_TO_BFO[reasonNotSold.toLowerCase()] || null;
+      // Competition (set via the Sold / Not Sold close-out popups or
+      // inline on Opps 2) is half of the mapping key AND feeds the
+      // Competitor Name the AI enters on Lost opps. A blank /
+      // placeholder Competition can't map, so the row surfaces as
+      // unmapped until the user fills it in.
+      const competitionRaw = String(r['Competition'] || '').trim();
+      const competition = (competitionRaw === '-' || competitionRaw === '#N/A') ? '' : competitionRaw;
+      const map = lookupCloseNotSold(competition, reasonNotSold);
       seen.add(key);
       rows.push({
         id: `${key}|${bfoUrl || bfoOpp}`,
@@ -2578,6 +2570,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
         reasonNotSold,
         status: map?.status || '',
         reason: map?.reason || '',
+        competition,
         unmapped: !map,
         bfoUrl,
       });
@@ -2792,10 +2785,10 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     for (const o of stageChangeOpps) stageLines.push(`${o.bfoUrl}\t${o.expectedBfoStage}`);
     const stageBlock = stageLines.join('\n');
 
-    const closeNotSoldLines = ['BFO Link\tStatus\tReason'];
+    const closeNotSoldLines = ['BFO Link\tStatus\tReason\tCompetition'];
     for (const o of closeNotSoldOpps) {
       if (o.unmapped) continue;
-      closeNotSoldLines.push(`${o.bfoUrl}\t${o.status}\t${o.reason}`);
+      closeNotSoldLines.push(`${o.bfoUrl}\t${o.status}\t${o.reason}\t${o.competition}`);
     }
     const closeNotSoldBlock = closeNotSoldLines.join('\n');
 
@@ -3921,15 +3914,15 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       {(() => {
         // Close Not Solds prompt — every Not-Sold Opps 2 opp that's
         // still open on the BFO Activity tab. Output is a tab-delimited
-        // "BFO Link\tStatus\tReason" block so the AI assistant can walk
-        // each row and close it out. Rows without a known Reason Not
-        // Sold mapping leave Status / Reason blank — surfaced in the
-        // table so the user can act on them.
-        const headerLine = 'BFO Link\tStatus\tReason';
+        // "BFO Link\tStatus\tReason\tCompetition" block so the AI
+        // assistant can walk each row and close it out. Rows without a
+        // known Reason Not Sold mapping leave Status / Reason blank —
+        // surfaced in the table so the user can act on them.
+        const headerLine = 'BFO Link\tStatus\tReason\tCompetition';
         const lines = [headerLine];
         for (const o of closeNotSoldOpps) {
           if (o.unmapped) continue;
-          lines.push(`${o.bfoUrl}\t${o.status}\t${o.reason}`);
+          lines.push(`${o.bfoUrl}\t${o.status}\t${o.reason}\t${o.competition}`);
         }
         const block = lines.join('\n');
         const fullPrompt = `${closeNotSoldsPrompt}\n\n${block}`;
@@ -3951,7 +3944,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
               <span className={styles.sectionCount}>{closeNotSoldOpps.length}</span>
             </h2>
             <p className={styles.subnote}>
-              Not-Sold Opps rows that still have a matching BFO Activity row. Status + Reason come from the Reason Not Sold → BFO mapping. Rows whose Reason Not Sold isn&rsquo;t in the mapping table are listed (highlighted) so you can update them on Opps or extend the mapping.
+              Not-Sold Opps rows that still have a matching BFO Activity row. Status + Reason come from the Reason Not Sold + Competition → BFO mapping. Rows whose combination isn&rsquo;t in the mapping table (including a blank or N/A Competition) are listed (highlighted) so you can update them on Opps or extend the mapping.
             </p>
             {revealedPrompts.closeNotSolds && (
               <textarea
@@ -3974,7 +3967,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
             </div>
             {closeNotSoldOpps.length > 0 && (
               <div style={{ marginTop: '0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
-                {readyCount} ready · {unmappedCount} need a mapped Reason Not Sold (excluded from the prompt block below).
+                {readyCount} ready · {unmappedCount} need a mapped Reason Not Sold + Competition combination (excluded from the prompt block below).
               </div>
             )}
             <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
@@ -3986,21 +3979,23 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                     <th>Reason Not Sold</th>
                     <th>Status</th>
                     <th>Reason</th>
+                    <th>Competition</th>
                     <th style={{ width: 70 }}>BFO Link</th>
                   </tr>
                 </thead>
                 <tbody>
                   {closeNotSoldOpps.length === 0 ? (
                     <tr className={styles.emptyRow}>
-                      <td colSpan={6}>No Not-Sold opps with a matching BFO Activity row. Paste fresh BFO Activity data if you expected matches.</td>
+                      <td colSpan={7}>No Not-Sold opps with a matching BFO Activity row. Paste fresh BFO Activity data if you expected matches.</td>
                     </tr>
                   ) : closeNotSoldOpps.map(o => (
                     <tr key={o.id} style={o.unmapped ? { background: '#FEF3C7' } : undefined}>
                       <td className={o.name ? '' : styles.missing}>{o.name || 'Missing'}</td>
                       <td className={o.account ? '' : styles.missing}>{o.account || 'Missing'}</td>
                       <td className={o.reasonNotSold ? '' : styles.missing}>{o.reasonNotSold || 'Missing'}</td>
-                      <td className={o.status ? '' : styles.missing}>{o.status || (o.unmapped ? 'Missing (unmapped reason)' : 'Missing')}</td>
-                      <td className={o.reason ? '' : styles.missing}>{o.reason || (o.unmapped ? 'Missing (unmapped reason)' : 'Missing')}</td>
+                      <td className={o.status ? '' : styles.missing}>{o.status || (o.unmapped ? 'Missing (unmapped combination)' : 'Missing')}</td>
+                      <td className={o.reason ? '' : styles.missing}>{o.reason || (o.unmapped ? 'Missing (unmapped combination)' : 'Missing')}</td>
+                      <td className={o.competition ? '' : styles.missing}>{o.competition || 'Missing'}</td>
                       <td className={o.bfoUrl ? '' : styles.missing}>
                         {o.bfoUrl ? (
                           <a href={o.bfoUrl} target="_blank" rel="noreferrer" className={styles.bfoLink}>Open</a>
