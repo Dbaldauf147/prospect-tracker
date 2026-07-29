@@ -629,6 +629,9 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
           <div style={{ display: 'grid', gap: '0.75rem', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
             {companies.map((c) => {
               const matches = listMatches[c.name] || [];
+              // True while either the revenue or the jurisdiction research
+              // for this company is in flight — drives the combined button.
+              const anyResearching = !!revState[c.name]?.loading || !!screenState[c.key]?.loading;
               return (
                 <div key={c.key || c.name} style={{
                   border: '1px solid var(--color-border)', borderRadius: 8,
@@ -646,6 +649,26 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                       </>
                     )}
                   </div>
+
+                  {/* One-click: revenue research + all six jurisdiction
+                      answers together. The per-section buttons below still
+                      re-run just one facet. */}
+                  <button
+                    type="button"
+                    onClick={() => { researchRevenue(c.name); researchCompliance(c.name, c.key); }}
+                    disabled={!c.key || anyResearching}
+                    title="Research this company's annual revenue and answer all six jurisdiction questions in one go."
+                    style={{
+                      marginTop: '0.5rem', width: '100%', padding: '0.4rem 0.6rem', borderRadius: 6,
+                      border: '1px solid var(--color-accent)', background: 'var(--color-accent)', color: '#fff',
+                      fontSize: 'var(--font-size-xs)', fontWeight: 700, fontFamily: 'inherit',
+                      cursor: (!c.key || anyResearching) ? 'default' : 'pointer',
+                      opacity: (!c.key || anyResearching) ? 0.55 : 1,
+                    }}
+                  >
+                    {anyResearching ? 'Researching…' : '🔎 Research everything'}
+                  </button>
+
                   <RevenueSection
                     data={revenueResearch[revenueSlug(c.name)] || null}
                     loading={!!revState[c.name]?.loading}
