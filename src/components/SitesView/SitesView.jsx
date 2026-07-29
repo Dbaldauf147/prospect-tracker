@@ -403,7 +403,13 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
     const slug = companySlug(picked);
     const entry = bySlug.get(slug) || null;
     const prospect = prospectBySlug.get(slug) || null;
-    return { company: picked, entry, prospect, revenue: String(prospect?.revenue || '').trim() };
+    return {
+      company: picked,
+      entry,
+      prospect,
+      revenue: String(prospect?.revenue || '').trim(),
+      analysis: prospect?.indicativeAnalysisMeta || null,
+    };
   }, [picked, bySlug, prospectBySlug]);
 
   function choose(name) {
@@ -540,6 +546,24 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
                 </span>
               ) : (
                 <span style={{ fontSize: '0.74rem', color: '#94A3B8' }}>Not mapped</span>
+              )}
+            </div>
+            {/* Distinct from the site list above: this reflects an
+                Indicative Savings Analysis saved via "Save to Company",
+                which lives on the prospect's analyses subcollection. */}
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
+              <span style={{ flexShrink: 0, minWidth: 118, fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#94A3B8' }}>
+                Indicative savings
+              </span>
+              {result.analysis ? (
+                <span style={{ fontSize: '0.74rem', color: '#166534', fontWeight: 600 }}>
+                  ✓ Saved
+                  {result.analysis.savedAt
+                    ? <span style={{ color: '#15803D', fontWeight: 400 }}> · {new Date(result.analysis.savedAt).toLocaleDateString()}</span>
+                    : null}
+                </span>
+              ) : (
+                <span style={{ fontSize: '0.74rem', color: '#94A3B8' }}>Not saved</span>
               )}
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
@@ -3474,6 +3498,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         dataBase64,
         sizeBytes: buffer.byteLength,
       });
+      // Stamp a lightweight marker on the prospect record so the Company
+      // Look Up widget can show "analysis saved" without fetching the
+      // (chunked) analysis subcollection for every company it lists.
+      if (updateProspect) {
+        try {
+          updateProspect(prospect.id, {
+            indicativeAnalysisMeta: { fileName, sizeBytes: buffer.byteLength, savedAt: new Date().toISOString() },
+          });
+        } catch (e) { console.warn('Could not stamp analysis marker on prospect:', e); }
+      }
       setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.` });
       setSavePickerSearch(null);
       setTimeout(() => setSaveStatus({ state: 'idle', message: '' }), 4000);
