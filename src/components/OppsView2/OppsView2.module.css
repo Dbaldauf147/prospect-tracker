@@ -12,6 +12,53 @@
   padding: 1rem 1.25rem 0.5rem;
 }
 
+.syncBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  /* Stick to the top so it stays visible while the user scrolls the
+     table — a local-only-edits warning must not scroll out of sight. */
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  margin: 0.5rem 1.25rem 0;
+  padding: 0.625rem 0.875rem;
+  background: #fdecea;
+  border: 1px solid #f5c2c0;
+  border-radius: 6px;
+  color: #8a1c12;
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+  box-shadow: 0 2px 8px rgba(138, 28, 18, 0.18);
+}
+
+.syncBannerDetail {
+  font-size: var(--font-size-xs);
+  opacity: 0.85;
+}
+
+.syncBannerRetry:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.syncBannerRetry {
+  flex: none;
+  padding: 0.35rem 0.75rem;
+  background: #c0392b;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.syncBannerRetry:hover {
+  background: #a93226;
+}
+
 .title {
   font-size: var(--font-size-xl);
   font-weight: 700;
@@ -147,6 +194,19 @@
   padding: 0 1.25rem 0.75rem;
 }
 
+/* Opportunities tab: keep the search / count / Mass Edit controls on the
+   same line as the Show / history / hidden controls instead of wrapping
+   below. Children don't shrink, so the strip scrolls horizontally on a
+   narrow window rather than squashing the search box or wrapping a
+   button's label. */
+.filterRowInline {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+.filterRowInline > * {
+  flex-shrink: 0;
+}
+
 .filterLabel {
   display: flex;
   flex-direction: column;
@@ -186,9 +246,14 @@
   cursor: pointer;
 }
 
-.clearFiltersBtn:hover {
+.clearFiltersBtn:hover:not(:disabled) {
   color: var(--color-text);
   border-color: var(--color-accent);
+}
+
+.clearFiltersBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .servicesWrap {

@@ -1,13 +1,12 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
-import { useAuth } from '../../contexts/AuthContext';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import { dbGet, dbPut } from '../../utils/db';
-import { OPPS_CACHE_UPDATED_EVENT } from '../../utils/oppsCache';
+import { userLsGet } from '../../utils/userLs';
+import { getOppsSheetCsvUrl } from '../../utils/oppsSheetUrl';
+import { useAuth } from '../../contexts/AuthContext';
 import styles from './OppsView.module.css';
 
-const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1ee0OREqA25jzDaR6xRDSrj_ZIZDymQjf1k2Z2_ajVKw/export?format=csv&gid=0';
 const DB_STORE = 'opps-cache';
 
 async function loadCacheAsync() {
@@ -54,32 +53,14 @@ const KEY_COLS = [
   'Competition', 'Waiting On', 'Close Date',
 ];
 
-// Legacy localStorage fallback for reading old cache
+// Legacy localStorage fallback for reading old cache. Per-user scoped
+// so a fresh non-admin doesn't inherit the admin's Opps sheet snapshot.
 function loadCacheLegacy() {
-  try { return JSON.parse(localStorage.getItem('opps-cache')); } catch { return null; }
-}
-
-async function loadFromFirestore(userId) {
-  try {
-    const ref = doc(db, 'oppsData', userId);
-    const snap = await getDoc(ref);
-    if (snap.exists()) {
-      const raw = snap.data();
-      if (raw.json) return JSON.parse(raw.json);
-    }
-  } catch (err) { console.error('Failed to load opps from Firestore:', err); }
-  return null;
-}
-
-async function saveToFirestore(userId, data) {
-  try {
-    const ref = doc(db, 'oppsData', userId);
-    await setDoc(ref, { json: JSON.stringify(data), updatedAt: new Date().toISOString() });
-  } catch (err) { console.error('Failed to save opps to Firestore:', err); }
+  try { return JSON.parse(userLsGet('opps-cache')); } catch { return null; }
 }
 
 export function OppsView({ settings, updateSettings } = {}) {
-  const { user } = useAuth();
+  const { isAdmin } = useAuth();
   const [data, setData] = useState(loadCacheLegacy);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -89,16 +70,6 @@ export function OppsView({ settings, updateSettings } = {}) {
   const [dateTo, setDateTo] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [activityFilter, setActivityFilter] = useState('all');
-  // First time the user opens the By Service tab, flip the Show filter to
-  // "Active only" since that's the useful default for that view. A ref so
-  // we only auto-apply once and don't clobber later deliberate changes.
-  const servicesDefaultAppliedRef = useRef(false);
-  useEffect(() => {
-    if (activeTab === 'services' && !servicesDefaultAppliedRef.current) {
-      servicesDefaultAppliedRef.current = true;
-      setActivityFilter(prev => (prev === 'all' ? 'active' : prev));
-    }
-  }, [activeTab]);
   const [hiddenServices, setHiddenServices] = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem('opps-services-hidden')) || []); }
     catch { return new Set(); }
@@ -115,10 +86,15 @@ export function OppsView({ settings, updateSettings } = {}) {
   }, []);
 
   async function fetchOpps() {
+    const sheetUrl = getOppsSheetCsvUrl({ isAdmin, settings });
+    if (!sheetUrl) {
+      setError('No Opps sheet configured. Set settings.oppsSheetUrl to enable.');
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(SHEET_URL);
+      const res = await fetch(sheetUrl);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const csvText = await res.text();
       const rows = parseCsv(csvText);
@@ -139,22 +115,16 @@ export function OppsView({ settings, updateSettings } = {}) {
           record[h] = val;
           if (val && val !== '-' && val !== '#N/A') hasData = true;
         }
-        if (hasData && record['Account']) records.push(record);
+        // Keep every row that has at least one populated cell. The
+        // earlier "must have an Account" guard silently dropped sheet
+        // rows where the Account column was left blank, which the user
+        // could see in the source Google Sheet but not on the Opps tab.
+        if (hasData) records.push(record);
       }
 
       const result = { headers, records, fetchedAt: new Date().toISOString() };
       setData(result);
       saveCacheAsync(result);
-      if (user?.uid) saveToFirestore(user.uid, result);
-      // Notify the Opps 2 view (and any other listener) so it can
-      // additively merge any new rows from this fetch into its own
-      // store. Opps is being phased out in favour of Opps 2 — see
-      // src/utils/oppsCache.js.
-      try {
-        window.dispatchEvent(new CustomEvent(OPPS_CACHE_UPDATED_EVENT, {
-          detail: { fetchedAt: result.fetchedAt },
-        }));
-      } catch { /* ignore */ }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -162,48 +132,43 @@ export function OppsView({ settings, updateSettings } = {}) {
     }
   }
 
-  // Load from Firestore (then IndexedDB fallback) on mount
+  // Hydrate from IndexedDB on mount. The legacy Opps tab is just a
+  // read-only mirror of a public Google Sheet, so the local cache is
+  // enough — the sheet auto-fetch below repopulates if it's stale.
   useEffect(() => {
     (async () => {
-      // Try Firestore first
-      if (user?.uid) {
-        const firestoreData = await loadFromFirestore(user.uid);
-        if (firestoreData) {
-          setData(firestoreData);
-          saveCacheAsync(firestoreData); // also cache locally
-          return;
-        }
-      }
-      // Fall back to IndexedDB
       const cached = await loadCacheAsync();
       if (cached) setData(cached);
     })();
-  }, [user]);
+  }, []);
 
   // Read frequency and paused state from sync settings
   function getOppsSettings() {
     try {
-      const s = JSON.parse(localStorage.getItem('prospect-sync-settings'));
+      const s = JSON.parse(userLsGet('prospect-sync-settings'));
       return { freq: s?.oppsFreq ?? 5, paused: !!s?.oppsPaused };
     } catch { return { freq: 5, paused: false }; }
   }
 
-  // Auto-fetch on mount if stale
+  // Auto-fetch on mount if stale. Skip silently when no Opps sheet
+  // URL is configured for this user (non-admin without an opts-in).
   useEffect(() => {
+    if (!getOppsSheetCsvUrl({ isAdmin, settings })) return;
     const { freq: freqMin, paused } = getOppsSettings();
     if (paused || freqMin === 0) return;
     const staleMs = freqMin * 60 * 1000;
     const isStale = !data?.fetchedAt || (Date.now() - new Date(data.fetchedAt).getTime()) > staleMs;
     if (isStale) fetchOpps();
-  }, []);
+  }, [isAdmin, settings?.oppsSheetUrl]);
 
   // Poll at configured frequency
   useEffect(() => {
+    if (!getOppsSheetCsvUrl({ isAdmin, settings })) return undefined;
     const { freq: freqMin, paused } = getOppsSettings();
-    if (paused || freqMin === 0) return;
+    if (paused || freqMin === 0) return undefined;
     const interval = setInterval(fetchOpps, freqMin * 60 * 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [isAdmin, settings?.oppsSheetUrl]);
 
   const headers = data?.headers || [];
   // Ignore any opp row that doesn't have an Open Year value.
@@ -300,45 +265,71 @@ export function OppsView({ settings, updateSettings } = {}) {
     return counts;
   }, [prefiltered]);
 
+  // Base set for the By Service breakdown. Honors the date + status
+  // filters but deliberately IGNORES the active/closed "Show" toggle so
+  // the breakdown can always show both Active and Historical side by side.
+  const serviceBase = useMemo(() => {
+    const fromTs = dateFrom ? Date.parse(dateFrom) : null;
+    const toTs = dateTo ? Date.parse(dateTo) + 86399999 : null;
+    return records.filter(r => {
+      if (fromTs != null || toTs != null) {
+        const raw = r['Start Date'];
+        const ts = raw ? Date.parse(raw) : NaN;
+        if (isNaN(ts)) return false;
+        if (fromTs != null && ts < fromTs) return false;
+        if (toTs != null && ts > toTs) return false;
+      }
+      if (statusFilter !== 'all' && (r['Status'] || '').trim() !== statusFilter) return false;
+      return true;
+    });
+  }, [records, dateFrom, dateTo, statusFilter]);
+
   // Service (Scope) breakdown: split each opp's Scope by comma and count
   // each individual service. One opp with "A, B, C" contributes 1 to each of A, B, C.
-  // Also tracks Sold / Not Sold per service so we can show win rate.
+  // Each service's opps are split into Active (open) vs Historical (closed:
+  // Sold / Not Sold) so both are visible at once; wins / losses come from
+  // the historical (closed) opps.
   const serviceBreakdown = useMemo(() => {
-    const stats = {}; // scope -> { total, wins, losses }
-    const totalOpps = prefiltered.length;
-    for (const r of prefiltered) {
+    const stats = {}; // scope -> { active, historical, wins, losses }
+    const totalOpps = serviceBase.length;
+    for (const r of serviceBase) {
       const raw = (r['Scope'] || '').trim();
       const cleaned = raw && raw !== '-' && raw !== '#N/A' ? raw : '';
       const services = cleaned
         ? cleaned.split(',').map(s => s.trim()).filter(Boolean)
         : ['(Unspecified)'];
       const stage = (r['Stage'] || '').trim();
+      const isClosed = CLOSED_STAGES.has(stage);
       const isWin = stage === 'Sold';
       const isLoss = stage === 'Not Sold';
       const seen = new Set();
       for (const s of services) {
         if (seen.has(s)) continue;
         seen.add(s);
-        if (!stats[s]) stats[s] = { total: 0, wins: 0, losses: 0 };
-        stats[s].total += 1;
+        if (!stats[s]) stats[s] = { active: 0, historical: 0, wins: 0, losses: 0 };
+        if (isClosed) stats[s].historical += 1;
+        else stats[s].active += 1;
         if (isWin) stats[s].wins += 1;
         else if (isLoss) stats[s].losses += 1;
       }
     }
     const rows = Object.entries(stats)
       .map(([scope, s]) => {
+        const count = s.active + s.historical;
         const decided = s.wins + s.losses;
         return {
           scope,
-          count: s.total,
+          active: s.active,
+          historical: s.historical,
+          count,
           wins: s.wins,
           winRate: decided > 0 ? (s.wins / decided) * 100 : null,
-          percent: totalOpps > 0 ? (s.total / totalOpps) * 100 : 0,
+          percent: totalOpps > 0 ? (count / totalOpps) * 100 : 0,
         };
       })
       .sort((a, b) => b.count - a.count);
     return { rows, total: totalOpps };
-  }, [prefiltered]);
+  }, [serviceBase, CLOSED_STAGES]);
 
   const filtersActive = !!(dateFrom || dateTo || statusFilter !== 'all' || activityFilter !== 'all');
   const clearFilters = () => {
@@ -347,6 +338,18 @@ export function OppsView({ settings, updateSettings } = {}) {
 
   const servicesColumns = useMemo(() => [
     { key: 'scope', label: 'Service (Scope)', defaultWidth: 260 },
+    {
+      key: 'active',
+      label: 'Active',
+      defaultWidth: 90,
+      render: (row) => <div style={{ textAlign: 'right' }}>{row.active}</div>,
+    },
+    {
+      key: 'historical',
+      label: 'Historical',
+      defaultWidth: 100,
+      render: (row) => <div style={{ textAlign: 'right' }}>{row.historical}</div>,
+    },
     {
       key: 'wins',
       label: 'Wins',
@@ -404,12 +407,39 @@ export function OppsView({ settings, updateSettings } = {}) {
     <div className={styles.wrapper}>
       <div className={styles.header}>
         <div>
-          <h2 className={styles.title}>Opps</h2>
+          <h2 className={styles.title}>Opps - Old</h2>
           {data?.fetchedAt && <span className={styles.lastSync}>Last fetched: {new Date(data.fetchedAt).toLocaleString()}</span>}
         </div>
-        <button className={styles.syncBtn} onClick={fetchOpps} disabled={loading}>
-          {loading ? 'Fetching...' : 'Refresh'}
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button
+            type="button"
+            className={styles.syncBtn}
+            disabled={!filtered?.length}
+            title={filtered?.length ? 'Download every visible row with every Google-Sheet column' : 'No rows to export'}
+            onClick={() => {
+              // Build the export from the Google Sheet's raw headers +
+              // the currently-filtered rows. Skips internal bookkeeping
+              // fields (_id) that aren't in the sheet's header set.
+              const exportHeaders = (headers || []).filter(Boolean);
+              const data = filtered.map(row => {
+                const obj = {};
+                for (const h of exportHeaders) obj[h] = row[h] ?? '';
+                return obj;
+              });
+              const ws = XLSX.utils.json_to_sheet(data, { header: exportHeaders });
+              ws['!cols'] = exportHeaders.map(h => ({ wch: Math.max(String(h).length + 2, 14) }));
+              const wb = XLSX.utils.book_new();
+              XLSX.utils.book_append_sheet(wb, ws, 'Opps');
+              const stamp = new Date().toISOString().slice(0, 10);
+              XLSX.writeFile(wb, `opps-${stamp}.xlsx`);
+            }}
+          >
+            Export to Excel
+          </button>
+          <button className={styles.syncBtn} onClick={fetchOpps} disabled={loading}>
+            {loading ? 'Fetching...' : 'Refresh'}
+          </button>
+        </div>
       </div>
 
       {error && <div className={styles.error}>{error}</div>}
@@ -457,18 +487,20 @@ export function OppsView({ settings, updateSettings } = {}) {
             ))}
           </select>
         </label>
-        <label className={styles.filterLabel}>
-          Show
-          <select
-            className={styles.filterInput}
-            value={activityFilter}
-            onChange={e => setActivityFilter(e.target.value)}
-          >
-            <option value="active">Active only</option>
-            <option value="closed">Closed only</option>
-            <option value="all">All</option>
-          </select>
-        </label>
+        {activeTab !== 'services' && (
+          <label className={styles.filterLabel}>
+            Show
+            <select
+              className={styles.filterInput}
+              value={activityFilter}
+              onChange={e => setActivityFilter(e.target.value)}
+            >
+              <option value="active">Active only</option>
+              <option value="closed">Closed only</option>
+              <option value="all">All</option>
+            </select>
+          </label>
+        )}
         {filtersActive && (
           <button className={styles.clearFiltersBtn} onClick={clearFilters}>Clear filters</button>
         )}

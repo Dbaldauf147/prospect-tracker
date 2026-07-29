@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect } from 'react';
+import { apiFetch } from '../../utils/apiFetch';
 import { createPortal } from 'react-dom';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
@@ -7,12 +8,17 @@ import { Badge } from '../common/Badge';
 import { DataTable } from '../common/DataTable';
 import { statusColor, formatAum } from '../../utils/formatters';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE } from '../../data/enums';
+import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
-import { buildCompanyIndex, findMatchesInIndex, hasMatchInIndex } from '../../utils/companyIndex';
-import { getHubspotCache, setHubspotCache } from '../../utils/hubspotContactsCache';
+import { buildCompanyIndex, findMatchesInIndex, findStrictMatchesInIndex, hasMatchInIndex } from '../../utils/companyIndex';
+import { getHubspotCache, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
+import { userLsGet, userLsSet } from '../../utils/userLs';
+import { saveMyAccountsFlags } from '../../utils/myAccountsFlagsStore';
 import { loadOppsFromCache } from '../../utils/oppsCache';
-import { matchesCdm } from '../../utils/cdmMatch';
+import { loadList } from '../../utils/uploadedListStore';
+import { MASTER_FIELDS, CANONICAL_HEADERS } from '../MasterSiteListView/masterSiteFields';
+import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import * as XLSX from 'xlsx';
 import styles from './MyAccountsView.module.css';
 
@@ -137,29 +143,52 @@ function findTier(companyName) {
   return null;
 }
 
+// Type → "Type 2" rollup, shared by the column renderer and its
+// header filter so filtering matches the pill the user sees.
+const TYPE2_MAP = {
+  'Owner Operator': 'Real Estate',
+  'Asset Management Firm': 'Real Estate',
+  'Facility Manager': 'Real Estate',
+  'Developer': 'Real Estate',
+  'Private Equity': 'Private Equity',
+  'Portfolio Company': 'Private Equity',
+  'Other': 'Other',
+  'Partner': 'Other',
+};
+const TYPE2_COLORS = {
+  'Real Estate': { bg: '#DBEAFE', color: '#1E40AF' },
+  'Private Equity': { bg: '#F3E8FF', color: '#7C3AED' },
+  'Other': { bg: '#F3F4F6', color: '#6B7280' },
+};
+
+// The Master Site List (SitesView's "Master Site List" tab) persists its
+// rows under this key via uploadedListStore. We load it here to show a
+// per-company count of how many sites exist on that tab.
+const MASTER_SITE_LIST_KEY = 'master-site-list-override';
+
+// Build the native hover tooltip shown on a column header's ⚠ warning:
+// a short description of what the flag means plus the list of accounts it
+// applies to. Returns undefined when nothing is flagged so the header
+// falls back to its plain label tooltip. The list is capped so a table-
+// wide flag doesn't produce an unreadably long tooltip.
+function warningHeaderTitle(description, companies) {
+  const names = (companies || []).map(c => String(c || '').trim()).filter(Boolean);
+  if (names.length === 0) return undefined;
+  const CAP = 50;
+  const shown = names.slice(0, CAP);
+  const more = names.length - shown.length;
+  return `${description} — ${names.length} account${names.length === 1 ? '' : 's'}:\n• ${shown.join('\n• ')}`
+    + (more > 0 ? `\n…and ${more} more` : '');
+}
+
 const ACCOUNT_COLUMNS = [
   { key: 'company', label: 'Company', defaultWidth: 220, sticky: true, render: null /* set below */ },
   { key: 'myTier', label: 'Tier', defaultWidth: 130, render: null /* set in columns memo */ },
   { key: 'status', label: 'Status', defaultWidth: 130, render: (row) => row.status ? <Badge label={row.status} color={statusColor(row.status)} /> : '—' },
   { key: 'type', label: 'Type', defaultWidth: 160 },
-  { key: 'type2', label: 'Type 2', defaultWidth: 110, render: (row) => {
-    const TYPE2_MAP = {
-      'Owner Operator': 'Real Estate',
-      'Asset Management Firm': 'Real Estate',
-      'Facility Manager': 'Real Estate',
-      'Developer': 'Real Estate',
-      'Private Equity': 'Private Equity',
-      'Portfolio Company': 'Private Equity',
-      'Other': 'Other',
-      'Partner': 'Other',
-    };
+  { key: 'type2', label: 'Type 2', defaultWidth: 110, getFilterValue: (row) => TYPE2_MAP[row.type] || '', render: (row) => {
     const val = TYPE2_MAP[row.type] || '';
-    const colors = {
-      'Real Estate': { bg: '#DBEAFE', color: '#1E40AF' },
-      'Private Equity': { bg: '#F3E8FF', color: '#7C3AED' },
-      'Other': { bg: '#F3F4F6', color: '#6B7280' },
-    };
-    const s = colors[val] || colors['Other'];
+    const s = TYPE2_COLORS[val] || TYPE2_COLORS['Other'];
     return val ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: s.bg, color: s.color }}>{val}</span> : <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
   }},
   { key: 'geography', label: 'Geography', defaultWidth: 100 },
@@ -167,6 +196,13 @@ const ACCOUNT_COLUMNS = [
   { key: 'reAum', label: 'RE AUM', defaultWidth: 90, render: (row) => formatAum(row.reAum) },
   { key: 'peAum', label: 'PE AUM', defaultWidth: 90, render: (row) => formatAum(row.peAum) },
   { key: 'numberOfSites', label: 'Sites', defaultWidth: 70, render: (row) => row.numberOfSites != null ? row.numberOfSites.toLocaleString() : '—' },
+  { key: 'mslSiteCount', label: 'MSL Sites', defaultWidth: 80, render: (row) => {
+    const n = row.mslSiteCount || 0;
+    const tip = `${n.toLocaleString()} site${n === 1 ? '' : 's'} on the Master Site List for "${row.company || ''}"`;
+    return n > 0
+      ? <span title={tip} style={{ fontWeight: 700, color: 'var(--color-accent)', cursor: 'help' }}>{n.toLocaleString()}</span>
+      : <span title={tip} style={{ color: 'var(--color-text-muted)', cursor: 'help' }}>0</span>;
+  } },
   // Frameworks now render as pills via the listFlags column below — the
   // two surfaces (My Accounts column + prospect-modal Frameworks
   // dropdown) share storage via prospect.frameworks plus the Lists-page
@@ -187,6 +223,7 @@ const ACCOUNT_COLUMNS = [
   HubSpot cache size: ${row._contactDebug?.cacheSize ?? '—'}
   Exact-name matches: ${row._contactDebug?.exactNameMatches ?? '—'}
   Domain matches: ${row._contactDebug?.domainMatches ?? '—'}
+  Linked (pinned) matches: ${row._contactDebug?.linkedMatches ?? '—'}
   Prospect domains: ${row._contactDebug?.prospectDomains?.join(', ') || '(none registered)'}
   Sample HubSpot companies w/ overlapping tokens:
     ${(row._contactDebug?.similarContactCompanies || []).join('\n    ') || '(none found)'}`;
@@ -207,7 +244,7 @@ const ACCOUNT_COLUMNS = [
     if (total === 0) return <span style={{ color: 'var(--color-text-muted)' }}>0/0</span>;
     return <span style={{ fontWeight: 700, color: active > 0 ? '#7C3AED' : 'var(--color-text-secondary)' }}>{active}/{total}</span>;
   }},
-  { key: 'dmFound', label: 'Decision Maker', defaultWidth: 140, render: (row) => row.dmFound
+  { key: 'dmFound', label: 'Decision Maker', defaultWidth: 140, getFilterValue: (row) => row.dmFound ? (row.dmNames || 'Found') : 'Not Found', render: (row) => row.dmFound
     ? <span title={row.dmNames} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
         <span style={{ color: '#10B981', fontWeight: 700, fontSize: '0.75rem' }}>&#10003;</span>
         <span style={{ fontSize: '0.75rem', color: 'var(--color-text)' }}>{row.dmNames}</span>
@@ -216,7 +253,7 @@ const ACCOUNT_COLUMNS = [
   },
   { key: 'targetName', label: 'Target Accounts Name', defaultWidth: 200, render: null /* set in columns memo */ },
   { key: 'divisions', label: 'Divisions', defaultWidth: 200, render: null /* set in columns memo */ },
-  { key: 'otherReps', label: 'Other Reps', defaultWidth: 260, render: (row) => {
+  { key: 'otherReps', label: 'Other Reps', defaultWidth: 260, getFilterValue: (row) => (row.otherReps && row.otherReps.length ? [...new Set(row.otherReps.map(r => r.rep))].join(', ') : ''), render: (row) => {
     if (!row.otherReps || row.otherReps.length === 0) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
     // Deduplicate by rep name, collect all companies per rep
     const byRep = {};
@@ -934,14 +971,56 @@ function parseXlsx(file) {
   });
 }
 
-export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd, targetAccountsData, settings, updateSettings, cdmName }) {
-  const { user } = useAuth();
+// Fields offered in the My Accounts mass-edit toolbar. Dropdown fields
+// carry their `options`; number fields set type:'number'; everything else
+// is a free-text input. Keys match the prospect fields written via onUpdate.
+const BULK_FIELDS = [
+  { key: 'tier', label: 'Tier', options: TIERS },
+  { key: 'status', label: 'Status', options: STATUSES },
+  { key: 'type', label: 'Type', options: TYPES },
+  { key: 'geography', label: 'Geography', options: GEOGRAPHIES },
+  { key: 'publicPrivate', label: 'Public / Private', options: PUBLIC_PRIVATE },
+  { key: 'hqRegion', label: 'HQ Region', options: ['North America', 'Outside of North America'] },
+  { key: 'cdm', label: 'CDM' },
+  { key: 'reAum', label: 'RE AUM', type: 'number' },
+  { key: 'peAum', label: 'PE AUM', type: 'number' },
+  { key: 'numberOfSites', label: '# Sites', type: 'number' },
+  { key: 'rank', label: 'Rank' },
+  { key: 'website', label: 'Website' },
+  { key: 'emailDomain', label: 'Email Domain' },
+  { key: 'notes', label: 'Notes' },
+  { key: 'bfoCompanyId', label: 'BFO Company ID' },
+  { key: 'bfoCompanyName', label: 'BFO Company Name' },
+  { key: 'zoomCompanyId', label: 'Zoom Company ID' },
+  { key: 'zoomCompanyName', label: 'Zoom Company Name' },
+];
+
+// Opps-only rows are synthetic (no backing prospect doc), so they can't be
+// bulk-edited. Everything else keys off its real prospect id.
+function isBulkSelectable(row) {
+  return !!row?.id && !String(row.id).startsWith('opps-only:');
+}
+
+// Statuses that take an account out of active rotation. Module-scoped so
+// both the filtered-view logic and the Issues-flag publisher share one set.
+const INACTIVE_STATUSES = new Set(['Old Client', 'Hold Off', 'Lost - Not Sold']);
+
+export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd, onFindDuplicates, onDedupe, targetAccountsData, settings, updateSettings, cdmName }) {
+  const { user, isAdmin } = useAuth();
   const savedView = settings?.viewFilters?.myAccounts;
   const [search, setSearch] = useState(savedView?.search || '');
   const [filters, setFilters] = useState(savedView?.filters || {});
   const [expandedBucket, setExpandedBucket] = useState(null);
   const [bucketFilter, setBucketFilter] = useState(savedView?.bucketFilter ?? null); // 'tier1' | 'tier2' | 'client' | 'pipeline' | null
   const [hqLookupRunning, setHqLookupRunning] = useState(false);
+  const [dedupeRunning, setDedupeRunning] = useState(false);
+  const [tierSyncRunning, setTierSyncRunning] = useState(false);
+  const [tier3BulkRunning, setTier3BulkRunning] = useState(false);
+  // Mass edit: checkbox selection + a field/value applied to all selected rows.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkField, setBulkField] = useState('');
+  const [bulkValue, setBulkValue] = useState('');
+  const [bulkRunning, setBulkRunning] = useState(false);
   const [inactiveMode, setInactiveMode] = useState(savedView?.inactiveMode || 'hide'); // 'hide' | 'only' | 'show'
   // companyLowerName → Set<listLabel>. Built further below once
   // allAccounts is resolved; declared here so it's available while
@@ -960,6 +1039,71 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     window.addEventListener('hubspot-cache-updated', refresh);
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
+
+  // Master Site List → per-company site count AND the rows themselves.
+  // Loaded once on mount from the same store the Master Site List tab
+  // persists to, keyed on the trimmed, lowercased company name. The count
+  // map drives the "MSL Sites" column; the rows map backs the popup that
+  // opens when that count is clicked (both built from the same filter so the
+  // clicked number always equals the number of rows shown).
+  const [mslCountByCompany, setMslCountByCompany] = useState(() => new Map());
+  const [mslRowsByCompany, setMslRowsByCompany] = useState(() => new Map());
+  const [sitesPopup, setSitesPopup] = useState(null); // { company, rows } | null
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await loadList(MASTER_SITE_LIST_KEY);
+        if (cancelled || !Array.isArray(rows)) return;
+        const counts = new Map();
+        const byCompany = new Map();
+        for (const r of rows) {
+          const c = String(r?.company || '').trim().toLowerCase();
+          if (!c) continue;
+          counts.set(c, (counts.get(c) || 0) + 1);
+          if (!byCompany.has(c)) byCompany.set(c, []);
+          byCompany.get(c).push(r);
+        }
+        setMslCountByCompany(counts);
+        setMslRowsByCompany(byCompany);
+      } catch { /* no master list yet — counts stay 0 */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Open the site-list popup for an account, gathering the Master Site List
+  // rows across its parent company and any division names — the same set the
+  // "MSL Sites" count is summed over, so the popup matches that number.
+  function openSitesPopup(row) {
+    const names = [
+      String(row.company || '').trim().toLowerCase(),
+      ...((divisionsMap[row.id] || []).map(d => String(d.company || '').trim().toLowerCase())),
+    ];
+    const seen = new Set();
+    const rows = [];
+    for (const name of names) {
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      for (const r of (mslRowsByCompany.get(name) || [])) rows.push(r);
+    }
+    setSitesPopup({ company: row.company || '—', rows });
+  }
+
+  // Download the popped-up company's sites as an .xlsx, using the Master Site
+  // List's own canonical headers.
+  function exportSitesExcel(company, rows) {
+    const data = (rows || []).map(r => {
+      const o = {};
+      MASTER_FIELDS.forEach((f, i) => { o[CANONICAL_HEADERS[i]] = r[f.key] || ''; });
+      return o;
+    });
+    if (!data.length) { alert('No sites to export.'); return; }
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Sites');
+    const safe = String(company || 'sites').replace(/[^\w.-]+/g, '_').slice(0, 40) || 'sites';
+    XLSX.writeFile(wb, `${safe}-sites.xlsx`);
+  }
 
   // Hydrate filter state once settings arrive after login, then debounce-persist changes.
   const viewHydratedRef = useRef(!!savedView);
@@ -1006,7 +1150,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     if (companies.length === 0) return;
     setHqLookupRunning(true);
     try {
-      const res = await fetch('/api/hq-lookup', {
+      const res = await apiFetch('/api/hq-lookup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ companies }),
@@ -1039,6 +1183,37 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
 
   function clearHqLocations() {
     updateSettings({ hqRegionMap: {} });
+  }
+
+  // Find and remove duplicate prospect records (same company stored as
+  // two+ documents). Previews the count first, then collapses each set
+  // into its most complete record on confirm. Fixes duplicates that
+  // surface across every page, since they all read the same collection.
+  async function handleDedupe() {
+    if (!onFindDuplicates || !onDedupe || dedupeRunning) return;
+    setDedupeRunning(true);
+    try {
+      const groups = await onFindDuplicates();
+      const extra = groups.reduce((s, g) => s + (g.docs.length - 1), 0);
+      if (extra === 0) {
+        alert('No duplicate accounts found.');
+        return;
+      }
+      const sample = groups.slice(0, 12).map(g => `• ${g.docs[0].company} (${g.docs.length} copies)`).join('\n');
+      const more = groups.length > 12 ? `\n…and ${groups.length - 12} more` : '';
+      const ok = window.confirm(
+        `Found ${extra} duplicate record${extra === 1 ? '' : 's'} across ${groups.length} ${groups.length === 1 ? 'company' : 'companies'}:\n\n${sample}${more}\n\n` +
+        'Remove the extra copies, keeping the most complete record for each (and backfilling any missing fields from the copies)?\n\nThis cannot be undone.'
+      );
+      if (!ok) return;
+      const result = await onDedupe();
+      alert(`Removed ${result.removed} duplicate record${result.removed === 1 ? '' : 's'} across ${result.groups} ${result.groups === 1 ? 'company' : 'companies'}.`);
+    } catch (err) {
+      console.error('De-dupe failed:', err);
+      alert('De-dupe failed: ' + (err?.message || err));
+    } finally {
+      setDedupeRunning(false);
+    }
   }
 
   const zoomFileRef = useRef(null);
@@ -1207,7 +1382,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       const cdmLastName = (cdmName || '').toLowerCase().split(/\s+/).filter(Boolean).pop() || '';
       for (const r of sheet.records) {
         const companyForLog = findCol(r, ['Account', 'Company', 'Account Name', 'Client', 'Name']);
-        let cdm = findCol(r, ['CDM', 'Salesperson', 'Sales Rep', 'Account Owner', 'Owner', 'Rep', 'Assigned', 'Team Member', 'Sales']).toLowerCase();
+        let cdm = resolveTargetAccountCdm(r, settings?.targetCdmColumn).toLowerCase();
         if (!cdm && cdmLastName) {
           cdm = Object.values(r).find(v => String(v || '').toLowerCase().includes(cdmLastName)) || '';
           cdm = String(cdm).toLowerCase();
@@ -1234,13 +1409,99 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     console.log(`Target Accounts: found ${accounts.length} ${cdmName || 'CDM'} Tier 1/2 accounts`);
     if (skippedAccounts.length > 0) console.log('Target Accounts SKIPPED:', skippedAccounts);
     return accounts;
-  }, [targetAccountsData, cdmName]);
+  }, [targetAccountsData, cdmName, settings?.targetCdmColumn]);
+
+  // All-tier view of the CDM's Target Accounts — same rows as
+  // `targetAccounts` above, but WITHOUT the Tier 1/2 restriction and with
+  // a tier normalizer that keeps Tier 3+. Used only to surface a tier
+  // mismatch when an account that's already in My Accounts sits at Tier 3
+  // (or lower) on the Targets list. The Tier 1/2 `targetAccounts` still
+  // drives the target book, the missing-target buckets, and the 'Target
+  // List' source badge, so those are unchanged.
+  const targetAccountTiers = useMemo(() => {
+    const data = targetAccountsData;
+    if (!data?.sheets) return [];
+    const findCol = (r, keywords) => {
+      for (const key of Object.keys(r)) {
+        const lower = key.toLowerCase();
+        for (const kw of keywords) {
+          if (lower.includes(kw.toLowerCase())) return String(r[key] || '').trim();
+        }
+      }
+      return '';
+    };
+    const cdmLastName = (cdmName || '').toLowerCase().split(/\s+/).filter(Boolean).pop() || '';
+    const out = [];
+    for (const sheetName of data.sheetNames || []) {
+      const sheet = data.sheets[sheetName];
+      if (!sheet?.records) continue;
+      for (const r of sheet.records) {
+        let cdm = resolveTargetAccountCdm(r, settings?.targetCdmColumn).toLowerCase();
+        if (!cdm && cdmLastName) {
+          cdm = String(Object.values(r).find(v => String(v || '').toLowerCase().includes(cdmLastName)) || '').toLowerCase();
+        }
+        if (!matchesCdm(cdm, cdmName)) continue;
+        const company = findCol(r, ['Account', 'Company', 'Account Name', 'Client', 'Name']);
+        if (!company) continue;
+        let tierRaw = findCol(r, ['Tier', 'Account Tier', 'Tier Level', 'Target']);
+        if (!tierRaw) tierRaw = String(Object.values(r).find(v => /Tier\s*[1-9]/i.test(String(v || ''))) || '');
+        const m = tierRaw.match(/(?:Tier\s*)?([1-9])/i);
+        if (!m) continue;
+        out.push({ company: company.trim(), tier: `Tier ${m[1]}` });
+      }
+    }
+    return out;
+  }, [targetAccountsData, cdmName, settings?.targetCdmColumn]);
+
+  // Same all-tier parse as `targetAccountTiers`, but WITHOUT the CDM
+  // filter. Used ONLY as a fallback resolver for the tier-mismatch flag:
+  // an account that's already in My Accounts should still surface a
+  // Targets-list tier difference even when the workbook row carrying the
+  // tier isn't attributed to the configured CDM (a blank owner cell, or an
+  // account tiered under another rep). The account is already "yours" by
+  // the time the mismatch is computed, so the owner column shouldn't gate
+  // the *warning*. Deliberately never feeds the target book, the
+  // missing-target buckets, or the 'Target List' source badge.
+  const targetAccountTiersAllReps = useMemo(() => {
+    const data = targetAccountsData;
+    if (!data?.sheets) return [];
+    const findCol = (r, keywords) => {
+      for (const key of Object.keys(r)) {
+        const lower = key.toLowerCase();
+        for (const kw of keywords) {
+          if (lower.includes(kw.toLowerCase())) return String(r[key] || '').trim();
+        }
+      }
+      return '';
+    };
+    const out = [];
+    for (const sheetName of data.sheetNames || []) {
+      const sheet = data.sheets[sheetName];
+      if (!sheet?.records) continue;
+      for (const r of sheet.records) {
+        const company = findCol(r, ['Account', 'Company', 'Account Name', 'Client', 'Name']);
+        if (!company) continue;
+        let tierRaw = findCol(r, ['Tier', 'Account Tier', 'Tier Level', 'Target']);
+        if (!tierRaw) tierRaw = String(Object.values(r).find(v => /Tier\s*[1-9]/i.test(String(v || ''))) || '');
+        const m = tierRaw.match(/(?:Tier\s*)?([1-9])/i);
+        if (!m) continue;
+        out.push({ company: company.trim(), tier: `Tier ${m[1]}` });
+      }
+    }
+    return out;
+  }, [targetAccountsData]);
 
   // All Target Accounts with their salesperson (for cross-rep detection)
   const allTargetReps = useMemo(() => {
     const data = targetAccountsData;
     if (!data?.sheets) return [];
     const results = [];
+    // Prefer the explicitly mapped "New Sales rep" column, then the
+    // mapped salesperson/CDM column, then a keyword guess. The New Sales
+    // column wins because that's the rep this badge is meant to surface;
+    // without a mapping the scan can grab a current-rep column sitting to
+    // the left of the New Sales column.
+    const repCol = String(settings?.targetRepColumn || '').trim() || String(settings?.targetCdmColumn || '').trim();
 
     function findCol(r, keywords) {
       for (const key of Object.keys(r)) {
@@ -1258,7 +1519,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       for (const r of sheet.records) {
         const company = findCol(r, ['Account', 'Company', 'Account Name', 'Client', 'Name']);
         if (!company) continue;
-        let rep = findCol(r, ['CDM', 'Salesperson', 'Sales Rep', 'Account Owner', 'Owner', 'Rep', 'Assigned', 'Team Member']);
+        // Prefer the mapped column when this sheet carries it; otherwise
+        // fall back to the keyword scan so sheets without that column
+        // still resolve a rep.
+        const rep = resolveTargetAccountCdm(r, repCol);
         if (!rep) continue;
         // Skip the current user's own entries — we only want OTHER reps here
         if (matchesCdm(rep, cdmName)) continue;
@@ -1266,13 +1530,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       }
     }
     return results;
-  }, [targetAccountsData, cdmName]);
+  }, [targetAccountsData, cdmName, settings?.targetRepColumn, settings?.targetCdmColumn]);
 
   // Load activity cache and count per company
   const activityByCompany = useMemo(() => {
     const counts = {};
     try {
-      const cache = JSON.parse(localStorage.getItem('hubspot-activity-cache'));
+      const cache = JSON.parse(userLsGet('hubspot-activity-cache'));
       if (!cache) return counts;
 
       // Build domain→company map from prospects
@@ -1340,16 +1604,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return data?.records || null;
       } catch { return null; }
     }
-    function loadFromLocalStorage() {
-      try {
-        const cache = JSON.parse(localStorage.getItem('opps-cache'));
-        return cache?.records || null;
-      } catch { return null; }
-    }
     async function loadFromFirestore() {
+      // Opps 2 is the canonical store — fall back to its Firestore
+      // doc when local IDB is empty (e.g. fresh browser, never
+      // opened Opps 2 here yet).
       if (!user?.uid) return null;
       try {
-        const ref = doc(db, 'oppsData', user.uid);
+        const ref = doc(db, 'opps2Data', user.uid);
         const snap = await getDoc(ref);
         if (!snap.exists()) return null;
         const raw = snap.data();
@@ -1360,7 +1621,6 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     }
     (async () => {
       let records = await loadFromIndexedDB();
-      if (!records || records.length === 0) records = loadFromLocalStorage();
       if (!records || records.length === 0) records = await loadFromFirestore();
       if (!cancelled && records && records.length > 0) setOppsRecords(records);
     })();
@@ -1533,10 +1793,14 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   const BUCKET_TAGS = ['esg', 'procurement', 'utilities', 'climate risk', 'capital planning'];
 
   // Background-refresh contacts from HubSpot when My Accounts loads.
+  // /api/hubspot uses a single server-side token tied to the admin's
+  // portal, so non-admins can't usefully populate the cache — skip the
+  // call rather than thrash a 401.
   useEffect(() => {
+    if (!isAdmin) return;
     (async () => {
       try {
-        const res = await fetch('/api/hubspot?action=contacts');
+        const res = await apiFetch('/api/hubspot?action=contacts');
         const json = await res.json();
         if (json.contacts) {
           // Slim each contact to essential fields to keep the cache compact.
@@ -1551,19 +1815,20 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
             notes_last_contacted: c.notes_last_contacted,
           }));
           try {
-            await setHubspotCache({ ...json, contacts: slimContacts, syncedAt: new Date().toISOString() });
+            await setHubspotCachePreservingManual({ ...json, contacts: slimContacts, syncedAt: new Date().toISOString() });
           } catch (err) {
             console.warn('HubSpot cache write failed:', err.message);
           }
         }
       } catch {}
     })();
-  }, []);
+  }, [isAdmin]);
 
-  const { hubspotCompanies, decisionMakerByCompany, contactsByCompany, bucketsByCompany, contactsByEmailDomain, bucketsByEmailDomain } = useMemo(() => {
+  const { hubspotCompanies, decisionMakerByCompany, contactsByCompany, bucketsByCompany, contactsByEmailDomain, bucketsByEmailDomain, linkableContactById } = useMemo(() => {
     const list = [];
     const dmMap = {}; // company lowercase → [names]
     const contactsMap = {}; // company lowercase → Set<contactId>
+    const linkMap = {}; // contact id|vid → cid (non-hidden only)
     const bucketMap = {}; // company lowercase → Set of matched bucket tags
     // Email-domain-keyed parallels so a prospect can pick up
     // contacts whose Company text is "TIAA" / "TIAA-CREF" / blank
@@ -1581,6 +1846,15 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         const cid = c.id || c.email || (c.firstname + '|' + c.lastname);
         const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').split(';').map(t => t.trim().toLowerCase()).filter(Boolean);
         const lower = (c.company || '').toLowerCase();
+        // Index non-hidden contacts by HubSpot id so the account contact
+        // count can also include people explicitly pinned to a company
+        // (settings.companyContactLinks) — mirroring the popup — even when
+        // their Company text doesn't match. Keyed by id|vid like the popup
+        // stores links; value is the canonical cid so dedup still works.
+        if (!isHidden) {
+          const linkId = String(c.id || c.vid || '');
+          if (linkId) linkMap[linkId] = cid;
+        }
         if (lower) {
           if (!seen.has(lower)) { seen.add(lower); list.push(lower); }
           if (!isHidden) {
@@ -1620,6 +1894,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       bucketsByCompany: bucketMap,
       contactsByEmailDomain: domainContacts,
       bucketsByEmailDomain: domainBuckets,
+      linkableContactById: linkMap,
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prospects, hubspotCache]);
@@ -1645,6 +1920,24 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       const k = (t.company || '').toLowerCase().trim();
       if (k && !targetByName.has(k)) targetByName.set(k, t);
     }
+    // All-tier lookups (incl. Tier 3+), used only to resolve the true
+    // Targets-list tier for the mismatch flag.
+    const targetTierByName = new Map();
+    for (const t of targetAccountTiers) {
+      const k = (t.company || '').toLowerCase().trim();
+      if (k && !targetTierByName.has(k)) targetTierByName.set(k, t.tier);
+    }
+    const targetTierIndex = buildCompanyIndex(targetAccountTiers.map(t => t.company || ''));
+    // All-reps fallback lookups (no CDM filter) — only consulted when the
+    // CDM-scoped resolution above finds no Targets tier, so an already-
+    // included account still flags a mismatch against a tier attributed to
+    // another rep / a blank owner cell.
+    const targetTierByNameAllReps = new Map();
+    for (const t of targetAccountTiersAllReps) {
+      const k = (t.company || '').toLowerCase().trim();
+      if (k && !targetTierByNameAllReps.has(k)) targetTierByNameAllReps.set(k, t.tier);
+    }
+    const targetTierIndexAllReps = buildCompanyIndex(targetAccountTiersAllReps.map(t => t.company || ''));
     const contactsByCompanyIndex = buildCompanyIndex(Object.keys(contactsByCompany));
     const dmIndex = buildCompanyIndex(Object.keys(decisionMakerByCompany));
     const peIndex = buildCompanyIndex([...(pePartnerAccountSet || [])]);
@@ -1655,10 +1948,19 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     for (const p of prospects) {
       // Skip dismissed companies
       if (isDismissed(p.company)) continue;
-      // Use Firestore tier if explicitly set (including '-' for no tier), otherwise fall back to map/target accounts
+      // Use Firestore tier if explicitly set, otherwise fall back to map/target accounts
       let tier;
-      if (p.tier === 'Tier 1' || p.tier === 'Tier 2' || p.tier === '-' || p.tier === '') {
-        tier = p.tier || '-';
+      if (p.tier === 'Tier 1' || p.tier === 'Tier 2' || p.tier === 'Tier 3') {
+        // Any explicitly-chosen tier wins — including Tier 3. Previously
+        // Tier 3 fell through to the hardcoded map below, so setting a
+        // mapped account (e.g. one the map lists as Tier 2) to Tier 3 got
+        // silently re-upgraded back to Tier 2. The target-list difference
+        // is still surfaced via the tierMismatch warning, so the user's
+        // explicit choice should stick here.
+        tier = p.tier;
+      } else if (p.tier === '-' || p.tier === '') {
+        // Blank / no-tier accounts default to Tier 3 instead of showing a dash.
+        tier = 'Tier 3';
       } else {
         tier = findTier(p.company);
         if (!tier) {
@@ -1686,9 +1988,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         // Still include if the company has an OPEN opp. Closed-only history
         // (Sold/Not Sold) on a non-CDM account isn't enough to keep it
         // in My Accounts — that's how JPMC was sneaking in.
+        // Use a STRICT opp match here: a non-CDM account should only be
+        // pulled in by an opp that genuinely belongs to it, not by a
+        // brand-prefix coincidence (e.g. a "Blackstone" opp dragging in
+        // the separate "Blackstone GP Stakes" account).
         const compLower = (p.company || '').toLowerCase();
         let hasOpenOpp = false;
-        for (const oppsCompany of findMatchesInIndex(openOppsIndex, compLower)) {
+        for (const oppsCompany of findStrictMatchesInIndex(openOppsIndex, compLower)) {
           if ((openOppsByAccount[oppsCompany] || 0) > 0) { hasOpenOpp = true; break; }
         }
         if (!hasOpenOpp) {
@@ -1749,11 +2055,49 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       if (targetNames.length > 0) {
         const matched = targetAccounts.find(t => targetNames.includes(t.company));
         if (matched) targetTier = matched.tier;
+        // Mapped name isn't in the Tier 1/2 book — resolve its true tier
+        // (Tier 3+) purely so the mismatch flag can fire.
+        if (!targetTier) {
+          for (const nm of targetNames) {
+            const tt = targetTierByName.get((nm || '').toLowerCase().trim());
+            if (tt) { targetTier = tt; break; }
+          }
+        }
+        // Nothing under the configured CDM — fall back to the all-reps
+        // parse so a mapped name tiered under another rep still flags.
+        if (!targetTier) {
+          for (const nm of targetNames) {
+            const tt = targetTierByNameAllReps.get((nm || '').toLowerCase().trim());
+            if (tt) { targetTier = tt; break; }
+          }
+        }
       } else if (!hasExplicitMapping) {
         // Only fuzzy-match if user never explicitly set/cleared the mapping
         for (const tName of findMatchesInIndex(targetAccountsIndex, p.company)) {
           const t = targetByName.get((tName || '').toLowerCase().trim());
           if (t) { targetNames = [t.company]; targetTier = t.tier; break; }
+        }
+        // No Tier 1/2 target matched. Check the all-tier lookup so a Tier
+        // 3+ target still surfaces a tier mismatch (e.g. My Accounts Tier
+        // 2 vs Targets Tier 3). Deliberately don't touch targetNames /
+        // sources so the target book and 'Target List' badge stay Tier
+        // 1/2 only.
+        if (!targetTier) {
+          for (const tName of findMatchesInIndex(targetTierIndex, p.company)) {
+            const tt = targetTierByName.get((tName || '').toLowerCase().trim());
+            if (tt) { targetTier = tt; break; }
+          }
+        }
+        // Still nothing under the configured CDM — fall back to the
+        // all-reps parse so a Targets tier attributed to another rep (or a
+        // blank CDM cell) still flags a mismatch for an account that's
+        // already in My Accounts. This is what surfaces e.g. TIAA showing
+        // Tier 2 here while the Targets list has it at Tier 3.
+        if (!targetTier) {
+          for (const tName of findMatchesInIndex(targetTierIndexAllReps, p.company)) {
+            const tt = targetTierByNameAllReps.get((tName || '').toLowerCase().trim());
+            if (tt) { targetTier = tt; break; }
+          }
         }
       }
       if (targetNames.length > 0) sources.push('Target List');
@@ -1819,6 +2163,16 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           for (const b of bucketsByEmailDomain[d]) bucketsSeen.add(b);
         }
       }
+      // Contacts the user explicitly pinned to this company on the popup
+      // (settings.companyContactLinks, keyed by lowercased company name).
+      // Include them in the count — minus any since-hidden ones — so the
+      // Contacts column matches what the popup shows.
+      let linkedMatches = 0;
+      const linkKey = (p.company || '').trim().toLowerCase();
+      for (const lid of ((settings?.companyContactLinks || {})[linkKey] || [])) {
+        const cid = linkableContactById[String(lid)];
+        if (cid != null && !matchedContactIds.has(cid)) { matchedContactIds.add(cid); linkedMatches++; }
+      }
       const contactCount = matchedContactIds.size;
       const bucketCount = bucketsSeen.size;
       // Find contact-company strings that share any significant token
@@ -1850,6 +2204,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         cacheSize: Object.values(contactsByCompany).reduce((s, set) => s + set.size, 0),
         exactNameMatches,
         domainMatches,
+        linkedMatches,
         prospectDomains: [...prospectDomains],
         similarContactCompanies,
       };
@@ -1880,12 +2235,19 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         && p.type !== suggestedType
         && p.dismissedSuggestedType !== suggestedType
         && !p.hideTypeSuggestion;
-      // Hide accounts with zero open opps — UNLESS they're strategic
-      // (Tier 1 or Tier 2) AND owned by Baldauf. A Tier 1 account on
-      // someone else's CDM with no open opps shouldn't show on Dan's list.
+      // Hide accounts with zero open opps — UNLESS they're one of Dan's
+      // strategic (Tier 1/Tier 2) accounts or one of his active Clients.
+      // A won Client on Dan's book belongs on the list even with no open
+      // opp and no tier tag (a blank tier resolves to "-" above, which is
+      // not strategic, so status carries it instead).
       const isStrategicTier = tier === 'Tier 1' || tier === 'Tier 2';
-      if (!(isStrategicTier && isBaldauf) && (!oppsCount || oppsCount === 0)) continue;
-      const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, feedingOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, _contactDebug, suggestedStatus, statusMismatch, suggestedType, typeMismatch };
+      const keepForDan = isBaldauf && (isStrategicTier || p.status === 'Client');
+      if (!keepForDan && (!oppsCount || oppsCount === 0)) continue;
+      // Master Site List count for this account — summed across the parent
+      // company and any division names, matched on the normalized name.
+      let mslSiteCount = 0;
+      for (const name of allCompanyNames) mslSiteCount += mslCountByCompany.get(String(name).trim()) || 0;
+      const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, feedingOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, mslSiteCount, _contactDebug, suggestedStatus, statusMismatch, suggestedType, typeMismatch };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry); // Tier 2 and Tier 3 both go in t2 array
       const s = p.status || 'Unknown';
@@ -1902,13 +2264,27 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     // Gated behind localStorage.debug-myaccounts so production sessions
     // don't flood the console (and crush the main thread) with these.
     let DEBUG_MA = false;
-    try { DEBUG_MA = !!(typeof localStorage !== 'undefined' && localStorage.getItem('debug-myaccounts')); } catch {}
-    const DEBUG_RX = /(urw|unibail|rodamco|westfield|\bara\b|ara\s*partners|jpmc|jp\s*morgan|jpmorgan)/i;
+    let DEBUG_MA_RAW = '';
+    try {
+      DEBUG_MA_RAW = (typeof localStorage !== 'undefined' && localStorage.getItem('debug-myaccounts')) || '';
+      DEBUG_MA = !!DEBUG_MA_RAW;
+    } catch { /* localStorage unavailable */ }
+    // Default watch-list. Set localStorage['debug-myaccounts'] to a
+    // comma-separated list of names (e.g. "edens") to watch those specific
+    // accounts instead — handy for diagnosing why one account isn't showing.
+    const DEBUG_BASE_RX = /(urw|unibail|rodamco|westfield|\bara\b|ara\s*partners|jpmc|jp\s*morgan|jpmorgan)/i;
+    const debugCustomTerms = DEBUG_MA_RAW && !/^(1|true|on|yes)$/i.test(DEBUG_MA_RAW.trim())
+      ? DEBUG_MA_RAW.split(',').map(s => s.trim()).filter(Boolean).map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      : [];
+    const DEBUG_RX = debugCustomTerms.length
+      ? new RegExp('(' + debugCustomTerms.join('|') + ')', 'i')
+      : DEBUG_BASE_RX;
     const debugProspects = DEBUG_MA ? prospects.filter(p => DEBUG_RX.test(p.company || '')) : [];
     const debugOppsKeys = DEBUG_MA ? Object.keys(totalOppsByAccount).filter(k => DEBUG_RX.test(k)) : [];
     const renderedAccountNamesLower = new Set([...t1, ...t2].map(e => (e.company || '').toLowerCase()));
     if (DEBUG_MA && (debugProspects.length > 0 || debugOppsKeys.length > 0)) {
       const payload = {
+        loggedInCdmName: cdmName,
         prospects: debugProspects.map(p => {
           const inList = renderedAccountNamesLower.has((p.company || '').toLowerCase());
           const compLower = (p.company || '').toLowerCase();
@@ -1940,6 +2316,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       // console — the full contents appear in the log line itself.
       // eslint-disable-next-line no-console
       console.log('[MyAccountsView] debug-account JSON:', JSON.stringify(payload, null, 2));
+    } else if (DEBUG_MA && debugCustomTerms.length > 0) {
+      // The custom watch term matched no prospect AND no opps account —
+      // i.e. the account isn't in either dataset (e.g. it exists only as a
+      // Target Accounts row, not as a prospect record), so the prospect
+      // pass never builds a My Accounts row for it.
+      // eslint-disable-next-line no-console
+      console.log(`[MyAccountsView] debug: no prospect or opps account matched ${JSON.stringify(DEBUG_MA_RAW)}. Logged-in CDM: ${JSON.stringify(cdmName)}. Prospects scanned: ${prospects.length}.`);
     }
 
     // Index prospects by company name so the opps-only surface below
@@ -2002,6 +2385,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         otherReps: [],
         contactCount: 0,
         bucketCount: 0,
+        mslSiteCount: mslCountByCompany.get(String(displayNameRaw || '').trim().toLowerCase()) || 0,
         suggestedStatus,
         statusMismatch: false, // no stored status to compare against
         suggestedType: '',
@@ -2017,10 +2401,103 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     if (DEBUG_MA && skippedCdm.length > 0) console.log('My Accounts: skipped (CDM not Baldauf):', skippedCdm);
     if (DEBUG_MA) console.log(`My Accounts: ${t1.length} Tier 1, ${t2.length} Tier 2 (incl ${oppsOnlyAdded} opps-only)`);
     return { tier1: t1, tier2: t2, allAccounts: all, statusCounts: counts };
-  }, [prospects, targetMap, targetAccounts, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, displayNameByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactsByCompany, bucketsByCompany, contactsByEmailDomain, bucketsByEmailDomain, divisionsMap, pePartnerAccountSet]);
+  }, [prospects, targetMap, targetAccounts, targetAccountTiers, targetAccountTiersAllReps, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, displayNameByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactsByCompany, bucketsByCompany, contactsByEmailDomain, bucketsByEmailDomain, linkableContactById, settings?.companyContactLinks, divisionsMap, pePartnerAccountSet, mslCountByCompany]);
 
   const clientCount = statusCounts['Client'] || 0;
   const tier3Count = allAccounts.filter(a => a.myTier === 'Tier 3').length;
+
+  // Accounts whose stored Tier differs from the Target Accounts tier and
+  // hasn't been individually dismissed — these are the ⚠ flags shown in
+  // the Tier column. The bulk button below applies them all at once.
+  const tierFlagged = useMemo(
+    () => allAccounts.filter(a => a.tierMismatch && a.targetTier && a.id),
+    [allAccounts]
+  );
+
+  // Bulk-apply every Tier-mismatch flag: set each flagged account's
+  // stored tier to the tier its Target Accounts row specifies. Mirrors
+  // the per-row "Update to {targetTier}" action in the Tier column, run
+  // across all flagged accounts at once.
+  async function applyAllTierFlags() {
+    if (tierSyncRunning) return;
+    if (tierFlagged.length === 0) {
+      alert('No tier flags to apply — every account already matches its Target Accounts tier.');
+      return;
+    }
+    const sample = tierFlagged.slice(0, 12)
+      .map(a => `• ${a.company}: ${a.myTier || '—'} → ${a.targetTier}`)
+      .join('\n');
+    const more = tierFlagged.length > 12 ? `\n…and ${tierFlagged.length - 12} more` : '';
+    const ok = window.confirm(
+      `Update ${tierFlagged.length} account tier${tierFlagged.length === 1 ? '' : 's'} to match Target Accounts:\n\n${sample}${more}`
+    );
+    if (!ok) return;
+    setTierSyncRunning(true);
+    try {
+      await Promise.all(tierFlagged.map(a => onUpdate(a.id, { tier: a.targetTier })));
+    } catch (err) {
+      console.error('Tier sync failed:', err);
+      alert('Tier sync failed: ' + (err?.message || err));
+    } finally {
+      setTierSyncRunning(false);
+    }
+  }
+
+  // One-click: move every account in the "on My Accounts but NOT on Target
+  // Accounts List" banner down to Tier 3. Only accounts backed by a real
+  // record id can be updated; the rest are surfaced in the confirm.
+  async function moveOnlyMyAccountsToTier3(list) {
+    if (tier3BulkRunning) return;
+    const updatable = (list || []).filter(a => a.id);
+    if (updatable.length === 0) {
+      alert('No updatable accounts — these rows have no saved record to write to.');
+      return;
+    }
+    const sample = updatable.slice(0, 12).map(a => `• ${a.company}: ${a.myTier || '—'} → Tier 3`).join('\n');
+    const more = updatable.length > 12 ? `\n…and ${updatable.length - 12} more` : '';
+    const skipped = (list || []).length - updatable.length;
+    const skippedNote = skipped > 0 ? `\n\n(${skipped} not saved yet and will be skipped.)` : '';
+    const ok = window.confirm(
+      `Move ${updatable.length} account${updatable.length === 1 ? '' : 's'} not on the Target Accounts List to Tier 3:\n\n${sample}${more}${skippedNote}`
+    );
+    if (!ok) return;
+    setTier3BulkRunning(true);
+    try {
+      await Promise.all(updatable.map(a => onUpdate(a.id, { tier: 'Tier 3' })));
+    } catch (err) {
+      console.error('Bulk Tier 3 update failed:', err);
+      alert('Bulk Tier 3 update failed: ' + (err?.message || err));
+    } finally {
+      setTier3BulkRunning(false);
+    }
+  }
+
+  // Prospects whose tier-mismatch warning was previously dismissed (the
+  // per-row "Dismiss" action sets ignoreTierMismatch). Count the raw
+  // prospect list, not just the visible rows, so the reset also catches
+  // dismissals on accounts hidden by the current filters.
+  const ignoredTierMismatches = useMemo(
+    () => (prospects || []).filter(p => p.ignoreTierMismatch),
+    [prospects]
+  );
+
+  // Undo every previously-dismissed tier mismatch so the ⚠ flags
+  // re-appear for re-review. Same effect as the clean-slate reset that
+  // runs on a new Target Accounts upload, but on demand from the toolbar.
+  async function resetTierMismatchIgnores() {
+    if (ignoredTierMismatches.length === 0) return;
+    const n = ignoredTierMismatches.length;
+    const ok = window.confirm(
+      `Restore ${n} previously-dismissed tier mismatch${n === 1 ? '' : 'es'}? The ⚠ flags will re-appear so you can review them again.`
+    );
+    if (!ok) return;
+    try {
+      await Promise.all(ignoredTierMismatches.map(p => onUpdate(p.id, { ignoreTierMismatch: false })));
+    } catch (err) {
+      console.error('Reset tier-mismatch dismissals failed:', err);
+      alert('Reset failed: ' + (err?.message || err));
+    }
+  }
 
   // Publish the resolved My-Accounts company names to localStorage so
   // the List tabs can filter against the exact same set (not just the
@@ -2029,7 +2506,25 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   useEffect(() => {
     try {
       const names = allAccounts.map(a => (a.company || '').trim()).filter(Boolean);
-      localStorage.setItem('my-accounts:active-names', JSON.stringify(names));
+      userLsSet('my-accounts:active-names', JSON.stringify(names));
+    } catch {}
+  }, [allAccounts]);
+
+  // Publish the tier / status / HQ-Region flags so the Issues tab can list
+  // them. One record per (account, flag); synthetic opps-only rows are
+  // skipped since they have no backing prospect to open or edit. The
+  // HQ-Region flag mirrors the column header's rule (missing region on a
+  // non-inactive account).
+  useEffect(() => {
+    try {
+      const flags = [];
+      for (const a of allAccounts) {
+        if (!a.id || String(a.id).startsWith('opps-only:')) continue;
+        if (a.tierMismatch) flags.push({ id: a.id, company: a.company || '', kind: 'tier', myTier: a.myTier || '', targetTier: a.targetTier || '' });
+        if (a.statusMismatch) flags.push({ id: a.id, company: a.company || '', kind: 'status', status: a.status || '', suggestedStatus: a.suggestedStatus || '' });
+        if (!a.hqRegion && !INACTIVE_STATUSES.has(a.status)) flags.push({ id: a.id, company: a.company || '', kind: 'hqRegion', status: a.status || '' });
+      }
+      saveMyAccountsFlags(flags);
     } catch {}
   }, [allAccounts]);
 
@@ -2091,7 +2586,6 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   }, [allAccounts]);
 
   // Apply filters, bucket filter, and search
-  const INACTIVE_STATUSES = new Set(['Old Client', 'Hold Off', 'Lost - Not Sold']);
   const filteredAccounts = useMemo(() => {
     let result = allAccounts;
     // Inactive status filter
@@ -2138,7 +2632,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       // the initial render of this tab can have an empty
       // filteredAccounts before prospects load.
       if (names.length === 0) return;
-      localStorage.setItem('my-accounts:filtered-names', JSON.stringify(names));
+      userLsSet('my-accounts:filtered-names', JSON.stringify(names));
     } catch {}
   }, [filteredAccounts]);
 
@@ -2166,13 +2660,6 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       .replace(/\s+/g, ' ')
       .trim();
 
-    // Companies that already have at least one HubSpot contact on file.
-    const contactCompanies = new Set();
-    for (const c of (hubspotCache?.contacts || [])) {
-      const k = norm(c.company);
-      if (k) contactCompanies.add(k);
-    }
-
     // Lookup prospects by normalized company name to pull Zoom + site.
     const prospectByNorm = new Map();
     for (const p of prospects) {
@@ -2180,10 +2667,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       if (k && !prospectByNorm.has(k)) prospectByNorm.set(k, p);
     }
 
-    const empty = filteredAccounts.filter(a => {
-      const k = norm(a.company);
-      return k && !contactCompanies.has(k);
-    });
+    // Use the same contact count the Contacts column shows (matches by
+    // company-name index across divisions AND by email domain, de-duped by
+    // contact ID). The previous exact-normalized-company-text match was
+    // stricter than the column, so accounts whose contacts only matched by
+    // domain or by a differently-worded Company field (e.g. PNC) were
+    // wrongly listed as having no contacts.
+    const empty = filteredAccounts.filter(a => (a.contactCount || 0) === 0);
     if (empty.length === 0) {
       alert('Every company in the current My Accounts view already has at least one HubSpot contact.');
       return;
@@ -2320,10 +2810,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   const columns = useMemo(() => {
     const mapped = ACCOUNT_COLUMNS.map(col => {
       if (col.key === 'company') {
-        const similarCount = filteredAccounts.filter(a => similarNamesByAccount.has((a.company || '').toLowerCase().trim())).length;
+        const similarAccounts = filteredAccounts.filter(a => similarNamesByAccount.has((a.company || '').toLowerCase().trim())).map(a => a.company);
         return {
           ...col,
-          label: similarCount > 0 ? `Company ⚠ ${similarCount}` : 'Company',
+          label: similarAccounts.length > 0 ? `Company ⚠ ${similarAccounts.length}` : 'Company',
+          headerTitle: warningHeaderTitle('Similar names in Table View', similarAccounts),
           render: (row) => {
             const similar = similarNamesByAccount.get((row.company || '').toLowerCase().trim());
             return (
@@ -2366,10 +2857,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return { ...col, render: (row) => <OppsHoverPopup row={row} /> };
       }
       if (col.key === 'targetName') {
-        return { ...col, render: (row) => <TargetNamePicker values={row.targetNames || []} companyId={row.id} companyName={row.company} targetOptions={allTargetNames} onToggle={toggleTargetMapping} duplicates={duplicateTargetNames} /> };
+        return { ...col, getFilterValue: (row) => (row.targetNames || []).join(', '), render: (row) => <TargetNamePicker values={row.targetNames || []} companyId={row.id} companyName={row.company} targetOptions={allTargetNames} onToggle={toggleTargetMapping} duplicates={duplicateTargetNames} /> };
       }
       if (col.key === 'listFlags') {
-        return { ...col, render: (row) => {
+        return { ...col, getFilterValue: (row) => {
+          const set = listFlagsByCompany.get((row.company || '').toLowerCase().trim());
+          return set ? [...set].join(', ') : '';
+        }, render: (row) => {
           const set = listFlagsByCompany.get((row.company || '').toLowerCase().trim());
           const flags = set ? [...set] : [];
           if (!flags.length) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
@@ -2390,11 +2884,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         }};
       }
       if (col.key === 'divisions') {
-        return { ...col, render: (row) => <DivisionPicker parentId={row.id} divisions={divisionsMap[row.id] || []} allCompanies={allCompaniesForDivisions} onAdd={addDivision} onRemove={removeDivision} rules={divisionRules[row.id] || []} onSetRule={addDivisionRule} onRemoveRule={removeDivisionRule} /> };
+        return { ...col, getFilterValue: (row) => (divisionsMap[row.id] || []).map(d => d.company).filter(Boolean).join(', '), render: (row) => <DivisionPicker parentId={row.id} divisions={divisionsMap[row.id] || []} allCompanies={allCompaniesForDivisions} onAdd={addDivision} onRemove={removeDivision} rules={divisionRules[row.id] || []} onSetRule={addDivisionRule} onRemoveRule={removeDivisionRule} /> };
       }
       if (col.key === 'status') {
-        const mismatchCount = filteredAccounts.filter(a => a.statusMismatch).length;
-        return { ...col, label: mismatchCount > 0 ? `Status ⚠ ${mismatchCount}` : 'Status', render: (row) => (
+        const mismatchAccounts = filteredAccounts.filter(a => a.statusMismatch).map(a => a.company);
+        return { ...col, label: mismatchAccounts.length > 0 ? `Status ⚠ ${mismatchAccounts.length}` : 'Status', headerTitle: warningHeaderTitle('Status differs from opps-derived suggestion', mismatchAccounts), render: (row) => (
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
             <InlineCell row={row} field="status" value={row.status} onUpdate={onUpdate} options={STATUSES} />
             {row.statusMismatch && <StatusMismatchWarning row={row} onUpdate={onUpdate} />}
@@ -2402,10 +2896,15 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         )};
       }
       if (col.key === 'type') {
-        const typeMismatchCount = filteredAccounts.filter(a => a.typeMismatch).length;
-        return { ...col, label: typeMismatchCount > 0 ? `Type ⚠ ${typeMismatchCount}` : 'Type', render: (row) => (
+        const typeMismatchAccounts = filteredAccounts.filter(a => a.typeMismatch).map(a => a.company);
+        // Source the dropdown options from the configurable "Type" list on
+        // the Dropdowns tab; fall back to the built-in enum if it's been
+        // hidden or emptied there.
+        const typeList = getEffectiveDropdownLists(settings).find(l => l.key === 'type');
+        const typeOptions = (typeList && typeList.options && typeList.options.length) ? typeList.options : TYPES;
+        return { ...col, label: typeMismatchAccounts.length > 0 ? `Type ⚠ ${typeMismatchAccounts.length}` : 'Type', headerTitle: warningHeaderTitle('Type differs from PE-partner-derived suggestion', typeMismatchAccounts), render: (row) => (
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-            <InlineCell row={row} field="type" value={row.type} onUpdate={onUpdate} options={TYPES} />
+            <InlineCell row={row} field="type" value={row.type} onUpdate={onUpdate} options={typeOptions} />
             {row.typeMismatch && <TypeMismatchWarning row={row} onUpdate={onUpdate} />}
           </span>
         )};
@@ -2426,11 +2925,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return { ...col, render: (row) => <InlineCell row={row} field="numberOfSites" value={row.numberOfSites} onUpdate={onUpdate} type="number" /> };
       }
       if (col.key === 'hqRegion') {
-        const missingCount = filteredAccounts.filter(a => !a.hqRegion && !INACTIVE_STATUSES.has(a.status)).length;
-        return { ...col, label: missingCount > 0 ? `HQ Region ⚠ ${missingCount}` : 'HQ Region', render: (row) => <InlineCell row={row} field="hqRegion" value={row.hqRegion} onUpdate={onUpdate} options={['North America', 'Outside of North America']} /> };
+        const missingAccounts = filteredAccounts.filter(a => !a.hqRegion && !INACTIVE_STATUSES.has(a.status)).map(a => a.company);
+        return { ...col, label: missingAccounts.length > 0 ? `HQ Region ⚠ ${missingAccounts.length}` : 'HQ Region', headerTitle: warningHeaderTitle('Missing HQ Region', missingAccounts), render: (row) => <InlineCell row={row} field="hqRegion" value={row.hqRegion} onUpdate={onUpdate} options={['North America', 'Outside of North America']} /> };
       }
       if (col.key === 'naRegion') {
-        return { ...col, render: (row) => {
+        return { ...col, getFilterValue: (row) => (row.hqRegion ? '' : (hqRegionMap[row.id] || '')), render: (row) => {
           if (row.hqRegion) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.65rem' }}>—</span>;
           const val = hqRegionMap[row.id] || '';
           return (
@@ -2478,6 +2977,24 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       if (col.key === 'emailDomain') {
         return { ...col, render: (row) => <InlineCell row={row} field="emailDomain" value={row.emailDomain} onUpdate={onUpdate} /> };
       }
+      // MSL Sites count is clickable: opens a popup of the company's Master
+      // Site List rows with an Excel download. Even "0" is clickable so the
+      // popup can explain there are none yet.
+      if (col.key === 'mslSiteCount') {
+        return { ...col, render: (row) => {
+          const n = row.mslSiteCount || 0;
+          const tip = n > 0
+            ? `View ${n.toLocaleString()} site${n === 1 ? '' : 's'} from the Master Site List for "${row.company || ''}"`
+            : `No sites on the Master Site List for "${row.company || ''}" — click for details`;
+          return (
+            <span
+              style={{ fontWeight: n > 0 ? 700 : 400, color: n > 0 ? 'var(--color-accent)' : 'var(--color-text-muted)', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '2px' }}
+              title={tip}
+              onClick={(e) => { e.stopPropagation(); openSitesPopup(row); }}
+            >{n.toLocaleString()}</span>
+          );
+        }};
+      }
       // Skip computed columns — they stay read-only
       if (['myTier', 'activityCount', 'oppsCount', 'contactCount', 'bucketCount', 'naRegion', 'type2', 'dmFound', 'sources', 'targetName', 'otherReps', 'divisions', 'listFlags', '_hide'].includes(col.key)) {
         return col;
@@ -2496,10 +3013,122 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       render: (row) => <button className={styles.deleteBtn} onClick={(e) => { e.stopPropagation(); if (confirm(`Remove "${row.company}" from the database?`)) { dismissCompany(row.company); onDelete(row.id); } }} title="Remove">&#x2715;</button>,
     });
     return mapped;
-  }, [onSelect, onUpdate, allTargetNames, divisionsMap, allCompaniesForDivisions, duplicateTargetNames, listFlagsByCompany, similarNamesByAccount, filteredAccounts]);
+  }, [onSelect, onUpdate, allTargetNames, divisionsMap, allCompaniesForDivisions, duplicateTargetNames, listFlagsByCompany, similarNamesByAccount, filteredAccounts, mslRowsByCompany, settings?.dropdownLists, settings?.dropdownListsHidden]);
+
+  // Prepend a checkbox column for the mass-edit selection. Opps-only rows
+  // render no checkbox since they have no backing prospect to update.
+  const columnsWithSelect = useMemo(() => {
+    const selectColumn = {
+      key: '__select__',
+      label: '',
+      defaultWidth: 36,
+      render: (row) => {
+        if (!isBulkSelectable(row)) return null;
+        return (
+          <input
+            type="checkbox"
+            checked={selectedIds.has(row.id)}
+            onChange={(e) => {
+              e.stopPropagation();
+              setSelectedIds(prev => {
+                const next = new Set(prev);
+                if (next.has(row.id)) next.delete(row.id); else next.add(row.id);
+                return next;
+              });
+            }}
+            onClick={(e) => e.stopPropagation()}
+            style={{ cursor: 'pointer', accentColor: 'var(--color-accent)' }}
+            aria-label="Select row for bulk edit"
+          />
+        );
+      },
+    };
+    return [selectColumn, ...columns];
+  }, [columns, selectedIds]);
+
+  // Selectable ids among the currently filtered/visible rows, and how many
+  // of them are already selected — drives the select-all-visible toggle.
+  const selectableVisibleIds = useMemo(
+    () => (filteredAccounts || []).filter(isBulkSelectable).map(r => r.id),
+    [filteredAccounts]
+  );
+  const selectedVisibleCount = selectableVisibleIds.filter(id => selectedIds.has(id)).length;
+  const allVisibleSelected = selectableVisibleIds.length > 0 && selectedVisibleCount === selectableVisibleIds.length;
+
+  function toggleSelectAllVisible() {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (allVisibleSelected) for (const id of selectableVisibleIds) next.delete(id);
+      else for (const id of selectableVisibleIds) next.add(id);
+      return next;
+    });
+  }
+  function clearSelection() { setSelectedIds(new Set()); }
+
+  const bulkFieldDef = BULK_FIELDS.find(f => f.key === bulkField) || null;
+
+  // Apply the chosen field/value to every selected (real) prospect at once.
+  async function applyBulkEdit() {
+    if (bulkRunning || !bulkFieldDef) return;
+    const ids = [...selectedIds].filter(id => id && !String(id).startsWith('opps-only:'));
+    if (ids.length === 0) return;
+    const value = bulkFieldDef.type === 'number'
+      ? (bulkValue === '' ? '' : Number(bulkValue))
+      : bulkValue;
+    if (bulkFieldDef.type === 'number' && bulkValue !== '' && Number.isNaN(value)) {
+      alert(`"${bulkValue}" is not a valid number.`);
+      return;
+    }
+    const shown = bulkValue === '' ? '(blank)' : bulkValue;
+    const ok = window.confirm(`Set ${bulkFieldDef.label} = "${shown}" on ${ids.length} selected account${ids.length === 1 ? '' : 's'}?`);
+    if (!ok) return;
+    setBulkRunning(true);
+    try {
+      await Promise.all(ids.map(id => onUpdate(id, { [bulkFieldDef.key]: value })));
+      setSelectedIds(new Set());
+      setBulkValue('');
+    } catch (err) {
+      console.error('Bulk edit failed:', err);
+      alert('Bulk edit failed: ' + (err?.message || err));
+    } finally {
+      setBulkRunning(false);
+    }
+  }
 
   return (
     <div className={styles.wrapper}>
+      {(() => {
+        // Company mappings resolve against `targetAccounts` — the Target
+        // Accounts list, filtered to this CDM + Tier 1/2. When that list
+        // comes back empty, every auto-fuzzy mapping silently vanishes and
+        // the picker dropdown empties, which reads as "all my mappings
+        // disappeared." Surface the two ways it collapses so the failure is
+        // actionable instead of mysterious: (1) the Target Accounts data
+        // never loaded, or (2) it loaded but nothing matched the CDM.
+        if (!prospects || prospects.length === 0) return null;
+        if (targetAccounts.length > 0) return null;
+        const dataLoaded = !!(targetAccountsData && targetAccountsData.sheets &&
+          (targetAccountsData.sheetNames || []).some(n => targetAccountsData.sheets[n]?.records?.length));
+        return (
+          <div
+            role="status"
+            style={{
+              display: 'flex', alignItems: 'flex-start', gap: '0.5rem',
+              padding: '0.6rem 0.85rem', margin: '0 0 0.6rem',
+              background: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: '8px',
+              fontSize: '0.78rem', color: '#991B1B', lineHeight: 1.4,
+            }}
+          >
+            <span style={{ fontSize: '1rem', lineHeight: 1 }}>&#9888;</span>
+            <span>
+              <strong>Company mappings can&rsquo;t resolve — your Target Accounts list is empty.</strong>{' '}
+              {dataLoaded
+                ? <>The list loaded, but no accounts matched your CDM{cdmName ? <> &ldquo;{cdmName}&rdquo;</> : ' (no CDM name set)'}. Check your CDM name in Settings, or the owner/CDM column on the Target Accounts sheet (Lists &rarr; Targets).</>
+                : <>The Target Accounts list didn&rsquo;t load. Open Lists &rarr; Targets to re-upload it — auto-mapped companies will repopulate once it&rsquo;s back.</>}
+            </span>
+          </div>
+        );
+      })()}
       <div className={styles.filterBar}>
         <input
           className={styles.searchInput}
@@ -2568,6 +3197,49 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
             </div>
           );
         })()}
+        {(() => {
+          // Surface dismissed matches — dismissed companies are removed
+          // from the accounts list entirely, so searching for one comes up
+          // empty with no explanation. Flag them like inactive-hidden rows,
+          // with a quick restore so they can be brought back to the list.
+          const term = search.trim().toLowerCase();
+          if (!term) return null;
+          const matched = dismissedCompanies.filter(name => (name || '').toLowerCase().includes(term)).slice(0, 10);
+          if (matched.length === 0) return null;
+          return (
+            <div
+              role="status"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: '0.3rem',
+                padding: '0.25rem 0.55rem',
+                background: '#F1F5F9',
+                border: '1px solid #CBD5E1',
+                borderRadius: '6px',
+                fontSize: '0.7rem',
+                color: '#475569',
+                fontWeight: 600,
+              }}
+              title="These accounts match your search but were dismissed. Click × to restore one to your list."
+            >
+              🚫 Dismissed:
+              {matched.map(name => (
+                <span key={name} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', padding: '0.05rem 0.45rem', background: '#fff', border: '1px solid #E2E8F0', borderRadius: '999px' }}>
+                  <span style={{ color: '#475569' }}>{name}</span>
+                  <button
+                    onClick={() => undismissCompany(name)}
+                    title="Restore"
+                    style={{ background: 'none', border: 'none', color: '#94A3B8', fontSize: '0.75rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
+                    onMouseEnter={e => e.target.style.color = '#22C55E'}
+                    onMouseLeave={e => e.target.style.color = '#94A3B8'}
+                  >&times;</button>
+                </span>
+              ))}
+            </div>
+          );
+        })()}
         {bucketFilter && <span style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', borderRadius: '999px', background: '#EBF2FC', color: '#3B7DDD', fontWeight: 600 }}>Showing: {bucketFilter === 'tier1' ? 'Tier 1' : bucketFilter === 'tier2' ? 'Tier 2' : bucketFilter === 'client' ? 'Clients' : bucketFilter === 'noTarget' ? 'No Target Mapped' : 'Tier 3'}</span>}
         {(activeFilterCount > 0 || bucketFilter) && <button className={styles.clearBtn} onClick={clearFilters}>Clear all</button>}
         <button
@@ -2595,6 +3267,33 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           title="Download a CSV of the accounts in the current view that have no HubSpot contacts yet, with their Zoom / website data from Table View"
           style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-accent)', whiteSpace: 'nowrap' }}
         >⇩ Accounts w/o contacts</button>
+        <button
+          onClick={applyAllTierFlags}
+          disabled={tierSyncRunning || tierFlagged.length === 0}
+          title="Set every flagged account's Tier to the tier its Target Accounts row specifies — applies all the ⚠ tier-mismatch flags in the Tier column at once."
+          style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: (tierSyncRunning || tierFlagged.length === 0) ? 'default' : 'pointer', fontFamily: 'inherit', color: tierFlagged.length === 0 ? 'var(--color-text-secondary)' : '#F59E0B', whiteSpace: 'nowrap', opacity: tierFlagged.length === 0 ? 0.6 : 1 }}
+        >
+          {tierSyncRunning ? 'Updating tiers…' : `⚠ Apply tier flags${tierFlagged.length ? ` (${tierFlagged.length})` : ''}`}
+        </button>
+        {ignoredTierMismatches.length > 0 && (
+          <button
+            onClick={resetTierMismatchIgnores}
+            title="Restore every tier-mismatch flag you previously dismissed so the ⚠ warnings re-appear for review."
+            style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-accent)', whiteSpace: 'nowrap' }}
+          >
+            ↺ Restore dismissed flags ({ignoredTierMismatches.length})
+          </button>
+        )}
+        {onDedupe && (
+          <button
+            onClick={handleDedupe}
+            disabled={dedupeRunning}
+            title="Find accounts saved as two or more records (the same company twice) and collapse each into its most complete record. Removes the duplicate rows you see here and on other pages."
+            style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: dedupeRunning ? 'wait' : 'pointer', fontFamily: 'inherit', color: '#DC2626', whiteSpace: 'nowrap' }}
+          >
+            {dedupeRunning ? 'Removing duplicates…' : 'Remove duplicates'}
+          </button>
+        )}
         <span className={styles.resultCount}>{filteredAccounts.length} of {allAccounts.length}</span>
       </div>
       {targetAccounts.length > 0 && (() => {
@@ -2617,8 +3316,17 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           <div className={styles.mismatchSection}>
             {onlyMyAccounts.length > 0 && (
               <div className={styles.missingBanner}>
-                <div className={styles.missingTitle}>
-                  {onlyMyAccounts.length} on My Accounts but NOT on Target Accounts List
+                <div className={styles.missingTitle} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+                  <span>{onlyMyAccounts.length} on My Accounts but NOT on Target Accounts List</span>
+                  <button
+                    type="button"
+                    onClick={() => moveOnlyMyAccountsToTier3(onlyMyAccounts)}
+                    disabled={tier3BulkRunning}
+                    title="Set every account listed here (on My Accounts but not on the Target Accounts List) to Tier 3."
+                    style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid #3B82F6', background: tier3BulkRunning ? 'var(--color-surface)' : '#3B82F6', color: tier3BulkRunning ? 'var(--color-text-secondary)' : '#fff', fontSize: '0.7rem', fontWeight: 700, cursor: tier3BulkRunning ? 'wait' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                  >
+                    {tier3BulkRunning ? 'Moving…' : `Move all to Tier 3 (${onlyMyAccounts.length})`}
+                  </button>
                 </div>
                 <div className={styles.missingList}>
                   {onlyMyAccounts.map(a => (
@@ -2681,7 +3389,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
             </button>
             <button className={`${styles.summaryCard} ${bucketFilter === 'tier2' ? styles.summaryCardActive : ''}`} style={{ borderLeftColor: '#3B82F6' }} onClick={() => { setBucketFilter(bucketFilter === 'tier2' ? null : 'tier2'); setExpandedBucket(expandedBucket === 'tier2' ? null : 'tier2'); }}>
               <div className={styles.summaryLabel}>Tier 2</div>
-              <div className={styles.summaryValue}>{tier2.length}</div>
+              <div className={styles.summaryValue}>{tier2.filter(a => a.myTier === 'Tier 2').length}</div>
               {t2Missing > 0 && <div className={styles.summaryBreakdown} style={{ color: '#3B82F6' }}>{t2Missing} not in list</div>}
             </button>
           </>;
@@ -2767,12 +3475,72 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         );
       })()}
 
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', padding: '0.4rem 0.75rem', borderTop: '1px solid var(--color-border)' }}>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-text-secondary)', cursor: selectableVisibleIds.length ? 'pointer' : 'default' }}>
+          <input
+            type="checkbox"
+            checked={allVisibleSelected}
+            ref={el => { if (el) el.indeterminate = selectedVisibleCount > 0 && !allVisibleSelected; }}
+            disabled={selectableVisibleIds.length === 0}
+            onChange={toggleSelectAllVisible}
+            style={{ cursor: 'pointer', accentColor: 'var(--color-accent)' }}
+          />
+          Select all ({selectableVisibleIds.length})
+        </label>
+        <span style={{ fontSize: '0.7rem', fontWeight: 600, color: selectedIds.size ? 'var(--color-accent)' : 'var(--color-text-muted)' }}>
+          {selectedIds.size} selected
+        </span>
+        <select
+          value={bulkField}
+          onChange={e => { setBulkField(e.target.value); setBulkValue(''); }}
+          disabled={selectedIds.size === 0}
+          style={{ padding: '0.25rem 0.5rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontFamily: 'inherit', cursor: selectedIds.size === 0 ? 'not-allowed' : 'pointer' }}
+        >
+          <option value="">Field to set…</option>
+          {BULK_FIELDS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+        </select>
+        {bulkFieldDef && (bulkFieldDef.options
+          ? (
+            <select
+              value={bulkValue}
+              onChange={e => setBulkValue(e.target.value)}
+              style={{ padding: '0.25rem 0.5rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontFamily: 'inherit', cursor: 'pointer' }}
+            >
+              <option value="">(blank)</option>
+              {bulkFieldDef.options.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          ) : (
+            <input
+              type={bulkFieldDef.type === 'number' ? 'number' : 'text'}
+              value={bulkValue}
+              onChange={e => setBulkValue(e.target.value)}
+              placeholder={`New ${bulkFieldDef.label}…`}
+              style={{ padding: '0.25rem 0.5rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontFamily: 'inherit', minWidth: 140 }}
+            />
+          ))}
+        <button
+          onClick={applyBulkEdit}
+          disabled={bulkRunning || selectedIds.size === 0 || !bulkFieldDef}
+          style={{ padding: '0.25rem 0.7rem', borderRadius: '6px', border: 'none', background: (bulkRunning || selectedIds.size === 0 || !bulkFieldDef) ? 'var(--color-border)' : 'var(--color-accent)', color: '#fff', fontSize: '0.7rem', fontWeight: 600, cursor: (bulkRunning || selectedIds.size === 0 || !bulkFieldDef) ? 'default' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+        >
+          {bulkRunning ? 'Applying…' : `Apply to ${selectedIds.size}`}
+        </button>
+        {selectedIds.size > 0 && (
+          <button
+            onClick={clearSelection}
+            style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}
+          >
+            Clear selection
+          </button>
+        )}
+      </div>
       <div className={styles.tableWrap}>
         <DataTable
           tableId="my-accounts"
-          columns={columns}
+          columns={columnsWithSelect}
           rows={filteredAccounts}
-          alwaysVisible={['company']}
+          alwaysVisible={['__select__', 'company']}
+          enableColumnFilters
           rowStyle={(row) => {
             const s = row.status;
             return (s === 'Lost - Not Sold' || s === 'Hold Off' || s === 'Old Client') ? { opacity: 0.45 } : undefined;
@@ -2823,6 +3591,57 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
               <button onClick={() => setZoomImportPreview(null)} style={{ padding: '0.5rem 1rem', border: '1px solid var(--color-border)', borderRadius: '6px', background: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer', color: 'var(--color-text-secondary)' }}>Cancel</button>
               <button onClick={executeZoomImport} style={{ padding: '0.5rem 1rem', border: 'none', borderRadius: '6px', background: 'var(--color-accent)', color: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer', fontWeight: 600 }}>Import</button>
             </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {sitesPopup && createPortal(
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setSitesPopup(null)}>
+          <div style={{ background: '#fff', borderRadius: '12px', padding: '1.25rem 1.5rem', width: '920px', maxWidth: '96vw', maxHeight: '88vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', gap: '1rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>
+                {sitesPopup.company} — Sites <span style={{ color: 'var(--color-text-muted)', fontWeight: 600 }}>({sitesPopup.rows.length})</span>
+              </h3>
+              <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
+                <button
+                  onClick={() => exportSitesExcel(sitesPopup.company, sitesPopup.rows)}
+                  disabled={!sitesPopup.rows.length}
+                  style={{ padding: '0.4rem 0.85rem', border: 'none', borderRadius: '6px', background: sitesPopup.rows.length ? 'var(--color-accent)' : 'var(--color-border)', color: '#fff', fontSize: '0.78rem', fontFamily: 'inherit', fontWeight: 600, cursor: sitesPopup.rows.length ? 'pointer' : 'default' }}
+                >Export Excel</button>
+                <button onClick={() => setSitesPopup(null)} style={{ background: 'none', border: 'none', fontSize: '1.3rem', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}>&times;</button>
+              </div>
+            </div>
+            {sitesPopup.rows.length === 0 ? (
+              <p style={{ fontSize: '0.82rem', color: 'var(--color-text-secondary)', margin: '1rem 0' }}>
+                No sites found for this company in the Master Site List. Add them on the Master Site List page (Lists &rarr; Master Site List).
+              </p>
+            ) : (
+              <div style={{ overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: '8px' }}>
+                <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.74rem' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ position: 'sticky', top: 0, background: 'var(--color-surface-alt)', textAlign: 'right', fontWeight: 700, color: 'var(--color-text-secondary)', padding: '0.45rem 0.6rem', borderBottom: '1px solid var(--color-border)', whiteSpace: 'nowrap' }}>#</th>
+                      {MASTER_FIELDS.map(f => (
+                        <th key={f.key} style={{ position: 'sticky', top: 0, background: 'var(--color-surface-alt)', textAlign: 'left', fontWeight: 700, color: 'var(--color-text-secondary)', padding: '0.45rem 0.6rem', borderBottom: '1px solid var(--color-border)', whiteSpace: 'nowrap' }}>{f.label}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sitesPopup.rows.map((r, i) => (
+                      <tr key={i}>
+                        <td style={{ padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--color-border-light)', textAlign: 'right', color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>{i + 1}</td>
+                        {MASTER_FIELDS.map(f => (
+                          <td key={f.key} style={{ padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--color-border-light)', whiteSpace: 'nowrap', color: 'var(--color-text)' }}>
+                            {r[f.key] || <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>,
         document.body

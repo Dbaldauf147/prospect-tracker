@@ -193,6 +193,27 @@ const SAVINGS_BAND = {
   'No opportunity':    { range: '',       lowPct: null, highPct: null },
 };
 
+// European markets don't carry a committed commodity-savings range yet,
+// so we surface "TBD" instead of quoting the 2 - 4 % band — and no
+// dollar savings (lowPct/highPct null) — wherever a range would
+// otherwise apply. Scoped to every country whose region is "Europe" or
+// "Europe/Asia", the same grouping the Europe View sheet uses. Markets
+// that already earn no commodity savings (Unlikely / No opportunity)
+// stay blank rather than flipping to TBD.
+const TBD_BAND = { range: 'TBD', lowPct: null, highPct: null };
+
+function isEuropeanRegion(region) {
+  return String(region || '').startsWith('Europe');
+}
+
+// Resolves the commodity-savings band for a country bucket, applying
+// the European TBD override on top of the status-driven SAVINGS_BAND.
+function savingsBandFor(status, region) {
+  const band = bandFor(status);
+  if (band.lowPct != null && isEuropeanRegion(region)) return TBD_BAND;
+  return band;
+}
+
 // Common alternate spellings of the country labels above. Keyed by
 // case-folded / punctuation-stripped names so a sheet with "USA",
 // "U.K.", "Czech Republic", etc. still resolves to the canonical row.
@@ -287,13 +308,13 @@ function bandFor(status) {
 export function countryElectricSavings(rawCountry) {
   const d = countryDeregulation(rawCountry);
   if (!d) return null;
-  return { status: d.electric, ...bandFor(d.electric) };
+  return { status: d.electric, ...savingsBandFor(d.electric, d.region) };
 }
 
 export function countryGasSavings(rawCountry) {
   const d = countryDeregulation(rawCountry);
   if (!d) return null;
-  return { status: d.gas, ...bandFor(d.gas) };
+  return { status: d.gas, ...savingsBandFor(d.gas, d.region) };
 }
 
 // True when the country's Power Rate Optimization column is

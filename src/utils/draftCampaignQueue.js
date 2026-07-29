@@ -3,16 +3,18 @@
 // across the Active / Client / Key Contacts pages and the Draft
 // Emails page (Custom Email Campaign card). Components subscribe via
 // the useDraftCampaignQueue hook so flipping a checkbox on one page
-// updates the count on another instantly.
+// updates the count on another instantly. Scoped per user — accounts
+// sharing a browser don't inherit each other's draft-campaign queue.
 
 import { useEffect, useState } from 'react';
+import { userLsGet, userLsSet } from './userLs';
 
 const STORAGE_KEY = 'draft-campaign:queued-contact-ids';
 const EVENT = 'draft-campaign-queue-changed';
 
 function readFromStorage() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = userLsGet(STORAGE_KEY);
     const arr = raw ? JSON.parse(raw) : [];
     return Array.isArray(arr) ? arr.filter(id => id != null).map(String) : [];
   } catch {
@@ -22,7 +24,7 @@ function readFromStorage() {
 
 function writeToStorage(ids) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(ids));
+    userLsSet(STORAGE_KEY, JSON.stringify(ids));
   } catch (e) { void e; }
   try {
     window.dispatchEvent(new CustomEvent(EVENT));

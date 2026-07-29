@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import styles from './LoginPage.module.css';
+import { allowlistDescription } from '../config/accessControl';
 
 export function LoginPage({ onSignInWithEmail, onCreateAccount, onResetPassword, error }) {
   const [email, setEmail] = useState('');
@@ -52,6 +53,9 @@ export function LoginPage({ onSignInWithEmail, onCreateAccount, onResetPassword,
       <div className={styles.card}>
         <h1 className={styles.title}>Prospect Tracker</h1>
         <p className={styles.subtitle}>{isCreateMode ? 'Create your account' : 'Sign in to manage your sales pipeline'}</p>
+        {isCreateMode && (
+          <p style={{ fontSize: '0.72rem', color: '#6B7280', margin: '-0.4rem 0 0.8rem' }}>{allowlistDescription()}</p>
+        )}
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
           <input

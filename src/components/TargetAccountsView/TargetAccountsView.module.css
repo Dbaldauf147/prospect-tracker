@@ -20,9 +20,36 @@
   margin: 0;
 }
 
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
 .lastUpload {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
+}
+
+.tierLegend {
+  margin: 0;
+  padding: 0.6rem 0.85rem;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  line-height: 1.5;
+  background: var(--color-surface-2, rgba(148, 163, 184, 0.12));
+  border: 1px solid var(--color-border, rgba(148, 163, 184, 0.35));
+  border-left: 3px solid #2563EB;
+  border-radius: 6px;
+}
+
+.tierLegend strong {
+  color: var(--color-text);
+  font-weight: 700;
 }
 
 .headerActions {

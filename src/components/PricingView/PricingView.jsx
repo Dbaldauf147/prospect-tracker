@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
+import { sanitizeExcelWorkbook, sanitizeSheetJsWorkbook } from '../../utils/exportSanitize.js';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer } from 'recharts';
 import styles from './PricingView.module.css';
 import { useAuth } from '../../contexts/AuthContext';
@@ -11,12 +12,14 @@ import { PricingConversions } from './PricingConversions';
 import { CompareTab } from './CompareTab';
 import { BrokerFeesTab } from './BrokerFeesTab';
 import { S2CTab } from './S2CTab';
+import { CalculatorTab } from './CalculatorTab';
 import { buildPricingOptionSnapshot } from '../../utils/pricingOptionCalc';
 import { setOppPricingSnapshot } from '../../utils/oppsPricingSnapshot';
 import { saveOppSourceFile, sourceFileMeta } from '../../utils/oppPricingSourceFile';
 import {
   loadOptionLinks,
   setOppOptionLink,
+  dropOptionFromLinks,
   OPTION_LINKS_EVENT,
 } from '../../utils/pricingOptionLinks';
 
@@ -124,7 +127,7 @@ function parseAltFeePaste(text) {
       fee: Number.isFinite(feeNum) ? feeNum : null,
       unit: cell(3),
       unitCount: Number.isFinite(ucNum) ? ucNum : cell(4),
-      startMonth: Number.isFinite(smNum) ? smNum : cell(5) || 1,
+      startMonth: cell(5) === '' ? null : (Number.isFinite(smNum) && smNum > 0 ? smNum : null),
       feeGmPct: Number.isFinite(gmNum) ? (gmNum > 1 ? gmNum / 100 : gmNum) : null,
       passThrough,
     });
@@ -132,7 +135,7 @@ function parseAltFeePaste(text) {
   return out;
 }
 
-function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onReplaceRows, onAppendRows, onClearRows, globalGmPct, marginFor, yearRevenue, autoFeeFor, siteCount, accountCount, altItemSuggestions = [], costByYear, passThroughByYear, passThroughRevenueByYear, numYears = 1 }) {
+function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onReplaceRows, onAppendRows, onClearRows, globalGmPct, marginFor, yearRevenue, autoFeeFor, autoStartMonthFor, siteCount, accountCount, altItemSuggestions = [], costByYear, passThroughByYear, passThroughRevenueByYear, numYears = 1 }) {
   const altItemListId = useId();
   const [dragFrom, setDragFrom] = useState(null); // row currently being dragged
   const [dragOverIdx, setDragOverIdx] = useState(null); // insertion point (0..rows.length)
@@ -201,13 +204,19 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
       const fee = hasManual ? manualFee : (typeof auto === 'number' ? auto : '');
       const feeCell = typeof fee === 'number' ? fee.toFixed(2) : '';
       const gmCell = typeof r.feeGmPct === 'number' ? (r.feeGmPct * 100).toFixed(1) + '%' : '';
+      const manualSm = Number(r.startMonth);
+      const hasManualSm = r.startMonth != null && r.startMonth !== '' && Number.isFinite(manualSm) && manualSm > 0;
+      const autoSm = !hasManualSm && autoStartMonthFor ? autoStartMonthFor(r) : null;
+      const smCell = hasManualSm
+        ? r.startMonth
+        : (typeof autoSm === 'number' && autoSm > 0 ? autoSm : '');
       lines.push([
         r.altItem || '',
         r.type || '',
         feeCell,
         r.unit || '',
         r.unitCount === '' || r.unitCount == null ? '' : r.unitCount,
-        r.startMonth === '' || r.startMonth == null ? '' : r.startMonth,
+        smCell,
         gmCell,
         r.passThrough ? 'yes' : '',
       ].join('\t'));
@@ -369,14 +378,26 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
                   onCommit={(v) => onChange(idx, 'unitCount', v)}
                 />
               </td>
-              <td className={styles.numCell}>
-                <CellTextInput
-                  key={`alt-${idx}-startMonth-${row.startMonth ?? ''}`}
-                  initial={row.startMonth}
-                  align="right"
-                  onCommit={(v) => onChange(idx, 'startMonth', v)}
-                />
-              </td>
+              {(() => {
+                const autoSm = autoStartMonthFor ? autoStartMonthFor(row) : null;
+                const manualSm = Number(row.startMonth);
+                const hasManualSm = row.startMonth != null && row.startMonth !== '' && Number.isFinite(manualSm) && manualSm > 0;
+                const placeholder = typeof autoSm === 'number' && autoSm > 0 ? String(autoSm) : '';
+                const title = typeof autoSm === 'number' && autoSm > 0
+                  ? `Auto-derived from linked CTS rows (month ${autoSm}). Type a value to override.`
+                  : 'Set the month this fee starts billing. Defaults to month 1 when no linked CTS row carries a start month.';
+                return (
+                  <td className={styles.numCell} title={title}>
+                    <CellTextInput
+                      key={`alt-${idx}-startMonth-${row.startMonth ?? ''}-${placeholder || 'n'}`}
+                      initial={hasManualSm ? row.startMonth : ''}
+                      placeholder={placeholder}
+                      align="right"
+                      onCommit={(v) => onChange(idx, 'startMonth', v)}
+                    />
+                  </td>
+                );
+              })()}
               {Array.from({ length: numYears }, (_, yi) => {
                 const rev = yearRevenue ? yearRevenue(row, yi + 1) : 0;
                 return (
@@ -474,13 +495,23 @@ Type a value to override.`
         const ctsPassRev = Array.isArray(passThroughRevenueByYear) ? passThroughRevenueByYear : ctsPasses;
         const revLessPass = grand.map((v, i) => v - (ctsPassRev[i] || 0) - (altPasses[i] || 0));
         const anyPassThrough = passes.some(v => v > 0);
+        // "Deal margin" is the deal's cumulative margin through each year,
+        // not that single year's margin in isolation: a heavy Year-1 setup
+        // fee keeps lifting the blended margin in later years. Accumulate
+        // fee / cost (and the pass-through carve-outs) year over year, then
+        // apply the same pass-through-excluded formula to the running totals.
+        let cumFee = 0;
+        let cumCost = 0;
+        let cumCtsPass = 0;
+        let cumAltPass = 0;
         const margins = grand.map((fee, i) => {
-          const cost = costs[i] || 0;
-          const ctsPass = ctsPasses[i] || 0;
-          const altPass = altPasses[i] || 0;
-          const adjFee = fee - ctsPass - altPass;
+          cumFee += fee;
+          cumCost += costs[i] || 0;
+          cumCtsPass += ctsPasses[i] || 0;
+          cumAltPass += altPasses[i] || 0;
+          const adjFee = cumFee - cumCtsPass - cumAltPass;
           if (adjFee <= 0) return null;
-          const adjCost = cost - ctsPass;
+          const adjCost = cumCost - cumCtsPass;
           return (adjFee - adjCost) / adjFee;
         });
         const fmtPctCell = (n) => n == null ? '' : `${(n * 100).toFixed(1)}%`;
@@ -613,7 +644,7 @@ Type a value to override.`
 // matches case-insensitively. Rows come from two sources combined:
 // every line item in the current workbook option plus every saved
 // mapping (so entries stay reachable after the workbook is cleared).
-function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemServices, solutionsOptions }) {
+function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemServices, lineItemIgnored, setLineItemIgnored, solutionsOptions }) {
   const [draftItem, setDraftItem] = useState('');
   const [filter, setFilter] = useState('');
 
@@ -659,6 +690,22 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
     setLineItemServices(next);
   }
 
+  function toggleIgnore(key) {
+    const next = { ...(lineItemIgnored || {}) };
+    if (next[key]) delete next[key];
+    else next[key] = true;
+    setLineItemIgnored(next);
+  }
+
+  // Line items still missing a service mapping, excluding the ones the
+  // user has chosen to ignore. Drives the warning banner so it only
+  // flags rows that genuinely need attention.
+  const unmappedRows = useMemo(() => rows.filter(r => {
+    if (lineItemIgnored?.[r.key]) return false;
+    const svcs = lineItemServices?.[r.key];
+    return !(Array.isArray(svcs) && svcs.length > 0);
+  }), [rows, lineItemServices, lineItemIgnored]);
+
   function addLineItem() {
     const name = draftItem.trim();
     if (!name) return;
@@ -678,7 +725,7 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
       <h3 className={styles.linkedSubheading}>Line Item → Services ({mappedCount})</h3>
       <p className={styles.linkedHint}>
         Tie each pricing Line Item to one or more services from the Dropdowns tab's
-        Solutions / Service Catalog. Opps 2's Scope column can then bulk-add the
+        Solutions / Service Catalog. Opps' Scope column can then bulk-add the
         union of services across every line item in a Pricing Option from an
         "Add from Pricing Option" picker.
       </p>
@@ -726,6 +773,18 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
           Solutions / Service Catalog list is empty. Add services to it on the Dropdowns tab first.
         </div>
       )}
+      {unmappedRows.length > 0 && (
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', gap: '0.4rem',
+            margin: '0 0 0.5rem', padding: '0.4rem 0.6rem',
+            background: '#FEF3C7', border: '1px solid #FCD34D', borderRadius: 4,
+            fontSize: '0.8rem', color: '#92400E',
+          }}
+        >
+          ⚠ {unmappedRows.length} line item{unmappedRows.length === 1 ? '' : 's'} missing a service mapping. Map them below, or click <strong>Ignore</strong> to set the ones you don't need aside.
+        </div>
+      )}
       {filteredRows.length === 0 ? (
         <div className={styles.linkedEmptyInline}>
           {rows.length === 0
@@ -738,20 +797,33 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
             <tr>
               <th style={{ width: '32%' }}>Line Item</th>
               <th>Services</th>
+              <th style={{ width: 70 }}>Ignore</th>
               <th style={{ width: 32 }} />
             </tr>
           </thead>
           <tbody>
             {filteredRows.map(row => {
               const services = Array.isArray(lineItemServices?.[row.key]) ? lineItemServices[row.key] : [];
+              const ignored = !!lineItemIgnored?.[row.key];
               return (
-                <tr key={row.key}>
+                <tr key={row.key} style={ignored ? { opacity: 0.5 } : undefined}>
                   <td>{row.name}</td>
                   <td>
                     <ServicesPicker
                       selected={services}
                       options={solutionsOptions}
                       onChange={(next) => updateServices(row.key, next)}
+                    />
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={ignored}
+                      onChange={() => toggleIgnore(row.key)}
+                      title={ignored
+                        ? 'Ignored — greyed out and excluded from the missing-mapping warning. Uncheck to track it again.'
+                        : 'Ignore this line item — greys it out and drops it from the missing-mapping warning.'}
+                      style={{ cursor: 'pointer' }}
                     />
                   </td>
                   <td>
@@ -840,6 +912,34 @@ function ServicesPicker({ selected, options, onChange }) {
   );
 }
 
+// Small numeric-ish input for the Linked To page's Fee Start Month
+// column. Local-draft pattern so re-renders don't fight typing. Empty
+// or non-positive commits drop the override; the placeholder shows the
+// auto-derived value from the CTS rows on the active option.
+function LinkedStartMonthInput({ initial, placeholder, onCommit }) {
+  const [draft, setDraft] = useState(initial === null || initial === undefined ? '' : String(initial));
+  return (
+    <input
+      type="text"
+      value={draft}
+      placeholder={placeholder || ''}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => onCommit(draft)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        if (e.key === 'Escape') { setDraft(initial === null || initial === undefined ? '' : String(initial)); e.currentTarget.blur(); }
+      }}
+      style={{
+        width: 60,
+        padding: '1px 4px',
+        border: '1px solid var(--color-border)', borderRadius: 3,
+        fontSize: '0.78rem', fontFamily: 'inherit', textAlign: 'right',
+        background: '#fff', color: 'var(--color-text)',
+      }}
+    />
+  );
+}
+
 // Read-only panel describing the existing Linked To logic and showing
 // the active relationships on the current workbook. Rendered on the
 // "Linked To" page subtab.
@@ -849,6 +949,12 @@ function LinkedToPanel({
   setActiveOption,
   overrides,
   linkedToDefaults,
+  linkedToUnitDefaults,
+  setLinkedToUnitDefault,
+  linkedToStartMonthDefaults,
+  setLinkedToStartMonthDefault,
+  linkedToPassThroughDefaults,
+  setLinkedToPassThroughDefault,
   altFees,
   resolvedLinkedTo,
   effectiveType,
@@ -856,6 +962,8 @@ function LinkedToPanel({
   removeLinkedToDefault,
   lineItemServices,
   setLineItemServices,
+  lineItemIgnored,
+  setLineItemIgnored,
   solutionsOptions,
 }) {
   const opt = workbook?.options.find(o => o.optionNumber === activeOption) || workbook?.options[0];
@@ -877,23 +985,65 @@ function LinkedToPanel({
   // unreachable defaults (or defaults shown without any workbook) fall
   // back to the stored lowercase key. Each row carries a delete button
   // so defaults can be cleaned up even when no file is loaded.
+  // Pick the active option's alt-fee rows so we can auto-fill the Unit
+  // column from whichever row carries the matching alt item. Lowercase
+  // match keeps "Network Services" / "network services" aligned with
+  // how Linked-To resolution works elsewhere on the page.
+  const activeAltRows = opt ? (altFees?.[opt.optionNumber] || []) : [];
+  const unitByAltItemLower = new Map();
+  for (const r of activeAltRows) {
+    const t = String(r.altItem || '').trim().toLowerCase();
+    if (!t) continue;
+    if (!unitByAltItemLower.has(t)) unitByAltItemLower.set(t, r.unit || '');
+  }
+  const unitCountForOption = (unit) => {
+    if (unit === 'Per Site' && typeof opt?.siteCount === 'number' && opt.siteCount > 0) return opt.siteCount;
+    if (unit === 'Per Account' && typeof opt?.accountCount === 'number' && opt.accountCount > 0) return opt.accountCount;
+    return null;
+  };
+
   const defaultEntries = (() => {
     const labelByKey = new Map();
+    // Earliest start month seen on any CTS row matching this
+    // (Line Item, Type) pair on the active option. Same value flows
+    // into the alt-fee row tagged with this default's Linked To.
+    const startMonthByKey = new Map();
     for (const item of flatItems) {
       const key = linkedToDefaultKey(item.description, effectiveType(item));
       if (!labelByKey.has(key)) labelByKey.set(key, { lineItem: item.description, type: effectiveType(item) });
+      const sm = Number(item.startMonth);
+      if (Number.isFinite(sm) && sm > 0) {
+        const prev = startMonthByKey.get(key);
+        if (prev == null || sm < prev) startMonthByKey.set(key, sm);
+      }
     }
     const rows = [];
     for (const [key, value] of Object.entries(linkedToDefaults)) {
       if (!value) continue;
       const labels = labelByKey.get(key);
       const [keyItem, keyType] = key.split('::');
+      const tagLower = String(value).trim().toLowerCase();
+      const autoUnit = tagLower ? (unitByAltItemLower.get(tagLower) || '') : '';
+      const overrideUnit = linkedToUnitDefaults?.[key] || '';
+      const effectiveUnit = overrideUnit || autoUnit;
+      const autoStartMonth = startMonthByKey.get(key) ?? null;
+      const overrideStartMonthRaw = linkedToStartMonthDefaults?.[key];
+      const overrideStartMonth = Number.isFinite(Number(overrideStartMonthRaw)) && Number(overrideStartMonthRaw) > 0
+        ? Number(overrideStartMonthRaw)
+        : null;
       rows.push({
         key,
         value,
         lineItem: labels?.lineItem || keyItem || '',
         type: labels?.type ?? (keyType || ''),
         reachable: !!labels,
+        autoUnit,
+        overrideUnit,
+        effectiveUnit,
+        autoStartMonth,
+        overrideStartMonth,
+        effectiveStartMonth: overrideStartMonth ?? autoStartMonth,
+        passThrough: linkedToPassThroughDefaults?.[key] === true,
       });
     }
     rows.sort((a, b) => (a.lineItem || '').localeCompare(b.lineItem || ''));
@@ -967,29 +1117,88 @@ function LinkedToPanel({
         ) : (
           <table className={styles.linkedTable}>
             <thead>
-              <tr><th>Line Item</th><th>Type</th><th>Default Linked To</th><th style={{ width: 32 }} /></tr>
+              <tr>
+                <th>Line Item</th>
+                <th>Type</th>
+                <th>Unit</th>
+                <th>Default Linked To</th>
+                <th>Fee Start Month</th>
+                <th>Pass-through</th>
+                <th style={{ width: 32 }} />
+              </tr>
             </thead>
             <tbody>
-              {defaultEntries.map(d => (
-                <tr key={d.key}>
-                  <td>
-                    {d.lineItem || <span className={styles.linkedMuted}>—</span>}
-                    {workbook && !d.reachable && <span className={styles.linkedMuted}> · not on this option</span>}
-                  </td>
-                  <td>{d.type || <span className={styles.linkedMuted}>—</span>}</td>
-                  <td><code>{d.value}</code></td>
-                  <td>
-                    {removeLinkedToDefault && (
-                      <button
-                        type="button"
-                        className={styles.rowDelBtn}
-                        title="Remove this saved default"
-                        onClick={() => removeLinkedToDefault(d.key)}
-                      >×</button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {defaultEntries.map(d => {
+                const unitCount = unitCountForOption(d.effectiveUnit);
+                return (
+                  <tr key={d.key}>
+                    <td>
+                      {d.lineItem || <span className={styles.linkedMuted}>—</span>}
+                      {workbook && !d.reachable && <span className={styles.linkedMuted}> · not on this option</span>}
+                    </td>
+                    <td>{d.type || <span className={styles.linkedMuted}>—</span>}</td>
+                    <td>
+                      <select
+                        value={d.overrideUnit}
+                        onChange={(e) => setLinkedToUnitDefault && setLinkedToUnitDefault(d.key, e.target.value)}
+                        title={d.overrideUnit
+                          ? 'Override saved for this Line Item + Type. Clear to fall back to the matching alt-fee row.'
+                          : d.autoUnit
+                            ? `Auto-filled from the "${d.value}" alt-fee row. Pick a value to override.`
+                            : 'Pick a unit. Per Site / Per Account inherit the SIA count automatically.'}
+                        style={{
+                          padding: '1px 4px',
+                          border: '1px solid var(--color-border)', borderRadius: 3,
+                          fontSize: '0.78rem', fontFamily: 'inherit',
+                          background: '#fff', color: 'var(--color-text)',
+                        }}
+                      >
+                        <option value="">{d.autoUnit ? `Auto: ${d.autoUnit}` : '—'}</option>
+                        <option value="Fixed">Fixed</option>
+                        <option value="Per Site">Per Site</option>
+                        <option value="Per Account">Per Account</option>
+                        <option value="Per Meter">Per Meter</option>
+                      </select>
+                      {unitCount != null && (
+                        <span className={styles.linkedMuted} style={{ marginLeft: 6 }}>({unitCount})</span>
+                      )}
+                    </td>
+                    <td><code>{d.value}</code></td>
+                    <td title={d.overrideStartMonth != null
+                      ? `Override saved for this Line Item + Type. Auto would be ${d.autoStartMonth ?? '—'}. Clear to fall back to the CTS row's start month.`
+                      : (d.autoStartMonth != null
+                        ? `Auto-derived from the CTS rows matching this Line Item + Type on the active option (month ${d.autoStartMonth}). Type a value to override; the override flows into the matching alt-fee row's Fee Start Month.`
+                        : 'Type a value to set the Fee Start Month for any alt-fee row linked to this default.')}>
+                      <LinkedStartMonthInput
+                        key={`${d.key}-${d.overrideStartMonth ?? ''}-${d.autoStartMonth ?? ''}`}
+                        initial={d.overrideStartMonth ?? ''}
+                        placeholder={d.autoStartMonth != null ? String(d.autoStartMonth) : ''}
+                        onCommit={(v) => setLinkedToStartMonthDefault && setLinkedToStartMonthDefault(d.key, v)}
+                      />
+                    </td>
+                    <td title="Bill every CTS row matching this Line Item + Type at cost (no markup). Per-row checkboxes on the pricing table still override.">
+                      <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.78rem' }}>
+                        <input
+                          type="checkbox"
+                          checked={d.passThrough}
+                          onChange={(e) => setLinkedToPassThroughDefault && setLinkedToPassThroughDefault(d.key, e.target.checked)}
+                        />
+                        {d.passThrough ? 'Yes' : 'No'}
+                      </label>
+                    </td>
+                    <td>
+                      {removeLinkedToDefault && (
+                        <button
+                          type="button"
+                          className={styles.rowDelBtn}
+                          title="Remove this saved default"
+                          onClick={() => removeLinkedToDefault(d.key)}
+                        >×</button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -999,6 +1208,8 @@ function LinkedToPanel({
         workbookItems={flatItems}
         lineItemServices={lineItemServices}
         setLineItemServices={setLineItemServices}
+        lineItemIgnored={lineItemIgnored}
+        setLineItemIgnored={setLineItemIgnored}
         solutionsOptions={solutionsOptions}
       />
 
@@ -1065,35 +1276,51 @@ function LinkedToPanel({
             ) : (
               <table className={styles.linkedTable}>
                 <thead>
-                  <tr><th>Tag</th><th>Source</th><th>Linked CTS rows</th></tr>
+                  <tr>
+                    <th>Tag</th>
+                    <th>Source</th>
+                    <th>Linked CTS row</th>
+                    <th>Type</th>
+                    <th>Start Month</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {tagEntries.map(([tag, items]) => {
                     const lower = tag.toLowerCase();
                     const altMatch = Array.from(altTags).some(t => t.toLowerCase() === lower);
-                    return (
-                      <tr key={tag}>
-                        <td><code>{tag}</code></td>
-                        <td>
-                          {altMatch && <span className={styles.linkedBadge}>alt-fee</span>}
-                          {!altMatch && <span className={styles.linkedMuted}>CTS only</span>}
-                        </td>
-                        <td>
-                          {items.length === 0
-                            ? <span className={styles.linkedMuted}>none — alt-fee tag with no CTS rows linked</span>
-                            : (
-                              <ul className={styles.linkedRowList}>
-                                {items.map(it => (
-                                  <li key={it.id}>
-                                    {it.description}
-                                    <span className={styles.linkedMuted}> · {effectiveType(it)}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                        </td>
-                      </tr>
-                    );
+                    const sourceCell = altMatch
+                      ? <span className={styles.linkedBadge}>alt-fee</span>
+                      : <span className={styles.linkedMuted}>CTS only</span>;
+                    if (items.length === 0) {
+                      return (
+                        <tr key={tag}>
+                          <td><code>{tag}</code></td>
+                          <td>{sourceCell}</td>
+                          <td colSpan={3}>
+                            <span className={styles.linkedMuted}>none — alt-fee tag with no CTS rows linked</span>
+                          </td>
+                        </tr>
+                      );
+                    }
+                    return items.map((it, idx) => {
+                      const sm = Number(it.startMonth);
+                      const startMonthCell = Number.isFinite(sm) && sm > 0
+                        ? sm
+                        : <span className={styles.linkedMuted}>—</span>;
+                      return (
+                        <tr key={`${tag}-${it.id}`}>
+                          {idx === 0 && (
+                            <>
+                              <td rowSpan={items.length}><code>{tag}</code></td>
+                              <td rowSpan={items.length}>{sourceCell}</td>
+                            </>
+                          )}
+                          <td>{it.description}</td>
+                          <td>{effectiveType(it)}</td>
+                          <td>{startMonthCell}</td>
+                        </tr>
+                      );
+                    });
                   })}
                 </tbody>
               </table>
@@ -1107,22 +1334,148 @@ function LinkedToPanel({
 
 // Free-text per-row cell input. Local-draft like GmInput so typing
 // doesn't fight a re-rendered controlled value.
-function LinkedToInput({ initial, isDefault, onCommit }) {
+function LinkedToInput({ initial, isDefault, onCommit, suggestions = [] }) {
   const [draft, setDraft] = useState(initial || '');
+  const listId = useId();
   return (
-    <input
-      className={`${styles.linkedInput} ${isDefault ? styles.linkedDefault : ''}`}
-      type="text"
-      value={draft}
-      placeholder="Tie to…"
-      title={isDefault ? 'Auto-filled from saved default for this Line Item + Type. Edit to override.' : undefined}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => onCommit(draft)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') e.currentTarget.blur();
-        if (e.key === 'Escape') { setDraft(initial || ''); e.currentTarget.blur(); }
-      }}
-    />
+    <>
+      <input
+        className={`${styles.linkedInput} ${isDefault ? styles.linkedDefault : ''}`}
+        type="text"
+        value={draft}
+        placeholder="Tie to…"
+        title={isDefault ? 'Auto-filled from saved default for this Line Item + Type. Edit to override.' : undefined}
+        list={suggestions.length > 0 ? listId : undefined}
+        autoComplete="off"
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => onCommit(draft)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          if (e.key === 'Escape') { setDraft(initial || ''); e.currentTarget.blur(); }
+        }}
+      />
+      {suggestions.length > 0 && (
+        <datalist id={listId}>
+          {suggestions.map(s => <option key={s} value={s} />)}
+        </datalist>
+      )}
+    </>
+  );
+}
+
+// Manager popup for the Linked To dropdown vocabulary, opened from the
+// ± button on the pricing table's Linked To column header. Lists every
+// option the dropdown currently offers (auto-derived tags + the user's
+// custom adds) with a remove button, shows removed ones with a restore
+// button, and takes new options via the input at the top. Add/remove
+// handlers live on the parent (addLinkedToOption / removeLinkedToOption)
+// so the curation persists with the rest of the pricing cache.
+function LinkedToOptionsModal({ autoTags = [], optionsList, onAdd, onRemove, onClose }) {
+  const [draft, setDraft] = useState('');
+  const custom = optionsList?.custom || [];
+  const hidden = optionsList?.hidden || [];
+  const hiddenSet = new Set(hidden.map(s => String(s).trim().toLowerCase()));
+  const customSet = new Set(custom.map(s => String(s).trim().toLowerCase()));
+  const seen = new Map();
+  for (const name of [...autoTags, ...custom]) {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) continue;
+    const k = trimmed.toLowerCase();
+    if (!seen.has(k) && !hiddenSet.has(k)) seen.set(k, trimmed);
+  }
+  const visible = [...seen.values()].sort((a, b) => a.localeCompare(b));
+  const removed = [...hidden].sort((a, b) => a.localeCompare(b));
+  const submit = () => {
+    const v = draft.trim();
+    if (!v) return;
+    onAdd(v);
+    setDraft('');
+  };
+  const rowStyle = { display: 'flex', alignItems: 'center', gap: 8, padding: '0.25rem 0' };
+  const xBtnStyle = { padding: '0 7px', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', fontSize: '0.78rem', fontFamily: 'inherit', color: '#b91c1c', cursor: 'pointer', lineHeight: 1.6 };
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)', zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } }}
+        style={{ width: 440, maxWidth: '92vw', maxHeight: '80vh', background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+      >
+        <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>Linked To dropdown options</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+            These options appear in every row&apos;s Linked To dropdown. Tags already used on saved defaults, alt-fee rows, or row overrides are suggested automatically; removing one keeps it out of the dropdown without touching the rows that use it.
+          </div>
+        </div>
+        <div style={{ padding: '0.85rem 1rem', overflowY: 'auto' }}>
+          <div style={{ display: 'flex', gap: 6, marginBottom: '0.7rem' }}>
+            <input
+              autoFocus
+              type="text"
+              value={draft}
+              placeholder="Add an option…"
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
+              style={{ flex: 1, boxSizing: 'border-box', padding: '0.4rem 0.55rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.82rem', fontFamily: 'inherit' }}
+            />
+            <button
+              type="button"
+              onClick={submit}
+              disabled={!draft.trim()}
+              style={{ padding: '0.35rem 0.8rem', border: '1px solid var(--color-accent)', borderRadius: 4, background: draft.trim() ? 'var(--color-accent)' : 'var(--color-border-light)', color: draft.trim() ? '#fff' : 'var(--color-text-muted)', fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit', cursor: draft.trim() ? 'pointer' : 'not-allowed' }}
+            >Add</button>
+          </div>
+          {visible.length === 0 ? (
+            <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', fontStyle: 'italic', padding: '0.3rem 0' }}>
+              No dropdown options yet — add one above, or tag a row and they&apos;ll be suggested automatically.
+            </div>
+          ) : visible.map(name => {
+            const isCustom = customSet.has(name.toLowerCase());
+            return (
+              <div key={name} style={rowStyle}>
+                <span style={{ flex: 1, fontSize: '0.82rem', color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={name}>
+                  {name}
+                  {isCustom && <span style={{ marginLeft: 6, fontSize: '0.65rem', fontWeight: 700, color: 'var(--color-text-muted)' }}>(added)</span>}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onRemove(name)}
+                  title={isCustom ? 'Remove this option from the dropdown' : 'Remove this auto-suggested tag from the dropdown (rows using it are unaffected)'}
+                  style={xBtnStyle}
+                >×</button>
+              </div>
+            );
+          })}
+          {removed.length > 0 && (
+            <>
+              <div style={{ margin: '0.7rem 0 0.3rem', fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)' }}>
+                Removed
+              </div>
+              {removed.map(name => (
+                <div key={name} style={rowStyle}>
+                  <span style={{ flex: 1, fontSize: '0.82rem', color: 'var(--color-text-muted)', textDecoration: 'line-through', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={name}>{name}</span>
+                  <button
+                    type="button"
+                    onClick={() => onAdd(name)}
+                    title="Restore this option to the dropdown"
+                    style={{ ...xBtnStyle, color: 'var(--color-text)' }}
+                  >↩</button>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0.6rem 1rem', borderTop: '1px solid var(--color-border-light)', background: 'var(--color-bg)' }}>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ padding: '0.35rem 0.85rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit', color: 'var(--color-text)', cursor: 'pointer' }}
+          >Done</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1154,6 +1507,29 @@ const KEY = 'current';
 // parser-version cache wipes, file removal, and switching to a new
 // SIA workbook. They're user-curated mappings, not parser output.
 const LINKED_TO_DEFAULTS_KEY = 'linkedToDefaults';
+// Per (Line Item, Type) Unit override for the Linked-To defaults
+// table. Same key shape as LINKED_TO_DEFAULTS_KEY ("lineitem::type",
+// lowercased) so a row can carry both a Default Linked To and a
+// Default Unit. Persisted on its own DB key for the same reason
+// linkedToDefaults are — these mappings outlive workbook reloads.
+const LINKED_TO_UNIT_DEFAULTS_KEY = 'linkedToUnitDefaults';
+// Per (Line Item, Type) Fee Start Month override. Same key shape, kept
+// in its own DB key so it survives workbook reloads / parser bumps.
+// Overrides the CTS row's own startMonth when auto-deriving the alt-fee
+// row's Fee Start Month and when rendering the Linked To Saved defaults
+// table's Fee Start Month column.
+const LINKED_TO_START_MONTH_DEFAULTS_KEY = 'linkedToStartMonthDefaults';
+// Per (Line Item, Type) Pass-through default. CTS rows matching the
+// pair are billed at cost (no markup) unless a per-row override on the
+// pricing table says otherwise. Persisted on its own DB key.
+const LINKED_TO_PASS_THROUGH_DEFAULTS_KEY = 'linkedToPassThroughDefaults';
+// User-curated vocabulary for the per-row Linked To dropdown on the
+// pricing page. `custom` holds options the user added by hand; `hidden`
+// suppresses auto-derived suggestions (tags pulled from saved defaults,
+// alt-fee rows, and per-row overrides) the user removed. Persisted on
+// its own key so the curation survives parser bumps and Clear-button
+// workbook wipes, like the Linked-To defaults above.
+const LINKED_TO_OPTIONS_KEY = 'linkedToOptionsList';
 // Line Item → Services catalog mapping. Keyed by lowercase line item
 // name; value is an array of service strings from the Dropdowns-tab
 // Solutions / Service Catalog. Persisted on its own key so it survives
@@ -1161,6 +1537,12 @@ const LINKED_TO_DEFAULTS_KEY = 'linkedToDefaults';
 // defaults.
 const LINE_ITEM_SERVICES_KEY = 'lineItemServices';
 const LINE_ITEM_SERVICES_EVENT = 'pricing:lineItemServicesChanged';
+// Line items the user has chosen to ignore in the Line Item → Services
+// table. Keyed by lowercase line item name (same shape as the services
+// map) and persisted on its own key so the choice survives parser bumps
+// and Clear-button wipes. Ignored rows are greyed out and excluded from
+// the "missing a service mapping" warning.
+const LINE_ITEM_IGNORED_KEY = 'lineItemIgnored';
 // Per-Option services bundle derived from the loaded workbook + the
 // Line Item → Services mapping. Persisted separately so Opps 2 can
 // offer an "Add from Pricing Option" picker on its Scope cell without
@@ -1222,7 +1604,13 @@ export function PricingView({ settings } = {}) {
   const [colWidths, setColWidths] = useState({}); // { [colKey]: pixelWidth }
   const [altFees, setAltFees] = useState({}); // { [optionNumber]: [{ altItem, type, fee, unit, unitCount, startMonth }] }
   const [linkedToDefaults, setLinkedToDefaults] = useState({}); // { [`${lineItem}::${type}`]: 'value' }
+  const [linkedToUnitDefaults, setLinkedToUnitDefaults] = useState({}); // { [`${lineItem}::${type}`]: 'Per Site' | 'Per Account' | 'Fixed' | 'Per Meter' }
+  const [linkedToStartMonthDefaults, setLinkedToStartMonthDefaults] = useState({}); // { [`${lineItem}::${type}`]: number } — overrides the CTS row's startMonth for the auto-derive that feeds alt-fee rows
+  const [linkedToPassThroughDefaults, setLinkedToPassThroughDefaults] = useState({}); // { [`${lineItem}::${type}`]: true } — sets pass-through for every CTS row matching the pair, unless the per-row override says otherwise
+  const [linkedToOptionsList, setLinkedToOptionsList] = useState({ custom: [], hidden: [] }); // user-curated Linked To dropdown vocabulary (see LINKED_TO_OPTIONS_KEY)
+  const [linkedToOptionsModal, setLinkedToOptionsModal] = useState(null); // { autoTags: string[] } — open state for the Linked To options manager
   const [lineItemServices, setLineItemServices] = useState({}); // { [lineItemKey]: string[] }
+  const [lineItemIgnored, setLineItemIgnored] = useState({}); // { [lineItemKey]: true } — line items the user opted to ignore (greyed out, excluded from the unmapped warning)
   const [termMonths, setTermMonths] = useState(36);
   const [annualEscalator, setAnnualEscalator] = useState(0.03);
   // Separate escalator for CTS costs — defaults to 3.85% so margin
@@ -1231,13 +1619,16 @@ export function PricingView({ settings } = {}) {
   const [costEscalator, setCostEscalator] = useState(0.0385);
   const [chartTag, setChartTag] = useState(''); // selected line-item / tag for the breakdown chart
   const [chartView, setChartView] = useState('chart'); // 'chart' | 'table'
+  const [chartVisible, setChartVisible] = useState(false); // "Line item year-over-year" panel — hidden by default, user opts in via Show
+  const [chartUnitCounts, setChartUnitCounts] = useState({}); // per-line-item unit count (keyed by lowercased tag) for the Fee / Unit column
   const [techDeprPct, setTechDeprPct] = useState(0.04);
   const [colVisibility, setColVisibility] = useState({}); // upper table: { [colKey]: bool, default true }
+  const [hideEmptyCtsRows, setHideEmptyCtsRows] = useState(true); // upper table: hide line items with no CTS value by default; user opts in to show them
   const [summaryColWidths, setSummaryColWidths] = useState({});
   const [summaryColVisibility, setSummaryColVisibility] = useState({});
   const [colMenuOpen, setColMenuOpen] = useState(false);
   const [summaryMenuOpen, setSummaryMenuOpen] = useState(false);
-  const [pageSubtab, setPageSubtab] = useState('pricing'); // 'pricing' | 'linkedTo' | 'options' | 'compare' | 'brokerFees' | 's2c'
+  const [pageSubtab, setPageSubtab] = useState('pricing'); // 'pricing' | 'linkedTo' | 'options' | 'compare' | 'brokerFees' | 's2c' | 'calculator'
   const [optionsTabData, setOptionsTabData] = useState(null); // OptionsTab state: array of { name, years, escPct, rows: [...] }
   const [compareTabData, setCompareTabData] = useState(null); // CompareTab state: { currentLabel, nextLabel, current: [...], next: [...] }
   const [brokerFeesData, setBrokerFeesData] = useState(null); // BrokerFeesTab state: array of { company, loadEp, feeEp, rfps, loadNg, feeNg }
@@ -1273,9 +1664,32 @@ export function PricingView({ settings } = {}) {
         if (!cancelled && savedDefaults && typeof savedDefaults === 'object') {
           setLinkedToDefaults(savedDefaults);
         }
+        const savedUnitDefaults = await dbGet(STORE, LINKED_TO_UNIT_DEFAULTS_KEY);
+        if (!cancelled && savedUnitDefaults && typeof savedUnitDefaults === 'object') {
+          setLinkedToUnitDefaults(savedUnitDefaults);
+        }
+        const savedStartMonthDefaults = await dbGet(STORE, LINKED_TO_START_MONTH_DEFAULTS_KEY);
+        if (!cancelled && savedStartMonthDefaults && typeof savedStartMonthDefaults === 'object') {
+          setLinkedToStartMonthDefaults(savedStartMonthDefaults);
+        }
+        const savedPassThroughDefaults = await dbGet(STORE, LINKED_TO_PASS_THROUGH_DEFAULTS_KEY);
+        if (!cancelled && savedPassThroughDefaults && typeof savedPassThroughDefaults === 'object') {
+          setLinkedToPassThroughDefaults(savedPassThroughDefaults);
+        }
+        const savedOptionsList = await dbGet(STORE, LINKED_TO_OPTIONS_KEY);
+        if (!cancelled && savedOptionsList && typeof savedOptionsList === 'object') {
+          setLinkedToOptionsList({
+            custom: Array.isArray(savedOptionsList.custom) ? savedOptionsList.custom : [],
+            hidden: Array.isArray(savedOptionsList.hidden) ? savedOptionsList.hidden : [],
+          });
+        }
         const savedLineItemServices = await dbGet(STORE, LINE_ITEM_SERVICES_KEY);
         if (!cancelled && savedLineItemServices && typeof savedLineItemServices === 'object') {
           setLineItemServices(savedLineItemServices);
+        }
+        const savedLineItemIgnored = await dbGet(STORE, LINE_ITEM_IGNORED_KEY);
+        if (!cancelled && savedLineItemIgnored && typeof savedLineItemIgnored === 'object') {
+          setLineItemIgnored(savedLineItemIgnored);
         }
         const saved = await dbGet(STORE, KEY);
         if (cancelled || !saved) { hydratedRef.current = true; return; }
@@ -1285,6 +1699,15 @@ export function PricingView({ settings } = {}) {
         if (saved.parserVersion !== PARSER_VERSION) {
           await dbDelete(STORE, KEY).catch(() => {});
           if (!savedDefaults && saved.linkedToDefaults) setLinkedToDefaults(saved.linkedToDefaults);
+          if (!savedUnitDefaults && saved.linkedToUnitDefaults) setLinkedToUnitDefaults(saved.linkedToUnitDefaults);
+          if (!savedStartMonthDefaults && saved.linkedToStartMonthDefaults) setLinkedToStartMonthDefaults(saved.linkedToStartMonthDefaults);
+          if (!savedPassThroughDefaults && saved.linkedToPassThroughDefaults) setLinkedToPassThroughDefaults(saved.linkedToPassThroughDefaults);
+          if (!savedOptionsList && saved.linkedToOptionsList && typeof saved.linkedToOptionsList === 'object') {
+            setLinkedToOptionsList({
+              custom: Array.isArray(saved.linkedToOptionsList.custom) ? saved.linkedToOptionsList.custom : [],
+              hidden: Array.isArray(saved.linkedToOptionsList.hidden) ? saved.linkedToOptionsList.hidden : [],
+            });
+          }
           hydratedRef.current = true;
           return;
         }
@@ -1295,17 +1718,30 @@ export function PricingView({ settings } = {}) {
         if (saved.colWidths) setColWidths(saved.colWidths);
         if (saved.altFees) setAltFees(saved.altFees);
         if (!savedDefaults && saved.linkedToDefaults) setLinkedToDefaults(saved.linkedToDefaults);
+        if (!savedUnitDefaults && saved.linkedToUnitDefaults) setLinkedToUnitDefaults(saved.linkedToUnitDefaults);
+        if (!savedStartMonthDefaults && saved.linkedToStartMonthDefaults) setLinkedToStartMonthDefaults(saved.linkedToStartMonthDefaults);
+        if (!savedPassThroughDefaults && saved.linkedToPassThroughDefaults) setLinkedToPassThroughDefaults(saved.linkedToPassThroughDefaults);
+        if (!savedOptionsList && saved.linkedToOptionsList && typeof saved.linkedToOptionsList === 'object') {
+          setLinkedToOptionsList({
+            custom: Array.isArray(saved.linkedToOptionsList.custom) ? saved.linkedToOptionsList.custom : [],
+            hidden: Array.isArray(saved.linkedToOptionsList.hidden) ? saved.linkedToOptionsList.hidden : [],
+          });
+        }
         if (!savedLineItemServices && saved.lineItemServices && typeof saved.lineItemServices === 'object') setLineItemServices(saved.lineItemServices);
+        if (!savedLineItemIgnored && saved.lineItemIgnored && typeof saved.lineItemIgnored === 'object') setLineItemIgnored(saved.lineItemIgnored);
         if (typeof saved.termMonths === 'number') setTermMonths(saved.termMonths);
         if (typeof saved.annualEscalator === 'number') setAnnualEscalator(saved.annualEscalator);
         if (typeof saved.costEscalator === 'number') setCostEscalator(saved.costEscalator);
         if (typeof saved.chartTag === 'string') setChartTag(saved.chartTag);
         if (saved.chartView === 'chart' || saved.chartView === 'table') setChartView(saved.chartView);
+        if (typeof saved.chartVisible === 'boolean') setChartVisible(saved.chartVisible);
+        if (saved.chartUnitCounts && typeof saved.chartUnitCounts === 'object') setChartUnitCounts(saved.chartUnitCounts);
         if (typeof saved.techDeprPct === 'number') setTechDeprPct(saved.techDeprPct);
         if (saved.colVisibility) setColVisibility(saved.colVisibility);
+        if (typeof saved.hideEmptyCtsRows === 'boolean') setHideEmptyCtsRows(saved.hideEmptyCtsRows);
         if (saved.summaryColWidths) setSummaryColWidths(saved.summaryColWidths);
         if (saved.summaryColVisibility) setSummaryColVisibility(saved.summaryColVisibility);
-        if (saved.pageSubtab === 'pricing' || saved.pageSubtab === 'linkedTo' || saved.pageSubtab === 'options' || saved.pageSubtab === 'compare' || saved.pageSubtab === 'brokerFees' || saved.pageSubtab === 's2c') setPageSubtab(saved.pageSubtab);
+        if (saved.pageSubtab === 'pricing' || saved.pageSubtab === 'linkedTo' || saved.pageSubtab === 'options' || saved.pageSubtab === 'compare' || saved.pageSubtab === 'brokerFees' || saved.pageSubtab === 's2c' || saved.pageSubtab === 'calculator') setPageSubtab(saved.pageSubtab);
         if (Array.isArray(saved.s2cTabData)) setS2cTabData(saved.s2cTabData);
         if (Array.isArray(saved.optionsTabData)) setOptionsTabData(saved.optionsTabData);
         if (saved.compareTabData && typeof saved.compareTabData === 'object') setCompareTabData(saved.compareTabData);
@@ -1330,9 +1766,9 @@ export function PricingView({ settings } = {}) {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, lineItemServices, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, lineItemServices, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
 
   // Mirror Linked-To defaults under their dedicated key so they
   // outlive the main cache (parser-version bumps, Clear button,
@@ -1342,6 +1778,26 @@ export function PricingView({ settings } = {}) {
     if (!hydratedRef.current) return;
     dbPut(STORE, linkedToDefaults, LINKED_TO_DEFAULTS_KEY).catch(err => console.warn('Failed to save linked-to defaults:', err));
   }, [linkedToDefaults]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    dbPut(STORE, linkedToUnitDefaults, LINKED_TO_UNIT_DEFAULTS_KEY).catch(err => console.warn('Failed to save linked-to unit defaults:', err));
+  }, [linkedToUnitDefaults]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    dbPut(STORE, linkedToOptionsList, LINKED_TO_OPTIONS_KEY).catch(err => console.warn('Failed to save linked-to options list:', err));
+  }, [linkedToOptionsList]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    dbPut(STORE, linkedToStartMonthDefaults, LINKED_TO_START_MONTH_DEFAULTS_KEY).catch(err => console.warn('Failed to save linked-to start-month defaults:', err));
+  }, [linkedToStartMonthDefaults]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    dbPut(STORE, linkedToPassThroughDefaults, LINKED_TO_PASS_THROUGH_DEFAULTS_KEY).catch(err => console.warn('Failed to save linked-to pass-through defaults:', err));
+  }, [linkedToPassThroughDefaults]);
 
   // Persist Line Item → Services mapping on its own key and broadcast
   // a custom event so other views (Opps 2's Scope cell) can refresh
@@ -1353,6 +1809,14 @@ export function PricingView({ settings } = {}) {
       window.dispatchEvent(new CustomEvent(LINE_ITEM_SERVICES_EVENT, { detail: lineItemServices }));
     } catch { /* CustomEvent unavailable */ }
   }, [lineItemServices]);
+
+  // Persist the ignored-line-item set on its own key so it outlives the
+  // main cache (parser bumps, Clear button). No broadcast event — the
+  // ignore flag is only consumed inside this view's mapping table.
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    dbPut(STORE, lineItemIgnored, LINE_ITEM_IGNORED_KEY).catch(err => console.warn('Failed to save ignored line items:', err));
+  }, [lineItemIgnored]);
 
   // Derive a per-Pricing-Option services bundle by walking each option's
   // line items, looking up their saved services in lineItemServices,
@@ -1442,6 +1906,49 @@ export function PricingView({ settings } = {}) {
     return 0;
   }
 
+  // Per-year revenue (marked-up price) from a single upper-table CTS
+  // item — the price mirror of ctsItemYearCost. Setup / One Time land
+  // upfront in the year containing their start month; Recurring
+  // (monthly) bills 12 months per year; Rolled variants amortize their
+  // billing evenly across the term. Recurring / Rolled revenue escalates
+  // with the revenue escalator (annualEscalator), matching how term
+  // price is projected elsewhere. Used by the line-item year-over-year
+  // table so a tag with linked CTS rows but no Alternative Fee row still
+  // shows the Fee and Margin from the prices the customer actually pays.
+  function ctsItemYearRevenue(item, yearIndex) {
+    if (typeof item.cts !== 'number') return 0;
+    const { price } = priceFor(item);
+    if (typeof price !== 'number' || !Number.isFinite(price)) return 0;
+    const t = effectiveType(item);
+    const isRecurring = /recurring.*monthly|monthly.*recurring|^recurring/i.test(t);
+    const isRolled = /\brolled\b/i.test(t);
+    const yearStart = (yearIndex - 1) * 12 + 1;
+    const yearEnd = yearIndex * 12;
+    const startMonth = Math.max(1, Math.round(Number(item.startMonth) || 1));
+    if (isRecurring) {
+      const billStart = Math.max(yearStart, startMonth);
+      const billEnd = Math.min(yearEnd, termMonths);
+      if (billEnd < billStart) return 0;
+      const months = billEnd - billStart + 1;
+      const esc = Math.pow(1 + annualEscalator, yearIndex - 1);
+      return price * months * esc;
+    }
+    if (isRolled && termMonths > 0) {
+      // Cost books upfront (ctsItemYearCost) but billing is amortized
+      // across the term on the revenue side, so spread the price evenly
+      // over every month of the term and escalate it annually.
+      const billStart = Math.max(yearStart, startMonth);
+      const billEnd = Math.min(yearEnd, termMonths);
+      if (billEnd < billStart) return 0;
+      const months = billEnd - billStart + 1;
+      const esc = Math.pow(1 + annualEscalator, yearIndex - 1);
+      return (price / termMonths) * months * esc;
+    }
+    if (startMonth > termMonths) return 0;
+    if (startMonth >= yearStart && startMonth <= yearEnd) return price;
+    return 0;
+  }
+
   // Revenue from a single Alt Fee row in calendar year `yearIndex`
   // (1-based). Setup / One Time charges land in the year containing
   // their start month. Recurring (monthly) bills every month from
@@ -1452,7 +1959,9 @@ export function PricingView({ settings } = {}) {
     const fee = hasManualFee ? manualFee : (autoFeePerUnitFor(row) ?? 0);
     const uc = Number(row.unitCount);
     if (!Number.isFinite(fee) || fee <= 0 || !Number.isFinite(uc) || uc <= 0) return 0;
-    const startMonth = Math.max(1, Math.round(Number(row.startMonth) || 1));
+    const manualSm = Number(row.startMonth);
+    const hasManualSm = row.startMonth != null && row.startMonth !== '' && Number.isFinite(manualSm) && manualSm > 0;
+    const startMonth = Math.max(1, Math.round(hasManualSm ? manualSm : (autoStartMonthFor(row) || 1)));
     const yearStart = (yearIndex - 1) * 12 + 1;
     const yearEnd = yearIndex * 12;
     const isRecurring = /recurring/i.test(row.type || '');
@@ -1521,6 +2030,42 @@ export function PricingView({ settings } = {}) {
     // calculation (year revenue, margin, totals). Without rounding,
     // a displayed $1.93 can multiply out from an underlying $1.9263.
     return Math.round((totalMarkup / uc) * 100) / 100;
+  }
+
+  // Earliest start month from CTS rows linked to this alt-fee row's
+  // tag. Falls back through type matching (Setup/One Time bucket vs
+  // Recurring incl. Rolled) so a Setup alt-fee row picks up the start
+  // month of the upfront CTS lines and a Recurring row picks up the
+  // monthly ones. Returns null if no linked rows carry a usable start
+  // month.
+  function autoStartMonthFor(row) {
+    if (!workbook) return null;
+    const target = String(row?.altItem || '').trim().toLowerCase();
+    if (!target) return null;
+    const opt = workbook.options.find(o => o.optionNumber === activeOption);
+    if (!opt) return null;
+    const rowType = String(row?.type || '').trim();
+    const isRecurringRow = /recurring/i.test(rowType);
+    const isSetupOrOneTimeRow = /^(setup|one\s*time)$/i.test(rowType);
+
+    let bestTyped = null;
+    let bestAny = null;
+    for (const sec of opt.sections) {
+      for (const item of sec.items) {
+        if (resolvedLinkedTo(item).trim().toLowerCase() !== target) continue;
+        const sm = effectiveItemStartMonth(item);
+        if (!Number.isFinite(sm) || sm <= 0) continue;
+        if (bestAny == null || sm < bestAny) bestAny = sm;
+        const t = effectiveType(item);
+        const itemIsRecurring = /recurring/i.test(t);
+        const itemIsRolled = /\brolled\b/i.test(t);
+        const itemIsSetupOrOneTime = /^(setup|one\s*time)$/i.test(t);
+        const typeMatches = (isRecurringRow && (itemIsRecurring || itemIsRolled))
+          || (isSetupOrOneTimeRow && itemIsSetupOrOneTime);
+        if (typeMatches && (bestTyped == null || sm < bestTyped)) bestTyped = sm;
+      }
+    }
+    return bestTyped ?? bestAny;
   }
 
   // For an Alt Fee tag, compute the total margin across ALL alt-fee
@@ -1628,6 +2173,19 @@ export function PricingView({ settings } = {}) {
     return linkedToDefaults[linkedToDefaultKey(item.description, effectiveType(item))] || '';
   }
 
+  // Start month for a CTS item, honoring the per-(Line Item, Type)
+  // override saved on the Linked To page over the workbook value.
+  function effectiveItemStartMonth(item) {
+    const key = linkedToDefaultKey(item.description, effectiveType(item));
+    const ov = linkedToStartMonthDefaults[key];
+    if (ov != null) {
+      const n = Number(ov);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+    const sm = Number(item.startMonth);
+    return Number.isFinite(sm) && sm > 0 ? sm : null;
+  }
+
   // Drag-to-resize for either the upper-table or summary-table cols.
   function startColResize(scope, key, evt) {
     evt.preventDefault();
@@ -1718,13 +2276,38 @@ export function PricingView({ settings } = {}) {
     if (s.linkedToDefaults && typeof s.linkedToDefaults === 'object') {
       setLinkedToDefaults(prev => ({ ...prev, ...s.linkedToDefaults }));
     }
+    if (s.linkedToUnitDefaults && typeof s.linkedToUnitDefaults === 'object') {
+      setLinkedToUnitDefaults(prev => ({ ...prev, ...s.linkedToUnitDefaults }));
+    }
+    if (s.linkedToOptionsList && typeof s.linkedToOptionsList === 'object') {
+      // Same union semantics as the defaults above — fold the snapshot's
+      // curated dropdown options into this device's list.
+      setLinkedToOptionsList(prev => {
+        const union = (a, b) => {
+          const seen = new Set((a || []).map(v => String(v).trim().toLowerCase()));
+          const out = [...(a || [])];
+          for (const v of (b || [])) {
+            const k = String(v).trim().toLowerCase();
+            if (k && !seen.has(k)) { seen.add(k); out.push(String(v).trim()); }
+          }
+          return out;
+        };
+        return {
+          custom: union(prev.custom, s.linkedToOptionsList.custom),
+          hidden: union(prev.hidden, s.linkedToOptionsList.hidden),
+        };
+      });
+    }
     if (typeof s.termMonths === 'number') setTermMonths(s.termMonths);
     if (typeof s.annualEscalator === 'number') setAnnualEscalator(s.annualEscalator);
     if (typeof s.costEscalator === 'number') setCostEscalator(s.costEscalator);
     if (typeof s.chartTag === 'string') setChartTag(s.chartTag);
     if (s.chartView === 'chart' || s.chartView === 'table') setChartView(s.chartView);
+    if (typeof s.chartVisible === 'boolean') setChartVisible(s.chartVisible);
+    if (s.chartUnitCounts && typeof s.chartUnitCounts === 'object') setChartUnitCounts(s.chartUnitCounts);
     if (typeof s.techDeprPct === 'number') setTechDeprPct(s.techDeprPct);
     setColVisibility(s.colVisibility || {});
+    if (typeof s.hideEmptyCtsRows === 'boolean') setHideEmptyCtsRows(s.hideEmptyCtsRows);
     setSummaryColWidths(s.summaryColWidths || {});
     setSummaryColVisibility(s.summaryColVisibility || {});
   }
@@ -1749,6 +2332,9 @@ export function PricingView({ settings } = {}) {
       dbPut(STORE, sourceBlob, WORKBOOK_SOURCE_KEY).catch(err => {
         console.warn('Failed to cache workbook source blob:', err);
       });
+      // A new SIA replaces the one on screen, so unlink any Opp the
+      // outgoing workbook was "Saved to" before we swap it out.
+      clearLoadedWorkbookOptionLinks(workbook);
       setWorkbook({
         fileName: file.name,
         options: parsed.options,
@@ -1756,16 +2342,89 @@ export function PricingView({ settings } = {}) {
         loadedAt: Date.now(),
       });
       setOverrides({});
+      // Fresh file → reset the global margin to the 50% default so a
+      // stale saved value from a prior workbook doesn't carry over.
+      setGlobalGmPct(0.5);
       setActiveOption(parsed.options[0]?.optionNumber ?? null);
-      // Seed the Alternative Fee schedule for each option from the
-      // workbook. The parser returns alt-fee rows that lived in the
-      // sheet's Alternative Fee Structure table; pad to 9 rows so the
-      // displayed grid still feels like the Excel template.
+      // Seed the Alternative Fee schedule from the cost rows' Linked To
+      // tags rather than the workbook's own alt-fee table. Every unique
+      // tag a cost row resolves to becomes one alt-fee row; the user
+      // fills the fee later. Unit pre-fills from linkedToUnitDefaults
+      // when set, and Per Site / Per Account inherit the SIA metadata
+      // count. Pad to 9 rows so the grid keeps its Excel-template feel.
+      // Normalize an SIA alt-fee Type string into one of the alt-fee
+      // dropdown values so imported rows render as selected (and match
+      // the seeded rows for the fill pass). Idempotent — already-normal
+      // values map back to themselves.
+      const normAltType = (raw) => {
+        const t = String(raw || '').trim();
+        if (/recurring/i.test(t)) return 'Recurring (monthly)';
+        if (/^setup/i.test(t)) return 'Setup';
+        if (/^one\s*time/i.test(t)) return 'One Time';
+        return t;
+      };
+
       const seeded = {};
       for (const opt of parsed.options) {
-        if (!Array.isArray(opt.altFees) || opt.altFees.length === 0) continue;
-        const rows = opt.altFees.map(r => ({ ...r }));
-        while (rows.length < 9) rows.push({ altItem: '', type: '', fee: null, unit: '', unitCount: 1, startMonth: 1 });
+        const flatItems = (opt.sections || []).flatMap(s => s.items || []);
+        // Tag → first matching cost item, so we can pull a unit default
+        // off whichever (lineItem, type) pair produced the tag.
+        const firstItemByTag = new Map();
+        for (const item of flatItems) {
+          const k = linkedToDefaultKey(item.description, item.type || '');
+          const tag = (linkedToDefaults[k] || '').trim();
+          if (!tag || firstItemByTag.has(tag)) continue;
+          firstItemByTag.set(tag, item);
+        }
+        const tags = Array.from(firstItemByTag.keys()).sort((a, b) => a.localeCompare(b));
+        // If the uploaded SIA already has its own Alternative Fee
+        // Structure/Schedule filled in, treat the file as the source of
+        // truth: use its fee rows verbatim and skip the auto-seeded
+        // Linked-To rows entirely, so the file's fees REPLACE the fees
+        // this tool would otherwise build (instead of stacking on top of
+        // them). The parser only yields real rows; we keep the ones
+        // carrying an actual fee so blank template rows don't add noise.
+        const wbAltRows = (opt.altFees || []).filter(a => a && a.fee != null);
+        let rows;
+        if (wbAltRows.length > 0) {
+          rows = wbAltRows.map(wb => ({
+            altItem: wb.altItem,
+            type: normAltType(wb.type),
+            fee: wb.fee,
+            unit: wb.unit || '',
+            unitCount: wb.unitCount == null ? 1 : wb.unitCount,
+            startMonth: wb.startMonth == null ? null : wb.startMonth,
+          }));
+        } else {
+          // No alt-fee table in the file → seed the schedule from the
+          // cost rows' Linked To tags so the user has a starting grid to
+          // fill in.
+          rows = tags.map(tag => {
+            const item = firstItemByTag.get(tag);
+            const unitKey = linkedToDefaultKey(item.description, item.type || '');
+            const unit = linkedToUnitDefaults[unitKey] || '';
+            let unitCount = 1;
+            if (unit === 'Per Site' && typeof opt.siteCount === 'number' && opt.siteCount > 0) {
+              unitCount = opt.siteCount;
+            } else if (unit === 'Per Account' && typeof opt.accountCount === 'number' && opt.accountCount > 0) {
+              unitCount = opt.accountCount;
+            }
+            // Map the cost item's type into one of the alt-fee dropdown
+            // values so the seeded row renders as selected. Rolled
+            // variants normalize to their base (Setup Rolled → Setup,
+            // One Time Rolled → One Time) since the alt-fee table doesn't
+            // expose Rolled types — the user can refine if needed.
+            const rawType = String(item.type || '').trim();
+            let type = '';
+            if (/recurring/i.test(rawType)) type = 'Recurring (monthly)';
+            else if (/^setup/i.test(rawType)) type = 'Setup';
+            else if (/^one\s*time/i.test(rawType)) type = 'One Time';
+            // Leave startMonth null so autoStartMonthFor derives it from
+            // the linked CTS rows; the user can type a value to override.
+            return { altItem: tag, type, fee: null, unit, unitCount, startMonth: null };
+          });
+        }
+        while (rows.length < 9) rows.push({ altItem: '', type: '', fee: null, unit: '', unitCount: 1, startMonth: null });
         seeded[opt.optionNumber] = rows;
       }
       setAltFees(seeded);
@@ -1793,8 +2452,25 @@ export function PricingView({ settings } = {}) {
     setDragOver(false);
   }
 
+  // Drop any "Saved to:" Opp links that point at the workbook currently
+  // loaded in the Pricing tab. Called when the SIA is cleared or replaced
+  // so the chip (and the Opps 2 "Pricing Option" column it feeds) doesn't
+  // dangle against a workbook that's no longer on screen.
+  function clearLoadedWorkbookOptionLinks(wb) {
+    const labels = new Set(
+      (wb?.options || [])
+        .map(o => (o.sheetName || '').trim())
+        .filter(Boolean)
+    );
+    for (const label of labels) {
+      dropOptionFromLinks(label).catch(() => {});
+    }
+  }
+
   function clearAll() {
     if (!confirm('Clear the loaded workbook, markup overrides, and the Alternative Fee schedule? Saved Linked-To defaults are kept.')) return;
+    // The SIA is going away, so unlink any Opp it was "Saved to".
+    clearLoadedWorkbookOptionLinks(workbook);
     setWorkbook(null);
     setOverrides({});
     setActiveOption(null);
@@ -1904,7 +2580,7 @@ export function PricingView({ settings } = {}) {
   // 9 empty starter rows that match the Excel template — used when
   // an option's alt-fee table hasn't been edited yet.
   const altFeeStarter = () => Array.from({ length: 9 }, () => ({
-    altItem: '', type: '', fee: null, unit: '', unitCount: 1, startMonth: 1,
+    altItem: '', type: '', fee: null, unit: '', unitCount: 1, startMonth: null,
   }));
 
   function updateAltFeeCell(optionNumber, idx, field, value) {
@@ -1919,7 +2595,7 @@ export function PricingView({ settings } = {}) {
   function addAltFeeRow(optionNumber) {
     setAltFees(prev => {
       const list = (prev[optionNumber] || altFeeStarter()).slice();
-      list.push({ altItem: '', type: '', fee: null, unit: '', unitCount: 1, startMonth: 1 });
+      list.push({ altItem: '', type: '', fee: null, unit: '', unitCount: 1, startMonth: null });
       return { ...prev, [optionNumber]: list };
     });
   }
@@ -1962,7 +2638,7 @@ export function PricingView({ settings } = {}) {
         const isEmpty = !r.altItem && !r.type && !r.unit &&
           (!r.unitCount || r.unitCount === 1 || r.unitCount === '1') &&
           (typeof r.fee !== 'number' || r.fee === 0) &&
-          (r.startMonth === '' || r.startMonth === 1);
+          (r.startMonth == null || r.startMonth === '' || r.startMonth === 1);
         if (!isEmpty) break;
         existing.pop();
       }
@@ -2009,6 +2685,37 @@ export function PricingView({ settings } = {}) {
     });
   }
 
+  // Add / remove entries in the Linked To dropdown vocabulary (the
+  // datalist on each pricing-table row), managed from the ± button on
+  // the column header. Adding clears a matching hidden entry, so
+  // re-adding (or restoring) a removed option brings it back; removing
+  // remembers the name in `hidden` so auto-derived tags that are still
+  // in use on defaults / alt fees / overrides stay suppressed.
+  function addLinkedToOption(name) {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) return;
+    const lower = trimmed.toLowerCase();
+    setLinkedToOptionsList(prev => {
+      const hidden = (prev.hidden || []).filter(h => String(h).trim().toLowerCase() !== lower);
+      const custom = (prev.custom || []).some(c => String(c).trim().toLowerCase() === lower)
+        ? (prev.custom || [])
+        : [...(prev.custom || []), trimmed];
+      return { custom, hidden };
+    });
+  }
+  function removeLinkedToOption(name) {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) return;
+    const lower = trimmed.toLowerCase();
+    setLinkedToOptionsList(prev => {
+      const custom = (prev.custom || []).filter(c => String(c).trim().toLowerCase() !== lower);
+      const hidden = (prev.hidden || []).some(h => String(h).trim().toLowerCase() === lower)
+        ? (prev.hidden || [])
+        : [...(prev.hidden || []), trimmed];
+      return { custom, hidden };
+    });
+  }
+
   // Save / clear the (Line Item, Type) default from the row's
   // currently-resolved value via the star button next to the input.
   function toggleLinkedToDefault(item) {
@@ -2033,6 +2740,57 @@ export function PricingView({ settings } = {}) {
       delete next[key];
       return next;
     });
+    setLinkedToUnitDefaults(prev => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setLinkedToStartMonthDefaults(prev => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setLinkedToPassThroughDefaults(prev => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }
+
+  // Save / clear the Fee Start Month override for a (Line Item, Type)
+  // pair. A non-positive / non-numeric value drops the override so the
+  // CTS row's own startMonth (auto-derived) takes back over.
+  function setLinkedToStartMonthDefault(key, raw) {
+    setLinkedToStartMonthDefaults(prev => {
+      const next = { ...prev };
+      const n = Number(String(raw ?? '').replace(/[^\d.-]/g, ''));
+      if (!Number.isFinite(n) || n <= 0) {
+        if (key in next) delete next[key];
+        else return prev;
+      } else {
+        next[key] = Math.round(n);
+      }
+      return next;
+    });
+  }
+
+  // Save / clear the Unit default for a (Line Item, Type) pair. Empty
+  // string drops the override so the auto-fill (matching alt-fee row's
+  // unit) takes back over.
+  function setLinkedToUnitDefault(key, unit) {
+    setLinkedToUnitDefaults(prev => {
+      const next = { ...prev };
+      if (!unit) {
+        if (key in next) delete next[key];
+        else return prev;
+      } else {
+        next[key] = unit;
+      }
+      return next;
+    });
   }
 
   function setItemGm(itemId, raw) {
@@ -2055,21 +2813,43 @@ export function PricingView({ settings } = {}) {
   }
 
   function isPassThrough(item) {
-    return overrides[item.id]?.passThrough === true;
+    const ov = overrides[item.id]?.passThrough;
+    if (ov === true) return true;
+    if (ov === false) return false;
+    const key = linkedToDefaultKey(item.description, effectiveType(item));
+    return linkedToPassThroughDefaults[key] === true;
   }
 
-  function setItemPassThrough(itemId, on) {
+  // Per-row pass-through toggle. Stores an explicit boolean so the row
+  // can also mute a Linked-To default (toggle off when the (Line Item,
+  // Type) default is on). If the toggled value matches the default,
+  // we drop the per-row override so the default flows through cleanly.
+  function setItemPassThrough(itemId, on, item) {
+    const defaultIsOn = !!(item
+      && linkedToPassThroughDefaults[linkedToDefaultKey(item.description, effectiveType(item))] === true);
     setOverrides(prev => {
       const next = { ...prev };
-      if (!on) {
+      if (Boolean(on) === defaultIsOn) {
         if (next[itemId]) {
           const { passThrough: _drop, ...rest } = next[itemId];
           if (Object.keys(rest).length === 0) delete next[itemId];
           else next[itemId] = rest;
         }
       } else {
-        next[itemId] = { ...next[itemId], passThrough: true };
+        next[itemId] = { ...next[itemId], passThrough: !!on };
       }
+      return next;
+    });
+  }
+
+  // Save / clear the Pass-through default for a (Line Item, Type) pair.
+  // Falsy drops the key so the default no longer applies.
+  function setLinkedToPassThroughDefault(key, on) {
+    setLinkedToPassThroughDefaults(prev => {
+      const next = { ...prev };
+      if (on) next[key] = true;
+      else if (key in next) delete next[key];
+      else return prev;
       return next;
     });
   }
@@ -2088,7 +2868,12 @@ export function PricingView({ settings } = {}) {
     if (source === 'passThrough') {
       return { gm: 0, source, price: typeof item.cts === 'number' ? item.cts : null };
     }
-    const price = priceFromCostAndGm(item.cts ?? null, gm);
+    // Mark up against the effective cost (CTS + tech depr) so the
+    // displayed Deal margin equals the target GM exactly. Marking up
+    // against raw CTS leaves tech depr unrecovered and shows a margin
+    // ~techDeprPct below target.
+    const effCost = typeof item.cts === 'number' ? ctsItemEffectiveCost(item) : null;
+    const price = priceFromCostAndGm(effCost, gm);
     return { gm, source, price };
   }
 
@@ -2149,7 +2934,7 @@ export function PricingView({ settings } = {}) {
       parserVersion: PARSER_VERSION,
       workbook, globalGmPct, overrides, activeOption, colWidths,
       altFees, linkedToDefaults, termMonths, annualEscalator, costEscalator,
-      chartTag, chartView, techDeprPct, colVisibility,
+      chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility,
       summaryColWidths, summaryColVisibility,
     };
     const json = JSON.stringify(snapshot);
@@ -2159,6 +2944,7 @@ export function PricingView({ settings } = {}) {
     const stateWs = XLSX.utils.aoa_to_sheet(stateRows);
     XLSX.utils.book_append_sheet(wb, stateWs, STATE_SHEET_NAME);
 
+    sanitizeSheetJsWorkbook(wb);
     XLSX.writeFile(wb, `pricing-markup-${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
@@ -2260,7 +3046,243 @@ export function PricingView({ settings } = {}) {
     const sheetName = (`Monthly Costs ${opt.sheetName || `Option ${opt.optionNumber}`}`).slice(0, 31);
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
     const slug = (opt.sheetName || `Option-${opt.optionNumber}`).replace(/[^a-zA-Z0-9-]+/g, '-');
+    sanitizeSheetJsWorkbook(wb);
     XLSX.writeFile(wb, `Monthly-Costs-${slug}-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
+
+  // Commercial Reference export — writes the active Option's cost line
+  // items in the SE Commercial Reference template format (Commercial
+  // Reference, Unit Amount, Quantity). Each item's CTS is annualized:
+  // Recurring (monthly) costs are multiplied by 12 so every row reads
+  // as a yearly figure; Setup / One Time costs pass through as-is.
+  // Quantity is always 1. Filename: CommercialReference-<option>-<date>.csv.
+  function exportCommercialRef() {
+    if (!workbook) return;
+    const opt = workbook.options.find(o => o.optionNumber === activeOption) || workbook.options[0];
+    if (!opt) return;
+    const escape = (v) => {
+      const s = String(v ?? '');
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lineRows = [];
+    for (const sec of opt.sections) {
+      for (const item of sec.items) {
+        if (typeof item.cts !== 'number') continue;
+        const isMonthly = /recurring.*monthly|monthly.*recurring|^recurring/i.test(effectiveType(item));
+        const unitAmount = item.cts * (isMonthly ? 12 : 1);
+        // Plain numbers, no currency formatting; skip zero-value line items.
+        if (unitAmount === 0) continue;
+        lineRows.push([item.description || '', unitAmount.toFixed(2), 1]);
+      }
+    }
+    if (!lineRows.length) {
+      window.alert('No cost line items to export on this Option.');
+      return;
+    }
+    const lines = [
+      ['Commercial Reference', 'Unit Amount', 'Quantity'].join(','),
+      ...lineRows.map(cols => cols.map(escape).join(',')),
+    ];
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const slug = (opt.sheetName || `Option-${opt.optionNumber}`).replace(/[^a-zA-Z0-9-]+/g, '-');
+    a.href = url;
+    a.download = `CommercialReference-${slug}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // Margin Request Template export — fills the standard SE template
+  // with one block per loaded Pricing Option. Services come from the
+  // per-option services bundle, Fee Structure is the option's Alt Fee
+  // table summarized, Margin is the term-projected option margin
+  // rounded to a whole percent, and Escalator is the annual revenue
+  // escalator. Customer Name / SIA Link / RFP fields are left blank
+  // for the user to fill in.
+  async function exportMarginRequest() {
+    if (!workbook || !Array.isArray(workbook.options) || workbook.options.length === 0) return;
+    const { Workbook } = await import('exceljs');
+
+    const SE_GREEN_DARK = 'FF009530';
+    const LABEL_BG     = 'FFF1F5F9';
+    const VALUE_BG     = 'FFFFFFFF';
+    const OPTION_BG    = 'FFE5E7EB';
+    const TEXT_DARK    = 'FF1E293B';
+    const TEXT_MUTED   = 'FF64748B';
+    const BORDER       = 'FFD4DDE1';
+
+    const wb = new Workbook();
+    wb.creator = 'Schneider Electric · Prospect Tracker';
+    const ws = wb.addWorksheet('Margin Request', {
+      properties: { tabColor: { argb: SE_GREEN_DARK } },
+      views: [{ showGridLines: false }],
+    });
+    ws.columns = [
+      { width: 24 }, // A: row labels / "Option N"
+      { width: 32 }, // B: services / term value / Yes/No value
+      { width: 14 }, // C: "Fee Structure" label
+      { width: 44 }, // D: Fee Structure value
+      { width: 14 }, // E: Margin / Escalator labels
+      { width: 14 }, // F: Margin / Escalator values
+    ];
+    const SPAN = 6;
+    const thinBorder = { style: 'thin', color: { argb: BORDER } };
+    const allBorders = { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder };
+    const setBordered = (cell) => { cell.border = allBorders; };
+    const greenBanner = (cellRange, text) => {
+      const [r1, c1, r2, c2] = cellRange;
+      ws.mergeCells(r1, c1, r2, c2);
+      const cell = ws.getCell(r1, c1);
+      cell.value = text;
+      cell.font = { name: 'Calibri', bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      for (let c = c1; c <= c2; c++) setBordered(ws.getCell(r1, c));
+      ws.getRow(r1).height = 22;
+    };
+    const setLabel = (cell, text, opts = {}) => {
+      cell.value = text;
+      cell.font = { name: 'Calibri', bold: !opts.italic, italic: !!opts.italic, size: 11, color: { argb: opts.italic ? TEXT_MUTED : TEXT_DARK } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: LABEL_BG } };
+      cell.alignment = { vertical: 'middle', horizontal: opts.italic ? 'right' : 'left', indent: 1, wrapText: true };
+      setBordered(cell);
+    };
+    const setValue = (cell, value, opts = {}) => {
+      if (value !== undefined && value !== null) cell.value = value;
+      cell.font = { name: 'Calibri', size: 11, color: { argb: TEXT_DARK } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: opts.bg || VALUE_BG } };
+      cell.alignment = { vertical: 'middle', horizontal: opts.align || 'left', indent: 1, wrapText: true };
+      if (opts.numFmt) cell.numFmt = opts.numFmt;
+      setBordered(cell);
+    };
+
+    // --- Header block --------------------------------------------------
+    greenBanner([1, 1, 1, SPAN], 'Margin Request Template');
+
+    setLabel(ws.getCell(2, 1), 'Customer Name');
+    ws.mergeCells(2, 2, 2, SPAN);
+    setValue(ws.getCell(2, 2), '');
+
+    setLabel(ws.getCell(3, 1), 'Sales Investment Analyzer (SIA) Link');
+    ws.mergeCells(3, 2, 3, SPAN);
+    setValue(ws.getCell(3, 2), '');
+
+    setLabel(ws.getCell(4, 1), 'Is this an RFP?');
+    setLabel(ws.getCell(4, 2), 'Yes/No', { italic: true });
+    ws.mergeCells(4, 3, 4, 4);
+    setValue(ws.getCell(4, 3), 'No');
+    setLabel(ws.getCell(4, 5), 'Due Date', { italic: true });
+    setValue(ws.getCell(4, 6), 'N/A');
+
+    // --- Options ------------------------------------------------------
+    greenBanner([5, 1, 5, SPAN], 'SIA Options Seeking Approval');
+
+    // Per-option margin: (termPrice − termCost) / termPrice, projecting
+    // recurring revenue + cost over the term with the active escalators
+    // (mirrors the per-option roll-up on the Pricing page).
+    const computeOptionMargin = (opt) => {
+      let termCost = 0, termPrice = 0;
+      for (const sec of (opt.sections || [])) {
+        for (const item of (sec.items || [])) {
+          const { price } = priceFor(item);
+          const t = effectiveType(item);
+          const isRecurring = /^recurring/i.test(t);
+          const isRolled = /\brolled\b/i.test(t);
+          if (isRecurring) {
+            termCost += projectMonthlyOverTerm(item.cts ?? null, costEscalator, termMonths);
+            termPrice += projectMonthlyOverTerm(price ?? null, annualEscalator, termMonths);
+          } else if (isRolled && termMonths > 0) {
+            if (typeof item.cts === 'number') termCost += item.cts;
+            const monthlyPrice = typeof price === 'number' ? price / termMonths : null;
+            termPrice += projectMonthlyOverTerm(monthlyPrice, annualEscalator, termMonths);
+          } else {
+            if (typeof item.cts === 'number') termCost += item.cts;
+            if (typeof price === 'number') termPrice += price;
+          }
+        }
+      }
+      if (!Number.isFinite(termPrice) || termPrice <= 0) return null;
+      return (termPrice - termCost) / termPrice;
+    };
+
+    // Compact summary of an option's Alt Fee rows. Empty rows are
+    // dropped; each kept row reads as "{altItem}: ${fee}/{unit}" plus
+    // a "({type})" qualifier when the row has one. Falls back to a
+    // dash so the cell isn't ambiguous when no alt fees are entered.
+    const summarizeAltFees = (opt) => {
+      const list = altFees?.[opt.optionNumber] || [];
+      const lines = [];
+      for (const r of list) {
+        const item = String(r?.altItem || '').trim();
+        const feeNum = Number(r?.fee);
+        if (!item && !Number.isFinite(feeNum)) continue;
+        const unit = String(r?.unit || '').trim();
+        const type = String(r?.type || '').trim();
+        const feeTxt = Number.isFinite(feeNum)
+          ? `$${feeNum.toLocaleString('en-US', { maximumFractionDigits: 2 })}${unit ? `/${unit}` : ''}`
+          : '';
+        const main = [item, feeTxt].filter(Boolean).join(': ');
+        lines.push(type ? `${main} (${type})` : main);
+      }
+      return lines.length > 0 ? lines.join('\n') : '—';
+    };
+
+    let row = 6;
+    const escPct = Math.round((annualEscalator || 0) * 100);
+    const termYrs = termMonths ? termMonths / 12 : 0;
+    workbook.options.forEach((opt, idx) => {
+      const optionLabel = `Option ${idx + 1}`;
+      // Row 1 of the block — option header strip.
+      setLabel(ws.getCell(row, 1), optionLabel);
+      ws.mergeCells(row, 2, row, SPAN);
+      setValue(ws.getCell(row, 2), opt.sheetName || '', { bg: OPTION_BG });
+      ws.getCell(row, 2).font = { name: 'Calibri', bold: true, size: 11, color: { argb: TEXT_DARK } };
+      ws.getRow(row).height = 20;
+
+      // Row 2 — Services | (Fee Structure label) | (Fee Structure value, merged with row 3) | Margin label/value
+      setLabel(ws.getCell(row + 1, 1), 'Services', { italic: true });
+      const services = (pricingOptionServices?.[opt.sheetName] || []).filter(Boolean);
+      setValue(ws.getCell(row + 1, 2), services.length > 0 ? services.join('\n') : '—');
+      setLabel(ws.getCell(row + 1, 3), 'Fee Structure', { italic: true });
+      // Merge Fee Structure value across rows 2 and 3 of the block.
+      ws.mergeCells(row + 1, 4, row + 2, 4);
+      setValue(ws.getCell(row + 1, 4), summarizeAltFees(opt));
+      setLabel(ws.getCell(row + 1, 5), 'Margin', { italic: true });
+      const margin = computeOptionMargin(opt);
+      if (margin == null) {
+        setValue(ws.getCell(row + 1, 6), '—', { align: 'right' });
+      } else {
+        setValue(ws.getCell(row + 1, 6), Math.round(margin * 100) / 100, { align: 'right', numFmt: '0%' });
+      }
+
+      // Row 3 — Term | Term value | (Fee Structure value continues) | Escalator label/value
+      setLabel(ws.getCell(row + 2, 1), 'Term', { italic: true });
+      setValue(ws.getCell(row + 2, 2), termYrs || '—', termYrs ? { numFmt: '0.##" yrs"' } : {});
+      // Fee Structure label cell on row 3 stays empty (the value spans
+      // from row 2). Tag it with the label-styled empty cell so the
+      // border lines up with its row neighbours.
+      setLabel(ws.getCell(row + 2, 3), '', { italic: true });
+      setLabel(ws.getCell(row + 2, 5), 'Escalator', { italic: true });
+      setValue(ws.getCell(row + 2, 6), escPct / 100, { align: 'right', numFmt: '0%' });
+
+      ws.getRow(row + 1).height = Math.max(22, services.length * 14);
+      ws.getRow(row + 2).height = 22;
+      row += 3;
+    });
+
+    sanitizeExcelWorkbook(wb);
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const fileSlug = (workbook.fileName || 'Pricing').replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9-]+/g, '-');
+    a.download = `Margin-Request-${fileSlug}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
   const totals = useMemo(() => {
@@ -2411,6 +3433,13 @@ export function PricingView({ settings } = {}) {
               >
                 Monthly costs ⇩
               </button>
+              <button
+                className={styles.actionBtn}
+                onClick={exportMarginRequest}
+                title="Fill the SE Margin Request Template with one block per Pricing Option: Services, Term, Alt Fee Structure, Margin, and Escalator."
+              >
+                Margin Request ⇩
+              </button>
               <button className={styles.actionBtnDanger} onClick={clearAll}>Clear</button>
             </>
           )}
@@ -2487,6 +3516,13 @@ export function PricingView({ settings } = {}) {
         >
           S2C
         </button>
+        <button
+          type="button"
+          className={pageSubtab === 'calculator' ? styles.subtabActive : styles.subtab}
+          onClick={() => setPageSubtab('calculator')}
+        >
+          Calculator
+        </button>
       </div>
 
       {pageSubtab === 'linkedTo' && (
@@ -2496,6 +3532,12 @@ export function PricingView({ settings } = {}) {
           setActiveOption={setActiveOption}
           overrides={overrides}
           linkedToDefaults={linkedToDefaults}
+          linkedToUnitDefaults={linkedToUnitDefaults}
+          setLinkedToUnitDefault={setLinkedToUnitDefault}
+          linkedToStartMonthDefaults={linkedToStartMonthDefaults}
+          setLinkedToStartMonthDefault={setLinkedToStartMonthDefault}
+          linkedToPassThroughDefaults={linkedToPassThroughDefaults}
+          setLinkedToPassThroughDefault={setLinkedToPassThroughDefault}
           altFees={altFees}
           resolvedLinkedTo={resolvedLinkedTo}
           effectiveType={effectiveType}
@@ -2503,6 +3545,8 @@ export function PricingView({ settings } = {}) {
           removeLinkedToDefault={removeLinkedToDefault}
           lineItemServices={lineItemServices}
           setLineItemServices={setLineItemServices}
+          lineItemIgnored={lineItemIgnored}
+          setLineItemIgnored={setLineItemIgnored}
           solutionsOptions={solutionsOptions}
         />
       )}
@@ -2518,6 +3562,10 @@ export function PricingView({ settings } = {}) {
         <CompareTab
           state={compareTabData}
           setState={setCompareTabData}
+          workbook={workbook}
+          resolvedLinkedTo={resolvedLinkedTo}
+          effectiveType={effectiveType}
+          techDeprPct={techDeprPct}
         />
       )}
 
@@ -2534,6 +3582,8 @@ export function PricingView({ settings } = {}) {
           setRows={setS2cTabData}
         />
       )}
+
+      {pageSubtab === 'calculator' && <CalculatorTab />}
 
       <div className={styles.body} style={pageSubtab !== 'pricing' ? { display: 'none' } : undefined}>
         {!workbook && (
@@ -2617,13 +3667,19 @@ export function PricingView({ settings } = {}) {
                     <button
                       type="button"
                       className={styles.actionBtn}
+                      onClick={exportCommercialRef}
+                      title={`Export "${opt.sheetName}" cost line items as a Commercial Reference CSV. Monthly costs are annualized (×12); Quantity is always 1.`}
+                    >Commercial Ref ⇩</button>
+                    <button
+                      type="button"
+                      className={styles.actionBtn}
                       onClick={cloneActiveOption}
                       title={`Clone "${opt.sheetName}" into a new Option on this workbook. The clone is temporary — it goes away when you remove or replace the file.`}
                     >Clone option</button>
                     {linkedLabel ? (
                       <span
                         className={styles.savedChip}
-                        title={`Linked to Opps 2 row: ${linkedLabel}`}
+                        title={`Linked to Opps row: ${linkedLabel}`}
                       >
                         Saved to: {linkedLabel}
                         <button
@@ -2646,7 +3702,7 @@ export function PricingView({ settings } = {}) {
                           }
                           setPricingPickerOpen(true);
                         }}
-                        title={`Save "${opt.sheetName}" to an Opps 2 row.`}
+                        title={`Save "${opt.sheetName}" to an Opps row.`}
                       >Save to Opp…</button>
                     )}
                     <ColumnsMenu
@@ -2656,6 +3712,26 @@ export function PricingView({ settings } = {}) {
                       hiddenFn={colHidden}
                       onItemToggle={toggleColVisible}
                     />
+                    {(() => {
+                      const emptyCtsCount = opt.sections
+                        .flatMap(s => s.items)
+                        .filter(i => typeof i.cts !== 'number').length;
+                      if (emptyCtsCount === 0) return null;
+                      return (
+                        <button
+                          type="button"
+                          className={styles.actionBtn}
+                          onClick={() => setHideEmptyCtsRows(v => !v)}
+                          title={hideEmptyCtsRows
+                            ? `${emptyCtsCount} line item${emptyCtsCount === 1 ? '' : 's'} with no CTS value ${emptyCtsCount === 1 ? 'is' : 'are'} hidden. Click to show them.`
+                            : `Showing ${emptyCtsCount} line item${emptyCtsCount === 1 ? '' : 's'} with no CTS value. Click to hide them.`}
+                        >
+                          {hideEmptyCtsRows
+                            ? `Show empty-CTS rows (${emptyCtsCount})`
+                            : `Hide empty-CTS rows (${emptyCtsCount})`}
+                        </button>
+                      );
+                    })()}
                     {t && (
                       <div className={styles.optionSummary}>
                         <span>Cost: <span className={styles.summaryNum}>{fmtMoney(t.cost)}</span></span>
@@ -2713,6 +3789,40 @@ export function PricingView({ settings } = {}) {
                 {(() => {
                   const flatItems = opt.sections.flatMap(s => s.items);
                   if (flatItems.length === 0) return null;
+                  // Predictive-text suggestions for the per-row Linked
+                  // To input. Unions every tag the user has touched —
+                  // saved (Line Item, Type) defaults, alt-fee rows on
+                  // this option, and per-row overrides — deduped
+                  // case-insensitively while preserving the original
+                  // casing for display. The raw auto-derived union is
+                  // kept separate so the ± options manager can tell
+                  // auto tags from hand-added ones; the dropdown itself
+                  // then folds in the user's custom options and drops
+                  // the removed (hidden) ones.
+                  const linkedToAutoTags = (() => {
+                    const seen = new Map();
+                    const add = (name) => {
+                      const trimmed = String(name || '').trim();
+                      if (!trimmed) return;
+                      const k = trimmed.toLowerCase();
+                      if (!seen.has(k)) seen.set(k, trimmed);
+                    };
+                    for (const v of Object.values(linkedToDefaults)) add(v);
+                    for (const r of (altFees[opt.optionNumber] || [])) add(r.altItem);
+                    for (const o of Object.values(overrides)) if (o?.linkedTo) add(o.linkedTo);
+                    return [...seen.values()];
+                  })();
+                  const linkedToSuggestions = (() => {
+                    const hiddenTags = new Set((linkedToOptionsList.hidden || []).map(s => String(s).trim().toLowerCase()));
+                    const seen = new Map();
+                    for (const name of [...linkedToAutoTags, ...(linkedToOptionsList.custom || [])]) {
+                      const trimmed = String(name || '').trim();
+                      if (!trimmed) continue;
+                      const k = trimmed.toLowerCase();
+                      if (!seen.has(k) && !hiddenTags.has(k)) seen.set(k, trimmed);
+                    }
+                    return [...seen.values()].sort((a, b) => a.localeCompare(b));
+                  })();
                   const totalCost = flatItems.reduce((s, i) => s + (typeof i.cts === 'number' ? i.cts : 0), 0);
                   const totalPrice = flatItems.reduce((s, i) => {
                     const { price } = priceFor(i);
@@ -2784,6 +3894,14 @@ export function PricingView({ settings } = {}) {
                               >
                                 <span className={styles.thInner}>
                                   <span className={styles.thLabel}>{col.label}</span>
+                                  {col.key === 'linkedTo' && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setLinkedToOptionsModal({ autoTags: linkedToAutoTags })}
+                                      title="Add or remove options in the Linked To dropdown"
+                                      style={{ marginLeft: 4, padding: '0 5px', border: '1px solid var(--color-border)', borderRadius: 3, background: '#fff', fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text-muted)', cursor: 'pointer', lineHeight: 1.4, fontFamily: 'inherit' }}
+                                    >±</button>
+                                  )}
                                   <span
                                     className={styles.colResizer}
                                     onMouseDown={(e) => startColResize('main', col.key, e)}
@@ -2795,7 +3913,7 @@ export function PricingView({ settings } = {}) {
                           </tr>
                         </thead>
                         <tbody>
-                          {flatItems.map(item => {
+                          {flatItems.filter(item => !hideEmptyCtsRows || typeof item.cts === 'number').map(item => {
                             const { gm, source, price } = priceFor(item);
                             const overrideVal = overrides[item.id]?.gmPct;
                             const passThrough = isPassThrough(item);
@@ -2865,7 +3983,7 @@ export function PricingView({ settings } = {}) {
                                       <input
                                         type="checkbox"
                                         checked={passThrough}
-                                        onChange={(e) => setItemPassThrough(item.id, e.target.checked)}
+                                        onChange={(e) => setItemPassThrough(item.id, e.target.checked, item)}
                                       />
                                       <span>Pass-through</span>
                                     </label>
@@ -2889,6 +4007,7 @@ export function PricingView({ settings } = {}) {
                                             initial={currentVal}
                                             isDefault={isFromDefault}
                                             onCommit={(raw) => setItemLinkedTo(item, raw)}
+                                            suggestions={linkedToSuggestions}
                                           />
                                           <button
                                             type="button"
@@ -3206,13 +4325,60 @@ export function PricingView({ settings } = {}) {
                           return sum;
                         });
 
+                        // Cost line items whose Linked To doesn't match any
+                        // alt-fee tag in this section — either blank or a
+                        // tag with no corresponding fee row. Their cost is
+                        // invisible to the Deal-margin / Linked CTS totals
+                        // above, so flag them. Aggregate distinct items
+                        // (description + type + tag) and sum their face cost.
+                        const unlinkedByKey = new Map();
+                        for (const sec of opt.sections) {
+                          for (const it of sec.items) {
+                            const cost = ctsItemEffectiveCost(it);
+                            if (!(cost > 0)) continue;
+                            const tag = resolvedLinkedTo(it).trim();
+                            if (tag && altTagSet.has(tag.toLowerCase())) continue;
+                            const type = effectiveType(it);
+                            const desc = String(it.description || '').trim() || '(unnamed line item)';
+                            const key = `${desc.toLowerCase()}|${type.toLowerCase()}|${tag.toLowerCase()}`;
+                            const prev = unlinkedByKey.get(key);
+                            if (prev) { prev.cost += cost; }
+                            else unlinkedByKey.set(key, { desc, type, tag, cost });
+                          }
+                        }
+                        const unlinkedCostItems = [...unlinkedByKey.values()]
+                          .sort((a, b) => b.cost - a.cost);
+
                         return (
+                          <>
+                          {unlinkedCostItems.length > 0 && (
+                            <div className={styles.unlinkedWarning} role="alert">
+                              <strong>
+                                ⚠ {unlinkedCostItems.length} cost line item{unlinkedCostItems.length === 1 ? '' : 's'} not linked to any fee in this section
+                              </strong>
+                              {' '}— their cost isn&apos;t captured in the Deal margin / Linked CTS totals. Set each row&apos;s Linked To to a fee tag.
+                              <ul>
+                                {unlinkedCostItems.map((u, i) => (
+                                  <li key={`unlinked-${i}`}>
+                                    {u.desc}
+                                    {u.type ? ` · ${u.type}` : ''}
+                                    {' '}
+                                    <span className={styles.unlinkedNote}>
+                                      ({u.tag ? <>Linked To &ldquo;<span className={styles.unlinkedTag}>{u.tag}</span>&rdquo; — no matching fee</> : 'no Linked To'}
+                                      {`, cost ${fmtMoney(u.cost)}`})
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
                           <AltFeeTable
                             rows={altFees[opt.optionNumber] || altFeeStarter()}
                             globalGmPct={globalGmPct}
                             marginFor={altFeeMarginFor}
                             yearRevenue={altFeeYearRevenue}
                             autoFeeFor={autoFeePerUnitFor}
+                            autoStartMonthFor={autoStartMonthFor}
                             siteCount={opt.siteCount}
                             accountCount={opt.accountCount}
                             altItemSuggestions={altItemSuggestions}
@@ -3228,6 +4394,7 @@ export function PricingView({ settings } = {}) {
                             onAppendRows={(rows) => appendAltFeeRows(opt.optionNumber, rows)}
                             onClearRows={() => replaceAltFeeRows(opt.optionNumber, altFeeStarter())}
                           />
+                          </>
                         );
                       })()}
                       </div>
@@ -3260,43 +4427,97 @@ export function PricingView({ settings } = {}) {
                         const matchingAltRows = target
                           ? (altFees[opt.optionNumber] || []).filter(r => (r.altItem || '').trim().toLowerCase() === target)
                           : [];
-                        const chartData = years.map(y => {
+                        // Fee comes from Alternative Fee rows sharing the
+                        // tag. When the tag has none (it was only tagged on
+                        // CTS rows' Linked To for cost), fall back to the
+                        // marked-up-price revenue of those linked CTS rows so
+                        // the Fee and Margin still populate. Decide the source
+                        // once for the whole line item — never mix alt-fee and
+                        // CTS revenue across years — so a one-time alt fee in
+                        // Y1 doesn't leak CTS revenue into later years.
+                        const altRevenueByYear = years.map(y => matchingAltRows.reduce((s, r) => s + altFeeYearRevenue(r, y), 0));
+                        const useAltRevenue = altRevenueByYear.some(v => v > 0);
+                        const chartData = years.map((y, i) => {
                           const cost = linkedItems.reduce((s, it) => s + ctsItemYearCost(it, y), 0);
-                          const fee = matchingAltRows.reduce((s, r) => s + altFeeYearRevenue(r, y), 0);
+                          const fee = useAltRevenue
+                            ? altRevenueByYear[i]
+                            : linkedItems.reduce((s, it) => s + ctsItemYearRevenue(it, y), 0);
                           return { year: `Y${y}`, Cost: Math.round(cost), Fee: Math.round(fee) };
                         });
+                        // Unit count for the Fee / Unit column. Use the value
+                        // the user typed for this line item; if they haven't
+                        // typed one, fall back to the total unit count on the
+                        // matching Alternative Fee rows so the column is
+                        // populated out of the box when that data exists.
+                        const storedUnits = chartUnitCounts[target];
+                        const typedUnits = Number(storedUnits);
+                        const hasTypedUnits = storedUnits != null && storedUnits !== ''
+                          && Number.isFinite(typedUnits) && typedUnits > 0;
+                        const autoUnits = matchingAltRows.reduce((s, r) => {
+                          const uc = Number(r.unitCount);
+                          return s + (Number.isFinite(uc) ? uc : 0);
+                        }, 0);
+                        const unitCount = hasTypedUnits ? typedUnits : autoUnits;
+                        const hasUnits = Number.isFinite(unitCount) && unitCount > 0;
                         return (
                           <div className={styles.chartPanel}>
                             <div className={styles.chartHeader}>
                               <h3 className={styles.summaryTitle} style={{ margin: 0 }}>Line item year-over-year</h3>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
-                                <div className={styles.viewToggle}>
-                                  <button
-                                    type="button"
-                                    className={chartView === 'chart' ? styles.viewToggleOn : styles.viewToggleBtn}
-                                    onClick={() => setChartView('chart')}
-                                  >Chart</button>
-                                  <button
-                                    type="button"
-                                    className={chartView === 'table' ? styles.viewToggleOn : styles.viewToggleBtn}
-                                    onClick={() => setChartView('table')}
-                                  >Table</button>
-                                </div>
-                                <label className={styles.chartTagLabel}>
-                                  Line item:{' '}
-                                  <select
-                                    className={styles.chartTagSelect}
-                                    value={tag}
-                                    onChange={(e) => setChartTag(e.target.value)}
-                                    disabled={tagOptions.length === 0}
-                                  >
-                                    {tagOptions.length === 0 && <option value="">(no tagged items yet)</option>}
-                                    {tagOptions.map(t => <option key={t} value={t}>{t}</option>)}
-                                  </select>
-                                </label>
+                                {chartVisible && (
+                                  <>
+                                    <div className={styles.viewToggle}>
+                                      <button
+                                        type="button"
+                                        className={chartView === 'chart' ? styles.viewToggleOn : styles.viewToggleBtn}
+                                        onClick={() => setChartView('chart')}
+                                      >Chart</button>
+                                      <button
+                                        type="button"
+                                        className={chartView === 'table' ? styles.viewToggleOn : styles.viewToggleBtn}
+                                        onClick={() => setChartView('table')}
+                                      >Table</button>
+                                    </div>
+                                    <label className={styles.chartTagLabel}>
+                                      Line item:{' '}
+                                      <select
+                                        className={styles.chartTagSelect}
+                                        value={tag}
+                                        onChange={(e) => setChartTag(e.target.value)}
+                                        disabled={tagOptions.length === 0}
+                                      >
+                                        {tagOptions.length === 0 && <option value="">(no tagged items yet)</option>}
+                                        {tagOptions.map(t => <option key={t} value={t}>{t}</option>)}
+                                      </select>
+                                    </label>
+                                    <label className={styles.chartTagLabel} title="Number of units for this line item. The Fee / Unit column divides each year's fee by this count.">
+                                      Units:{' '}
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="any"
+                                        className={styles.chartTagSelect}
+                                        style={{ width: '5.5rem' }}
+                                        value={target ? (chartUnitCounts[target] ?? '') : ''}
+                                        placeholder={autoUnits > 0 ? String(autoUnits) : '—'}
+                                        disabled={!target}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          setChartUnitCounts(m => ({ ...m, [target]: v }));
+                                        }}
+                                      />
+                                    </label>
+                                  </>
+                                )}
+                                <button
+                                  type="button"
+                                  className={styles.viewToggleBtn}
+                                  onClick={() => setChartVisible(v => !v)}
+                                  title={chartVisible ? 'Hide the line item year-over-year breakdown' : 'Show the line item year-over-year breakdown'}
+                                >{chartVisible ? 'Hide' : 'Show'}</button>
                               </div>
                             </div>
-                            {tag ? (
+                            {chartVisible && (tag ? (
                               chartView === 'table' ? (
                                 <table className={styles.summaryTable}>
                                   <thead>
@@ -3304,6 +4525,7 @@ export function PricingView({ settings } = {}) {
                                       <th>Year</th>
                                       <th className={styles.numCell}>Cost</th>
                                       <th className={styles.priceCell}>Fee</th>
+                                      <th className={styles.priceCell} title={hasUnits ? `Fee ÷ ${unitCount.toLocaleString('en-US')} units` : 'Enter a unit count above to see fee per unit'}>Fee / Unit</th>
                                       <th className={styles.priceCell}>Margin</th>
                                     </tr>
                                   </thead>
@@ -3315,6 +4537,7 @@ export function PricingView({ settings } = {}) {
                                           <td>{d.year}</td>
                                           <td className={styles.numCell}>{fmtMoney(d.Cost)}</td>
                                           <td className={styles.priceCell}>{fmtMoney(d.Fee)}</td>
+                                          <td className={styles.priceCell}>{hasUnits ? fmtMoney(d.Fee / unitCount) : ''}</td>
                                           <td className={styles.priceCell}>{margin === null ? '' : `${(margin * 100).toFixed(1)}%`}</td>
                                         </tr>
                                       );
@@ -3323,6 +4546,7 @@ export function PricingView({ settings } = {}) {
                                       <td>Total</td>
                                       <td className={styles.numCell}>{fmtMoney(chartData.reduce((s, d) => s + d.Cost, 0))}</td>
                                       <td className={styles.priceCell}>{fmtMoney(chartData.reduce((s, d) => s + d.Fee, 0))}</td>
+                                      <td className={styles.priceCell}>{hasUnits ? fmtMoney(chartData.reduce((s, d) => s + d.Fee, 0) / unitCount) : ''}</td>
                                       <td className={styles.priceCell}>{(() => {
                                         const tc = chartData.reduce((s, d) => s + d.Cost, 0);
                                         const tf = chartData.reduce((s, d) => s + d.Fee, 0);
@@ -3350,7 +4574,7 @@ export function PricingView({ settings } = {}) {
                               <div style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)', padding: '1rem 0' }}>
                                 Tag at least one CTS row's <strong>Linked To</strong> column or fill in the <strong>Alternative Fee Structure / Schedule</strong> with an item name to populate this chart.
                               </div>
-                            )}
+                            ))}
                           </div>
                         );
                       })()}
@@ -3382,19 +4606,24 @@ export function PricingView({ settings } = {}) {
                 const hasManualFee = r.fee != null && r.fee !== ''
                   && Number.isFinite(manualFee) && manualFee >= 0;
                 const resolvedFee = hasManualFee ? manualFee : (autoFeePerUnitFor(r) ?? 0);
+                const manualSm = Number(r.startMonth);
+                const hasManualSm = r.startMonth != null && r.startMonth !== ''
+                  && Number.isFinite(manualSm) && manualSm > 0;
+                const resolvedSm = hasManualSm ? manualSm : (autoStartMonthFor(r) || 1);
                 return {
                   feeSchedule: r.altItem || '',
                   type: r.type || '',
                   fee: resolvedFee,
                   unit: r.unit || '',
                   unitCount: r.unitCount,
-                  startMonth: r.startMonth,
+                  startMonth: resolvedSm,
                 };
               });
               const snapshot = buildPricingOptionSnapshot({
                 name: label,
                 years: Math.max(1, Math.round((termMonths || 12) / 12)),
                 escPct: (Number(annualEscalator) || 0) * 100,
+                services: (opt && pricingOptionServices) ? (pricingOptionServices[opt.sheetName] || []) : [],
                 rows,
               });
               // Attach a copy of the uploaded SIA workbook to this opp
@@ -3424,11 +4653,17 @@ export function PricingView({ settings } = {}) {
                 }
                 setPricingPickerOpen(false);
               } catch (err) {
-                console.error('Save to Opp (Pricing): snapshot save failed', err);
+                console.error('Save to Opp (Pricing): snapshot save failed', { err, uid: user?.uid, oppId });
+                const denied = err?.code === 'permission-denied'
+                  || /insufficient permissions/i.test(err?.message || '');
                 window.alert(
                   'Saved the link, but the Pricing snapshot failed to save to Firestore. ' +
-                  'Year 1 fees and the saved details may not appear on the Opp. ' +
-                  'Check your network and try again.\n\n' +
+                  'Year 1 fees and the saved details may not appear on the Opp.\n\n' +
+                  (denied
+                    ? 'Firestore denied the write (permission error) — this is a security-rules issue, not your network. '
+                      + 'The deployed rules need to allow the opps2Data document for your account.'
+                    : 'Check your network and try again.') +
+                  '\n\n' +
                   (err?.message || String(err))
                 );
               }
@@ -3437,6 +4672,16 @@ export function PricingView({ settings } = {}) {
           />
         );
       })()}
+
+      {linkedToOptionsModal && (
+        <LinkedToOptionsModal
+          autoTags={linkedToOptionsModal.autoTags}
+          optionsList={linkedToOptionsList}
+          onAdd={addLinkedToOption}
+          onRemove={removeLinkedToOption}
+          onClose={() => setLinkedToOptionsModal(null)}
+        />
+      )}
     </div>
   );
 }

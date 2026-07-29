@@ -5,6 +5,7 @@ import {
   getEffectiveDropdownLists,
   makeCustomListKey,
 } from '../../utils/dropdownListsStore';
+import { QuestionsTab } from './QuestionsTab';
 import styles from './DropdownsView.module.css';
 
 const SERVICE_TABLE_COLUMNS = [
@@ -15,6 +16,8 @@ const SERVICE_TABLE_COLUMNS = [
   { key: 'productLine',      label: 'Product Line',      width: 260,    editable: true  },
   { key: 'serviceType',      label: 'Service Type',      width: 110,    editable: true  },
   { key: 'localProjectName', label: 'Local Project Name', width: 200,   editable: true  },
+  { key: 'timelineDriven',   label: 'Timeline Driven',   width: 120,    editable: true  },
+  { key: 'rolloutTime',      label: 'Rollout Time',      width: 160,    editable: true  },
 ];
 
 // Inline cell editor for the Services subtab. Renders the current
@@ -69,6 +72,36 @@ function ServiceCell({ value, onCommit }) {
         boxSizing: 'border-box',
       }}
     />
+  );
+}
+
+// Yes/No dropdown for the Services subtab's "Timeline Driven" column.
+// Renders as a compact <select>; an empty value ("—") means the user
+// hasn't set it yet and clears the override so the cell falls back to
+// the seed value (currently none).
+function ServiceYesNoCell({ value, onCommit }) {
+  return (
+    <select
+      value={value || ''}
+      onChange={(e) => {
+        const next = e.target.value;
+        if (next === (value || '')) return;
+        onCommit(next);
+      }}
+      title="Is this service timeline driven?"
+      style={{
+        width: '100%',
+        padding: '3px 4px',
+        border: '1px solid transparent', borderRadius: 4,
+        fontSize: '0.75rem', fontFamily: 'inherit',
+        background: 'transparent', color: 'var(--color-text)',
+        cursor: 'pointer', boxSizing: 'border-box',
+      }}
+    >
+      <option value="">—</option>
+      <option value="Yes">Yes</option>
+      <option value="No">No</option>
+    </select>
   );
 }
 
@@ -155,6 +188,8 @@ function ServiceRow({ name, meta, url, onSaveUrl, onSaveField }) {
       <td><ServiceCell value={meta?.productLine || ''}      onCommit={(v) => onSaveField(name, 'productLine', v)} /></td>
       <td><ServiceCell value={meta?.serviceType || ''}      onCommit={(v) => onSaveField(name, 'serviceType', v)} /></td>
       <td><ServiceCell value={meta?.localProjectName || ''} onCommit={(v) => onSaveField(name, 'localProjectName', v)} /></td>
+      <td><ServiceYesNoCell value={meta?.timelineDriven || ''} onCommit={(v) => onSaveField(name, 'timelineDriven', v)} /></td>
+      <td><ServiceCell value={meta?.rolloutTime || ''}      onCommit={(v) => onSaveField(name, 'rolloutTime', v)} /></td>
     </tr>
   );
 }
@@ -172,9 +207,19 @@ function ServiceRow({ name, meta, url, onSaveUrl, onSaveField }) {
 // Single editable option row. Holds a local draft so typing is
 // instant; the parent only learns about the change on commit (blur
 // or Enter), which keeps Firestore writes per-edit not per-keystroke.
-function OptionRow({ value, onCommit, onRemove }) {
+//
+// When `linkEnabled` is set (the Solutions / Service Catalog card),
+// the row grows a second column where the user can attach a
+// presentation hyperlink for that option. The link commits on blur /
+// Enter; clearing it removes the link.
+function OptionRow({ value, onCommit, onRemove, linkEnabled, link, onSaveLink }) {
   const [draft, setDraft] = useState(value);
   useEffect(() => { setDraft(value); }, [value]);
+
+  const [linkEditing, setLinkEditing] = useState(false);
+  const [linkDraft, setLinkDraft] = useState('');
+  const linkInputRef = useRef(null);
+  useEffect(() => { if (linkEditing) linkInputRef.current?.focus(); }, [linkEditing]);
 
   function commit() {
     const trimmed = draft.trim();
@@ -185,6 +230,15 @@ function OptionRow({ value, onCommit, onRemove }) {
   function cancel() {
     setDraft(value);
   }
+
+  function startLinkEdit() { setLinkDraft(link || ''); setLinkEditing(true); }
+  function commitLink() {
+    const next = linkDraft.trim();
+    setLinkEditing(false);
+    if ((next || '') === (link || '')) return;
+    onSaveLink(value, next);
+  }
+  function cancelLink() { setLinkEditing(false); }
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 0' }}>
@@ -207,6 +261,63 @@ function OptionRow({ value, onCommit, onRemove }) {
         onFocus={(e) => { e.currentTarget.style.background = '#fff'; e.currentTarget.style.borderColor = 'var(--color-border)'; }}
         onBlurCapture={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'transparent'; }}
       />
+      {linkEnabled && (
+        <div className={styles.optionLinkCell}>
+          {linkEditing ? (
+            <input
+              ref={linkInputRef}
+              type="url"
+              value={linkDraft}
+              placeholder="https://…/presentation"
+              onChange={(e) => setLinkDraft(e.target.value)}
+              onBlur={commitLink}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); commitLink(); }
+                else if (e.key === 'Escape') { e.preventDefault(); cancelLink(); }
+              }}
+              style={{
+                flex: 1, minWidth: 0,
+                padding: '3px 6px',
+                border: '1px solid var(--color-accent)', borderRadius: 4,
+                fontSize: '0.72rem', fontFamily: 'inherit',
+                color: 'var(--color-text)', background: '#fff',
+              }}
+            />
+          ) : link ? (
+            <>
+              <a
+                href={link}
+                target="_blank"
+                rel="noreferrer"
+                className={styles.serviceLink}
+                title={link}
+              >🔗 Presentation</a>
+              <button
+                type="button"
+                className={styles.serviceLinkEditBtn}
+                onClick={startLinkEdit}
+                title="Edit presentation link"
+                aria-label="Edit presentation link"
+              >✎</button>
+              <button
+                type="button"
+                className={styles.serviceLinkEditBtn}
+                onClick={() => onSaveLink(value, '')}
+                title="Remove presentation link"
+                aria-label="Remove presentation link"
+              >×</button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className={styles.serviceLinkEditBtn}
+              onClick={startLinkEdit}
+              title="Add presentation link"
+              aria-label="Add presentation link"
+            >+ link</button>
+          )}
+        </div>
+      )}
       <button
         type="button"
         onClick={onRemove}
@@ -262,7 +373,8 @@ function EditableTitle({ value, onCommit }) {
 // Single editable list card. Filters its option list to whatever
 // matches the global search term but always edits against the full
 // underlying array.
-function ListCard({ list, filter, wide, onChange, onRenameLabel, onRemoveList }) {
+function ListCard({ list, filter, wide, links, onSaveLink, onChange, onRenameLabel, onRemoveList }) {
+  const linkEnabled = typeof onSaveLink === 'function';
   const [adding, setAdding] = useState(false);
   const [addDraft, setAddDraft] = useState('');
   const addInputRef = useRef(null);
@@ -330,6 +442,13 @@ function ListCard({ list, filter, wide, onChange, onRenameLabel, onRemoveList })
         >🗑</button>
       </div>
       <div className={`${styles.cardBody} ${wide ? styles.cardBodyTall : ''}`}>
+        {linkEnabled && (
+          <div className={styles.listColHeader}>
+            <span className={styles.listColHeaderName}>Solution</span>
+            <span className={styles.listColHeaderLink}>Presentation</span>
+            <span className={styles.listColHeaderSpacer} />
+          </div>
+        )}
         {visible.length === 0 ? (
           <div className={styles.optionEmpty}>
             {list.options.length === 0 ? '— no options —' : '— no matches —'}
@@ -341,6 +460,9 @@ function ListCard({ list, filter, wide, onChange, onRenameLabel, onRemoveList })
               value={opt}
               onCommit={(next) => commitOption(idx, next)}
               onRemove={() => removeOption(idx)}
+              linkEnabled={linkEnabled}
+              link={linkEnabled ? (links?.[opt] || '') : ''}
+              onSaveLink={onSaveLink}
             />
           ))
         )}
@@ -410,6 +532,22 @@ export function DropdownsView({ settings, updateSettings }) {
     updateSettings?.({ serviceLinks: next });
   }
 
+  // Per-service presentation hyperlinks shown as a second column on
+  // the Solutions / Service Catalog card (Lists tab). Stored separately
+  // from `serviceLinks` (the Services subtab's name-as-link feature) so
+  // the two don't interfere. Keyed by service name; syncs across
+  // devices alongside the other dropdown settings.
+  const presentationLinks = (settings?.servicePresentationLinks && typeof settings.servicePresentationLinks === 'object')
+    ? settings.servicePresentationLinks
+    : {};
+  function savePresentationLink(name, url) {
+    const next = { ...presentationLinks };
+    const trimmed = (url || '').trim();
+    if (trimmed) next[name] = trimmed;
+    else delete next[name];
+    updateSettings?.({ servicePresentationLinks: next });
+  }
+
   // User overrides for the Services subtab cells. Persisted under
   // settings.serviceOverrides so edits sync across devices. A blank
   // value clears that field's override so the cell falls back to the
@@ -447,7 +585,7 @@ export function DropdownsView({ settings, updateSettings }) {
     return serviceRows.filter(({ name, meta }) => {
       if (name.toLowerCase().includes(term)) return true;
       if (!meta) return false;
-      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.localProjectName]
+      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.localProjectName, meta.timelineDriven, meta.rolloutTime]
         .some(v => String(v || '').toLowerCase().includes(term));
     });
   }, [serviceRows, serviceSearch]);
@@ -530,7 +668,7 @@ export function DropdownsView({ settings, updateSettings }) {
       <div className={styles.header}>
         <h2 className={styles.title}>Dropdowns</h2>
         <span className={styles.lastSync}>
-          Edit the picklist vocabulary the Opps 2, Deals, and Clients tabs use when a column is linked to a list. Changes save automatically and sync across devices.
+          Edit the picklist vocabulary the Opps, Deals, and Clients tabs use when a column is linked to a list. Changes save automatically and sync across devices.
         </span>
       </div>
 
@@ -545,6 +683,11 @@ export function DropdownsView({ settings, updateSettings }) {
           className={activeTab === 'services' ? styles.subtabActive : styles.subtab}
           onClick={() => setActiveTab('services')}
         >Services <span className={styles.subtabCount}>{serviceRows.length}</span></button>
+        <button
+          type="button"
+          className={activeTab === 'questions' ? styles.subtabActive : styles.subtab}
+          onClick={() => setActiveTab('questions')}
+        >Questions</button>
       </div>
 
       {activeTab === 'lists' ? (
@@ -592,6 +735,8 @@ export function DropdownsView({ settings, updateSettings }) {
                   list={solutions}
                   filter={search}
                   wide
+                  links={presentationLinks}
+                  onSaveLink={savePresentationLink}
                   onChange={saveList}
                   onRenameLabel={renameList}
                   onRemoveList={removeList}
@@ -624,7 +769,7 @@ export function DropdownsView({ settings, updateSettings }) {
             )}
           </div>
         </>
-      ) : (
+      ) : activeTab === 'services' ? (
         <>
           <div className={styles.searchRow}>
             <input
@@ -682,6 +827,8 @@ export function DropdownsView({ settings, updateSettings }) {
             </div>
           </div>
         </>
+      ) : (
+        <QuestionsTab settings={settings} updateSettings={updateSettings} serviceOptions={serviceRows.map(r => r.name)} />
       )}
     </div>
   );
