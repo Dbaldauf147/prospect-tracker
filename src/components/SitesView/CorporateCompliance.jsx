@@ -19,6 +19,11 @@ const revenueSlug = (name) => String(name || '').toLowerCase().replace(/[^a-z0-9
 
 const UNNAMED = '(Unnamed company)';
 
+// Company cards span the full page width, so unconstrained prose and
+// question rows would run edge to edge. Cap the text-heavy blocks at a
+// readable measure — the card itself still fills the page.
+const READABLE_MAX = '90ch';
+
 const isCalifornia = (state) => {
   const s = String(state || '').trim().toLowerCase();
   return s === 'ca' || s === 'california';
@@ -170,8 +175,10 @@ function RevenueSection({ data, loading, error, disabled, onResearch, linked, co
                 .filter(Boolean).join(' · ')}
             </div>
           )}
+          {/* maxWidth keeps the prose readable on a full-width card —
+              without it a summary runs the entire page width. */}
           {data.summary && (
-            <div style={{ marginTop: '0.25rem', color: 'var(--color-text)', fontStyle: 'italic' }}>{data.summary}</div>
+            <div style={{ marginTop: '0.25rem', color: 'var(--color-text)', fontStyle: 'italic', maxWidth: READABLE_MAX }}>{data.summary}</div>
           )}
           {Array.isArray(data.sources) && data.sources.length > 0 && (
             <div style={{ marginTop: '0.3rem', display: 'flex', flexWrap: 'wrap', gap: '0.3rem 0.5rem' }}>
@@ -243,7 +250,9 @@ function answerSelectStyle(val) {
 // in; `research` holds the last run's per-question rationale + sources.
 function JurisdictionScreening({ answers, caSiteCount = 0, onSet, disabled, onResearch, researching, researchError, research }) {
   return (
-    <div>
+    // Capped so each Yes/No select stays beside its question instead of
+    // drifting to the far edge of a full-width card.
+    <div style={{ maxWidth: READABLE_MAX }}>
       {!disabled && (
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.35rem' }}>
           <button
@@ -293,7 +302,7 @@ function JurisdictionScreening({ answers, caSiteCount = 0, onSet, disabled, onRe
                   </select>
                 </div>
                 {note && (
-                  <div style={{ margin: '0.15rem 0 0', paddingLeft: '0.1rem', fontSize: '0.63rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
+                  <div style={{ margin: '0.15rem 0 0', paddingLeft: '0.1rem', fontSize: '0.63rem', color: 'var(--color-text-muted)', fontStyle: 'italic', maxWidth: READABLE_MAX }}>
                     {note}
                   </div>
                 )}
@@ -316,7 +325,7 @@ function JurisdictionScreening({ answers, caSiteCount = 0, onSet, disabled, onRe
           )}
           {research && (research.summary || (research.sources && research.sources.length > 0) || research.savedAt) && (
             <div style={{ marginTop: '0.15rem', fontSize: '0.62rem', color: 'var(--color-text-muted)' }}>
-              {research.summary && <div style={{ fontStyle: 'italic', marginBottom: '0.2rem' }}>{research.summary}</div>}
+              {research.summary && <div style={{ fontStyle: 'italic', marginBottom: '0.2rem', maxWidth: READABLE_MAX }}>{research.summary}</div>}
               {Array.isArray(research.sources) && research.sources.length > 0 && (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.2rem 0.5rem' }}>
                   {research.sources.slice(0, 6).map((s, i) => (
@@ -680,7 +689,8 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
             {totalCA === 1 ? 'site' : 'sites'}
             {scanning && <span> · scanning lists…</span>}
           </div>
-          <div style={{ display: 'grid', gap: '0.75rem', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
+          {/* One company per row — each card spans the full page width. */}
+          <div style={{ display: 'grid', gap: '0.75rem', gridTemplateColumns: '1fr' }}>
             {companies.map((c) => {
               const matches = listMatches[c.name] || [];
               // True while either the revenue or the jurisdiction research
@@ -691,34 +701,34 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                   border: '1px solid var(--color-border)', borderRadius: 8,
                   background: 'var(--color-surface)', padding: '0.75rem 0.9rem',
                 }}>
-                  {/* Card header — company name + one-click research. */}
-                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.5rem' }}>
+                  {/* Card header — company name on the left, one-click
+                      research on the right. The button sizes to its label
+                      (a full-width card would otherwise stretch it across
+                      the whole page). The per-section buttons below still
+                      re-run just one facet. */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem' }}>
                     <div
                       title={c.name}
                       style={{ fontWeight: 700, color: 'var(--color-text)', fontSize: 'var(--font-size-sm)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                     >
                       {c.name}
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => { researchRevenue(c.name); researchCompliance(c.name, c.key); }}
+                      disabled={!c.key || anyResearching}
+                      title="Research this company's annual revenue and answer all six jurisdiction questions in one go."
+                      style={{
+                        flexShrink: 0, padding: '0.4rem 0.8rem', borderRadius: 6,
+                        border: '1px solid var(--color-accent)', background: 'var(--color-accent)', color: '#fff',
+                        fontSize: 'var(--font-size-xs)', fontWeight: 700, fontFamily: 'inherit',
+                        cursor: (!c.key || anyResearching) ? 'default' : 'pointer',
+                        opacity: (!c.key || anyResearching) ? 0.55 : 1,
+                      }}
+                    >
+                      {anyResearching ? 'Researching…' : '🔎 Research everything'}
+                    </button>
                   </div>
-
-                  {/* One-click: revenue research + all six jurisdiction
-                      answers together. The per-section buttons below still
-                      re-run just one facet. */}
-                  <button
-                    type="button"
-                    onClick={() => { researchRevenue(c.name); researchCompliance(c.name, c.key); }}
-                    disabled={!c.key || anyResearching}
-                    title="Research this company's annual revenue and answer all six jurisdiction questions in one go."
-                    style={{
-                      marginTop: '0.5rem', width: '100%', padding: '0.4rem 0.6rem', borderRadius: 6,
-                      border: '1px solid var(--color-accent)', background: 'var(--color-accent)', color: '#fff',
-                      fontSize: 'var(--font-size-xs)', fontWeight: 700, fontFamily: 'inherit',
-                      cursor: (!c.key || anyResearching) ? 'default' : 'pointer',
-                      opacity: (!c.key || anyResearching) ? 0.55 : 1,
-                    }}
-                  >
-                    {anyResearching ? 'Researching…' : '🔎 Research everything'}
-                  </button>
 
                   {/* Everything below reads as an aligned label / value
                       table: one CardRow per section instead of stacked
