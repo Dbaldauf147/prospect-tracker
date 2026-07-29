@@ -64,6 +64,12 @@ import styles from './OppsView2.module.css';
 // stays the canonical Google Sheets view; Opps 2 is the place the
 // user types new opps directly into the app.
 
+// Hides the "Import from Opps - Old tab" and "Bulk import" buttons in
+// the page header. The one-time Opps - Old copy has already been run
+// and neither is in routine use, so they just crowd the toolbar. All
+// the import machinery is still here — flip this to true to show them.
+const SHOW_IMPORT_BUTTONS = false;
+
 // Opps 2 persistence (IndexedDB cache + chunked Firestore doc) lives in
 // utils/opps2Store.js so other views can read/write through the same
 // path; see the imports above.
@@ -9277,6 +9283,37 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             suggestions={companySuggestions}
             onCommit={(name) => setPendingNewOpp({ account: name })}
           />
+          {/* Mass Edit lives up here with the rest of the page actions.
+              Still Opportunities-only — the other tabs have no row
+              selection to drive it. */}
+          {activeTab === 'opps' && (
+            <button
+              type="button"
+              onClick={() => {
+                setMassEditOn(on => {
+                  // Leaving mass-edit mode clears any in-flight selection
+                  // so the bulk toolbar disappears and the next time the
+                  // user re-enters they start fresh.
+                  if (on) { setSelectedIds(new Set()); selectionAnchorRef.current = null; }
+                  return !on;
+                });
+              }}
+              title={massEditOn
+                ? 'Hide the selection checkboxes and exit mass-edit mode.'
+                : 'Show selection checkboxes so you can pick multiple rows to edit at once.'}
+              style={{
+                padding: '0.45rem 0.85rem',
+                fontSize: 'var(--font-size-sm)',
+                fontWeight: 600,
+                fontFamily: 'inherit',
+                color: massEditOn ? '#fff' : '#1E3A8A',
+                background: massEditOn ? '#2563EB' : 'transparent',
+                border: `1px solid ${massEditOn ? '#2563EB' : '#93C5FD'}`,
+                borderRadius: 'var(--radius-md)',
+                cursor: 'pointer',
+              }}
+            >{massEditOn ? 'Exit Mass Edit' : 'Mass Edit'}</button>
+          )}
           <button
             type="button"
             onClick={() => setLinkModalOpen(true)}
@@ -9288,29 +9325,37 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             }}
             title="Bind columns to Dropdowns-tab lists"
           >Link columns</button>
-          <button
-            type="button"
-            onClick={importFromOppsTab}
-            disabled={importingFromOpps}
-            style={{
-              padding: '0.45rem 0.85rem', background: 'transparent',
-              border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
-              fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
-              color: 'var(--color-text)', cursor: importingFromOpps ? 'progress' : 'pointer',
-            }}
-            title="One-time copy of every row from the Opps - Old tab cache that isn't already on Opps"
-          >{importingFromOpps ? 'Importing…' : 'Import from Opps - Old tab'}</button>
-          <button
-            type="button"
-            onClick={() => setBulkImportOpen(true)}
-            style={{
-              padding: '0.45rem 0.85rem', background: 'transparent',
-              border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
-              fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
-              color: 'var(--color-text)', cursor: 'pointer',
-            }}
-            title="Paste data from a Google Sheet with the same columns and review the mapping before importing"
-          >Bulk import</button>
+          {/* The two import entry points are hidden — the one-time
+              Opps - Old copy is done and Bulk import isn't in routine use.
+              Flip SHOW_IMPORT_BUTTONS to bring them back; the import
+              handlers and modals are all still wired up. */}
+          {SHOW_IMPORT_BUTTONS && (
+            <>
+              <button
+                type="button"
+                onClick={importFromOppsTab}
+                disabled={importingFromOpps}
+                style={{
+                  padding: '0.45rem 0.85rem', background: 'transparent',
+                  border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
+                  fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
+                  color: 'var(--color-text)', cursor: importingFromOpps ? 'progress' : 'pointer',
+                }}
+                title="One-time copy of every row from the Opps - Old tab cache that isn't already on Opps"
+              >{importingFromOpps ? 'Importing…' : 'Import from Opps - Old tab'}</button>
+              <button
+                type="button"
+                onClick={() => setBulkImportOpen(true)}
+                style={{
+                  padding: '0.45rem 0.85rem', background: 'transparent',
+                  border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
+                  fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
+                  color: 'var(--color-text)', cursor: 'pointer',
+                }}
+                title="Paste data from a Google Sheet with the same columns and review the mapping before importing"
+              >Bulk import</button>
+            </>
+          )}
           <button
             type="button"
             onClick={() => setNfatScheduleOpen(true)}
@@ -9867,10 +9912,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         {filtersActive && (
           <button className={styles.clearFiltersBtn} onClick={clearFilters}>Clear filters</button>
         )}
-        {/* Opps-tab search + result count + Mass Edit, hoisted up onto the
-            filter row so the whole control strip sits on one line. Guarded
-            to the Opportunities tab (the other tabs have no free-text
-            search). */}
+        {/* Opps-tab search + result count. Guarded to the Opportunities
+            tab (the other tabs have no free-text search). Mass Edit used
+            to sit here — it now lives in the page header. */}
         {activeTab === 'opps' && (
           <>
             <input
@@ -9882,32 +9926,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               style={{ width: 260 }}
             />
             <span className={styles.resultCount}>{filtered.length} of {prefiltered.length}{filtersActive && prefiltered.length !== records.length ? ` (filtered from ${records.length})` : ''}</span>
-            <button
-              type="button"
-              onClick={() => {
-                setMassEditOn(on => {
-                  // Leaving mass-edit mode clears any in-flight selection
-                  // so the bulk toolbar disappears and the next time the
-                  // user re-enters they start fresh.
-                  if (on) { setSelectedIds(new Set()); selectionAnchorRef.current = null; }
-                  return !on;
-                });
-              }}
-              title={massEditOn
-                ? 'Hide the selection checkboxes and exit mass-edit mode.'
-                : 'Show selection checkboxes so you can pick multiple rows to edit at once.'}
-              style={{
-                padding: '0.3rem 0.7rem',
-                fontSize: '0.78rem',
-                fontWeight: 600,
-                fontFamily: 'inherit',
-                color: massEditOn ? '#fff' : '#1E3A8A',
-                background: massEditOn ? '#2563EB' : '#fff',
-                border: `1px solid ${massEditOn ? '#2563EB' : '#93C5FD'}`,
-                borderRadius: 6,
-                cursor: 'pointer',
-              }}
-            >{massEditOn ? 'Exit Mass Edit' : 'Mass Edit'}</button>
             {selectedIds.size > 0 && (
               <button
                 type="button"
