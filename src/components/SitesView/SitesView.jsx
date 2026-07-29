@@ -35,7 +35,7 @@ import { ComplianceRoadmap } from './ComplianceRoadmap';
 import CorporateCompliance from './CorporateCompliance';
 import { screenSites, CATEGORIES, totalPenalty, bpsPrioritization } from '../../utils/complianceMandates';
 import { exportComplianceReportXlsx, buildCorporateComplianceSheet, buildComplianceMethodologySheet } from '../../utils/complianceReportXlsx';
-import { saveIndicativeAnalysis, deleteIndicativeAnalysis } from '../../utils/firestoreSync';
+import { saveIndicativeAnalysis, deleteIndicativeAnalysis, getIndicativeAnalysisMeta } from '../../utils/firestoreSync';
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
 import { classifyUtility } from '../../utils/utilityClassify';
@@ -412,6 +412,24 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
     };
   }, [picked, bySlug, prospectBySlug]);
 
+  // The prospect-record marker is only stamped on saves made after it was
+  // introduced, so analyses saved before that would read "Not saved". Fall
+  // back to a metadata-only read of the picked company's analyses doc — one
+  // document read, and only for the company currently on screen.
+  const [fetchedAnalysis, setFetchedAnalysis] = useState(null);
+  const resultProspectId = result?.prospect?.id || null;
+  useEffect(() => {
+    setFetchedAnalysis(null);
+    if (!resultProspectId) return;
+    let cancelled = false;
+    getIndicativeAnalysisMeta(resultProspectId)
+      .then((meta) => { if (!cancelled) setFetchedAnalysis(meta); })
+      .catch(() => { /* absent or unreadable — leave the marker-based value */ });
+    return () => { cancelled = true; };
+  }, [resultProspectId]);
+
+  const analysisMeta = result?.analysis || fetchedAnalysis || null;
+
   function choose(name) {
     setPicked(name);
     setQuery(name);
@@ -430,13 +448,16 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
       style={{
         marginTop: '0.6rem', padding: '0.6rem 0.75rem',
         border: '1px solid var(--color-border)', borderRadius: 8, background: '#fff',
-        maxWidth: 680,
+        maxWidth: 1040,
       }}
     >
       <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#0F172A', marginBottom: '0.45rem' }}>
         Company Look Up
       </div>
-      <div style={{ position: 'relative' }}>
+      {/* Search on the left, the looked-up company's details to its right.
+          Wraps back to stacked on narrow viewports. */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1.25rem', flexWrap: 'wrap' }}>
+      <div style={{ position: 'relative', flex: '0 0 280px', minWidth: 220 }}>
         <input
           type="text"
           value={query}
@@ -492,7 +513,7 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
       </div>
 
       {result && (
-        <div style={{ marginTop: '0.55rem' }}>
+        <div style={{ flex: '1 1 380px', minWidth: 0 }}>
           {/* Mapped company name — clickable to open the company popup when a
               matching Table View record exists. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
@@ -532,11 +553,11 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
             </button>
           </div>
 
-          {/* Two status items: site list mapped + company revenue — laid out
-              side by side so they read horizontally instead of stacked. */}
-          <div style={{ marginTop: '0.5rem', display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '0.4rem 2rem' }}>
+          {/* Status items stack in this right-hand column so each label /
+              value pair stays on one line at the column's width. */}
+          <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
-              <span style={{ flexShrink: 0, fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#94A3B8' }}>
+              <span style={{ flexShrink: 0, minWidth: 118, fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#94A3B8' }}>
                 Site list mapped
               </span>
               {result.entry ? (
@@ -555,11 +576,11 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
               <span style={{ flexShrink: 0, minWidth: 118, fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#94A3B8' }}>
                 Indicative savings
               </span>
-              {result.analysis ? (
+              {analysisMeta ? (
                 <span style={{ fontSize: '0.74rem', color: '#166534', fontWeight: 600 }}>
                   ✓ Saved
-                  {result.analysis.savedAt
-                    ? <span style={{ color: '#15803D', fontWeight: 400 }}> · {new Date(result.analysis.savedAt).toLocaleDateString()}</span>
+                  {analysisMeta.savedAt
+                    ? <span style={{ color: '#15803D', fontWeight: 400 }}> · {new Date(analysisMeta.savedAt).toLocaleDateString()}</span>
                     : null}
                 </span>
               ) : (
@@ -567,7 +588,7 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
               )}
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
-              <span style={{ flexShrink: 0, fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#94A3B8' }}>
+              <span style={{ flexShrink: 0, minWidth: 118, fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#94A3B8' }}>
                 Company revenue
               </span>
               {result.revenue ? (
@@ -579,6 +600,7 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
@@ -3465,6 +3487,50 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     return btoa(binary);
   }
 
+  // Mirror the currently-loaded sites into settings.companySiteLists under
+  // the company's slug, matching the shape the company popup writes
+  // ({ company, fileName, headers, rows, uploadedAt }) so the Company Look
+  // Up status and the Site List Overview both read it. Returns a short
+  // note to append to the save status ('' when the list was written).
+  function saveSitesAsCompanySiteList(company) {
+    const slug = companySlug(company);
+    if (!slug || !updateSettingsPath) return '';
+    if (!sitesData.length || !siteHeaders.length) return '';
+    // Firestore rejects Dates / nested objects in these row maps, and the
+    // popup's own upload path normalizes the same way.
+    const safeCell = (v) => {
+      if (v == null) return '';
+      if (v instanceof Date) return v.toISOString();
+      if (typeof v === 'object') return String(v);
+      return v;
+    };
+    const rows = sitesData.map((r) => {
+      const o = {};
+      for (const h of siteHeaders) o[h] = safeCell(r[h]);
+      return o;
+    });
+    const entry = {
+      company: company || '',
+      fileName: 'Saved from Utility Look Up',
+      headers: siteHeaders,
+      rows,
+      uploadedAt: new Date().toISOString(),
+    };
+    // companySiteLists lives on the single settings document, which
+    // Firestore caps at ~1 MiB across every company's list. Skip rather
+    // than fail the whole save when these rows alone would crowd it out.
+    if (JSON.stringify(entry).length > 400_000) {
+      return ' Site list not mapped — too many sites for the settings document.';
+    }
+    try {
+      updateSettingsPath({ [`companySiteLists.${slug}`]: entry });
+      return '';
+    } catch (e) {
+      console.warn('Could not save company site list:', e);
+      return ' Site list could not be mapped.';
+    }
+  }
+
   async function saveIndicativeSavingsToCompany(prospect) {
     if (!prospect?.id) return;
     // Picking a company to save to also names the whole portfolio, so the
@@ -3508,7 +3574,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           });
         } catch (e) { console.warn('Could not stamp analysis marker on prospect:', e); }
       }
-      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.` });
+      // Also register the loaded sites as this company's site list, so the
+      // "Site list mapped" status (and the Site List Overview) reflect the
+      // save instead of staying empty until someone re-uploads the same
+      // rows from the company popup.
+      const siteListNote = saveSitesAsCompanySiteList(prospect.company);
+      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteListNote}` });
       setSavePickerSearch(null);
       setTimeout(() => setSaveStatus({ state: 'idle', message: '' }), 4000);
     } catch (err) {
