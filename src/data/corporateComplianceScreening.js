@@ -21,7 +21,10 @@ export const JURISDICTION_QUESTIONS = [
 ];
 
 // Allowed answers (plus the blank "unanswered" state the UI adds).
-export const SCREENING_ANSWERS = ['Yes', 'No'];
+// "Unknown" is a real, persisted answer — the research step returns it when
+// the public record doesn't settle the question, and it must be
+// distinguishable from "nobody has looked yet".
+export const SCREENING_ANSWERS = ['Yes', 'No', 'Unknown'];
 
 // The reporting regulations gated by each jurisdiction question, keyed by
 // the same `key` as JURISDICTION_QUESTIONS. `thresholds` are the
@@ -33,6 +36,10 @@ export const REGULATIONS_BY_JURISDICTION = {
       regulation: 'SB 253',
       timeline: '2026 data (reporting starts 2027)',
       description: 'Applies to companies with $1 billion+ in annual revenue doing business in California (legally formed or commercially based in California, or California sales exceeding $735,019 in the last two years).',
+      // Machine-readable twin of the "1,000 Revenue (Million USD)" row
+      // above — `thresholds` is display text, this is what the Applies?
+      // derivation compares against. See deriveRegulationVerdict.
+      revenueThresholdUsd: 1_000_000_000,
       thresholds: [
         { value: '1,000', metric: 'Revenue (Million USD)' },
         { value: '735,019', metric: 'California Sales (USD)' },
@@ -42,6 +49,7 @@ export const REGULATIONS_BY_JURISDICTION = {
       regulation: 'SB 261',
       timeline: '2027 data (reporting starts 2028)',
       description: 'Applies to companies with $500 million+ in annual revenue doing business in California (legally formed or commercially based in California, or California sales exceeding $735,019 in the last two years).',
+      revenueThresholdUsd: 500_000_000,
       thresholds: [
         { value: '500', metric: 'Revenue (Million USD)' },
         { value: '735,019', metric: 'California Sales (USD)' },
@@ -145,3 +153,60 @@ export const REGULATIONS_BY_JURISDICTION = {
     },
   ],
 };
+
+// ---- Applies? derivation ---------------------------------------------------
+// Some regulations are pure threshold tests we already hold the inputs for:
+// California's SB 253 / SB 261 turn on annual revenue plus "doing business in
+// California". Rather than leave those dropdowns for a human to fill from
+// numbers already on the card, derive the verdict and let the user override.
+//
+// Only regulations carrying `revenueThresholdUsd` are derivable. The rest
+// (CSRD's employees + EUR turnover, the UK's GBP tests, Australia's AUD
+// two-of-three) need data this page doesn't have, and currency conversion we
+// shouldn't guess at — they stay blank rather than assert something wrong.
+
+// Parse a human revenue string into US dollars: "$2.4B" → 2_400_000_000,
+// "$500M" → 500_000_000, "2,400,000,000" → 2_400_000_000. Returns null when
+// there's no number to read, so callers can tell "no figure" from "zero".
+export function parseRevenueUsd(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!s) return null;
+  // Leading non-numerics are currency symbols / stray words; take the first
+  // number and whatever unit word immediately follows it.
+  const m = s.match(/(-?[\d,]*\.?\d+)\s*([a-zA-Z]*)/);
+  if (!m) return null;
+  const n = Number(m[1].replace(/,/g, ''));
+  if (!Number.isFinite(n)) return null;
+  const unit = m[2].toLowerCase();
+  const mult = unit.startsWith('t') ? 1e12
+    : unit.startsWith('b') ? 1e9
+    : unit.startsWith('m') ? 1e6
+    : unit.startsWith('k') ? 1e3
+    : 1;
+  return n * mult;
+}
+
+function fmtUsd(n) {
+  if (n >= 1e9) return `$${+(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `$${+(n / 1e6).toFixed(2)}M`;
+  return `$${n.toLocaleString()}`;
+}
+
+// Derive one regulation's Applies? verdict. Returns { verdict, basis } — the
+// basis explains the call in the tooltip — or null when it isn't derivable:
+// no revenue threshold on this regulation, no revenue figure researched yet,
+// or the jurisdiction gate itself isn't a firm Yes. A "Yes" jurisdiction is
+// required because the revenue test alone doesn't create the obligation; the
+// company also has to do business there.
+export function deriveRegulationVerdict(regulation, {
+  revenueUsd, revenueLabel, jurisdictionAnswer, jurisdictionLabel,
+} = {}) {
+  const threshold = regulation?.revenueThresholdUsd;
+  if (threshold == null) return null;
+  if (jurisdictionAnswer !== 'Yes') return null;
+  if (!Number.isFinite(revenueUsd)) return null;
+  const verdict = revenueUsd >= threshold ? 'Yes' : 'No';
+  const shown = revenueLabel || fmtUsd(revenueUsd);
+  const basis = `Auto-derived: revenue ${shown} ${verdict === 'Yes' ? '≥' : '<'} the ${fmtUsd(threshold)} threshold, and ${jurisdictionLabel || 'the jurisdiction'} screened Yes. Pick a value to override.`;
+  return { verdict, basis };
+}
