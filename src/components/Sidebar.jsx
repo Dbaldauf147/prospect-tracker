@@ -251,6 +251,13 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
         </button>
         {/* Opps - Old nav hidden — uncomment to restore. Route is still wired up in App.jsx so the view is reachable manually if needed.
         <button
+          className={view === 'strategic' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('strategic')}
+        >
+          <span className={styles.navIcon}>&#127919;</span>
+          Strategic Accounts
+        </button>
+        <button
           className={view === 'opps' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('opps')}
         >

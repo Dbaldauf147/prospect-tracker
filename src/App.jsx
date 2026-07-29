@@ -33,6 +33,7 @@ import { loadTargetAccountsFromDB } from './components/TargetAccountsView/Target
 import { DraftEmailsPage } from './components/DraftEmailView/DraftEmailsPage';
 import { VibeProspecting } from './components/VibeProspecting/VibeProspecting';
 import { ListsView } from './components/ListsView/ListsView';
+import { UploadedListView } from './components/UploadedListView/UploadedListView';
 import { PEPortfolioView } from './components/PEPortfolioView/PEPortfolioView';
 // Charts host: YOY / Progress / Pipeline as sub-tabs. Its YOY + Progress
 // sub-views stay code-split inside ChartsView.
@@ -370,6 +371,20 @@ function App() {
             />
           ) : view === 'lists' ? (
             <ListsView onTargetAccountsLoaded={setTargetAccountsData} prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} updateProspect={updateProspect} />
+          ) : view === 'strategic' ? (
+            <UploadedListView
+              storageKey="strategic-accounts-override"
+              tableIdPrefix="strategic-accounts"
+              title="Strategic Accounts"
+              singular="account"
+              plural="accounts"
+              prospects={prospects}
+              onSelectProspect={handleSelect}
+              cdmName={cdmName}
+              settings={settings}
+              updateSettings={updateSettings}
+              updateSettingsPath={updateSettingsPath}
+            />
           ) : view === 'clients' ? (
             <ClientsView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} user={user} targetAccountsData={targetAccountsData} addProspect={addProspect} />
           ) : view === 'issues' ? (
