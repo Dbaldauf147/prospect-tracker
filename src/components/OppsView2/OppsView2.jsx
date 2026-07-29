@@ -3987,6 +3987,11 @@ function AgreementSentFollowUpModal({
             {opp?.['Scope'] ? <> &middot; {opp['Scope']}</> : null}
             {' '}is now <strong>Agreement Sent</strong>. Enter or review the details below.
           </div>
+          {String(opp?.['Sales Partner'] || '').trim() && (
+            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+              Sales Partner: <strong style={{ color: 'var(--color-text)' }}>{String(opp['Sales Partner']).trim()}</strong>
+            </div>
+          )}
         </div>
 
         <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem', overflowY: 'auto' }}>
