@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { Fragment, useEffect, useMemo, useState, useCallback } from 'react';
 import { loadList } from '../../utils/uploadedListStore';
 import { normalizeCompany, pickNameKey } from '../../utils/companyNorm';
 import { UPLOADED_LISTS } from '../../utils/uploadedListsRegistry';
@@ -207,6 +207,16 @@ function thresholdText(thresholds) {
   return (thresholds || []).map(t => `${t.value} ${t.metric}`).join(' · ');
 }
 
+// Persistence key for one regulation's Applies? answer, e.g.
+// "california__sb-253". Stored in the same per-company screening map as
+// the jurisdiction answers, so it needs the same Firestore-safe shape:
+// no dots, and a double underscore that can't collide with a
+// jurisdiction key (those are single words).
+function regulationAnswerKey(jurisdictionKey, regulation) {
+  const slug = String(regulation || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return `${jurisdictionKey}__${slug}`;
+}
+
 // Colour a screening answer select: Yes = green, No = muted, blank = default.
 function answerSelectStyle(val) {
   const base = {
@@ -220,13 +230,26 @@ function answerSelectStyle(val) {
   return base;
 }
 
-// Per-company jurisdiction screening: the six Yes/No gating questions.
-// Answering "Yes" reveals the regulations that jurisdiction may trigger
-// (from the reference data). `answers` is this company's saved map
-// ({ california: 'Yes', ... }); `onSet(key, value)` persists one answer.
-// The "Research answers" button asks Claude (web search) to fill them all
-// in; `research` holds the last run's per-question rationale + sources.
+// Per-company jurisdiction screening, rendered as a Jurisdiction /
+// Screening / Applies? table. Each of the six gating questions is a row;
+// answering "Yes" adds a sub-row per regulation that jurisdiction
+// triggers, carrying the threshold it screens on and its own Applies?
+// answer. `answers` is this company's saved map ({ california: 'Yes',
+// california__sb-253: 'Yes', … }); `onSet(key, value)` persists one
+// answer. The "Research answers" button asks Claude (web search) to fill
+// the jurisdiction rows; `research` holds that run's rationale + sources.
 function JurisdictionScreening({ answers, caSiteCount = 0, onSet, disabled, onResearch, researching, researchError, research }) {
+  const th = {
+    textAlign: 'left', padding: '0.3rem 0.5rem', fontSize: '0.62rem', fontWeight: 700,
+    textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)',
+    borderBottom: '1px solid var(--color-border)', whiteSpace: 'nowrap',
+  };
+  const td = {
+    padding: '0.35rem 0.5rem', fontSize: 'var(--font-size-xs)',
+    color: 'var(--color-text)', borderBottom: '1px solid var(--color-border)',
+    verticalAlign: 'top', lineHeight: 1.35,
+  };
+
   return (
     // Capped so each Yes/No select stays beside its question instead of
     // drifting to the far edge of a full-width card.
@@ -255,49 +278,89 @@ function JurisdictionScreening({ answers, caSiteCount = 0, onSet, disabled, onRe
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-          {JURISDICTION_QUESTIONS.map((q) => {
-            const val = answers?.[q.key] || '';
-            const regs = REGULATIONS_BY_JURISDICTION[q.key] || [];
-            const note = research?.notes?.[q.key] || '';
-            return (
-              <div key={q.key}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.4rem' }}>
-                  <label style={{ flex: 1, minWidth: 0, fontSize: 'var(--font-size-xs)', color: 'var(--color-text)', lineHeight: 1.35 }}>
-                    <span style={{ fontWeight: 700 }}>{q.jurisdiction}</span>{' '}
-                    <span style={{ color: 'var(--color-text-muted)' }}>{q.question}</span>
-                    {q.key === 'california' && caSiteCount > 0 && (
-                      <span style={{ color: '#166534', fontWeight: 700 }}> · {caSiteCount} CA {caSiteCount === 1 ? 'site' : 'sites'} on file</span>
-                    )}
-                  </label>
-                  <select
-                    value={val}
-                    onChange={(e) => onSet(q.key, e.target.value)}
-                    aria-label={`${q.jurisdiction}: ${q.question}`}
-                    style={answerSelectStyle(val)}
-                  >
-                    <option value="">—</option>
-                    {SCREENING_ANSWERS.map((a) => <option key={a} value={a}>{a}</option>)}
-                  </select>
-                </div>
-                {note && (
-                  <div style={{ margin: '0.15rem 0 0', paddingLeft: '0.1rem', fontSize: '0.63rem', color: 'var(--color-text-muted)', fontStyle: 'italic', maxWidth: READABLE_MAX }}>
-                    {note}
-                  </div>
-                )}
-                {val === 'Yes' && regs.length > 0 && (
-                  <ul style={{ margin: '0.25rem 0 0', paddingLeft: '0.95rem', fontSize: '0.65rem', color: 'var(--color-text-muted)', display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
-                    {regs.map((r) => (
-                      <li key={r.regulation}>
-                        <span style={{ fontWeight: 700, color: 'var(--color-text)' }}>{r.regulation}</span>
-                        {' · '}{r.timeline}
-                        {r.thresholds.length > 0 && <> · {thresholdText(r.thresholds)}</>}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            );
-          })}
+          <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+            <thead>
+              <tr>
+                <th style={{ ...th, width: '38%' }}>Jurisdiction</th>
+                <th style={{ ...th, width: '46%' }}>Screening</th>
+                <th style={{ ...th, width: '16%' }}>Applies?</th>
+              </tr>
+            </thead>
+            <tbody>
+              {JURISDICTION_QUESTIONS.map((q) => {
+                const val = answers?.[q.key] || '';
+                const regs = REGULATIONS_BY_JURISDICTION[q.key] || [];
+                const note = research?.notes?.[q.key] || '';
+                return (
+                  <Fragment key={q.key}>
+                    <tr>
+                      <td style={td}>
+                        <div style={{ fontWeight: 700 }}>{q.jurisdiction}</div>
+                        <div style={{ color: 'var(--color-text-muted)', fontSize: '0.68rem' }}>{q.question}</div>
+                      </td>
+                      <td style={td}>
+                        {/* The screening signal for this jurisdiction: the
+                            CA site count we can prove from the uploaded
+                            file, plus whatever the research turned up. */}
+                        {q.key === 'california' && caSiteCount > 0 && (
+                          <div style={{ color: '#166534', fontWeight: 700 }}>
+                            {caSiteCount} {caSiteCount === 1 ? 'site' : 'sites'}
+                          </div>
+                        )}
+                        {note
+                          ? <div style={{ color: 'var(--color-text-muted)', fontStyle: 'italic', fontSize: '0.68rem' }}>{note}</div>
+                          : (q.key !== 'california' || caSiteCount === 0)
+                            ? <span style={{ color: 'var(--color-text-muted)' }}>—</span>
+                            : null}
+                      </td>
+                      <td style={td}>
+                        <select
+                          value={val}
+                          onChange={(e) => onSet(q.key, e.target.value)}
+                          aria-label={`${q.jurisdiction}: ${q.question}`}
+                          style={answerSelectStyle(val)}
+                        >
+                          <option value="">—</option>
+                          {SCREENING_ANSWERS.map((a) => <option key={a} value={a}>{a}</option>)}
+                        </select>
+                      </td>
+                    </tr>
+                    {/* Regulations this jurisdiction triggers, shown once
+                        it's answered Yes. Each carries its own Applies?
+                        answer, keyed jurisdiction__regulation-slug. */}
+                    {val === 'Yes' && regs.map((r) => {
+                      const rKey = regulationAnswerKey(q.key, r.regulation);
+                      const rVal = answers?.[rKey] || '';
+                      return (
+                        <tr key={rKey}>
+                          <td style={{ ...td, paddingLeft: '1.4rem' }}>
+                            <div style={{ fontWeight: 700 }}>{r.regulation}</div>
+                            <div style={{ color: 'var(--color-text-muted)', fontSize: '0.68rem' }}>{r.timeline}</div>
+                          </td>
+                          <td style={td} title={r.description}>
+                            {r.thresholds.length > 0
+                              ? thresholdText(r.thresholds)
+                              : <span style={{ color: 'var(--color-text-muted)' }}>{r.description}</span>}
+                          </td>
+                          <td style={td}>
+                            <select
+                              value={rVal}
+                              onChange={(e) => onSet(rKey, e.target.value)}
+                              aria-label={`${r.regulation} applies?`}
+                              style={answerSelectStyle(rVal)}
+                            >
+                              <option value="">—</option>
+                              {SCREENING_ANSWERS.map((a) => <option key={a} value={a}>{a}</option>)}
+                            </select>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
           {researchError && (
             <div style={{ fontSize: '0.63rem', color: '#B91C1C' }}>{researchError}</div>
           )}
@@ -738,7 +801,10 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                         Keyed by the canonical company identity (c.key) so
                         answers save against the matched company from the
                         uploaded file, not a raw-name slug. */}
-                    <CardRow label="Jurisdiction">
+                    {/* Labelled "Compliance" rather than "Jurisdiction" so
+                        the gutter doesn't repeat the table's own
+                        Jurisdiction column header. */}
+                    <CardRow label="Compliance">
                       <JurisdictionScreening
                         answers={screening[c.key] || null}
                         caSiteCount={c.california}
