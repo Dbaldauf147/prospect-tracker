@@ -3521,7 +3521,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     }
   }
 
-  async function saveIndicativeSavingsToCompany(prospect) {
+  // Builds the Master Analysis workbook (Indicative Savings + Building
+  // Compliance + Corporate Compliance + Methodology) and saves it against
+  // the company, where it shows up on that company's prospect / client
+  // popup. Kept under the indicativeAnalysis storage keys so previously
+  // saved analyses stay readable and a re-save replaces them in place.
+  async function saveMasterAnalysisToCompany(prospect) {
     if (!prospect?.id) return;
     // Picking a company to save to also names the whole portfolio, so the
     // company flows onto every Utility Lookup subtab (incl. Corporate
@@ -3529,7 +3534,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     setPortfolioCompanyName(prospect.company);
     setSaveStatus({ state: 'saving', message: `Saving to ${prospect.company || 'company'}…` });
     try {
-      const result = await exportIndicativeSavings({ returnBuffer: true, companyName: prospect.company });
+      const result = await exportMasterAnalysis({ returnBuffer: true, companyName: prospect.company });
       if (!result) {
         setSaveStatus({ state: 'error', message: 'Nothing to save — load sites first.' });
         return;
@@ -10218,13 +10223,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // Site Detail is renamed so it doesn't collide with Indicative Savings' own
   // Site Detail). Empty sections still emit their tab so the tab set stays
   // consistent.
-  async function exportMasterAnalysis() {
+  async function exportMasterAnalysis({ returnBuffer = false, companyName = null } = {}) {
     if (!rows.length) {
       throw new Error('No sites available to export — re-check the uploaded file or the Site Name column mapping.');
     }
     const { Workbook } = await import('exceljs');
     const wb = new Workbook();
     wb.creator = 'Schneider Electric · Prospect Tracker';
+    // One resolved company name for every sheet and the file name, so a
+    // save bound to a specific company labels the whole workbook with it.
+    const company = deriveExportCompanyName(companyName);
 
     // 1. Indicative Savings sheets (returns its native-chart descriptors).
     const indicative = await exportIndicativeSavings({ targetWb: wb });
@@ -10239,21 +10247,21 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       generatedAt: new Date().toLocaleString('en-US'),
       siteCount: complianceSites.length,
       siteDetailSheetName: 'Compliance Site Detail',
-      companyName: deriveExportCompanyName(null),
+      companyName: company,
     });
 
     // 3. Corporate Compliance — company-level portfolio view (site footprint
     //    + California operations), Schneider-formatted.
     buildCorporateComplianceSheet(wb, complianceSites, {
       generatedAt: new Date().toLocaleString('en-US'),
-      companyName: deriveExportCompanyName(null),
+      companyName: company,
     });
 
     // 4. Compliance Report Methodology — how the estimated fines were derived,
     //    by mandate, plus the per-jurisdiction penalty inputs behind them.
     buildComplianceMethodologySheet(wb, complianceResults, {
       generatedAt: new Date().toLocaleString('en-US'),
-      companyName: deriveExportCompanyName(null),
+      companyName: company,
     });
 
     // Write the merged workbook once, then inject the Indicative Savings
@@ -10264,10 +10272,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       buf = await injectLiveLineChart(buf, injection);
     }
 
-    const exportCompany = sanitizeFileNamePart(deriveExportCompanyName(null));
+    const exportCompany = sanitizeFileNamePart(company);
     const fileName = exportCompany
       ? `${exportCompany}_Master Analysis.xlsx`
       : `Master Analysis - ${new Date().toISOString().slice(0, 10)}.xlsx`;
+    // Save-to-company mode: hand the workbook back instead of downloading.
+    if (returnBuffer) return { buffer: buf, fileName };
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -11285,23 +11295,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                 // nothing." Console.error keeps the stack trace for
                 // diagnosis; alert tells the user the export tripped.
                 try {
-                  await exportIndicativeSavings();
-                } catch (err) {
-                  console.error('Indicative Savings export failed:', err);
-                  alert(`Indicative Savings export failed:\n\n${err?.message || err}`);
-                }
-              }}
-              title="Download an Indicative Savings by State workbook (Schneider-branded). Aggregates the loaded sites by state with 2 % – 4 % savings on the deregulated spend, plus supplier name + contract dates."
-              style={{ padding: '0.4rem 0.8rem', border: '1px solid #009530', background: '#009530', color: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
-            >
-              ⬇ Indicative Savings
-            </button>
-          )}
-          {sitesData.length > 0 && (
-            <button
-              type="button"
-              onClick={async () => {
-                try {
                   await exportMasterAnalysis();
                 } catch (err) {
                   console.error('Master Analysis export failed:', err);
@@ -11331,14 +11324,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                     (p) => p.company && p.company.trim().toLowerCase() === target,
                   );
                   if (match) {
-                    saveIndicativeSavingsToCompany(match);
+                    saveMasterAnalysisToCompany(match);
                     return;
                   }
                 }
                 setSavePickerSearch(mapped || '');
                 setSaveStatus({ state: 'idle', message: '' });
               }}
-              title="Save the current Indicative Savings analysis to the company mapped to this page. If no company is mapped, search for one. The saved file shows up on that company's prospect / client popup and can be downloaded from there."
+              title="Save the current Master Analysis to the company mapped to this page. If no company is mapped, search for one. The saved file shows up on that company's prospect / client popup and can be downloaded from there."
               style={{ padding: '0.4rem 0.8rem', border: '1px solid #009530', background: '#fff', color: '#009530', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
             >
               💾 {portfolioCompanyName ? `Save to ${portfolioCompanyName}` : 'Save to Company'}
@@ -11392,7 +11385,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             }}
           >
             <div style={{ padding: '0.9rem 1rem 0.5rem', borderBottom: '1px solid #E2E8F0' }}>
-              <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#0F172A' }}>Save Indicative Savings to a Company</div>
+              <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#0F172A' }}>Save Master Analysis to a Company</div>
               <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: '0.2rem' }}>Pick a company — the analysis appears on its prospect / client popup.</div>
               <input
                 type="text"
@@ -11420,7 +11413,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                 return list.map(p => (
                   <div
                     key={p.id}
-                    onClick={() => saveIndicativeSavingsToCompany(p)}
+                    onClick={() => saveMasterAnalysisToCompany(p)}
                     style={{
                       padding: '0.4rem 1rem', fontSize: '0.78rem', color: '#1E293B', cursor: 'pointer',
                     }}
