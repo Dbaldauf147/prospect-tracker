@@ -88,7 +88,7 @@ export function SyncPanel({ prospects, onClose }) {
       paused: !!settings.mainPaused,
     }] : []),
     ...(oppsSheetDisplayUrl ? [{
-      label: 'Opps',
+      label: 'Opps - Old',
       url: oppsSheetDisplayUrl,
       sheetName: 'Opps',
       lastSync: userLsGet('opps-cache') ? (() => { try { return JSON.parse(userLsGet('opps-cache'))?.fetchedAt; } catch { return null; } })() : null,
@@ -420,7 +420,7 @@ export function SyncPanel({ prospects, onClose }) {
                           ))}
                         </select>
                         {sheet.type === 'main' && <span className={styles.badgeMain}>Main</span>}
-                        {sheet.type === 'opps' && <span className={styles.badgeOpps}>Opps</span>}
+                        {sheet.type === 'opps' && <span className={styles.badgeOpps}>Opps - Old</span>}
                         {sheet.type === 'extra' && (
                           <button className={styles.sheetRemoveBtn} onClick={() => removeExtraSheet(extraIdx)} title="Remove">&times;</button>
                         )}

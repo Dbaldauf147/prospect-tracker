@@ -8,18 +8,22 @@ import { apiFetch } from '../../utils/apiFetch';
 const HOURS = Array.from({ length: 24 }, (_, h) => h);
 const DOM = Array.from({ length: 28 }, (_, i) => i + 1);
 
-function emptyForm(defaultColumns) {
+function emptyForm(defaultColumns, firm = '') {
   return {
     id: null,
     name: '',
     recipients: '',
-    subject: 'PE Opportunities',
+    subject: firm ? `${firm} — PE Opportunities` : 'PE Opportunities',
     message: '',
     frequency: 'weekly',
     hourLocal: 9,
     dayOfWeekLocal: 1,
     dayOfMonthLocal: 1,
     columns: Array.isArray(defaultColumns) ? [...defaultColumns] : [],
+    // Firm scope for this schedule — '' = full PE Opps list, a firm name =
+    // every opp on that firm or its portfolio companies. Set from the PE
+    // Opps tab's firm picker; the server re-derives the rows from it.
+    firm: firm || '',
     skipWhenEmpty: false,
     enabled: true,
   };
@@ -34,9 +38,9 @@ const tzLabel = (() => {
 // send the PE Opps Excel file to a list of recipients. `allColumns` is the
 // PE Opps column set ([{key,label}]); `defaultColumns` seeds new schedules
 // with the columns currently shown in the tab.
-export function PEOppsScheduleModal({ open, onClose, uid, email, oppsRows, allColumns, defaultColumns }) {
+export function PEOppsScheduleModal({ open, onClose, uid, email, firm = '', oppsRows, allColumns, defaultColumns }) {
   const [schedules, setSchedules] = useState([]);
-  const [form, setForm] = useState(() => emptyForm(defaultColumns));
+  const [form, setForm] = useState(() => emptyForm(defaultColumns, firm));
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -68,9 +72,15 @@ export function PEOppsScheduleModal({ open, onClose, uid, email, oppsRows, allCo
 
   if (!open) return null;
 
+  // Each firm scope manages its own schedules: when the tab is scoped to a
+  // firm, only that firm's schedules show here; the unscoped (All PE Opps)
+  // view shows the firm-less ones.
+  const visibleSchedules = schedules.filter((s) => (s.firm || '') === (firm || ''));
+  const scopeLabel = firm ? `${firm} PE Opps` : 'PE Opps';
+
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
-  const startNew = () => { setForm(emptyForm(defaultColumns)); setEditing(true); setError(''); };
+  const startNew = () => { setForm(emptyForm(defaultColumns, firm)); setEditing(true); setError(''); };
   const startEdit = (s) => {
     setForm({
       id: s.id,
@@ -83,6 +93,7 @@ export function PEOppsScheduleModal({ open, onClose, uid, email, oppsRows, allCo
       dayOfWeekLocal: s.dayOfWeekLocal ?? 1,
       dayOfMonthLocal: s.dayOfMonthLocal ?? 1,
       columns: Array.isArray(s.columns) && s.columns.length ? [...s.columns] : (defaultColumns || []),
+      firm: s.firm || '',
       skipWhenEmpty: !!s.skipWhenEmpty,
       enabled: s.enabled !== false,
     });
@@ -143,6 +154,7 @@ export function PEOppsScheduleModal({ open, onClose, uid, email, oppsRows, allCo
             subject: form.subject,
             message: form.message,
             columns: form.columns,
+            firm: form.firm || '',
             records,
           };
       if (!s) {
@@ -179,7 +191,7 @@ export function PEOppsScheduleModal({ open, onClose, uid, email, oppsRows, allCo
     >
       <div style={{ background: '#fff', borderRadius: 10, width: 'min(680px, 100%)', boxShadow: '0 20px 60px rgba(0,0,0,0.3)', overflow: 'hidden' }}>
         <div style={{ padding: '0.9rem 1.25rem', background: '#009530', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ fontSize: '1rem', fontWeight: 700 }}>Schedule PE Opps email</div>
+          <div style={{ fontSize: '1rem', fontWeight: 700 }}>Schedule {scopeLabel} email</div>
           <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', color: '#fff', fontSize: '1.3rem', cursor: 'pointer', lineHeight: 1 }}>×</button>
         </div>
 
@@ -192,12 +204,12 @@ export function PEOppsScheduleModal({ open, onClose, uid, email, oppsRows, allCo
             <>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.6rem' }}>
                 <div style={{ fontSize: '0.78rem', color: '#64748B' }}>
-                  {loading ? 'Loading…' : schedules.length === 0 ? 'No schedules yet.' : `${schedules.length} schedule${schedules.length === 1 ? '' : 's'}`}
+                  {loading ? 'Loading…' : visibleSchedules.length === 0 ? `No ${scopeLabel} schedules yet.` : `${visibleSchedules.length} ${scopeLabel} schedule${visibleSchedules.length === 1 ? '' : 's'}`}
                 </div>
                 <button type="button" onClick={startNew} style={btnPrimary}>+ New schedule</button>
               </div>
 
-              {schedules.map((s) => (
+              {visibleSchedules.map((s) => (
                 <div key={s.id} style={{ border: '1px solid #E2E8F0', borderRadius: 8, padding: '0.7rem 0.85rem', marginBottom: '0.6rem', background: s.enabled === false ? '#F8FAFC' : '#fff' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
                     <div style={{ minWidth: 0 }}>
@@ -231,6 +243,12 @@ export function PEOppsScheduleModal({ open, onClose, uid, email, oppsRows, allCo
 
           {editing && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
+              <div style={{ fontSize: '0.72rem', color: '#475569', background: '#F1F5F9', border: '1px solid #E2E8F0', borderRadius: 6, padding: '0.45rem 0.6rem' }}>
+                Scope: <strong>{(form.firm || '').trim() || 'All PE Opps'}</strong>
+                {(form.firm || '').trim()
+                  ? ' — every opp on this firm or its portfolio companies.'
+                  : ' — the full PE Opps list (Type = Private Equity or Source = PE partner).'}
+              </div>
               <Field label="Name (optional)">
                 <input style={inp} value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="e.g. Weekly PE digest" />
               </Field>

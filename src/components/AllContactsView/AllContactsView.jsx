@@ -105,6 +105,64 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
     return out;
   }, [oppsRecords]);
 
+  // ---- Key Prospect gate (mirror of KeyProspectsView) ---------------
+  // A contact is a "Key Prospect" when it's tagged Decision Maker at a
+  // Tier 1 / Tier 2 account on this CDM whose company has no opps yet.
+  const myTierAccounts = useMemo(() => {
+    return (prospects || []).filter(p => {
+      if (!matchesCdm(p.cdm, cdmName)) return false;
+      // Clients aren't prospects — keep them out of the Key Prospect bucket.
+      if (p.status === 'Client') return false;
+      const t = (p.tier || '').toLowerCase();
+      return t === 'tier 1' || t === 'tier 2';
+    });
+  }, [prospects, cdmName]);
+
+  const allOppAccounts = useMemo(() => {
+    const set = new Set();
+    if (!oppsRecords) return set;
+    for (const r of oppsRecords) {
+      const acct = String(r['Account'] || '').trim().toLowerCase();
+      if (acct) set.add(acct);
+    }
+    return set;
+  }, [oppsRecords]);
+  const allOppAccountsArr = useMemo(() => Array.from(allOppAccounts), [allOppAccounts]);
+
+  // Map<lowercase company, { tier, hasOpp }> for the Tier 1/2 accounts.
+  const tierAccountStatus = useMemo(() => {
+    const map = new Map();
+    for (const p of myTierAccounts) {
+      const lc = String(p.company || '').toLowerCase().trim();
+      if (!lc) continue;
+      let hasOpp = allOppAccounts.has(lc);
+      if (!hasOpp) {
+        for (const acct of allOppAccountsArr) {
+          if (companiesMatch(p.company, acct)) { hasOpp = true; break; }
+        }
+      }
+      map.set(lc, { tier: p.tier, hasOpp });
+    }
+    return map;
+  }, [myTierAccounts, allOppAccounts, allOppAccountsArr]);
+
+  // Shared decision: does this contact sit at a Tier 1/2 account (CDM = me)
+  // with no opps yet? `tags` is the lowercased dans_tags string.
+  const isKeyProspectAtTierAccount = useCallback((c) => {
+    const company = String(c.company || '').trim();
+    if (!company) return false;
+    const lc = company.toLowerCase();
+    const direct = tierAccountStatus.get(lc);
+    if (direct) return !direct.hasOpp;
+    for (const p of myTierAccounts) {
+      if (companiesMatch(p.company, company)) {
+        const status = tierAccountStatus.get(String(p.company || '').toLowerCase().trim());
+        if (status) return !status.hasOpp;
+      }
+    }
+    return false;
+  }, [tierAccountStatus, myTierAccounts]);
+
   // "Show hidden contacts" toggle. Same review-mode behaviour the
   // dedicated Active page exposes — when on, the page becomes a list
   // of every Hide-tagged contact that would otherwise have qualified
@@ -187,23 +245,35 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
     return tags.includes('dan key target');
   }, [showHidden]);
 
+  // ---- Key Prospect gate --------------------------------------------
+  const isKeyProspect = useCallback((c) => {
+    const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+    const hidden = tags.includes('hide');
+    if (showHidden ? !hidden : hidden) return false;
+    if (tags.includes('left')) return false;
+    if (isSchneiderContact(c)) return false;
+    if (!tags.includes('decision maker')) return false;
+    return isKeyProspectAtTierAccount(c);
+  }, [showHidden, isKeyProspectAtTierAccount]);
+
   // Combined selector — a contact passes when it would land on at
   // least one of the dedicated rosters.
   const combinedSelector = useCallback(
-    (c) => isKey(c) || isActive(c) || isClient(c),
-    [isKey, isActive, isClient]
+    (c) => isKey(c) || isActive(c) || isClient(c) || isKeyProspect(c),
+    [isKey, isActive, isClient, isKeyProspect]
   );
 
   // Categorisation function for the Category column. Returns the
-  // array of labels (Key / Active / Client) the contact qualifies
-  // for so KeyContactsView can render a colored pill per label.
+  // array of labels (Key / Active / Client / Key Prospect) the contact
+  // qualifies for so KeyContactsView can render a colored pill per label.
   const categorizeContact = useCallback((c) => {
     const out = [];
     if (isKey(c)) out.push('Key');
     if (isActive(c)) out.push('Active');
     if (isClient(c)) out.push('Client');
+    if (isKeyProspect(c)) out.push('Key Prospect');
     return out;
-  }, [isKey, isActive, isClient]);
+  }, [isKey, isActive, isClient, isKeyProspect]);
 
   // Count of hide-tagged contacts that WOULD qualify if not hidden,
   // so the toggle pill shows the user how many they'd uncover. We
@@ -258,12 +328,20 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       if (!company && domainOk && clientDomains.has(domain)) return true;
       return false;
     };
+    const isKeyProspectHidden = (c) => {
+      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+      if (!tags.includes('hide')) return false;
+      if (tags.includes('left')) return false;
+      if (isSchneiderContact(c)) return false;
+      if (!tags.includes('decision maker')) return false;
+      return isKeyProspectAtTierAccount(c);
+    };
     let n = 0;
     for (const c of hubspotContacts) {
-      if (isKeyHidden(c) || isActiveHidden(c) || isClientHidden(c)) n += 1;
+      if (isKeyHidden(c) || isActiveHidden(c) || isClientHidden(c) || isKeyProspectHidden(c)) n += 1;
     }
     return n;
-  }, [hubspotContacts, activeClientFilter, activeOppCompanies, clientProspects, oldClientProspects, clientDomains, oldClientDomains]);
+  }, [hubspotContacts, activeClientFilter, activeOppCompanies, clientProspects, oldClientProspects, clientDomains, oldClientDomains, isKeyProspectAtTierAccount]);
 
   // Per-category totals across the loaded HubSpot cache. Uses the
   // visible-mode selectors (showHidden = false) so the numbers reflect
@@ -303,7 +381,14 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       if (!company && domainOk && clientDomains.has(domain)) return true;
       return false;
     };
-    let key = 0, active = 0, client = 0, total = 0;
+    const visIsKeyProspect = (c) => {
+      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+      if (tags.includes('hide') || tags.includes('left')) return false;
+      if (isSchneiderContact(c)) return false;
+      if (!tags.includes('decision maker')) return false;
+      return isKeyProspectAtTierAccount(c);
+    };
+    let key = 0, active = 0, client = 0, keyProspect = 0, total = 0;
     const localFields = settings?.contactLocalFields || {};
     for (const baseC of hubspotContacts) {
       const lf = localFields[String(baseC.id || baseC.vid || '')] || null;
@@ -313,17 +398,19 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       const k = visIsKey(c);
       const a = visIsActive(c);
       const cl = visIsClient(c);
+      const kp = visIsKeyProspect(c);
       if (k) key++;
       if (a) active++;
       if (cl) client++;
-      if (k || a || cl) total++;
+      if (kp) keyProspect++;
+      if (k || a || cl || kp) total++;
     }
-    return { key, active, client, total };
-  }, [hubspotContacts, activeClientFilter, activeOppCompanies, clientProspects, oldClientProspects, clientDomains, oldClientDomains, settings?.contactLocalFields]);
+    return { key, active, client, keyProspect, total };
+  }, [hubspotContacts, activeClientFilter, activeOppCompanies, clientProspects, oldClientProspects, clientDomains, oldClientDomains, settings?.contactLocalFields, isKeyProspectAtTierAccount]);
 
   const subtitle = (
     <>
-      Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, or <strong>Client</strong> rosters — same selectors and filters those tabs run, rolled up into a single list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table or <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters.
+      Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, <strong>Client</strong>, or <strong>Key Prospect</strong> rosters — same selectors and filters those tabs run, rolled up into a single list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats, or <strong>Travel</strong> to pick a state/city and see everyone in that area. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters.
       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 700 }}>Totals:</span>
         {[
@@ -331,6 +418,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
           { cat: 'Key',    label: 'Key',    count: categoryCounts.key,    bg: '#FEF3C7', border: '#FCD34D', color: '#92400E', tip: 'Click to show only contacts tagged Dan Key Target' },
           { cat: 'Active', label: 'Active', count: categoryCounts.active, bg: '#DCFCE7', border: '#86EFAC', color: '#166534', tip: 'Click to show only contacts in the active window with an open opp (mirrors the Active Contacts page)' },
           { cat: 'Client', label: 'Client', count: categoryCounts.client, bg: '#DBEAFE', border: '#93C5FD', color: '#1E3A8A', tip: 'Click to show only contacts whose company is a current Client on your CDM (mirrors the Client Contacts page)' },
+          { cat: 'Key Prospect', label: 'Key Prospect', count: categoryCounts.keyProspect, bg: '#EDE9FE', border: '#C4B5FD', color: '#5B21B6', tip: 'Click to show only Decision Maker contacts at Tier 1 / Tier 2 accounts on your CDM whose company has no opps yet (mirrors the Key Prospects page)' },
         ].map(({ cat, label, count, bg, border, color, tip }) => {
           const selected = categoryFilter === cat;
           return (
@@ -391,11 +479,12 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       pageSubtitle={subtitle}
       emptyTitle="No contacts found"
       emptyDetail={
-        <>Nothing matched. A contact appears on this page when it would also appear on Key, Active, or Client Contacts. Try the dedicated tabs to see why a specific contact is being filtered out.</>
+        <>Nothing matched. A contact appears on this page when it would also appear on Key, Active, Client, or Key Prospects. Try the dedicated tabs to see why a specific contact is being filtered out.</>
       }
       contactSelector={combinedSelector}
       categorizeContact={categorizeContact}
       categoryFilter={categoryFilter}
+      linkCompanyToProspect
     />
   );
 }

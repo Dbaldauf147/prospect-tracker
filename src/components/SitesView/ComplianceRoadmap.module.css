@@ -1,0 +1,53 @@
+.wrapper { padding: 1rem 1.25rem 2rem; }
+
+/* Schneider Electric branded header band */
+.brandBand {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+  background: linear-gradient(90deg, #009530 0%, #3DCD58 100%);
+  color: #fff; border-radius: 12px; padding: 0.85rem 1.1rem; margin-bottom: 0.75rem;
+  box-shadow: 0 2px 8px rgba(0, 149, 48, 0.18);
+}
+.brandBand .title { color: #fff; }
+.brandLogo { flex: 0 0 auto; display: inline-flex; align-items: center; }
+.brandLogo svg { display: block; }
+
+.header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0.75rem; }
+.title { font-size: 1.15rem; font-weight: 800; color: var(--color-text-primary, #1E293B); margin: 0; }
+.subtitle { font-size: 0.8rem; color: var(--color-text-muted, #64748B); margin-top: 0.25rem; max-width: 70ch; }
+.actions { display: flex; gap: 0.5rem; flex-shrink: 0; }
+.btn { padding: 0.4rem 0.8rem; border: 1px solid var(--color-border, #CBD5E1); border-radius: 6px; background: var(--color-surface, #fff); color: var(--color-text-primary, #1E293B); font-size: 0.78rem; font-weight: 600; cursor: pointer; font-family: inherit; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.empty { padding: 1.5rem; background: var(--color-surface-muted, #F8FAFC); border: 1px dashed var(--color-border, #CBD5E1); border-radius: 8px; color: var(--color-text-primary, #334155); }
+.emptySub { font-size: 0.8rem; color: var(--color-text-muted, #64748B); margin-top: 0.35rem; }
+
+.kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; margin: 0.5rem 0 0.75rem; }
+.kpi { border: 1px solid var(--color-border, #E2E8F0); border-radius: 8px; padding: 0.6rem 0.85rem; background: var(--color-surface, #fff); }
+.kpiNum { font-size: 1.35rem; font-weight: 800; line-height: 1.15; }
+.kpiLbl { font-size: 0.66rem; color: var(--color-text-muted, #64748B); text-transform: uppercase; letter-spacing: 0.03em; }
+
+.legend { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin: 0.25rem 0 0.75rem; }
+.legendItem { display: inline-flex; align-items: center; gap: 6px; font-size: 0.74rem; color: #334155; font-weight: 600; }
+.legendSwatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.undated { font-size: 0.72rem; color: #92400E; background: #FEF3C7; border: 1px solid #FDE68A; border-radius: 999px; padding: 1px 9px; }
+
+.card { border: 1px solid var(--color-border, #E2E8F0); border-radius: 8px; padding: 0.7rem 0.9rem 0.9rem; background: var(--color-surface, #fff); margin-bottom: 0.9rem; }
+.cardTitle { font-size: 0.85rem; font-weight: 800; color: #334155; margin-bottom: 0.5rem; }
+.cardSub { font-weight: 500; font-style: italic; color: var(--color-text-muted, #94A3B8); font-size: 0.74rem; }
+
+.chartGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.9rem; }
+
+.tableScroll { overflow-x: auto; }
+.table { width: 100%; border-collapse: collapse; font-size: 0.76rem; }
+.table th { text-align: left; padding: 0.5rem 0.55rem; background: #009530; color: #fff; font-weight: 700; white-space: nowrap; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.03em; position: sticky; top: 0; }
+.table td { padding: 0.4rem 0.55rem; border-bottom: 1px solid var(--color-surface-muted, #F1F5F9); font-variant-numeric: tabular-nums; }
+.table tbody tr:nth-child(even) td { background: #FAFCFB; }
+.table tbody tr:hover td { background: #E6F7EC; }
+.qCell { font-weight: 700; color: #334155; white-space: nowrap; }
+.quietRow td { color: #94A3B8; }
+.dash { color: var(--color-text-muted, #CBD5E1); }
+
+@media (max-width: 900px) {
+  .kpis { grid-template-columns: repeat(2, 1fr); }
+  .chartGrid { grid-template-columns: 1fr; }
+}

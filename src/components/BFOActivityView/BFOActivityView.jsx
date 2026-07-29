@@ -10,7 +10,16 @@ import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { setOppBfoLink } from '../../utils/opps2Store';
 import { normalizeCompany } from '../../utils/companyNorm';
+import { parseTSV, compareValues, cleanHeader } from '../../utils/tsvTable';
 import { useAuth } from '../../contexts/AuthContext';
+import { PasteTableView } from './PasteTableView';
+
+// IndexedDB store shared by both subtabs (a generic key-value store).
+// The Leads subtab persists under its own keys so it never collides with
+// the main BFO Activity data.
+const LEADS_DATA_KEY = 'leads-current';
+const LEADS_PREFS_KEY = 'leads-prefs';
+const LEADS_PLACEHOLDER = 'Name\tCompany\tEmail\tLead Status\t…\nJane Doe\tAcme Inc.\tjane@acme.com\tOpen\t…';
 
 // Readable label for an Opps 2 opp shown as an assignment target —
 // Scope plus Stage / Open Year context, falling back to the row id.
@@ -39,54 +48,10 @@ function bfoOppName(r) {
   return BFO_BLANK_SENTINELS.has(v.toLowerCase()) ? '' : v;
 }
 
-function parseTSV(text) {
-  if (!text) return { headers: [], rows: [] };
-  const lines = text.replace(/\r\n?/g, '\n').split('\n').filter(l => l.length > 0);
-  if (lines.length === 0) return { headers: [], rows: [] };
-  const split = (line) => line.split('\t');
-  // BFO copies the active sort indicator into the header text — e.g.
-  // "Age Sorted Descending" or "Close DateSorted Ascending" (note: BFO
-  // sometimes drops the space between the column name and "Sorted").
-  // Strip the suffix so the canonical column name survives the paste.
-  const cleanHeader = (h) => String(h || '')
-    .replace(/\s*[▲▼↑↓]\s*$/, '')
-    .replace(/\s*sorted\s+(ascending|descending)\s*$/i, '')
-    .trim();
-  const rawHeaders = split(lines[0]).map(cleanHeader);
-  // Make headers unique
-  const seen = new Map();
-  const headers = rawHeaders.map((h, i) => {
-    const base = h || `Column ${i + 1}`;
-    const c = seen.get(base) || 0;
-    seen.set(base, c + 1);
-    return c === 0 ? base : `${base} (${c + 1})`;
-  });
-  const rows = lines.slice(1).map(line => {
-    const cells = split(line);
-    const obj = {};
-    headers.forEach((h, i) => { obj[h] = (cells[i] ?? '').trim(); });
-    return obj;
-  });
-  return { headers, rows };
-}
-
-function compareValues(a, b) {
-  // Try number/currency first
-  const numA = Number(String(a).replace(/[$,\s]/g, ''));
-  const numB = Number(String(b).replace(/[$,\s]/g, ''));
-  if (Number.isFinite(numA) && Number.isFinite(numB) && /\d/.test(String(a)) && /\d/.test(String(b))) {
-    return numA - numB;
-  }
-  // Try date (M/D/YYYY)
-  const dA = Date.parse(a);
-  const dB = Date.parse(b);
-  if (!Number.isNaN(dA) && !Number.isNaN(dB) && /\d/.test(String(a)) && /\d/.test(String(b))) {
-    return dA - dB;
-  }
-  return String(a).localeCompare(String(b));
-}
-
 export function BFOActivityView({ prospects = [] } = {}) {
+  // Which subtab is showing: the rich BFO Activity table, or the generic
+  // Leads-list paste table.
+  const [subtab, setSubtab] = useState('bfo'); // 'bfo' | 'leads'
   const [data, setData] = useState({ headers: [], rows: [] });
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState(null); // { col, dir: 'asc'|'desc' }
@@ -123,10 +88,6 @@ export function BFOActivityView({ prospects = [] } = {}) {
           // baked into header names. Strip that suffix on load and
           // remap row keys so downstream column lookups work without
           // requiring a fresh paste.
-          const cleanHeader = (h) => String(h || '')
-            .replace(/\s*[▲▼↑↓]\s*$/, '')
-            .replace(/\s*sorted\s+(ascending|descending)\s*$/i, '')
-            .trim();
           const cleaned = saved.headers.map(cleanHeader);
           const needsRemap = cleaned.some((h, i) => h !== saved.headers[i]);
           if (needsRemap) {
@@ -232,9 +193,15 @@ export function BFOActivityView({ prospects = [] } = {}) {
       }
       return s;
     };
+    // Amount columns come in as "USD 15,000.00" — export just the dollar
+    // amount, dropping the leading ISO currency code so the cell is a plain
+    // number.
+    const isAmountHeader = (h) => /amount/i.test(h);
+    const stripCurrency = (v) => String(v ?? '').replace(/^\s*[A-Z]{3}\s+/, '').trim();
+    const cellFor = (r, h) => (isAmountHeader(h) ? stripCurrency(r[h]) : r[h]);
     const lines = [
       data.headers.map(escape).join(','),
-      ...data.rows.map(r => data.headers.map(h => escape(r[h])).join(',')),
+      ...data.rows.map(r => data.headers.map(h => escape(cellFor(r, h))).join(',')),
     ];
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -357,7 +324,7 @@ export function BFOActivityView({ prospects = [] } = {}) {
       await setOppBfoLink(user?.uid, oppId, bfoName);
       const refreshed = await loadOppsFromCache();
       setOpps(refreshed || null);
-      setFlash(`Tagged an Opps 2 opp with "${bfoName}".`);
+      setFlash(`Tagged an Opps opp with "${bfoName}".`);
     } catch (err) {
       setFlash(`Could not tag opp: ${err?.message || err}`);
     } finally {
@@ -408,7 +375,38 @@ export function BFOActivityView({ prospects = [] } = {}) {
   }
 
   return (
-    <div className={styles.wrapper} onPaste={handlePagePaste}>
+    <div className={styles.wrapper}>
+      <div className={styles.subtabBar} role="tablist" aria-label="BFO Activity subtabs">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={subtab === 'bfo'}
+          className={subtab === 'bfo' ? styles.subtabActive : styles.subtab}
+          onClick={() => setSubtab('bfo')}
+        >BFO Activity</button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={subtab === 'leads'}
+          className={subtab === 'leads' ? styles.subtabActive : styles.subtab}
+          onClick={() => setSubtab('leads')}
+        >Leads</button>
+      </div>
+
+      {subtab === 'leads' ? (
+        <PasteTableView
+          title="Leads"
+          subtitle="Paste rows from the Salesforce Leads printable view (⌘V / Ctrl+V) anywhere on this page. First row is the header."
+          placeholder={LEADS_PLACEHOLDER}
+          storeName={STORE}
+          dataKey={LEADS_DATA_KEY}
+          prefsKey={LEADS_PREFS_KEY}
+          csvPrefix="leads"
+          flipNameColumn
+          emptyHint="Open the Salesforce Leads list, click Printable View, select the table (including the header row), copy, then paste anywhere on this page. The data persists in your browser until you clear or replace it."
+        />
+      ) : (
+      <div className={styles.pane} onPaste={handlePagePaste}>
       <div className={styles.header}>
         <div className={styles.titleBlock}>
           <h1 className={styles.title}>BFO Activity</h1>
@@ -466,10 +464,10 @@ export function BFOActivityView({ prospects = [] } = {}) {
         <div style={{ padding: '0 1.25rem 0.5rem' }}>
           <div className={styles.warning}>
             <strong>
-              ⚠ {unmatchedOppNames.length} BFO Opportunity Name{unmatchedOppNames.length === 1 ? '' : 's'} not tagged to an opp on Opps 2
+              ⚠ {unmatchedOppNames.length} BFO Opportunity Name{unmatchedOppNames.length === 1 ? '' : 's'} not tagged to an opp on Opps
             </strong>
             <div className={styles.warningHint}>
-              Click an Opps 2 opp below to tag it with the BFO Opportunity Name. Only opps that don&apos;t already have a BFO Opportunity Name are listed.
+              Click an Opps opp below to tag it with the BFO Opportunity Name. Only opps that don&apos;t already have a BFO Opportunity Name are listed.
             </div>
             <ul className={styles.warnList}>
               {unmatchedOppNames.map(({ name, account }) => {
@@ -482,7 +480,7 @@ export function BFOActivityView({ prospects = [] } = {}) {
                     </div>
                     {candidates.length === 0 ? (
                       <div className={styles.warnNone}>
-                        No untagged Opps 2 opps{account ? ` for “${account}”` : ''} to assign.
+                        No untagged Opps opps{account ? ` for “${account}”` : ''} to assign.
                       </div>
                     ) : (
                       <div className={styles.warnChips}>
@@ -596,6 +594,8 @@ export function BFOActivityView({ prospects = [] } = {}) {
           </>
         )}
       </div>
+      </div>
+      )}
     </div>
   );
 }

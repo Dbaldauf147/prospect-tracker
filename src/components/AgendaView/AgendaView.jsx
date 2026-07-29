@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotContacts, updateHubspotCache } from '../../utils/hubspotContactsCache';
-import { matchesCdm } from '../../utils/cdmMatch';
+import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import { getQueuedContactIds, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
 import styles from './AgendaView.module.css';
@@ -47,6 +47,10 @@ const HEADER_MATCH_RULES = [
   ['country',                 ['country']],
   ['company',                 ['accountname', 'companyname', 'organization', 'company', 'account']],
   ['dans_tags',               ['danstags', 'tags']],
+  // Full Name last: every more-specific name-ish header (First/Last/Company
+  // Name, etc.) is claimed by an earlier rule first, so this only catches a
+  // single combined-name column like "Full Name" / "Contact Name" / "Name".
+  ['fullName',                ['fullname', 'fullcontactname', 'contactfullname', 'contactname', 'employeefullname', 'employeename', 'personname', 'displayname', 'name']],
 ];
 
 // Headers that should never be auto-mapped, even if a rule pattern
@@ -72,6 +76,7 @@ const FIELD_OPTIONS = [
   { key: 'email',                    label: 'Email (required)' },
   { key: 'firstname',                label: 'First Name' },
   { key: 'lastname',                 label: 'Last Name' },
+  { key: 'fullName',                 label: 'Full Name (splits to First / Last)' },
   { key: 'company',                  label: 'Company' },
   { key: 'phone',                    label: 'Work Phone Number' },
   { key: 'mobilePhone',              label: 'Cell Phone Number' },
@@ -129,13 +134,30 @@ function applyMappingToRows(rawRows, mapping) {
       city: '', state: '', country: '', dans_tags: '',
     };
     for (const f of PROSPECT_BACKFILL_FIELDS) out1[`_upload_${f.key}`] = '';
+    let fullName = '';
     for (const [src, dst] of Object.entries(mapping)) {
       if (!dst) continue;
-      out1[dst] = String(r[src] ?? '').trim();
+      const val = String(r[src] ?? '').trim();
+      // Full Name is a composite — capture it and split below rather than
+      // writing it to a real row field.
+      if (dst === 'fullName') { fullName = val; continue; }
+      out1[dst] = val;
     }
-    if (!out1.email) continue;
-    out1.email = out1.email.toLowerCase();
-    if (out1.email.endsWith('@se.com')) continue;
+    // Split a mapped Full Name into first/last (handles "Last, First" too),
+    // but let explicitly-mapped First/Last columns win when both are present.
+    if (fullName && !out1.firstname && !out1.lastname) {
+      const { firstname, lastname } = splitFullName(fullName);
+      out1.firstname = firstname;
+      out1.lastname = lastname;
+    }
+    // Keep name-only rows (no email column) so the address can be estimated
+    // from the company's recorded pattern after import. Drop rows that have
+    // neither an email nor a name — there's nothing to import or estimate.
+    if (!out1.email && !out1.firstname && !out1.lastname) continue;
+    if (out1.email) {
+      out1.email = out1.email.toLowerCase();
+      if (out1.email.endsWith('@se.com')) continue;
+    }
     out.push(out1);
   }
   return out;
@@ -377,6 +399,49 @@ function detectLocalPattern(email, firstname, lastname) {
   return null;
 }
 
+// Materialise an email address from a company's recorded naming pattern.
+// A prospect's Email Domain field holds one or more "<pattern>@<domain>"
+// entries (e.g. "firstinitiallastname@coatue.com"), where the pattern half is
+// one of the EMAIL_PATTERN_RULES keys. Given a name and that field, build the
+// address. Returns '' when no usable pattern is on record — a bare domain with
+// no naming pattern, an unrecognised pattern, or a name we can't fill it with.
+function buildEmailFromPattern(emailDomainField, firstname, lastname) {
+  const f = String(firstname || '').toLowerCase().replace(/[^a-z]/g, '');
+  const l = String(lastname || '').toLowerCase().replace(/[^a-z]/g, '');
+  if (!f && !l) return '';
+  const entries = String(emailDomainField || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
+  for (const entry of entries) {
+    const at = entry.lastIndexOf('@');
+    if (at <= 0) continue; // bare domain, no naming pattern recorded
+    const patternKey = entry.slice(0, at).toLowerCase();
+    const domain = entry.slice(at + 1).toLowerCase();
+    if (!domain) continue;
+    const rule = EMAIL_PATTERN_RULES.find(r => r.key === patternKey);
+    if (!rule) continue;
+    const local = rule.build(f, l);
+    if (local) return `${local}@${domain}`;
+  }
+  return '';
+}
+
+// A row's email is "real" when it's a syntactically valid address. Name-only
+// pastes arrive without one; rather than leaving the email blank (which would
+// collide as a row key and could be mistaken for a sendable address) those rows
+// hold a non-email placeholder key — see placeholderEmailKey.
+function isRealEmail(e) {
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(e || '').trim());
+}
+
+// Deterministic, non-email row key for a contact we couldn't find or estimate
+// an address for. Derived from name + company so re-pasting the same list
+// dedupes instead of piling up duplicates. Never contains '@', so it can't be
+// pushed to HubSpot and reads as blank in the (editable) Email cell.
+function placeholderEmailKey(firstname, lastname, company) {
+  const slug = `${firstname || ''} ${lastname || ''} ${company || ''}`
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return `__noemail__${slug || Math.random().toString(36).slice(2)}`;
+}
+
 const FREE_MAIL_DOMAINS = new Set([
   'gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com',
   'aol.com', 'me.com', 'proton.me', 'protonmail.com', 'live.com', 'msn.com',
@@ -447,6 +512,23 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
   const [bulkEditField, setBulkEditField] = useState('company');
   const [bulkEditValue, setBulkEditValue] = useState('');
   const [bulkEditMode, setBulkEditMode] = useState('replace'); // 'replace' | 'append'
+  // "Add a contact by name" mini-form: type first/last/title/company and the
+  // email is guessed from the company's recorded naming pattern. manualEmail is
+  // kept editable; manualEmailTouched tracks whether the user has overridden the
+  // guess so we stop auto-syncing it once they do.
+  const [manualEntry, setManualEntry] = useState({ firstname: '', lastname: '', jobtitle: '', company: '' });
+  const [manualEmail, setManualEmail] = useState('');
+  const [manualEmailTouched, setManualEmailTouched] = useState(false);
+  const [manualMsg, setManualMsg] = useState('');
+  // Collapse the "Add a contact by name" panel by default so the parsed
+  // contacts table (and its sortable / filterable header) gets more
+  // vertical room. Remembered per browser.
+  const [showManualAdd, setShowManualAdd] = useState(() => {
+    try { return localStorage.getItem('bulk-add:show-manual') === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('bulk-add:show-manual', showManualAdd ? '1' : '0'); } catch { /* ignore */ }
+  }, [showManualAdd]);
   function applyBulkEdit() {
     const field = bulkEditField;
     const value = bulkEditValue;
@@ -625,7 +707,10 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
       for (const r of sheet.records) {
         const company = findCol(r, ['Account', 'Company', 'Account Name', 'Client', 'Name']);
         if (!company) continue;
-        const rep = findCol(r, ['CDM', 'Salesperson', 'Sales Rep', 'Account Owner', 'Owner', 'Rep', 'Assigned', 'Team Member']);
+        // Use the salesperson/CDM column mapped on the Target Accounts
+        // page (New Sales rep wins, then CDM), falling back to a keyword
+        // scan so this resolves a rep even without a mapping.
+        const rep = resolveTargetAccountCdm(r, settings?.targetRepColumn || settings?.targetCdmColumn);
         if (!rep) continue;
         // Skip the current user's own entries — those are "your"
         // accounts, not Other Reps.
@@ -634,7 +719,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
       }
     }
     return out;
-  }, [targetAccountsData, cdmName]);
+  }, [targetAccountsData, cdmName, settings?.targetRepColumn, settings?.targetCdmColumn]);
 
   // For each matched prospect, the list of Other Reps tied to the
   // confirmed Target Account name(s) for that prospect. Mirrors the
@@ -852,6 +937,8 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
     const { domain, matched, wasExactMatch } = lookupMatch(r.email, r);
     // Only guess name parts if the parsed row didn't already carry them from "Name <email>" drops.
     const nameGuess = (!r.firstname && !r.lastname) ? guessNameFromEmail(r.email) : { firstname: '', lastname: '' };
+    const firstname = fixAllCapsName(r.firstname || nameGuess.firstname);
+    const lastname = fixAllCapsName(r.lastname || nameGuess.lastname);
     // Initial Company value: match HubSpot's current value when the contact already exists
     // (even if blank — so user sees the real state). For brand-new contacts, leave blank so the
     // Suggested Company chip is an explicit opt-in rather than an auto-fill.
@@ -859,10 +946,27 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
     const initialCompany = r.company !== undefined && r.company !== null && r.company !== ''
       ? r.company
       : (existing ? (existing.company || '') : '');
+    // Email resolution. A real provided address wins. Otherwise estimate one
+    // from the matched company's recorded naming pattern. Otherwise fall back
+    // to a non-email placeholder key so the row still shows up for review but
+    // can't be pushed to HubSpot until the user supplies an address.
+    //   _emailStatus: 'provided' | 'estimated' | 'missing'
+    let email = isRealEmail(r.email) ? r.email.toLowerCase() : '';
+    let emailStatus = email ? 'provided' : '';
+    if (!email && matched) {
+      const est = buildEmailFromPattern(matched.emailDomain, firstname, lastname);
+      if (est) { email = est.toLowerCase(); emailStatus = 'estimated'; }
+    }
+    if (!email) {
+      email = placeholderEmailKey(firstname, lastname, initialCompany);
+      emailStatus = 'missing';
+    }
     return {
       ...r,
-      firstname: fixAllCapsName(r.firstname || nameGuess.firstname),
-      lastname: fixAllCapsName(r.lastname || nameGuess.lastname),
+      email,
+      _emailStatus: emailStatus,
+      firstname,
+      lastname,
       company: initialCompany,
       _matchedProspectId: matched?.id || null,
       _matchedDomain: domain,
@@ -919,10 +1023,12 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
     setRows(prev => {
       const byEmail = new Map(prev.map(r => [r.email, r]));
       for (const p of parsed) {
-        const existing = byEmail.get(p.email);
+        // Enrich first so an estimated / placeholder email becomes the dedupe
+        // key — name-only rows have no email of their own to key on.
+        const er = enrichRow(p);
+        const existing = byEmail.get(er.email);
         if (!existing) {
-          const er = enrichRow(p);
-          byEmail.set(p.email, er);
+          byEmail.set(er.email, er);
           newlyEnriched.push(er);
         } else {
           // Re-drop of the same contact: refresh the upload-sourced
@@ -943,7 +1049,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
           if (!existing.country && p.country) refreshed.country = p.country;
           if (!existing.company && p.company) refreshed.company = p.company;
           if (!existing.dans_tags && p.dans_tags) refreshed.dans_tags = p.dans_tags;
-          byEmail.set(p.email, refreshed);
+          byEmail.set(er.email, refreshed);
         }
       }
       const next = Array.from(byEmail.values());
@@ -952,6 +1058,48 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
     });
     if (newlyEnriched.length > 0) patchProspectDomains(newlyEnriched);
   }, [enrichRow, patchProspectDomains, companyRules]);
+
+  // Guess an email for the "Add a contact by name" form: match the typed
+  // company to a Table View prospect, then apply that prospect's recorded
+  // naming pattern. Returns '' when the company isn't matched or has no pattern.
+  const guessEmailFromCompany = useCallback((firstname, lastname, company) => {
+    const m = matchProspectByCompanyName(company);
+    if (!m) return '';
+    return buildEmailFromPattern(m.emailDomain, firstname, lastname);
+  }, [matchProspectByCompanyName]);
+
+  const manualGuessedEmail = useMemo(
+    () => guessEmailFromCompany(manualEntry.firstname, manualEntry.lastname, manualEntry.company),
+    [guessEmailFromCompany, manualEntry],
+  );
+  // Keep the email box in sync with the guess until the user edits it by hand.
+  useEffect(() => {
+    if (!manualEmailTouched) setManualEmail(manualGuessedEmail);
+  }, [manualGuessedEmail, manualEmailTouched]);
+
+  function addManualContact() {
+    const email = manualEmail.trim().toLowerCase();
+    const { firstname, lastname, jobtitle, company } = manualEntry;
+    if (!firstname.trim() && !lastname.trim()) { setManualMsg('Add a first or last name'); return; }
+    if (!email) { setManualMsg('No email yet — type one, or add a company whose pattern is on record'); return; }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { setManualMsg('That email doesn’t look valid'); return; }
+    if (email.endsWith('@se.com')) { setManualMsg('@se.com addresses are skipped'); return; }
+    if (rows.some(r => r.email === email)) { setManualMsg('That email is already in the list'); return; }
+    // Reuse the upload pipeline so the new row is enriched (prospect match,
+    // company suggestion, Table View backfill) exactly like a pasted one.
+    mergeNewRows([{
+      email,
+      firstname: firstname.trim(),
+      lastname: lastname.trim(),
+      company: company.trim(),
+      jobtitle: jobtitle.trim(),
+      phone: '', mobilePhone: '', linkedinUrl: '', city: '', state: '', country: '', dans_tags: '',
+    }]);
+    setManualEntry({ firstname: '', lastname: '', jobtitle: '', company: '' });
+    setManualEmail('');
+    setManualEmailTouched(false);
+    setManualMsg('Added — see it at the top of the list below');
+  }
 
   function handleDrop(e) {
     e.preventDefault();
@@ -1366,6 +1514,9 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
   }
 
   async function addOne(row) {
+    // Defensive: never POST a row without a real address (placeholder keys for
+    // contacts whose email couldn't be estimated must be resolved first).
+    if (!isRealEmail(row.email)) return 'error: no email address';
     const firstname = fixAllCapsName(row.firstname);
     const lastname = fixAllCapsName(row.lastname);
     try {
@@ -1466,9 +1617,10 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
 
   async function addAll() {
     // Two parallel queues: create new contacts, and fill in missing fields on existing ones.
-    const toCreate = rows.filter(r => !hubspotByEmail.has(r.email) && results[r.email] !== 'added');
+    const toCreate = rows.filter(r => isRealEmail(r.email) && !hubspotByEmail.has(r.email) && results[r.email] !== 'added');
     const toUpdate = [];
     for (const r of rows) {
+      if (!isRealEmail(r.email)) continue;
       if (results[r.email] === 'added' || results[r.email] === 'updated') continue;
       const existing = hubspotByEmail.get(r.email);
       if (!existing) continue;
@@ -1504,9 +1656,10 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
   async function addSelected() {
     if (bulkSelected.size === 0) return;
     const picked = rows.filter(r => bulkSelected.has(r.email));
-    const toCreate = picked.filter(r => !hubspotByEmail.has(r.email) && results[r.email] !== 'added');
+    const toCreate = picked.filter(r => isRealEmail(r.email) && !hubspotByEmail.has(r.email) && results[r.email] !== 'added');
     const toUpdate = [];
     for (const r of picked) {
+      if (!isRealEmail(r.email)) continue;
       if (results[r.email] === 'added' || results[r.email] === 'updated') continue;
       const existing = hubspotByEmail.get(r.email);
       if (!existing) continue;
@@ -1534,8 +1687,12 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
     setProgress(null);
   }
 
-  const newCount = rows.filter(r => !hubspotByEmail.has(r.email)).length;
+  // Rows with no usable address (couldn't be estimated from a company pattern).
+  // They stay in the grid for review but are blocked from the HubSpot push.
+  const missingEmailCount = rows.filter(r => !isRealEmail(r.email)).length;
+  const newCount = rows.filter(r => isRealEmail(r.email) && !hubspotByEmail.has(r.email)).length;
   const updateCount = rows.filter(r => {
+    if (!isRealEmail(r.email)) return false;
     const existing = hubspotByEmail.get(r.email);
     if (!existing) return false;
     return !!missingFieldUpdates(r, existing) || hasPendingNote(r, existing);
@@ -2195,6 +2352,66 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
           </div>
         )}
 
+        {activeTab === 'contacts' && (() => {
+          const set = (patch) => { setManualEntry(prev => ({ ...prev, ...patch })); if (manualMsg) setManualMsg(''); };
+          const companyTyped = manualEntry.company.trim().length >= 2;
+          const guessed = !manualEmailTouched && !!manualGuessedEmail;
+          const inputStyle = { padding: '0.32rem 0.45rem', border: '1px solid var(--color-border)', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit', minWidth: 0 };
+          return (
+            <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, padding: showManualAdd ? '0.55rem 0.85rem' : '0.3rem 0.6rem', margin: '0.4rem 0 0', background: '#F8FAFC' }}>
+              <button
+                type="button"
+                onClick={() => setShowManualAdd(v => !v)}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', width: '100%', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-text-secondary)', textAlign: 'left' }}
+                title={showManualAdd ? 'Collapse' : 'Expand to add a single contact by name'}
+              >
+                <span style={{ fontSize: '0.7rem', color: '#94A3B8' }}>{showManualAdd ? '▾' : '▸'}</span>
+                Add a contact by name
+                <span style={{ fontWeight: 400, color: '#64748B' }}>
+                  — email is guessed from the company’s recorded pattern
+                </span>
+              </button>
+              {showManualAdd && (<>
+              <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'flex-end', marginTop: '0.5rem' }}>
+                <input style={{ ...inputStyle, flex: '1 1 110px' }} placeholder="First name"
+                  value={manualEntry.firstname} onChange={e => set({ firstname: e.target.value })}
+                  onKeyDown={e => { if (e.key === 'Enter') addManualContact(); }} />
+                <input style={{ ...inputStyle, flex: '1 1 110px' }} placeholder="Last name"
+                  value={manualEntry.lastname} onChange={e => set({ lastname: e.target.value })}
+                  onKeyDown={e => { if (e.key === 'Enter') addManualContact(); }} />
+                <input style={{ ...inputStyle, flex: '1 1 140px' }} placeholder="Job title"
+                  value={manualEntry.jobtitle} onChange={e => set({ jobtitle: e.target.value })}
+                  onKeyDown={e => { if (e.key === 'Enter') addManualContact(); }} />
+                <input style={{ ...inputStyle, flex: '1 1 160px' }} placeholder="Company"
+                  value={manualEntry.company} onChange={e => set({ company: e.target.value })}
+                  onKeyDown={e => { if (e.key === 'Enter') addManualContact(); }} />
+                <input
+                  style={{ ...inputStyle, flex: '1 1 200px', background: guessed ? '#ECFDF5' : '#fff', borderColor: guessed ? '#86EFAC' : 'var(--color-border)' }}
+                  placeholder="Email (auto-guessed)"
+                  value={manualEmail}
+                  onChange={e => { setManualEmail(e.target.value); setManualEmailTouched(true); if (manualMsg) setManualMsg(''); }}
+                  onKeyDown={e => { if (e.key === 'Enter') addManualContact(); }}
+                  title={guessed ? 'Guessed from the company’s recorded email pattern — edit if it’s wrong' : 'Type the email, or add a company whose pattern is on record to auto-guess'}
+                />
+                <button type="button" className={styles.primaryBtn} onClick={addManualContact}
+                  style={{ flex: '0 0 auto', whiteSpace: 'nowrap' }}>
+                  + Add contact
+                </button>
+              </div>
+              <div style={{ fontSize: '0.72rem', marginTop: '0.4rem', minHeight: '1em', color: manualMsg ? '#B45309' : (guessed ? '#15803D' : '#64748B') }}>
+                {manualMsg
+                  ? manualMsg
+                  : guessed
+                    ? `Guessed “${manualEmail}” from ${manualEntry.company.trim()}’s recorded email pattern.`
+                    : companyTyped && (manualEntry.firstname.trim() || manualEntry.lastname.trim()) && !manualEmail
+                      ? 'No email pattern on record for that company — type the email manually, or it’ll fill in once a pattern is known.'
+                      : 'Type a name + company; if the company’s email pattern is on record, the address fills in automatically.'}
+              </div>
+              </>)}
+            </div>
+          );
+        })()}
+
         {activeTab === 'contacts' && rows.length === 0 ? (
           <div
             className={styles.empty}
@@ -2216,17 +2433,25 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
           </div>
         ) : activeTab === 'contacts' && (
           <>
+          {missingEmailCount > 0 && (
+            <div style={{ margin: '0.75rem 0 0', padding: '0.5rem 0.7rem', background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#991B1B', borderRadius: 6, fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <strong>{missingEmailCount}</strong> contact{missingEmailCount === 1 ? '' : 's'} {missingEmailCount === 1 ? 'has' : 'have'} no email — no address could be estimated from the company’s pattern.
+              Add an email in the <strong>Email</strong> column or remove {missingEmailCount === 1 ? 'it' : 'them'} before importing to HubSpot.
+            </div>
+          )}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', margin: '0.75rem 0 0.25rem', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <button
                 type="button"
                 className={styles.primaryBtn}
-                disabled={busy || (newCount === 0 && updateCount === 0)}
+                disabled={busy || missingEmailCount > 0 || (newCount === 0 && updateCount === 0)}
                 onClick={addAll}
                 title={
-                  newCount === 0 && updateCount === 0
-                    ? 'Nothing to send'
-                    : `Create ${newCount} new and fill missing fields on ${updateCount} existing contact${updateCount === 1 ? '' : 's'}`
+                  missingEmailCount > 0
+                    ? `${missingEmailCount} contact${missingEmailCount === 1 ? '' : 's'} ${missingEmailCount === 1 ? 'has' : 'have'} no email — add or remove ${missingEmailCount === 1 ? 'it' : 'them'} first`
+                    : newCount === 0 && updateCount === 0
+                      ? 'Nothing to send'
+                      : `Create ${newCount} new and fill missing fields on ${updateCount} existing contact${updateCount === 1 ? '' : 's'}`
                 }
               >
                 {busy
@@ -2696,7 +2921,42 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                         </td>
                       )}
                       {bulkColVisible.has('_remove') && <td><button className={styles.rowRemove} onClick={() => removeRow(r.email)} title="Remove row">×</button></td>}
-                      {bulkColVisible.has('email') && <td className={styles.emailCell}>{r.email}</td>}
+                      {bulkColVisible.has('email') && (() => {
+                        // Placeholder keys (__noemail__…) stand in for an unknown
+                        // address — show them as blank so the user can type one.
+                        // An in-progress entry (not yet a valid email) is still
+                        // shown so typing works; it just stays flagged "missing".
+                        const isPlaceholder = String(r.email).startsWith('__noemail__');
+                        const real = isRealEmail(r.email);
+                        const estimated = real && r._emailStatus === 'estimated';
+                        const missing = !real;
+                        return (
+                          <td className={styles.emailCell}>
+                            <input
+                              className={styles.cellInput}
+                              type="email"
+                              value={isPlaceholder ? '' : r.email}
+                              placeholder={missing ? 'No email — add one' : ''}
+                              onChange={e => {
+                                const v = e.target.value.trim().toLowerCase();
+                                if (v) updateRow(r.email, { email: v, _emailStatus: 'provided' });
+                                else updateRow(r.email, { email: placeholderEmailKey(r.firstname, r.lastname, effectiveRowCompany(r)), _emailStatus: 'missing' });
+                              }}
+                              title={estimated
+                                ? 'Estimated from the company’s recorded email pattern — edit if it’s wrong'
+                                : missing
+                                  ? 'No address could be estimated — type one to import this contact to HubSpot'
+                                  : ''}
+                              style={{
+                                background: estimated ? '#FFFBEB' : missing ? '#FEF2F2' : undefined,
+                                borderColor: estimated ? '#FCD34D' : missing ? '#FCA5A5' : undefined,
+                              }}
+                            />
+                            {estimated && <span style={{ fontSize: '0.6rem', fontWeight: 700, color: '#B45309', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Estimated</span>}
+                            {missing && <span style={{ fontSize: '0.6rem', fontWeight: 700, color: '#B91C1C', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Needs email</span>}
+                          </td>
+                        );
+                      })()}
                       {bulkColVisible.has('status') && <td><span className={`${styles.statusPill} ${statusClass}`}>{statusLabel}</span></td>}
                       {bulkColVisible.has('fullName') && <td><input
                         className={styles.cellInput}
@@ -2987,18 +3247,27 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
         const sampleRow = rawRows[0] || {};
         const mappedFieldCounts = {};
         for (const v of Object.values(mapping)) if (v) mappedFieldCounts[v] = (mappedFieldCounts[v] || 0) + 1;
-        const hasEmail = Object.values(mapping).includes('email');
+        const mappedVals = Object.values(mapping);
+        const hasEmail = mappedVals.includes('email');
+        const hasName = mappedVals.includes('firstname') || mappedVals.includes('lastname') || mappedVals.includes('fullName');
+        const hasCompany = mappedVals.includes('company');
+        // Without an Email column we can still import as long as Name + Company
+        // are mapped — addresses are estimated from each company's recorded
+        // pattern, and any that can't be estimated are flagged in the grid and
+        // blocked from the HubSpot push until the user fills them in.
+        const canEstimate = !hasEmail && hasName && hasCompany;
+        const canImport = hasEmail || canEstimate;
         const hasDuplicate = Object.values(mappedFieldCounts).some(n => n > 1);
         const updateCell = (header, fieldKey) => {
           setPendingUpload(prev => prev ? { ...prev, mapping: { ...prev.mapping, [header]: fieldKey } } : prev);
         };
         const cancel = () => setPendingUpload(null);
         const confirmImport = () => {
-          if (!hasEmail) { alert('At least one column must map to Email before importing.'); return; }
+          if (!canImport) { alert('Map a column to Email — or map Name and Company so addresses can be estimated.'); return; }
           if (hasDuplicate) { alert('Each field can only be mapped to one column. Set duplicates to Ignore first.'); return; }
           const parsed = applyMappingToRows(rawRows, mapping);
           if (parsed.length === 0) {
-            alert('No rows had a valid Email — nothing to import.');
+            alert('No rows had an email or a name — nothing to import.');
             return;
           }
           mergeNewRows(parsed);
@@ -3012,9 +3281,14 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                 <div style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '0.2rem' }}>
                   <strong>{rawRows.length}</strong> row{rawRows.length === 1 ? '' : 's'} from <em>{fileName}</em> — confirm each column maps to the right field, then import.
                 </div>
-                {!hasEmail && (
+                {!canImport && (
                   <div style={{ marginTop: '0.5rem', padding: '0.4rem 0.6rem', background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#991B1B', borderRadius: 6, fontSize: '0.75rem' }}>
-                    A column must map to <strong>Email</strong> before you can import.
+                    Map a column to <strong>Email</strong> — or map <strong>Name</strong> and <strong>Company</strong> so addresses can be estimated.
+                  </div>
+                )}
+                {canEstimate && (
+                  <div style={{ marginTop: '0.5rem', padding: '0.4rem 0.6rem', background: '#EFF6FF', border: '1px solid #93C5FD', color: '#1E40AF', borderRadius: 6, fontSize: '0.75rem' }}>
+                    No <strong>Email</strong> column — addresses will be estimated from each company’s recorded pattern. Contacts we can’t estimate are flagged in the grid and blocked from the HubSpot import until you add an email.
                   </div>
                 )}
                 {hasDuplicate && (
@@ -3061,7 +3335,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
               </div>
               <div style={{ padding: '0.75rem 1.25rem', borderTop: '1px solid var(--color-border)', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
                 <button type="button" onClick={cancel} style={{ padding: '0.45rem 0.9rem', border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
-                <button type="button" onClick={confirmImport} disabled={!hasEmail || hasDuplicate} style={{ padding: '0.45rem 0.9rem', border: 'none', background: (!hasEmail || hasDuplicate) ? '#94A3B8' : 'var(--color-accent)', color: '#fff', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: (!hasEmail || hasDuplicate) ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}>Import {rawRows.length} row{rawRows.length === 1 ? '' : 's'}</button>
+                <button type="button" onClick={confirmImport} disabled={!canImport || hasDuplicate} style={{ padding: '0.45rem 0.9rem', border: 'none', background: (!canImport || hasDuplicate) ? '#94A3B8' : 'var(--color-accent)', color: '#fff', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: (!canImport || hasDuplicate) ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}>Import {rawRows.length} row{rawRows.length === 1 ? '' : 's'}</button>
               </div>
             </div>
           </div>
