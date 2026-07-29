@@ -12,11 +12,11 @@ import { userLsGet } from '../../utils/userLs';
 import styles from './ListsView.module.css';
 
 const SUBTABS = [
+  { key: 'sites', label: 'Utility Lookup' },
   { key: 'raclients', label: 'RA Clients' },
   { key: 'targets', label: 'Targets' },
   { key: 'largest', label: 'Largest', storageKey: 'largest-list-override' },
   { key: 'strategic', label: 'Strategic Accounts', storageKey: 'strategic-accounts-override' },
-  { key: 'sites', label: 'Utility Lookup' },
   { key: 'mastersites', label: 'Master Site List' },
   { key: 'recaclients', label: 'RECA', storageKey: 'reca-clients-override' },
   { key: 'ecoactclients', label: 'EcoAct', storageKey: 'ecoact-clients-override' },
@@ -165,7 +165,7 @@ function DataSourceLink({ storageKey }) {
 }
 
 export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectProspect, cdmName, settings, updateSettings, updateSettingsPath, updateProspect }) {
-  const [subtab, setSubtab] = useState('raclients');
+  const [subtab, setSubtab] = useState('sites');
   // { [subtabKey]: { mapped, touched, pct } } — green subtab when pct===100.
   const [coverageByKey, setCoverageByKey] = useState({});
   // Bumped on subtab change, custom coverage-changed events, and
