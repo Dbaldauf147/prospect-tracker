@@ -15,6 +15,7 @@ import { S2CTab } from './S2CTab';
 import { CalculatorTab } from './CalculatorTab';
 import { buildPricingOptionSnapshot } from '../../utils/pricingOptionCalc';
 import { setOppPricingSnapshot } from '../../utils/oppsPricingSnapshot';
+import { saveOppSourceFile, sourceFileMeta } from '../../utils/oppPricingSourceFile';
 import {
   loadOptionLinks,
   setOppOptionLink,
@@ -1548,6 +1549,11 @@ const LINE_ITEM_IGNORED_KEY = 'lineItemIgnored';
 // needing to walk the workbook itself.
 const OPTION_SERVICES_KEY = 'pricingOptionServices';
 const OPTION_SERVICES_EVENT = 'pricing:optionServicesChanged';
+// Raw bytes of the most-recently uploaded SIA workbook so that
+// "Save to Opp" can attach the source file to the opp without
+// requiring the user to re-upload. Stored as a Blob so reload
+// rehydrates it cleanly.
+const WORKBOOK_SOURCE_KEY = 'workbookSourceBlob';
 // Bump this whenever the parser output shape changes — older cached
 // parses are silently discarded on hydration so the user re-uploads
 // against the current parser.
@@ -1638,6 +1644,12 @@ export function PricingView({ settings } = {}) {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
   const hydratedRef = useRef(false);
+  // Raw Blob of the uploaded SIA workbook. Kept alive in a ref so
+  // "Save to Opp" can attach it without re-reading the file input.
+  // Also persisted to IndexedDB (see WORKBOOK_SOURCE_KEY) so a page
+  // reload doesn't lose it as long as the parsed workbook is still
+  // hydrated.
+  const workbookSourceRef = useRef(null);
 
   // Hydrate from IndexedDB on first mount.
   useEffect(() => {
@@ -1734,6 +1746,14 @@ export function PricingView({ settings } = {}) {
         if (Array.isArray(saved.optionsTabData)) setOptionsTabData(saved.optionsTabData);
         if (saved.compareTabData && typeof saved.compareTabData === 'object') setCompareTabData(saved.compareTabData);
         if (Array.isArray(saved.brokerFeesData)) setBrokerFeesData(saved.brokerFeesData);
+        // Rehydrate the uploaded SIA workbook bytes so "Save to Opp"
+        // can still attach the source file after a page reload.
+        try {
+          const sourceBlob = await dbGet(STORE, WORKBOOK_SOURCE_KEY);
+          if (!cancelled && sourceBlob instanceof Blob) {
+            workbookSourceRef.current = sourceBlob;
+          }
+        } catch { /* ignore */ }
       } catch (err) {
         console.warn('Failed to load pricing cache:', err);
       } finally {
@@ -2302,6 +2322,16 @@ export function PricingView({ settings } = {}) {
         return;
       }
       const parsed = parsePricingWorkbook(buf);
+      // Stash the raw bytes so "Save to Opp" can attach them later.
+      // Use a Blob (not the raw ArrayBuffer) so IndexedDB rehydrates
+      // it as a downloadable file on next mount.
+      const sourceBlob = new Blob([buf], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      workbookSourceRef.current = sourceBlob;
+      dbPut(STORE, sourceBlob, WORKBOOK_SOURCE_KEY).catch(err => {
+        console.warn('Failed to cache workbook source blob:', err);
+      });
       // A new SIA replaces the one on screen, so unlink any Opp the
       // outgoing workbook was "Saved to" before we swap it out.
       clearLoadedWorkbookOptionLinks(workbook);
@@ -2449,6 +2479,12 @@ export function PricingView({ settings } = {}) {
     // Linked-To defaults live under their own key (LINKED_TO_DEFAULTS_KEY)
     // and are intentionally preserved across Clear / file changes.
     dbDelete(STORE, KEY).catch(() => {});
+    // The source-file blob is tied to the loaded workbook — drop it
+    // alongside. Per-opp copies already saved via "Save to Opp" are
+    // kept (they live in the pricing-source-files store keyed by oppId
+    // so they survive the Pricing tab being cleared).
+    workbookSourceRef.current = null;
+    dbDelete(STORE, WORKBOOK_SOURCE_KEY).catch(() => {});
   }
 
   // Clone the active option in-place on the loaded workbook. The new
@@ -4590,6 +4626,17 @@ export function PricingView({ settings } = {}) {
                 services: (opt && pricingOptionServices) ? (pricingOptionServices[opt.sheetName] || []) : [],
                 rows,
               });
+              // Attach a copy of the uploaded SIA workbook to this opp
+              // so the Opps 2 popup can offer a download later — even
+              // after the Pricing tab has been cleared or a different
+              // workbook loaded. Metadata (fileName, size) rides on the
+              // snapshot; the bytes live in their own IDB store keyed
+              // by oppId.
+              const sourceBlob = workbookSourceRef.current;
+              const sourceName = workbook?.fileName || 'workbook.xlsx';
+              if (sourceBlob) {
+                snapshot.sourceFile = sourceFileMeta(sourceName, sourceBlob);
+              }
               try {
                 // Await both writes so the picker doesn't close before
                 // Firestore has the snapshot — otherwise Opps 2's next
@@ -4597,6 +4644,13 @@ export function PricingView({ settings } = {}) {
                 // Firestore copy and the user sees only the link.
                 await setOppOptionLink(oppId, label);
                 await setOppPricingSnapshot(user?.uid, oppId, snapshot);
+                if (sourceBlob) {
+                  // Best-effort source-file copy. Failure here doesn't
+                  // invalidate the snapshot — the user just won't see a
+                  // Download button on the opp until they re-save.
+                  try { await saveOppSourceFile(oppId, sourceBlob, sourceName); }
+                  catch (err) { console.warn('Save source file failed:', err); }
+                }
                 setPricingPickerOpen(false);
               } catch (err) {
                 console.error('Save to Opp (Pricing): snapshot save failed', { err, uid: user?.uid, oppId });

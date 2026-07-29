@@ -31,6 +31,7 @@ import {
 import { pushOpps2Backup } from '../../utils/opps2Backup';
 import { loadOptionLinks, setOppOptionLink, OPTION_LINKS_EVENT } from '../../utils/pricingOptionLinks';
 import { OPPS_PRICING_SNAPSHOT_EVENT } from '../../utils/oppsPricingSnapshot';
+import { loadOppSourceFile } from '../../utils/oppPricingSourceFile';
 import { fmtMoneyWhole, toNum, unitCountOrOne, rowYearRevenue } from '../../utils/pricingOptionCalc';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
@@ -1145,6 +1146,71 @@ function ComputedCell({ value }) {
     >
       {isEmpty ? '—' : String(value)}
     </span>
+  );
+}
+
+// Small download button for the original SIA workbook attached to an
+// opp by the Pricing tab's "Save to Opp" flow. Bytes live in the
+// per-opp `pricing-source-files` IndexedDB store keyed by oppId.
+// Shows the file size next to the name; if the local IDB copy is
+// missing (e.g. the user is on a different browser than the one
+// where they clicked Save to Opp), the button surfaces a hint
+// instead of failing silently.
+function SourceFileDownloadButton({ oppId, fileName, sizeBytes }) {
+  const [busy, setBusy] = useState(false);
+  const sizeLabel = (() => {
+    if (typeof sizeBytes !== 'number' || !Number.isFinite(sizeBytes) || sizeBytes <= 0) return '';
+    if (sizeBytes >= 1024 * 1024) return `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`;
+    if (sizeBytes >= 1024) return `${Math.round(sizeBytes / 1024)} KB`;
+    return `${sizeBytes} B`;
+  })();
+  async function download() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const rec = await loadOppSourceFile(oppId);
+      if (!rec?.blob) {
+        window.alert(
+          'No source file saved on this device for this opp.\n\n' +
+          'The source workbook lives in this browser\'s IndexedDB. If you saved ' +
+          'this opp from a different browser or have cleared site data since, ' +
+          'go to the Pricing tab, load the workbook again, and click ' +
+          'Save to Opp on this opp to re-attach the file.'
+        );
+        return;
+      }
+      const url = URL.createObjectURL(rec.blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = rec.fileName || fileName || 'workbook.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={download}
+      disabled={busy}
+      title={`Download ${fileName || 'workbook.xlsx'}${sizeLabel ? ` (${sizeLabel})` : ''}`}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+        padding: '0.25rem 0.55rem',
+        border: '1px solid var(--color-border)', borderRadius: 4,
+        background: '#fff', cursor: busy ? 'progress' : 'pointer',
+        fontSize: '0.72rem', fontFamily: 'inherit', fontWeight: 600,
+        color: 'var(--color-text)', whiteSpace: 'nowrap',
+      }}
+    >
+      <span>{busy ? 'Loading…' : '⬇ Source file'}</span>
+      <span style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}>
+        {fileName || 'workbook.xlsx'}{sizeLabel ? ` · ${sizeLabel}` : ''}
+      </span>
+    </button>
   );
 }
 
@@ -4548,9 +4614,21 @@ export function OppInfoModal({
           {opp._pricingOption ? (
             <div style={{ margin: '0.25rem 0 0.75rem' }}>
               <div style={{
-                fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.03em',
-                color: 'var(--color-text-muted)', fontWeight: 600, marginBottom: '0.35rem',
-              }}>Pricing Option (saved snapshot)</div>
+                display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+                gap: '0.6rem', marginBottom: '0.35rem',
+              }}>
+                <div style={{
+                  fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.03em',
+                  color: 'var(--color-text-muted)', fontWeight: 600,
+                }}>Pricing Option (saved snapshot)</div>
+                {opp._pricingOption.sourceFile && (
+                  <SourceFileDownloadButton
+                    oppId={opp._id}
+                    fileName={opp._pricingOption.sourceFile.fileName}
+                    sizeBytes={opp._pricingOption.sourceFile.sizeBytes}
+                  />
+                )}
+              </div>
               <PricingOptionSnapshotView snapshot={opp._pricingOption} />
             </div>
           ) : pricingOptionLinkName ? (
