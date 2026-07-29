@@ -129,23 +129,6 @@
   padding: 0 1.25rem 0.5rem;
 }
 
-.searchInput {
-  width: 100%;
-  max-width: 320px;
-  padding: 0.45rem 0.6rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-family: inherit;
-  color: var(--color-text);
-  background: var(--color-bg);
-}
-
-.searchInput:focus {
-  outline: none;
-  border-color: var(--color-accent);
-}
-
 .resultCount {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
@@ -192,19 +175,6 @@
   align-items: flex-end;
   gap: 0.75rem;
   padding: 0 1.25rem 0.75rem;
-}
-
-/* Opportunities tab: keep the search / count / Mass Edit controls on the
-   same line as the Show / history / hidden controls instead of wrapping
-   below. Children don't shrink, so the strip scrolls horizontally on a
-   narrow window rather than squashing the search box or wrapping a
-   button's label. */
-.filterRowInline {
-  flex-wrap: nowrap;
-  overflow-x: auto;
-}
-.filterRowInline > * {
-  flex-shrink: 0;
 }
 
 .filterLabel {

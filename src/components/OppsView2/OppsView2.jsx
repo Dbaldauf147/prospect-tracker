@@ -6590,7 +6590,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // _updatedAt timestamp of the most recent blob we wrote to Firestore.
   // The onSnapshot listener compares against this to skip our own echoes.
   const lastFsSavedAtRef = useRef(null);
-  const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState('opps');
   // New Opps subtab: controls the recurring-email schedule manager modal.
   const [newOppsScheduleOpen, setNewOppsScheduleOpen] = useState(false);
@@ -6621,13 +6620,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // backlog), so we let the user hide that column without losing the
   // data. Defaulted to visible so the column is discoverable.
   const [hideNotStarted, setHideNotStarted] = useState(false);
-  const servicesDefaultAppliedRef = useRef(false);
-  useEffect(() => {
-    if (activeTab === 'services' && !servicesDefaultAppliedRef.current) {
-      servicesDefaultAppliedRef.current = true;
-      setActivityFilter(prev => (prev === 'all' ? 'active' : prev));
-    }
-  }, [activeTab]);
+  // By Service reads as active-only. This used to be a one-time effect
+  // that flipped the shared activityFilter, which meant visiting the tab
+  // left every other tab stuck on "active" — recoverable only via the
+  // Show dropdown. That dropdown is gone, so derive the By Service
+  // default per-tab instead of mutating shared state.
+  const effectiveActivityFilter = activeTab === 'services' ? 'active' : activityFilter;
   const [hiddenServices, setHiddenServices] = useState(() => new Set());
   const [showHidden, setShowHidden] = useState(false);
   const [linkModalOpen, setLinkModalOpen] = useState(false);
@@ -8724,11 +8722,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       }
       if (statusFilter !== 'all' && (r['Status'] || '').trim() !== statusFilter) return false;
       const stage = (r['Stage'] || '').trim();
-      if (activityFilter === 'active' && CLOSED_STAGES.has(stage)) return false;
-      if (activityFilter === 'closed' && !CLOSED_STAGES.has(stage)) return false;
+      if (effectiveActivityFilter === 'active' && CLOSED_STAGES.has(stage)) return false;
+      if (effectiveActivityFilter === 'closed' && !CLOSED_STAGES.has(stage)) return false;
       return true;
     });
-  }, [records, dateFrom, dateTo, statusFilter, activityFilter, hideHistory, CLOSED_STAGES, recentClosedHistoryIds]);
+  }, [records, dateFrom, dateTo, statusFilter, effectiveActivityFilter, hideHistory, CLOSED_STAGES, recentClosedHistoryIds]);
 
   // Standalone count of rows the Hide-history gate is suppressing, so
   // the toggle button can show "Show history (N)" without depending on
@@ -8751,19 +8749,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   const hiddenByFilterCount = records.length - filteredByActiveFilters.length;
   const prefiltered = showHiddenByFilter ? records : filteredByActiveFilters;
 
-  // Global search across every column on each record — see OppsView for
-  // the same shape. Trims + lowercases the term so the value the user
-  // typed lines up with the stored cell text.
+  // The cross-column search box is gone — the table's per-column filters
+  // cover the same ground — so the only narrowing left here is the
+  // mass-edit "show selected only" toggle.
   const filtered = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    const searched = !term ? prefiltered : prefiltered.filter(r =>
-      Object.values(r).some(v => v != null && v !== '' && String(v).toLowerCase().includes(term))
-    );
     if (showOnlySelected && selectedIds.size > 0) {
-      return searched.filter(r => selectedIds.has(r._id));
+      return prefiltered.filter(r => selectedIds.has(r._id));
     }
-    return searched;
-  }, [prefiltered, search, showOnlySelected, selectedIds]);
+    return prefiltered;
+  }, [prefiltered, showOnlySelected, selectedIds]);
 
   // "Waiting on Keith" subtab: opps where Keith appears in the Waiting On
   // column. The displayed Waiting On value is the stacked per-step
@@ -9885,70 +9879,40 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         >Keith{waitingOnKeith.length ? ` (${waitingOnKeith.length})` : ''}</button>
       </div>
 
-      <div
-        // On the Opportunities tab the search box + result count + Mass
-        // Edit ride on this row too; the filterRowInline modifier keeps
-        // the whole strip on one line (inline with the Show controls)
-        // instead of letting it wrap below, scrolling horizontally on a
-        // narrow window rather than clipping. Other tabs keep the default
-        // wrapping behavior.
-        className={`${styles.filterRow}${activeTab === 'opps' ? ` ${styles.filterRowInline}` : ''}`}
-      >
-        {/* Start Date range + Status filters intentionally hidden — the
-            underlying state stays at its no-op defaults (empty range,
-            status "all") so nothing is filtered out. */}
-        <label className={styles.filterLabel}>
-          Show
-          <select
-            className={styles.filterInput}
-            value={activityFilter}
-            onChange={e => setActivityFilter(e.target.value)}
-          >
-            <option value="active">Active only</option>
-            <option value="closed">Closed only</option>
-            <option value="all">All</option>
-          </select>
-        </label>
-        {filtersActive && (
-          <button className={styles.clearFiltersBtn} onClick={clearFilters}>Clear filters</button>
-        )}
-        {/* Opps-tab search + result count. Guarded to the Opportunities
-            tab (the other tabs have no free-text search). Mass Edit used
-            to sit here — it now lives in the page header. */}
-        {activeTab === 'opps' && (
-          <>
-            <input
-              className={styles.searchInput}
-              type="text"
-              placeholder="Search across all columns (Account, Stage, Scope, Notes, BFO Address, …)"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              style={{ width: 260 }}
-            />
-            <span className={styles.resultCount}>{filtered.length} of {prefiltered.length}{filtersActive && prefiltered.length !== records.length ? ` (filtered from ${records.length})` : ''}</span>
-            {selectedIds.size > 0 && (
-              <button
-                type="button"
-                onClick={() => setShowOnlySelected(v => !v)}
-                title={showOnlySelected
-                  ? 'Show every row again. Your selection is kept.'
-                  : 'Hide every row that isn\'t currently selected.'}
-                style={{
-                  padding: '0.3rem 0.7rem',
-                  fontSize: '0.78rem',
-                  fontWeight: 600,
-                  fontFamily: 'inherit',
-                  color: showOnlySelected ? '#fff' : '#166534',
-                  background: showOnlySelected ? '#16A34A' : '#fff',
-                  border: `1px solid ${showOnlySelected ? '#16A34A' : '#86EFAC'}`,
-                  borderRadius: 6,
-                  cursor: 'pointer',
-                }}
-              >{showOnlySelected ? `Showing ${selectedIds.size} selected — Show all` : `Show ${selectedIds.size} selected only`}</button>
-            )}
-          </>
-        )}
-      </div>
+      {/* Filter row. The Show / Start Date / Status filters and the
+          Opportunities global search + result count are all intentionally
+          hidden — the remaining filter state stays at its no-op defaults
+          (activity "all", empty date range, status "all") so nothing is
+          filtered out. Per-column filters on the table cover the same
+          ground. The row only renders when it has something to show, so
+          it doesn't leave an empty strip under the tabs. */}
+      {(filtersActive || (activeTab === 'opps' && selectedIds.size > 0)) && (
+        <div className={styles.filterRow}>
+          {filtersActive && (
+            <button className={styles.clearFiltersBtn} onClick={clearFilters}>Clear filters</button>
+          )}
+          {activeTab === 'opps' && selectedIds.size > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowOnlySelected(v => !v)}
+              title={showOnlySelected
+                ? 'Show every row again. Your selection is kept.'
+                : 'Hide every row that isn\'t currently selected.'}
+              style={{
+                padding: '0.3rem 0.7rem',
+                fontSize: '0.78rem',
+                fontWeight: 600,
+                fontFamily: 'inherit',
+                color: showOnlySelected ? '#fff' : '#166534',
+                background: showOnlySelected ? '#16A34A' : '#fff',
+                border: `1px solid ${showOnlySelected ? '#16A34A' : '#86EFAC'}`,
+                borderRadius: 6,
+                cursor: 'pointer',
+              }}
+            >{showOnlySelected ? `Showing ${selectedIds.size} selected — Show all` : `Show ${selectedIds.size} selected only`}</button>
+          )}
+        </div>
+      )}
 
       {activeTab === 'opps' && (
         <>
