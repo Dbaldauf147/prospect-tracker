@@ -556,32 +556,26 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
           {/* Status items stack in this right-hand column so each label /
               value pair stays on one line at the column's width. */}
           <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
-              <span style={{ flexShrink: 0, minWidth: 118, fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#94A3B8' }}>
-                Site list mapped
-              </span>
-              {result.entry ? (
-                <span style={{ fontSize: '0.74rem', color: '#166534', fontWeight: 600 }}>
-                  ✓ {result.entry.rows.length} site{result.entry.rows.length === 1 ? '' : 's'}
-                  {result.entry.fileName ? <span style={{ color: '#15803D', fontWeight: 400 }}> · {result.entry.fileName}</span> : null}
-                </span>
-              ) : (
-                <span style={{ fontSize: '0.74rem', color: '#94A3B8' }}>Not mapped</span>
-              )}
-            </div>
-            {/* Distinct from the site list above: this reflects an
-                Indicative Savings Analysis saved via "Save to Company",
-                which lives on the prospect's analyses subcollection. */}
+            {/* The saved site list and the Indicative Savings Analysis are
+                two stores behind one idea — the analysis is built from the
+                site list — so they report as a single status. Either one
+                present counts as mapped; whichever details exist are shown
+                (site count from the list, save date from the analysis). */}
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
               <span style={{ flexShrink: 0, minWidth: 118, fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#94A3B8' }}>
                 Indicative savings
               </span>
-              {analysisMeta ? (
+              {(result.entry || analysisMeta) ? (
                 <span style={{ fontSize: '0.74rem', color: '#166534', fontWeight: 600 }}>
                   ✓ Saved
-                  {analysisMeta.savedAt
-                    ? <span style={{ color: '#15803D', fontWeight: 400 }}> · {new Date(analysisMeta.savedAt).toLocaleDateString()}</span>
-                    : null}
+                  <span style={{ color: '#15803D', fontWeight: 400 }}>
+                    {result.entry
+                      ? ` · ${result.entry.rows.length} site${result.entry.rows.length === 1 ? '' : 's'}`
+                      : ''}
+                    {analysisMeta?.savedAt
+                      ? ` · ${new Date(analysisMeta.savedAt).toLocaleDateString()}`
+                      : ''}
+                  </span>
                 </span>
               ) : (
                 <span style={{ fontSize: '0.74rem', color: '#94A3B8' }}>Not saved</span>
