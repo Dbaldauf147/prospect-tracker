@@ -5,7 +5,10 @@ import { UPLOADED_LISTS } from '../../utils/uploadedListsRegistry';
 import { LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { userLsGet } from '../../utils/userLs';
 import { apiFetch } from '../../utils/apiFetch';
-import { JURISDICTION_QUESTIONS, SCREENING_ANSWERS, REGULATIONS_BY_JURISDICTION } from '../../data/corporateComplianceScreening';
+import {
+  JURISDICTION_QUESTIONS, SCREENING_ANSWERS, REGULATIONS_BY_JURISDICTION,
+  deriveRegulationVerdict, parseRevenueUsd,
+} from '../../data/corporateComplianceScreening';
 
 // Firestore path segment for a company's persisted revenue research —
 // same slug shape the prospect modal uses for its research blobs.
@@ -217,17 +220,26 @@ function regulationAnswerKey(jurisdictionKey, regulation) {
   return `${jurisdictionKey}__${slug}`;
 }
 
-// Colour a screening answer select: Yes = green, No = muted, blank = default.
-function answerSelectStyle(val) {
+// Colour a screening answer select: Yes = green, No = muted, Unknown = amber
+// (researched but unresolved — deliberately distinct from the blank
+// nobody-has-looked-yet state), blank = default. `derived` renders an
+// auto-filled value in the same colour but dashed, so a computed answer
+// doesn't masquerade as one somebody entered.
+function answerSelectStyle(val, derived = false) {
   const base = {
     fontSize: '0.68rem', fontWeight: 700, fontFamily: 'inherit',
     padding: '0.15rem 0.35rem', borderRadius: 5, cursor: 'pointer',
     border: '1px solid var(--color-border)', background: 'var(--color-surface)',
     color: 'var(--color-text-muted)', flexShrink: 0,
   };
-  if (val === 'Yes') return { ...base, borderColor: '#86EFAC', background: '#F0FDF4', color: '#166534' };
-  if (val === 'No') return { ...base, color: 'var(--color-text)' };
-  return base;
+  const style = val === 'Yes'
+    ? { ...base, borderColor: '#86EFAC', background: '#F0FDF4', color: '#166534' }
+    : val === 'Unknown'
+      ? { ...base, borderColor: '#FDE68A', background: '#FFFBEB', color: '#92400E' }
+      : val === 'No'
+        ? { ...base, color: 'var(--color-text)' }
+        : base;
+  return derived ? { ...style, borderStyle: 'dashed' } : style;
 }
 
 // Per-company jurisdiction screening, rendered as a Jurisdiction /
@@ -238,7 +250,11 @@ function answerSelectStyle(val) {
 // california__sb-253: 'Yes', … }); `onSet(key, value)` persists one
 // answer. The "Research answers" button asks Claude (web search) to fill
 // the jurisdiction rows; `research` holds that run's rationale + sources.
-function JurisdictionScreening({ answers, caSiteCount = 0, onSet, disabled, onResearch, researching, researchError, research }) {
+function JurisdictionScreening({ answers, caSiteCount = 0, revenue = '', onSet, disabled, onResearch, researching, researchError, research }) {
+  // Revenue drives the derived Applies? verdicts (SB 253 / SB 261). Parsed
+  // once per render rather than per regulation row.
+  const revenueLabel = String(revenue || '').trim();
+  const revenueUsd = parseRevenueUsd(revenueLabel);
   const th = {
     textAlign: 'left', padding: '0.3rem 0.5rem', fontSize: '0.62rem', fontWeight: 700,
     textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)',
@@ -325,12 +341,27 @@ function JurisdictionScreening({ answers, caSiteCount = 0, onSet, disabled, onRe
                         </select>
                       </td>
                     </tr>
-                    {/* Regulations this jurisdiction triggers, shown once
-                        it's answered Yes. Each carries its own Applies?
+                    {/* Regulations this jurisdiction triggers. Shown for a
+                        Yes and for an Unknown — an unresolved jurisdiction
+                        still needs its mandates visible so they can be
+                        answered by hand — but not while the question is
+                        unanswered, which would expand every jurisdiction on
+                        a fresh company. Each carries its own Applies?
                         answer, keyed jurisdiction__regulation-slug. */}
-                    {val === 'Yes' && regs.map((r) => {
+                    {(val === 'Yes' || val === 'Unknown') && regs.map((r) => {
                       const rKey = regulationAnswerKey(q.key, r.regulation);
                       const rVal = answers?.[rKey] || '';
+                      // Pure threshold tests (SB 253 / SB 261) answer
+                      // themselves from the revenue already on this card.
+                      // A hand-picked answer always wins; choosing "—"
+                      // falls back to the derived value.
+                      const auto = rVal ? null : deriveRegulationVerdict(r, {
+                        revenueUsd,
+                        revenueLabel,
+                        jurisdictionAnswer: val,
+                        jurisdictionLabel: q.jurisdiction,
+                      });
+                      const shownVal = rVal || auto?.verdict || '';
                       return (
                         <tr key={rKey}>
                           <td style={{ ...td, paddingLeft: '1.4rem' }}>
@@ -343,15 +374,27 @@ function JurisdictionScreening({ answers, caSiteCount = 0, onSet, disabled, onRe
                               : <span style={{ color: 'var(--color-text-muted)' }}>{r.description}</span>}
                           </td>
                           <td style={td}>
-                            <select
-                              value={rVal}
-                              onChange={(e) => onSet(rKey, e.target.value)}
-                              aria-label={`${r.regulation} applies?`}
-                              style={answerSelectStyle(rVal)}
-                            >
-                              <option value="">—</option>
-                              {SCREENING_ANSWERS.map((a) => <option key={a} value={a}>{a}</option>)}
-                            </select>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                              <select
+                                value={shownVal}
+                                onChange={(e) => onSet(rKey, e.target.value)}
+                                aria-label={`${r.regulation} applies?`}
+                                title={auto ? auto.basis : undefined}
+                                style={answerSelectStyle(shownVal, !!auto)}
+                              >
+                                <option value="">—</option>
+                                {SCREENING_ANSWERS.map((a) => <option key={a} value={a}>{a}</option>)}
+                              </select>
+                              {auto && (
+                                <span
+                                  title={auto.basis}
+                                  style={{
+                                    fontSize: '0.55rem', fontWeight: 700, letterSpacing: '0.04em',
+                                    color: 'var(--color-text-muted)', textTransform: 'uppercase', cursor: 'help',
+                                  }}
+                                >auto</span>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -614,10 +657,15 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
       const data = await r.json();
       const answers = data.answers || {};
       const updates = {};
-      // Fill each dropdown: Yes/No are set, Unknown clears the answer (null).
+      // Fill each dropdown. Unknown is persisted as a real answer rather
+      // than cleared — "we looked and couldn't tell" is a different state
+      // from "nobody has looked", and clearing it also used to hide that
+      // jurisdiction's mandates entirely. Anything unrecognised still
+      // clears, so a malformed verdict can't stick.
       for (const q of JURISDICTION_QUESTIONS) {
         const a = answers[q.key];
-        updates[`corporateComplianceScreening.${key}.${q.key}`] = (a === 'Yes' || a === 'No') ? a : null;
+        updates[`corporateComplianceScreening.${key}.${q.key}`] =
+          SCREENING_ANSWERS.includes(a) ? a : null;
       }
       // Keep the rationale + sources alongside so the card can explain itself.
       updates[`companyComplianceResearch.${key}`] = {
@@ -808,6 +856,15 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                       <JurisdictionScreening
                         answers={screening[c.key] || null}
                         caSiteCount={c.california}
+                        // Feeds the derived SB 253 / SB 261 verdicts. Prefer
+                        // the researched figure shown in the Revenue row,
+                        // falling back to whatever the matched company
+                        // record already carries.
+                        revenue={
+                          revenueResearch[revenueSlug(c.name)]?.revenue
+                          || prospectByKey.get(c.key)?.revenue
+                          || ''
+                        }
                         disabled={!c.key}
                         onSet={(qKey, value) => setScreeningAnswer(c.key, qKey, value)}
                         onResearch={() => researchCompliance(c.name, c.key)}
