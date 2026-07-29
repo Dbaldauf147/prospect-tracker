@@ -344,12 +344,54 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
   const [open, setOpen] = useState(false);
   const [picked, setPicked] = useState(activeCompany || '');
   const boxRef = useRef(null);
+  const inputRef = useRef(null);
+  const listRef = useRef(null);
+  // Screen position for the portaled suggestion list. The lookup row is a
+  // horizontal scroller (overflowX: auto), which clips anything absolutely
+  // positioned below the input — so the list renders into document.body and
+  // is anchored to the input's rect instead. Same pattern as the supplier
+  // combobox above.
+  const [anchor, setAnchor] = useState(null);
+
+  const updateAnchor = useCallback(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    // Drop above the input when there isn't room below it.
+    const below = window.innerHeight - r.bottom;
+    const flip = below < 140 && r.top > below;
+    setAnchor({
+      left: r.left,
+      width: Math.max(r.width, 220),
+      top: flip ? undefined : r.bottom + 2,
+      bottom: flip ? window.innerHeight - r.top + 2 : undefined,
+      maxHeight: Math.max(120, Math.min(240, (flip ? r.top : below) - 12)),
+    });
+  }, []);
 
   useEffect(() => {
-    function onDown(e) { if (!boxRef.current?.contains(e.target)) setOpen(false); }
+    function onDown(e) {
+      const insideBox = boxRef.current?.contains(e.target);
+      const insideList = listRef.current?.contains(e.target);
+      if (!insideBox && !insideList) setOpen(false);
+    }
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, []);
+
+  // Keep the list glued to the input while anything scrolls or resizes —
+  // capture phase so the lookup row's own sideways scroll counts too.
+  useEffect(() => {
+    if (!open) return;
+    updateAnchor();
+    const onMove = () => updateAnchor();
+    window.addEventListener('scroll', onMove, true);
+    window.addEventListener('resize', onMove);
+    return () => {
+      window.removeEventListener('scroll', onMove, true);
+      window.removeEventListener('resize', onMove);
+    };
+  }, [open, updateAnchor]);
 
   // slug -> entry for every company that actually has a site list.
   const bySlug = useMemo(() => {
@@ -465,11 +507,12 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
       </div>
       <div style={{ position: 'relative', flex: '0 0 210px' }}>
         <input
+          ref={inputRef}
           type="text"
           value={query}
           placeholder="Type a company name…"
-          onChange={(e) => { setQuery(e.target.value); setOpen(true); if (picked) setPicked(''); }}
-          onFocus={() => { if (query.trim()) setOpen(true); }}
+          onChange={(e) => { setQuery(e.target.value); setOpen(true); updateAnchor(); if (picked) setPicked(''); }}
+          onFocus={() => { if (query.trim()) { setOpen(true); updateAnchor(); } }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault();
@@ -485,11 +528,14 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
             fontSize: '0.8rem', fontFamily: 'inherit',
           }}
         />
-        {open && matches.length > 0 && (
+        {open && matches.length > 0 && anchor && createPortal(
           <div
+            ref={listRef}
             style={{
-              position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30,
-              marginTop: 2, maxHeight: 240, overflowY: 'auto',
+              position: 'fixed', zIndex: 1000,
+              left: anchor.left, width: anchor.width,
+              top: anchor.top, bottom: anchor.bottom,
+              maxHeight: anchor.maxHeight, overflowY: 'auto',
               background: '#fff', border: '1px solid #CBD5E1', borderRadius: 6,
               boxShadow: '0 8px 20px rgba(15,23,42,0.18)',
             }}
@@ -514,7 +560,8 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
                 </div>
               );
             })}
-          </div>
+          </div>,
+          document.body
         )}
       </div>
 
