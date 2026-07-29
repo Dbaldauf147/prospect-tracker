@@ -139,7 +139,7 @@ function fmtStamp(ms) {
 // "Research revenue" button that asks Claude (with web search) to find
 // the company's most recent annual revenue. `disabled` guards the
 // unnamed-company card, which has nothing to research.
-function RevenueSection({ data, loading, error, disabled, onResearch }) {
+function RevenueSection({ data, loading, error, disabled, onResearch, linked, companyRevenue }) {
   const btn = (label) => (
     <button
       type="button"
@@ -197,6 +197,17 @@ function RevenueSection({ data, loading, error, disabled, onResearch }) {
             {loading ? 'Researching revenue…' : 'Revenue: pending research'}
           </span>
           {btn(loading ? 'Researching…' : 'Research revenue')}
+        </div>
+      )}
+      {!disabled && (
+        <div style={{ marginTop: '0.3rem', fontSize: '0.62rem', color: 'var(--color-text-muted)' }}>
+          {!linked ? (
+            <span style={{ fontStyle: 'italic' }}>No matching company record — add this company on the Table to save revenue to it.</span>
+          ) : companyRevenue ? (
+            <span>On company record: <strong style={{ color: '#166534' }}>{companyRevenue}</strong></span>
+          ) : (
+            <span style={{ fontStyle: 'italic' }}>Company record has no revenue yet — research to save it.</span>
+          )}
         </div>
       )}
       {error && (
@@ -379,7 +390,20 @@ function RegulationReference() {
   );
 }
 
-export default function CorporateCompliance({ sites = [], settings, updateSettingsPath }) {
+export default function CorporateCompliance({ sites = [], settings, updateSettingsPath, prospects = [], updateProspect }) {
+  // Map each canonical company key to a matching prospect (company) record,
+  // so researched revenue can be written onto that company's popup field and
+  // its current revenue can be surfaced here. Keyed the same way companies on
+  // this page are (companyKeyOf → normalized name), so cosmetic spelling
+  // differences still line up.
+  const prospectByKey = useMemo(() => {
+    const map = new Map();
+    for (const p of prospects || []) {
+      const key = companyKeyOf(p?.company);
+      if (key && !map.has(key)) map.set(key, p);
+    }
+    return map;
+  }, [prospects]);
   const companies = useMemo(() => {
     // Group by the canonical company key (the file-matching identity), so
     // name variants collapse onto one company and its saved answers.
@@ -476,10 +500,21 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
       if (updateSettingsPath && slug) {
         updateSettingsPath({ [`companyRevenueResearch.${slug}`]: stamped });
       }
+      // Also write the headline revenue figure onto the matching company
+      // (prospect) record, so it shows on that company's popup and in the
+      // TableView Revenue column. Only when a company record exists and the
+      // research produced a figure.
+      const revenue = String(data.revenue || '').trim();
+      if (updateProspect && revenue) {
+        const match = prospectByKey.get(companyKeyOf(company));
+        if (match?.id && match.revenue !== revenue) {
+          updateProspect(match.id, { revenue });
+        }
+      }
     } catch (err) {
       setRevState(s => ({ ...s, [company]: { loading: false, error: err?.message || 'Request failed' } }));
     }
-  }, [updateSettingsPath]);
+  }, [updateSettingsPath, updateProspect, prospectByKey]);
 
   // Persisted compliance-research blobs (per-question verdicts + rationale
   // + sources), keyed by the canonical company key so they line up with the
@@ -675,6 +710,8 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                     error={revState[c.name]?.error || null}
                     disabled={c.name === UNNAMED}
                     onResearch={() => researchRevenue(c.name)}
+                    linked={!!(c.key && prospectByKey.get(c.key))}
+                    companyRevenue={String(prospectByKey.get(c.key)?.revenue || '').trim()}
                   />
 
                   {/* Jurisdiction screening — the six gating questions.
