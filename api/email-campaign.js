@@ -5,10 +5,95 @@
  * Body: { subject: "Your subject line" }
  */
 
+import { withAuth } from './_lib/http.js';
+import { enforceRateLimit } from './_lib/rateLimit.js';
+
 const BASE = 'https://api.hubapi.com';
 
-export default async function handler(req, res) {
+// Email properties we read for every send/reply. Shared by both fetch paths.
+const EMAIL_PROPERTIES = 'hs_email_subject,hs_email_status,hs_email_direction,hs_timestamp,hs_email_to_email,hs_email_cc_email,hs_email_from_email,hs_email_to_firstname,hs_email_to_lastname,hs_email_from_firstname,hs_email_from_lastname';
+
+// Safety cap shared by both fetch paths — mirrors the previous behavior.
+const MAX_EMAILS = 10000;
+
+// The single most distinctive word in the subject, used to pre-filter emails
+// server-side with the CRM search API instead of listing the whole mailbox.
+// The longest alphanumeric token (>= 3 chars) is the most selective, and any
+// email whose subject contains the full campaign subject necessarily contains
+// this whole word — so CONTAINS_TOKEN on it returns a superset of the exact
+// substring match, which is then re-applied in memory. Returns '' when the
+// subject has no such token (e.g. very short), in which case the caller lists
+// all emails as before.
+function distinctiveSubjectToken(subjectLower) {
+  const tokens = subjectLower.replace(/[^a-z0-9]+/g, ' ').split(/\s+/).filter(Boolean);
+  let best = '';
+  for (const t of tokens) if (t.length > best.length) best = t;
+  return best.length >= 3 ? best : '';
+}
+
+// Page through emails whose subject contains a token, via the CRM search API.
+// Far cheaper than scanning the whole emails object on a large portal.
+async function searchEmailsBySubjectToken(token, searchToken) {
+  const collected = [];
+  let after;
+  while (true) {
+    const body = {
+      filterGroups: [{ filters: [{ propertyName: 'hs_email_subject', operator: 'CONTAINS_TOKEN', value: searchToken }] }],
+      properties: EMAIL_PROPERTIES.split(','),
+      sorts: [{ propertyName: 'hs_timestamp', direction: 'DESCENDING' }],
+      limit: 100,
+    };
+    if (after) body.after = after;
+    const response = await fetch(`${BASE}/crm/v3/objects/emails/search`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`HubSpot search ${response.status}: ${text.slice(0, 200)}`);
+    }
+    const data = await response.json();
+    collected.push(...(data.results || []).map(e => ({ id: e.id, ...e.properties })));
+    if (data.paging?.next?.after && collected.length < MAX_EMAILS) { after = data.paging.next.after; } else break;
+  }
+  return collected;
+}
+
+// Page through the entire emails object. Fallback for subjects with no
+// distinctive token (the old behavior, kept for correctness on edge cases).
+async function listAllEmails(token) {
+  const collected = [];
+  let after;
+  while (true) {
+    const params = new URLSearchParams({ limit: '100', properties: EMAIL_PROPERTIES, sort: '-hs_timestamp' });
+    if (after) params.set('after', after);
+    const response = await fetch(`${BASE}/crm/v3/objects/emails?${params}`, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`HubSpot API ${response.status}: ${text.slice(0, 200)}`);
+    }
+    const data = await response.json();
+    collected.push(...(data.results || []).map(e => ({ id: e.id, ...e.properties })));
+    if (data.paging?.next?.after && collected.length < MAX_EMAILS) { after = data.paging.next.after; } else break;
+  }
+  return collected;
+}
+
+// Candidate emails whose subject may match the campaign subject. Narrow
+// server-side when we have a distinctive token; otherwise list everything.
+async function fetchCandidateEmails(token, subjectLower) {
+  const searchToken = distinctiveSubjectToken(subjectLower);
+  return searchToken
+    ? searchEmailsBySubjectToken(token, searchToken)
+    : listAllEmails(token);
+}
+
+async function handler(req, res, auth) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  if (!(await enforceRateLimit(res, auth.uid, 'email-campaign', 30, 5 * 60 * 1000))) return;
 
   const token = process.env.HUBSPOT_ACCESS_TOKEN;
   if (!token) return res.status(500).json({ error: 'HubSpot token not configured' });
@@ -19,28 +104,11 @@ export default async function handler(req, res) {
   const subjectLower = subject.toLowerCase().trim();
 
   try {
-    // Fetch all emails — paginate through
-    let allEmails = [];
-    let after;
-    const properties = 'hs_email_subject,hs_email_status,hs_email_direction,hs_timestamp,hs_email_to_email,hs_email_from_email,hs_email_to_firstname,hs_email_to_lastname,hs_email_from_firstname,hs_email_from_lastname';
-
-    while (true) {
-      const params = new URLSearchParams({ limit: '100', properties, sort: '-hs_timestamp' });
-      if (after) params.set('after', after);
-
-      const response = await fetch(`${BASE}/crm/v3/objects/emails?${params}`, {
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      });
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`HubSpot API ${response.status}: ${text.slice(0, 200)}`);
-      }
-
-      const data = await response.json();
-      allEmails.push(...(data.results || []).map(e => ({ id: e.id, ...e.properties })));
-      if (data.paging?.next?.after) { after = data.paging.next.after; } else break;
-      if (allEmails.length > 10000) break;
-    }
+    // Pull candidate emails — narrowed server-side by a distinctive subject
+    // token so we no longer scan the whole mailbox (which timed out on large
+    // portals). The exact case-insensitive substring match below is unchanged,
+    // so the result set is identical to the old list-everything approach.
+    const allEmails = await fetchCandidateEmails(token, subjectLower);
 
     // Filter emails matching the subject
     const matching = allEmails.filter(e => (e.hs_email_subject || '').toLowerCase().includes(subjectLower));
@@ -87,11 +155,28 @@ export default async function handler(req, res) {
     }
 
     // Group sent emails — deduplicate by recipient(s)
-    // If the same person is emailed multiple times, keep only the most recent
+    // If the same person is emailed multiple times, keep only the most recent.
+    // Recipients include both the To and CC addresses, so a contact who was
+    // CC'd on the send is tracked as "sent" just like a To recipient.
+    // HubSpot separates addresses in the To/CC fields with either a
+    // semicolon or a comma (and may wrap them as "Name <email>"), so split
+    // on both and pull the bare address out of any angle brackets — same
+    // parsing the Activity views use. Without this, a comma-separated CC
+    // list collapses into one token and a CC'd contact never matches.
+    const splitAddrs = (raw) => (raw || '')
+      .toLowerCase()
+      .split(/[;,]/)
+      .map(a => {
+        const m = a.match(/<([^>]+)>/);
+        return (m ? m[1] : a).trim();
+      })
+      .filter(Boolean);
     const sendsByRecipients = {};
     for (const e of sentEmails) {
-      const toRaw = (e.hs_email_to_email || '').toLowerCase().trim();
-      const recipients = toRaw ? toRaw.split(';').map(a => a.trim()).filter(Boolean) : [];
+      const recipients = [...new Set([
+        ...splitAddrs(e.hs_email_to_email),
+        ...splitAddrs(e.hs_email_cc_email),
+      ])];
       if (recipients.length === 0) continue;
       const key = recipients.sort().join(',');
       // Keep most recent send per unique recipient set
@@ -165,3 +250,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: err.message });
   }
 }
+
+export default withAuth(handler);

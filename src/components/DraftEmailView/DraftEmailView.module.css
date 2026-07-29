@@ -92,12 +92,39 @@
 .editorWrap :global(.ql-editor) { min-height: 180px; line-height: 1.6; color: var(--color-text); padding: 0.65rem 0.75rem; }
 .editorWrap :global(.ql-editor.ql-blank::before) { font-style: normal; color: var(--color-text-muted); }
 
+.draftsHeader { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 1rem; }
+.draftsHeader .cardTitle { margin-bottom: 0; }
+.clearAllDrafts { flex-shrink: 0; border: 1px solid #FECACA; background: #FEF2F2; color: #EF4444; cursor: pointer; font-size: 0.75rem; font-weight: 600; padding: 0.25rem 0.6rem; border-radius: 6px; line-height: 1; }
+.clearAllDrafts:hover { background: #FEE2E2; border-color: #FCA5A5; }
 .emptyDrafts { font-size: 0.82rem; color: var(--color-text-muted); text-align: center; padding: 1.5rem 0; }
+.draftsHint { font-size: 0.68rem; color: var(--color-text-muted); margin: -0.6rem 0 0.75rem; line-height: 1.35; }
 .draftsList { display: flex; flex-direction: column; gap: 0.35rem; }
 .draftItem { display: flex; align-items: center; gap: 0.35rem; }
 .draftLoad { flex: 1; display: flex; flex-direction: column; padding: 0.5rem 0.65rem; border: 1px solid var(--color-border); border-radius: 6px; background: none; cursor: pointer; text-align: left; font-family: inherit; }
 .draftLoad:hover { background: #F8FAFC; border-color: var(--color-accent); }
+/* Pinned drafts are exempt from the auto-drop; give them a subtle amber accent. */
+.draftItemPinned .draftLoad { border-color: #FCD34D; background: #FFFBEB; }
+.draftItemPinned .draftLoad:hover { background: #FEF3C7; border-color: #F59E0B; }
+.draftPin { flex-shrink: 0; background: none; border: none; font-size: 0.95rem; cursor: pointer; padding: 0.25rem; line-height: 1; filter: grayscale(1); opacity: 0.55; }
+.draftPin:hover { opacity: 1; }
+.draftPinActive { filter: none; opacity: 1; }
 .draftSubject { font-size: 0.8rem; font-weight: 600; color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .draftMeta { font-size: 0.65rem; color: var(--color-text-muted); }
 .draftDelete { background: none; border: none; color: var(--color-text-muted); font-size: 1rem; cursor: pointer; padding: 0.25rem; line-height: 1; }
 .draftDelete:hover { color: #DC2626; }
+
+/* Line-break visibility toggle + markers in the preview pane. The markers
+   reveal which line breaks survive in the sent email (faint ↵) vs. which ones
+   the email strips (struck-through red ↵), so the "missing line break" gap
+   between the editor and the sent message is visible at a glance. */
+.breakToggle, .breakToggleOn { flex-shrink: 0; border: 1px solid var(--color-border); background: #fff; color: var(--color-text-muted); cursor: pointer; font-size: 0.68rem; font-weight: 600; padding: 0.2rem 0.5rem; border-radius: 6px; line-height: 1.2; font-family: inherit; }
+.breakToggle:hover { background: #F8FAFC; border-color: var(--color-accent); }
+.breakToggleOn { background: #EFF6FF; border-color: #93C5FD; color: #1E3A8A; }
+.lbKeep { color: #CBD5E1; font-size: 0.85em; user-select: none; }
+.lbDrop { color: #DC2626; text-decoration: line-through; font-size: 0.85em; font-weight: 700; user-select: none; }
+
+/* "Page break" entry in the Insert dropdown + the divider as it renders inside
+   the Quill editor and the preview pane. */
+.insertDivLine { height: 1px; background: var(--color-border); margin: 0.3rem 0.4rem; }
+.editorWrap :global(.ql-editor hr) { border: none; border-top: 1px solid #CBD5E1; margin: 10px 0; }
+.previewBody :global(hr) { border: none; border-top: 1px solid #CBD5E1; margin: 12px 0; }

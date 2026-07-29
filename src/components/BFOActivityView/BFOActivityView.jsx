@@ -8,68 +8,50 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import styles from './BFOActivityView.module.css';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
+import { setOppBfoLink } from '../../utils/opps2Store';
+import { normalizeCompany } from '../../utils/companyNorm';
+import { parseTSV, compareValues, cleanHeader } from '../../utils/tsvTable';
+import { useAuth } from '../../contexts/AuthContext';
+import { PasteTableView } from './PasteTableView';
+
+// IndexedDB store shared by both subtabs (a generic key-value store).
+// The Leads subtab persists under its own keys so it never collides with
+// the main BFO Activity data.
+const LEADS_DATA_KEY = 'leads-current';
+const LEADS_PREFS_KEY = 'leads-prefs';
+const LEADS_PLACEHOLDER = 'Name\tCompany\tEmail\tLead Status\t…\nJane Doe\tAcme Inc.\tjane@acme.com\tOpen\t…';
+
+// Readable label for an Opps 2 opp shown as an assignment target —
+// Scope plus Stage / Open Year context, falling back to the row id.
+function oppTargetLabel(r) {
+  const scope = String(r?.Scope || '').trim();
+  const meta = [r?.Stage, r?.['Open Year']].map(v => String(v || '').trim()).filter(Boolean).join(' · ');
+  const base = scope || `Opp ${r?._id}`;
+  return meta ? `${base} (${meta})` : base;
+}
 
 const STORE = 'bfo-activity';
 const KEY = 'current';
 const PREFS_KEY = 'prefs';
 const LEAD_SOURCE_COL = 'Lead Source';
 
-function parseTSV(text) {
-  if (!text) return { headers: [], rows: [] };
-  const lines = text.replace(/\r\n?/g, '\n').split('\n').filter(l => l.length > 0);
-  if (lines.length === 0) return { headers: [], rows: [] };
-  const split = (line) => line.split('\t');
-  // BFO copies the active sort indicator into the header text — e.g.
-  // "Age Sorted Descending" or "Close DateSorted Ascending" (note: BFO
-  // sometimes drops the space between the column name and "Sorted").
-  // Strip the suffix so the canonical column name survives the paste.
-  const cleanHeader = (h) => String(h || '')
-    .replace(/\s*[▲▼↑↓]\s*$/, '')
-    .replace(/\s*sorted\s+(ascending|descending)\s*$/i, '')
-    .trim();
-  const rawHeaders = split(lines[0]).map(cleanHeader);
-  // Make headers unique
-  const seen = new Map();
-  const headers = rawHeaders.map((h, i) => {
-    const base = h || `Column ${i + 1}`;
-    const c = seen.get(base) || 0;
-    seen.set(base, c + 1);
-    return c === 0 ? base : `${base} (${c + 1})`;
-  });
-  const rows = lines.slice(1).map(line => {
-    const cells = split(line);
-    const obj = {};
-    headers.forEach((h, i) => { obj[h] = (cells[i] ?? '').trim(); });
-    return obj;
-  });
-  return { headers, rows };
+// Values an Opps 2 "BFO Link" (BFO Opportunity Name) cell can hold that
+// mean "no name yet". New opps are seeded with a dash placeholder (see
+// makeBlankOpp in OppsView2), and sheet imports leave #N/A — neither is
+// a real tag, so they must not count as "already tagged".
+const BFO_BLANK_SENTINELS = new Set(['', '-', '#n/a', 'n/a']);
+
+// The opp's BFO Opportunity Name, or '' when it holds only a blank
+// placeholder. Use this everywhere we decide whether an opp is tagged.
+function bfoOppName(r) {
+  const v = String(r?.['BFO Link'] || '').trim();
+  return BFO_BLANK_SENTINELS.has(v.toLowerCase()) ? '' : v;
 }
 
-function compareValues(a, b) {
-  // Try number/currency first
-  const numA = Number(String(a).replace(/[$,\s]/g, ''));
-  const numB = Number(String(b).replace(/[$,\s]/g, ''));
-  if (Number.isFinite(numA) && Number.isFinite(numB) && /\d/.test(String(a)) && /\d/.test(String(b))) {
-    return numA - numB;
-  }
-  // Try date (M/D/YYYY)
-  const dA = Date.parse(a);
-  const dB = Date.parse(b);
-  if (!Number.isNaN(dA) && !Number.isNaN(dB) && /\d/.test(String(a)) && /\d/.test(String(b))) {
-    return dA - dB;
-  }
-  return String(a).localeCompare(String(b));
-}
-
-function ageClass(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return '';
-  if (n <= 60) return styles.ageGreen;
-  if (n <= 180) return styles.ageAmber;
-  return styles.ageRed;
-}
-
-export function BFOActivityView() {
+export function BFOActivityView({ prospects = [] } = {}) {
+  // Which subtab is showing: the rich BFO Activity table, or the generic
+  // Leads-list paste table.
+  const [subtab, setSubtab] = useState('bfo'); // 'bfo' | 'leads'
   const [data, setData] = useState({ headers: [], rows: [] });
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState(null); // { col, dir: 'asc'|'desc' }
@@ -83,6 +65,8 @@ export function BFOActivityView() {
   // mount and whenever the window regains focus so that pasting on
   // the Opps tab and switching back here surfaces the new sources.
   const [opps, setOpps] = useState(null);
+  const { user } = useAuth();
+  const [assigning, setAssigning] = useState(false);
   useEffect(() => {
     let cancelled = false;
     const refresh = () => {
@@ -104,10 +88,6 @@ export function BFOActivityView() {
           // baked into header names. Strip that suffix on load and
           // remap row keys so downstream column lookups work without
           // requiring a fresh paste.
-          const cleanHeader = (h) => String(h || '')
-            .replace(/\s*[▲▼↑↓]\s*$/, '')
-            .replace(/\s*sorted\s+(ascending|descending)\s*$/i, '')
-            .trim();
           const cleaned = saved.headers.map(cleanHeader);
           const needsRemap = cleaned.some((h, i) => h !== saved.headers[i]);
           if (needsRemap) {
@@ -213,9 +193,15 @@ export function BFOActivityView() {
       }
       return s;
     };
+    // Amount columns come in as "USD 15,000.00" — export just the dollar
+    // amount, dropping the leading ISO currency code so the cell is a plain
+    // number.
+    const isAmountHeader = (h) => /amount/i.test(h);
+    const stripCurrency = (v) => String(v ?? '').replace(/^\s*[A-Z]{3}\s+/, '').trim();
+    const cellFor = (r, h) => (isAmountHeader(h) ? stripCurrency(r[h]) : r[h]);
     const lines = [
       data.headers.map(escape).join(','),
-      ...data.rows.map(r => data.headers.map(h => escape(r[h])).join(',')),
+      ...data.rows.map(r => data.headers.map(h => escape(cellFor(r, h))).join(',')),
     ];
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -235,13 +221,117 @@ export function BFOActivityView() {
     const map = new Map();
     const records = (opps && Array.isArray(opps.records)) ? opps.records : [];
     for (const r of records) {
-      const k = String(r['BFO Link'] || '').trim().toLowerCase();
+      const k = bfoOppName(r).toLowerCase();
       if (!k) continue;
       const src = (r['Lead Source'] || r['Source'] || '').toString().trim();
       if (src) map.set(k, src);
     }
     return map;
   }, [opps]);
+
+  // Set of BFO Opportunity Names that exist on Opps 2 (keyed by the
+  // "BFO Link" field, lowercased + trimmed) used to flag BFO Activity
+  // rows whose Opportunity Name has no matching opp.
+  const oppNameKeys = useMemo(() => {
+    const set = new Set();
+    const records = (opps && Array.isArray(opps.records)) ? opps.records : [];
+    for (const r of records) {
+      const k = bfoOppName(r).toLowerCase();
+      if (k) set.add(k);
+    }
+    return set;
+  }, [opps]);
+
+  // Opportunity Names in the pasted BFO data that don't match any opp
+  // on Opps 2, paired with the BFO Account they came from (used to
+  // suggest assignment targets). Only meaningful once the Opps 2 cache
+  // has loaded — when it hasn't (oppNameKeys empty) we suppress the
+  // warning rather than flag every row.
+  const unmatchedOppNames = useMemo(() => {
+    if (!data?.headers?.length || oppNameKeys.size === 0) return [];
+    const oppCol = data.headers.find(h => /opportunity\s*name/i.test(h));
+    if (!oppCol) return [];
+    const acctCol = data.headers.find(h => /^account(\s*name)?$/i.test(h.trim()))
+      || data.headers.find(h => /account/i.test(h));
+    const seen = new Set();
+    const missing = [];
+    for (const r of data.rows) {
+      const raw = String(r[oppCol] || '').trim();
+      if (!raw) continue;
+      const k = raw.toLowerCase();
+      if (oppNameKeys.has(k) || seen.has(k)) continue;
+      seen.add(k);
+      missing.push({ name: raw, account: acctCol ? String(r[acctCol] || '').trim() : '' });
+    }
+    return missing;
+  }, [data, oppNameKeys]);
+
+  // Map of normalized company name → that company's BFO Company Name,
+  // sourced from the Table View company records (prospects). Lets us
+  // match a BFO Activity row to Opps 2 opps on the shared BFO Company
+  // Name rather than relying on the raw Account text lining up.
+  const bfoCompanyByAccount = useMemo(() => {
+    const map = new Map();
+    for (const p of (prospects || [])) {
+      const key = normalizeCompany(p?.company || '');
+      const bfo = String(p?.bfoCompanyName || '').trim();
+      if (key && bfo) map.set(key, bfo);
+    }
+    return map;
+  }, [prospects]);
+
+  // Opps 2 opps that have NO BFO Opportunity Name yet, indexed by every
+  // key we might match a BFO Activity row on: the normalized Account, the
+  // opp's own normalized BFO Company Name field, and the normalized BFO
+  // Company Name carried on the matching Table View company. Indexing on
+  // the opp's BFO Company Name lets a row whose Account reads "Simon
+  // Property Group" still match a BFO row for "Simon Property Group, Inc.
+  // - Headquarters" when that fuller name is stored on the opp.
+  // Closed opps (Stage "Sold" / "Not Sold") are excluded — there's no
+  // point tagging a finished deal with a BFO Opportunity Name.
+  const unlinkedOppsByKey = useMemo(() => {
+    const map = new Map();
+    const add = (key, opp) => {
+      if (!key) return;
+      let list = map.get(key);
+      if (!list) { list = []; map.set(key, list); }
+      if (!list.some(o => o._id === opp._id)) list.push(opp);
+    };
+    const isClosedStage = (stage) => {
+      const s = String(stage || '').trim().toLowerCase();
+      return s === 'sold' || s === 'not sold';
+    };
+    const records = (opps && Array.isArray(opps.records)) ? opps.records : [];
+    for (const r of records) {
+      if (bfoOppName(r) !== '') continue;
+      if (isClosedStage(r.Stage)) continue;
+      const acctKey = normalizeCompany(r.Account || '');
+      add(acctKey, r);
+      add(normalizeCompany(r['BFO Company Name'] || ''), r);
+      const bfo = bfoCompanyByAccount.get(acctKey);
+      if (bfo) add(normalizeCompany(bfo), r);
+    }
+    return map;
+  }, [opps, bfoCompanyByAccount]);
+
+  // Tag the chosen Opps 2 opp with the BFO Opportunity Name, persist
+  // through the shared Opps 2 store, then refresh the local opps cache
+  // so the warning + Lead Source column reflect the new tag.
+  async function assignBfoName(oppId, bfoName) {
+    if (assigning) return;
+    setAssigning(true);
+    try {
+      await setOppBfoLink(user?.uid, oppId, bfoName);
+      const refreshed = await loadOppsFromCache();
+      setOpps(refreshed || null);
+      setFlash(`Tagged an Opps opp with "${bfoName}".`);
+    } catch (err) {
+      setFlash(`Could not tag opp: ${err?.message || err}`);
+    } finally {
+      setAssigning(false);
+      window.setTimeout(() => setFlash(''), 3500);
+    }
+  }
 
   // Build a derived view of the BFO data with the synthetic Lead
   // Source column injected. Persisted `data` is left untouched so the
@@ -285,7 +375,38 @@ export function BFOActivityView() {
   }
 
   return (
-    <div className={styles.wrapper} onPaste={handlePagePaste}>
+    <div className={styles.wrapper}>
+      <div className={styles.subtabBar} role="tablist" aria-label="BFO Activity subtabs">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={subtab === 'bfo'}
+          className={subtab === 'bfo' ? styles.subtabActive : styles.subtab}
+          onClick={() => setSubtab('bfo')}
+        >BFO Activity</button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={subtab === 'leads'}
+          className={subtab === 'leads' ? styles.subtabActive : styles.subtab}
+          onClick={() => setSubtab('leads')}
+        >Leads</button>
+      </div>
+
+      {subtab === 'leads' ? (
+        <PasteTableView
+          title="Leads"
+          subtitle="Paste rows from the Salesforce Leads printable view (⌘V / Ctrl+V) anywhere on this page. First row is the header."
+          placeholder={LEADS_PLACEHOLDER}
+          storeName={STORE}
+          dataKey={LEADS_DATA_KEY}
+          prefsKey={LEADS_PREFS_KEY}
+          csvPrefix="leads"
+          flipNameColumn
+          emptyHint="Open the Salesforce Leads list, click Printable View, select the table (including the header row), copy, then paste anywhere on this page. The data persists in your browser until you clear or replace it."
+        />
+      ) : (
+      <div className={styles.pane} onPaste={handlePagePaste}>
       <div className={styles.header}>
         <div className={styles.titleBlock}>
           <h1 className={styles.title}>BFO Activity</h1>
@@ -336,6 +457,52 @@ export function BFOActivityView() {
       {flash && (
         <div style={{ padding: '0 1.25rem 0.25rem' }}>
           <div className={styles.pasteFlash}>{flash}</div>
+        </div>
+      )}
+
+      {unmatchedOppNames.length > 0 && (
+        <div style={{ padding: '0 1.25rem 0.5rem' }}>
+          <div className={styles.warning}>
+            <strong>
+              ⚠ {unmatchedOppNames.length} BFO Opportunity Name{unmatchedOppNames.length === 1 ? '' : 's'} not tagged to an opp on Opps
+            </strong>
+            <div className={styles.warningHint}>
+              Click an Opps opp below to tag it with the BFO Opportunity Name. Only opps that don&apos;t already have a BFO Opportunity Name are listed.
+            </div>
+            <ul className={styles.warnList}>
+              {unmatchedOppNames.map(({ name, account }) => {
+                const candidates = unlinkedOppsByKey.get(normalizeCompany(account)) || [];
+                return (
+                  <li key={name} className={styles.warnItem}>
+                    <div className={styles.warnName}>
+                      <span className={styles.warnNameText}>{name}</span>
+                      {account && <span className={styles.warnAcct}> · {account}</span>}
+                    </div>
+                    {candidates.length === 0 ? (
+                      <div className={styles.warnNone}>
+                        No untagged Opps opps{account ? ` for “${account}”` : ''} to assign.
+                      </div>
+                    ) : (
+                      <div className={styles.warnChips}>
+                        {candidates.map(c => (
+                          <button
+                            key={c._id}
+                            type="button"
+                            className={styles.assignChip}
+                            disabled={assigning}
+                            title={`Tag this opp's BFO Opportunity Name as "${name}"`}
+                            onClick={() => assignBfoName(c._id, name)}
+                          >
+                            + {oppTargetLabel(c)}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         </div>
       )}
 
@@ -415,7 +582,6 @@ export function BFOActivityView() {
                         const isAge = /^age$/i.test(h);
                         const isAmount = /^amount$/i.test(h);
                         const classes = [
-                          isAge ? ageClass(v) : '',
                           (isAge || isAmount) ? styles.nowrapCell : '',
                         ].filter(Boolean).join(' ');
                         return <td key={h} className={classes}>{v}</td>;
@@ -428,6 +594,8 @@ export function BFOActivityView() {
           </>
         )}
       </div>
+      </div>
+      )}
     </div>
   );
 }

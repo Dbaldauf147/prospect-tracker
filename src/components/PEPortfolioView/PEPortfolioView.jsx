@@ -1,14 +1,113 @@
-import { useEffect, useMemo, useState, useRef } from 'react';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import { sanitizeExcelWorkbook } from '../../utils/exportSanitize.js';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
-import { dbGet } from '../../utils/db';
+import { loadOpps2Newest, setOppField } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
+import { formatDateDisplay, toISODate, daysFromToday } from '../../utils/oppsCallIn';
+import { PE_STAGES, STATUSES, TYPES, TIERS, GEOGRAPHIES } from '../../data/enums';
+import { InlineCell } from '../TableView/TableView';
+import { buildTypeOptions, buildCdmOptions, persistCustomOption, buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions } from '../../utils/prospectOptions';
+import { TagMultiSelect } from '../common/TagMultiSelect';
+import { computePortfolioFitScore, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
+import { PEOppsScheduleModal } from './PEOppsScheduleModal';
+import { DataTable } from '../common/DataTable';
+import { PasteAddModal } from '../TableView/PasteAddModal';
+import { splitPeOwners } from '../../utils/peOwners';
+import { loadClientManagerMap, setClientManager, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
+
+// Reference list behind the "Strategies" sub-tab — the core private-equity
+// investment strategies, each with a short plain-language description. The
+// user rates the value of each on a 0–10 slider; the score is saved per
+// user in settings.peStrategyRatings keyed by strategy id.
+const PE_STRATEGIES = [
+  { id: 'buyout', name: 'Buyout / LBO', description: 'Acquire a controlling stake in a mature, cash-generative company, often using significant debt (leverage), then improve operations and exit for a return on equity.' },
+  { id: 'growth', name: 'Growth Equity', description: 'Take minority stakes in established, fast-growing companies that need capital to scale — expansion, new markets, acquisitions — without a control change or heavy leverage.' },
+  { id: 'venture', name: 'Venture Capital', description: 'Fund early-stage, high-growth startups in exchange for equity, accepting high failure rates in return for outsized returns from the winners.' },
+  { id: 'growth_buyout', name: 'Middle-Market Buyout', description: 'Control buyouts of smaller mid-market businesses, where value is driven more by operational improvement and buy-and-build than by financial engineering.' },
+  { id: 'distressed', name: 'Distressed / Special Situations', description: 'Invest in troubled companies — via debt, restructuring, or turnaround equity — betting on a recovery or a favorable outcome in bankruptcy/reorganization.' },
+  { id: 'mezzanine', name: 'Mezzanine / Private Credit', description: 'Provide subordinated debt or direct loans that sit between senior debt and equity, earning higher yields plus occasional equity upside (warrants).' },
+  { id: 'secondaries', name: 'Secondaries', description: 'Buy existing LP interests or portfolios of assets from other investors seeking early liquidity, typically at a discount to net asset value.' },
+  { id: 'fund_of_funds', name: 'Fund of Funds', description: 'Invest in a diversified portfolio of other PE funds rather than companies directly, spreading manager and vintage-year risk for LPs.' },
+  { id: 'infrastructure', name: 'Infrastructure', description: 'Own long-duration real assets — energy, transport, utilities, digital infrastructure — prized for stable, often inflation-linked cash flows.' },
+  { id: 'real_estate', name: 'Real Estate', description: 'Acquire, develop, or reposition property across core, value-add, and opportunistic risk profiles for income plus capital appreciation.' },
+];
+
+// Reference list behind the "Categories" sub-tab within Strategies — the
+// higher-level strategy categories, each with a short plain-language
+// description. Same 0–10 value slider as the Investment Strategies list, but
+// rated independently and saved per user in settings.peStrategyCategoryRatings.
+const PE_STRATEGY_CATEGORIES = [
+  { id: 'cat_venture', name: 'Venture Capital', description: 'Fund early-stage, high-growth startups in exchange for equity, accepting high failure rates in return for outsized returns from the winners.' },
+  { id: 'cat_buyout', name: 'Buyout', description: 'Acquire a controlling stake in a mature, cash-generative company, often using significant debt (leverage), then improve operations and exit for a return on equity.' },
+  { id: 'cat_real_estate', name: 'Real Estate', description: 'Acquire, develop, or reposition property across core, value-add, and opportunistic risk profiles for income plus capital appreciation.' },
+  { id: 'cat_infrastructure', name: 'Infrastructure', description: 'Own long-duration real assets — transport, utilities, digital infrastructure — prized for stable, often inflation-linked cash flows.' },
+  { id: 'cat_growth', name: 'Growth Equity', description: 'Take minority stakes in established, fast-growing companies that need capital to scale — expansion, new markets, acquisitions — without a control change or heavy leverage.' },
+  { id: 'cat_energy', name: 'Energy', description: 'Invest across energy assets and companies — traditional and renewable power, oil & gas, transition infrastructure — for cash yield and long-term value.' },
+  { id: 'cat_credit', name: 'Credit', description: 'Lend to companies through direct loans, mezzanine, or distressed debt, earning contractual yield that sits senior to equity, sometimes with equity upside.' },
+];
+
+// Reference list behind the "Case Study" sub-tab — the industries our
+// experience spans. Each row's editable Company / Summary / Results cells
+// are saved per user in settings.peCaseStudies, keyed by industry id.
+const CASE_STUDY_INDUSTRIES = [
+  { id: 'automotive', name: 'Automotive' },
+  { id: 'food_bev', name: 'Food & Bev' },
+  { id: 'hospitality', name: 'Hospitality' },
+  { id: 'retail', name: 'Retail' },
+  { id: 'manufacturing', name: 'Manufacturing' },
+  { id: 'pharmaceutical', name: 'Pharmaceutical' },
+  { id: 'oil_gas', name: 'Oil & Gas' },
+  { id: 'transportation', name: 'Transportation' },
+  { id: 'travel_tourism', name: 'Travel and Tourism' },
+  { id: 'renewable_energy', name: 'Renewable Energy' },
+  { id: 'microgrids', name: 'Microgrids' },
+  { id: 'software', name: 'Software' },
+  { id: 'chemicals', name: 'Chemicals' },
+  { id: 'packaging', name: 'Packaging' },
+  { id: 'aerospace_manufacturing', name: 'Aerospace Manufacturing' },
+];
 
 // Closed/invalid stages from the Opps tab — these shouldn't count toward "active pipeline".
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
 const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
+
+// Parse an Opps date cell (ISO or anything Date.parse handles) into a
+// Date, or null when it's blank/unparseable. Mirrors Opps 2's toISODate
+// so the PE Opps tab agrees with how dates are stored there.
+function parseOppsDate(raw) {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  const t = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T00:00:00` : s);
+  return isNaN(t) ? null : new Date(t);
+}
+
+// Values Opps 2 treats as "no data" in a numeric cell.
+const BLANK_SENTINELS = new Set(['', '-', '#N/A', '#n/a', 'N/A', 'n/a']);
+
+// Resolve a row's "Call In" the same way Opps 2 does: a blank-sentinel
+// stored value wins (the cell was deliberately cleared); otherwise it's
+// the live calendar-day count from today to the Follow Up date, falling
+// back to the stored number when there's no parseable Follow Up.
+function resolveCallIn(r) {
+  if (r && 'Call In' in r) {
+    const s = r['Call In'] == null ? '' : String(r['Call In']).trim();
+    if (BLANK_SENTINELS.has(s)) return null;
+  }
+  const followUp = parseOppsDate(r['Follow Up']);
+  if (followUp) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    followUp.setHours(0, 0, 0, 0);
+    return Math.round((followUp - today) / 86400000);
+  }
+  if (r && 'Call In' in r) {
+    const n = parseFloat(String(r['Call In']).replace(/[,$%]/g, ''));
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
 
 // Same fuzzy match the My Accounts table uses, so the Opps column here agrees with that one.
 function companiesMatch(a, b) {
@@ -37,53 +136,203 @@ function companiesMatch(a, b) {
   return false;
 }
 
-// Matches the fallback chain MyAccountsView uses: version-agnostic
-// IndexedDB open (so a settings-backups VersionError doesn't wipe us
-// out), then localStorage, then the user's Firestore oppsData doc.
-// Without the Firestore tier this view was showing "No Opps data loaded"
-// even when the other tabs had synced fine from Firestore.
+// Resolve a company's Client Manager from the shared clients-manager-map
+// the SAME way the company popup does (resolveClientManagerFromMap): try
+// the exact normalized key first, then fall back to a fuzzy companiesMatch
+// scan. The popup matched fuzzily while this view only did an exact-key
+// lookup, so portfolio companies whose name drifts from the Clients-tab
+// name (e.g. "Perform Properties fka ShopCore" vs "ShopCore") showed a
+// blank Client Manager here even though the popup displayed one.
+function resolveManagerFromMap(company, map) {
+  const key = String(company || '').trim().toLowerCase();
+  if (!key || !map) return '';
+  if (map[key]) return map[key];
+  for (const [k, v] of Object.entries(map)) {
+    if (v && companiesMatch(k, company)) return v;
+  }
+  return '';
+}
+
+// Stricter matcher used only for tying an Opps record's Account to a
+// company name (the PE firm or one of its portfolio companies). The
+// general `companiesMatch` above is deliberately loose so contact/DM
+// lookups catch acronyms and partial names — but that looseness
+// over-counts opportunities: a single shared word (e.g. a portfolio
+// company called "Origin" matching an unrelated "Origin Bank" deal) or a
+// 60%-length substring would inflate a firm's active/total. Here we only
+// accept an exact normalized match or a full multi-word phrase that one
+// account name contains in the other, so the PE Opps count reflects deals
+// that genuinely belong to the firm or its portfolio companies.
+const CO_SUFFIX_RE = /\b(inc|incorporated|llc|ltd|limited|corp|corporation|co|company|lp|llp|plc|holdings?)\b\.?/gi;
+function normalizeAccount(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(CO_SUFFIX_RE, ' ')
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function accountMatchesCompany(companyName, oppAccount) {
+  const a = normalizeAccount(companyName);
+  const b = normalizeAccount(oppAccount);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const aWords = a.split(' ');
+  const bWords = b.split(' ');
+  const [shortW, longW] = aWords.length <= bWords.length ? [aWords, bWords] : [bWords, aWords];
+  // Require the shorter side to be a multi-word phrase appearing verbatim
+  // (with word boundaries) inside the longer one. A single shared word is
+  // never enough — that's what produced the false-positive opp counts.
+  if (shortW.length < 2) return false;
+  return (' ' + longW.join(' ') + ' ').includes(' ' + shortW.join(' ') + ' ');
+}
+
+// Drop deals closed (Sold / Not Sold) more than a month ago — the same
+// recency rule peOpps applies, factored out so the firm-scoped PE Opps
+// view (which skips the Type/Source filter) can reuse it.
+function oppWithinRecency(r) {
+  const stage = String(r['Stage'] || '').trim().toLowerCase();
+  if (stage === 'sold' || stage === 'not sold') {
+    const cutoff = new Date();
+    cutoff.setMonth(cutoff.getMonth() - 1);
+    const closed = parseOppsDate(r['Close Date']);
+    if (!closed || closed < cutoff) return false;
+  }
+  return true;
+}
+
+// A Table View prospect "belongs" to the selected PE firm when one of its
+// PE Owner tokens matches the firm name. Deliberately a bidirectional
+// substring test (not the stricter companiesMatch, which fails on the
+// length ratio for "Blue Owl" ↔ "Blue Owl Capital") so the short
+// canonical name still catches its longer variants — preserving the
+// original Blue Owl tab's contains-match while generalizing it to any
+// firm the user picks.
+function prospectOwnedByFirm(peOwnerStr, firm) {
+  const f = String(firm || '').trim().toLowerCase();
+  if (!f) return false;
+  return splitPeOwners(peOwnerStr).some(o => {
+    const t = o.trim().toLowerCase();
+    if (!t) return false;
+    if (t.includes(f)) return true;              // owner ⊇ firm  ("Blue Owl Capital" ⊇ "Blue Owl")
+    if (t.length >= 4 && f.includes(t)) return true; // firm ⊇ owner (picked a long name, owner uses a short variant)
+    return false;
+  });
+}
+
+// Firm name backing the dedicated "Blackstone Opps" sub-tab. Matched the
+// same bidirectional way prospectOwnedByFirm / accountMatchesCompany work,
+// so "Blackstone", "Blackstone Inc", and companies whose PE Owner names
+// Blackstone all land in the tab.
+const BLACKSTONE_FIRM = 'Blackstone';
+
+// Narrow the PE Opps list to a single firm: every opp — regardless of
+// Type / Source — whose Account matches the firm itself or one of its
+// portfolio companies (the peOwner linkage), still dropping long-closed
+// deals. An empty firm returns the unscoped PE Opps list. Shared by the
+// PE Opps firm picker and the Blackstone tab so both filter identically.
+function computeFirmScopedOpps(firm, peOpps, oppsRecords, prospects) {
+  if (!String(firm || '').trim()) return peOpps;
+  const names = new Set([firm.trim().toLowerCase()]);
+  for (const p of prospects) {
+    if (prospectOwnedByFirm(p.peOwner, firm)) {
+      const n = (p.company || '').trim().toLowerCase();
+      if (n) names.add(n);
+    }
+  }
+  const nameList = [...names];
+  return oppsRecords.filter(r => oppWithinRecency(r) && nameList.some(n => accountMatchesCompany(n, r['Account'])));
+}
+
+// Earliest opportunity Start Date across every opp that belongs to a PE
+// firm — the firm itself or any of its portfolio companies (the same
+// peOwner linkage computeFirmScopedOpps uses), but WITHOUT the
+// long-closed-deal drop so a firm's genuinely-earliest opportunity still
+// counts. Returns an ISO YYYY-MM-DD string, or null when the firm has no
+// dated opportunity. Used to back-date a Discovery firm's "days in stage"
+// clock to when its first opportunity opened, instead of the day the board
+// first loaded.
+function earliestFirmOppStartISO(firm, oppsRecords, prospects) {
+  const f = String(firm || '').trim().toLowerCase();
+  if (!f) return null;
+  const names = new Set([f]);
+  for (const p of prospects) {
+    if (prospectOwnedByFirm(p.peOwner, firm)) {
+      const n = (p.company || '').trim().toLowerCase();
+      if (n) names.add(n);
+    }
+  }
+  const nameList = [...names];
+  let best = null;
+  for (const r of oppsRecords) {
+    if (!nameList.some(n => accountMatchesCompany(n, r['Account']))) continue;
+    const iso = toISODate(r['Start Date']);
+    if (!iso) continue;
+    if (best == null || iso < best) best = iso; // ISO YYYY-MM-DD sorts chronologically
+  }
+  return best;
+}
+
+// Reads Opps 2 — the canonical opps store. Local IndexedDB first for
+// speed; falls back to the user's Firestore `opps2Data` doc when the
+// local cache is empty (e.g. fresh browser, never opened Opps 2 here
+// yet) so this view doesn't show "No Opps data loaded" right after
+// sign-in on a new machine.
 function useOppsRecords(userId) {
   const [records, setRecords] = useState([]);
   useEffect(() => {
     let cancelled = false;
-    async function loadFromIndexedDB() {
+    // Read the canonical Opps 2 store the way the rest of the app does:
+    // the strictly-newer of the local IndexedDB cache and the Firestore
+    // doc, with Firestore's chunked payload reassembled. The inline
+    // reader this replaced only read the doc's `json` field and bailed
+    // when the doc was chunked (large datasets), and it always preferred
+    // local IDB even when Firestore was newer. That let the on-screen PE
+    // Opps table drift from the server-built PE Opps email, which reads
+    // the same (chunk-aware) Firestore doc.
+    const refresh = async () => {
       try {
-        const data = await dbGet('opps-cache', 'data');
-        return data?.records || null;
-      } catch { return null; }
-    }
-    function loadFromLocalStorage() {
-      try {
-        const cache = JSON.parse(localStorage.getItem('opps-cache'));
-        return cache?.records || null;
-      } catch { return null; }
-    }
-    async function loadFromFirestore() {
-      if (!userId) return null;
-      try {
-        const ref = doc(db, 'oppsData', userId);
-        const snap = await getDoc(ref);
-        if (!snap.exists()) return null;
-        const raw = snap.data();
-        if (!raw?.json) return null;
-        const parsed = JSON.parse(raw.json);
-        return parsed?.records || null;
-      } catch { return null; }
-    }
-    (async () => {
-      let recs = await loadFromIndexedDB();
-      if (!recs || recs.length === 0) recs = loadFromLocalStorage();
-      if (!recs || recs.length === 0) recs = await loadFromFirestore();
-      if (!cancelled && recs && recs.length > 0) setRecords(recs);
-    })();
-    return () => { cancelled = true; };
+        const data = await loadOpps2Newest(userId);
+        const recs = Array.isArray(data?.records) ? data.records : null;
+        if (!cancelled && recs && recs.length > 0) setRecords(recs);
+      } catch { /* leave records empty on failure */ }
+    };
+    refresh();
+    // Re-pull when Opps 2 writes its cache (e.g. an inline Sales Partner
+    // edit here, or an edit on the Opps 2 tab) so the table stays live.
+    const onUpdate = () => { refresh(); };
+    window.addEventListener('opps2-cache-updated', onUpdate);
+    return () => { cancelled = true; window.removeEventListener('opps2-cache-updated', onUpdate); };
   }, [userId]);
-  return records;
+  return [records, setRecords];
 }
 
-export function PEPortfolioView({ prospects = [], onSelectProspect }) {
+export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonMap = {}, onUpdateProspect, onAddProspect, settings, updateSettings }) {
   const { user } = useAuth();
+  const [subtab, setSubtab] = useState('portfolio');
+  // Which PE firm the "PE Firm" sub-tab (formerly hardcoded to Blue Owl)
+  // is showing. Defaults to Blue Owl so the tab opens exactly as before;
+  // the in-tab picker lets the user switch to any other firm. The last
+  // pick is persisted (like the other PE view prefs) so it survives a
+  // refresh or navigating away and back.
+  const [peFirm, setPeFirm] = useState(() => {
+    try { return localStorage.getItem('pe-portfolio:pe-firm') || 'Blue Owl'; } catch { return 'Blue Owl'; }
+  });
   const [showClosed, setShowClosed] = useState(false);
+  const [oppsQuery, setOppsQuery] = useState('');
+  // Independent search box for the dedicated Blackstone Opps tab.
+  const [blackstoneQuery, setBlackstoneQuery] = useState('');
+  // PE Opps firm scope. '' = the full PE Opps list (Type = Private Equity
+  // OR Source = PE partner). A firm name narrows to every opp tied to that
+  // firm or its portfolio companies — any Type/Source — for a per-firm
+  // digest (e.g. Blackstone). Persisted like the other PE view prefs.
+  const [oppsFirm, setOppsFirm] = useState(() => {
+    try { return localStorage.getItem('pe-portfolio:opps-firm') || ''; } catch { return ''; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('pe-portfolio:opps-firm', oppsFirm); } catch { /* ignore */ }
+  }, [oppsFirm]);
   const [expanded, setExpanded] = useState(() => new Set());
   const [query, setQuery] = useState('');
   const [hubspotCache, setHubspotCacheState] = useState(null);
@@ -97,9 +346,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
   // Persisted column widths + sort so the layout survives reloads.
-  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, opps: 100, ratio: 120, clients: 110, keyContacts: 120 };
+  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, pcDownload: 120, ratio: 120, clients: 110, keyContacts: 120, caseStudy: 110, discovery: 100, piloting: 100, existingPartnership: 150, notSold: 100 };
   // company is sticky and always shown — every other column is opt-in.
-  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'opps', 'ratio', 'clients', 'keyContacts'];
+  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'pcDownload', 'ratio', 'clients', 'keyContacts', 'caseStudy', 'discovery', 'piloting', 'existingPartnership', 'notSold'];
   const [colWidths, setColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
@@ -111,7 +360,28 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
   const [visibleCols, setVisibleCols] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:visible-cols'));
-      if (Array.isArray(saved)) return new Set([...saved, 'company']);
+      if (Array.isArray(saved)) {
+        const next = new Set([...saved, 'company']);
+        // One-time migration: reveal the PE Stage columns for users whose
+        // saved set predates them, so they show up without a manual opt-in.
+        if (!localStorage.getItem('pe-portfolio:cols-pe-stage')) {
+          next.add('discovery'); next.add('piloting'); next.add('existingPartnership');
+          try { localStorage.setItem('pe-portfolio:cols-pe-stage', '1'); } catch {}
+        }
+        // One-time migration: reveal the Not Sold PE Stage column for
+        // users whose saved set predates it.
+        if (!localStorage.getItem('pe-portfolio:cols-not-sold')) {
+          next.add('notSold');
+          try { localStorage.setItem('pe-portfolio:cols-not-sold', '1'); } catch {}
+        }
+        // One-time migration: reveal the PC Download column for users
+        // whose saved set predates it.
+        if (!localStorage.getItem('pe-portfolio:cols-pc-download')) {
+          next.add('pcDownload');
+          try { localStorage.setItem('pe-portfolio:cols-pc-download', '1'); } catch {}
+        }
+        return next;
+      }
     } catch {}
     return new Set(ALL_COL_KEYS);
   });
@@ -133,6 +403,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       return next;
     });
   }
+  useEffect(() => {
+    try { localStorage.setItem('pe-portfolio:pe-firm', peFirm); } catch {}
+  }, [peFirm]);
   useEffect(() => {
     try { localStorage.setItem('pe-portfolio:col-widths', JSON.stringify(colWidths)); } catch {}
   }, [colWidths]);
@@ -168,7 +441,102 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     setSortDir(prev => (sortKey === key ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
     setSortKey(key);
   }
-  const oppsRecords = useOppsRecords(user?.uid);
+  const [oppsRecords, setOppsRecords] = useOppsRecords(user?.uid);
+
+  // Download a PE firm's mapped portfolio companies (the entries in its
+  // Portfolio Companies tab — the same array behind the PC Mapping
+  // column) as an Excel file. Uses the shared workbook builder so the
+  // output is identical to the company pop-up's "Download Current Data"
+  // button: Schneider-branded, opportunity-score ranked, with the Top 5
+  // Overview / Deep Dives / Methodology aux tabs carried over.
+  const exportPortfolioCompanies = async (pe) => {
+    const rows = Array.isArray(pe?.portfolioCompanies) ? pe.portfolioCompanies : [];
+    if (rows.length === 0) return;
+    await downloadPortfolioCompaniesWorkbook({
+      company: pe.company || 'pe_firm',
+      rows,
+      topFive: pe.portfolioTopFive || null,
+      overview: pe.portfolioOverview || null,
+    });
+  };
+
+  // Edit a single field on a PE opp directly from the PE Opps table.
+  // Optimistically updates the in-memory rows, then persists to the
+  // shared Opps 2 store (cache + Firestore). On failure the persisted
+  // value never lands; the next reload reconciles from the store.
+  const updateOppField = async (oppId, field, value) => {
+    setOppsRecords(prev => prev.map(r => (
+      String(r._id) === String(oppId)
+        ? { ...r, [field]: value, _rowUpdatedAt: Date.now() }
+        : r
+    )));
+    try {
+      await setOppField(user?.uid, oppId, field, value);
+    } catch (err) {
+      console.error('PE Opps: failed to save field edit', { field, oppId, err });
+    }
+  };
+
+  // PE Opps sub-tab: every Opps 2 row whose Type is "Private Equity"
+  // OR whose Source is "PE partner" (case/space-insensitive so minor
+  // data-entry variants still match). These are the deals tied to the
+  // PE channel regardless of whether the account is mapped to a PE firm
+  // on the Portfolio tab.
+  //
+  // Opps closed (Sold / Not Sold) more than a month ago are dropped so
+  // the list stays focused on live + recently-closed deals. A closed opp
+  // with no parseable Close Date is also dropped (treated as stale).
+  const peOpps = useMemo(() => {
+    const norm = s => String(s || '').trim().toLowerCase();
+    const cutoff = new Date();
+    cutoff.setMonth(cutoff.getMonth() - 1);
+    return oppsRecords.filter(r => {
+      const type = norm(r['Type']);
+      const source = norm(r['Source']);
+      if (type !== 'private equity' && source !== 'pe partner') return false;
+      const stage = norm(r['Stage']);
+      if (stage === 'sold' || stage === 'not sold') {
+        const closed = parseOppsDate(r['Close Date']);
+        if (!closed || closed < cutoff) return false;
+      }
+      return true;
+    });
+  }, [oppsRecords]);
+
+  // When a firm is picked, swap the all-PE list for every opp tied to that
+  // firm or one of its portfolio companies — regardless of Type / Source —
+  // matched the same way the PE Overview counts are (account ↔ company),
+  // still dropping long-closed deals. Empty firm = the original PE Opps set.
+  const peOppsScoped = useMemo(
+    () => computeFirmScopedOpps(oppsFirm, peOpps, oppsRecords, prospects),
+    [oppsFirm, peOpps, oppsRecords, prospects],
+  );
+
+  const filteredPeOpps = useMemo(() => {
+    const q = oppsQuery.trim().toLowerCase();
+    if (!q) return peOppsScoped;
+    return peOppsScoped.filter(r =>
+      [r['Account'], r['Contact'], r['Stage'], r['Scope'], r['Source'], r['Type'], r['Sales Partner'], r['Status'], r['BFO Link'], r['Next Steps']]
+        .some(v => String(v || '').toLowerCase().includes(q))
+    );
+  }, [peOppsScoped, oppsQuery]);
+
+  // Dedicated "Blackstone Opps" sub-tab — the same PE Opps view locked to
+  // Blackstone (firm + its portfolio companies), with its own search box so
+  // it stays independent of the main PE Opps tab.
+  const blackstoneOpps = useMemo(
+    () => computeFirmScopedOpps(BLACKSTONE_FIRM, peOpps, oppsRecords, prospects),
+    [peOpps, oppsRecords, prospects],
+  );
+
+  const filteredBlackstoneOpps = useMemo(() => {
+    const q = blackstoneQuery.trim().toLowerCase();
+    if (!q) return blackstoneOpps;
+    return blackstoneOpps.filter(r =>
+      [r['Account'], r['Contact'], r['Stage'], r['Scope'], r['Source'], r['Type'], r['Sales Partner'], r['Status'], r['BFO Link'], r['Next Steps']]
+        .some(v => String(v || '').toLowerCase().includes(q))
+    );
+  }, [blackstoneOpps, blackstoneQuery]);
 
   const peFirms = useMemo(() => (
     prospects
@@ -176,14 +544,90 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       .sort((a, b) => (a.company || '').localeCompare(b.company || ''))
   ), [prospects]);
 
-  // Portfolio company → PE firm (lowercased name) lookup, from each prospect's peOwner field.
+  // "Days in Stage" needs to know when each firm entered its current PE
+  // Stage. Going forward that's stamped on every stage change (see
+  // useProspects.updateProspect). For firms that already had a stage set
+  // before this shipped, "start the clock now": stamp today once so they
+  // begin counting from here instead of showing blank forever. Runs a
+  // single pass per mount once the firms have loaded.
+  const peStageBackfilledRef = useRef(false);
+  useEffect(() => {
+    if (peStageBackfilledRef.current || !peFirms.length) return;
+    peStageBackfilledRef.current = true;
+    const d = new Date();
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    for (const p of peFirms) {
+      if (PE_STAGES.includes(p.peStage) && !p.peStageEnteredAt) {
+        onUpdateProspect?.(p.id, { peStageEnteredAt: today });
+      }
+    }
+  }, [peFirms, onUpdateProspect]);
+
+  // Discovery firms count from their FIRST opportunity, not the day this
+  // board first loaded: a firm we've been discovering for months should
+  // read its real age, not restart at 0. Waits for opps to load, then
+  // stamps each Discovery firm's peStageEnteredAt with the earliest Start
+  // Date across its opportunities (firm + portfolio companies). Only ever
+  // moves the date EARLIER, so it's idempotent — and self-heals a firm
+  // that was previously stamped "today" by the pass above. Non-Discovery
+  // stages keep their stamp-on-entry date. Runs once opps are present.
+  const peDiscoveryImportRef = useRef(false);
+  useEffect(() => {
+    if (peDiscoveryImportRef.current || !peFirms.length || oppsRecords.length === 0) return;
+    peDiscoveryImportRef.current = true;
+    for (const p of peFirms) {
+      if (p.peStage !== 'Discovery') continue;
+      const earliest = earliestFirmOppStartISO(p.company, oppsRecords, prospects);
+      if (!earliest) continue;
+      const current = toISODate(p.peStageEnteredAt);
+      if (!current || earliest < current) {
+        onUpdateProspect?.(p.id, { peStageEnteredAt: earliest });
+      }
+    }
+  }, [peFirms, oppsRecords, prospects, onUpdateProspect]);
+
+  // PE Firm sub-tab: every Table View prospect whose PE Owner names the
+  // selected firm (bidirectional contains-match so variants like "Blue
+  // Owl Capital" still land here). Prospects typed as Portfolio Company
+  // are excluded.
+  const peFirmCompanies = useMemo(() => (
+    prospects
+      .filter(p => p.type !== 'Portfolio Company' && prospectOwnedByFirm(p.peOwner, peFirm))
+      .sort((a, b) => (a.company || '').localeCompare(b.company || ''))
+  ), [prospects, peFirm]);
+
+  // Dropdown vocabulary for the firm picker: every distinct PE Owner set
+  // on a Table View prospect + every PE firm name, deduped
+  // case-insensitively and sorted. The current selection is always
+  // included so the <select> can show it even before any data names it.
+  const peFirmOptions = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    const push = (v) => {
+      const t = String(v || '').trim();
+      if (!t) return;
+      const k = t.toLowerCase();
+      if (seen.has(k)) return;
+      seen.add(k);
+      out.push(t);
+    };
+    push(peFirm);
+    for (const p of prospects) for (const o of splitPeOwners(p.peOwner)) push(o);
+    for (const pe of peFirms) push(pe.company);
+    return out.sort((a, b) => a.localeCompare(b));
+  }, [prospects, peFirms, peFirm]);
+
+  // Portfolio company → PE firm (lowercased name) lookup, from each
+  // prospect's peOwner field. A company can list several owners
+  // (comma-separated) and is linked under each of them.
   const portfolioByPe = useMemo(() => {
     const map = new Map();
     for (const p of prospects) {
-      const owner = (p.peOwner || '').trim().toLowerCase();
-      if (!owner) continue;
-      if (!map.has(owner)) map.set(owner, []);
-      map.get(owner).push(p);
+      for (const owner of splitPeOwners(p.peOwner)) {
+        const key = owner.toLowerCase();
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(p);
+      }
     }
     return map;
   }, [prospects]);
@@ -201,7 +645,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       if (!name) continue;
       for (const r of oppsRecords) {
         const acct = (r['Account'] || '').toLowerCase();
-        if (companiesMatch(name, acct)) list.push(r);
+        if (accountMatchesCompany(name, acct)) list.push(r);
       }
       if (list.length > 0) map.set(p.id, list);
     }
@@ -224,20 +668,33 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       if (tags.includes('hide')) continue;
       if (!tags.includes('decision maker')) continue;
       const company = (c.company || '').toLowerCase().trim();
+      // The contact's own typed company text, preserved by the sync
+      // alongside the canonical association name. Lets a decision maker
+      // match by the company the user actually entered even when the
+      // HubSpot Company association is blank or rebranded.
+      const companyText = (c.companyText || '').toLowerCase().trim();
       const email = (c.email || '').toLowerCase().trim();
       const at = email.lastIndexOf('@');
       const rawDomain = at >= 0 ? email.slice(at + 1).trim() : '';
       const domain = rawDomain && !FREE_MAIL.has(rawDomain) ? rawDomain : '';
+      // "Met In Person" is now a local Prospect Tracker checkbox
+      // (settings.contactMetInPerson), not a HubSpot tag — prefer the saved
+      // local value, falling back to the legacy tag for untouched contacts.
+      const cmId = String(c.id || c.vid || '');
+      const metInPerson = (cmId && Object.prototype.hasOwnProperty.call(metInPersonMap, cmId))
+        ? !!metInPersonMap[cmId]
+        : tags.includes('met in person');
       out.push({
         name: [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'Unknown',
         company,
+        companyText,
         domain,
-        metInPerson: tags.includes('met in person'),
+        metInPerson,
         city: String(c.city || '').trim(),
       });
     }
     return out;
-  }, [hubspotCache, FREE_MAIL]);
+  }, [hubspotCache, FREE_MAIL, metInPersonMap]);
 
   // Same flat-list pattern for the "Dan Key Target" tag.
   const keyContacts = useMemo(() => {
@@ -278,10 +735,86 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     }
   };
 
+  // Key-contact names per Blue Owl company. A HubSpot "Decision Maker"
+  // contact ties to a row on either (a) a strict 1-to-1 company-name match
+  // — the contact's HubSpot Company is the *same* company as the row after
+  // normalizing case, punctuation and legal suffixes — or (b) the contact's
+  // email domain matching one of THIS row's own registered domains. We still
+  // deliberately drop the loose fuzzy substring / acronym match, and the
+  // domain check is scoped per-row (never the PE owner's or sibling PCs'
+  // domains): both guards keep a PE owner's decision maker (e.g. Dan Egan on
+  // "Blue Owl") from leaking onto portfolio-company rows that merely share a
+  // token or a union domain. The earlier regression came from matching
+  // against the firm-wide union of domains; a single company's own domain is
+  // safe and lets e.g. delpers@americancampus.com land on the ACC row even
+  // when its typed Company text doesn't normalize-equal the row name. We also
+  // do NOT spread in the company's PE owner or related portfolio companies,
+  // so each row shows only its own contacts. Deduped by display name. Feeds
+  // the Blue Owl tab's "Key Contacts" column.
+  const blueOwlDmByCompanyId = useMemo(() => {
+    const map = new Map();
+    if (decisionMakers.length === 0) return map;
+    for (const p of peFirmCompanies) {
+      const rowName = normalizeAccount(p.company);
+      // Per-company registered domains — this prospect's own emailDomain /
+      // website only, never the PE owner's or sibling portfolio companies'.
+      // A domain match scoped to a single row stays precise (a contact at
+      // americancampus.com lands only on the ACC row) and can't leak a PE
+      // owner's decision maker the way the old union-domain fallback did.
+      const rowDomains = new Set();
+      collectProspectDomains(p, rowDomains);
+      // Former names / rebrands the user recorded on this company (the
+      // "Also Known As" field). A contact whose synced HubSpot Company is
+      // the rebranded entity — e.g. "Andmore" against the row
+      // "International Market Centers (IMC)" — shares no words with the row
+      // name, so neither exact nor fuzzy name matching can bridge it. The
+      // alias list closes that gap without per-contact re-saves or domain
+      // registration.
+      const aliasNames = String(p.aliases || '')
+        .split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
+      if (!rowName && rowDomains.size === 0 && aliasNames.length === 0) continue;
+      const seen = new Set();
+      const names = [];
+      for (const dm of decisionMakers) {
+        // Name match is fuzzy (companiesMatch) so a contact whose synced
+        // HubSpot Company is a variant of the row name — e.g. the canonical
+        // association "ShopCore" vs the row "Perform Properties fka ShopCore"
+        // — still lands here without the user having to re-save the contact
+        // to force an exact-string association. This mirrors what the company
+        // popup's own contact list already shows. To honor the original
+        // anti-leak intent, a contact that belongs to the PE owner itself (its
+        // company matches the selected firm) is barred from fuzzy-spraying
+        // across that firm's portfolio companies — it only attaches on an
+        // exact name match. The per-row domain match is unchanged and stays
+        // scoped to this company's own registered domains.
+        // Company name is the PRIMARY signal: compare BOTH the contact's
+        // canonical association name and the company text the user typed on
+        // the contact (so a decision maker still matches when the HubSpot
+        // association is blank or points at a rebranded record). Email
+        // domain is only a fallback below.
+        const dmNames = [dm.company, dm.companyText].filter(Boolean);
+        const exactName = rowName && dmNames.some(n => normalizeAccount(n) === rowName);
+        const ownerContact = peFirm && dmNames.some(n => companiesMatch(n, peFirm));
+        const fuzzyName = !ownerContact && dmNames.some(n => companiesMatch(n, p.company));
+        // Match against any recorded former name / alias for this company,
+        // so a rebranded association (e.g. "Andmore") still lands on the row.
+        const aliasMatch = !ownerContact && dmNames.some(n => aliasNames.some(a => companiesMatch(n, a)));
+        // Fallback only: per-row email domain (scoped to this company's own
+        // registered domains).
+        const domainMatch = dm.domain && rowDomains.has(dm.domain);
+        if (!exactName && !fuzzyName && !aliasMatch && !domainMatch) continue;
+        if (seen.has(dm.name)) continue;
+        seen.add(dm.name);
+        names.push(dm.name);
+      }
+      if (names.length) map.set(p.id, names);
+    }
+    return map;
+  }, [peFirmCompanies, decisionMakers, peFirm]);
+
   // Per-firm stage stats — the row-level data behind the stages table.
   //   decisionMakerNames  : DM contacts on this PE firm (or its PCs)
   //   pcMappingCount      : portfolio companies linked via peOwner
-  //   pcOppsCount         : PCs that have ≥1 opp (any stage)
   //   activeOpps, totalOpps : aggregated across the PE firm + all PCs,
   //                           active = non-closed non-invalid stage;
   //                           total = every non-invalid stage
@@ -314,26 +847,30 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       const metInPersonCount = dmEntries.filter(e => e.metInPerson).length;
       const nycCount = dmEntries.filter(e => /(new york|nyc)/i.test(e.city || '')).length;
 
-      // PC Opps — PCs with ≥1 opp.
-      let pcOppsCount = 0;
-      for (const p of portfolio) {
-        if ((oppsByProspectId.get(p.id) || []).length > 0) pcOppsCount++;
-      }
-
       // Aggregate opps for the PE firm itself + every portfolio company.
       // We re-scan the Opps records so we also catch opps that land
       // directly on the PE firm's account name (not just its PCs).
       let active = 0;
       let total = 0;
+      // The individual opp records behind the active/total counts, so the
+      // PE Opps column can show *which* opps are included on hover.
+      const oppsTip = [];
       const oppsNames = [firmName, ...portfolio.map(p => (p.company || '').toLowerCase().trim()).filter(Boolean)];
       for (const r of oppsRecords) {
         const stage = (r['Stage'] || '').trim();
         if (INVALID_STAGES.has(stage)) continue;
         const acct = (r['Account'] || '').toLowerCase();
         if (!acct) continue;
-        if (!oppsNames.some(n => companiesMatch(n, acct))) continue;
+        if (!oppsNames.some(n => accountMatchesCompany(n, acct))) continue;
         total++;
-        if (!CLOSED_STAGES.has(stage)) active++;
+        const isActive = !CLOSED_STAGES.has(stage);
+        if (isActive) active++;
+        oppsTip.push({
+          title: r['Opportunity Name'] || r['Opportunity'] || r['Name'] || r['Description'] || '(Unnamed opportunity)',
+          account: r['Account'] || '',
+          stage,
+          active: isActive,
+        });
       }
 
       // PCs that have converted to Clients.
@@ -354,6 +891,24 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         keyNames.push(kc.name);
       }
 
+      // Case study state across the PE firm + its portfolio companies. Each
+      // record's caseStudyCreated is tri-state: true (Yes), 'in-progress', or
+      // false (No). The row shows the strongest state present — Yes wins over
+      // In Progress wins over No — with tooltips listing which companies.
+      const isCaseStudyYes = (v) => v === true;
+      const isCaseStudyInProgress = (v) => v === 'in-progress';
+      const caseStudyYesNames = [
+        ...(isCaseStudyYes(pe.caseStudyCreated) ? [pe.company] : []),
+        ...portfolio.filter(p => isCaseStudyYes(p.caseStudyCreated)).map(p => p.company),
+      ];
+      const caseStudyInProgressNames = [
+        ...(isCaseStudyInProgress(pe.caseStudyCreated) ? [pe.company] : []),
+        ...portfolio.filter(p => isCaseStudyInProgress(p.caseStudyCreated)).map(p => p.company),
+      ];
+      const caseStudyState = caseStudyYesNames.length > 0
+        ? 'yes'
+        : (caseStudyInProgressNames.length > 0 ? 'in-progress' : 'no');
+
       out.set(pe.id, {
         decisionMakerNames: dmNames,
         decisionMakerEntries: dmEntries,
@@ -365,16 +920,19 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         // entries in its portfolioCompanies array — independent of
         // how many separate prospects reference it via peOwner.
         pcMapped: Array.isArray(pe.portfolioCompanies) && pe.portfolioCompanies.length > 0,
-        pcOppsCount,
         activeOpps: active,
         totalOpps: total,
+        oppsTip,
         pcClientCount,
         keyContactCount: keyNames.length,
         keyContactNames: keyNames,
+        caseStudyState,
+        caseStudyYesNames,
+        caseStudyInProgressNames,
       });
     }
     return out;
-  }, [peFirms, portfolioByPe, oppsByProspectId, decisionMakers, keyContacts, oppsRecords]);
+  }, [peFirms, portfolioByPe, decisionMakers, keyContacts, oppsRecords]);
 
   const sortedPeFirms = useMemo(() => {
     const arr = [...peFirms];
@@ -402,9 +960,6 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         case 'mapping':
           cmp = (sa.pcMapped ? 1 : 0) - (sb.pcMapped ? 1 : 0);
           break;
-        case 'opps':
-          cmp = (sa.pcOppsCount || 0) - (sb.pcOppsCount || 0);
-          break;
         case 'ratio':
           cmp = (sa.activeOpps || 0) - (sb.activeOpps || 0);
           if (cmp === 0) cmp = (sa.totalOpps || 0) - (sb.totalOpps || 0);
@@ -414,6 +969,23 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
           break;
         case 'keyContacts':
           cmp = (sa.keyContactCount || 0) - (sb.keyContactCount || 0);
+          break;
+        case 'caseStudy': {
+          const rank = (s) => s.caseStudyState === 'yes' ? 2 : s.caseStudyState === 'in-progress' ? 1 : 0;
+          cmp = rank(sa) - rank(sb);
+          break;
+        }
+        case 'discovery':
+          cmp = (a.peStage === 'Discovery' ? 1 : 0) - (b.peStage === 'Discovery' ? 1 : 0);
+          break;
+        case 'piloting':
+          cmp = (a.peStage === 'Piloting' ? 1 : 0) - (b.peStage === 'Piloting' ? 1 : 0);
+          break;
+        case 'existingPartnership':
+          cmp = (a.peStage === 'Existing Partnership' ? 1 : 0) - (b.peStage === 'Existing Partnership' ? 1 : 0);
+          break;
+        case 'notSold':
+          cmp = (a.peStage === 'Not Sold' ? 1 : 0) - (b.peStage === 'Not Sold' ? 1 : 0);
           break;
         default:
           cmp = 0;
@@ -445,15 +1017,149 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         <div>
           <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>PE Portfolio</h2>
           <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2, maxWidth: 640 }}>
-            Every prospect with Type = <code>Private Equity</code>, sorted by pipeline from their portfolio companies. Opportunity counts come from the <strong>Opps</strong> tab (same as the Opps column in My Accounts).
+            {subtab === 'portfolio'
+              ? <>Every prospect with Type = <code>Private Equity</code>, sorted by pipeline from their portfolio companies. Opportunity counts come from the <strong>Opps</strong> tab (same as the Opps column in My Accounts).</>
+              : subtab === 'stages'
+              ? <>PE firms grouped by their <strong>PE Stage</strong> (set in each firm's company popup): <code>Discovery</code>, <code>Piloting</code>, <code>Existing Partnership</code>, and <code>Not Sold</code>.</>
+              : subtab === 'companies'
+              ? <>Every mapped <strong>portfolio company</strong> across all PE firms (from each firm's Portfolio Companies tab), merged into one searchable, filterable table. <strong>Opportunity Score</strong> is ranked within each PC's own firm — matching that firm's export. The <strong>PE Owner</strong> dropdown filters to one owner, matching the source PE firm, the company's own PE Owner from Table View, or firms that owner owns — so picking <code>Blue Owl</code> also shows the portfolio companies of every Blue Owl-owned firm.</>
+              : subtab === 'blueOwl'
+              ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>{peFirm || '—'}</code>. Pick a different firm from the dropdown to switch the view. Double-click any cell to edit it — same dropdowns as Table View.</>
+              : subtab === 'stageDays'
+              ? <>PE firms grouped by their <strong>PE Stage</strong>, each card showing how many days the firm has sat in that stage. The clock starts when a firm's PE Stage changes (set in its company popup); firms already in a stage started counting the day this shipped. Longest-waiting firms lead each column.</>
+              : subtab === 'strategies'
+              ? <>Reference lists of <strong>private-equity strategies</strong>, each with a short description — switch between the detailed <strong>Investment Strategies</strong> and the higher-level <strong>Categories</strong>. Drag each slider to rate how valuable that strategy is to you (0–10); your ratings save automatically and are ranked highest-first per list.</>
+              : subtab === 'caseStudy'
+              ? <>The <strong>industries our experience spans</strong>. Fill in the <strong>Company</strong>, <strong>Summary</strong>, and <strong>Results</strong> for a case study in each industry — your edits save automatically.</>
+              : <>Every opportunity from the <strong>Opps</strong> tab with Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>}
           </div>
         </div>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: '#475569', cursor: 'pointer' }}>
-          <input type="checkbox" checked={showClosed} onChange={e => setShowClosed(e.target.checked)} />
-          <span>Include closed (Sold / Not Sold / Lost)</span>
-        </label>
+        {subtab === 'portfolio' && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: '#475569', cursor: 'pointer' }}>
+            <input type="checkbox" checked={showClosed} onChange={e => setShowClosed(e.target.checked)} />
+            <span>Include closed (Sold / Not Sold / Lost)</span>
+          </label>
+        )}
       </div>
 
+      {/* Sub-tab bar — Portfolio firms vs. the flat PE Opps list. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid #E2E8F0', margin: '0 1.25rem 0.5rem', flexShrink: 0 }}>
+        {[
+          { key: 'portfolio', label: 'Portfolio' },
+          { key: 'stages', label: 'PE Stages' },
+          { key: 'companies', label: 'All PCs' },
+          { key: 'blueOwl', label: 'PE Overview' },
+          { key: 'opps', label: 'PE Opps' },
+          { key: 'stageDays', label: 'Days in Stage' },
+          { key: 'strategies', label: 'Strategies' },
+          { key: 'caseStudy', label: 'Case Study' },
+          { key: 'blackstoneOpps', label: 'Blackstone Opps' },
+        ].map(t => {
+          const isActive = subtab === t.key;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setSubtab(t.key)}
+              style={{
+                background: 'none',
+                border: 'none',
+                borderBottom: isActive ? '2px solid #7C3AED' : '2px solid transparent',
+                color: isActive ? '#7C3AED' : '#64748B',
+                fontSize: '0.78rem',
+                fontWeight: 700,
+                padding: '0.5rem 0.75rem',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {subtab === 'opps' ? (
+        <PEOppsTab
+          opps={filteredPeOpps}
+          totalOpps={peOppsScoped.length}
+          query={oppsQuery}
+          setQuery={setOppsQuery}
+          firm={oppsFirm}
+          setFirm={setOppsFirm}
+          firmOptions={peFirmOptions}
+          oppsLoaded={oppsRecords.length > 0}
+          prospects={prospects}
+          onSelectProspect={onSelectProspect}
+          onEditField={updateOppField}
+          user={user}
+        />
+      ) : subtab === 'blackstoneOpps' ? (
+        // Same PE Opps tab, hard-scoped to Blackstone. Omitting setFirm
+        // hides the firm picker (the scope is fixed) while firm still
+        // drives the export label and the email-schedule scope.
+        <PEOppsTab
+          opps={filteredBlackstoneOpps}
+          totalOpps={blackstoneOpps.length}
+          query={blackstoneQuery}
+          setQuery={setBlackstoneQuery}
+          firm={BLACKSTONE_FIRM}
+          oppsLoaded={oppsRecords.length > 0}
+          prospects={prospects}
+          onSelectProspect={onSelectProspect}
+          onEditField={updateOppField}
+          user={user}
+        />
+      ) : subtab === 'stages' ? (
+        <PEStagesTab
+          firms={peFirms}
+          portfolioByPe={portfolioByPe}
+          onSelectProspect={onSelectProspect}
+        />
+      ) : subtab === 'companies' ? (
+        <PEAllCompaniesTab
+          firms={peFirms}
+          prospects={prospects}
+          onSelectProspect={onSelectProspect}
+        />
+      ) : subtab === 'blueOwl' ? (
+        <PEBlueOwlTab
+          companies={peFirmCompanies}
+          selectedFirm={peFirm}
+          firmOptions={peFirmOptions}
+          onSelectFirm={setPeFirm}
+          prospects={prospects}
+          oppsRecords={oppsRecords}
+          portfolioByPe={portfolioByPe}
+          dmNamesByCompanyId={blueOwlDmByCompanyId}
+          onSelectProspect={onSelectProspect}
+          onUpdateProspect={onUpdateProspect}
+          onAddProspect={onAddProspect}
+          onDownloadPortfolio={exportPortfolioCompanies}
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      ) : subtab === 'stageDays' ? (
+        <PEStageDaysTab
+          firms={peFirms}
+          portfolioByPe={portfolioByPe}
+          onSelectProspect={onSelectProspect}
+        />
+      ) : subtab === 'strategies' ? (
+        <PEStrategiesTab
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      ) : subtab === 'caseStudy' ? (
+        <PECaseStudyTab
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      ) : (
+      <>
       <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
         <input
           type="text"
@@ -471,8 +1177,10 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
           {colMenuOpen && (() => {
             const COL_LABELS = {
               company: 'PE firm', peAum: 'PE AUM', geography: 'Geography', dm: 'Decision Maker Found?',
-              met: 'Met in Person', mapping: 'PC Mapping', opps: 'PC Opps', ratio: 'PC Opps 2/4',
-              clients: 'PC Clients', keyContacts: 'Key Contacts',
+              met: 'Met in Person', mapping: 'PC Mapping', pcDownload: 'PC Download', ratio: 'PE Opps',
+              clients: 'PC Clients', keyContacts: 'Key Contacts', caseStudy: 'Case Study',
+              discovery: 'Discovery', piloting: 'Piloting', existingPartnership: 'Existing Partnership',
+              notSold: 'Not Sold',
             };
             return (
               <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', zIndex: 100, minWidth: 200, padding: '0.3rem 0' }}>
@@ -508,7 +1216,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
         {oppsRecords.length === 0 && (
           <div style={{ padding: '0.6rem 0.8rem', marginBottom: '0.5rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6, fontSize: '0.72rem', color: '#92400E' }}>
-            No Opps data loaded. Open the <strong>Opps</strong> tab once to sync it from Google Sheets; counts will populate here afterwards.
+            No Opps data loaded. Open the <strong>Opps</strong> tab once to sync it; counts will populate here afterwards.
           </div>
         )}
         {filteredFirms.length === 0 ? (
@@ -530,10 +1238,15 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
             { key: 'dm',      label: 'Decision Maker Found?', align: 'left', tip: 'Sort by number of decision makers found on HubSpot' },
             { key: 'met',     label: 'Met in Person', align: 'left', tip: 'Met-in-person count / total decision makers, plus how many of them list New York / NYC as their city' },
             { key: 'mapping', label: 'PC Mapping', align: 'center', tip: 'Yes when the PE firm has entries in its Portfolio Companies tab; No otherwise' },
-            { key: 'opps',    label: 'PC Opps', align: 'center',    tip: 'Count of portfolio companies that have at least one opportunity in the Opps tab' },
-            { key: 'ratio',   label: 'PC Opps 2/4', align: 'center', tip: 'Active / total opps aggregated across the PE firm plus every portfolio company' },
+            { key: 'pcDownload', label: 'PC Download', align: 'center', tip: 'Download this PE firm\'s mapped portfolio companies (from its Portfolio Companies tab) as an Excel file' },
+            { key: 'ratio',   label: 'PE Opps', align: 'center', tip: 'Active / total opps aggregated across the PE firm plus every portfolio company' },
             { key: 'clients', label: 'PC Clients', align: 'center',  tip: 'Portfolio companies currently set to status = Client' },
             { key: 'keyContacts', label: 'Key Contacts', align: 'center', tip: 'Count of HubSpot contacts tagged "Dan Key Target" across the PE firm plus its portfolio companies' },
+            { key: 'caseStudy', label: 'Case Study', align: 'center', tip: 'Yes when the PE firm or any of its portfolio companies has "Case Study Created?" set to Yes on its company page; In Progress when one is marked In Progress (and none are Yes)' },
+            { key: 'discovery', label: 'Discovery', align: 'center', tip: 'Checked when this PE firm\'s PE Stage (set in its company popup) is Discovery' },
+            { key: 'piloting', label: 'Piloting', align: 'center', tip: 'Checked when this PE firm\'s PE Stage (set in its company popup) is Piloting' },
+            { key: 'existingPartnership', label: 'Existing Partnership', align: 'center', tip: 'Checked when this PE firm\'s PE Stage (set in its company popup) is Existing Partnership' },
+            { key: 'notSold', label: 'Not Sold', align: 'center', tip: 'Checked when this PE firm\'s PE Stage (set in its company popup) is Not Sold' },
           ];
           const HEADER_COLUMNS = ALL_HEADER_COLUMNS.filter(c => visibleCols.has(c.key));
           const GRID = `${HEADER_COLUMNS.map(c => `${colWidths[c.key] || DEFAULT_COL_WIDTHS[c.key] || 110}px`).join(' ')} 28px`;
@@ -719,17 +1432,50 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                       </div>
                       )}
 
-                      {visibleCols.has('opps') && (
-                      <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.pcOppsCount || 0) > 0 ? '#7C3AED' : '#CBD5E1' }}>
-                        {stats.pcOppsCount || 0}
-                      </div>
-                      )}
+                      {visibleCols.has('pcDownload') && (() => {
+                        const pcCount = Array.isArray(pe.portfolioCompanies) ? pe.portfolioCompanies.length : 0;
+                        return (
+                          <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center' }}>
+                            {pcCount > 0 ? (
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                title={`Download ${pcCount} mapped portfolio compan${pcCount === 1 ? 'y' : 'ies'} as Excel`}
+                                onClick={e => { e.stopPropagation(); exportPortfolioCompanies(pe); }}
+                                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); exportPortfolioCompanies(pe); } }}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 700, color: '#2563EB', cursor: 'pointer', textDecoration: 'underline' }}
+                              >
+                                ⬇ {pcCount}
+                              </span>
+                            ) : (
+                              <span style={{ color: '#CBD5E1', fontSize: '0.72rem' }}>—</span>
+                            )}
+                          </div>
+                        );
+                      })()}
 
-                      {visibleCols.has('ratio') && (
-                      <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.activeOpps || 0) > 0 ? '#7C3AED' : (stats.totalOpps || 0) > 0 ? '#64748B' : '#CBD5E1' }} title="active / total opportunities across this firm and its portfolio companies">
-                        {(stats.activeOpps || 0)}/{(stats.totalOpps || 0)}
-                      </div>
-                      )}
+                      {visibleCols.has('ratio') && (() => {
+                        const oppsTip = stats.oppsTip || [];
+                        const fmt = o => `• ${o.title}${o.stage ? ` — ${o.stage}` : ''}${o.account ? ` [${o.account}]` : ''}`;
+                        let tipText;
+                        if (oppsTip.length === 0) {
+                          tipText = 'No opportunities on this firm or its portfolio companies';
+                        } else {
+                          const activeList = oppsTip.filter(o => o.active);
+                          const closedList = oppsTip.filter(o => !o.active);
+                          const lines = ['active / total opportunities across this firm and its portfolio companies', ''];
+                          lines.push(`Active (${activeList.length}):`);
+                          lines.push(...(activeList.length ? activeList.map(fmt) : ['  (none)']));
+                          lines.push(`Closed (${closedList.length}):`);
+                          lines.push(...(closedList.length ? closedList.map(fmt) : ['  (none)']));
+                          tipText = lines.join('\n');
+                        }
+                        return (
+                          <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.activeOpps || 0) > 0 ? '#7C3AED' : (stats.totalOpps || 0) > 0 ? '#64748B' : '#CBD5E1' }} title={tipText}>
+                            {(stats.activeOpps || 0)}/{(stats.totalOpps || 0)}
+                          </div>
+                        );
+                      })()}
 
                       {visibleCols.has('clients') && (
                       <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.pcClientCount || 0) > 0 ? '#10B981' : '#CBD5E1' }}>
@@ -745,6 +1491,44 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                         {stats.keyContactCount || 0}
                       </div>
                       )}
+
+                      {visibleCols.has('caseStudy') && (
+                      <div
+                        title={stats.caseStudyState === 'yes'
+                          ? `Case study created on:\n${(stats.caseStudyYesNames || []).join('\n')}`
+                          : stats.caseStudyState === 'in-progress'
+                            ? `Case study in progress on:\n${(stats.caseStudyInProgressNames || []).join('\n')}`
+                            : 'No PE firm or portfolio company on this row has "Case Study Created?" set to Yes or In Progress'}
+                        style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.72rem', fontWeight: 700 }}
+                      >
+                        {stats.caseStudyState === 'yes' ? (
+                          <span style={{ padding: '1px 8px', borderRadius: 999, background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534' }}>Yes</span>
+                        ) : stats.caseStudyState === 'in-progress' ? (
+                          <span style={{ padding: '1px 8px', borderRadius: 999, background: '#FEF3C7', border: '1px solid #FDE68A', color: '#92400E' }}>In Progress</span>
+                        ) : (
+                          <span style={{ padding: '1px 8px', borderRadius: 999, background: '#F1F5F9', border: '1px solid #CBD5E1', color: '#64748B' }}>No</span>
+                        )}
+                      </div>
+                      )}
+
+                      {[
+                        { key: 'discovery', stage: 'Discovery' },
+                        { key: 'piloting', stage: 'Piloting' },
+                        { key: 'existingPartnership', stage: 'Existing Partnership' },
+                        { key: 'notSold', stage: 'Not Sold' },
+                      ].map(({ key, stage }) => visibleCols.has(key) && (
+                        <div
+                          key={key}
+                          title={pe.peStage === stage
+                            ? `PE Stage set to "${stage}" in this firm's company popup`
+                            : pe.peStage
+                              ? `PE Stage is "${pe.peStage}", not "${stage}"`
+                              : 'No PE Stage set on this firm\'s company popup'}
+                          style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: pe.peStage === stage ? '#7C3AED' : '#CBD5E1' }}
+                        >
+                          {pe.peStage === stage ? '✓' : '—'}
+                        </div>
+                      ))}
 
                       <div style={{ padding: '0.55rem 0.2rem', textAlign: 'center', color: '#94A3B8', fontSize: '0.8rem' }}>
                         {isExpanded ? '▾' : '▸'}
@@ -823,6 +1607,2185 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
             </div>
           );
         })()}
+      </div>
+      </>
+      )}
+    </div>
+  );
+}
+
+// "All PCs" sub-tab: every PE firm's mapped portfolio companies
+// (the entries in each firm's Portfolio Companies tab) flattened into a
+// single table, with a global search plus per-column filters and sorting
+// via the shared DataTable. A leading PE Firm column records which firm
+// each company came from and links back to that firm's company popup.
+// The PE Owner dropdown filters rows to one owner: a row passes when the
+// source PE firm matches the pick, the portfolio company itself is a
+// Table View prospect whose PE Owner field matches it, or the source
+// firm is in turn owned by the pick (GP stakes — picking "Blue Owl"
+// also shows the portfolio companies of every firm whose PE Owner is
+// Blue Owl). Matching uses the shared fuzzy companiesMatch so name
+// variants ("Blue Owl" ↔ "Blue Owl Capital") line up.
+function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect }) {
+  const [search, setSearch] = useState('');
+  const [ownerFilter, setOwnerFilter] = useState('');
+
+  // Dropdown vocabulary: every PE firm that contributed rows + every
+  // distinct PE Owner set on a Table View prospect, deduped
+  // case-insensitively and sorted.
+  const ownerOptions = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    const push = (v) => {
+      const t = String(v || '').trim();
+      if (!t) return;
+      const k = t.toLowerCase();
+      if (seen.has(k)) return;
+      seen.add(k);
+      out.push(t);
+    };
+    for (const pe of firms) {
+      if (Array.isArray(pe.portfolioCompanies) && pe.portfolioCompanies.length > 0) push(pe.company);
+    }
+    for (const p of prospects) for (const o of splitPeOwners(p.peOwner)) push(o);
+    return out.sort((a, b) => a.localeCompare(b));
+  }, [firms, prospects]);
+
+  // Company name (lowercased) → its Table View PE Owners (a company can
+  // list several, comma-separated), for the "or the Company" half of
+  // the owner filter.
+  const ownerByCompany = useMemo(() => {
+    const m = new Map();
+    for (const p of prospects) {
+      const owners = splitPeOwners(p.peOwner);
+      const name = (p.company || '').trim().toLowerCase();
+      if (owners.length && name) m.set(name, owners);
+    }
+    return m;
+  }, [prospects]);
+
+  const rows = useMemo(() => {
+    const out = [];
+    let id = 0;
+    for (const pe of firms) {
+      const pcs = Array.isArray(pe.portfolioCompanies) ? pe.portfolioCompanies : [];
+      // Opportunity Score is normalized within each firm's own portfolio —
+      // same maxima/year-range basis as the firm's "Download Current Data"
+      // export — so a PC's score here matches what it shows in that export.
+      const maxE = pcs.reduce((m, r) => Math.max(m, Number(r.energyGwh) || 0), 0);
+      const maxS = pcs.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
+      const years = pcs.map(r => Number(r.acquisitionYear)).filter(y => y > 0);
+      const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
+      for (const pc of pcs) {
+        out.push({
+          id: id++,
+          _peId: pe.id,
+          score: computePortfolioFitScore(pc, maxE, maxS, yearRange),
+          peFirm: pe.company || '',
+          companyName: pc.companyName || '',
+          sector: pc.sector || pc.industry || '',
+          subsector: pc.subsector || '',
+          subsectorScore: pc.subsectorScore ?? '',
+          strategy: pc.strategy || '',
+          hqCity: pc.hqCity || '',
+          hqCountry: pc.hqCountry || '',
+          energyGwh: pc.energyGwh ?? '',
+          estElectricity: pc.estElectricity ?? '',
+          estNaturalGas: pc.estNaturalGas ?? '',
+          siteCount: pc.siteCount ?? '',
+          acquisitionYear: pc.acquisitionYear ?? '',
+          raClientMatch: pc.raClientMatch || '',
+          clientManager: pc.clientManager || '',
+          targetAccount: pc.targetAccount || '',
+          pcDescription: pc.pcDescription || '',
+          notes: pc.notes || '',
+        });
+      }
+    }
+    return out;
+  }, [firms]);
+
+  const columns = useMemo(() => [
+    { key: 'peFirm', label: 'PE Firm', defaultWidth: 190, sticky: true, render: (r) => (
+      <button
+        type="button"
+        onClick={() => { const pe = firms.find(f => f.id === r._peId); if (pe) onSelectProspect?.(pe); }}
+        title={`Open "${r.peFirm}" in the Table View`}
+        style={{ background: 'none', border: 'none', padding: 0, color: '#7C3AED', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', textAlign: 'left' }}
+      >
+        {r.peFirm || '—'}
+      </button>
+    ) },
+    { key: 'companyName', label: 'Company Name', defaultWidth: 220 },
+    { key: 'score', label: 'Opportunity Score', defaultWidth: 130, getSortValue: (r) => r.score, render: (r) => (r.score == null ? 'N/A' : r.score) },
+    { key: 'sector', label: 'Sector', defaultWidth: 200 },
+    { key: 'subsector', label: 'Subsector', defaultWidth: 180 },
+    { key: 'subsectorScore', label: 'Subsector Score', defaultWidth: 120 },
+    { key: 'strategy', label: 'Strategy', defaultWidth: 140 },
+    { key: 'hqCity', label: 'HQ City', defaultWidth: 150 },
+    { key: 'hqCountry', label: 'HQ Country', defaultWidth: 130 },
+    { key: 'energyGwh', label: 'Est. Energy (GWh/yr)', defaultWidth: 150 },
+    { key: 'estElectricity', label: 'Est. Electricity', defaultWidth: 130 },
+    { key: 'estNaturalGas', label: 'Est. Natural Gas', defaultWidth: 130 },
+    { key: 'siteCount', label: 'Site Count', defaultWidth: 100 },
+    { key: 'acquisitionYear', label: 'Acquisition Year', defaultWidth: 120 },
+    { key: 'raClientMatch', label: 'RA Client Match', defaultWidth: 160 },
+    { key: 'clientManager', label: 'Client Manager', defaultWidth: 160 },
+    { key: 'targetAccount', label: 'Target Account', defaultWidth: 160 },
+    { key: 'pcDescription', label: 'PC Description', defaultWidth: 320 },
+    { key: 'notes', label: 'Notes', defaultWidth: 220 },
+  ], [firms, onSelectProspect]);
+
+  const filtered = useMemo(() => {
+    let out = rows;
+    if (ownerFilter) {
+      out = out.filter(r => {
+        if (companiesMatch(r.peFirm, ownerFilter)) return true;
+        const owners = ownerByCompany.get(r.companyName.trim().toLowerCase()) || [];
+        if (owners.some(o => companiesMatch(o, ownerFilter))) return true;
+        // One level up the ownership chain: the firm that mapped this
+        // PC is itself owned by the pick (its Table View PE Owner
+        // matches), so its portfolio companies belong to the pick's
+        // GP-stakes family too.
+        const firmOwners = ownerByCompany.get(r.peFirm.trim().toLowerCase()) || [];
+        return firmOwners.some(o => companiesMatch(o, ownerFilter));
+      });
+    }
+    const term = search.trim().toLowerCase();
+    if (!term) return out;
+    return out.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(term)));
+  }, [search, rows, ownerFilter, ownerByCompany]);
+
+  return (
+    <>
+      <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder={`Search ${rows.length} portfolio compan${rows.length === 1 ? 'y' : 'ies'}…`}
+          style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
+        />
+        <select
+          value={ownerFilter}
+          onChange={e => setOwnerFilter(e.target.value)}
+          title="Show only companies under one PE owner — matches the source PE firm, the company's own PE Owner from Table View, or firms that owner owns (their PCs count too)"
+          style={{
+            maxWidth: 220, padding: '0.4rem 0.6rem',
+            border: `1px solid ${ownerFilter ? '#7C3AED' : '#E2E8F0'}`, borderRadius: 6,
+            fontSize: '0.78rem', fontFamily: 'inherit',
+            color: ownerFilter ? '#7C3AED' : 'inherit', fontWeight: ownerFilter ? 700 : 400,
+            background: '#fff', cursor: 'pointer',
+          }}
+        >
+          <option value="">All PE Owners</option>
+          {ownerOptions.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+        {(search.trim() || ownerFilter) && <span style={{ fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap' }}>{filtered.length} of {rows.length}</span>}
+      </div>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
+        {rows.length === 0 ? (
+          <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
+            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No portfolio companies mapped yet</div>
+            <div style={{ fontSize: '0.78rem' }}>
+              Open a PE firm's company popup and add companies in its <strong>Portfolio Companies</strong> tab — they'll be merged here.
+            </div>
+          </div>
+        ) : (
+          <DataTable
+            tableId="pe-all-portfolio-companies"
+            columns={columns}
+            rows={filtered}
+            alwaysVisible={['peFirm']}
+            defaultSort={{ key: 'score', direction: 'desc' }}
+            enableColumnFilters
+            emptyMessage="No portfolio companies match your filters"
+            exportFileName="pe_portfolio_companies"
+            exportPrimarySheetName="Portfolio Companies"
+          />
+        )}
+      </div>
+    </>
+  );
+}
+
+// Rows pasted onto the PE Firm tab that don't carry their own PE Owner
+// column inherit the currently selected firm — new companies land in
+// Table View already owned by it (so they show up on this tab), and
+// matched companies with a blank PE Owner get it filled. The default is
+// built per-render from the selected firm, so there's no module-level
+// constant here anymore.
+
+// Prospect fields the bulk-edit bar can set. Enum-backed
+// fields render a picker fed from the shared vocabularies; HQ Region's
+// two options mirror the company popup's dropdown. peAum is parsed to
+// a number (blank clears it).
+const BLUE_OWL_BULK_FIELDS = [
+  { key: 'status', label: 'Status', options: STATUSES },
+  { key: 'cdm', label: 'CDM' },
+  { key: 'type', label: 'Type', options: TYPES },
+  { key: 'tier', label: 'Tier', options: TIERS },
+  { key: 'geography', label: 'Geography', options: GEOGRAPHIES },
+  { key: 'hqRegion', label: 'HQ Region', options: ['North America', 'Outside of North America'] },
+  { key: 'website', label: 'Website' },
+  { key: 'peAum', label: 'PE AUM ($B)', type: 'number' },
+  { key: 'peOwner', label: 'PE Owner' },
+  { key: 'notes', label: 'Notes' },
+];
+
+// Bulk-edit bar for the Blue Owl tab — appears once any rows are
+// checked. Pick a field, give it a value, Apply writes it to every
+// selected company's Table View record. Same shape as Opps 2's
+// MassEditBar, but against prospect fields. A blank value clears the
+// field (the Apply button is explicit about which it'll do).
+function BlueOwlBulkEditBar({ selectedCount, applying, onApply, onClear }) {
+  const [fieldKey, setFieldKey] = useState('status');
+  const [value, setValue] = useState('');
+  // Reset the value buffer when the field changes so a stale value from
+  // the previous field doesn't get applied by accident.
+  useEffect(() => { setValue(''); }, [fieldKey]);
+  const field = BLUE_OWL_BULK_FIELDS.find(f => f.key === fieldKey) || BLUE_OWL_BULK_FIELDS[0];
+  const inputStyle = { padding: '0.3rem 0.45rem', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.78rem', fontFamily: 'inherit', background: '#fff', color: '#1E293B' };
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', margin: '0 1.25rem 0.5rem', padding: '0.5rem 0.75rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 6, fontSize: '0.78rem' }}>
+      <span style={{ fontWeight: 700, color: '#1E3A8A' }}>{selectedCount} selected</span>
+      <span style={{ color: '#64748B' }}>·</span>
+      <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+        <span style={{ color: '#64748B' }}>Set</span>
+        <select value={fieldKey} onChange={e => setFieldKey(e.target.value)} style={inputStyle}>
+          {BLUE_OWL_BULK_FIELDS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+        </select>
+      </label>
+      <span style={{ color: '#64748B' }}>to</span>
+      {field.options ? (
+        <select value={value} onChange={e => setValue(e.target.value)} style={{ ...inputStyle, minWidth: 170 }}>
+          <option value="">— blank (clear) —</option>
+          {field.options.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+      ) : (
+        <input
+          type={field.type === 'number' ? 'number' : 'text'}
+          step={field.type === 'number' ? 'any' : undefined}
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          placeholder="New value (blank to clear)"
+          style={{ ...inputStyle, minWidth: 200 }}
+        />
+      )}
+      <button
+        type="button"
+        disabled={applying}
+        onClick={() => onApply(field, value)}
+        style={{ padding: '0.35rem 0.85rem', background: applying ? '#94A3B8' : '#3B82F6', border: 'none', borderRadius: 4, fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit', color: '#fff', cursor: applying ? 'wait' : 'pointer' }}
+      >{applying ? 'Applying…' : `${value.trim() ? 'Apply to' : 'Clear on'} ${selectedCount}`}</button>
+      <button
+        type="button"
+        onClick={onClear}
+        disabled={applying}
+        style={{ padding: '0.35rem 0.7rem', background: '#fff', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit', color: '#475569', cursor: 'pointer' }}
+      >Clear selection</button>
+    </div>
+  );
+}
+
+// PE Firm sub-tab: every Table View prospect whose PE Owner names the
+// firm picked in the in-tab dropdown (defaulting to Blue Owl), as one
+// searchable, filterable table via the shared DataTable. Unlike All PCs
+// (which reads each firm's Portfolio Companies tab), these are full
+// prospect records — so each row links straight to the company's own
+// popup, the Paste from Excel button writes straight back to Table View
+// (fill blanks / optionally overwrite on existing companies, add the
+// rest as new prospects owned by the selected firm), and every
+// prospect-backed cell edits in place through Table View's InlineCell
+// (double-click; enum columns get the same dropdown options Table View
+// shows, including "+ Add new" for Type / CDM).
+// Compact read-only cell for a list of names (PC opp companies /
+// contacts / decision makers): shows them comma-joined on one line,
+// truncated with the full list on hover, or a muted placeholder when
+// the list is empty.
+function NameListCell({ items, empty }) {
+  const list = Array.isArray(items) ? items.filter(Boolean) : [];
+  if (list.length === 0) {
+    return <span style={{ color: '#CBD5E1' }} title={empty || ''}>—</span>;
+  }
+  return (
+    <span
+      title={list.join('\n')}
+      style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '0.78rem', color: '#334155' }}
+    >
+      {list.join(', ')}
+    </span>
+  );
+}
+
+// Inline editor for the Blue Owl tab's Client Manager column. Mirrors the
+// Clients tab's editor (local draft, commit on blur/Enter, revert on
+// Escape) and writes to the same per-company clientManagerStore, so a
+// manager typed here and on the Clients tab stays in sync. Swallows click
+// + keydown so editing doesn't open the row's popup or hit table shortcuts.
+function ClientManagerCell({ company, value, onCommit }) {
+  const [draft, setDraft] = useState(value || '');
+  const [focused, setFocused] = useState(false);
+  useEffect(() => { setDraft(value || ''); }, [value]);
+  function commit() {
+    const next = draft.trim();
+    if (next === (value || '').trim()) return;
+    onCommit(company, next);
+  }
+  return (
+    <input
+      type="text"
+      value={draft}
+      placeholder="—"
+      onChange={(e) => setDraft(e.target.value)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => { setFocused(false); commit(); }}
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+        else if (e.key === 'Escape') { e.preventDefault(); setDraft(value || ''); e.currentTarget.blur(); }
+      }}
+      style={{
+        width: '100%', boxSizing: 'border-box',
+        padding: '3px 6px',
+        border: `1px solid ${focused ? '#3B82F6' : 'transparent'}`, borderRadius: 4,
+        background: focused ? '#fff' : 'transparent', color: '#1E293B',
+        fontSize: '0.78rem', fontFamily: 'inherit',
+      }}
+    />
+  );
+}
+
+// Read-only popup that shows the Opps-tab opportunities matched to a
+// company — opened from the PE Overview tab's Services In Progress cell.
+// Active (in-flight) opps are listed first so the "current" opportunity
+// behind the in-progress services is front and centre. Each opp shows the
+// fields users scan for on the Opps tab; the BFO Link opens the full
+// opportunity record in a new tab.
+function CompanyOppsModal({ company, opps = [], onClose, onOpenCompany }) {
+  const backdropMouseDown = useRef(false);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const oppTitle = (r) => r['Opportunity Name'] || r['Opportunity'] || r['Name'] || r['Description'] || '(Unnamed opportunity)';
+  const fields = [
+    ['Account', (r) => r['Account']],
+    ['Contact', (r) => r['Contact']],
+    ['Scope', (r) => r['Scope']],
+    ['Sales Partner', (r) => r['Sales Partner']],
+    ['Amount', (r) => { const v = r['Amount'] || r['Value'] || r['$'] || ''; return v && !String(v).startsWith('$') ? `$${v}` : v; }],
+    ['Close Date', (r) => formatDateDisplay(r['Close Date'] || r['Est. Close'] || r['Target Close'] || '')],
+    ['Next Steps', (r) => r['Next Steps']],
+  ];
+  return createPortal(
+    <div
+      onMouseDown={(e) => { backdropMouseDown.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && backdropMouseDown.current) onClose(); }}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
+        zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: 640, maxWidth: '94vw', maxHeight: '88vh',
+          background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.85rem 1rem', borderBottom: '1px solid #E2E8F0' }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              Opportunities — {company || '—'}
+            </div>
+            <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
+              {opps.length} matching opportunit{opps.length === 1 ? 'y' : 'ies'} from the Opps tab
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            title="Close"
+            style={{ flexShrink: 0, marginLeft: '0.75rem', background: 'none', border: 'none', fontSize: '1.3rem', lineHeight: 1, color: '#94A3B8', cursor: 'pointer' }}
+          >×</button>
+        </div>
+        <div style={{ padding: '0.85rem 1rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          {opps.length === 0 ? (
+            <div style={{ fontSize: '0.8rem', color: '#64748B', fontStyle: 'italic' }}>No opportunities found.</div>
+          ) : opps.map((r, idx) => {
+            const stage = (r['Stage'] || '').trim();
+            const isActive = !CLOSED_STAGES.has(stage) && !INVALID_STAGES.has(stage);
+            const bfoLink = r['BFO Link'];
+            return (
+              <div key={idx} style={{ border: '1px solid #E2E8F0', borderRadius: 6, padding: '0.6rem 0.75rem', background: isActive ? '#FAF5FF' : '#FBFBFB' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.4rem' }}>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {oppTitle(r)}
+                  </div>
+                  {stage && (
+                    <span style={{ flexShrink: 0, padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', background: isActive ? '#7C3AED' : '#CBD5E1', color: '#fff' }}>
+                      {stage}
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '0.15rem 0.6rem', fontSize: '0.75rem' }}>
+                  {fields.map(([label, get]) => {
+                    const val = get(r);
+                    if (val == null || String(val).trim() === '' || String(val).trim() === '-') return null;
+                    return (
+                      <div key={label} style={{ display: 'contents' }}>
+                        <div style={{ color: '#94A3B8', fontWeight: 600, whiteSpace: 'nowrap' }}>{label}</div>
+                        <div style={{ color: '#334155', wordBreak: 'break-word' }}>{String(val)}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {bfoLink && /^https?:\/\//i.test(String(bfoLink).trim()) && (
+                  <a
+                    href={String(bfoLink).trim()}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ display: 'inline-block', marginTop: '0.5rem', fontSize: '0.72rem', fontWeight: 600, color: '#2563EB' }}
+                  >Open in BFO ↗</a>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', padding: '0.7rem 1rem', borderTop: '1px solid #E2E8F0' }}>
+          {onOpenCompany && (
+            <button
+              type="button"
+              onClick={onOpenCompany}
+              style={{ padding: '0.4rem 0.85rem', border: '1px solid #7C3AED', borderRadius: 6, background: '#fff', color: '#7C3AED', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+            >Open company in Table View</button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ padding: '0.4rem 0.85rem', border: '1px solid #E2E8F0', borderRadius: 6, background: '#fff', color: '#334155', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+          >Close</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelectFirm, prospects = [], oppsRecords = [], portfolioByPe = new Map(), dmNamesByCompanyId = new Map(), onSelectProspect, onUpdateProspect, onAddProspect, onDownloadPortfolio, settings, updateSettings }) {
+  const firmLabel = selectedFirm.trim() || 'PE firm';
+  // Strategy-tag vocabulary shared with the company popup, so a tag added
+  // in either surface shows up in the other.
+  const strategyOptions = useMemo(() => buildStrategyOptions(prospects, settings), [prospects, settings]);
+  // Asset Types vocabulary, managed on the Dropdowns tab — fed into the
+  // Asset Types column's inline tags editor so it matches Table View.
+  const assetTypeOptions = useMemo(() => buildAssetTypeOptions(prospects, settings), [prospects, settings]);
+  // Toggle one strategy tag on a firm, persisting the whole array.
+  const toggleStrategy = useCallback((prospect, tag) => {
+    const current = Array.isArray(prospect?.strategies) ? prospect.strategies : [];
+    const next = current.includes(tag) ? current.filter(s => s !== tag) : [...current, tag];
+    onUpdateProspect?.(prospect.id, { strategies: next });
+  }, [onUpdateProspect]);
+  const addStrategy = useCallback((tag) => persistCustomStrategy(tag, settings, updateSettings), [settings, updateSettings]);
+  const [search, setSearch] = useState('');
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+  // Client Manager values live in the shared per-company store (the same
+  // one the Clients tab edits), keyed by normalized company name. Mirror
+  // it into state and refresh on the store's change event + cross-tab
+  // storage writes so the column stays live as managers are edited here
+  // or on the Clients tab.
+  const [managerMap, setManagerMap] = useState(() => loadClientManagerMap());
+  useEffect(() => {
+    const refresh = () => setManagerMap(loadClientManagerMap());
+    const onStorage = (e) => { if (e.key === 'clients-manager-map') refresh(); };
+    window.addEventListener(CLIENT_MANAGER_EVENT, refresh);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(CLIENT_MANAGER_EVENT, refresh);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+  // Bulk-edit selection. filteredRowIds mirrors the rows currently
+  // passing the DataTable's column filters (and this tab's search) so
+  // the header checkbox selects exactly what's on screen.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [filteredRowIds, setFilteredRowIds] = useState(() => new Set());
+  const [bulkApplying, setBulkApplying] = useState(false);
+  // Row whose matching Opps-tab opportunities are shown in the detail
+  // popup — set by clicking a Services In Progress cell that has a
+  // current opp on the company.
+  const [oppsModalRow, setOppsModalRow] = useState(null);
+
+  // Set-equality guard (same as Opps 2's handler): returning prev when
+  // the ids haven't changed stops the notify → setState → re-render →
+  // notify cycle the DataTable callback would otherwise feed.
+  const handleFilteredRowsChange = useCallback((tableRows) => {
+    setFilteredRowIds(prev => {
+      const next = new Set();
+      for (const r of (tableRows || [])) if (r?.id != null) next.add(r.id);
+      if (prev.size === next.size && [...prev].every(id => next.has(id))) return prev;
+      return next;
+    });
+  }, []);
+
+  // A bulk edit can move a company off this tab (e.g. PE Owner no
+  // longer names Blue Owl, or Type set to Portfolio Company) — drop
+  // departed ids from the selection so the count stays honest.
+  useEffect(() => {
+    setSelectedIds(prev => {
+      const valid = new Set(companies.map(p => p.id));
+      if ([...prev].every(id => valid.has(id))) return prev;
+      return new Set([...prev].filter(id => valid.has(id)));
+    });
+  }, [companies]);
+
+  // Write one field to every selected company's Table View record.
+  // Sequential so a flaky write surfaces per company instead of a
+  // half-applied Promise.all; failures are collected and reported.
+  async function applyBulkEdit(field, rawValue) {
+    if (!onUpdateProspect || selectedIds.size === 0) return;
+    let value = rawValue.trim();
+    if (field.type === 'number') {
+      const n = parseFloat(value.replace(/[,$]/g, ''));
+      value = Number.isFinite(n) ? n : null;
+    }
+    setBulkApplying(true);
+    const failed = [];
+    try {
+      for (const id of selectedIds) {
+        try {
+          await onUpdateProspect(id, { [field.key]: value });
+        } catch (err) {
+          console.error('Blue Owl bulk edit: update failed', { id, field: field.key, err });
+          failed.push(companies.find(c => c.id === id)?.company || id);
+        }
+      }
+      if (failed.length) {
+        window.alert(`Bulk edit failed for ${failed.length} compan${failed.length === 1 ? 'y' : 'ies'} — try again:\n  ${failed.join('\n  ')}`);
+      }
+    } finally {
+      setBulkApplying(false);
+    }
+  }
+
+  // Per-company opp counts from the Opps tab, shown as active/total.
+  // Same matcher and stage buckets the Portfolio tab's PE Opps column
+  // uses: accounts tie to companies via the strict accountMatchesCompany,
+  // invalid stages are dropped entirely, total counts every opp ever and
+  // active excludes the closed stages (Sold / Not Sold / Closed / Lost).
+  const oppCountsByCompanyId = useMemo(() => {
+    const map = new Map();
+    if (oppsRecords.length === 0) return map;
+    for (const p of companies) {
+      const name = (p.company || '').trim().toLowerCase();
+      if (!name) continue;
+      let active = 0;
+      let total = 0;
+      const tip = [];
+      // Keep the matching opp records so the Services In Progress cell can
+      // pop their details — active stages first, then the rest, so the
+      // "current" opps surface at the top of the modal.
+      const records = [];
+      for (const r of oppsRecords) {
+        const stage = (r['Stage'] || '').trim();
+        if (INVALID_STAGES.has(stage)) continue;
+        const acct = (r['Account'] || '').toLowerCase();
+        if (!acct || !accountMatchesCompany(name, acct)) continue;
+        total++;
+        const isActive = !CLOSED_STAGES.has(stage);
+        if (isActive) active++;
+        records.push({ record: r, isActive });
+        tip.push(`• ${r['Opportunity Name'] || r['Opportunity'] || r['Name'] || r['Description'] || '(Unnamed opportunity)'}${stage ? ` — ${stage}` : ''}`);
+      }
+      records.sort((a, b) => (a.isActive === b.isActive ? 0 : a.isActive ? -1 : 1));
+      if (total > 0) map.set(p.id, { active, total, tip, records: records.map(x => x.record) });
+    }
+    return map;
+  }, [companies, oppsRecords]);
+
+  // Same counting for each firm's portfolio companies — every prospect
+  // whose PE Owner names this firm (the portfolioByPe linkage the
+  // Portfolio tab uses). Opps are scanned outer-loop so an opp whose
+  // account matches two sister PCs still counts once.
+  const pcOppCountsByCompanyId = useMemo(() => {
+    const map = new Map();
+    if (oppsRecords.length === 0) return map;
+    for (const p of companies) {
+      const portfolio = portfolioByPe.get((p.company || '').trim().toLowerCase()) || [];
+      if (portfolio.length === 0) continue;
+      const pcNames = portfolio
+        .map(pc => ({ name: (pc.company || '').trim().toLowerCase(), display: pc.company }))
+        .filter(pc => pc.name);
+      let active = 0;
+      let total = 0;
+      const tip = [];
+      // Distinct portfolio-company names that carry a PC opp, and the
+      // distinct contact names tied to those opps — surfaced as their own
+      // columns next to PC Opps.
+      const companySeen = new Set();
+      const companyNames = [];
+      const contactSeen = new Set();
+      const contactNames = [];
+      for (const r of oppsRecords) {
+        const stage = (r['Stage'] || '').trim();
+        if (INVALID_STAGES.has(stage)) continue;
+        const acct = (r['Account'] || '').toLowerCase();
+        if (!acct) continue;
+        const pcMatch = pcNames.find(pc => accountMatchesCompany(pc.name, acct));
+        if (!pcMatch) continue;
+        total++;
+        if (!CLOSED_STAGES.has(stage)) active++;
+        tip.push(`• ${r['Opportunity Name'] || r['Opportunity'] || r['Name'] || r['Description'] || '(Unnamed opportunity)'}${stage ? ` — ${stage}` : ''} [${pcMatch.display}]`);
+        const display = (pcMatch.display || '').trim();
+        if (display && !companySeen.has(display.toLowerCase())) {
+          companySeen.add(display.toLowerCase());
+          companyNames.push(display);
+        }
+        for (const c of String(r['Contact'] || '').split(/[,;\n]+/).map(s => s.trim()).filter(Boolean)) {
+          if (contactSeen.has(c.toLowerCase())) continue;
+          contactSeen.add(c.toLowerCase());
+          contactNames.push(c);
+        }
+      }
+      if (total > 0) map.set(p.id, { active, total, tip, companyNames, contactNames });
+    }
+    return map;
+  }, [companies, portfolioByPe, oppsRecords]);
+
+  const rows = useMemo(() => companies.map(p => {
+    const counts = oppCountsByCompanyId.get(p.id);
+    const pcCounts = pcOppCountsByCompanyId.get(p.id);
+    // Bucket the explored services by outcome. "In Progress" is any
+    // service that's been explored but isn't a terminal Sold / Not Sold
+    // (or N/A / blank) — i.e. the in-flight statuses (Exploring, Quoting,
+    // Verbal, In Progress, etc.).
+    const svc = p.servicesExplored || {};
+    const servicesSold = [];
+    const servicesNotSold = [];
+    const servicesInProgress = [];
+    for (const [name, status] of Object.entries(svc)) {
+      const s = String(status || '').trim();
+      if (s === 'Sold') servicesSold.push(name);
+      else if (s === 'Not Sold') servicesNotSold.push(name);
+      else if (s && s !== '-' && s !== 'N/A') servicesInProgress.push(name);
+    }
+    return {
+      id: p.id,
+      _prospect: p,
+      _oppsTip: counts?.tip || [],
+      _oppRecords: counts?.records || [],
+      _pcOppsTip: pcCounts?.tip || [],
+      _pcCount: (portfolioByPe.get((p.company || '').trim().toLowerCase()) || []).length,
+      // Mapped portfolio companies from this firm's own Portfolio
+      // Companies tab — the array the PC Download export ships.
+      _pcMappedCount: Array.isArray(p.portfolioCompanies) ? p.portfolioCompanies.length : 0,
+      strategies: Array.isArray(p.strategies) ? p.strategies : [],
+      company: p.company || '',
+      status: p.status || '',
+      cdm: p.cdm || '',
+      clientManager: resolveManagerFromMap(p.company, managerMap),
+      type: p.type || '',
+      assetTypes: Array.isArray(p.assetTypes) ? p.assetTypes : [],
+      tier: p.tier || '',
+      geography: p.geography || '',
+      hqRegion: p.hqRegion || '',
+      website: p.website || '',
+      peAum: p.peAum ?? '',
+      oppsActive: counts?.active || 0,
+      oppsTotal: counts?.total || 0,
+      pcOppsActive: pcCounts?.active || 0,
+      pcOppsTotal: pcCounts?.total || 0,
+      pcOppCompanies: pcCounts?.companyNames || [],
+      pcOppContacts: pcCounts?.contactNames || [],
+      decisionMakerNames: dmNamesByCompanyId.get(p.id) || [],
+      servicesSold,
+      servicesNotSold,
+      servicesInProgress,
+      peOwner: p.peOwner || '',
+      notes: p.notes || '',
+    };
+  }), [companies, oppCountsByCompanyId, pcOppCountsByCompanyId, portfolioByPe, dmNamesByCompanyId, managerMap]);
+
+  // Same dropdown vocabularies as Table View's inline editors, built
+  // from the full prospect list so the options match exactly.
+  const typeOptions = useMemo(() => buildTypeOptions(prospects, settings), [prospects, settings]);
+  const cdmOptions = useMemo(() => buildCdmOptions(prospects, settings), [prospects, settings]);
+  const handleAddOption = useCallback((colKey, name) => {
+    persistCustomOption(colKey, name, settings, updateSettings, cdmOptions);
+  }, [settings, updateSettings, cdmOptions]);
+
+  const columns = useMemo(() => {
+    // Each prospect-backed cell edits through Table View's InlineCell
+    // (double-click to edit; enum columns drop down the same options
+    // Table View shows). colDefs mirror Table View's COLUMNS for the
+    // overlapping fields. The Opps / PC Opps columns stay read-only —
+    // they're derived from the Opps tab, not stored on the prospect.
+    const editable = (colDef, getValue) => function EditableCell(r) {
+      return (
+        <InlineCell
+          value={getValue ? getValue(r) : r[colDef.key]}
+          prospect={r._prospect}
+          colDef={colDef}
+          onUpdate={onUpdateProspect}
+          onAddOption={handleAddOption}
+        />
+      );
+    };
+    return [
+      { key: 'company', label: 'Company', defaultWidth: 240, sticky: true, render: (r) => (
+        <button
+          type="button"
+          onClick={() => onSelectProspect?.(r._prospect)}
+          title={`Open "${r.company}" in the Table View`}
+          style={{ background: 'none', border: 'none', padding: 0, color: '#7C3AED', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', textAlign: 'left' }}
+        >
+          {r.company || '—'}
+        </button>
+      ) },
+      // Explored-services breakdown, pulled from each prospect's
+      // servicesExplored map (service name -> status). Read-only here —
+      // edit the statuses in the prospect's Services Explored panel.
+      { key: 'servicesSold', label: 'Services Sold', defaultWidth: 220,
+        getSortValue: (r) => r.servicesSold.length,
+        getFilterValue: (r) => r.servicesSold.join(', '),
+        exportValue: (r) => r.servicesSold.join(', '),
+        render: (r) => <NameListCell items={r.servicesSold} empty="No services sold" /> },
+      { key: 'servicesNotSold', label: 'Services Not Sold', defaultWidth: 220,
+        getSortValue: (r) => r.servicesNotSold.length,
+        getFilterValue: (r) => r.servicesNotSold.join(', '),
+        exportValue: (r) => r.servicesNotSold.join(', '),
+        render: (r) => <NameListCell items={r.servicesNotSold} empty="No services marked not sold" /> },
+      // Services In Progress: in-flight explored services. When the
+      // company has a matching opp in the Opps tab, the cell becomes a
+      // link that pops those opps' details (active first) — so a user can
+      // jump from "what's in progress" to the live opportunity behind it.
+      { key: 'servicesInProgress', label: 'Services In Progress', defaultWidth: 220,
+        getSortValue: (r) => r.servicesInProgress.length,
+        getFilterValue: (r) => r.servicesInProgress.join(', '),
+        exportValue: (r) => r.servicesInProgress.join(', '),
+        render: (r) => {
+          if (r.servicesInProgress.length === 0) {
+            return <NameListCell items={r.servicesInProgress} empty="No services in progress" />;
+          }
+          if (r._oppRecords.length === 0) {
+            return <NameListCell items={r.servicesInProgress} empty="No services in progress" />;
+          }
+          const oppCount = r._oppRecords.length;
+          return (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setOppsModalRow(r); }}
+              title={`View ${oppCount} matching opportunit${oppCount === 1 ? 'y' : 'ies'} from the Opps tab\n${r._oppsTip.join('\n')}`}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left', background: 'none',
+                border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: '0.78rem', color: '#7C3AED', fontWeight: 600,
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                textDecoration: 'underline', textDecorationStyle: 'dotted',
+              }}
+            >
+              {r.servicesInProgress.join(', ')}
+            </button>
+          );
+        } },
+      // Bulk-edit checkbox. Sits after the Company column (not before)
+      // because Company is the sticky column pinned at left: 0 — a
+      // column to its left would slide underneath it on horizontal
+      // scroll. The header checkbox selects/clears every row passing
+      // the current filters.
+      { key: '_select', label: '', defaultWidth: 36, getFilterValue: () => '', renderHeader: () => {
+        const filteredArr = [...filteredRowIds];
+        const selectedInFilter = filteredArr.filter(id => selectedIds.has(id)).length;
+        const allSelected = filteredArr.length > 0 && selectedInFilter === filteredArr.length;
+        return (
+          <input
+            type="checkbox"
+            ref={(el) => { if (el) el.indeterminate = selectedInFilter > 0 && !allSelected; }}
+            checked={allSelected}
+            disabled={filteredArr.length === 0}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => {
+              const checked = e.target.checked;
+              setSelectedIds(prev => {
+                const next = new Set(prev);
+                for (const id of filteredArr) { if (checked) next.add(id); else next.delete(id); }
+                return next;
+              });
+            }}
+            style={{ margin: 0, cursor: filteredArr.length === 0 ? 'not-allowed' : 'pointer' }}
+            title={allSelected
+              ? `Clear selection for all ${filteredArr.length} filtered row${filteredArr.length === 1 ? '' : 's'}`
+              : `Select all ${filteredArr.length} filtered row${filteredArr.length === 1 ? '' : 's'} for bulk edit`}
+          />
+        );
+      }, render: (r) => (
+        <input
+          type="checkbox"
+          checked={selectedIds.has(r.id)}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            const checked = e.target.checked;
+            setSelectedIds(prev => {
+              const next = new Set(prev);
+              if (checked) next.add(r.id); else next.delete(r.id);
+              return next;
+            });
+          }}
+          style={{ margin: 0, cursor: 'pointer' }}
+          title="Select for bulk edit"
+        />
+      ) },
+      { key: 'status', label: 'Status', defaultWidth: 140, render: editable({ key: 'status', label: 'Status', type: 'enum', options: STATUSES }) },
+      { key: 'cdm', label: 'CDM', defaultWidth: 160, render: editable({ key: 'cdm', label: 'CDM', type: 'enum', options: cdmOptions, allowAddNew: true }) },
+      // Client Manager — the per-company manager stored in the shared
+      // clientManagerStore (same value the Clients tab shows/edits), keyed
+      // by company name. Editable inline here; commits sync to the Clients
+      // tab via the store's change event.
+      { key: 'clientManager', label: 'Client Manager', defaultWidth: 170,
+        getSortValue: (r) => (r.clientManager || '').toLowerCase(),
+        getFilterValue: (r) => r.clientManager,
+        exportValue: (r) => r.clientManager,
+        render: (r) => <ClientManagerCell company={r.company} value={r.clientManager} onCommit={setClientManager} /> },
+      { key: 'type', label: 'Type', defaultWidth: 150, render: editable({ key: 'type', label: 'Type', type: 'enum', options: typeOptions, allowAddNew: true }) },
+      // Asset Types — the same multi-tag field Table View shows, edited
+      // inline through InlineCell's TagsCell. Its vocabulary is managed on
+      // the Dropdowns tab (assetTypeOptions). Read the array off the
+      // prospect so sort/filter/export agree with the values being edited.
+      { key: 'assetTypes', label: 'Asset Types', defaultWidth: 170,
+        getSortValue: (r) => r.assetTypes.length,
+        getFilterValue: (r) => r.assetTypes.join(', '),
+        exportValue: (r) => r.assetTypes.join(', '),
+        render: editable({ key: 'assetTypes', label: 'Asset Types', type: 'tags', options: assetTypeOptions }, (r) => r.assetTypes) },
+      { key: 'tier', label: 'Tier', defaultWidth: 100, render: editable({ key: 'tier', label: 'Tier', type: 'enum', options: TIERS }) },
+      { key: 'geography', label: 'Geography', defaultWidth: 130, render: editable({ key: 'geography', label: 'Geography', type: 'enum', options: GEOGRAPHIES }) },
+      { key: 'hqRegion', label: 'HQ Region', defaultWidth: 130, render: editable({ key: 'hqRegion', label: 'HQ Region' }) },
+      { key: 'website', label: 'Website', defaultWidth: 200, render: editable({ key: 'website', label: 'Website', type: 'link' }) },
+      // The row keeps '' for missing AUM (so global search doesn't hit
+      // "null"); normalize to null for the cell so it renders '—'.
+      { key: 'peAum', label: 'PE AUM ($B)', defaultWidth: 110, getSortValue: (r) => Number(r.peAum) || 0, render: editable({ key: 'peAum', label: 'PE AUM', type: 'number', format: 'aum' }, (r) => (typeof r.peAum === 'number' ? r.peAum : null)) },
+      // Sort by active first, total as the tiebreak (active is what the
+      // user scans for; 1e6 keeps totals from ever outranking an active).
+      { key: 'opps', label: 'Opps', defaultWidth: 90, getSortValue: (r) => r.oppsActive * 1e6 + r.oppsTotal, exportValue: (r) => `${r.oppsActive}/${r.oppsTotal}`, render: (r) => (
+        <span
+          title={r._oppsTip.length ? `active / total opps from the Opps tab\n${r._oppsTip.join('\n')}` : 'No opportunities on this company in the Opps tab'}
+          style={{ fontWeight: 700, color: r.oppsActive > 0 ? '#7C3AED' : r.oppsTotal > 0 ? '#64748B' : '#CBD5E1' }}
+        >{r.oppsActive}/{r.oppsTotal}</span>
+      ) },
+      { key: 'pcOpps', label: 'PC Opps', defaultWidth: 90, getSortValue: (r) => r.pcOppsActive * 1e6 + r.pcOppsTotal, exportValue: (r) => `${r.pcOppsActive}/${r.pcOppsTotal}`, render: (r) => (
+        <span
+          title={r._pcOppsTip.length
+            ? `active / total opps across this firm's ${r._pcCount} portfolio compan${r._pcCount === 1 ? 'y' : 'ies'}\n${r._pcOppsTip.join('\n')}`
+            : r._pcCount > 0
+            ? `No opps on this firm's ${r._pcCount} portfolio compan${r._pcCount === 1 ? 'y' : 'ies'} in the Opps tab`
+            : 'No portfolio companies point to this firm — set a company\'s PE Owner to link it'}
+          style={{ fontWeight: 700, color: r.pcOppsActive > 0 ? '#7C3AED' : r.pcOppsTotal > 0 ? '#64748B' : '#CBD5E1' }}
+        >{r.pcOppsActive}/{r.pcOppsTotal}</span>
+      ) },
+      // PC Download: count of this firm's mapped portfolio companies (its
+      // Portfolio Companies tab) with a click-to-download of that exact
+      // Excel workbook — same export the Portfolio tab's PC Download
+      // column and the company pop-up's "Download Current Data" ship.
+      { key: 'pcDownload', label: 'PC Download', defaultWidth: 110, getSortValue: (r) => r._pcMappedCount, exportValue: (r) => String(r._pcMappedCount), render: (r) => (
+        r._pcMappedCount > 0 ? (
+          <span
+            role="button"
+            tabIndex={0}
+            title={`Download ${r._pcMappedCount} mapped portfolio compan${r._pcMappedCount === 1 ? 'y' : 'ies'} as Excel`}
+            onClick={(e) => { e.stopPropagation(); onDownloadPortfolio?.(r._prospect); }}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); onDownloadPortfolio?.(r._prospect); } }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 700, color: '#2563EB', cursor: 'pointer', textDecoration: 'underline' }}
+          >⬇ {r._pcMappedCount}</span>
+        ) : <span style={{ color: '#CBD5E1', fontSize: '0.72rem' }}>—</span>
+      ) },
+      // Read-only companions to PC Opps: the portfolio companies that
+      // carry those opps, and the contacts tied to them (both pulled from
+      // the same Opps-tab scan).
+      { key: 'pcOppCompanies', label: 'PC Opp Companies', defaultWidth: 220, getSortValue: (r) => r.pcOppCompanies.length, getFilterValue: (r) => r.pcOppCompanies.join(', '), exportValue: (r) => r.pcOppCompanies.join(', '), render: (r) => <NameListCell items={r.pcOppCompanies} empty="No PC opps" /> },
+      { key: 'pcOppContacts', label: 'PC Opp Contacts', defaultWidth: 220, getSortValue: (r) => r.pcOppContacts.length, getFilterValue: (r) => r.pcOppContacts.join(', '), exportValue: (r) => r.pcOppContacts.join(', '), render: (r) => <NameListCell items={r.pcOppContacts} empty="No contacts on PC opps" /> },
+      // Decision-Maker contacts for this PE firm (HubSpot "Decision
+      // Maker"-tagged, matched by company or email domain).
+      { key: 'decisionMakers', label: 'Key Contacts', defaultWidth: 220, getSortValue: (r) => r.decisionMakerNames.length, getFilterValue: (r) => r.decisionMakerNames.join(', '), exportValue: (r) => r.decisionMakerNames.join(', '), render: (r) => <NameListCell items={r.decisionMakerNames} empty="No key contacts found" /> },
+      { key: 'peOwner', label: 'PE Owner', defaultWidth: 170, render: editable({ key: 'peOwner', label: 'PE Owner' }) },
+      // Strategies: multi-tag investment-strategy field, editable inline
+      // (same control + vocabulary as the company pop-up, with add-new).
+      { key: 'strategies', label: 'Strategies', defaultWidth: 260, getSortValue: (r) => r.strategies.length, getFilterValue: (r) => r.strategies.join(', '), exportValue: (r) => r.strategies.join(', '), render: (r) => (
+        <div onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+          <TagMultiSelect
+            options={strategyOptions}
+            selected={r.strategies}
+            onToggle={(tag) => toggleStrategy(r._prospect, tag)}
+            onAddNew={addStrategy}
+            placeholder="Add strategies…"
+          />
+        </div>
+      ) },
+      { key: 'notes', label: 'Notes', defaultWidth: 320, render: editable({ key: 'notes', label: 'Notes', type: 'notes' }) },
+    ];
+  }, [onSelectProspect, onUpdateProspect, handleAddOption, typeOptions, cdmOptions, assetTypeOptions, selectedIds, filteredRowIds, onDownloadPortfolio, strategyOptions, toggleStrategy, addStrategy]);
+
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return rows;
+    return rows.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(term)));
+  }, [search, rows]);
+
+  // Apply a confirmed paste plan (from PasteAddModal in upsert mode):
+  // adds go through onAddProspect (idempotent by company key), updates
+  // through onUpdateProspect with only the changed fields. The table —
+  // and Table View — refresh live off the prospects subscription.
+  async function handlePasteImport(plan) {
+    setPasteOpen(false);
+    setImporting(true);
+    let added = 0;
+    let updated = 0;
+    const failed = [];
+    try {
+      for (const record of (plan.toAdd || [])) {
+        try {
+          await onAddProspect?.(record);
+          added++;
+        } catch (err) {
+          console.error('Blue Owl paste: add failed for', record.company, err);
+          failed.push(record.company);
+        }
+      }
+      for (const u of (plan.toUpdate || [])) {
+        try {
+          await onUpdateProspect?.(u.id, u.changes);
+          updated++;
+        } catch (err) {
+          console.error('Blue Owl paste: update failed for', u.company, err);
+          failed.push(u.company);
+        }
+      }
+      const parts = [`${added} added`, `${updated} updated`];
+      if (plan.unchanged?.length) parts.push(`${plan.unchanged.length} unchanged`);
+      if (plan.noCompany) parts.push(`${plan.noCompany} without a company skipped`);
+      if (failed.length) parts.push(`${failed.length} FAILED`);
+      window.alert(`Blue Owl paste: ${parts.join(' · ')}.${failed.length ? `\n\nFailed rows — try them again:\n  ${failed.join('\n  ')}` : ''}`);
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  // Schneider-branded Excel export for the PE Overview table. DataTable
+  // hands us its currently-visible columns (in order) and the sorted +
+  // filtered rows; we render them into a styled .xlsx (green title band,
+  // dark-green header, Nunito Sans, zebra rows) matching the other
+  // Schneider exports, using each column's exportValue mapper so the file
+  // reflects what's on screen.
+  const exportSchneider = async ({ columns: exportCols, rows: exportRows, colNames }) => {
+    const { Workbook } = await import('exceljs');
+    const SE_GREEN = 'FF3DCD58';
+    const SE_GREEN_DARK = 'FF009530';
+    const SE_BORDER = 'FFD4DDE1';
+    const SE_TEXT = 'FF1E293B';
+    const ZEBRA = 'FFF1F8F4';
+    const cols = (exportCols || []).filter(c => c.key !== '_select');
+    const headers = cols.map(c => colNames?.[c.key] || c.label || c.key);
+
+    const wb = new Workbook();
+    wb.creator = 'Schneider Electric · Prospect Tracker';
+    wb.created = new Date();
+    const ws = wb.addWorksheet(`${firmLabel} Companies`.slice(0, 31), {
+      properties: { tabColor: { argb: SE_GREEN } },
+      views: [{ state: 'frozen', ySplit: 3 }],
+    });
+    ws.columns = cols.map((c, i) => ({ width: i === 0 ? 34 : Math.max((headers[i] || '').length + 4, 16) }));
+
+    ws.mergeCells(1, 1, 1, cols.length);
+    const title = ws.getCell(1, 1);
+    title.value = 'Schneider Electric';
+    title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+    title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN } };
+    title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(1).height = 30;
+
+    ws.mergeCells(2, 1, 2, cols.length);
+    const sub = ws.getCell(2, 1);
+    sub.value = `PE Overview · ${firmLabel} · ${exportRows.length} compan${exportRows.length === 1 ? 'y' : 'ies'}`;
+    sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: 'FF64748B' } };
+    sub.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(2).height = 20;
+
+    const headerRow = ws.getRow(3);
+    headers.forEach((h, i) => {
+      const cell = headerRow.getCell(i + 1);
+      cell.value = h;
+      cell.font = { name: 'Nunito Sans', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      cell.border = {
+        top: { style: 'thin', color: { argb: SE_BORDER } },
+        bottom: { style: 'thin', color: { argb: SE_BORDER } },
+        left: { style: 'thin', color: { argb: SE_BORDER } },
+        right: { style: 'thin', color: { argb: SE_BORDER } },
+      };
+    });
+    headerRow.height = 26;
+
+    exportRows.forEach((row, ri) => {
+      const r = ws.getRow(4 + ri);
+      cols.forEach((c, ci) => {
+        let val = typeof c.exportValue === 'function' ? c.exportValue(row) : row[c.key];
+        if (Array.isArray(val)) val = val.join(', ');
+        const cell = r.getCell(ci + 1);
+        cell.value = val === '' || val == null ? null : val;
+        cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT } };
+        cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+        if (ri % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
+        cell.border = {
+          bottom: { style: 'thin', color: { argb: SE_BORDER } },
+          left: { style: 'thin', color: { argb: SE_BORDER } },
+          right: { style: 'thin', color: { argb: SE_BORDER } },
+        };
+      });
+    });
+
+    if (cols.length > 0) {
+      ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: cols.length } };
+    }
+
+    sanitizeExcelWorkbook(wb);
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const safe = (selectedFirm.trim() || 'pe_firm').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${safe}_pe_overview_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <>
+      <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.72rem', fontWeight: 600, color: '#475569', whiteSpace: 'nowrap' }}>
+          PE firm
+          <select
+            value={selectedFirm}
+            onChange={e => onSelectFirm?.(e.target.value)}
+            title="Choose which PE firm's companies to show"
+            style={{ padding: '0.4rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: 6, background: '#fff', fontSize: '0.78rem', fontFamily: 'inherit', color: '#1E293B', maxWidth: 240, cursor: 'pointer' }}
+          >
+            {firmOptions.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </label>
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder={`Search ${rows.length} ${firmLabel} compan${rows.length === 1 ? 'y' : 'ies'}…`}
+          style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
+        />
+        {search.trim() && <span style={{ fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap' }}>{filtered.length} of {rows.length}</span>}
+        {(onAddProspect || onUpdateProspect) && (
+          <button
+            type="button"
+            onClick={() => setPasteOpen(true)}
+            disabled={importing}
+            title={`Copy rows from Excel (with the header row) and paste them in — fills blank fields on companies already in Table View and adds the rest as ${firmLabel} companies`}
+            style={{ padding: '0.4rem 0.75rem', border: '1px solid #E2E8F0', borderRadius: 6, background: importing ? '#F1F5F9' : '#fff', fontSize: '0.72rem', fontWeight: 600, color: importing ? '#94A3B8' : '#334155', cursor: importing ? 'wait' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+          >{importing ? 'Importing…' : 'Paste from Excel'}</button>
+        )}
+      </div>
+      {onUpdateProspect && selectedIds.size > 0 && (
+        <BlueOwlBulkEditBar
+          selectedCount={selectedIds.size}
+          applying={bulkApplying}
+          onApply={applyBulkEdit}
+          onClear={() => setSelectedIds(new Set())}
+        />
+      )}
+      {pasteOpen && (
+        <PasteAddModal
+          existingProspects={prospects}
+          mode="upsert"
+          defaults={{ peOwner: selectedFirm }}
+          onImport={handlePasteImport}
+          onClose={() => setPasteOpen(false)}
+        />
+      )}
+      {oppsModalRow && (
+        <CompanyOppsModal
+          company={oppsModalRow.company}
+          opps={oppsModalRow._oppRecords}
+          onClose={() => setOppsModalRow(null)}
+          onOpenCompany={() => { const p = oppsModalRow._prospect; setOppsModalRow(null); onSelectProspect?.(p); }}
+        />
+      )}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
+        {rows.length === 0 ? (
+          <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
+            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No {firmLabel} companies found</div>
+            <div style={{ fontSize: '0.78rem' }}>
+              Open a company's popup and set its <strong>PE Owner</strong> to <code>{selectedFirm.trim() || 'the firm'}</code> — it'll show up here. Or pick a different firm from the dropdown above.
+            </div>
+          </div>
+        ) : (
+          <DataTable
+            // -9: fresh prefs key so columns added after the original
+            // layout (HQ Region / Website / PE AUM at -2, Opps at -3,
+            // PC Opps at -4, the bulk-edit checkbox at -5, the PC Opp
+            // Companies / Contacts + Decision Makers columns at -6, the
+            // PC Download + Strategies columns at -7, the Asset Types
+            // column at -9) aren't hidden by a saved visible-set from an
+            // older one.
+            tableId="pe-blue-owl-companies-9"
+            columns={columns}
+            rows={filtered}
+            alwaysVisible={['company', '_select']}
+            removableColumns
+            onFilteredRowsChange={handleFilteredRowsChange}
+            defaultSort={{ key: 'company', direction: 'asc' }}
+            enableColumnFilters
+            emptyMessage={`No ${firmLabel} companies match your filters`}
+            exportFileName={`${(selectedFirm.trim() || 'pe_firm').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')}_companies`}
+            exportPrimarySheetName={`${firmLabel} Companies`.slice(0, 31)}
+            onExport={exportSchneider}
+          />
+        )}
+      </div>
+    </>
+  );
+}
+
+// PE firms laid out as a Kanban board by engagement stage (peStage):
+// one column per stage — Discovery, Piloting, Existing Partnership, Not Sold,
+// plus an Unassigned column for firms with no stage set — so the user can
+// scan which PE relationships sit at each phase. Cards link back to the
+// firm's company popup; stage is set per firm in that popup's "PE Stage"
+// dropdown. The whole board (respecting the search filter) exports to
+// Excel via the toolbar button.
+function PEStagesTab({ firms, portfolioByPe, onSelectProspect }) {
+  const [query, setQuery] = useState('');
+  const STAGE_META = [
+    { stage: 'Discovery', accent: '#2563EB', bg: '#EFF6FF', border: '#BFDBFE' },
+    { stage: 'Piloting', accent: '#D97706', bg: '#FFFBEB', border: '#FDE68A' },
+    { stage: 'Existing Partnership', accent: '#059669', bg: '#ECFDF5', border: '#A7F3D0' },
+    { stage: 'Not Sold', accent: '#DC2626', bg: '#FEF2F2', border: '#FECACA' },
+    { stage: 'Unassigned', accent: '#64748B', bg: '#F8FAFC', border: '#E2E8F0' },
+  ];
+  const stageOf = (pe) => (PE_STAGES.includes(pe.peStage) ? pe.peStage : 'Unassigned');
+  const pcCountOf = (pe) => (portfolioByPe.get((pe.company || '').trim().toLowerCase()) || []).length;
+  const q = query.trim().toLowerCase();
+  const filtered = q ? firms.filter(p => (p.company || '').toLowerCase().includes(q)) : firms;
+  const groups = new Map(STAGE_META.map(m => [m.stage, []]));
+  for (const pe of filtered) groups.get(stageOf(pe)).push(pe);
+
+  // SE-formatted XLSX export that mirrors the on-screen Kanban board:
+  // one spreadsheet column per stage, each holding stacked "firm cards"
+  // (name + AUM · geography + portfolio-company count) in the stage's
+  // accent palette, with a slim spacer column between stages for the gap.
+  const exportToExcel = async () => {
+    const { Workbook } = await import('exceljs');
+    // STAGE_META carries CSS hex (#RRGGBB); ExcelJS wants ARGB ('FF'+RGB).
+    const argb = (hex) => 'FF' + hex.replace('#', '').toUpperCase();
+    const cardBorder = (m) => ({
+      left: { style: 'thick', color: { argb: argb(m.accent) } },
+      top: { style: 'thin', color: { argb: argb(m.border) } },
+      bottom: { style: 'thin', color: { argb: argb(m.border) } },
+      right: { style: 'thin', color: { argb: argb(m.border) } },
+    });
+    const SE_GREEN_DARK = 'FF009530';
+    const SE_GREEN = 'FF3DCD58';
+
+    const wb = new Workbook();
+    wb.creator = 'Schneider Electric · Prospect Tracker';
+    wb.created = new Date();
+    const ws = wb.addWorksheet('PE Stages', {
+      properties: { tabColor: { argb: SE_GREEN } },
+      views: [{ showGridLines: false, state: 'frozen', ySplit: 3 }],
+    });
+
+    // Lay out one column per stage with a spacer column in between.
+    const stageCol = {};
+    const colSpecs = [];
+    STAGE_META.forEach((m, i) => {
+      stageCol[m.stage] = colSpecs.length + 1;
+      colSpecs.push({ width: 34 });
+      if (i < STAGE_META.length - 1) colSpecs.push({ width: 3 });
+    });
+    ws.columns = colSpecs;
+    const lastCol = colSpecs.length;
+
+    // Title band across the whole board (Schneider green, white text).
+    ws.mergeCells(1, 1, 1, lastCol);
+    const title = ws.getCell(1, 1);
+    title.value = `PE Stages · ${filtered.length} PE firm${filtered.length === 1 ? '' : 's'}`;
+    title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+    title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+    title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(1).height = 28;
+    ws.getRow(2).height = 6; // spacer
+
+    // Stage header row (3) — each column in its own accent color, with a
+    // count badge baked into the label, matching the on-screen headers.
+    const headerRow = ws.getRow(3);
+    STAGE_META.forEach((m) => {
+      const list = groups.get(m.stage) || [];
+      const cell = headerRow.getCell(stageCol[m.stage]);
+      cell.value = `${m.stage}  (${list.length})`;
+      cell.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: argb(m.accent) } };
+      cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    });
+    headerRow.height = 24;
+
+    // Card rows — one row per firm slot; the tallest column sets how many
+    // rows we draw, and shorter columns just leave their cells blank
+    // (so the board has uneven column heights, like the page).
+    const maxLen = Math.max(0, ...STAGE_META.map((m) => (groups.get(m.stage) || []).length));
+    for (let i = 0; i < Math.max(maxLen, 1); i++) {
+      const row = ws.getRow(4 + i);
+      row.height = 46;
+      STAGE_META.forEach((m) => {
+        const list = groups.get(m.stage) || [];
+        const cell = row.getCell(stageCol[m.stage]);
+        const pe = list[i];
+        if (!pe) {
+          // First empty slot of an empty column gets a placeholder card,
+          // mirroring the "No PE firms at this stage." note on the page.
+          if (i === 0 && list.length === 0) {
+            cell.value = 'No PE firms at this stage.';
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: argb(m.bg) } };
+            cell.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: 'FF94A3B8' } };
+            cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+            cell.border = cardBorder(m);
+          }
+          return;
+        }
+        const pcCount = pcCountOf(pe);
+        cell.value = {
+          richText: [
+            { text: pe.company || '—', font: { name: 'Nunito Sans', bold: true, size: 11, color: { argb: 'FF1E293B' } } },
+            { text: `\n${formatAum(pe.peAum)}   ·   ${pe.geography || '—'}`, font: { name: 'Nunito Sans', size: 9, color: { argb: 'FF475569' } } },
+            { text: `\n${pcCount} portfolio co${pcCount === 1 ? '' : 's'}`, font: { name: 'Nunito Sans', size: 9, color: { argb: 'FF64748B' } } },
+          ],
+        };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: argb(m.bg) } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+        cell.border = cardBorder(m);
+      });
+    }
+
+    sanitizeExcelWorkbook(wb);
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `pe-stages-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <>
+      <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <input
+          type="text"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder={`Search ${firms.length} PE firm${firms.length === 1 ? '' : 's'}…`}
+          style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
+        />
+        <button
+          type="button"
+          onClick={exportToExcel}
+          disabled={filtered.length === 0}
+          title={filtered.length === 0 ? 'No PE firms to export' : 'Export the board to Excel (.xlsx)'}
+          style={{ padding: '0.4rem 0.75rem', border: '1px solid #E2E8F0', borderRadius: 6, background: filtered.length === 0 ? '#F1F5F9' : '#fff', fontSize: '0.72rem', fontWeight: 600, color: filtered.length === 0 ? '#94A3B8' : '#334155', cursor: filtered.length === 0 ? 'not-allowed' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+        >Export to Excel</button>
+      </div>
+      {firms.length === 0 ? (
+        <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
+          <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
+            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No PE firms found</div>
+            <div style={{ fontSize: '0.78rem' }}>Set a prospect's <strong>Type</strong> to <code>Private Equity</code> to list it here.</div>
+          </div>
+        </div>
+      ) : (
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: '0.75rem', overflowX: 'auto', overflowY: 'hidden', padding: '0 1.25rem 1.25rem' }}>
+          {STAGE_META.map(({ stage, accent, bg, border }) => {
+            const list = groups.get(stage) || [];
+            return (
+              <div key={stage} style={{ flex: '0 0 290px', display: 'flex', flexDirection: 'column', minHeight: 0, border: `1px solid ${border}`, borderRadius: 8, background: '#F8FAFC', overflow: 'hidden' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.55rem 0.75rem', background: bg, borderBottom: `1px solid ${border}`, flexShrink: 0 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: accent }} />
+                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1E293B', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{stage}</span>
+                  <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '1px 7px', borderRadius: 999, background: accent, color: '#fff' }}>{list.length}</span>
+                </div>
+                <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, padding: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {list.length === 0 ? (
+                    <div style={{ padding: '0.6rem 0.5rem', fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic', textAlign: 'center' }}>
+                      {q ? 'No matches here.' : 'No PE firms at this stage.'}
+                    </div>
+                  ) : list.map((pe) => {
+                    const pcCount = pcCountOf(pe);
+                    return (
+                      <button
+                        key={pe.id}
+                        type="button"
+                        onClick={() => onSelectProspect?.(pe)}
+                        title={`Open ${pe.company || 'this firm'}`}
+                        style={{ display: 'block', width: '100%', textAlign: 'left', background: '#fff', border: '1px solid #E2E8F0', borderLeft: `3px solid ${accent}`, borderRadius: 6, padding: '0.55rem 0.6rem', cursor: 'pointer', fontFamily: 'inherit', boxShadow: '0 1px 2px rgba(15,23,42,0.04)' }}
+                      >
+                        <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pe.company || '—'}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem', marginTop: '0.35rem' }}>
+                          <span style={{ fontSize: '0.7rem', fontWeight: 600, color: pe.peAum ? '#1E293B' : '#CBD5E1' }} title={pe.peAum ? `PE AUM: $${pe.peAum}B` : 'No PE AUM set'}>{formatAum(pe.peAum)}</span>
+                          <span style={{ fontSize: '0.68rem', fontWeight: 600, color: pe.geography ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={pe.geography || 'No geography set'}>{pe.geography || '—'}</span>
+                        </div>
+                        <div style={{ marginTop: '0.3rem', fontSize: '0.66rem', fontWeight: 600, color: pcCount ? '#64748B' : '#CBD5E1' }} title="Portfolio companies linked to this firm">
+                          {pcCount} portfolio co{pcCount === 1 ? '' : 's'}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
+
+// PE firms laid out by PE Stage — the same Kanban shape as the PE Stages
+// board, but each card carries a "days in stage" badge and the columns
+// sort longest-waiting firm first. Mirrors the Opps page's Days-in-Stage
+// board (day counts, longest-stalling on top) at the firm level. The day
+// count reads `peStageEnteredAt` (stamped whenever a firm's PE Stage
+// changes); firms with no stamp yet show "—".
+function PEStageDaysTab({ firms, portfolioByPe, onSelectProspect }) {
+  const [query, setQuery] = useState('');
+  const [hideUnassigned, setHideUnassigned] = useState(false);
+  const STAGE_META = [
+    { stage: 'Discovery', accent: '#2563EB', bg: '#EFF6FF', border: '#BFDBFE' },
+    { stage: 'Piloting', accent: '#D97706', bg: '#FFFBEB', border: '#FDE68A' },
+    { stage: 'Existing Partnership', accent: '#059669', bg: '#ECFDF5', border: '#A7F3D0' },
+    { stage: 'Not Sold', accent: '#DC2626', bg: '#FEF2F2', border: '#FECACA' },
+    { stage: 'Unassigned', accent: '#64748B', bg: '#F8FAFC', border: '#E2E8F0' },
+  ];
+  const stageOf = (pe) => (PE_STAGES.includes(pe.peStage) ? pe.peStage : 'Unassigned');
+  const pcCountOf = (pe) => (portfolioByPe.get((pe.company || '').trim().toLowerCase()) || []).length;
+  // Days the firm has sat in its current PE Stage. null when there's no
+  // entry date recorded (Unassigned firms, or ones not yet stamped).
+  const daysOf = (pe) => {
+    const iso = toISODate(pe.peStageEnteredAt);
+    if (!iso) return null;
+    return Math.max(0, -daysFromToday(iso));
+  };
+  const q = query.trim().toLowerCase();
+  const filtered = q ? firms.filter(p => (p.company || '').toLowerCase().includes(q)) : firms;
+  const groups = new Map(STAGE_META.map(m => [m.stage, []]));
+  for (const pe of filtered) groups.get(stageOf(pe)).push(pe);
+  // Longest-waiting firm first in each column; firms with no day count
+  // settle at the bottom, tie-broken by name so the order is stable.
+  for (const list of groups.values()) {
+    list.sort((a, b) => {
+      const da = daysOf(a); const dbv = daysOf(b);
+      if (da == null && dbv == null) return (a.company || '').localeCompare(b.company || '');
+      if (da == null) return 1;
+      if (dbv == null) return -1;
+      return dbv - da || (a.company || '').localeCompare(b.company || '');
+    });
+  }
+  const columns = STAGE_META.filter(m => !(hideUnassigned && m.stage === 'Unassigned'));
+  const unassignedCount = (groups.get('Unassigned') || []).length;
+  // Day-badge color ramp — the longer a firm has sat in a stage the more
+  // it stands out. Neutral for fresh entries, amber past ~3 months, red
+  // past ~6 so a stalled relationship is obvious at a glance.
+  const dayColor = (days) => (days == null ? '#CBD5E1' : days >= 180 ? '#DC2626' : days >= 90 ? '#B45309' : '#475569');
+
+  return (
+    <>
+      <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        <input
+          type="text"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder={`Search ${firms.length} PE firm${firms.length === 1 ? '' : 's'}…`}
+          style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
+        />
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.72rem', color: '#64748B', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          <input type="checkbox" checked={hideUnassigned} onChange={e => setHideUnassigned(e.target.checked)} />
+          Hide Unassigned ({unassignedCount})
+        </label>
+      </div>
+      {firms.length === 0 ? (
+        <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
+          <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
+            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No PE firms found</div>
+            <div style={{ fontSize: '0.78rem' }}>Set a prospect's <strong>Type</strong> to <code>Private Equity</code> to list it here.</div>
+          </div>
+        </div>
+      ) : (
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: '0.75rem', overflowX: 'auto', overflowY: 'hidden', padding: '0 1.25rem 1.25rem' }}>
+          {columns.map(({ stage, accent, bg, border }) => {
+            const list = groups.get(stage) || [];
+            return (
+              <div key={stage} style={{ flex: '0 0 290px', display: 'flex', flexDirection: 'column', minHeight: 0, border: `1px solid ${border}`, borderRadius: 8, background: '#F8FAFC', overflow: 'hidden' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.55rem 0.75rem', background: bg, borderBottom: `1px solid ${border}`, flexShrink: 0 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: accent }} />
+                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1E293B', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{stage}</span>
+                  <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '1px 7px', borderRadius: 999, background: accent, color: '#fff' }}>{list.length}</span>
+                </div>
+                <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, padding: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {list.length === 0 ? (
+                    <div style={{ padding: '0.6rem 0.5rem', fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic', textAlign: 'center' }}>
+                      {q ? 'No matches here.' : 'No PE firms at this stage.'}
+                    </div>
+                  ) : list.map((pe) => {
+                    const pcCount = pcCountOf(pe);
+                    const days = daysOf(pe);
+                    const enteredISO = toISODate(pe.peStageEnteredAt);
+                    const badgeTitle = stage === 'Unassigned'
+                      ? 'No PE Stage set — set one in this firm\'s company popup to start the clock.'
+                      : enteredISO
+                        ? `In ${stage} since ${formatDateDisplay(enteredISO)} · ${days} day${days === 1 ? '' : 's'}`
+                        : 'No entry date recorded yet.';
+                    return (
+                      <button
+                        key={pe.id}
+                        type="button"
+                        onClick={() => onSelectProspect?.(pe)}
+                        title={`Open ${pe.company || 'this firm'}`}
+                        style={{ display: 'block', width: '100%', textAlign: 'left', background: '#fff', border: '1px solid #E2E8F0', borderLeft: `3px solid ${accent}`, borderRadius: 6, padding: '0.55rem 0.6rem', cursor: 'pointer', fontFamily: 'inherit', boxShadow: '0 1px 2px rgba(15,23,42,0.04)' }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.4rem' }}>
+                          <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{pe.company || '—'}</span>
+                          <span
+                            title={badgeTitle}
+                            style={{ fontSize: '0.72rem', fontWeight: 700, color: dayColor(days), fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', flexShrink: 0 }}
+                          >
+                            {days == null ? '—' : `${days}d`}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem', marginTop: '0.35rem' }}>
+                          <span style={{ fontSize: '0.7rem', fontWeight: 600, color: pe.peAum ? '#1E293B' : '#CBD5E1' }} title={pe.peAum ? `PE AUM: $${pe.peAum}B` : 'No PE AUM set'}>{formatAum(pe.peAum)}</span>
+                          <span style={{ fontSize: '0.68rem', fontWeight: 600, color: pe.geography ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={pe.geography || 'No geography set'}>{pe.geography || '—'}</span>
+                        </div>
+                        <div style={{ marginTop: '0.3rem', fontSize: '0.66rem', fontWeight: 600, color: pcCount ? '#64748B' : '#CBD5E1' }} title="Portfolio companies linked to this firm">
+                          {pcCount} portfolio co{pcCount === 1 ? '' : 's'}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
+
+// Inline-editable table cell (used for the Sales Partner column).
+// Commits on blur / Enter; Escape reverts. Click and key events are
+// stopped from bubbling so editing doesn't trigger the row's
+// navigate-to-prospect handler. The input is uncontrolled and keyed on
+// the stored value: the DOM owns the text while focused (no per-key
+// React state), and an external change (e.g. a re-sort after commit)
+// remounts it with the new value — no sync effect needed.
+function EditableCell({ value, align, onCommit }) {
+  const initial = String(value ?? '');
+  const commit = (el) => {
+    const next = el.value.trim();
+    if (next !== initial.trim()) onCommit(next);
+  };
+  return (
+    <div
+      onClick={(e) => e.stopPropagation()}
+      style={{ padding: '0.25rem 0.35rem', borderRight: '1px solid #F1F5F9', display: 'flex' }}
+    >
+      <input
+        key={initial}
+        type="text"
+        defaultValue={initial}
+        placeholder="—"
+        onBlur={(e) => commit(e.currentTarget)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+          else if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.value = initial; e.currentTarget.blur(); }
+        }}
+        style={{
+          width: '100%', padding: '0.25rem 0.35rem', border: '1px solid transparent',
+          borderRadius: 4, fontSize: '0.74rem', fontFamily: 'inherit', color: '#334155',
+          background: 'transparent', textAlign: align || 'left',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.border = '1px solid #E2E8F0'; }}
+        onMouseLeave={(e) => { if (document.activeElement !== e.currentTarget) e.currentTarget.style.border = '1px solid transparent'; }}
+      />
+    </div>
+  );
+}
+
+// Flat table of PE-channel opportunities pulled straight from the
+// Opps 2 store — anything with Type = "Private Equity" or Source =
+// "PE partner". Rows link back to the matching prospect when one
+// exists so the user can jump into the company popup.
+function PEOppsTab({ opps, totalOpps, query, setQuery, firm = '', setFirm, firmOptions = [], oppsLoaded, prospects, onSelectProspect, onEditField, user }) {
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const firmLabel = firm.trim();
+  const ALL_COLUMNS = [
+    { key: 'Account', label: 'Account', width: '1.6fr' },
+    { key: 'Contact', label: 'Contacts', width: '1.4fr' },
+    { key: 'Stage', label: 'Stage', width: '1fr' },
+    { key: 'Type', label: 'Type', width: '1fr' },
+    { key: 'Source', label: 'Source', width: '1fr' },
+    { key: 'Sales Partner', label: 'Sales Partner', width: '1.2fr', editable: true },
+    { key: 'Scope', label: 'Scope', width: '0.9fr' },
+    { key: 'Quoted Amount', label: 'Quoted Amount', width: '1fr', align: 'right' },
+    { key: 'Status', label: 'Status', width: '1.4fr' },
+    { key: 'BFO Link', label: 'BFO Opportunity Name', width: '1.6fr' },
+    { key: 'Next Steps', label: 'Next Steps', width: '1.8fr' },
+    { key: 'Last Client Heard From Us', label: 'Last Client Heard From Us', width: '1.3fr', value: r => formatDateDisplay(r['Last Client Heard From Us']) },
+    { key: 'Call In', label: 'Call In', width: '0.8fr', align: 'right', value: r => { const n = resolveCallIn(r); return n == null ? '' : String(n); } },
+    { key: 'Close Date', label: 'Close Date', width: '1fr', value: r => formatDateDisplay(r['Close Date']) },
+  ];
+  const ALL_KEYS = ALL_COLUMNS.map(c => c.key);
+  const cellValue = (r, c) => (c.value ? c.value(r) : (r[c.key] ?? ''));
+
+  // Column chooser — drives both the on-screen table and the export.
+  // Account always stays on (it's the row anchor). Persisted so the
+  // chosen layout survives reloads.
+  const [visibleCols, setVisibleCols] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('pe-opps:visible-cols'));
+      if (Array.isArray(saved)) return new Set([...saved, 'Account']);
+    } catch { /* fall through to default */ }
+    return new Set(ALL_KEYS);
+  });
+  useEffect(() => {
+    try { localStorage.setItem('pe-opps:visible-cols', JSON.stringify([...visibleCols])); } catch { /* ignore */ }
+  }, [visibleCols]);
+  const [colMenuOpen, setColMenuOpen] = useState(false);
+  const colMenuRef = useRef(null);
+  useEffect(() => {
+    if (!colMenuOpen) return;
+    function handleClick(e) {
+      if (colMenuRef.current && !colMenuRef.current.contains(e.target)) setColMenuOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [colMenuOpen]);
+  function toggleCol(key) {
+    if (key === 'Account') return;
+    setVisibleCols(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
+  const COLUMNS = ALL_COLUMNS.filter(c => visibleCols.has(c.key));
+  const GRID = COLUMNS.map(c => c.width).join(' ');
+
+  // Default ordering: Sales Partner first, then Stage. Blanks sort last so
+  // populated rows group at the top; Account breaks any remaining ties.
+  // Drives both the on-screen rows and the Excel export so they match.
+  const sortedOpps = useMemo(() => {
+    const val = (r, k) => String(r[k] ?? '').trim().toLowerCase();
+    const cmp = (a, b, k) => {
+      const va = val(a, k), vb = val(b, k);
+      if (!va && vb) return 1;
+      if (va && !vb) return -1;
+      return va.localeCompare(vb);
+    };
+    return [...opps].sort((a, b) =>
+      cmp(a, b, 'Sales Partner')
+      || cmp(a, b, 'Stage')
+      || String(a['Account'] || '').localeCompare(String(b['Account'] || '')));
+  }, [opps]);
+
+  // SE-formatted (Schneider-branded) XLSX export of the rows shown,
+  // limited to the visible columns. Mirrors the green palette / layout
+  // of the Key Contacts export so SE collateral stays consistent.
+  const handleExport = async () => {
+    if (opps.length === 0) return;
+    const { Workbook } = await import('exceljs');
+    const SE_GREEN_DARK = 'FF009530';
+    const SE_GREEN_LIGHT = 'FFE6F7EC';
+    const SE_GREEN = 'FF3DCD58';
+    const wb = new Workbook();
+    wb.creator = 'Schneider Electric · Prospect Tracker';
+    wb.created = new Date();
+    const ws = wb.addWorksheet('PE Opps', {
+      properties: { tabColor: { argb: SE_GREEN } },
+      views: [{ showGridLines: false, state: 'frozen', ySplit: 3 }],
+    });
+    ws.columns = COLUMNS.map(c => ({ width: Math.min(Math.max(c.label.length + 4, 16), 40) }));
+
+    // Title row — Schneider green band, white text.
+    ws.mergeCells(1, 1, 1, COLUMNS.length);
+    const title = ws.getCell(1, 1);
+    title.value = `${firmLabel ? `${firmLabel} · ` : ''}PE Opportunities · ${opps.length} opp${opps.length === 1 ? '' : 's'}`;
+    title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+    title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+    title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(1).height = 28;
+    ws.getRow(2).height = 6; // spacer
+
+    // Header row 3 — light-green wash, dark-green bold text.
+    const headerRow = ws.getRow(3);
+    COLUMNS.forEach((col, i) => {
+      const cell = headerRow.getCell(i + 1);
+      cell.value = col.label;
+      cell.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_GREEN_DARK } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+    });
+    headerRow.height = 22;
+
+    // Data rows with subtle alternating green banding.
+    sortedOpps.forEach((r, idx) => {
+      const row = ws.getRow(4 + idx);
+      COLUMNS.forEach((col, i) => {
+        const cell = row.getCell(i + 1);
+        cell.value = cellValue(r, col);
+        cell.font = { name: 'Nunito Sans', size: 10 };
+        cell.alignment = { vertical: 'middle', horizontal: col.align === 'right' ? 'right' : 'left', indent: 1, wrapText: false };
+        if (idx % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF6FCF8' } };
+      });
+      row.height = 18;
+    });
+
+    ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: COLUMNS.length } };
+
+    sanitizeExcelWorkbook(wb);
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const date = new Date().toISOString().slice(0, 10);
+    const slug = firmLabel ? `${firmLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}-` : '';
+    a.download = `${slug}pe-opps-${date}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const findProspect = (account) => {
+    const name = (account || '').toLowerCase();
+    if (!name) return null;
+    return prospects.find(p => companiesMatch((p.company || '').toLowerCase(), name)) || null;
+  };
+
+  return (
+    <>
+      <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        {setFirm && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.72rem', fontWeight: 600, color: '#475569', whiteSpace: 'nowrap' }}>
+            Firm
+            <select
+              value={firm}
+              onChange={e => setFirm(e.target.value)}
+              title="Scope the list to one PE firm — every opp on that firm or its portfolio companies. Choose “All PE Opps” for the full PE channel."
+              style={{ padding: '0.4rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: 6, background: '#fff', fontSize: '0.78rem', fontFamily: 'inherit', color: '#1E293B', maxWidth: 220, cursor: 'pointer' }}
+            >
+              <option value="">All PE Opps</option>
+              {firmOptions.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </label>
+        )}
+        <input
+          type="text"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder={firmLabel ? `Search ${totalOpps} ${firmLabel} opp${totalOpps === 1 ? '' : 's'}…` : `Search ${totalOpps} PE opp${totalOpps === 1 ? '' : 's'}…`}
+          style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
+        />
+        <div ref={colMenuRef} style={{ position: 'relative' }}>
+          <button
+            type="button"
+            onClick={() => setColMenuOpen(o => !o)}
+            style={{ padding: '0.4rem 0.7rem', border: '1px solid #E2E8F0', borderRadius: 6, background: '#fff', fontSize: '0.72rem', fontWeight: 600, color: '#334155', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+          >Columns ({visibleCols.size}/{ALL_KEYS.length})</button>
+          {colMenuOpen && (
+            <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', zIndex: 100, minWidth: 220, padding: '0.3rem 0' }}>
+              {ALL_COLUMNS.map(c => (
+                <label key={c.key} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.3rem 0.6rem', fontSize: '0.75rem', color: c.key === 'Account' ? '#94A3B8' : '#334155', cursor: c.key === 'Account' ? 'not-allowed' : 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={visibleCols.has(c.key)}
+                    disabled={c.key === 'Account'}
+                    onChange={() => toggleCol(c.key)}
+                  />
+                  <span style={{ flex: 1 }}>{c.label}</span>
+                </label>
+              ))}
+              <div style={{ borderTop: '1px solid #F1F5F9', marginTop: '0.3rem', padding: '0.3rem 0.6rem', display: 'flex', gap: '0.4rem' }}>
+                <button
+                  type="button"
+                  onClick={() => setVisibleCols(new Set(ALL_KEYS))}
+                  style={{ flex: 1, padding: '0.25rem 0.4rem', border: '1px solid #E2E8F0', borderRadius: 4, background: '#fff', fontSize: '0.68rem', fontWeight: 600, color: '#334155', cursor: 'pointer', fontFamily: 'inherit' }}
+                >Show all</button>
+                <button
+                  type="button"
+                  onClick={() => setVisibleCols(new Set(['Account']))}
+                  style={{ flex: 1, padding: '0.25rem 0.4rem', border: '1px solid #E2E8F0', borderRadius: 4, background: '#fff', fontSize: '0.68rem', fontWeight: 600, color: '#334155', cursor: 'pointer', fontFamily: 'inherit' }}
+                >Hide all</button>
+              </div>
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={handleExport}
+          disabled={opps.length === 0}
+          title={opps.length ? 'Download the visible columns of the PE opps shown below as an SE-formatted Excel file' : 'No PE opps to export'}
+          style={{ padding: '0.4rem 0.8rem', border: '1px solid #009530', borderRadius: 6, background: opps.length ? '#009530' : '#E2E8F0', color: opps.length ? '#fff' : '#94A3B8', fontSize: '0.72rem', fontWeight: 700, cursor: opps.length ? 'pointer' : 'not-allowed', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+        >Export to Excel</button>
+        <button
+          type="button"
+          onClick={() => setScheduleOpen(true)}
+          title="Schedule a recurring email that sends this PE Opps Excel file to a list of recipients"
+          style={{ padding: '0.4rem 0.8rem', border: '1px solid #009530', borderRadius: 6, background: '#fff', color: '#009530', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+        >Schedule email</button>
+      </div>
+
+      <PEOppsScheduleModal
+        open={scheduleOpen}
+        onClose={() => setScheduleOpen(false)}
+        uid={user?.uid}
+        email={user?.email}
+        firm={firmLabel}
+        oppsRows={sortedOpps}
+        allColumns={ALL_COLUMNS.map(c => ({ key: c.key, label: c.label }))}
+        defaultColumns={[...visibleCols]}
+      />
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
+        {!oppsLoaded && (
+          <div style={{ padding: '0.6rem 0.8rem', marginBottom: '0.5rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6, fontSize: '0.72rem', color: '#92400E' }}>
+            No Opps data loaded. Open the <strong>Opps</strong> tab once to sync it; PE opps will populate here afterwards.
+          </div>
+        )}
+        {opps.length === 0 ? (
+          <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
+            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>
+              {totalOpps === 0 ? (firmLabel ? `No ${firmLabel} opps found` : 'No PE opps found') : `No opps match "${query}"`}
+            </div>
+            <div style={{ fontSize: '0.78rem' }}>
+              {totalOpps === 0
+                ? (firmLabel
+                    ? <>No Opps rows have an Account matching <strong>{firmLabel}</strong> or a company whose PE Owner is <strong>{firmLabel}</strong>.</>
+                    : <>No Opps rows have Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>)
+                : `${totalOpps} total ${firmLabel || 'PE'} opps loaded — adjust your search.`}
+            </div>
+          </div>
+        ) : (
+          <div style={{ background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8, overflow: 'hidden' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: GRID, background: '#F1F5F9', borderBottom: '1px solid #CBD5E1', position: 'sticky', top: 0, zIndex: 1 }}>
+              {COLUMNS.map(c => (
+                <div
+                  key={c.key}
+                  style={{ padding: '0.4rem 0.6rem', fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569', textAlign: c.align || 'left', borderRight: '1px solid #E2E8F0' }}
+                >{c.label}</div>
+              ))}
+            </div>
+            {sortedOpps.map((r, idx) => {
+              const parent = findProspect(r['Account']);
+              // Tint lost deals light red so they read at a glance. The
+              // base color also drives the hover handlers so the tint
+              // survives mouse-over instead of flashing back to white.
+              const isNotSold = String(r['Stage'] || '').trim().toLowerCase() === 'not sold';
+              const baseBg = isNotSold ? '#FEE2E2' : '#fff';
+              const hoverBg = isNotSold ? '#FECACA' : '#F8FAFC';
+              return (
+                <div
+                  key={r._id || r.id || idx}
+                  onClick={() => parent && onSelectProspect?.(parent)}
+                  style={{ display: 'grid', gridTemplateColumns: GRID, borderTop: idx === 0 ? 'none' : '1px solid #E2E8F0', cursor: parent ? 'pointer' : 'default', background: baseBg }}
+                  onMouseEnter={e => { if (parent) e.currentTarget.style.background = hoverBg; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = baseBg; }}
+                >
+                  {COLUMNS.map(c => {
+                    const val = cellValue(r, c) || '';
+                    const isAccount = c.key === 'Account';
+                    if (c.editable && onEditField) {
+                      return (
+                        <EditableCell
+                          key={c.key}
+                          value={r[c.key] ?? ''}
+                          align={c.align}
+                          onCommit={(v) => onEditField(r._id, c.key, v)}
+                        />
+                      );
+                    }
+                    return (
+                      <div
+                        key={c.key}
+                        title={String(val)}
+                        style={{ padding: '0.5rem 0.6rem', fontSize: '0.74rem', fontWeight: isAccount ? 700 : 500, color: isAccount ? '#1E293B' : '#334155', textAlign: c.align || 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', borderRight: '1px solid #F1F5F9' }}
+                      >{val || '—'}</div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+// "Strategies" sub-tab — hosts two nested, independently-ranked reference
+// lists (Investment Strategies and Categories), each a table of strategies
+// with descriptions and a 0–10 value slider. A small tab bar switches between
+// them; each keeps its own ratings under a separate settings key.
+function PEStrategiesTab({ settings, updateSettings }) {
+  // Two nested lists under Strategies, each ranked independently: the detailed
+  // Investment Strategies list and the higher-level Categories list. Each keeps
+  // its own ratings under a separate settings key.
+  const [stratTab, setStratTab] = useState('investment');
+  const TABS = [
+    { key: 'investment', label: 'Investment Strategies', strategies: PE_STRATEGIES, settingsKey: 'peStrategyRatings' },
+    { key: 'categories', label: 'Categories', strategies: PE_STRATEGY_CATEGORIES, settingsKey: 'peStrategyCategoryRatings' },
+  ];
+  const active = TABS.find(t => t.key === stratTab) || TABS[0];
+
+  return (
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', gap: '0.35rem', padding: '0 1.25rem', marginBottom: '0.5rem' }}>
+        {TABS.map(t => (
+          <button
+            key={t.key}
+            onClick={() => setStratTab(t.key)}
+            style={{
+              padding: '0.3rem 0.7rem', borderRadius: 6, fontSize: '0.72rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+              border: stratTab === t.key ? '1px solid #7C3AED' : '1px solid #E2E8F0',
+              background: stratTab === t.key ? '#F3EEFF' : '#FFFFFF',
+              color: stratTab === t.key ? '#6D28D9' : '#64748B',
+            }}
+          >{t.label}</button>
+        ))}
+      </div>
+      {/* Remount per tab so each list hydrates its own ratings cleanly. */}
+      <StrategyRatingTable
+        key={active.key}
+        strategies={active.strategies}
+        settingsKey={active.settingsKey}
+        settings={settings}
+        updateSettings={updateSettings}
+      />
+    </div>
+  );
+}
+
+// Ranked 0–10 value-slider table for a list of strategies. Ratings persist per
+// user under settings[settingsKey] (keyed by strategy id). Rows sort
+// highest-rated first, but the order is frozen while a slider is being dragged
+// so rows don't jump out from under the cursor.
+function StrategyRatingTable({ strategies, settingsKey, settings, updateSettings }) {
+  const RATING_MAX = 10;
+
+  // Live, editable copy of the ratings for smooth dragging.
+  const [ratings, setRatings] = useState(() => settings?.[settingsKey] || {});
+  // Snapshot the row ORDER is derived from. Updated on drag-release (and on
+  // keyboard edits) rather than every slider tick, so rows don't reshuffle
+  // out from under the cursor while a slider is being dragged.
+  const [sortRatings, setSortRatings] = useState(() => settings?.[settingsKey] || {});
+
+  const draggingRef = useRef(false);
+  const saveTimer = useRef(null);
+  // The last value we wrote (or hydrated), so the sync effect below can
+  // tell "the server echoed our own save" from "another device changed it".
+  const lastSyncedRef = useRef(JSON.stringify(settings?.[settingsKey] || {}));
+
+  // Hydrate when settings first load, or when another device/tab changes the
+  // ratings. Guarded by a JSON compare (and skipped mid-drag) so our own
+  // optimistic saves don't stomp a slider the user is still holding.
+  useEffect(() => {
+    if (draggingRef.current) return;
+    const incoming = JSON.stringify(settings?.[settingsKey] || {});
+    if (incoming !== lastSyncedRef.current) {
+      lastSyncedRef.current = incoming;
+      const val = settings?.[settingsKey] || {};
+      setRatings(val);
+      setSortRatings(val);
+    }
+  }, [settings, settingsKey]);
+
+  useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current); }, []);
+
+  const persist = useCallback((next) => {
+    lastSyncedRef.current = JSON.stringify(next);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => { updateSettings({ [settingsKey]: next }); }, 400);
+  }, [updateSettings, settingsKey]);
+
+  const setRating = useCallback((id, value) => {
+    setRatings(prev => {
+      const next = { ...prev, [id]: value };
+      persist(next);
+      // Keyboard (arrow-key) edits fire no drag events — reorder immediately.
+      // During a pointer drag we defer reordering to drag-release below.
+      if (!draggingRef.current) setSortRatings(next);
+      return next;
+    });
+  }, [persist]);
+
+  // Read `ratings` directly (not via a ref) — event handlers always close
+  // over the latest committed render, so this sees the final dragged value.
+  const startDrag = () => { draggingRef.current = true; };
+  const endDrag = () => {
+    draggingRef.current = false;
+    setSortRatings(ratings);
+  };
+
+  const ratingOf = (id) => (Number.isFinite(ratings[id]) ? ratings[id] : 0);
+
+  // Display order: highest rating first, ties broken by canonical list order.
+  // Driven by the frozen `sortRatings` snapshot, not the live values.
+  const orderedIds = useMemo(() => {
+    const idx = Object.fromEntries(strategies.map((s, i) => [s.id, i]));
+    const rank = (id) => (Number.isFinite(sortRatings[id]) ? sortRatings[id] : 0);
+    return strategies.map(s => s.id).sort((a, b) => {
+      const d = rank(b) - rank(a);
+      return d !== 0 ? d : idx[a] - idx[b];
+    });
+  }, [sortRatings, strategies]);
+
+  const byId = Object.fromEntries(strategies.map(s => [s.id, s]));
+  const rated = strategies.filter(s => Number.isFinite(ratings[s.id])).length;
+  const GRID_COLS = '48px minmax(160px, 1fr) minmax(240px, 2.2fr) 220px';
+
+  return (
+    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '0 1.25rem 1.25rem' }}>
+      <div style={{ fontSize: '0.72rem', color: '#64748B', margin: '0 0 0.6rem' }}>
+        {rated} of {strategies.length} strategies rated
+      </div>
+      <div style={{ border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden' }}>
+        {/* Header row */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: GRID_COLS,
+          alignItems: 'center',
+          background: '#F8FAFC',
+          borderBottom: '1px solid #E2E8F0',
+          fontSize: '0.68rem',
+          fontWeight: 700,
+          color: '#475569',
+          textTransform: 'uppercase',
+          letterSpacing: '0.03em',
+        }}>
+          <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center' }}>#</div>
+          <div style={{ padding: '0.55rem 0.6rem' }}>Strategy</div>
+          <div style={{ padding: '0.55rem 0.6rem' }}>Description</div>
+          <div style={{ padding: '0.55rem 0.6rem' }}>Value rating</div>
+        </div>
+        {orderedIds.map((id, i) => {
+          const s = byId[id];
+          const value = ratingOf(id);
+          const pct = (value / RATING_MAX) * 100;
+          return (
+            <div
+              key={id}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: GRID_COLS,
+                alignItems: 'center',
+                borderBottom: i === orderedIds.length - 1 ? 'none' : '1px solid #F1F5F9',
+                background: i % 2 ? '#FFFFFF' : '#FCFCFD',
+              }}
+            >
+              <div style={{ padding: '0.6rem', textAlign: 'center', fontSize: '0.8rem', fontWeight: 700, color: '#94A3B8' }}>{i + 1}</div>
+              <div style={{ padding: '0.6rem', fontSize: '0.78rem', fontWeight: 700, color: '#1E293B' }}>{s.name}</div>
+              <div style={{ padding: '0.6rem', fontSize: '0.72rem', color: '#475569', lineHeight: 1.45 }}>{s.description}</div>
+              <div style={{ padding: '0.6rem', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <input
+                  type="range"
+                  min={0}
+                  max={RATING_MAX}
+                  step={1}
+                  value={value}
+                  onChange={(e) => setRating(id, Number(e.target.value))}
+                  onMouseDown={startDrag}
+                  onMouseUp={endDrag}
+                  onTouchStart={startDrag}
+                  onTouchEnd={endDrag}
+                  onBlur={endDrag}
+                  aria-label={`Value rating for ${s.name}`}
+                  style={{
+                    flex: 1,
+                    accentColor: '#7C3AED',
+                    background: `linear-gradient(to right, #7C3AED 0%, #7C3AED ${pct}%, #E2E8F0 ${pct}%, #E2E8F0 100%)`,
+                    height: 4,
+                    borderRadius: 999,
+                    cursor: 'pointer',
+                  }}
+                />
+                <span style={{
+                  minWidth: 34,
+                  textAlign: 'center',
+                  fontSize: '0.74rem',
+                  fontWeight: 700,
+                  color: value > 0 ? '#7C3AED' : '#94A3B8',
+                  padding: '2px 6px',
+                  borderRadius: 6,
+                  background: value > 0 ? '#F3EEFF' : '#F1F5F9',
+                }}>{value}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// "Case Study" sub-tab — a table of the industries our experience spans.
+// Each industry row has editable Company / Summary / Results cells, saved per
+// user in settings.peCaseStudies (keyed by industry id). Edits are held in
+// local state for responsive typing and flushed to settings on a short
+// debounce, mirroring the Strategies tab's persistence.
+function PECaseStudyTab({ settings, updateSettings }) {
+  const [data, setData] = useState(() => settings?.peCaseStudies || {});
+  const saveTimer = useRef(null);
+  const lastSyncedRef = useRef(JSON.stringify(settings?.peCaseStudies || {}));
+  // True while a cell is focused, so a settings echo doesn't stomp the text
+  // the user is actively typing.
+  const editingRef = useRef(false);
+
+  // Hydrate on first load, or when another device/tab changes the data.
+  useEffect(() => {
+    if (editingRef.current) return;
+    const incoming = JSON.stringify(settings?.peCaseStudies || {});
+    if (incoming !== lastSyncedRef.current) {
+      lastSyncedRef.current = incoming;
+      setData(settings?.peCaseStudies || {});
+    }
+  }, [settings]);
+
+  useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current); }, []);
+
+  const persist = useCallback((next) => {
+    lastSyncedRef.current = JSON.stringify(next);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => { updateSettings({ peCaseStudies: next }); }, 400);
+  }, [updateSettings]);
+
+  const setField = useCallback((id, field, value) => {
+    setData(prev => {
+      const next = { ...prev, [id]: { ...(prev[id] || {}), [field]: value } };
+      persist(next);
+      return next;
+    });
+  }, [persist]);
+
+  const filled = CASE_STUDY_INDUSTRIES.filter(ind => {
+    const d = data[ind.id];
+    return d && (d.company || d.summary || d.results);
+  }).length;
+
+  const GRID_COLS = '48px minmax(150px, 0.9fr) minmax(140px, 1fr) minmax(240px, 1.8fr) minmax(200px, 1.4fr)';
+  const cellInputStyle = {
+    width: '100%',
+    boxSizing: 'border-box',
+    border: '1px solid #E2E8F0',
+    borderRadius: 6,
+    padding: '0.4rem 0.5rem',
+    fontSize: '0.74rem',
+    fontFamily: 'inherit',
+    color: '#1E293B',
+    resize: 'vertical',
+    background: '#fff',
+  };
+
+  return (
+    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '0 1.25rem 1.25rem' }}>
+      <div style={{ fontSize: '0.72rem', color: '#64748B', margin: '0 0 0.6rem' }}>
+        {filled} of {CASE_STUDY_INDUSTRIES.length} industries with a case study
+      </div>
+      <div style={{ border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden' }}>
+        {/* Header row */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: GRID_COLS,
+          background: '#F8FAFC',
+          borderBottom: '1px solid #E2E8F0',
+          fontSize: '0.68rem',
+          fontWeight: 700,
+          color: '#475569',
+          textTransform: 'uppercase',
+          letterSpacing: '0.03em',
+        }}>
+          <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center' }}>#</div>
+          <div style={{ padding: '0.55rem 0.6rem' }}>Industry</div>
+          <div style={{ padding: '0.55rem 0.6rem' }}>Company</div>
+          <div style={{ padding: '0.55rem 0.6rem' }}>Summary</div>
+          <div style={{ padding: '0.55rem 0.6rem' }}>Results</div>
+        </div>
+        {CASE_STUDY_INDUSTRIES.map((ind, i) => {
+          const d = data[ind.id] || {};
+          return (
+            <div
+              key={ind.id}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: GRID_COLS,
+                alignItems: 'start',
+                borderBottom: i === CASE_STUDY_INDUSTRIES.length - 1 ? 'none' : '1px solid #F1F5F9',
+                background: i % 2 ? '#FFFFFF' : '#FCFCFD',
+              }}
+            >
+              <div style={{ padding: '0.6rem', textAlign: 'center', fontSize: '0.8rem', fontWeight: 700, color: '#94A3B8', alignSelf: 'center' }}>{i + 1}</div>
+              <div style={{ padding: '0.6rem', fontSize: '0.78rem', fontWeight: 700, color: '#1E293B', alignSelf: 'center' }}>{ind.name}</div>
+              <div style={{ padding: '0.5rem 0.6rem' }}>
+                <input
+                  type="text"
+                  value={d.company || ''}
+                  placeholder="Company"
+                  onChange={(e) => setField(ind.id, 'company', e.target.value)}
+                  onFocus={() => { editingRef.current = true; }}
+                  onBlur={() => { editingRef.current = false; }}
+                  style={cellInputStyle}
+                />
+              </div>
+              <div style={{ padding: '0.5rem 0.6rem' }}>
+                <textarea
+                  rows={2}
+                  value={d.summary || ''}
+                  placeholder="What was the engagement?"
+                  onChange={(e) => setField(ind.id, 'summary', e.target.value)}
+                  onFocus={() => { editingRef.current = true; }}
+                  onBlur={() => { editingRef.current = false; }}
+                  style={cellInputStyle}
+                />
+              </div>
+              <div style={{ padding: '0.5rem 0.6rem' }}>
+                <textarea
+                  rows={2}
+                  value={d.results || ''}
+                  placeholder="Outcome / results"
+                  onChange={(e) => setField(ind.id, 'results', e.target.value)}
+                  onFocus={() => { editingRef.current = true; }}
+                  onBlur={() => { editingRef.current = false; }}
+                  style={cellInputStyle}
+                />
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

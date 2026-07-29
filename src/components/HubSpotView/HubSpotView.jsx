@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { apiFetch } from '../../utils/apiFetch';
 import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
@@ -233,6 +234,79 @@ function HubSpotNotesCell({ contact, savedNote, onSave }) {
       className={saving ? styles.cellSaving : styles.cellEditable}
       onClick={start}
       title={display ? `${display}\n\n(Click to edit. ⌘/Ctrl+Enter saves, Esc cancels.)` : 'Click to add a note. ⌘/Ctrl+Enter saves, Esc cancels.'}
+      style={{
+        display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+        overflow: 'hidden', textOverflow: 'ellipsis',
+        whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+        lineHeight: 1.3, fontSize: '0.74rem',
+      }}
+    >
+      {saving ? 'Saving…' : (display || <span style={{ color: '#CBD5E1', fontStyle: 'italic' }}>—</span>)}
+    </span>
+  );
+}
+
+// Inline editor for the app-side "Custom" field. Unlike the Notes cell
+// it has no HubSpot fallbacks — the only source is the manually-typed
+// value stored in settings.customField (keyed by contact id), which the
+// Draft Email page reads for the {custom} variable.
+function HubSpotCustomFieldCell({ contact, savedValue, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const taRef = useRef(null);
+  const display = (savedValue || '').trim();
+
+  function start(e) {
+    e.stopPropagation();
+    setDraft(savedValue ?? '');
+    setEditing(true);
+  }
+  async function commit(next) {
+    setEditing(false);
+    const nextVal = (next ?? draft);
+    if ((nextVal || '').trim() === (savedValue || '').trim()) return;
+    setSaving(true);
+    try { await onSave(contact.id, nextVal); } finally { setSaving(false); }
+  }
+
+  useEffect(() => {
+    if (!editing) return;
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(160, el.scrollHeight)}px`;
+  }, [editing, draft]);
+
+  if (editing) {
+    return (
+      <textarea
+        ref={taRef}
+        value={draft}
+        autoFocus
+        onChange={e => setDraft(e.target.value)}
+        onClick={e => e.stopPropagation()}
+        onBlur={() => commit()}
+        onKeyDown={e => {
+          if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+          else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); commit(); }
+        }}
+        rows={3}
+        className={styles.inlineInput}
+        style={{
+          width: '100%', minHeight: 56, maxHeight: 160,
+          resize: 'vertical', lineHeight: 1.4,
+          fontFamily: 'inherit', fontSize: '0.78rem',
+          padding: '0.35rem 0.5rem',
+        }}
+      />
+    );
+  }
+  return (
+    <span
+      className={saving ? styles.cellSaving : styles.cellEditable}
+      onClick={start}
+      title={display ? `${display}\n\n(Used for the {custom} email variable. Click to edit. ⌘/Ctrl+Enter saves, Esc cancels.)` : 'Click to add a custom value for the {custom} email variable. ⌘/Ctrl+Enter saves, Esc cancels.'}
       style={{
         display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
         overflow: 'hidden', textOverflow: 'ellipsis',
@@ -637,11 +711,26 @@ function BulkUploadModal({ onUpload, onClose, uploading, progress }) {
 }
 
 
-function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptions, ccMap, toAlsoMap, onSaveCcMap, onSaveToAlsoMap, contactOldEmails = {}, onSaveOldEmails, companyDomainsMap = {}, contactNicknames = {}, onSaveNickname }) {
+// Guess First / Last name from an email's local part, e.g.
+// john.smith@co.com → { firstName: 'John', lastName: 'Smith' }.
+// Handles first.last / first_last / first-last. Returns empty strings
+// when the local part isn't a clear two-part name (so callers can fall
+// back to other sources / leave the fields untouched).
+function guessNameFromEmail(email) {
+  const local = String(email || '').split('@')[0] || '';
+  const parts = local.split(/[._-]/).filter(Boolean);
+  if (parts.length < 2) return { firstName: '', lastName: '' };
+  const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+  return { firstName: cap(parts[0]), lastName: cap(parts[parts.length - 1]) };
+}
+
+function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptions, ccMap, toAlsoMap, onSaveCcMap, onSaveToAlsoMap, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, companyDomainsMap = {}, contactNicknames = {}, onSaveNickname, contactFamilies = {}, onSaveFamily }) {
   const isNew = !contact;
   const cid = contact?.id || contact?.vid;
   const savedOldEmails = (cid && contactOldEmails[cid]) || '';
+  const savedOldCompany = (cid && contactOldCompany[cid]) || '';
   const savedNickname = (cid && contactNicknames[cid]) || '';
+  const savedFamily = (cid && contactFamilies[cid]) || { partner: '', kids: '' };
   const [fields, setFields] = useState({
     firstname: contact?.firstname || '',
     lastname: contact?.lastname || '',
@@ -657,6 +746,9 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
     dans_tags: contact?.dans_tags || contact?.dan_s_tags || contact?.dans_tag || '',
     notes: contact?.hs_note || contact?.notes || '',
     oldEmails: savedOldEmails,
+    oldCompany: savedOldCompany,
+    partner: savedFamily.partner || '',
+    kids: savedFamily.kids || '',
   });
   // CC emails per contact email
   const [ccEmails, setCcEmails] = useState(() => {
@@ -686,7 +778,7 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
     if (!cid) return; // new contact — will be saved when user clicks Save
     setTagsSaveStatus('Saving tag…');
     try {
-      const res = await fetch(`/api/hubspot?action=update-contact`, {
+      const res = await apiFetch(`/api/hubspot?action=update-contact`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contactId: cid, properties: { dans_tags: tagsStr } }),
@@ -763,6 +855,19 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
 
   function set(key, value) { setFields(prev => ({ ...prev, [key]: value })); }
 
+  // When an email is entered and a name field is still blank, fill it in
+  // from the email's local part (e.g. john.smith@co.com → John Smith).
+  // Only touches empty fields, so a name the user typed is never lost.
+  function guessNamesFromEmail(email) {
+    const { firstName, lastName } = guessNameFromEmail(email);
+    if (!firstName && !lastName) return;
+    setFields(prev => ({
+      ...prev,
+      firstname: prev.firstname?.trim() ? prev.firstname : firstName,
+      lastname: prev.lastname?.trim() ? prev.lastname : lastName,
+    }));
+  }
+
   function addCc(email) {
     if (!email.trim() || ccEmails.includes(email.trim())) return;
     setCcEmails(prev => [...prev, email.trim()]);
@@ -829,12 +934,20 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
               <input className={styles.modalInput} value={fields.lastname} onChange={e => set('lastname', e.target.value)} />
             </div>
             <div className={styles.modalSpan2}>
-              <label className={styles.modalLabel}>Nickname <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label>
+              <label className={styles.modalLabel}>Goes By <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label>
               <input className={styles.modalInput} value={fields.nickname} onChange={e => set('nickname', e.target.value)} placeholder="e.g. Bob" />
+            </div>
+            <div>
+              <label className={styles.modalLabel}>Partner&apos;s name <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label>
+              <input className={styles.modalInput} value={fields.partner} onChange={e => set('partner', e.target.value)} placeholder="e.g. Jane" />
+            </div>
+            <div>
+              <label className={styles.modalLabel}>Kids&apos; names <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label>
+              <input className={styles.modalInput} value={fields.kids} onChange={e => set('kids', e.target.value)} placeholder="e.g. Sam (12), Riley (9)" />
             </div>
             <div className={styles.modalSpan2}>
               <label className={styles.modalLabel}>Email <span style={{ fontWeight: 400, textTransform: 'none', color: '#DC2626' }}>*</span></label>
-              <input className={styles.modalInput} type="email" value={fields.email} onChange={e => set('email', e.target.value)} />
+              <input className={styles.modalInput} type="email" value={fields.email} onChange={e => set('email', e.target.value)} onBlur={e => guessNamesFromEmail(e.target.value)} />
               {isNew && (() => {
                 const first = (fields.firstname || '').toLowerCase().trim().replace(/[^a-z]/g, '');
                 const last = (fields.lastname || '').toLowerCase().trim().replace(/[^a-z]/g, '');
@@ -1020,6 +1133,10 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
               <label className={styles.modalLabel}>Old Emails <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(comma-separated, inactive)</span></label>
               <input className={styles.modalInput} value={fields.oldEmails} onChange={e => set('oldEmails', e.target.value)} placeholder="old.email@company.com" />
             </div>
+            <div className={styles.modalSpan2}>
+              <label className={styles.modalLabel}>Old Company <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(previous employer)</span></label>
+              <input className={styles.modalInput} value={fields.oldCompany} onChange={e => set('oldCompany', e.target.value)} placeholder="Previous company name" />
+            </div>
             <div className={styles.modalFull}>
               <label className={styles.modalLabel}>Notes</label>
               <textarea className={styles.modalInput} value={fields.notes} onChange={e => set('notes', e.target.value)} placeholder="Add notes about this contact..." rows={3} style={{ resize: 'vertical', minHeight: '60px', lineHeight: '1.5' }} />
@@ -1118,11 +1235,17 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
             if (cid && onSaveOldEmails) {
               onSaveOldEmails(cid, fields.oldEmails || '');
             }
+            if (cid && onSaveOldCompany) {
+              onSaveOldCompany(cid, fields.oldCompany || '');
+            }
             if (cid && onSaveNickname) {
               onSaveNickname(cid, fields.nickname || '');
             }
+            if (cid && onSaveFamily) {
+              onSaveFamily(cid, { partner: fields.partner || '', kids: fields.kids || '' });
+            }
             // Strip local-only fields before HubSpot save
-            const { oldEmails, nickname, ...hsFields } = fields;
+            const { oldEmails, oldCompany, nickname, partner, kids, ...hsFields } = fields;
             onSave(hsFields, contact?.id);
           }} disabled={saving || !fields.email.trim()}>
             {saving ? 'Saving...' : isNew ? 'Create in HubSpot' : 'Update in HubSpot'}
@@ -1134,7 +1257,7 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
 }
 
 export function HubSpotView({ prospects, settings, updateSettings, emailFilterMode = 'exclude-se' }) {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [data, setData] = useState(null);
   useEffect(() => {
     let cancelled = false;
@@ -1150,6 +1273,12 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
   const [pushStatus, setPushStatus] = useState(null);
   const [massMode, setMassMode] = useState(false);
   const [selected, setSelected] = useState(new Set());
+  // The rows DataTable is actually showing after its own internal
+  // column-header filters (enableColumnFilters). Those filters live
+  // inside DataTable and aren't reflected in our `filteredContacts`,
+  // so without this "Select All" would grab every passed-in row and
+  // ignore the on-screen filtering. null until DataTable first reports.
+  const [tableVisibleRows, setTableVisibleRows] = useState(null);
   const [massField, setMassField] = useState('company');
   const [massValue, setMassValue] = useState('');
   const [massProcessing, setMassProcessing] = useState(false);
@@ -1162,6 +1291,19 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
   // value so matches don't need to be a 1:1 enum hit.
   const [colFilterDrafts, setColFilterDrafts] = useState({});
   const [dansTagOptions, setDansTagOptions] = useState([]);
+  // Per-contact family info (partner name, kids names) stored in user
+  // settings under contactFamilies, keyed by HubSpot contact id. Click
+  // the 👪 button in the first column to open the contact pop-up — the
+  // family fields live alongside the rest of the contact details there.
+  const contactFamilies = settings?.contactFamilies || {};
+  function saveFamily(contactId, info) {
+    const next = { ...(settings?.contactFamilies || {}) };
+    const partner = String(info.partner || '').trim();
+    const kids = String(info.kids || '').trim();
+    if (!partner && !kids) delete next[contactId];
+    else next[contactId] = { partner, kids };
+    updateSettings({ contactFamilies: next });
+  }
   const dismissedGuesses = settings?.dismissedGuesses || {};
   function dismissGuess(contactId, field) {
     updateSettings({ dismissedGuesses: { ...dismissedGuesses, [`${contactId}_${field}`]: true } });
@@ -1235,6 +1377,17 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
     updateSettings({ contactNotes: next });
   }, [settings?.contactNotes, updateSettings]);
 
+  // App-side "Custom" field — stored in settings.customField keyed by
+  // contact id, the same Firestore-synced pattern as contactNotes. The
+  // Draft Email page reads this map for the {custom} variable.
+  const handleSaveCustomField = useCallback((cid, value) => {
+    const cur = settings?.customField || {};
+    const next = { ...cur };
+    if (value && String(value).trim()) next[cid] = value;
+    else delete next[cid];
+    updateSettings({ customField: next });
+  }, [settings?.customField, updateSettings]);
+
   const handleInlineUpdate = useCallback(async (contactId, properties) => {
     try {
       // Split into HubSpot props and local-only props
@@ -1253,43 +1406,47 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
       // Only call HubSpot API if there are real HubSpot properties to update
       let companyOverrideSetTo = undefined; // undefined = no change · null = clear · string = set
       if (Object.keys(hubspotProps).length > 0) {
-        const res = await fetch('/api/hubspot?action=update-contact', {
+        const res = await apiFetch('/api/hubspot?action=update-contact', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contactId, properties: hubspotProps }),
         });
         const json = await res.json();
         if (json.error) throw new Error(json.error);
-        // When the user changed the `company` field, the API also tries
-        // to pin the contact's primary Company association so the next
-        // sync doesn't revert the text. If that step fails, fall back
-        // to a local Prospect Tracker override so the typed value
-        // sticks regardless of HubSpot's sync behavior. When it
-        // succeeds, clear any prior override that's no longer needed.
+        // When the user changed the `company` field, the API renames the
+        // Company record the contact is linked to so the new name lands in
+        // HubSpot (and cascades to every contact at that company). If that
+        // push fails, fall back to a local Prospect Tracker override so the
+        // typed value sticks regardless. On success, clear any prior
+        // override that's no longer needed since HubSpot now holds the name.
         const ca = json.companyAssignment;
         if (typeof hubspotProps.company === 'string') {
+          // Always pin the typed value as a local override so it survives a
+          // refresh regardless of HubSpot sync/association timing. The API
+          // also renamed the linked Company record, so on success this pin
+          // matches what HubSpot will sync back; on failure it's the only
+          // thing keeping the value visible. (Empty string → clear instead.)
+          companyOverrideSetTo = hubspotProps.company || null;
           if (ca && ca.ok === false) {
-            companyOverrideSetTo = hubspotProps.company;
             const detail = ca.errorText ? ` · ${ca.errorText}` : '';
+            const what = ca.mode === 'rename-failed' ? 'rename the Company record' : 'pin the Company association';
             setPushStatus({
               type: 'success',
-              message: `Saved "${hubspotProps.company}" locally. HubSpot couldn't pin the Company association${ca.status ? ` (HTTP ${ca.status})` : ''}${detail} — Prospect Tracker will keep your value through future syncs.`,
+              message: `Saved "${hubspotProps.company}" locally. HubSpot couldn't ${what}${ca.status ? ` (HTTP ${ca.status})` : ''}${detail} — Prospect Tracker will keep your value through future syncs.`,
             });
           } else if (ca && ca.ok === true) {
-            // HubSpot accepted the association, but if it pinned to a
-            // Company record whose `name` differs from what the user
-            // typed, the next sync will overwrite the contact.company
-            // text with the matched Company's name. Keep our typed
-            // value via the local override and surface a warning so
-            // the user knows what's happening on the HubSpot side.
-            if (ca.nameDiffers && ca.matchedName) {
-              companyOverrideSetTo = hubspotProps.company;
+            if (ca.mode === 'renamed') {
               setPushStatus({
                 type: 'success',
-                message: `Saved "${hubspotProps.company}" locally. HubSpot linked this contact to an existing Company record named "${ca.matchedName}" — its sync will display that name unless you rename the Company in HubSpot. Prospect Tracker will keep your typed value here.`,
+                message: `Renamed the HubSpot Company "${ca.oldName || '—'}" → "${hubspotProps.company}". This updates it for every contact linked to that company.`,
               });
-            } else {
-              companyOverrideSetTo = null;
+            } else if (ca.nameDiffers && ca.matchedName) {
+              // Fallback (contact had no linked company): HubSpot linked it
+              // to an existing record whose name differs from what was typed.
+              setPushStatus({
+                type: 'success',
+                message: `Saved "${hubspotProps.company}". This contact had no linked company, so HubSpot linked it to an existing Company record named "${ca.matchedName}".`,
+              });
             }
           }
         }
@@ -1335,7 +1492,15 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
       console.error('Inline update failed:', err);
       setPushStatus({ type: 'error', message: `Update failed: ${err.message}` });
     }
-  }, [user]);
+    // contactLocalFields and dansTagOptions must be in the deps: the body
+    // reads contactLocalFields to merge the per-contact _companyOverride
+    // (and other local-only fields) before writing them back with
+    // updateSettings, and reads dansTagOptions to filter tag values. With
+    // a stale [user]-only closure, the override write started from the
+    // snapshot captured at first render (empty), so each inline edit
+    // clobbered overrides saved by earlier edits — making a typed company
+    // name silently revert on the next HubSpot sync.
+  }, [user, contactLocalFields, dansTagOptions, updateSettings]);
 
   // Re-fire the Company-association reassignment for one contact without
   // changing the text. Useful when the original inline edit's reassign
@@ -1350,7 +1515,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
     }
     setReassigningId(contactId);
     try {
-      const res = await fetch('/api/hubspot?action=update-contact', {
+      const res = await apiFetch('/api/hubspot?action=update-contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contactId, properties: { company: name } }),
@@ -1411,7 +1576,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
   const handleDeleteContact = useCallback(async (contactId, name) => {
     if (!confirm(`Delete "${name}" from HubSpot? This cannot be undone.`)) return;
     try {
-      const res = await fetch('/api/hubspot?action=delete-contact', {
+      const res = await apiFetch('/api/hubspot?action=delete-contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contactId }),
@@ -1520,7 +1685,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
         try {
           // Send contacts with notes intact — the API creates the note server-side after a successful create/update,
           // which it can do because it already has the contact id from HubSpot's response.
-          const res = await fetch('/api/hubspot?action=push-contacts', {
+          const res = await apiFetch('/api/hubspot?action=push-contacts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ contacts: batch }),
@@ -1556,14 +1721,16 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
       if (localSaved > 0) parts.push(`${localSaved} saved locally (no email)`);
       setPushStatus({ type: allErrors.length > 0 ? 'error' : 'success', message: `Bulk upload complete: ${parts.join(', ')}` });
 
-      // Auto-email the error report if there are failures
-      if (allErrors.length > 0) {
+      // Auto-email the error report if there are failures. Only the
+      // admin gets the auto-mailed report; other users see the on-screen
+      // error list but don't trigger a server-side send.
+      if (allErrors.length > 0 && isAdmin) {
         try {
-          await fetch('/api/send-report', {
+          await apiFetch('/api/send-report', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              to: 'baldaufdan@gmail.com',
+              to: user?.email,
               subject: `Bulk Upload Report — ${totalErrors} Failed out of ${contacts.length}`,
               errors: allErrors,
               totalUploaded: contacts.length,
@@ -1602,7 +1769,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
       let reqBody = existingId
         ? { contactId: existingId, properties: contactProps }
         : { properties: contactProps };
-      let res = await fetch(`/api/hubspot?action=${action}`, {
+      let res = await apiFetch(`/api/hubspot?action=${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(reqBody),
@@ -1617,7 +1784,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
           resolvedId = existingIdMatch[1];
           action = 'update-contact';
           reqBody = { contactId: resolvedId, properties: contactProps };
-          res = await fetch(`/api/hubspot?action=${action}`, {
+          res = await apiFetch(`/api/hubspot?action=${action}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(reqBody),
@@ -1627,10 +1794,15 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
       }
       if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
       // If there are notes, create a HubSpot note (engagement) attached to the contact
-      const contactId = resolvedId || json.id;
+      // create-contact returns the new record under json.contact (id +
+      // properties), not a top-level json.id. Reading json.id left contactId
+      // undefined for new contacts, so the note never attached and the
+      // manual-source cache stamping below was skipped — the contact then
+      // vanished on the full-sync that follows.
+      const contactId = resolvedId || json?.contact?.id || json.id;
       if (notes?.trim() && contactId) {
         try {
-          await fetch(`/api/hubspot?action=create-note`, {
+          await apiFetch(`/api/hubspot?action=create-note`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ contactId, body: notes.trim() }),
@@ -1663,7 +1835,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
     if (!background) setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/hubspot?action=full-sync');
+      const res = await apiFetch('/api/hubspot?action=full-sync');
       const json = await res.json();
       if (json.error) throw new Error(json.error);
       // Preserve local-only contacts (created from bulk upload rows without email) across syncs
@@ -1686,6 +1858,24 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
         const localOnly = (existing?.contacts || []).filter(c => c._localOnly);
         if (localOnly.length > 0 && Array.isArray(json.contacts)) {
           json.contacts = [...json.contacts, ...localOnly];
+        }
+        // Carry forward manually-created contacts the sync doesn't include
+        // yet. HubSpot's index lags a few seconds behind creation, so a sync
+        // fired right after "Add Contact" returns a snapshot without the new
+        // contact — preserving it (matched by id or email) keeps it visible
+        // until HubSpot indexes it, at which point the snapshot carries it.
+        if (Array.isArray(json.contacts)) {
+          const presentIds = new Set(json.contacts.map(c => String(c.id || c.vid || '')).filter(Boolean));
+          const presentEmails = new Set(json.contacts.map(c => (c.email || '').toLowerCase()).filter(Boolean));
+          const manualMissing = (existing?.contacts || []).filter(c => {
+            if (c._source !== 'manual' || c._localOnly) return false;
+            const id = String(c.id || c.vid || '');
+            const email = (c.email || '').toLowerCase();
+            if (id && presentIds.has(id)) return false;
+            if (email && presentEmails.has(email)) return false;
+            return true;
+          });
+          if (manualMissing.length > 0) json.contacts = [...json.contacts, ...manualMissing];
         }
       } catch {}
       setData(json);
@@ -1723,7 +1913,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
     // Also try HubSpot property options as supplement
     (async () => {
       try {
-        const res = await fetch('/api/hubspot?action=properties');
+        const res = await apiFetch('/api/hubspot?action=properties');
         const json = await res.json();
         if (json.properties) {
           const prop = json.properties.find(p =>
@@ -1731,7 +1921,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
             ((p.label || '').toLowerCase().includes('dan') && (p.label || '').toLowerCase().includes('tag'))
           );
           if (prop) {
-            const detailRes = await fetch(`/api/hubspot?action=property-detail&name=${prop.name}`);
+            const detailRes = await apiFetch(`/api/hubspot?action=property-detail&name=${prop.name}`);
             const detail = await detailRes.json();
             if (detail.options?.length) {
               const propVals = detail.options.map(o => typeof o === 'string' ? o : (o.label || o.value || '')).filter(Boolean);
@@ -2024,13 +2214,9 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
         if (!c.firstname || !c.lastname) {
           // Try email first: john.smith@company.com → John Smith
           if (c.email) {
-            const local = c.email.split('@')[0] || '';
-            // Common patterns: first.last, first_last, firstlast (if short)
-            const parts = local.split(/[._-]/).filter(Boolean);
-            if (parts.length >= 2) {
-              if (!c.firstname) guessedFirstName = parts[0].charAt(0).toUpperCase() + parts[0].slice(1).toLowerCase();
-              if (!c.lastname) guessedLastName = parts[parts.length - 1].charAt(0).toUpperCase() + parts[parts.length - 1].slice(1).toLowerCase();
-            }
+            const g = guessNameFromEmail(c.email);
+            if (!c.firstname) guessedFirstName = g.firstName;
+            if (!c.lastname) guessedLastName = g.lastName;
           }
           // Try LinkedIn URL: linkedin.com/in/john-smith → John Smith
           if ((!guessedFirstName || !guessedLastName)) {
@@ -2195,6 +2381,13 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
     return result;
   }, [enrichedContacts, search, cardFilter, colFilters, colFilterDrafts, prospectCompanyKeys]);
 
+  // What "Select All" actually operates on: the rows on screen. When
+  // DataTable's internal column filters are active, tableVisibleRows is
+  // the post-filter subset; when they're not, DataTable reports back the
+  // full `filteredContacts` it was handed, so this stays in sync either
+  // way. Falls back to filteredContacts before the first report.
+  const selectableContacts = tableVisibleRows ?? filteredContacts;
+
   function toggleSelect(id) {
     setSelected(prev => {
       const next = new Set(prev);
@@ -2204,10 +2397,10 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
   }
 
   function toggleSelectAll() {
-    if (selected.size === filteredContacts.length) {
+    if (selected.size === selectableContacts.length) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(filteredContacts.map(c => c.id)));
+      setSelected(new Set(selectableContacts.map(c => c.id)));
     }
   }
 
@@ -2218,7 +2411,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
     let updated = 0, errors = 0;
     for (const id of selected) {
       try {
-        const res = await fetch('/api/hubspot?action=update-contact', {
+        const res = await apiFetch('/api/hubspot?action=update-contact', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contactId: id, properties: { [massField]: massValue.trim() } }),
@@ -2343,7 +2536,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
         if (c.guessedFirstName && !c.firstname) props.firstname = c.guessedFirstName;
         if (c.guessedLastName && !c.lastname) props.lastname = c.guessedLastName;
         if (Object.keys(props).length === 0) continue;
-        const res = await fetch('/api/hubspot?action=update-contact', {
+        const res = await apiFetch('/api/hubspot?action=update-contact', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contactId: c.id, properties: props }),
@@ -2376,7 +2569,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
     let deleted = 0, errors = 0;
     for (const id of selected) {
       try {
-        const res = await fetch('/api/hubspot?action=delete-contact', {
+        const res = await apiFetch('/api/hubspot?action=delete-contact', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contactId: id }),
@@ -2517,11 +2710,11 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
                 type="button"
                 className={styles.massEditBtn}
                 onClick={toggleSelectAll}
-                title={selected.size === filteredContacts.length && filteredContacts.length > 0 ? 'Clear selection' : `Select every contact that passes the current search and column filters (${filteredContacts.length})`}
+                title={selected.size === selectableContacts.length && selectableContacts.length > 0 ? 'Clear selection' : `Select every contact that passes the current search and column filters (${selectableContacts.length})`}
               >
-                {selected.size === filteredContacts.length && filteredContacts.length > 0
+                {selected.size === selectableContacts.length && selectableContacts.length > 0
                   ? `Deselect All (${selected.size})`
-                  : `Select All Filtered (${filteredContacts.length})`}
+                  : `Select All Filtered (${selectableContacts.length})`}
               </button>
             )}
             <button className={styles.newContactBtn} onClick={() => setEditContact(null)}>+ New Contact</button>
@@ -2587,6 +2780,32 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
             tableId="hubspot-contacts"
             columns={[
               {
+                key: '_family',
+                label: 'Family',
+                defaultWidth: 60,
+                render: (c) => {
+                  const fam = contactFamilies[c.id];
+                  const has = !!(fam && (fam.partner || fam.kids));
+                  return (
+                    <button
+                      type="button"
+                      title={has ? `Partner: ${fam.partner || '—'} · Kids: ${fam.kids || '—'}` : 'Add partner / kids names'}
+                      onClick={(e) => { e.stopPropagation(); setEditContact(c); }}
+                      style={{
+                        background: has ? '#ECFDF5' : '#F8FAFC',
+                        border: `1px solid ${has ? '#A7F3D0' : 'var(--color-border)'}`,
+                        borderRadius: 6,
+                        color: has ? '#065F46' : '#475569',
+                        cursor: 'pointer',
+                        fontSize: '0.95rem',
+                        padding: '2px 8px',
+                        lineHeight: 1,
+                      }}
+                    >👪</button>
+                  );
+                },
+              },
+              {
                 key: '_deleteRow',
                 label: 'Delete',
                 defaultWidth: 60,
@@ -2609,16 +2828,27 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
                 label: (
                   <input
                     type="checkbox"
-                    checked={filteredContacts.length > 0 && selected.size >= filteredContacts.length}
+                    checked={selectableContacts.length > 0 && selected.size >= selectableContacts.length}
                     onChange={toggleSelectAll}
                     onClick={e => e.stopPropagation()}
-                    title={selected.size === filteredContacts.length && filteredContacts.length > 0 ? 'Clear all selected' : `Select all ${filteredContacts.length} filtered contacts`}
+                    title={selected.size === selectableContacts.length && selectableContacts.length > 0 ? 'Clear all selected' : `Select all ${selectableContacts.length} filtered contacts`}
                     style={{ accentColor: 'var(--color-accent)' }}
                   />
                 ),
                 defaultWidth: 36,
                 render: (c) => <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelect(c.id)} onClick={e => e.stopPropagation()} style={{ accentColor: 'var(--color-accent)' }} />
               }] : []),
+              { key: '_name', label: 'Name', defaultWidth: 170, render: (c) => {
+                const full = [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || '(no name)';
+                return (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setEditContact(c); }}
+                    title="Open contact details"
+                    style={{ background: 'none', border: 'none', padding: 0, color: 'var(--color-accent)', fontWeight: 600, fontSize: 'var(--font-size-xs)', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', textDecoration: 'underline', textUnderlineOffset: 2, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                  >{full}</button>
+                );
+              } },
               { key: 'firstname', label: 'First Name', defaultWidth: 120, render: (c) => <HubSpotInlineCell contact={c} field="firstname" value={c.firstname} onSave={handleInlineUpdate} /> },
               { key: 'lastname', label: 'Last Name', defaultWidth: 120, render: (c) => <HubSpotInlineCell contact={c} field="lastname" value={c.lastname} onSave={handleInlineUpdate} /> },
               { key: 'email', label: 'Email', defaultWidth: 200, render: (c) => <HubSpotInlineCell contact={c} field="email" value={c.email} onSave={handleInlineUpdate} /> },
@@ -2774,6 +3004,13 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
                   onSave={handleSaveContactNote}
                 />
               ) },
+              { key: 'customField', label: 'Custom', defaultWidth: 200, render: (c) => (
+                <HubSpotCustomFieldCell
+                  contact={c}
+                  savedValue={(settings?.customField || {})[c.id] || ''}
+                  onSave={handleSaveCustomField}
+                />
+              ) },
               { key: '_zoomCompanyName', label: 'Zoom Company', defaultWidth: 160, render: (c) => <HubSpotInlineCell contact={c} field="_zoomCompanyName" value={c._zoomCompanyName} onSave={handleInlineUpdate} /> },
               { key: '_zoomCompanyId', label: 'Zoom Company ID', defaultWidth: 120, render: (c) => <HubSpotInlineCell contact={c} field="_zoomCompanyId" value={c._zoomCompanyId} onSave={handleInlineUpdate} /> },
               { key: '_linkedinProfile', label: 'LinkedIn Profile', defaultWidth: 160, render: (c) => {
@@ -2792,6 +3029,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
               { key: '_edit', label: '', defaultWidth: 36, render: (c) => <button onClick={(e) => { e.stopPropagation(); setEditContact(c); }} title="Edit contact" style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: '4px', padding: '1px 6px', fontSize: '0.7rem', cursor: 'pointer', color: 'var(--color-accent)' }}>Edit</button> },
             ]}
             rows={filteredContacts}
+            onFilteredRowsChange={setTableVisibleRows}
             alwaysVisible={['_deleteRow', '_select']}
             enableColumnFilters
             emptyMessage="No contacts found"
@@ -2826,6 +3064,14 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
             else delete next[contactId];
             updateSettings({ contactOldEmails: next });
           }}
+          contactOldCompany={settings?.contactOldCompany || {}}
+          onSaveOldCompany={(contactId, oldCompany) => {
+            const current = settings?.contactOldCompany || {};
+            const next = { ...current };
+            if (oldCompany && oldCompany.trim()) next[contactId] = oldCompany;
+            else delete next[contactId];
+            updateSettings({ contactOldCompany: next });
+          }}
           companyDomainsMap={(() => {
             const map = {};
             for (const p of prospects || []) {
@@ -2843,6 +3089,8 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
             else delete next[contactId];
             updateSettings({ contactNicknames: next });
           }}
+          contactFamilies={contactFamilies}
+          onSaveFamily={saveFamily}
         />
       )}
 
@@ -2915,3 +3163,4 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
     </div>
   );
 }
+

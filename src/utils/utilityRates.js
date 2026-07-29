@@ -1,66 +1,68 @@
-// Indicative commercial-sector utility rates by US state, plus the
-// rate-derivation helpers used on the Utility Lookup page to estimate
-// annual cost per site.
+// Indicative utility rates by US state, split by customer segment
+// (commercial vs industrial), plus the rate-derivation helpers used on
+// the Utility Lookup page to estimate annual cost per site.
 //
-// Electric rates are in $/kWh, gas rates are in $/therm. Numbers are
-// approximate 2024 EIA commercial averages — close enough for
-// "indicative" back-of-napkin costing, but nowhere near tariff-level
-// accurate, especially for regulated muni / coop customers. The user
-// can layer overrides on top later.
-
+// Each state carries electric ($/kWh) and gas ($/therm) figures, and
+// each commodity carries a `commercial` and an `industrial` average.
+// Numbers are EIA commercial / industrial sector averages — close
+// enough for "indicative" back-of-napkin costing, but nowhere near
+// tariff-level accurate, especially for regulated muni / coop
+// customers. The site's segment (see propertyTypeSegment) selects
+// which column applies; industrial falls back to commercial when an
+// industrial figure is missing (e.g. DC has no industrial gas value).
 export const STATE_RATES = {
-  // { electric: $/kWh, gas: $/therm }
-  AL: { electric: 0.128, gas: 1.08 },
-  AK: { electric: 0.238, gas: 0.96 },
-  AZ: { electric: 0.109, gas: 1.03 },
-  AR: { electric: 0.095, gas: 0.92 },
-  CA: { electric: 0.225, gas: 1.43 },
-  CO: { electric: 0.114, gas: 0.92 },
-  CT: { electric: 0.200, gas: 1.24 },
-  DE: { electric: 0.113, gas: 1.11 },
-  DC: { electric: 0.135, gas: 1.00 },
-  FL: { electric: 0.115, gas: 1.09 },
-  GA: { electric: 0.109, gas: 1.19 },
-  HI: { electric: 0.401, gas: 4.64 },
-  ID: { electric: 0.093, gas: 0.79 },
-  IL: { electric: 0.111, gas: 0.86 },
-  IN: { electric: 0.113, gas: 0.88 },
-  IA: { electric: 0.093, gas: 0.89 },
-  KS: { electric: 0.118, gas: 0.82 },
-  KY: { electric: 0.110, gas: 0.87 },
-  LA: { electric: 0.104, gas: 0.80 },
-  ME: { electric: 0.182, gas: 1.24 },
-  MD: { electric: 0.124, gas: 1.11 },
-  MA: { electric: 0.227, gas: 1.38 },
-  MI: { electric: 0.123, gas: 0.88 },
-  MN: { electric: 0.119, gas: 0.82 },
-  MS: { electric: 0.110, gas: 0.96 },
-  MO: { electric: 0.107, gas: 1.04 },
-  MT: { electric: 0.109, gas: 0.85 },
-  NE: { electric: 0.099, gas: 0.87 },
-  NV: { electric: 0.116, gas: 0.97 },
-  NH: { electric: 0.198, gas: 1.21 },
-  NJ: { electric: 0.152, gas: 1.14 },
-  NM: { electric: 0.104, gas: 0.81 },
-  NY: { electric: 0.183, gas: 1.11 },
-  NC: { electric: 0.098, gas: 1.03 },
-  ND: { electric: 0.102, gas: 0.89 },
-  OH: { electric: 0.107, gas: 0.86 },
-  OK: { electric: 0.095, gas: 0.82 },
-  OR: { electric: 0.111, gas: 0.94 },
-  PA: { electric: 0.110, gas: 0.99 },
-  RI: { electric: 0.208, gas: 1.15 },
-  SC: { electric: 0.114, gas: 1.14 },
-  SD: { electric: 0.104, gas: 0.85 },
-  TN: { electric: 0.111, gas: 0.96 },
-  TX: { electric: 0.099, gas: 0.89 },
-  UT: { electric: 0.094, gas: 0.76 },
-  VT: { electric: 0.183, gas: 1.13 },
-  VA: { electric: 0.097, gas: 1.14 },
-  WA: { electric: 0.099, gas: 0.96 },
-  WV: { electric: 0.108, gas: 1.01 },
-  WI: { electric: 0.117, gas: 0.83 },
-  WY: { electric: 0.100, gas: 0.92 },
+  // { electric: { commercial, industrial } $/kWh, gas: { commercial, industrial } $/therm }
+  AL: { electric: { commercial: 0.1307, industrial: 0.0692 }, gas: { commercial: 1.3365, industrial: 1.0386 } },
+  AK: { electric: { commercial: 0.2087, industrial: 0.1870 }, gas: { commercial: 1.1716, industrial: 0.7300 } },
+  AZ: { electric: { commercial: 0.1179, industrial: 0.0811 }, gas: { commercial: 0.9344, industrial: 0.4311 } },
+  AR: { electric: { commercial: 0.1036, industrial: 0.0630 }, gas: { commercial: 1.2015, industrial: 0.9759 } },
+  CA: { electric: { commercial: 0.2391, industrial: 0.1864 }, gas: { commercial: 1.5709, industrial: 1.3867 } },
+  CO: { electric: { commercial: 0.1164, industrial: 0.0850 }, gas: { commercial: 0.9373, industrial: 0.8361 } },
+  CT: { electric: { commercial: 0.1999, industrial: 0.1569 }, gas: { commercial: 1.2237, industrial: 0.8689 } },
+  DE: { electric: { commercial: 0.1220, industrial: 0.0930 }, gas: { commercial: 1.2748, industrial: 1.2141 } },
+  DC: { electric: { commercial: 0.1518, industrial: 0.1200 }, gas: { commercial: 1.5680, industrial: null } },
+  FL: { electric: { commercial: 0.1085, industrial: 0.0840 }, gas: { commercial: 1.2459, industrial: 0.4889 } },
+  GA: { electric: { commercial: 0.1149, industrial: 0.0680 }, gas: { commercial: 1.1427, industrial: 1.1418 } },
+  HI: { electric: { commercial: 0.3903, industrial: 0.3528 }, gas: { commercial: 4.3288, industrial: 3.3230 } },
+  ID: { electric: { commercial: 0.0878, industrial: 0.0717 }, gas: { commercial: 0.6201, industrial: 0.4108 } },
+  IL: { electric: { commercial: 0.1124, industrial: 0.0820 }, gas: { commercial: 1.0145, industrial: 0.8293 } },
+  IN: { electric: { commercial: 0.1255, industrial: 0.0824 }, gas: { commercial: 0.8997, industrial: 0.7445 } },
+  IA: { electric: { commercial: 0.1033, industrial: 0.0691 }, gas: { commercial: 0.9720, industrial: 0.9942 } },
+  KS: { electric: { commercial: 0.1085, industrial: 0.0764 }, gas: { commercial: 1.1880, industrial: 0.7425 } },
+  KY: { electric: { commercial: 0.1096, industrial: 0.0680 }, gas: { commercial: 1.3356, industrial: 0.8708 } },
+  LA: { electric: { commercial: 0.1041, industrial: 0.0588 }, gas: { commercial: 1.3645, industrial: 0.8775 } },
+  ME: { electric: { commercial: 0.1788, industrial: 0.1230 }, gas: { commercial: 1.5063, industrial: 0.9961 } },
+  MD: { electric: { commercial: 0.1293, industrial: 0.0980 }, gas: { commercial: 1.4243, industrial: 1.4658 } },
+  MA: { electric: { commercial: 0.1962, industrial: 0.1788 }, gas: { commercial: 2.1090, industrial: 1.8149 } },
+  MI: { electric: { commercial: 0.1340, industrial: 0.0816 }, gas: { commercial: 0.9383, industrial: 0.8139 } },
+  MN: { electric: { commercial: 0.1178, industrial: 0.0810 }, gas: { commercial: 1.2546, industrial: 1.1659 } },
+  MS: { electric: { commercial: 0.1146, industrial: 0.0680 }, gas: { commercial: 1.3327, industrial: 0.7126 } },
+  MO: { electric: { commercial: 0.0995, industrial: 0.0750 }, gas: { commercial: 1.0338, industrial: 0.9257 } },
+  MT: { electric: { commercial: 0.1211, industrial: 0.0780 }, gas: { commercial: 0.7570, industrial: 0.6760 } },
+  NE: { electric: { commercial: 0.0969, industrial: 0.0690 }, gas: { commercial: 0.9797, industrial: 0.7203 } },
+  NV: { electric: { commercial: 0.1191, industrial: 0.1036 }, gas: { commercial: 0.4831, industrial: 0.3722 } },
+  NH: { electric: { commercial: 0.2040, industrial: 0.1576 }, gas: { commercial: 1.6095, industrial: 1.2228 } },
+  NJ: { electric: { commercial: 0.1400, industrial: 0.1168 }, gas: { commercial: 1.5448, industrial: 1.3153 } },
+  NM: { electric: { commercial: 0.1068, industrial: 0.0575 }, gas: { commercial: 0.6933, industrial: 0.9981 } },
+  NY: { electric: { commercial: 0.1801, industrial: 0.0687 }, gas: { commercial: 1.2652, industrial: 1.4185 } },
+  NC: { electric: { commercial: 0.0990, industrial: 0.0720 }, gas: { commercial: 1.4947, industrial: 0.8361 } },
+  ND: { electric: { commercial: 0.0940, industrial: 0.0820 }, gas: { commercial: 0.6750, industrial: 0.7136 } },
+  OH: { electric: { commercial: 0.1075, industrial: 0.0703 }, gas: { commercial: 0.8419, industrial: 1.1157 } },
+  OK: { electric: { commercial: 0.0930, industrial: 0.0626 }, gas: { commercial: 1.0733, industrial: 0.8534 } },
+  OR: { electric: { commercial: 0.0992, industrial: 0.0752 }, gas: { commercial: 1.2604, industrial: 0.4658 } },
+  PA: { electric: { commercial: 0.1126, industrial: 0.0775 }, gas: { commercial: 1.3693, industrial: 1.0675 } },
+  RI: { electric: { commercial: 0.1768, industrial: 0.1898 }, gas: { commercial: 1.1495, industrial: 0.9904 } },
+  SC: { electric: { commercial: 0.1130, industrial: 0.0680 }, gas: { commercial: 1.4542, industrial: 0.8920 } },
+  SD: { electric: { commercial: 0.1020, industrial: 0.0750 }, gas: { commercial: 0.8689, industrial: 0.8293 } },
+  TN: { electric: { commercial: 0.1150, industrial: 0.0800 }, gas: { commercial: 1.2960, industrial: 0.8235 } },
+  TX: { electric: { commercial: 0.0882, industrial: 0.0660 }, gas: { commercial: 1.2266, industrial: 0.6095 } },
+  UT: { electric: { commercial: 0.0851, industrial: 0.0699 }, gas: { commercial: 0.9190, industrial: 0.6905 } },
+  VT: { electric: { commercial: 0.1800, industrial: 0.1127 }, gas: { commercial: 0.7907, industrial: 0.7165 } },
+  VA: { electric: { commercial: 0.0980, industrial: 0.0750 }, gas: { commercial: 1.1803, industrial: 0.8862 } },
+  WA: { electric: { commercial: 0.0992, industrial: 0.0635 }, gas: { commercial: 1.3192, industrial: 1.3722 } },
+  WV: { electric: { commercial: 0.0950, industrial: 0.0720 }, gas: { commercial: 1.2604, industrial: 0.8438 } },
+  WI: { electric: { commercial: 0.1276, industrial: 0.0868 }, gas: { commercial: 0.6847, industrial: 1.0791 } },
+  WY: { electric: { commercial: 0.0894, industrial: 0.0706 }, gas: { commercial: 0.7927, industrial: 0.3780 } },
 };
 
 // US zip-prefix → state. Keyed by the first 3 digits of the ZIP. Most
@@ -307,11 +309,41 @@ export function toTherms(value, unit) {
   }
 }
 
-export function stateRate(state, commodity) {
+export function stateRate(state, commodity, segment = 'commercial') {
   if (!state) return null;
   const row = STATE_RATES[state];
   if (!row) return null;
-  return row[commodity] ?? null;
+  const byCommodity = row[commodity];
+  if (byCommodity == null) return null;
+  // Older single-value shape ({ electric: 0.12 }) — keep working in
+  // case any caller still hits a flat number.
+  if (typeof byCommodity === 'number') return byCommodity;
+  const seg = segment === 'industrial' ? 'industrial' : 'commercial';
+  // Industrial falls back to commercial when no industrial figure
+  // exists (e.g. DC gas), so an industrial site never loses its rate.
+  return byCommodity[seg] ?? byCommodity.commercial ?? null;
+}
+
+// Customer-segment classification. A site is "industrial" when its
+// (canonical) property type is one of the Industrial categories;
+// everything else is "commercial". Returns null when there's no
+// property type to classify — callers default that to commercial.
+export function propertyTypeSegment(canonicalPropertyType) {
+  if (!canonicalPropertyType) return null;
+  return /industrial/i.test(canonicalPropertyType) ? 'industrial' : 'commercial';
+}
+
+// Parse a free-text segment value coming from an uploaded column into
+// the canonical 'commercial' / 'industrial' tokens. Tolerant of common
+// spellings and abbreviations; returns null when nothing usable so the
+// property-type-derived classification can take over.
+export function normalizeSegment(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim().toLowerCase();
+  if (!s) return null;
+  if (/\bind/.test(s) || s === 'i') return 'industrial';
+  if (/\bcomm/.test(s) || s === 'c') return 'commercial';
+  return null;
 }
 
 export function formatMoney(value) {

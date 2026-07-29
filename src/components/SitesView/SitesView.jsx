@@ -1,5 +1,6 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { sanitizeExcelWorkbook } from '../../utils/exportSanitize.js';
 import { DataTable } from '../common/DataTable';
 import {
   saveList as saveListToIDB,
@@ -22,13 +23,28 @@ import {
   toKwh,
   toTherms,
   stateRate,
+  propertyTypeSegment,
+  normalizeSegment,
   formatMoney,
   formatRate,
 } from '../../utils/utilityRates';
 import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripState, isIndicativeSavingsExport } from '../../utils/xlsxParse';
+import { UtilityMappingView } from './UtilityMappingView';
+import { BuildingComplianceScreening } from './BuildingComplianceScreening';
+import { ComplianceRoadmap } from './ComplianceRoadmap';
+import CorporateCompliance from './CorporateCompliance';
+import { screenSites, CATEGORIES, totalPenalty, bpsPrioritization } from '../../utils/complianceMandates';
+import { exportComplianceReportXlsx, buildCorporateComplianceSheet, buildComplianceMethodologySheet } from '../../utils/complianceReportXlsx';
 import { saveIndicativeAnalysis, deleteIndicativeAnalysis } from '../../utils/firestoreSync';
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
+import { classifyUtility } from '../../utils/utilityClassify';
+import { buildCityStateZipIndex, buildCityStateZipFallback, estimateZipFromCityState } from '../../utils/zipEstimate';
+import {
+  saveZipFallback,
+  loadZipFallback,
+  clearZipFallback,
+} from '../../utils/zipFallbackStore';
 import { ENERGY_SUPPLIERS } from '../../data/energySuppliers';
 import { isRegulatedRateOpportunity } from '../../data/regulatedRateOpportunities';
 import {
@@ -50,18 +66,29 @@ import {
   NA_CATEGORIES,
   US_MARKETS,
   CA_MARKETS,
+  naCategoryFor,
+  normalizeProvince,
 } from '../../data/naMarkets';
 import {
   COUNTRY_CENTERS,
   US_STATE_CENTERS,
   CANADA_PROVINCE_CENTERS,
   statusTier,
-  TIER_COLORS,
-  TIER_LABELS,
   getCountryFeatures,
   getNAAdmin1Features,
   TOPO_NAME_TO_DEREG_KEY,
 } from '../../data/worldGeo';
+import {
+  ISO_REGIONS,
+  ISO_FILL,
+  ISO_LABEL,
+  isoForState,
+  isoForProvince,
+  resolveSiteIso,
+  STATE_ISO_SPLIT,
+  STATE_ISO_SUBAREAS,
+} from '../../data/isoRegions';
+import { lookupIsoForZip } from '../../utils/isoLookup';
 import {
   countryElectricRate,
   countryGasRatePerTherm,
@@ -117,12 +144,14 @@ function detectSitesMapping(headers) {
   const siteName = headers.find(h => /\b(site\s*name|site|property|location|facility|building|name)\b/i.test(String(h))) || headers[0];
   return {
     siteName,
+    companyName: detectColumn(headers, [/^company\s*name$/i, /^company$/i, /\bcompany\b/i, /\bportfolio\b/i, /parent\s*(co|company|org)/i, /\baccount\s*name\b/i, /\bcustomer\s*name\b/i, /\borganization\b/i, /\bclient\b/i]) || '',
     address: detectColumn(headers, [/^address$/i, /^street\s*address$/i, /street/i, /\baddress\b/i]) || '',
     city: detectColumn(headers, [/^city$/i, /^town$/i, /^municipality$/i, /\bcity\b/i]) || '',
     state: detectColumn(headers, [/^state$/i, /^province$/i, /^state\s*\/\s*province$/i, /\bstate\b/i, /\bregion\b/i]) || '',
     zip: pickZipColumn(headers),
     country: detectColumn(headers, [/^country$/i, /\bcountry\b/i, /\bnation\b/i]) || '',
     propertyType: detectColumn(headers, [/property\s*type/i, /building\s*type/i, /property\s*class/i, /asset\s*type/i, /^use$/i, /\buse\s*type\b/i, /\bsegment\b/i]) || '',
+    segment: detectColumn(headers, [/customer\s*class/i, /rate\s*class/i, /\bc\s*&\s*i\b/i, /commercial\s*\/?\s*industrial/i, /industrial\s*\/?\s*commercial/i, /comm.*ind|ind.*comm/i]) || '',
     siteDescription: detectColumn(headers, [/^site\s*description$/i, /^description$/i, /\bdescription\b/i]) || '',
     propertySize: detectColumn(headers, [/sq\s*\.?\s*ft/i, /square\s*(feet|foot)/i, /\bft\s*2\b/i, /\bft\^?2\b/i, /\bsf\b/i, /size.*ft/i, /building.*size/i, /gross.*area/i, /^size$/i, /rsf|gsf/i]) || '',
     electric: detectColumn(headers, [/electric.*kwh|kwh.*electric/i, /annual.*electric.*kwh/i, /annual.*kwh/i, /^kwh$/i, /electric.*usage/i, /electric.*consumption/i, /annual.*electric/i, /^electric$/i]) || '',
@@ -146,62 +175,8 @@ function detectSitesMapping(headers) {
   };
 }
 
-// Classify a utility provider as "Regulated" (monopoly market — usually
-// municipally owned, public power, or a cooperative) or "Deregulated"
-// (competitive retail market). Based on the provider name only, since
-// that's all we have in the lookup file today. Well-known municipal
-// and coop utilities that don't follow the naming conventions get an
-// explicit override so Austin Energy / LADWP / SMUD / TVA etc. are
-// classified correctly.
-const REGULATED_PATTERNS = [
-  /^city of\b/i,
-  /\bmunicipal\b/i,
-  /\b(co-?op|cooperative)\b/i,
-  /\bpublic power\b/i,
-  /\bpublic utilit(y|ies)\b/i,
-  /\b(power|electric|utility|utilities)\s+authority\b/i,
-  /\b(p\.?u\.?d\.?)\b/i, // Public Utility District
-  /\bmembership corp(oration)?\b/i, // Rural electric membership corps
-  /\belectric (membership|cooperative)\b/i,
-];
-const REGULATED_OVERRIDES = [
-  /^austin energy\b/i,
-  /^ladwp\b/i,
-  /\bdepartment of water( and|&) power\b/i,
-  /^smud\b/i,
-  /^sacramento municipal/i,
-  /^seattle city light\b/i,
-  /^tacoma power\b/i,
-  /^cps energy\b/i, // San Antonio
-  /^jea\b/i,         // Jacksonville
-  /^ouc\b/i,         // Orlando Utilities Commission
-  /^orlando utilities/i,
-  /^long island power\b/i,
-  /^lipa\b/i,
-  /^nyseg\b/i,
-  /^nebraska public power\b/i,
-  /^omaha public power\b/i,
-  /^salt river project\b/i,
-  /^srp\b/i,
-  /^colorado springs utilities\b/i,
-  /^nashville electric\b/i,
-  /^memphis light,?\s*gas/i,
-  /^knoxville utilities\b/i,
-  /^epb\b/i,                       // Chattanooga
-  /^bonneville power\b/i,
-  /^tva\b/i,
-  /^tennessee valley authority\b/i,
-  /^gainesville regional utilities\b/i,
-  /^lakeland electric\b/i,
-];
-function classifyUtility(name) {
-  if (!name) return null;
-  const str = String(name).trim();
-  if (!str) return null;
-  if (REGULATED_OVERRIDES.some(r => r.test(str))) return 'Regulated';
-  if (REGULATED_PATTERNS.some(r => r.test(str))) return 'Regulated';
-  return 'Deregulated';
-}
+// classifyUtility (Regulated vs Deregulated) now lives in
+// ../../utils/utilityClassify so the Master Site List shares it.
 
 // Ontario Global Adjustment (GA) opportunity flag. Every Ontario
 // commercial customer pays GA, but only Class A — peak demand ≥ 1 MW
@@ -225,6 +200,22 @@ function gacOpportunity(state, kwh) {
     return { tier: 'mid', label: 'Maybe — verify peak demand' };
   }
   return { tier: 'low', label: 'Class B (small load)' };
+}
+
+// The utility-provider lookup is North-America-centric: the bundled
+// utility database (zip → utility, plus the known-utility fuzzy list)
+// only covers the United States, Puerto Rico, Canada, and Mexico. For a
+// site in any other country a zip can still collide with a US zip and
+// resolve a bogus provider, so we gate the lookup to those four. An
+// empty / unknown country defaults to in-scope — uploads without a
+// Country column are overwhelmingly US, matching the prior behavior.
+function isUtilityLookupCountry(rawCountry) {
+  const c = String(rawCountry || '').trim();
+  if (!c) return true;
+  return /^(u\.?\s*s\.?\s*a?\.?|united states( of america)?)$/i.test(c)
+    || /^(pr|puerto\s*rico)$/i.test(c)
+    || /^(ca|can|canada)$/i.test(c)
+    || /^(mx|mex|m[eé]xico)$/i.test(c);
 }
 
 // Inline autocomplete input used by supplier cells in the Utility
@@ -329,15 +320,239 @@ function SupplierAutocomplete({ initialValue, onCommit, onCancel }) {
   );
 }
 
-export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
+// Same slug transform ProspectModal uses to key a company's uploaded site
+// list under settings.companySiteLists — kept in sync so a lookup here
+// resolves the exact entry the modal wrote.
+function companySlug(name) {
+  return (name || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
+}
+
+// Look up a company (from Table View / any company that has a site list)
+// and show whether a site list is already mapped to it. Site lists live in
+// settings.companySiteLists, keyed by the company-name slug, and are
+// uploaded from the company popup. This is a read-only convenience so the
+// user doesn't have to open each company to check.
+function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCompany, activeCompany = '' }) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState('');
+  const boxRef = useRef(null);
+
+  useEffect(() => {
+    function onDown(e) { if (!boxRef.current?.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, []);
+
+  // slug -> entry for every company that actually has a site list.
+  const bySlug = useMemo(() => {
+    const m = new Map();
+    for (const [slug, entry] of Object.entries(companySiteLists || {})) {
+      if (entry && Array.isArray(entry.rows) && entry.rows.length > 0) m.set(slug, entry);
+    }
+    return m;
+  }, [companySiteLists]);
+
+  // Autocomplete pool: every Table View company, unioned with any company
+  // that has a site list (so a mapped company shows even without a prospect
+  // record). Deduped case-insensitively.
+  const companyNames = useMemo(() => {
+    const seen = new Set();
+    const names = [];
+    const add = (n) => {
+      const name = String(n || '').trim();
+      if (!name) return;
+      const k = name.toLowerCase();
+      if (seen.has(k)) return;
+      seen.add(k);
+      names.push(name);
+    };
+    for (const p of prospects || []) add(p?.company);
+    for (const entry of bySlug.values()) add(entry?.company);
+    return names.sort((a, b) => a.localeCompare(b));
+  }, [prospects, bySlug]);
+
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const starts = [], includes = [];
+    for (const n of companyNames) {
+      const lower = n.toLowerCase();
+      if (lower.startsWith(q)) starts.push(n);
+      else if (lower.includes(q)) includes.push(n);
+      if (starts.length + includes.length >= 40) break;
+    }
+    return [...starts, ...includes].slice(0, 30);
+  }, [query, companyNames]);
+
+  const result = useMemo(() => {
+    if (!picked) return null;
+    const entry = bySlug.get(companySlug(picked)) || null;
+    return { company: picked, entry };
+  }, [picked, bySlug]);
+
+  function choose(name) {
+    setPicked(name);
+    setQuery(name);
+    setOpen(false);
+  }
+
+  const mappedCount = bySlug.size;
+
+  return (
+    <div
+      ref={boxRef}
+      style={{
+        marginTop: '0.6rem', padding: '0.6rem 0.75rem',
+        border: '1px solid var(--color-border)', borderRadius: 8, background: '#fff',
+        maxWidth: 520,
+      }}
+    >
+      <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#0F172A', marginBottom: '0.1rem' }}>
+        Company site-list lookup
+      </div>
+      <div style={{ fontSize: '0.68rem', color: '#64748B', marginBottom: '0.45rem' }}>
+        Check whether a company already has a site list mapped to it, or set it
+        as the company for this uploaded portfolio.
+        {mappedCount > 0 && <> {mappedCount} compan{mappedCount === 1 ? 'y has' : 'ies have'} one.</>}
+      </div>
+      {activeCompany && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.45rem', fontSize: '0.7rem', color: '#166534' }}>
+          <span>Portfolio company: <strong>{activeCompany}</strong></span>
+          {onUseCompany && (
+            <button
+              type="button"
+              onClick={() => onUseCompany('')}
+              title="Clear the portfolio company (sites fall back to any mapped Company Name column)"
+              style={{ padding: '0.05rem 0.4rem', border: '1px solid #CBD5E1', background: '#fff', color: '#64748B', borderRadius: 999, fontSize: '0.62rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700 }}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
+      <div style={{ position: 'relative' }}>
+        <input
+          type="text"
+          value={query}
+          placeholder="Type a company name…"
+          onChange={(e) => { setQuery(e.target.value); setOpen(true); if (picked) setPicked(''); }}
+          onFocus={() => { if (query.trim()) setOpen(true); }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              if (matches.length > 0) choose(matches[0]);
+              else if (query.trim()) { setPicked(query.trim()); setOpen(false); }
+            } else if (e.key === 'Escape') {
+              setOpen(false);
+            }
+          }}
+          style={{
+            width: '100%', boxSizing: 'border-box', padding: '0.4rem 0.55rem',
+            border: '1px solid var(--color-border)', borderRadius: 6,
+            fontSize: '0.8rem', fontFamily: 'inherit',
+          }}
+        />
+        {open && matches.length > 0 && (
+          <div
+            style={{
+              position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30,
+              marginTop: 2, maxHeight: 240, overflowY: 'auto',
+              background: '#fff', border: '1px solid #CBD5E1', borderRadius: 6,
+              boxShadow: '0 8px 20px rgba(15,23,42,0.18)',
+            }}
+          >
+            {matches.map((n) => {
+              const has = bySlug.has(companySlug(n));
+              return (
+                <div
+                  key={n}
+                  onMouseDown={(e) => { e.preventDefault(); choose(n); }}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem',
+                    padding: '0.35rem 0.55rem', fontSize: '0.76rem', color: '#1E293B', cursor: 'pointer',
+                  }}
+                  onMouseOver={(e) => e.currentTarget.style.background = '#F1F5F9'}
+                  onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
+                >
+                  <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n}</span>
+                  <span style={{ flexShrink: 0, fontSize: '0.62rem', fontWeight: 700, color: has ? '#166534' : '#94A3B8' }}>
+                    {has ? '● list' : '—'}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {result && onUseCompany && result.company !== activeCompany && (
+        <button
+          type="button"
+          onClick={() => onUseCompany(result.company)}
+          title="Apply this company to every uploaded site (shows on all Utility Lookup subtabs, including Corporate Compliance)"
+          style={{ marginTop: '0.5rem', padding: '0.35rem 0.7rem', border: '1px solid #009530', background: '#009530', color: '#fff', borderRadius: 6, fontSize: '0.74rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700 }}
+        >
+          Use “{result.company}” as the portfolio company
+        </button>
+      )}
+
+      {result && (
+        result.entry ? (
+          <div style={{
+            marginTop: '0.5rem', padding: '0.5rem 0.65rem', borderRadius: 6,
+            background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534',
+            fontSize: '0.74rem',
+          }}>
+            <div style={{ fontWeight: 700 }}>
+              ✓ {result.company} has a site list mapped
+            </div>
+            <div style={{ marginTop: '0.15rem', color: '#15803D' }}>
+              {result.entry.rows.length} site{result.entry.rows.length === 1 ? '' : 's'}
+              {result.entry.fileName ? <> · {result.entry.fileName}</> : null}
+              {result.entry.uploadedAt ? <> · added {new Date(result.entry.uploadedAt).toLocaleDateString()}</> : null}
+            </div>
+            <div style={{ marginTop: '0.2rem', fontSize: '0.66rem', color: '#3F6212' }}>
+              Open this company from Table View to view or edit its site list.
+            </div>
+          </div>
+        ) : (
+          <div style={{
+            marginTop: '0.5rem', padding: '0.5rem 0.65rem', borderRadius: 6,
+            background: '#F1F5F9', border: '1px solid #CBD5E1', color: '#475569',
+            fontSize: '0.74rem',
+          }}>
+            <span style={{ fontWeight: 700 }}>No site list mapped</span> to <strong>{result.company}</strong> yet.
+            <div style={{ marginTop: '0.2rem', fontSize: '0.66rem', color: '#64748B' }}>
+              Open the company from Table View to upload or paste one.
+            </div>
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
+export function SitesView({ settings, updateSettings, updateSettingsPath, prospects = [] } = {}) {
+  // Top-level toggle between the Utility Lookup page and the nested
+  // Utility Mapping view (interval-data availability by utility).
+  const [mainTab, setMainTab] = useState('lookup'); // 'lookup' | 'mapping' | 'compliance'
   const [sitesData, setSitesData] = useState([]);
   const [sitesLoaded, setSitesLoaded] = useState(false);
   const [utility, setUtility] = useState(null); // { zipMap, meta }
   const [utilityLoaded, setUtilityLoaded] = useState(false);
+  // User-uploaded city + state → zip fallback table: { list, meta }.
+  // Supplies a zip for sites that arrive with a city + state but no zip,
+  // taking precedence over the zips inferred from the utility lookup.
+  const [zipFallback, setZipFallback] = useState(null);
+  const [zipFallbackBusy, setZipFallbackBusy] = useState(false);
   const [search, setSearch] = useState('');
   const [uploadError, setUploadError] = useState('');
   const [utilityBusy, setUtilityBusy] = useState(false);
   const [mappingModal, setMappingModal] = useState(null);
+  // Column-mapping modal for the Fallback Zips upload — mirrors
+  // mappingModal but only needs City / State / Zip.
+  const [zipFbMappingModal, setZipFbMappingModal] = useState(null);
   const [dragOver, setDragOver] = useState(false);
   // Picker for "Save to Company": null = closed, '' = open & empty,
   // string = open & user is typing. saveStatus drives the button
@@ -371,6 +586,21 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   // descriptive (don't drive any computation). Surface on the on-page
   // table and in the Indicative Savings Site Detail / Contract
   // Overview sheets when mapped.
+  // Optional Company Name column from the upload — purely descriptive
+  // (doesn't drive any computation). Surfaced on the on-page table and
+  // used to name the Indicative Savings export file.
+  const [companyNameOverride, setCompanyNameOverride] = useState(null);
+  // A single company applied to every uploaded site that has no per-row
+  // Company Name value. Set from "Save to Company", the site-list lookup,
+  // or typed directly, and persisted so ALL Utility Lookup subtabs (the
+  // on-page table, Corporate Compliance, the exports) treat the portfolio
+  // as one company. Per-row Company Name column values still win over it.
+  const portfolioCompanyName = String(settings?.utilityLookupCompanyName || '').trim();
+  const setPortfolioCompanyName = useCallback((name) => {
+    if (!updateSettingsPath) return;
+    const v = String(name || '').trim();
+    updateSettingsPath({ utilityLookupCompanyName: v || null });
+  }, [updateSettingsPath]);
   const [addressOverride, setAddressOverride] = useState(null);
   const [cityOverride, setCityOverride] = useState(null);
   const [stateColumnOverride, setStateColumnOverride] = useState(null);
@@ -380,6 +610,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   // are optional; with only Property Type the export uses the
   // reference Size_ft2 for that type and skips per-site size scaling.
   const [propertyTypeOverride, setPropertyTypeOverride] = useState(null);
+  // Optional column mapping the user's own Commercial / Industrial
+  // classification onto each site, overriding the property-type-derived
+  // segment that drives commercial-vs-industrial rate selection.
+  const [segmentOverride, setSegmentOverride] = useState(null);
   const [siteDescriptionOverride, setSiteDescriptionOverride] = useState(null);
   const [propertySizeOverride, setPropertySizeOverride] = useState(null);
   const [electricContractPriceOverride, setElectricContractPriceOverride] = useState(null);
@@ -444,13 +678,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   // { rows, headers, mapping: { zip, electric, gas, water } }
   const sitesFileRef = useRef(null);
   const utilityFileRef = useRef(null);
+  const zipFallbackFileRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [sites, util] = await Promise.all([
+      const [sites, util, zipFb] = await Promise.all([
         loadListFromIDB(SITES_STORAGE_KEY),
         loadUtilityRates(),
+        loadZipFallback(),
       ]);
       if (cancelled) return;
       const sitesArr = Array.isArray(sites) ? sites : [];
@@ -465,6 +701,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const persistedHeaders = Object.keys(sitesArr[0]);
         const m = detectSitesMapping(persistedHeaders);
         setSiteNameOverride(m.siteName || null);
+        setCompanyNameOverride(m.companyName || null);
         setZipColOverride(m.zip || null);
         setElectricColOverride(m.electric || '__none__');
         setGasColOverride(m.gas || '__none__');
@@ -483,6 +720,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         setCityOverride(m.city || null);
         setStateColumnOverride(m.state || null);
         setPropertyTypeOverride(m.propertyType || null);
+        setSegmentOverride(m.segment || null);
         setSiteDescriptionOverride(m.siteDescription || null);
         setPropertySizeOverride(m.propertySize || null);
         setElectricContractPriceOverride(m.electricContractPrice || null);
@@ -494,6 +732,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       }
       setUtility(util);
       setUtilityLoaded(true);
+      setZipFallback(zipFb);
     })();
     return () => { cancelled = true; };
   }, []);
@@ -588,6 +827,69 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     }
   }
 
+  // Re-open the column mapping modal against the data the user has
+  // already imported. Lets the user re-target which column drives
+  // each Utility Lookup field without re-uploading. Only columns that
+  // survived the previous import are available (unmapped columns
+  // were dropped on import) — to bring back a dropped column, the
+  // user has to re-upload the original file.
+  function openUpdateColumnMapping() {
+    if (!sitesData.length) return;
+    const headers = Object.keys(sitesData[0]);
+    const noneToEmpty = (v) => (v === '__none__' || v == null) ? '' : v;
+    // Build the mapping object from the per-target *Override states so
+    // the modal opens reflecting the user's last applied mapping. Any
+    // override pointing at a column that's no longer present (rare —
+    // would only happen after a partial state migration) is dropped.
+    const headerSet = new Set(headers);
+    const safe = (v) => (v && headerSet.has(v)) ? v : '';
+    const mapping = {
+      siteName:              safe(noneToEmpty(siteNameOverride)),
+      companyName:           safe(noneToEmpty(companyNameOverride)),
+      address:               safe(noneToEmpty(addressOverride)),
+      city:                  safe(noneToEmpty(cityOverride)),
+      state:                 safe(noneToEmpty(stateColumnOverride)),
+      zip:                   safe(noneToEmpty(zipColOverride)),
+      country:               safe(noneToEmpty(countryOverride)),
+      propertyType:          safe(noneToEmpty(propertyTypeOverride)),
+      segment:               safe(noneToEmpty(segmentOverride)),
+      siteDescription:       safe(noneToEmpty(siteDescriptionOverride)),
+      propertySize:          safe(noneToEmpty(propertySizeOverride)),
+      electric:              safe(noneToEmpty(electricColOverride)),
+      electricUom:           safe(noneToEmpty(electricUomOverride)),
+      gas:                   safe(noneToEmpty(gasColOverride)),
+      gasUom:                safe(noneToEmpty(gasUomOverride)),
+      electricCost:          safe(noneToEmpty(electricCostOverride)),
+      gasCost:               safe(noneToEmpty(gasCostOverride)),
+      electricSupplier:      safe(noneToEmpty(electricSupplierOverride)),
+      gasSupplier:           safe(noneToEmpty(gasSupplierOverride)),
+      electricStart:         safe(noneToEmpty(electricStartOverride)),
+      electricEnd:           safe(noneToEmpty(electricEndOverride)),
+      electricContractPrice: safe(noneToEmpty(electricContractPriceOverride)),
+      electricContractName:  safe(noneToEmpty(electricContractNameOverride)),
+      electricProductType:   safe(noneToEmpty(electricProductTypeOverride)),
+      gasStart:              safe(noneToEmpty(gasStartOverride)),
+      gasEnd:                safe(noneToEmpty(gasEndOverride)),
+      gasContractPrice:      safe(noneToEmpty(gasContractPriceOverride)),
+      gasContractName:       safe(noneToEmpty(gasContractNameOverride)),
+      gasProductType:        safe(noneToEmpty(gasProductTypeOverride)),
+    };
+    setUploadError('');
+    setSitesMappingModal({
+      fileName: '(currently loaded sites)',
+      mode: 'update',
+      sheets: [{
+        sheetName: 'Loaded sites',
+        rows: sitesData,
+        headers,
+        mapping,
+        isMerged: false,
+      }],
+      selectedIdx: 0,
+      roundTripState: null,
+    });
+  }
+
   // Commit the popup's chosen mapping, persist the data + override
   // settings, and close the modal. If the user blanks out the site
   // name or zip column we fall back to auto-detection so the lookup
@@ -596,6 +898,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     if (!sitesMappingModal) return;
     const active = sitesMappingModal.sheets[sitesMappingModal.selectedIdx];
     if (!active) return;
+    const isUpdate = sitesMappingModal.mode === 'update';
     const { rows, mapping } = active;
     setUploadError('');
     try {
@@ -603,8 +906,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // pass-through column ends up rendered on the Utility Lookup
       // table even though the user only wanted these specific fields.
       const TARGET_KEYS = [
-        'siteName', 'address', 'city', 'state', 'zip', 'country',
-        'propertyType', 'siteDescription', 'propertySize',
+        'siteName', 'companyName', 'address', 'city', 'state', 'zip', 'country',
+        'propertyType', 'segment', 'siteDescription', 'propertySize',
         'electric', 'electricUom', 'gas', 'gasUom',
         'electricCost', 'gasCost',
         'electricSupplier', 'gasSupplier',
@@ -628,10 +931,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // They're keyed by row index (e.g. `5_gas` -> "NRG Energy"), so
       // they bleed straight onto row 5 of the new list when row counts
       // overlap. Vendor-name decisions stay — those are brand-keyed and
-      // still meaningful across uploads.
-      setSupplierOverrides({});
-      try { localStorage.removeItem('utility-lookup:supplier-overrides'); } catch {}
+      // still meaningful across uploads. Skipped on the update-mapping
+      // flow: row indexes are identical to what they were before, so
+      // the existing per-row overrides still point at the right rows.
+      if (!isUpdate) {
+        setSupplierOverrides({});
+        try { localStorage.removeItem('utility-lookup:supplier-overrides'); } catch {}
+      }
       setSiteNameOverride(mapping.siteName || null);
+      setCompanyNameOverride(mapping.companyName || null);
       setZipColOverride(mapping.zip || null);
       setElectricColOverride(mapping.electric || '__none__');
       setGasColOverride(mapping.gas || '__none__');
@@ -650,6 +958,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       setCityOverride(mapping.city || null);
       setStateColumnOverride(mapping.state || null);
       setPropertyTypeOverride(mapping.propertyType || null);
+      setSegmentOverride(mapping.segment || null);
       setSiteDescriptionOverride(mapping.siteDescription || null);
       setPropertySizeOverride(mapping.propertySize || null);
       setElectricContractPriceOverride(mapping.electricContractPrice || null);
@@ -662,11 +971,14 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // hidden sheet (vendor accept/reject decisions). Replaces — not
       // merges — to match the supplierOverrides "fresh slate" model:
       // an export-then-import flow is a session restore, not a merge
-      // of two different sessions.
-      const rt = sitesMappingModal.roundTripState;
-      if (rt && rt.vendorDecisions && typeof rt.vendorDecisions === 'object') {
-        setVendorDecisions(rt.vendorDecisions);
-        try { localStorage.setItem('utility-lookup:vendor-decisions', JSON.stringify(rt.vendorDecisions)); } catch {}
+      // of two different sessions. Skipped on update-mapping — the
+      // user's existing vendor decisions stay put.
+      if (!isUpdate) {
+        const rt = sitesMappingModal.roundTripState;
+        if (rt && rt.vendorDecisions && typeof rt.vendorDecisions === 'object') {
+          setVendorDecisions(rt.vendorDecisions);
+          try { localStorage.setItem('utility-lookup:vendor-decisions', JSON.stringify(rt.vendorDecisions)); } catch {}
+        }
       }
     } catch (err) {
       setUploadError(err?.message || 'Failed to save the sites file');
@@ -848,6 +1160,95 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     setUtility(null);
   }
 
+  // Upload the city + state → zip fallback table. The file needs City,
+  // State, and Zip columns. We auto-detect them as a starting point but
+  // open a column-mapping modal so the user can confirm or correct the
+  // picks before importing — the actual build runs in
+  // executeZipFallbackImport once they confirm.
+  async function handleZipFallbackFileSelect(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setUploadError('');
+    setZipFallbackBusy(true);
+    try {
+      const buf = await file.arrayBuffer();
+      const { rows, headers, sheetName } = parseBestSheet(new Uint8Array(buf));
+      if (!rows.length) {
+        setUploadError('No data rows found in the fallback zip file.');
+        return;
+      }
+      const mapping = {
+        city: detectColumn(headers, [/^city$/i, /city/i, /municipality/i, /town/i]) || '',
+        state: detectColumn(headers, [/^state$/i, /\bstate\b/i, /province/i, /region/i]) || '',
+        zip: detectColumn(headers, [/zip.?postal/i, /^zip\s*code$/i, /^postal\s*code$/i, /^zip$/i, /zip/i, /postal/i]) || '',
+      };
+      setZipFbMappingModal({ rows, headers, mapping, fileName: file.name, sheetName });
+    } catch (err) {
+      setUploadError(err?.message || 'Failed to read the fallback zip file');
+    } finally {
+      setZipFallbackBusy(false);
+    }
+  }
+
+  // Finalize the Fallback Zips import from the mapping modal's column
+  // choices: build one { city, state, zip } record per usable row,
+  // de-duped on (state, city), then persist.
+  async function executeZipFallbackImport() {
+    if (!zipFbMappingModal) return;
+    const { rows, mapping, fileName } = zipFbMappingModal;
+    const cityCol = mapping.city;
+    const stateCol = mapping.state;
+    const zipCol = mapping.zip;
+    if (!cityCol || !stateCol || !zipCol) {
+      const missing = [!cityCol && 'City', !stateCol && 'State', !zipCol && 'Zip'].filter(Boolean).join(', ');
+      setUploadError(`Map all three columns first — still need: ${missing}.`);
+      return;
+    }
+    setUploadError('');
+    setZipFallbackBusy(true);
+    try {
+      const list = [];
+      const seen = new Set();
+      for (const r of rows) {
+        const city = String(r[cityCol] ?? '').trim();
+        const state = String(r[stateCol] ?? '').trim();
+        const zip = normalizeZip(r[zipCol]);
+        if (!city || !state || !zip) continue;
+        // De-dupe on (state, city) keeping the first zip seen so a tidy
+        // count is shown and the index build is deterministic.
+        const key = `${state.toLowerCase()}|${city.toLowerCase()}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        list.push({ city, state, zip });
+      }
+      if (!list.length) {
+        setUploadError('No usable City / State / Zip rows found in the fallback file.');
+        return;
+      }
+      const meta = {
+        fileName,
+        rowCount: rows.length,
+        entryCount: list.length,
+        columns: { city: cityCol, state: stateCol, zip: zipCol },
+        importedAt: Date.now(),
+      };
+      await saveZipFallback(list, meta);
+      setZipFallback({ list, meta });
+      setZipFbMappingModal(null);
+    } catch (err) {
+      setUploadError(err?.message || 'Failed to save the fallback zip list');
+    } finally {
+      setZipFallbackBusy(false);
+    }
+  }
+
+  async function handleClearZipFallback() {
+    if (!window.confirm('Remove the uploaded fallback zip list?')) return;
+    await clearZipFallback();
+    setZipFallback(null);
+  }
+
   const zipColumn = useMemo(() => {
     if (!sitesData.length) return '';
     const headers = Object.keys(sitesData[0]);
@@ -918,6 +1319,14 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
   const siteHeaders = useMemo(() => sitesData.length ? Object.keys(sitesData[0]) : [], [sitesData]);
 
+  // Compact { siteName, city, state } list fed to the Building Compliance
+  // Screening subtab so it can screen every uploaded site. City/State come
+  // from the resolved (detected or overridden) columns of the site list.
+  // complianceSites is built from the fully-processed `rows` (defined below)
+  // so it carries square footage, property type, and the electric/gas utility
+  // the Building Compliance Screening subtab needs — see just after the `rows`
+  // memo.
+
   // Pick the FIRST candidate column (in document order) that has a
   // valid value for this row. Earlier we took the per-row minimum,
   // but that lets a stray "1" in a later column beat the real
@@ -975,18 +1384,68 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     return hit ? { canonical: hit.name, score: hit.score } : null;
   }
 
+  // Reverse index (city + state → zips) built from the loaded utility
+  // lookup so a site that arrives without a zip — but with a city and
+  // state — can borrow a representative zip from the other locations we
+  // already know live in that same city. Rebuilt only when the utility
+  // file changes. See src/utils/zipEstimate.js.
+  const cityStateZipIndex = useMemo(
+    () => buildCityStateZipIndex(utility?.zipMap),
+    [utility]
+  );
+
+  // Explicit city + state → zip map from the user-uploaded fallback list.
+  // Consulted ahead of cityStateZipIndex when a site has no zip of its
+  // own, so the user's authoritative mapping wins over an inferred zip.
+  const zipFallbackIndex = useMemo(
+    () => buildCityStateZipFallback(zipFallback?.list),
+    [zipFallback]
+  );
+
   const rows = useMemo(() => {
     return cleanSitesData.map((r, i) => {
-      const zip = zipColumn ? normalizeZip(r[zipColumn]) : '';
+      const cityColInput = cityOverride ? String(r[cityOverride] || '').trim() : '';
+      const stateColInput = stateColumnOverride ? String(r[stateColumnOverride] || '').trim() : '';
+      const uploadedZip = zipColumn ? normalizeZip(r[zipColumn]) : '';
+      // When the row has no zip of its own, estimate one from its city +
+      // state using zips already present in the utility lookup. The
+      // estimate then feeds the zip → utility / state / rate match below
+      // exactly like an uploaded zip would, flagged via __zipEstimated__
+      // so the UI can render it as modeled rather than measured.
+      const zipEstimate = (!uploadedZip && (cityStateZipIndex || zipFallbackIndex))
+        ? estimateZipFromCityState(cityStateZipIndex, cityColInput, stateColInput, zipFallbackIndex)
+        : null;
+      const zip = uploadedZip || zipEstimate?.zip || '';
+      const zipEstimated = !uploadedZip && !!zipEstimate;
       const match = utility?.zipMap && zip ? utility.zipMap[zip] : null;
-      const state = match?.state || zipToState(zip);
-      const stateElectricRate = state ? stateRate(state, 'electric') : null;
-      const stateGasRate = state ? stateRate(state, 'gas') : null;
+      // State resolution for indicative rates + the deregulation map.
+      // Prefer the utility file's zip match, then the zip prefix, then
+      // a mapped State column — but only when that column normalizes to
+      // a real US state code, so international provinces ("Milan",
+      // "SP") don't false-map and still fall through to country rates.
+      const state = match?.state || zipToState(zip) || normalizeState(stateColInput);
+      // Property type + customer segment resolve first: the segment
+      // (commercial vs industrial) picks which state-rate column
+      // applies. An explicit Segment column wins; otherwise infer it
+      // from the property type; absent both, default to commercial.
+      const inputPropertyType = propertyTypeOverride ? String(r[propertyTypeOverride] || '').trim() : '';
+      const canonicalPropertyType = inputPropertyType ? normalizePropertyType(inputPropertyType) : null;
+      const segmentFromColumn = segmentOverride ? normalizeSegment(r[segmentOverride]) : null;
+      const segment = segmentFromColumn || propertyTypeSegment(canonicalPropertyType) || 'commercial';
+      const segmentSource = segmentFromColumn ? 'column' : (propertyTypeSegment(canonicalPropertyType) ? 'propertyType' : 'default');
+      const stateElectricRate = state ? stateRate(state, 'electric', segment) : null;
+      const stateGasRate = state ? stateRate(state, 'gas', segment) : null;
       const electricUomRaw = electricUomOverride ? r[electricUomOverride] : '';
       const gasUomRaw = gasUomOverride ? r[gasUomOverride] : '';
       const elec = pickFirstConsumption(r, consumption.electric, toKwh, normalizeElectricUom(electricUomRaw));
       const gas = pickFirstConsumption(r, consumption.gas, toTherms, normalizeGasUom(gasUomRaw));
       const inputCountry = countryOverride ? String(r[countryOverride] || '').trim() : '';
+      // Gate the utility-provider lookup to the four supported countries
+      // (US / Puerto Rico / Canada / Mexico). Out-of-scope sites skip the
+      // zip → utility match and the vendor-name → known-utility match so
+      // a colliding US zip or a coincidental name match can't fabricate a
+      // provider. Rates, consumption, suppliers, etc. are unaffected.
+      const lookupAllowed = isUtilityLookupCountry(inputCountry);
       // Country-rate fallback. When the state rate didn't resolve
       // (non-US sites, or US sites whose state code we couldn't
       // derive), look up an indicative commercial rate from the
@@ -1012,8 +1471,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const resolvedCountryRateName = (electricRateSource === 'country' || gasRateSource === 'country')
         ? normalizeCountryRateName(resolvedCountryForRate)
         : null;
-      const inputPropertyType = propertyTypeOverride ? String(r[propertyTypeOverride] || '').trim() : '';
-      const canonicalPropertyType = inputPropertyType ? normalizePropertyType(inputPropertyType) : null;
+      const inputCompanyName = companyNameOverride ? String(r[companyNameOverride] || '').trim() : '';
       const inputSiteDescription = siteDescriptionOverride ? String(r[siteDescriptionOverride] || '').trim() : '';
       // Loose numeric parse for the optional Size_ft2 column — strips
       // commas, "sf"/"sqft" suffixes, etc.
@@ -1114,7 +1572,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // sticks per-name across rows + refreshes.
       const classifyVendorToken = (raw) => {
         const supplier = matchVendorToSupplier(raw);
-        const utility = !supplier ? matchVendorToUtility(raw) : null;
+        // Only promote a vendor token to a looked-up utility for in-scope
+        // countries; elsewhere it stays an (un-looked-up) supplier token.
+        const utility = (!supplier && lookupAllowed) ? matchVendorToUtility(raw) : null;
         const kind = supplier ? 'supplier' : (utility ? 'utility' : null);
         const canonical = supplier?.canonical || utility?.canonical || null;
         const score = (supplier?.score ?? utility?.score) || null;
@@ -1156,9 +1616,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ...r,
         id: i,
         __zipNorm__: zip,
+        __iso__: lookupIsoForZip(zip),
+        __zipEstimated__: zipEstimated,
+        __zipEstimateCount__: zipEstimate?.candidateCount || 0,
+        __zipEstimateSource__: zipEstimate?.source || null,
         __supplierSuggestions__: supplierSuggestions,
-        __electric__: match?.electric || electricUtilityTokens[0]?.canonical || null,
-        __gas__: match?.gas || gasUtilityTokens[0]?.canonical || null,
+        __electric__: (lookupAllowed ? match?.electric : null) || electricUtilityTokens[0]?.canonical || null,
+        __gas__: (lookupAllowed ? match?.gas : null) || gasUtilityTokens[0]?.canonical || null,
         __electricVendorRaw__: rawElectric || null,
         __electricVendorMatchScore__: electricUtilityVendorScore,
         __electricVendorMatchKind__: electricUtilityTokens.length ? 'utility' : null,
@@ -1169,13 +1633,33 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         __gasSupplierTokens__: gasSupplierDisplayTokens,
         __electricUtilityTokens__: electricUtilityTokens,
         __gasUtilityTokens__: gasUtilityTokens,
-        __water__: match?.water,
+        __water__: lookupAllowed ? match?.water : undefined,
         __address__: addressOverride ? String(r[addressOverride] || '').trim() || null : null,
-        __city__: (cityOverride ? String(r[cityOverride] || '').trim() : '') || match?.city,
+        __city__: cityColInput || match?.city,
         __country__: inputCountry || match?.country,
-        __state__: (stateColumnOverride ? String(r[stateColumnOverride] || '').trim() : '') || state,
+        // Canonical US code when resolved (drives rates + deregulation
+        // lookups); else the raw mapped value so non-US provinces still
+        // display.
+        __state__: state || stateColInput || null,
+        // Display value for the export's State / Province columns. US and
+        // Canadian sites keep the 2-letter code (TX, ON); every other
+        // country shows the full subdivision name exactly as uploaded —
+        // a derived US code from a zip-prefix / name collision (e.g. a
+        // German postal code resolving to "NY") must never override it.
+        __stateProvinceDisplay__: (() => {
+          const resolvedCountry = inputCountry || match?.country || '';
+          const isUS = /^(united states|usa|us)$/i.test(resolvedCountry);
+          const isCA = /^(canada|ca)$/i.test(resolvedCountry);
+          const countryLabel = normalizeCountryName(resolvedCountry) || resolvedCountry;
+          return (isUS || isCA)
+            ? (state || stateColInput || countryLabel || '')
+            : (stateColInput || countryLabel || '');
+        })(),
+        __companyName__: (inputCompanyName || portfolioCompanyName) || null,
         __propertyTypeRaw__: inputPropertyType || null,
         __propertyType__: canonicalPropertyType,
+        __segment__: segment,
+        __segmentSource__: segmentSource,
         __siteDescription__: inputSiteDescription || null,
         __propertySizeFt2__: inputPropertySize,
         __kwhFromEstimate__: elecValueFromEstimate,
@@ -1211,7 +1695,26 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         __matched__: !!match || electricUtilityTokens.length > 0 || gasUtilityTokens.length > 0,
       };
     });
-  }, [cleanSitesData, zipColumn, utility, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, siteDescriptionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
+  }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, companyNameOverride, portfolioCompanyName, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, segmentOverride, siteDescriptionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
+
+  // Sites fed to the Building Compliance Screening subtab. Built from the
+  // processed rows so each site carries the derived square footage, property
+  // type, and electric/gas utility — the screening uses square footage vs each
+  // ordinance's threshold for eligibility, and the utilities for the
+  // whole-building-data-collection (utility feed) breakdown.
+  const complianceSites = useMemo(() => {
+    return rows.map((r, i) => ({
+      id: r.id ?? i,
+      company: r.__companyName__ || '',
+      siteName: siteNameColumn ? String(r[siteNameColumn] ?? '').trim() : (r.__siteName__ || ''),
+      city: String(r.__city__ || (cityOverride ? r[cityOverride] : '') || '').trim(),
+      state: String(r.__state__ || (stateColumnOverride ? r[stateColumnOverride] : '') || '').trim(),
+      sqft: (typeof r.__propertySizeFt2__ === 'number' && Number.isFinite(r.__propertySizeFt2__)) ? r.__propertySizeFt2__ : null,
+      propertyType: r.__propertyType__ || r.__propertyTypeRaw__ || '',
+      electricUtility: r.__electric__ || '',
+      gasUtility: r.__gas__ || '',
+    }));
+  }, [rows, siteNameColumn, cityOverride, stateColumnOverride]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
@@ -1222,6 +1725,41 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       )
     );
   }, [search, rows]);
+
+  // Data-quality flag for the header — counts uploaded sites missing
+  // any of the three inputs that the rest of the page relies on:
+  // zip code (drives utility / supplier matching), electric kWh
+  // (actual-from-file or property-type estimate), and gas therms.
+  const missingStats = useMemo(() => {
+    if (!rows.length) return { total: 0, anyMissing: 0, noZip: 0, noElectric: 0, noGas: 0, estimatedZip: 0, samples: [] };
+    let anyMissing = 0;
+    let noZip = 0;
+    let noElectric = 0;
+    let noGas = 0;
+    let estimatedZip = 0;
+    const samples = [];
+    for (const r of rows) {
+      if (r.__zipEstimated__) estimatedZip += 1;
+      const missingZip = !r.__zipNorm__;
+      const missingElectric = r.__kwh__ == null;
+      const missingGas = r.__therms__ == null;
+      if (!(missingZip || missingElectric || missingGas)) continue;
+      anyMissing += 1;
+      if (missingZip) noZip += 1;
+      if (missingElectric) noElectric += 1;
+      if (missingGas) noGas += 1;
+      if (samples.length < 25) {
+        const name = String(r[Object.keys(r).find(k => !k.startsWith('__')) || ''] || '').trim() || '(no name)';
+        const flags = [
+          missingZip ? 'no zip' : null,
+          missingElectric ? 'no electric' : null,
+          missingGas ? 'no gas' : null,
+        ].filter(Boolean).join(' · ');
+        samples.push(`${name} — ${flags}`);
+      }
+    }
+    return { total: rows.length, anyMissing, noZip, noElectric, noGas, estimatedZip, samples };
+  }, [rows]);
 
   const columns = useMemo(() => {
     if (!sitesData.length) return [];
@@ -1250,7 +1788,33 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ...(i === 0 ? { sticky: true } : {}),
         render: (row) => {
           const v = row[k];
-          if (k === zipColumn && row.__zipNorm__) return row.__zipNorm__;
+          if (k === zipColumn && row.__zipNorm__) {
+            if (row.__zipEstimated__) {
+              const n = row.__zipEstimateCount__;
+              const where = `${row.__city__ || 'this city'}${row.__state__ ? `, ${row.__state__}` : ''}`;
+              const title = row.__zipEstimateSource__ === 'fallback'
+                ? `Estimated zip — this site had no zip, so it uses ${row.__zipNorm__} from the uploaded fallback zip list for ${where}.`
+                : `Estimated zip — this site had no zip, so it borrows ${row.__zipNorm__} from ${n} known location${n === 1 ? '' : 's'} in ${where} in the utility lookup.`;
+              return (
+                <span
+                  title={title}
+                  style={{ color: '#94A3B8', fontStyle: 'italic' }}
+                >{row.__zipNorm__} (est)</span>
+              );
+            }
+            return row.__zipNorm__;
+          }
+          if (k === zipColumn) {
+            // No uploaded zip, and the site's city + state didn't resolve
+            // to a known zip in the utility lookup, so there was nothing
+            // to estimate from.
+            return (
+              <span
+                title="This site has no zip code, and its city + state didn't match any zip in the utility lookup — so none could be estimated."
+                style={{ color: 'var(--color-text-muted)', fontStyle: 'italic' }}
+              >no estimate available</span>
+            );
+          }
           if (v == null || v === '') return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
           return isDate ? fmtShortDate(v) : String(v);
         },
@@ -1262,6 +1826,64 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         },
       };
     });
+    // Company Name — the company / portfolio each site belongs to, from
+    // the optional mapped Company Name column. Purely descriptive; also
+    // drives the Indicative Savings export's file name.
+    const companyNameCol = {
+      key: 'companyName',
+      label: 'Company Name',
+      defaultWidth: 200,
+      render: (row) => {
+        const v = row.__companyName__;
+        if (!v) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
+        return (
+          <span
+            title={v}
+            style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-primary)', display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          >{v}</span>
+        );
+      },
+      exportValue: (row) => row.__companyName__ || '',
+    };
+    // ISO / RTO — the site's wholesale electricity market, resolved from its
+    // zip via EPA eGRID subregions (see utils/isoLookup). A small chip flags
+    // when the zip straddles two markets (seam) or the subregion is ambiguous
+    // (verify). "None …" markets show muted; unresolved zips show a dash.
+    const isoCol = {
+      key: 'iso',
+      label: 'ISO / RTO',
+      defaultWidth: 150,
+      render: (row) => {
+        const info = row.__iso__ || { iso: null, iso_confidence: 'unknown' };
+        if (!info.iso) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
+        const isNone = info.iso.startsWith('None');
+        const conf = info.iso_confidence;
+        const chip = conf === 'seam'
+          ? { bg: '#FEF3C7', border: '#FCD34D', text: '#92400E', label: 'seam' }
+          : conf === 'verify'
+            ? { bg: '#EDE9FE', border: '#C4B5FD', text: '#5B21B6', label: 'verify' }
+            : null;
+        const tip = [
+          isNone ? info.iso : `ISO / RTO: ${info.iso}`,
+          info.egrid_subregion ? `eGRID ${info.egrid_subregion}` : null,
+          conf === 'seam' ? 'ZIP straddles two markets — primary market shown' : null,
+          conf === 'verify' ? 'Subregion is ambiguous — verify' : null,
+        ].filter(Boolean).join(' · ');
+        return (
+          <span title={tip} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%' }}>
+            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: isNone ? 'var(--color-text-muted)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {isNone ? 'None' : info.iso}
+            </span>
+            {chip && (
+              <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '0 5px', borderRadius: 999, background: chip.bg, border: `1px solid ${chip.border}`, color: chip.text }}>
+                {chip.label}
+              </span>
+            )}
+          </span>
+        );
+      },
+      exportValue: (row) => row.__iso__?.iso || '',
+    };
     const makeUtilityCol = (key, label, color) => ({
       key,
       label,
@@ -1356,6 +1978,37 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       },
       exportValue: (row) => row.__propertyType__ || row.__propertyTypeRaw__ || '',
     };
+    // Customer segment (Commercial / Industrial) — drives which state
+    // rate column the cost estimate uses. Derived from property type
+    // unless the upload mapped an explicit Segment column. A coloured
+    // badge mirrors the electric/gas palette: amber-ish for industrial,
+    // slate for commercial.
+    const segmentCol = {
+      key: 'segment',
+      label: 'Segment',
+      defaultWidth: 110,
+      render: (row) => {
+        const seg = row.__segment__;
+        if (!seg) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
+        const isIndustrial = seg === 'industrial';
+        const src = row.__segmentSource__;
+        const srcLabel = src === 'column'
+          ? 'from the mapped Segment column'
+          : src === 'propertyType'
+            ? 'inferred from property type'
+            : 'defaulted (no property type or segment column)';
+        const palette = isIndustrial
+          ? { bg: '#FEF3C7', border: '#FCD34D', text: '#92400E' }
+          : { bg: '#F1F5F9', border: '#CBD5E1', text: '#475569' };
+        return (
+          <span
+            title={`${isIndustrial ? 'Industrial' : 'Commercial'} — ${srcLabel}. Uses the state ${isIndustrial ? 'industrial' : 'commercial'} indicative rate.`}
+            style={{ display: 'inline-block', fontSize: '0.68rem', fontWeight: 600, padding: '0.1rem 0.4rem', borderRadius: 4, background: palette.bg, border: `1px solid ${palette.border}`, color: palette.text }}
+          >{isIndustrial ? 'Industrial' : 'Commercial'}</span>
+        );
+      },
+      exportValue: (row) => row.__segment__ === 'industrial' ? 'Industrial' : (row.__segment__ ? 'Commercial' : ''),
+    };
     // Free-text site annotation that lives next to Property Type. No
     // canonicalization or estimates — purely a passthrough column for
     // the user's notes / descriptions of each site.
@@ -1396,9 +2049,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       label,
       defaultWidth: 120,
       render: (row) => {
-        if (!utility?.zipMap || !row.__matched__) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
         const providerName = row[`__${utilityKey}__`];
-        const classification = classifyUtility(providerName);
+        const providerClass = (utility?.zipMap && row.__matched__) ? classifyUtility(providerName) : null;
+        // Fall back to the state deregulation map when there's no
+        // recognized provider (e.g. no utility file loaded, US site
+        // resolved only by State column).
+        const fromState = !providerClass;
+        const classification = providerClass || classifyMarketByState(row.__state__, utilityKey);
         if (!classification) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
         const isRegulated = classification === 'Regulated';
         // Deregulated = green (opportunity), Regulated = orange.
@@ -1408,14 +2065,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const ruleHint = isRegulated
           ? 'Municipal, public power, or cooperative — single-utility market.'
           : 'Competitive retail market — customers can choose a supplier.';
+        const basis = fromState
+          ? `Based on ${row.__state__ || 'state'} (no utility provider matched).`
+          : `Provider: ${providerName}`;
         return (
           <span
-            title={`${label}: ${classification}. ${ruleHint} Provider: ${providerName}`}
+            title={`${label}: ${classification}. ${ruleHint} ${basis}`}
             style={{ background: color.bg, border: `1px solid ${color.border}`, color: color.text, padding: '1px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 700, whiteSpace: 'nowrap' }}
-          >{classification}</span>
+          >{classification}{fromState ? '*' : ''}</span>
         );
       },
-      exportValue: (row) => classifyUtility(row[`__${utilityKey}__`]) || '',
+      exportValue: (row) => classifyMarket(row, utilityKey) || '',
     });
     const makeGacOpportunityCol = () => ({
       key: 'gac_opportunity',
@@ -1457,9 +2117,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const val = row[`__${commodity}Rate__`];
         if (val == null) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
         const source = row[`__${commodity}RateSource__`];
+        const segLabel = row.__segment__ === 'industrial' ? 'industrial' : 'commercial';
         const tip = source === 'country'
           ? `${row.__rateCountry__ || 'country'} indicative commercial rate. Drops in when no state rate resolves and no actual cost was provided. Indicative only — not a tariff rate.`
-          : `${row.__state__ || 'unknown state'} commercial average. Indicative only — not a tariff rate.`;
+          : `${row.__state__ || 'unknown state'} ${segLabel} average. Indicative only — not a tariff rate.`;
         return (
           <span
             title={tip}
@@ -1687,7 +2348,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     });
     return [
       ...base,
+      companyNameCol,
       makeStateCol(),
+      isoCol,
       makeUtilityCol('electric', 'Electric Utility', { bg: '#FEF3C7', border: '#FCD34D', text: '#92400E' }),
       makeSupplierCol('electric', 'Electric Supplier'),
       makeMarketCol('electric', 'Electric Market'),
@@ -1710,6 +2373,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       makeLocationCol('city', 'Lookup City'),
       makeLocationCol('country', 'Lookup Country'),
       propertyTypeCol,
+      segmentCol,
       siteDescriptionCol,
       propertySizeCol,
       // Property-type-based estimates — always show the reference
@@ -1793,6 +2457,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     return [
       columns[0].key,
       'propertyType',
+      'segment',
       'siteDescription',
       'propertySize',
       'electric', 'electric_market', 'electric_rate', 'electricCost',
@@ -1822,6 +2487,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     let elecEstCost = 0, elecEstCostSites = 0;
     let gasActualCost = 0, gasActualCostSites = 0;
     let gasEstCost = 0, gasEstCostSites = 0;
+    // "Missing" = the site landed in neither the actual nor the
+    // estimated bucket, i.e. we have no consumption / cost figure for
+    // it at all. Tracked per commodity so the summary card can flag
+    // the data gap in red.
+    let elecMissingKwhSites = 0, gasMissingThermsSites = 0;
+    let elecMissingCostSites = 0, gasMissingCostSites = 0;
     let elecFromSupplier = 0, elecFromZip = 0, elecUnknown = 0;
     let gasFromSupplier = 0, gasFromZip = 0, gasUnknown = 0;
     for (const r of rows) {
@@ -1835,21 +2506,29 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         elecActualKwh += r.__kwh__; elecActualKwhSites++;
       } else if (r.__kwhFromEstimate__ && typeof r.__kwh__ === 'number' && Number.isFinite(r.__kwh__)) {
         elecEstKwh += r.__kwh__; elecEstKwhSites++;
+      } else {
+        elecMissingKwhSites++;
       }
       if (r.__thermsSource__ && typeof r.__therms__ === 'number' && Number.isFinite(r.__therms__)) {
         gasActualTherms += r.__therms__; gasActualThermsSites++;
       } else if (r.__thermsFromEstimate__ && typeof r.__therms__ === 'number' && Number.isFinite(r.__therms__)) {
         gasEstTherms += r.__therms__; gasEstThermsSites++;
+      } else {
+        gasMissingThermsSites++;
       }
       if (typeof r.__electricCostActual__ === 'number' && Number.isFinite(r.__electricCostActual__)) {
         elecActualCost += r.__electricCostActual__; elecActualCostSites++;
       } else if (typeof r.__electricCostEstimated__ === 'number' && Number.isFinite(r.__electricCostEstimated__)) {
         elecEstCost += r.__electricCostEstimated__; elecEstCostSites++;
+      } else {
+        elecMissingCostSites++;
       }
       if (typeof r.__gasCostActual__ === 'number' && Number.isFinite(r.__gasCostActual__)) {
         gasActualCost += r.__gasCostActual__; gasActualCostSites++;
       } else if (typeof r.__gasCostEstimated__ === 'number' && Number.isFinite(r.__gasCostEstimated__)) {
         gasEstCost += r.__gasCostEstimated__; gasEstCostSites++;
+      } else {
+        gasMissingCostSites++;
       }
       // Utility company provenance — vendor-match wins (the source
       // file named a supplier that resolved to a utility); else zip-
@@ -1864,12 +2543,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     return {
       total: rows.length,
       consumption: {
-        electric: { actual: elecActualKwh, actualSites: elecActualKwhSites, est: elecEstKwh, estSites: elecEstKwhSites },
-        gas:      { actual: gasActualTherms, actualSites: gasActualThermsSites, est: gasEstTherms, estSites: gasEstThermsSites },
+        electric: { actual: elecActualKwh, actualSites: elecActualKwhSites, est: elecEstKwh, estSites: elecEstKwhSites, missingSites: elecMissingKwhSites },
+        gas:      { actual: gasActualTherms, actualSites: gasActualThermsSites, est: gasEstTherms, estSites: gasEstThermsSites, missingSites: gasMissingThermsSites },
       },
       cost: {
-        electric: { actual: elecActualCost, actualSites: elecActualCostSites, est: elecEstCost, estSites: elecEstCostSites },
-        gas:      { actual: gasActualCost, actualSites: gasActualCostSites, est: gasEstCost, estSites: gasEstCostSites },
+        electric: { actual: elecActualCost, actualSites: elecActualCostSites, est: elecEstCost, estSites: elecEstCostSites, missingSites: elecMissingCostSites },
+        gas:      { actual: gasActualCost, actualSites: gasActualCostSites, est: gasEstCost, estSites: gasEstCostSites, missingSites: gasMissingCostSites },
       },
       utility: {
         electric: { fromSupplier: elecFromSupplier, fromZip: elecFromZip, unknown: elecUnknown },
@@ -1914,7 +2593,34 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     };
   }, [rows, utility]);
 
+  // Lightweight projection of each site's matched electric/gas utility,
+  // handed to the nested Utility Mapping view so it can roll the
+  // portfolio up by utility without re-running the whole rows pipeline.
+  const siteUtilities = useMemo(() => rows.map(r => ({
+    siteName: siteNameColumn ? String(r[siteNameColumn] || '').trim() : '',
+    state: r.__state__ || '',
+    electricUtility: r.__electric__ || '',
+    gasUtility: r.__gas__ || '',
+  })), [rows, siteNameColumn]);
+
   const utilMeta = utility?.meta || null;
+  const zipFbMeta = zipFallback?.meta || null;
+
+  // Virginia's retail-choice program is gated on individual-site load:
+  // only sites consuming more than 45,000 MWh/yr (5 MW × 8,760 hr) can
+  // leave the regulated tariff. We don't want VA showing up as a
+  // deregulated market just because the portfolio has small VA sites —
+  // it would advertise a savings motion that's not actually available.
+  // So VA is conditionally included in the deregulation map: it lands
+  // in the table only when at least one VA site in the uploaded data
+  // clears the 45,000 MWh/yr threshold. The site-level Flags column on
+  // the export still surfaces the gating alert.
+  const VA_HEAVY_LOAD_KWH = 45_000 * 1_000;
+  const vaHasQualifyingSite = rows.some((r) => {
+    if (r.__state__ !== 'VA') return false;
+    const kwh = r.__kwh__;
+    return typeof kwh === 'number' && Number.isFinite(kwh) && kwh > VA_HEAVY_LOAD_KWH;
+  });
 
   // Per-commodity savings % used for the overview. Applied to
   // deregulated spend only — the user can adjust the numbers later if
@@ -1942,16 +2648,23 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     RI: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
     TX: { status: 'yes',     range: '1 - 2%',  lowPct: 0.01, highPct: 0.02 },
     // Limited-deregulation markets — the underlying retail-choice
-    // programs are narrow enough (Direct Access only in CA, heavy-load
-    // gating in VA, opt-in pilots in MI / WA) that the standard 2-4 %
-    // commodity savings doesn't apply. Surfaced as 0 - 0 % so the
-    // Indicative Savings tab still lists them (Status stays "Limited"
-    // so they aren't filtered out as regulated) but every savings
-    // column resolves to $0.
+    // programs are narrow enough (Direct Access only in CA, opt-in
+    // pilots in MI, prior-3rd-party gating in AZ) that the standard
+    // 2-4 % commodity savings doesn't apply. Surfaced as 0 - 0 % so
+    // the Indicative Savings tab still lists them (Status stays
+    // "Limited" so they aren't filtered out as regulated) but every
+    // savings column resolves to $0. WA is intentionally absent —
+    // its retail-choice pilot was small enough that the seller no
+    // longer wants WA sites surfaced as deregulated at all, so it
+    // falls through to the regulated bucket. VA is handled separately
+    // below — it's only included when at least one site clears the
+    // 45,000 MWh/yr large-load threshold.
+    AZ: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
     CA: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
     MI: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    VA: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    WA: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    ...(vaHasQualifyingSite
+      ? { VA: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 } }
+      : {}),
   };
   // Flat savings range applied to any deregulated natural-gas site.
   const GAS_SAVINGS = { range: '2 - 4%', lowPct: 0.02, highPct: 0.04 };
@@ -2021,6 +2734,51 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     WV: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
     WY: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
   };
+
+  // Market structure from the state alone, used as a fallback when no
+  // utility provider is available to classify. A US/CA state that
+  // appears in the deregulation map for the commodity is Deregulated;
+  // a recognized US state that isn't is Regulated; anything else
+  // (non-US/CA, or an unrecognized code) is left Unknown. Declared as a
+  // hoisted function so both the Market column closure and the
+  // marketSummary memo below can share it. References the dereg maps
+  // above — only ever called after they're initialized.
+  function classifyMarketByState(rawState, commodity) {
+    const code = String(rawState || '').trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(code)) return null;
+    const map = commodity === 'electric' ? ELECTRIC_DEREGULATION : GAS_DEREGULATION;
+    if (map[code]) return 'Deregulated';
+    if (stateRate(code, commodity) != null) return 'Regulated';
+    return null;
+  }
+  // Single market classifier shared by the column and the summary card:
+  // a recognized utility provider wins; otherwise fall back to the
+  // site's state. Returns 'Deregulated' | 'Regulated' | null.
+  function classifyMarket(row, commodity) {
+    const providerName = commodity === 'electric' ? row.__electric__ : row.__gas__;
+    const providerClass = (utility?.zipMap && row.__matched__) ? classifyUtility(providerName) : null;
+    return providerClass || classifyMarketByState(row.__state__, commodity);
+  }
+
+  // Regulated / deregulated split for the on-page summary card. Lives
+  // in its own memo (after the dereg maps) so it can use the state
+  // fallback above. Three buckets per commodity always sum to total.
+  const marketSummary = useMemo(() => {
+    if (!rows.length) return null;
+    const bucket = () => ({ deregulated: 0, regulated: 0, unknown: 0 });
+    const electric = bucket(), gas = bucket();
+    const tally = (acc, cls) => {
+      if (cls === 'Deregulated') acc.deregulated++;
+      else if (cls === 'Regulated') acc.regulated++;
+      else acc.unknown++;
+    };
+    for (const r of rows) {
+      tally(electric, classifyMarket(r, 'electric'));
+      tally(gas, classifyMarket(r, 'gas'));
+    }
+    return { total: rows.length, electric, gas };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, utility]);
 
   // Detect a company column on the uploaded sites sheet so we can
   // group the overview by (company, state). Falls back to the sticky
@@ -2244,7 +3002,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       if (hasAny(r.__electricSupplier__, r.__electricContractName__, r.__electricProductType__, r.__electricStart__, r.__electricEnd__, r.__electricContractPrice__)) {
         out.push({
           'Site': name,
-          'State': r.__state__ || '',
+          'State': r.__stateProvinceDisplay__ || '',
           'Country': r.__country__ || '',
           'Commodity': 'Electric',
           'Utility': r.__electric__ || '',
@@ -2263,7 +3021,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       if (hasAny(r.__gasSupplier__, r.__gasContractName__, r.__gasProductType__, r.__gasStart__, r.__gasEnd__, r.__gasContractPrice__)) {
         out.push({
           'Site': name,
-          'State': r.__state__ || '',
+          'State': r.__stateProvinceDisplay__ || '',
           'Country': r.__country__ || '',
           'Commodity': 'Gas',
           'Utility': r.__gas__ || '',
@@ -2418,6 +3176,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
     const COMMON_FIELDS = [
       { label: 'Site Name', required: true, hint: 'Row label. Required so the row isn\'t filtered as blank. Enter on the Electric Power tab — the Gas tab pulls Site Name from there via formula.' },
+      { label: 'Company Name', greenHeader: true, hint: 'Company / portfolio the site belongs to. Optional reference field — shown as a column on the Utility Lookup page and used to name the Indicative Savings export file. Enter on the Electric Power tab — the Gas tab pulls from there via formula.' },
       { label: 'Address', greenHeader: true, hint: 'Street address of the site. Optional reference field. Enter on the Electric Power tab — the Gas tab pulls from there via formula.' },
       { label: 'City', greenHeader: true, hint: 'City / town of the site. Optional reference field. Enter on the Electric Power tab — the Gas tab pulls from there via formula.' },
       { label: 'State / Province', greenHeader: true, hint: 'State or province. Optional reference field — auto-derived from Zip for US / Canada when blank. Enter on the Electric Power tab — the Gas tab pulls from there via formula.' },
@@ -2619,6 +3378,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       row.height = 26;
     });
 
+    sanitizeExcelWorkbook(wb);
     const buf = await wb.xlsx.writeBuffer();
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
@@ -2653,19 +3413,25 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
   async function saveIndicativeSavingsToCompany(prospect) {
     if (!prospect?.id) return;
+    // Picking a company to save to also names the whole portfolio, so the
+    // company flows onto every Utility Lookup subtab (incl. Corporate
+    // Compliance) — not just the saved export file.
+    setPortfolioCompanyName(prospect.company);
     setSaveStatus({ state: 'saving', message: `Saving to ${prospect.company || 'company'}…` });
     try {
-      const result = await exportIndicativeSavings({ returnBuffer: true });
+      const result = await exportIndicativeSavings({ returnBuffer: true, companyName: prospect.company });
       if (!result) {
         setSaveStatus({ state: 'error', message: 'Nothing to save — load sites first.' });
         return;
       }
       const { buffer, fileName } = result;
       const dataBase64 = arrayBufferToBase64(buffer);
-      // Firestore single-document limit is 1 MiB; warn the user well
-      // below that since the wrapper metadata adds a few KB on top.
-      if (dataBase64.length > 950_000) {
-        setSaveStatus({ state: 'error', message: 'Analysis is too large for a single Firestore doc (> ~700 KB raw). Trim sites and retry.' });
+      // The analysis is chunked across multiple Firestore docs on save, so
+      // it's no longer bound by the ~1 MiB single-document cap. Keep a
+      // generous sanity ceiling so a pathologically large workbook can't
+      // spray dozens of chunk docs (and slow the company popup's read).
+      if (dataBase64.length > 15_000_000) {
+        setSaveStatus({ state: 'error', message: 'Analysis is too large to save (over ~11 MB). Trim sites and retry.' });
         return;
       }
       // Wipe any prior saved analysis on this prospect before writing
@@ -2687,8 +3453,43 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     }
   }
 
-  async function exportIndicativeSavings({ returnBuffer = false } = {}) {
-    if (!rows.length) return null;
+  // Pick a single company name to label the export with. Prefers an
+  // explicit override (e.g. the company a "Save to Company" save is
+  // bound to), otherwise the most common value in the mapped Company
+  // Name column. Returns '' when nothing is available.
+  function deriveExportCompanyName(override) {
+    const explicit = String(override || '').trim();
+    if (explicit) return explicit;
+    const counts = new Map();
+    for (const r of rows) {
+      const name = String(r.__companyName__ || '').trim();
+      if (!name) continue;
+      counts.set(name, (counts.get(name) || 0) + 1);
+    }
+    let best = '';
+    let bestCount = 0;
+    for (const [name, count] of counts) {
+      if (count > bestCount) { best = name; bestCount = count; }
+    }
+    return best;
+  }
+
+  // Strip characters that browsers / OSes reject in download file names
+  // and collapse the leftover whitespace.
+  function sanitizeFileNamePart(s) {
+    return String(s).replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
+  async function exportIndicativeSavings({ returnBuffer = false, companyName = null, targetWb = null } = {}) {
+    // The button is gated on sitesData.length, but the export reads
+    // from `rows` — which strips entries without a Site Name when a
+    // mapping is set. If every uploaded row is blank at the site-
+    // name column, the export silently returned null and the click
+    // looked like it did nothing. Throw so the caller's catch shows
+    // the user what to fix.
+    if (!rows.length) {
+      throw new Error('No sites available to export — re-check the uploaded file or the Site Name column mapping.');
+    }
     const { Workbook } = await import('exceljs');
     const SE_GREEN_DARK = 'FF009530';
     const SE_GREEN_LIGHT = 'FFE6F7EC';
@@ -2696,6 +3497,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     const SE_BORDER = 'FFD4DDE1';
     const SE_GREEN = 'FF3DCD58';
     const SE_SLATE = 'FF475569';
+    // Amber used to flag estimated / indicative values on the Site Detail
+    // sheet (modeled consumption, rate-derived cost, indicative rates).
+    const SE_EST = 'FFB45309';
 
     // Mexico-specific helpers. Baja California / Baja California Sur
     // run on a grid separate from CFE's national system, so they
@@ -2721,6 +3525,20 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       if (isCFE(utility)) return '★ Potential Mexico sourcing opportunity (CFE, > 6,000,000 kWh/yr)';
       return '';
     };
+    // ST / Prov only applies to US and Canada sites. International
+    // uploads sometimes carry a US-state-like code in the state column
+    // (e.g. a France site tagged "GA"); that value is meaningless
+    // abroad, so we ignore it and let those sites bucket / label by
+    // country instead. Returns the cleaned state code for US/CA sites,
+    // '' otherwise.
+    const effectiveStateCode = (r) => {
+      const rawCountry = String(r.__country__ || '').trim();
+      const isUS = /^(united states|usa|us)$/i.test(rawCountry);
+      const isCA = /^(canada|ca)$/i.test(rawCountry);
+      if (!isUS && !isCA) return '';
+      return String(r.__state__ || '').trim();
+    };
+
     // Both commodities use a per-state curated savings range — see
     // ELECTRIC_DEREGULATION and GAS_DEREGULATION above for the
     // canonical status / range / lowPct / highPct lookup.
@@ -2876,7 +3694,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // Per-site detail kept for the Monthly Savings Breakdown sheet.
       const siteRows = [];
       for (const r of rows) {
-        const state = r.__state__ || '';
+        const state = effectiveStateCode(r);
         // International (non-US/Canada) sites bucket by country —
         // pulled from the row's resolved country tag and matched against
         // the COUNTRY_DEREGULATION reference. Falls back to skipping the
@@ -2918,10 +3736,24 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             const entry = commodity === 'electric'
               ? ELECTRIC_DEREGULATION[state]
               : GAS_DEREGULATION[state];
-            bandStatus = entry?.status || 'no';
-            bandRange = entry?.range ?? '';
-            bandLowPct = entry?.lowPct ?? null;
-            bandHighPct = entry?.highPct ?? null;
+            if (entry) {
+              bandStatus = entry.status;
+              bandRange = entry.range ?? '';
+              bandLowPct = entry.lowPct ?? null;
+              bandHighPct = entry.highPct ?? null;
+            } else {
+              // State absent from the curated list → regulated market
+              // ('no'). The curated ELECTRIC_DEREGULATION /
+              // GAS_DEREGULATION maps are the source of truth for which
+              // states are deregulated; an unlisted state carries zero
+              // commodity savings and folds into the regulated-markets
+              // summary downstream. The band is left unset so no site here
+              // can accrue indicative savings.
+              bandStatus = 'no';
+              bandRange = '';
+              bandLowPct = null;
+              bandHighPct = null;
+            }
           }
           g = {
             // `state` here is the bucket label that lands in the ST /
@@ -2958,10 +3790,24 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             // Computed in the post-loop map() once we know the state's
             // total electric / gas spend + consumption.
             hasMexicoSourcing: false,
+            // Aggregates that include regulated sites too — needed for
+            // VA / AZ / MI flags that fire on any electric load,
+            // independent of the dereg gate that filters g.consumption.
+            anyConsumption: 0,
+            maxSiteConsumption: 0,
           };
           states.set(bucketKey, g);
         }
         g.totalSites += 1;
+        // Track consumption across every site (including regulated ones)
+        // so flags that fire on "any electric load" or "single-site load
+        // above N" can see sites the dereg gate would otherwise skip.
+        const rawConsumption = r[consumptionKey];
+        if (typeof rawConsumption === 'number' && Number.isFinite(rawConsumption) && rawConsumption > 0) {
+          const normalized = commodity === 'gas' ? rawConsumption / 10 : rawConsumption;
+          g.anyConsumption += normalized;
+          if (normalized > g.maxSiteConsumption) g.maxSiteConsumption = normalized;
+        }
         const provider = r[providerKey];
         // Track the regulated utility for every site (not just the
         // deregulated ones) so the Utility column captures PG&E /
@@ -3008,9 +3854,23 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         // Country buckets defer to the country reference for the dereg
         // classification — the per-utility classifier is keyed off US
         // naming patterns and would mis-classify international utilities.
+        //
+        // US/CA buckets: the curated ELECTRIC_DEREGULATION /
+        // GAS_DEREGULATION maps are the source of truth for whether the
+        // STATE is a deregulated market (g.status !== 'no' means it's in
+        // the curated list as deregulated or limited). Only inside such a
+        // market does the per-utility classifier decide which SITES count
+        // — excluding municipals / coops on a regulated tariff (e.g.
+        // CPS Energy / Austin Energy in TX). A state absent from the map
+        // (g.status === 'no') is a regulated market with zero commodity
+        // savings, so none of its sites count — even though the heuristic
+        // classifier would otherwise default an unrecognized utility name
+        // (e.g. "Duke Energy Florida") to Deregulated and wrongly surface
+        // the regulated state as a deregulated row.
         const isDereg = isCountryBucket
           ? (g.status === 'Deregulated' || g.status === 'Some deregulation')
-          : (classifyUtility(provider) === 'Deregulated' || !!r[supplierKey]);
+          : (g.status !== 'no'
+             && (classifyUtility(provider) === 'Deregulated' || !!r[supplierKey]));
         if (!isDereg) continue;
         g.deregulatedSites += 1;
         const consumption = r[consumptionKey];
@@ -3105,6 +3965,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         // from the COUNTRY_DEREGULATION reference. Pull straight off the
         // bucket so the source-of-truth lookup happens in exactly one
         // place.
+        // Status comes straight off the bucket's curated band. US/CA
+        // states absent from the deregulation map stay 'no' (regulated)
+        // and fold into the regulated-markets summary downstream — the
+        // per-site loop above only accrues deregulated sites/spend inside
+        // states the curated map actually lists as deregulated, so a
+        // regulated state never carries deregulated spend to promote.
         const status = g.status;
         const range = g.range ?? '';
         const { lowPct, highPct } = pctsFor(g);
@@ -3159,6 +4025,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           consumption: Math.round(g.consumption),
           spend: Math.round(g.spend),
           range,
+          // European country buckets resolve to a "TBD" band (no
+          // committed lowPct/highPct) — flagged here so the by-state
+          // writer shows TBD in the Low/High cells and a flat $0/0 % in
+          // the savings columns instead of a formula that errors against
+          // the empty percentage inputs.
+          isTbd: range === 'TBD',
           // Per-state flags joined with newlines so the cell wraps
           // visibly on the by-state sheet. Electric: small market
           // (< $1M dereg spend), Risk Management consideration
@@ -3174,12 +4046,33 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
               // to convert to MWh before comparing to the 10,000 MWh
               // Risk Management threshold.
               const consumptionMWh = g.consumption / 1000;
-              if (consumptionMWh > 10_000) out.push('⚠ Risk Management should be considered (>10,000 MWh)');
+              // Risk Management is a NAM-only offering: US / Canada
+              // state buckets always qualify; country buckets only
+              // when the reference table places the country in North
+              // America (e.g. Mexico). International markets skip it.
+              const isNamMarket = !g.isCountry
+                || COUNTRY_DEREGULATION[g.state]?.region === 'North America';
+              if (isNamMarket && consumptionMWh > 10_000) out.push('⚠ Risk Management should be considered (>10,000 MWh)');
               // Wholesale Plus: > 44,000 MWh/yr of deregulated electric
               // in a single state is large enough to justify exploring
               // the structured wholesale procurement product.
               if (consumptionMWh > 44_000) out.push('★ Wholesale Plus should be explored (>44,000 MWh)');
               if (g.hasMexicoSourcing) out.push('★ Potential Mexico sourcing opportunity');
+              // Virginia heavy-load gating: VA's retail-choice program
+              // only opens up for a single site above 45,000 MWh/yr —
+              // no aggregation across sites, so we compare against the
+              // largest individual site's kWh.
+              if (g.state === 'VA' && g.maxSiteConsumption / 1000 > 45_000) {
+                out.push('★ Virginia site exceeds 45,000 MWh/yr — large-load deregulation threshold met');
+              }
+              // Arizona / Michigan: limited retail-choice markets where
+              // we can only support a customer if they already have a
+              // third-party supply contract in place. Fires on any
+              // electric load — even regulated sites — so the seller
+              // sees the gating up front.
+              if ((g.state === 'AZ' || g.state === 'MI') && g.anyConsumption > 0) {
+                out.push('⚠ Limited market — can only help if 3rd-party supply is already in place');
+              }
             } else if (commodity === 'gas') {
               if (g.spend > 0 && g.spend < 30_000) out.push('⚠ Natural gas consumption might be too low for sourcing (<$30K)');
             }
@@ -3230,9 +4123,27 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     const { stateRows: electricRows, siteRows: electricSiteRows } = buildBucket('electric');
     const { stateRows: gasRows, siteRows: gasSiteRows } = buildBucket('gas');
 
-    const wb = new Workbook();
+    // Combined-export mode builds these sheets into a shared workbook so
+    // the Indicative Savings tabs sit alongside the compliance exports.
+    const wb = targetWb || new Workbook();
     wb.creator = 'Schneider Electric · Prospect Tracker';
     wb.created = new Date();
+    // ---- Executive Summary sheet (tab #1) ---------------------------
+    // Created first so it leads the workbook; it's populated further
+    // down (see "Populate the Executive Summary tab") once the
+    // Indicative Savings headline figures and the building-compliance
+    // screening totals have been computed.
+    const summarySheet = wb.addWorksheet('Summary', {
+      properties: { tabColor: { argb: SE_GREEN } },
+      views: [{ showGridLines: false }],
+    });
+    // Captured inside the Hedging Analysis sheet builder so the chart
+    // injection at the end of the export knows which rows to plot.
+    let hedgingChartRange = null;
+    // Same trick for the Gas Market Timing tab — its chart bounds get
+    // ferried out via closure to the injection block at the end of the
+    // export.
+    let gasTimingChartRange = null;
 
     // ---- Portfolio Overview sheet -----------------------------------
     // World map + per-bucket dot rendering. Each dot is split
@@ -3242,14 +4153,16 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // dot radius scales with site count. Map is rendered to a canvas
     // and embedded as a PNG because ExcelJS doesn't write charts.
     {
-      const ws = wb.addWorksheet('Portfolio Overview', {
+      const ws = wb.addWorksheet('Global', {
         properties: { tabColor: { argb: SE_GREEN_DARK } },
         views: [{ showGridLines: false }],
       });
-      // COLS covers the map image (≈ cols 1-14) plus a few extra
-      // columns to the right that host the legend block.
+      // The legend now lives on the map canvas itself (matching the
+      // NAM View treatment). COLS spans out to column T so the green
+      // title band covers the full width of the two-panel map image,
+      // exactly like the NAM View.
       const MAP_COLS = 14;
-      const LEGEND_COLS = 4;
+      const LEGEND_COLS = 6;
       const COLS = MAP_COLS + LEGEND_COLS;
       // Widen the columns the summary tables use for large numbers
       // — Load (kWh / Dth) and Cost — so a comma-formatted figure
@@ -3261,10 +4174,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ...Array.from({ length: MAP_COLS }, (_, i) => ({
           width: NUMERIC_WIDE_COLS.has(i + 1) ? 17 : 12,
         })),
-        { width: 4 },  // gutter between map and legend
-        { width: 6 },  // saturated swatch
-        { width: 6 },  // (kept for legacy header alignment)
-        { width: 28 }, // tier label
+        // Cols O–T kept narrow so the worksheet's right edge sits next
+        // to the two-panel map image instead of leaving a wide empty
+        // band — the title band merges through column T to span the map.
+        { width: 4 },
+        { width: 6 },
+        { width: 6 },
+        { width: 12 },
+        { width: 12 },
+        { width: 12 },
       ];
 
       // Bucket sites by (country, state-or-province) and look up the
@@ -3424,46 +4342,78 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         return String(a.country).localeCompare(String(b.country));
       });
 
-      // Canvas render — equirectangular projection. The map itself
-      // is now drawn from the bundled world-atlas TopoJSON
-      // (src/data/countries-110m.json) so each country can be filled
-      // independently by its deregulation tier. Lat/lng → pixel uses
-      // the same linear projection the dots use.
-      const W = 1200, H = 600;
+      // Canvas render — two side-by-side equirectangular world maps,
+      // Natural Gas on the left and Electric Power on the right, mirroring
+      // the NAM View. Each country is shaded by its deregulation status
+      // (hue) and portfolio site count (darker = more sites); countries
+      // with no sites stay light grey. No dots or site-count labels — the
+      // choropleth alone carries the distribution.
+      // Same panel dimensions as the NAM View so the two sheets' maps
+      // are identically sized.
+      const MAP_W = 800;
+      const MAP_H = 500;
+      const PAD = 16;
+      const TITLE_H = 36;
+      const LEGEND_H = 70;
+      const W = MAP_W * 2 + PAD * 3;
+      const H = TITLE_H + MAP_H + LEGEND_H + PAD * 2;
       const canvas = document.createElement('canvas');
       canvas.width = W; canvas.height = H;
       const ctx = canvas.getContext('2d');
-      // Ocean background.
-      ctx.fillStyle = '#F1F5F9';
+      ctx.fillStyle = '#FFFFFF';
       ctx.fillRect(0, 0, W, H);
 
-      const project = (lng, lat) => [((lng + 180) / 360) * W, ((90 - lat) / 180) * H];
+      // NAM-style palette + helpers. statusTier returns
+      // dereg/some/reg/unknown for a country; map to the NAM
+      // categories (dereg/limited/reg) so the chips read the same
+      // way across both sheets.
+      const STATUS_FILL = {
+        reg:     '#94A3B8', // slate
+        dereg:   '#10B981', // emerald
+        limited: '#F59E0B', // amber
+      };
+      const STATUS_LABEL = {
+        reg:     'Regulated',
+        dereg:   'Deregulated',
+        limited: 'Limited Deregulation',
+      };
+      const NO_SITES_FILL   = '#E5E7EB';
+      const NO_SITES_STROKE = '#9CA3AF';
+      const tierToStatus = (tier) => {
+        if (tier === 'dereg') return 'dereg';
+        if (tier === 'some')  return 'limited';
+        return 'reg'; // 'reg' or 'unknown' both fall through
+      };
 
-      // Choropleth fills — every country's color comes from its
-      // COUNTRY_DEREGULATION entry so the map matches the Country
-      // level view table below. Portfolio has sites → saturated
-      // tier color; no sites → uniform light gray so the sites-
-      // having countries dominate visually. No more "Mixed" tier;
-      // US and Canada read their country reference directly.
-      const NO_SITES_FILL = '#E2E8F0';
+      // Per-country site count → choropleth density. Sqrt scaling
+      // keeps a single-site country visibly tinted while the densest
+      // market hits the full status hue plus a 20 % darken.
+      const maxCountrySites = Math.max(1, ...Array.from(countryAggs.values()).map(a => a.sites));
+      const argbToRgb = (hex) => {
+        const h = String(hex).replace(/^#/, '').replace(/^FF/i, '');
+        return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+      };
+      const rgbToHex = (rgb) => '#' + rgb.map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+      const shadeForCount = (statusHex, count) => {
+        if (count <= 0) return NO_SITES_FILL;
+        const [r, g, b] = argbToRgb(statusHex);
+        const t = Math.sqrt(count / maxCountrySites);
+        const sat  = 0.45 + 0.55 * t;
+        const dark = 0.20 * t;
+        const blend = (c) => (c * sat + 255 * (1 - sat)) * (1 - dark);
+        return rgbToHex([blend(r), blend(g), blend(b)]);
+      };
+
       const countryFeatures = getCountryFeatures();
-      for (const feat of countryFeatures) {
-        const derGKey = TOPO_NAME_TO_DEREG_KEY[feat.name] || feat.name;
-        const c = COUNTRY_DEREGULATION[derGKey];
-        const tier = c ? statusTier(c.electric) : 'unknown';
-        const hasSites = countryAggs.has(derGKey);
-        ctx.fillStyle = hasSites ? TIER_COLORS[tier] : NO_SITES_FILL;
-        ctx.strokeStyle = '#94A3B8';
-        ctx.lineWidth = 0.5;
-        // Antimeridian-aware sub-ring splitting: countries that
-        // cross the date line (Russia, Fiji, the Aleutians) have
-        // adjacent ring points whose longitudes jump by ~360°.
-        // Drawing those connectors straight in equirectangular space
-        // streaks a long line across the entire map. Splitting the
-        // ring at each big jump and drawing each sub-ring as its
-        // own closed polygon keeps the fill intact without the
-        // wraparound artifact.
-        for (const ring of feat.rings) {
+
+      // Antimeridian-aware feature drawing: countries that cross the date
+      // line (Russia, Fiji, the Aleutians) have adjacent ring points whose
+      // longitudes jump ~360°. Drawing those connectors straight in
+      // equirectangular space streaks a line across the map, so we split
+      // the ring at each big jump and draw each sub-ring as its own
+      // closed polygon.
+      const drawFeature = (project, rings) => {
+        for (const ring of rings) {
           const subRings = [];
           let cur = [];
           let prevLng = null;
@@ -3487,44 +4437,91 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             ctx.stroke();
           }
         }
-      }
+      };
 
-      // Plot dots — radius scales with sqrt(count) so a 100-site
-      // bucket isn't 100× the area of a 1-site bucket.
-      const maxCount = Math.max(1, ...Array.from(buckets.values()).map(b => b.count));
-      const dots = Array.from(buckets.values());
-      // Larger dots first so smaller dots don't get hidden underneath.
-      dots.sort((a, b) => b.count - a.count);
-      for (const b of dots) {
-        const [x, y] = project(b.location[0], b.location[1]);
-        const r = 6 + Math.sqrt(b.count / maxCount) * 18;
-        // Two-tone fill: electric (left half) + gas (right half).
+      // One world-map panel. Every country's color comes from its
+      // COUNTRY_DEREGULATION entry for the chosen commodity (gas / electric)
+      // — portfolio has sites → status hue shaded by density; no sites →
+      // uniform light grey so the sites-having countries dominate visually.
+      // The world is 2:1 (360° × 180°); fit it into the NAM-sized panel
+      // while preserving that aspect so it isn't vertically stretched,
+      // then centre it (the panel is taller than 2:1, so a thin ocean
+      // band sits above and below the map).
+      const worldScale = Math.min(MAP_W / 360, MAP_H / 180);
+      const worldOffX = (MAP_W - 360 * worldScale) / 2;
+      const worldOffY = (MAP_H - 180 * worldScale) / 2;
+      const drawPanel = (originX, commodity, headerLabel) => {
+        const project = (lng, lat) => [
+          originX + worldOffX + (lng + 180) * worldScale,
+          TITLE_H + worldOffY + (90 - lat) * worldScale,
+        ];
+        // Panel header above the map.
+        ctx.fillStyle = '#0F172A';
+        ctx.font = 'bold 18px Nunito Sans, Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText(headerLabel, originX + MAP_W / 2, TITLE_H - 10);
+
+        // Clip every layer to the panel so geometry never bleeds past an
+        // edge onto the adjacent panel or the legend strip below.
         ctx.save();
         ctx.beginPath();
-        ctx.arc(x, y, r, Math.PI / 2, (3 * Math.PI) / 2, false);
-        ctx.closePath();
-        ctx.fillStyle = TIER_COLORS[b.elecTier];
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(x, y, r, -Math.PI / 2, Math.PI / 2, false);
-        ctx.closePath();
-        ctx.fillStyle = TIER_COLORS[b.gasTier];
-        ctx.fill();
-        ctx.restore();
-        // Site-count number — no ring outline so each dot reads as a
-        // clean two-tone fill against the choropleth.
-        ctx.fillStyle = '#FFFFFF';
-        ctx.strokeStyle = '#0F172A';
-        ctx.font = `bold ${Math.max(10, Math.min(16, Math.round(r * 0.9)))}px Nunito Sans, Arial, sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.lineWidth = 3;
-        ctx.strokeText(String(b.count), x, y + 4);
-        ctx.fillText(String(b.count), x, y + 4);
-      }
+        ctx.rect(originX, TITLE_H, MAP_W, MAP_H);
+        ctx.clip();
 
-      // Legend is rendered as Excel cells to the RIGHT of the map
-      // image (further down) so the user gets searchable, copyable,
-      // resizable swatches instead of pixels burned into the PNG.
+        // Ocean tint inside the map area so land (no-sites grey) stays
+        // distinct from sea.
+        ctx.fillStyle = '#F1F5F9';
+        ctx.fillRect(originX, TITLE_H, MAP_W, MAP_H);
+
+        ctx.lineWidth = 0.5;
+        ctx.strokeStyle = NO_SITES_STROKE;
+        for (const feat of countryFeatures) {
+          const derGKey = TOPO_NAME_TO_DEREG_KEY[feat.name] || feat.name;
+          const c = COUNTRY_DEREGULATION[derGKey];
+          const tier = c ? statusTier(commodity === 'gas' ? c.gas : c.electric) : 'unknown';
+          const status = tierToStatus(tier);
+          const sites = countryAggs.get(derGKey)?.sites || 0;
+          ctx.fillStyle = sites > 0 ? shadeForCount(STATUS_FILL[status], sites) : NO_SITES_FILL;
+          drawFeature(project, feat.rings);
+        }
+        ctx.restore();
+      };
+
+      drawPanel(PAD,             'gas',      'Natural Gas Markets');
+      drawPanel(PAD * 2 + MAP_W, 'electric', 'Electric Power Markets');
+
+      // Per-panel legends along the bottom — same chip set on both maps.
+      const SWATCH = 22;
+      const GAP_SWATCH_LABEL = 8;
+      const GAP_ITEMS = 22;
+      ctx.font = '13px Nunito Sans, Arial, sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      const itemW = (label) => SWATCH + GAP_SWATCH_LABEL + ctx.measureText(label).width;
+      const drawPanelLegend = (originX) => {
+        const labels = [
+          { color: STATUS_FILL.dereg,   label: STATUS_LABEL.dereg },
+          { color: STATUS_FILL.limited, label: STATUS_LABEL.limited },
+          { color: STATUS_FILL.reg,     label: STATUS_LABEL.reg },
+          { color: NO_SITES_FILL,       label: 'No portfolio sites' },
+        ];
+        const totalW = labels.reduce((a, it) => a + itemW(it.label), 0) + GAP_ITEMS * (labels.length - 1);
+        let cursorX = originX + (MAP_W - totalW) / 2;
+        const legendY = TITLE_H + MAP_H + PAD * 2;
+        for (const it of labels) {
+          ctx.fillStyle = it.color;
+          ctx.fillRect(cursorX, legendY, SWATCH, SWATCH);
+          ctx.strokeStyle = NO_SITES_STROKE;
+          ctx.lineWidth = 0.8;
+          ctx.strokeRect(cursorX, legendY, SWATCH, SWATCH);
+          ctx.fillStyle = '#0F172A';
+          ctx.fillText(it.label, cursorX + SWATCH + GAP_SWATCH_LABEL, legendY + SWATCH / 2);
+          cursorX += itemW(it.label) + GAP_ITEMS;
+        }
+      };
+      drawPanelLegend(PAD);
+      drawPanelLegend(PAD * 2 + MAP_W);
 
       const dataUrl = canvas.toDataURL('image/png');
       const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
@@ -3532,7 +4529,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // Title band.
       ws.mergeCells(1, 1, 1, COLS);
       const title = ws.getCell(1, 1);
-      title.value = 'Portfolio Overview — Site Distribution by Market';
+      title.value = 'Global View — Site Distribution by Market';
       title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
       title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
       title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -3542,85 +4539,26 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const sub = ws.getCell(2, 1);
       const subtotal = mappedSites;
       const skippedNote = skippedCount > 0 ? ` (${skippedCount} site${skippedCount === 1 ? '' : 's'} skipped — country not in the geographic reference)` : '';
-      sub.value = `${subtotal} site${subtotal === 1 ? '' : 's'} plotted across ${buckets.size} bucket${buckets.size === 1 ? '' : 's'}. Dots are split vertically — left half is the Electric deregulation tier, right half is the Gas tier. Dot size scales with the number of sites in that state / country.${skippedNote}`;
+      sub.value = `${subtotal} site${subtotal === 1 ? '' : 's'} across ${buckets.size} market${buckets.size === 1 ? '' : 's'}. Natural Gas (left) and Electric Power (right) maps each shade every country by its market status (hue) and portfolio site count (darker = more sites); countries with no sites stay light grey.${skippedNote}`;
       sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
       sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
       ws.getRow(2).height = 36;
 
       // Anchor the image starting at row 4. Image dimensions are in
-      // pixels; cell-grid sizing scales it visually.
+      // pixels; cell-grid sizing scales it visually. The legend now
+      // lives on the canvas itself (matching NAM View), so there's no
+      // separate Excel-cell legend block to the right of the image.
       ws.addImage(imageId, {
         tl: { col: 0, row: 3 },
         ext: { width: W, height: H },
       });
 
-      // Legend block — rendered as Excel cells to the right of the
-      // map image. The swatch sits in the swatch column; the tier
-      // label sits in the label column. Single swatch per tier
-      // (countries with sites only); a final gray row marks the
-      // no-sites fill.
-      const legendStart = 4; // 1-indexed row
-      const swatchCol = MAP_COLS + 2;
-      const labelCol = MAP_COLS + 4;
-
-      ws.mergeCells(legendStart, swatchCol, legendStart, labelCol);
-      const legTitle = ws.getCell(legendStart, swatchCol);
-      legTitle.value = 'Legend';
-      legTitle.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
-      legTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-      legTitle.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(legendStart).height = 22;
-
-      ws.mergeCells(legendStart + 1, swatchCol, legendStart + 1, labelCol);
-      const legCap = ws.getCell(legendStart + 1, swatchCol);
-      legCap.value = 'Country fill = deregulation tier. Countries with no portfolio sites are grayed out.';
-      legCap.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: SE_SLATE } };
-      legCap.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
-      ws.getRow(legendStart + 1).height = 36;
-
-      // One row per tier: tier-color swatch + tier label. Plus a
-      // final gray "No sites" row that matches the no-sites fill.
-      const hexToArgb = (hex) => 'FF' + String(hex).replace(/^#/, '').toUpperCase();
-      const swatchBorder = {
-        top:    { style: 'thin', color: { argb: 'FF94A3B8' } },
-        bottom: { style: 'thin', color: { argb: 'FF94A3B8' } },
-        left:   { style: 'thin', color: { argb: 'FF94A3B8' } },
-        right:  { style: 'thin', color: { argb: 'FF94A3B8' } },
-      };
-      const legendEntries = [
-        ['dereg',  TIER_COLORS.dereg, TIER_LABELS.dereg],
-        ['some',   TIER_COLORS.some,  TIER_LABELS.some],
-        ['reg',    TIER_COLORS.reg,   TIER_LABELS.reg],
-        ['nosite', NO_SITES_FILL,     'No sites'],
-      ];
-      legendEntries.forEach(([_t, color, label], i) => {
-        const rowIdx = legendStart + 2 + i;
-        const sw = ws.getCell(rowIdx, swatchCol);
-        sw.value = '';
-        sw.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: hexToArgb(color) } };
-        sw.border = swatchBorder;
-        const lbl = ws.getCell(rowIdx, labelCol);
-        lbl.value = label;
-        lbl.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-        lbl.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-        ws.getRow(rowIdx).height = 18;
-      });
-
-      // Caption explaining the dot encoding sits below the tier list.
-      const dotsCapRow = legendStart + 2 + legendEntries.length + 1;
-      ws.mergeCells(dotsCapRow, swatchCol, dotsCapRow, labelCol);
-      const dotsCap = ws.getCell(dotsCapRow, swatchCol);
-      dotsCap.value = 'Each site dot — left half = Electric tier, right half = Gas tier. Dot size scales with the number of sites in that bucket.';
-      dotsCap.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: SE_SLATE } };
-      dotsCap.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
-      ws.getRow(dotsCapRow).height = 42;
-
       // Overview table sits just below the map image. Anchored at
-      // row 30 so the table starts before the image bleeds into
-      // taller cell heights below it — the Country level view
-      // follows immediately underneath (the country header recalcs
+      // row 39 (same as the NAM View) so it clears the bottom edge of
+      // the now NAM-sized 638-px map image above — the Country level
+      // view follows immediately underneath (the country header recalcs
       // its row offset from this constant).
-      const SUMMARY_START = 30;
+      const SUMMARY_START = 39;
       ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
       const sumHdr = ws.getCell(SUMMARY_START, 1);
       sumHdr.value = 'Overview';
@@ -3755,12 +4693,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // bottom table breaks out per US state / Canadian province
     // rather than rolling up to the country level.
     {
-      const ws = wb.addWorksheet('North America Overview', {
+      const ws = wb.addWorksheet('NAM', {
         properties: { tabColor: { argb: SE_GREEN_DARK } },
         views: [{ showGridLines: false }],
       });
       const MAP_COLS = 14;
-      const LEGEND_COLS = 4;
+      const LEGEND_COLS = 6;
       const COLS = MAP_COLS + LEGEND_COLS;
       const NUMERIC_WIDE_COLS = new Set([5, 6, 7, 8]);
       ws.columns = [
@@ -3770,15 +4708,19 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         { width: 4 },
         { width: 6 },
         { width: 6 },
-        { width: 28 },
+        // Cols R–T kept narrow so the worksheet's right edge sits next
+        // to the two-panel map image instead of leaving a wide empty
+        // band. The top green title band merges through column T so it
+        // visually spans the full width of the map figure.
+        { width: 12 },
+        { width: 12 },
+        { width: 12 },
       ];
 
       // Bucket NA sites by (state | province). Non-NA rows are
       // skipped — they're already covered on the Portfolio Overview
       // sheet, so dropping them here keeps this view focused.
       const buckets = new Map();
-      let skippedCount = 0;
-      let naSiteCount = 0;
       for (const r of rows) {
         const rawCountry = String(r.__country__ || '').trim();
         const country = normalizeCountryName(rawCountry) || rawCountry;
@@ -3786,7 +4728,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const isUS = /^(united states|usa|us)$/i.test(country);
         const isCA = /^(canada|ca)$/i.test(country);
         if (!isUS && !isCA) continue;
-        naSiteCount++;
         let key, location, elecTier, gasTier, label;
         if (isUS && US_STATE_CENTERS[stateCode]) {
           key = `US/${stateCode}`;
@@ -3806,7 +4747,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           // NA row whose state code we don't have a centroid for
           // (rare — usually a malformed state). Counts towards the
           // total but doesn't get a dot.
-          skippedCount++;
           continue;
         }
         if (!buckets.has(key)) {
@@ -3888,32 +4828,126 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         agg.cost += eCost + gCost;
       }
 
-      // Canvas — NA-bounded equirectangular projection so the map
-      // fills the canvas with the US + Canada landmass. Lat range
-      // covers from northern Canada down to the southern US border;
-      // longitude covers Alaska through Newfoundland.
-      const W = 1200, H = 600;
+      // Two-panel choropleth — Natural Gas markets on the left,
+      // Electric Power markets on the right. Both panels derive their
+      // per-state / per-province status straight from the NA_CATEGORIES
+      // table (US_MARKETS + CA_MARKETS) so the map always agrees with the
+      // State / Province deregulation status table and the per-site
+      // Electric / Gas Market columns. Each status string is bucketed
+      // into one of the legend colours below; states / provinces with no
+      // sites fade to a light grey so the highlighted set reads as a
+      // single foreground layer.
+      const statusBucket = (statusText) => {
+        const s = String(statusText || '').toLowerCase();
+        if (!s || s.startsWith('regulated')) return 'reg';
+        if (s.includes('limited opportunity') || s.includes('limited deregulation')) return 'limited';
+        if (s.includes('direct access')) return 'direct_access';
+        if (s.startsWith('deregulated')) return 'dereg';
+        return 'reg';
+      };
+      // Electric Power gets a finer breakdown than the NG panel so the
+      // legend can call out each state's specific retail-choice program
+      // (market-cap lottery, annual election, 5 MW minimum, etc.).
+      const epCategoryKey = (statusText) => {
+        const s = String(statusText || '').toLowerCase();
+        if (!s || s.startsWith('regulated')) return 'reg';
+        if (s.includes('annual lottery')) return 'lottery';   // CA
+        if (s.includes('market cap')) return 'cap';            // MI
+        if (s.includes('annual election')) return 'election';  // OR
+        if (s.includes('5 mw') || s.includes('limited opportunity')) return 'va5mw'; // VA
+        return 'dereg';
+      };
+      const ngStatusByKey = new Map();
+      const epStatusByKey = new Map();
+      for (const m of US_MARKETS) {
+        const cat = NA_CATEGORIES[m.category];
+        ngStatusByKey.set(`US/${m.code}`, statusBucket(cat?.ng));
+        epStatusByKey.set(`US/${m.code}`, epCategoryKey(cat?.ep));
+      }
+      for (const m of CA_MARKETS) {
+        const cat = NA_CATEGORIES[m.category];
+        ngStatusByKey.set(`CA/${m.code}`, statusBucket(cat?.ng));
+        epStatusByKey.set(`CA/${m.code}`, epCategoryKey(cat?.ep));
+      }
+      const hasSites = (key) => buckets.has(key);
+
+      const STATUS_FILL = {
+        reg:           '#1FA0E0', // blue
+        dereg:         '#57B947', // green
+        limited:       '#F59E0B', // amber (NG limited opportunity)
+        direct_access: '#3B82F6', // sky blue
+        // Electric-power program-specific buckets (EP legend).
+        va5mw:         '#F5C400', // gold  — VA 5 MW minimum
+        election:      '#A9DEEC', // light cyan — OR annual election period
+        cap:           '#4C535A', // dark grey — MI market cap
+        lottery:       '#E07D18', // orange — CA market cap + annual lottery
+      };
+      const STATUS_LABEL = {
+        reg:           'Regulated',
+        dereg:         'Deregulated',
+        limited:       'Limited Deregulation',
+        direct_access: 'Direct Access only',
+        va5mw:         'Deregulated – Limited Opportunity – utility account must be 5 MW',
+        election:      'Deregulated with annual election period',
+        cap:           'Deregulated with market cap',
+        lottery:       'Deregulated, eligibility for new third-party supply subject to market cap and annual lottery',
+      };
+      const NO_SITES_FILL   = '#E5E7EB';
+      const NO_SITES_STROKE = '#9CA3AF';
+      const MEXICO_FILL     = '#E5E7EB';
+
+      // Site-count → fill shading. Sqrt scaling keeps a single-site
+      // state visibly tinted while the densest market hits the full
+      // status hue plus a 20 % darken, so density reads as background
+      // without needing a bold outline.
+      const maxSiteCount = Math.max(1, ...Array.from(buckets.values()).map(b => b.count));
+      const argbToRgb = (hex) => {
+        const h = String(hex).replace(/^#/, '').replace(/^FF/i, '');
+        return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+      };
+      const rgbToHex = (rgb) => '#' + rgb.map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+      const shadeForCount = (statusHex, count) => {
+        if (count <= 0) return NO_SITES_FILL;
+        const [r, g, b] = argbToRgb(statusHex);
+        const t = Math.sqrt(count / maxSiteCount);
+        const sat  = 0.45 + 0.55 * t;
+        const dark = 0.20 * t;
+        const blend = (c) => (c * sat + 255 * (1 - sat)) * (1 - dark);
+        return rgbToHex([blend(r), blend(g), blend(b)]);
+      };
+
+      // Composite canvas — two panels side by side, each with its own
+      // legend strip underneath. One image keeps Excel layout simple.
+      const MAP_W = 800;
+      const MAP_H = 500;
+      const PAD = 16;
+      const TITLE_H = 36;
+      // Tall enough for the Electric Power panel's vertical legend, which
+      // lists each program-specific deregulation category on its own row.
+      const LEGEND_H = 240;
+      const W = MAP_W * 2 + PAD * 3;
+      const H = TITLE_H + MAP_H + LEGEND_H + PAD * 2;
       const canvas = document.createElement('canvas');
       canvas.width = W; canvas.height = H;
       const ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#F1F5F9';
+      ctx.fillStyle = '#FFFFFF';
       ctx.fillRect(0, 0, W, H);
 
       const NA_LNG_MIN = -170;
       const NA_LNG_MAX = -52;
       const NA_LAT_MIN = 18;
-      const NA_LAT_MAX = 75;
-      const project = (lng, lat) => [
-        ((lng - NA_LNG_MIN) / (NA_LNG_MAX - NA_LNG_MIN)) * W,
-        ((NA_LAT_MAX - lat) / (NA_LAT_MAX - NA_LAT_MIN)) * H,
+      // 84 °N keeps the Canadian Arctic archipelago (Ellesmere reaches
+      // ~83 °N) on-canvas instead of clipping the top of Canada.
+      const NA_LAT_MAX = 84;
+      const projectInto = (originX, originY) => (lng, lat) => [
+        originX + ((lng - NA_LNG_MIN) / (NA_LNG_MAX - NA_LNG_MIN)) * MAP_W,
+        originY + ((NA_LAT_MAX - lat) / (NA_LAT_MAX - NA_LAT_MIN)) * MAP_H,
       ];
 
-      // Canvas helper — draws a feature's rings with antimeridian-
-      // aware sub-ring splitting (Alaska's Aleutian chain crosses
-      // -180°, otherwise the polygon streaks a connector all the way
-      // across the canvas). Shared by both the Mexico landmass pass
-      // and the per-state / per-province admin-1 pass below.
-      const drawFeature = (rings) => {
+      // Splits rings that cross the antimeridian (Alaska's Aleutians)
+      // into sub-rings so we don't draw a connector line across the
+      // whole panel.
+      const drawFeature = (project, rings) => {
         for (const ring of rings) {
           const subRings = [];
           let cur = [];
@@ -3940,171 +4974,154 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         }
       };
 
-      // Pass 1 — Mexico landmass at the southern edge. Drawn first
-      // (under the admin-1 polygons) and tinted with the no-sites
-      // gray so the map has a soft southern boundary instead of a
-      // hard cutoff at the US border. Pulled from the country
-      // TopoJSON; the admin-1 layer doesn't carry Mexican states.
-      const NO_SITES_FILL = '#E2E8F0';
-      ctx.strokeStyle = '#94A3B8';
-      ctx.lineWidth = 0.5;
-      ctx.fillStyle = NO_SITES_FILL;
       const countryFeatures = getCountryFeatures();
-      for (const feat of countryFeatures) {
-        const derGKey = TOPO_NAME_TO_DEREG_KEY[feat.name] || feat.name;
-        if (derGKey !== 'Mexico' && feat.name !== 'Mexico') continue;
-        drawFeature(feat.rings);
-      }
-
-      // Pass 2 — choropleth at the state / province level. Each US
-      // state + DC and each Canadian province is filled with its
-      // NA_CATEGORIES color (matching the Markets Legend in the
-      // sidebar). States / provinces without an explicit category
-      // default to the regulated (NG & EP) bucket so every polygon
-      // carries a fill. The map uses a darker tone for the
-      // regulated bucket than the table cells do — without that,
-      // the northern Canadian territories (mostly REG_NG_EP) blend
-      // into the pale-blue ocean instead of reading as land.
-      const naMarketByPostal = new Map();
-      for (const m of US_MARKETS) naMarketByPostal.set(`US/${m.code}`, m);
-      for (const m of CA_MARKETS) naMarketByPostal.set(`CA/${m.code}`, m);
-      // Map-only color override for the three Canadian territories.
-      // CA_MARKETS classifies them as REG_NG_EP (which is accurate —
-      // no retail-choice gas or electric market), but rendering them
-      // gray makes the top of Canada look unfilled next to the colored
-      // southern provinces. Painting each territory with its southern
-      // neighbor's category color removes the sharp 60 °N break without
-      // touching the data the breakdown table reads from.
-      const CA_TERRITORY_MAP_FILL = {
-        YT: NA_CATEGORIES.CA_LIMITED_NG_DEREG_EP.fill,
-        NT: NA_CATEGORIES.CA_LIMITED_NG_REG_EP.fill,
-        NU: NA_CATEGORIES.DEREG_NG.fill,
-      };
       const naFeatures = getNAAdmin1Features();
-      ctx.lineWidth = 0.6;
-      ctx.strokeStyle = '#94A3B8';
-      const hexToCanvas = (argb) => '#' + String(argb).replace(/^FF/i, '');
-      const MAP_REG_FILL = '#9CA3AF';
-      for (const feat of naFeatures) {
-        const marketKey = `${feat.admin}/${feat.postal}`;
-        const m = naMarketByPostal.get(marketKey);
-        const cat = m ? NA_CATEGORIES[m.category] : null;
-        const territoryOverride = feat.admin === 'CA' ? CA_TERRITORY_MAP_FILL[feat.postal] : null;
-        if (territoryOverride) {
-          ctx.fillStyle = hexToCanvas(territoryOverride);
-        } else if (!cat || cat.key === 'REG_NG_EP') {
-          ctx.fillStyle = MAP_REG_FILL;
-        } else {
-          ctx.fillStyle = hexToCanvas(cat.fill);
-        }
-        drawFeature(feat.rings);
-      }
 
-      // Site dots — same two-tone (electric left half / gas right
-      // half) treatment as the Portfolio Overview map.
-      const maxCount = Math.max(1, ...Array.from(buckets.values()).map(b => b.count));
-      const dots = Array.from(buckets.values()).sort((a, b) => b.count - a.count);
-      for (const b of dots) {
-        const [x, y] = project(b.location[0], b.location[1]);
-        const r = 6 + Math.sqrt(b.count / maxCount) * 18;
+      const drawPanel = (originX, originY, statusByKey, headerLabel) => {
+        const project = projectInto(originX, originY);
+        ctx.fillStyle = '#0F172A';
+        ctx.font = 'bold 18px Nunito Sans, Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText(headerLabel, originX + MAP_W / 2, originY - 10);
+
+        // Clip every map layer to the panel rectangle so geometry that
+        // projects past an edge — chiefly Mexico's southern tip, which
+        // extends below NA_LAT_MIN — is cut off flush with the grey
+        // boundary instead of bleeding onto the white canvas beneath the
+        // map. The title above is drawn before this clip so it stays
+        // visible.
         ctx.save();
         ctx.beginPath();
-        ctx.arc(x, y, r, Math.PI / 2, (3 * Math.PI) / 2, false);
-        ctx.closePath();
-        ctx.fillStyle = TIER_COLORS[b.elecTier];
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(x, y, r, -Math.PI / 2, Math.PI / 2, false);
-        ctx.closePath();
-        ctx.fillStyle = TIER_COLORS[b.gasTier];
-        ctx.fill();
+        ctx.rect(originX, originY, MAP_W, MAP_H);
+        ctx.clip();
+
+        // Panel background uses the no-sites grey instead of the old
+        // slate ocean tint so Mexico's southern edge (now clipped at the
+        // panel's southern edge) blends into the background instead of
+        // showing a hard line where Mexico meets the panel.
+        ctx.fillStyle = NO_SITES_FILL;
+        ctx.fillRect(originX, originY, MAP_W, MAP_H);
+
+        ctx.fillStyle = MEXICO_FILL;
+        ctx.strokeStyle = NO_SITES_STROKE;
+        ctx.lineWidth = 0.5;
+        for (const feat of countryFeatures) {
+          const derGKey = TOPO_NAME_TO_DEREG_KEY[feat.name] || feat.name;
+          if (derGKey !== 'Mexico' && feat.name !== 'Mexico') continue;
+          drawFeature(project, feat.rings);
+        }
+
+        // Hairline borders for every state / province — the choropleth
+        // fill carries the information, the outline only defines the
+        // shape.
+        ctx.strokeStyle = NO_SITES_STROKE;
+        ctx.lineWidth = 0.5;
+        for (const feat of naFeatures) {
+          const key = `${feat.admin}/${feat.postal}`;
+          const tier = statusByKey.get(key) || 'reg';
+          const count = buckets.get(key)?.count || 0;
+          ctx.fillStyle = shadeForCount(STATUS_FILL[tier], count);
+          drawFeature(project, feat.rings);
+        }
+
         ctx.restore();
-        ctx.fillStyle = '#FFFFFF';
-        ctx.strokeStyle = '#0F172A';
-        ctx.font = `bold ${Math.max(10, Math.min(16, Math.round(r * 0.9)))}px Nunito Sans, Arial, sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.lineWidth = 3;
-        ctx.strokeText(String(b.count), x, y + 4);
-        ctx.fillText(String(b.count), x, y + 4);
-      }
+      };
+
+      drawPanel(PAD,             TITLE_H, ngStatusByKey, 'Natural Gas Markets');
+      drawPanel(PAD * 2 + MAP_W, TITLE_H, epStatusByKey, 'Electric Power Markets');
+
+      // Per-panel legends along the bottom — each map gets its own key
+      // so the EP-only "Direct Access" chip doesn't show beneath the
+      // gas map.
+      const SWATCH = 22;
+      const GAP_SWATCH_LABEL = 8;
+      const GAP_ITEMS = 22;
+      ctx.font = '13px Nunito Sans, Arial, sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      const itemW = (label) => SWATCH + GAP_SWATCH_LABEL + ctx.measureText(label).width;
+      // Horizontal legend — used for the Natural Gas panel (few, short
+      // categories that fit on one row under the map).
+      const drawPanelLegend = (originX, tiers) => {
+        const labels = [
+          ...tiers.map(t => ({ color: STATUS_FILL[t], label: STATUS_LABEL[t] })),
+          { color: NO_SITES_FILL, label: 'No portfolio sites' },
+        ];
+        const totalW = labels.reduce((a, it) => a + itemW(it.label), 0) + GAP_ITEMS * (labels.length - 1);
+        let cursorX = originX + (MAP_W - totalW) / 2;
+        // PAD * 2 of breathing room above the chips so each legend
+        // doesn't crowd the bottom edge of Mexico in the map above.
+        const legendY = TITLE_H + MAP_H + PAD * 2;
+        for (const it of labels) {
+          ctx.fillStyle = it.color;
+          ctx.fillRect(cursorX, legendY, SWATCH, SWATCH);
+          ctx.strokeStyle = NO_SITES_STROKE;
+          ctx.lineWidth = 0.8;
+          ctx.strokeRect(cursorX, legendY, SWATCH, SWATCH);
+          ctx.fillStyle = '#0F172A';
+          ctx.fillText(it.label, cursorX + SWATCH + GAP_SWATCH_LABEL, legendY + SWATCH / 2);
+          cursorX += itemW(it.label) + GAP_ITEMS;
+        }
+      };
+      // Vertical legend — used for the Electric Power panel, whose
+      // program-specific categories carry long labels that need their own
+      // row each (wrapping if a label runs wider than the panel).
+      const drawVerticalLegend = (originX, tiers) => {
+        const items = [
+          ...tiers.map(t => ({ color: STATUS_FILL[t], label: STATUS_LABEL[t] })),
+          { color: NO_SITES_FILL, label: 'No portfolio sites' },
+        ];
+        const LINE_H = 17;
+        const ROW_GAP = 7;
+        const textX = originX + PAD + SWATCH + GAP_SWATCH_LABEL;
+        const maxLabelW = MAP_W - PAD - SWATCH - GAP_SWATCH_LABEL - PAD;
+        let y = TITLE_H + MAP_H + PAD;
+        for (const it of items) {
+          // Greedy word-wrap so an over-long label spills onto extra lines.
+          const words = String(it.label).split(' ');
+          const lines = [];
+          let cur = '';
+          for (const w of words) {
+            const test = cur ? `${cur} ${w}` : w;
+            if (cur && ctx.measureText(test).width > maxLabelW) { lines.push(cur); cur = w; }
+            else cur = test;
+          }
+          if (cur) lines.push(cur);
+          ctx.fillStyle = it.color;
+          ctx.fillRect(originX + PAD, y, SWATCH, SWATCH);
+          ctx.strokeStyle = NO_SITES_STROKE;
+          ctx.lineWidth = 0.8;
+          ctx.strokeRect(originX + PAD, y, SWATCH, SWATCH);
+          ctx.fillStyle = '#0F172A';
+          let ty = y + SWATCH / 2 - ((lines.length - 1) * LINE_H) / 2;
+          for (const ln of lines) { ctx.fillText(ln, textX, ty); ty += LINE_H; }
+          y += Math.max(SWATCH, lines.length * LINE_H) + ROW_GAP;
+        }
+      };
+      drawPanelLegend(PAD, ['dereg', 'limited', 'reg']); // Natural Gas
+      drawVerticalLegend(PAD * 2 + MAP_W, ['reg', 'dereg', 'va5mw', 'election', 'cap', 'lottery']); // Electric Power
 
       const dataUrl = canvas.toDataURL('image/png');
       const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
 
       ws.mergeCells(1, 1, 1, COLS);
       const title = ws.getCell(1, 1);
-      title.value = 'North America Overview — US + Canada Site Distribution';
+      title.value = 'NAM View — US + Canada Site Distribution';
       title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
       title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
       title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
       ws.getRow(1).height = 30;
 
-      ws.mergeCells(2, 1, 2, COLS);
-      const sub = ws.getCell(2, 1);
-      const skippedNote = skippedCount > 0 ? ` (${skippedCount} site${skippedCount === 1 ? '' : 's'} skipped — state / province code not in the geographic reference)` : '';
-      sub.value = `${naSiteCount} North America site${naSiteCount === 1 ? '' : 's'} plotted across ${buckets.size} state/province bucket${buckets.size === 1 ? '' : 's'}. Dots split vertically — left half is the Electric deregulation tier, right half is the Gas tier. Dot size scales with the site count.${skippedNote}`;
-      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
-      sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
-      ws.getRow(2).height = 36;
-
       ws.addImage(imageId, {
-        tl: { col: 0, row: 3 },
+        tl: { col: 0, row: 1 },
         ext: { width: W, height: H },
       });
 
-      // Markets Legend — top-right of the map. Lists every NA market
-      // category with its swatch + label so the user reads the map
-      // and the legend side-by-side without scrolling. Same display
-      // order the SE deregulation reference uses top-to-bottom.
-      const legendStart = 4;
-      const swatchCol = MAP_COLS + 2;
-      const labelCol = MAP_COLS + 4;
-      ws.mergeCells(legendStart, swatchCol, legendStart, labelCol);
-      const legTitle = ws.getCell(legendStart, swatchCol);
-      legTitle.value = 'North America Markets Legend';
-      legTitle.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
-      legTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-      legTitle.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(legendStart).height = 22;
-
-      const legendOrder = [
-        'REG_NG_EP', 'DEREG_NG', 'DEREG_NG_EP',
-        'DEREG_NG_LIMITED_EP', 'DEREG_NG_HEAVY_EP',
-        'LIMITED_EP', 'DIRECT_ACCESS_EP', 'HEAVY_EP',
-        'CA_LIMITED_NG_DEREG_EP', 'CA_LIMITED_NG_REG_EP',
-      ];
-      const swatchBorder = {
-        top:    { style: 'thin', color: { argb: SE_BORDER } },
-        bottom: { style: 'thin', color: { argb: SE_BORDER } },
-        left:   { style: 'thin', color: { argb: SE_BORDER } },
-        right:  { style: 'thin', color: { argb: SE_BORDER } },
-      };
-      legendOrder.forEach((key, idx) => {
-        const cat = NA_CATEGORIES[key];
-        if (!cat) return;
-        const rowIdx = legendStart + 1 + idx;
-        const sw = ws.getCell(rowIdx, swatchCol);
-        sw.value = '';
-        sw.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: cat.fill } };
-        sw.border = swatchBorder;
-        const lbl = ws.getCell(rowIdx, labelCol);
-        lbl.value = cat.label;
-        lbl.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-        lbl.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
-        ws.getRow(rowIdx).height = 28;
-      });
-
-      const dotsCapRow = legendStart + 1 + legendOrder.length + 1;
-      ws.mergeCells(dotsCapRow, swatchCol, dotsCapRow, labelCol);
-      const dotsCap = ws.getCell(dotsCapRow, swatchCol);
-      dotsCap.value = 'Site dots — left half = Electric tier, right half = Gas tier. Dot size scales with the number of sites. Mexico is gray for geographic context only.';
-      dotsCap.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: SE_SLATE } };
-      dotsCap.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
-      ws.getRow(dotsCapRow).height = 56;
-
       // Overview table — same tier rollup as Portfolio Overview but
-      // scoped to NA sites only.
-      const SUMMARY_START = 30;
+      // scoped to NA sites only. Anchored at row 37 so the table
+      // clears the bottom edge of the 638-px map image above.
+      const SUMMARY_START = 37;
       ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
       const sumHdr = ws.getCell(SUMMARY_START, 1);
       sumHdr.value = 'NA Overview';
@@ -4165,10 +5182,24 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // the same US_MARKETS + CA_MARKETS dataset that drives the
       // North America Markets sheet, so the two tabs stay in sync.
       // Portfolio site counts + load + cost roll in from stateAggs;
-      // states / provinces with no sites still render with zeros so
-      // the user gets a full reference without flipping tabs. The
-      // Markets legend is appended directly below the table.
-      {
+      // only states / provinces that actually have portfolio sites are
+      // listed (no-site markets are omitted). The Markets legend is
+      // appended directly below the table.
+      //
+      // Rank by Annual Cost descending — largest portfolio markets at
+      // the top; ties fall back to alphabetical by code.
+      const marketRows = [
+        ...US_MARKETS.map(m => ({ ...m, country: 'United States', countryKey: 'US' })),
+        ...CA_MARKETS.map(m => ({ ...m, country: 'Canada',        countryKey: 'CA' })),
+      ]
+        .filter(m => (stateAggs.get(`${m.countryKey}/${m.code}`)?.sites || 0) > 0)
+        .sort((a, b) => {
+          const aCost = stateAggs.get(`${a.countryKey}/${a.code}`)?.cost || 0;
+          const bCost = stateAggs.get(`${b.countryKey}/${b.code}`)?.cost || 0;
+          if (bCost !== aCost) return bCost - aCost;
+          return String(a.code).localeCompare(String(b.code));
+        });
+      if (marketRows.length > 0) {
         const stateHdrRow = tableHeaderRow + tierRows.length + 3;
         ws.mergeCells(stateHdrRow, 1, stateHdrRow, COLS);
         const sHdr = ws.getCell(stateHdrRow, 1);
@@ -4196,18 +5227,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         });
         sHdrCells.height = 26;
 
-        // Rank by Annual Cost descending — largest portfolio markets
-        // at the top, states / provinces with no sites (cost = 0)
-        // fall to the bottom sorted alphabetically by code.
-        const marketRows = [
-          ...US_MARKETS.map(m => ({ ...m, country: 'United States', countryKey: 'US' })),
-          ...CA_MARKETS.map(m => ({ ...m, country: 'Canada',        countryKey: 'CA' })),
-        ].sort((a, b) => {
-          const aCost = stateAggs.get(`${a.countryKey}/${a.code}`)?.cost || 0;
-          const bCost = stateAggs.get(`${b.countryKey}/${b.code}`)?.cost || 0;
-          if (bCost !== aCost) return bCost - aCost;
-          return String(a.code).localeCompare(String(b.code));
-        });
         marketRows.forEach((m, i) => {
           const cat = NA_CATEGORIES[m.category];
           const agg = stateAggs.get(`${m.countryKey}/${m.code}`);
@@ -4243,11 +5262,1177 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             catCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: cat.fill } };
             catCell.font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: cat.fg } };
           }
+          // Colour the NG (4) and EP (5) cells by their own status so the
+          // table reads like the source map: Regulated = blue,
+          // Deregulated = green, Limited Opportunity = amber.
+          const statusCellStyle = (statusText) => {
+            const s = String(statusText || '').toLowerCase();
+            if (!s || s.startsWith('regulated')) return { fill: 'FF4AA3E0', fg: 'FFFFFFFF' };
+            if (s.includes('limited opportunity') || s.includes('limited deregulation')) return { fill: 'FFF2C200', fg: 'FF422006' };
+            return { fill: 'FF4CAF50', fg: 'FF14532D' };
+          };
+          [[4, cat?.ng], [5, cat?.ep]].forEach(([ci, status]) => {
+            const st = statusCellStyle(status);
+            rr.getCell(ci).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: st.fill } };
+            rr.getCell(ci).font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: st.fg } };
+          });
           if (sites > 0) {
             rr.getCell(7).font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: SE_TEXT_DARK } };
           }
           rr.height = 20;
         });
+      }
+    }
+
+    // ---- ISO / RTO Overview sheet ------------------------------
+    // Parallels the NAM View, but the geographic unit is the wholesale
+    // electricity market (ISO / RTO) rather than the state. Aligned to the
+    // ISO/RTO Council reference map: the seven US markets plus the three
+    // Canadian markets (Alberta AESO, Ontario IESO, New Brunswick), with
+    // everything outside those footprints (the non-ISO West / Southeast,
+    // most of Canada) drawn grey. Sites are placed in a market the fine
+    // way — by electric utility, then ZIP, then state / province (see
+    // src/data/isoRegions.js) — so split-state sites land in the right ISO
+    // even though the choropleth itself colours whole states / provinces.
+    // Single panel: ISOs are electricity markets, so there's no Natural Gas
+    // / Electric Power split. The bottom table rolls the portfolio up per
+    // ISO / RTO market.
+    {
+      const ws = wb.addWorksheet('ISO', {
+        properties: { tabColor: { argb: SE_GREEN_DARK } },
+        views: [{ showGridLines: false }],
+      });
+      const COLS = 12;
+      ws.columns = [
+        { width: 22 }, // Region
+        { width: 12 }, // Sites
+        { width: 10 }, // Sites %
+        { width: 16 }, // Load (kWh)
+        { width: 16 }, // Load (Dth)
+        { width: 18 }, // Annual Cost
+        { width: 6 }, { width: 6 }, { width: 6 },
+        { width: 6 }, { width: 6 }, { width: 6 },
+      ];
+
+      // Aggregate North America sites (US + Canada) into ISO regions. Each
+      // site is resolved to its market the fine way — by electric utility
+      // first, then ZIP, then state / province — so split-state sites land
+      // in the right ISO (a Chicago ComEd site → PJM even though Illinois'
+      // footprint polygon is MISO). Sites outside any IRC-mapped market
+      // (the non-ISO West / Southeast, most of Canada) resolve to null and
+      // are excluded from the rollup. Two tallies feed the map: per
+      // state / province site counts (density) and, within each, how the
+      // portfolio splits across ISOs (so a split state is coloured by the
+      // market its sites actually sit in).
+      const stateCounts = new Map();        // "US:IL" / "CA:ON" -> site count
+      const stateRegionCounts = new Map();  // stateKey -> Map(regionKey -> count)
+      const isoAggs = new Map();            // regionKey -> { sites, kwh, therms, cost }
+      const siteRecords = [];               // per-site rows feeding the ISO Site Explorer
+      let naSiteCount = 0;
+      let unmappedCount = 0;                // NA sites that resolve to no ISO market
+      for (const r of rows) {
+        const rawCountry = String(r.__country__ || '').trim();
+        const country = normalizeCountryName(rawCountry) || rawCountry;
+        const isUS = /^(united states|usa|us)$/i.test(country);
+        const isCA = /^(canada|ca)$/i.test(country);
+        if (!isUS && !isCA) continue;
+        const admin = isUS ? 'US' : 'CA';
+        naSiteCount++;
+        const code = String(r.__state__ || '').trim().toUpperCase();
+        const region = resolveSiteIso({ admin, code, zip: r.__zipNorm__, utility: r.__electric__ });
+        if (!region) { unmappedCount++; continue; }
+        const stateKey = `${admin}:${code}`;
+        stateCounts.set(stateKey, (stateCounts.get(stateKey) || 0) + 1);
+        let rc = stateRegionCounts.get(stateKey);
+        if (!rc) { rc = new Map(); stateRegionCounts.set(stateKey, rc); }
+        rc.set(region, (rc.get(region) || 0) + 1);
+        const kwh = (typeof r.__kwh__ === 'number' && Number.isFinite(r.__kwh__)) ? r.__kwh__ : 0;
+        const therms = (typeof r.__therms__ === 'number' && Number.isFinite(r.__therms__)) ? r.__therms__ : 0;
+        const eCost = (typeof r.__electricCostActual__ === 'number' && Number.isFinite(r.__electricCostActual__))
+          ? r.__electricCostActual__
+          : (typeof r.__electricCostEstimated__ === 'number' && Number.isFinite(r.__electricCostEstimated__) ? r.__electricCostEstimated__ : 0);
+        const gCost = (typeof r.__gasCostActual__ === 'number' && Number.isFinite(r.__gasCostActual__))
+          ? r.__gasCostActual__
+          : (typeof r.__gasCostEstimated__ === 'number' && Number.isFinite(r.__gasCostEstimated__) ? r.__gasCostEstimated__ : 0);
+        let agg = isoAggs.get(region);
+        if (!agg) { agg = { sites: 0, kwh: 0, therms: 0, cost: 0 }; isoAggs.set(region, agg); }
+        agg.sites++;
+        agg.kwh += kwh;
+        agg.therms += therms;
+        agg.cost += eCost + gCost;
+        // Keep a per-site record so the ISO Site Explorer below can list the
+        // sites in whichever market the reader picks from the dropdown.
+        siteRecords.push({
+          siteName: siteNameColumn ? String(r[siteNameColumn] ?? '').trim() : String(r.__siteName__ || '').trim(),
+          city: String(r.__city__ || '').trim(),
+          state: String(r.__stateProvinceDisplay__ || r.__state__ || '').trim(),
+          zip: String(r.__zipNorm__ || '').trim(),
+          electric: String(r.__electric__ || '').trim(),
+          kwh: Math.round(kwh),
+          cost: Math.round(eCost + gCost),
+          iso: ISO_LABEL[region] || region,
+        });
+      }
+
+      // Per-feature helpers: the whole-polygon footprint ISO (dominant
+      // market for that state / province) and the display region — the ISO
+      // the portfolio actually favours in that state when it has sites
+      // there, else the footprint so empty markets still read on the map.
+      const footprintForFeature = (feat) => (
+        feat.admin === 'CA' ? isoForProvince(feat.postal) : isoForState(feat.postal)
+      );
+      const displayRegionForFeature = (feat) => {
+        const key = `${feat.admin}:${String(feat.postal || '').toUpperCase()}`;
+        const rc = stateRegionCounts.get(key);
+        if (rc && rc.size) {
+          let best = null, bestN = -1;
+          for (const [k, n] of rc) if (n > bestN) { bestN = n; best = k; }
+          return best;
+        }
+        return footprintForFeature(feat);
+      };
+
+      const NO_REGION_FILL   = '#E5E7EB'; // unmapped US states (AK/HI) + non-US
+      const NO_REGION_STROKE = '#9CA3AF';
+      const maxSiteCount = Math.max(1, ...Array.from(stateCounts.values()));
+      const argbToRgb = (hex) => {
+        const h = String(hex).replace(/^#/, '').replace(/^FF/i, '');
+        return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+      };
+      const rgbToHex = (rgb) => '#' + rgb.map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+      // Region hue, always applied (so every region reads on the map like
+      // the reference breakdown), with a sqrt density darken keyed to the
+      // state's portfolio site count. Zero-site states stay a light tint of
+      // their region hue rather than fading to grey.
+      const shadeForRegion = (regionKey, count) => {
+        const [r, g, b] = argbToRgb(ISO_FILL[regionKey] || '#9CA3AF');
+        if (count <= 0) {
+          const sat = 0.38;
+          const blend = (c) => c * sat + 255 * (1 - sat);
+          return rgbToHex([blend(r), blend(g), blend(b)]);
+        }
+        const t = Math.sqrt(count / maxSiteCount);
+        const sat = 0.60 + 0.40 * t;
+        const dark = 0.16 * t;
+        const blend = (c) => (c * sat + 255 * (1 - sat)) * (1 - dark);
+        return rgbToHex([blend(r), blend(g), blend(b)]);
+      };
+
+      // Single-panel canvas, framed to North America south of ~60°N so the
+      // three Canadian ISO markets (Alberta, Ontario, New Brunswick) sit
+      // above the US band, mirroring the IRC reference map. Same
+      // equirectangular projection helper as the NAM sheet.
+      const MAP_W = 900;
+      const MAP_H = 580;
+      const PAD = 16;
+      const TITLE_H = 34;
+      const LEGEND_H = 96;
+      const W = MAP_W + PAD * 2;
+      const H = TITLE_H + MAP_H + LEGEND_H + PAD * 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = H;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, W, H);
+
+      const NA_LNG_MIN = -125;
+      const NA_LNG_MAX = -63;
+      const NA_LAT_MIN = 24;
+      const NA_LAT_MAX = 60;
+      const project = (lng, lat) => [
+        PAD + ((lng - NA_LNG_MIN) / (NA_LNG_MAX - NA_LNG_MIN)) * MAP_W,
+        TITLE_H + ((NA_LAT_MAX - lat) / (NA_LAT_MAX - NA_LAT_MIN)) * MAP_H,
+      ];
+      const traceFeature = (rings, { fill = false, stroke = false } = {}) => {
+        for (const ring of rings) {
+          const subRings = [];
+          let cur = [];
+          let prevLng = null;
+          for (const pt of ring) {
+            if (prevLng !== null && Math.abs(pt[0] - prevLng) > 180) {
+              if (cur.length > 2) subRings.push(cur);
+              cur = [];
+            }
+            cur.push(pt);
+            prevLng = pt[0];
+          }
+          if (cur.length > 2) subRings.push(cur);
+          for (const sr of subRings) {
+            ctx.beginPath();
+            for (let i = 0; i < sr.length; i++) {
+              const [px, py] = project(sr[i][0], sr[i][1]);
+              if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            if (fill) ctx.fill();
+            if (stroke) ctx.stroke();
+          }
+        }
+      };
+      const drawFeature = (rings) => traceFeature(rings, { fill: true, stroke: true });
+      const strokeFeature = (rings) => traceFeature(rings, { stroke: true });
+
+      // Build a single clip path from all of a feature's rings (splitting at
+      // the antimeridian like traceFeature) and set it as the canvas clip, so
+      // subsequent fills only paint inside the state / province outline.
+      const clipToFeature = (rings) => {
+        ctx.beginPath();
+        for (const ring of rings) {
+          const subRings = [];
+          let cur = [];
+          let prevLng = null;
+          for (const pt of ring) {
+            if (prevLng !== null && Math.abs(pt[0] - prevLng) > 180) {
+              if (cur.length > 2) subRings.push(cur);
+              cur = [];
+            }
+            cur.push(pt);
+            prevLng = pt[0];
+          }
+          if (cur.length > 2) subRings.push(cur);
+          for (const sr of subRings) {
+            for (let i = 0; i < sr.length; i++) {
+              const [px, py] = project(sr[i][0], sr[i][1]);
+              if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+          }
+        }
+        ctx.clip();
+      };
+
+      // Screen-space bounding box of a feature (projected). Used to size the
+      // diagonal stripe field that fills a hybrid state.
+      const featureScreenBBox = (rings) => {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const ring of rings) {
+          for (const pt of ring) {
+            const [px, py] = project(pt[0], pt[1]);
+            if (px < minX) minX = px;
+            if (px > maxX) maxX = px;
+            if (py < minY) minY = py;
+            if (py > maxY) maxY = py;
+          }
+        }
+        return { minX, minY, maxX, maxY };
+      };
+
+      // Turn ordered ISO shares into an evenly-interleaved stripe assignment
+      // via largest-remainder apportionment: band i goes to whichever market
+      // is most "owed" so far (share × bands − assigned). Weights of 0.85 /
+      // 0.15 yield ~6 dominant bands per minority band, spread out rather than
+      // clumped, so the dominant market visibly out-stripes the minority.
+      const buildStripePattern = (weights, len) => {
+        const assigned = weights.map(() => 0);
+        const pat = [];
+        for (let i = 0; i < len; i++) {
+          let best = 0, bestScore = -Infinity;
+          for (let k = 0; k < weights.length; k++) {
+            const score = weights[k].weight * (i + 1) - assigned[k];
+            if (score > bestScore) { bestScore = score; best = k; }
+          }
+          assigned[best] += 1;
+          pat.push(weights[best].iso);
+        }
+        return pat;
+      };
+
+      const STRIPE_W = 9; // px, diagonal stripe thickness on the map
+
+      // Fill a split state as a hybrid: diagonal stripes proportioned to the
+      // ISO shares (denser = dominant market), plus a solid block over each
+      // minority market's geographic corner. All clipped to the state outline;
+      // `count` drives the same site-density darkening as the solid fills.
+      const fillHybridFeature = (feat, split, count) => {
+        const bbox = featureScreenBBox(feat.rings);
+        const cx = (bbox.minX + bbox.maxX) / 2;
+        const cy = (bbox.minY + bbox.maxY) / 2;
+        const reach = Math.hypot(bbox.maxX - bbox.minX, bbox.maxY - bbox.minY) + STRIPE_W;
+        ctx.save();
+        clipToFeature(feat.rings);
+        // Diagonal stripes (45°). Rotate about the state's centre, lay down
+        // horizontal bands across the reach, let the clip trim them.
+        const pattern = buildStripePattern(split, 120);
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(-Math.PI / 4);
+        let bi = 0;
+        for (let y = -reach; y < reach; y += STRIPE_W, bi += 1) {
+          ctx.fillStyle = shadeForRegion(pattern[bi % pattern.length], count);
+          ctx.fillRect(-reach, y, reach * 2, STRIPE_W + 0.5);
+        }
+        ctx.restore();
+        // Shaded minority sub-areas (e.g. the SPP Panhandle of Texas). Solid
+        // block of the minority hue over its lat/lng box, clipped to the state.
+        const subs = STATE_ISO_SUBAREAS[`${feat.admin}:${String(feat.postal || '').toUpperCase()}`];
+        if (subs) {
+          for (const s of subs) {
+            const [aLng, aLat, bLng, bLat] = s.bbox;
+            const [x0, y0] = project(aLng, bLat);
+            const [x1, y1] = project(bLng, aLat);
+            ctx.fillStyle = shadeForRegion(s.iso, count);
+            ctx.fillRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
+          }
+        }
+        ctx.restore();
+        // White hairline border, matching the solid states.
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 0.6;
+        strokeFeature(feat.rings);
+      };
+
+      const naFeatures = getNAAdmin1Features();
+
+      // Panel title.
+      ctx.fillStyle = '#0F172A';
+      ctx.font = 'bold 18px Nunito Sans, Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText('ISO / RTO Regions', PAD + MAP_W / 2, TITLE_H - 10);
+
+      // Clip the map layers to the panel rectangle.
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(PAD, TITLE_H, MAP_W, MAP_H);
+      ctx.clip();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(PAD, TITLE_H, MAP_W, MAP_H);
+
+      // Which ISO / RTO regions actually hold portfolio sites. Regions with
+      // no sites are drawn as plain grey states (like any non-ISO area) — no
+      // region-coloured outline — so the map only highlights the markets the
+      // portfolio actually touches.
+      const activeRegions = new Set(isoAggs.keys());
+
+      // Pass 1 — fills. A state / province where the portfolio has sites is
+      // filled with the ISO those sites actually favour (utility/ZIP-resolved
+      // majority), darkened by site count; an empty state in an active market
+      // keeps a light tint of that market's hue so the footprint still reads.
+      // A state that genuinely straddles two markets (STATE_ISO_SPLIT) is
+      // instead drawn HYBRID — diagonal stripes proportioned to each market's
+      // share, plus a shaded block over the minority market's corner.
+      // Everything else — empty markets, and anything outside the IRC map
+      // (the non-ISO West / Southeast, most of Canada, AK/HI) — is greyed out.
+      let anyHybrid = false;
+      ctx.lineWidth = 0.6;
+      for (const feat of naFeatures) {
+        const code = String(feat.postal || '').toUpperCase();
+        if (feat.admin === 'US' && (code === 'AK' || code === 'HI')) continue;
+        const stateKey = `${feat.admin}:${code}`;
+        const region = displayRegionForFeature(feat);
+        if (region && activeRegions.has(region)) {
+          const split = STATE_ISO_SPLIT[stateKey];
+          // Only stripe when at least one of the split's markets actually
+          // holds portfolio sites — otherwise a whole empty market would show
+          // stripes it hasn't earned. The dominant band still reflects the
+          // footprint even when the portfolio favours the minority side.
+          if (split && split.length > 1 && split.some(s => activeRegions.has(s.iso))) {
+            fillHybridFeature(feat, split, stateCounts.get(stateKey) || 0);
+            anyHybrid = true;
+            continue;
+          }
+          ctx.fillStyle = shadeForRegion(region, stateCounts.get(stateKey) || 0);
+          ctx.strokeStyle = '#FFFFFF';
+        } else {
+          // Greyed out as a plain state: outside the IRC map, or in a market
+          // that holds no portfolio sites. Both read as neutral grey with an
+          // ordinary state boundary — empty markets are no longer outlined.
+          ctx.fillStyle = NO_REGION_FILL;
+          ctx.strokeStyle = NO_REGION_STROKE;
+        }
+        drawFeature(feat.rings);
+      }
+      ctx.restore();
+
+      // Thin frame around the map, echoing the reference image's border.
+      ctx.strokeStyle = '#0F172A';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(PAD, TITLE_H, MAP_W, MAP_H);
+
+      // Wrapping horizontal legend — one chip per ISO region.
+      const SWATCH = 20;
+      const GAP_SWATCH_LABEL = 7;
+      const GAP_ITEMS = 20;
+      const ROW_H = 28;
+      ctx.font = '14px Nunito Sans, Arial, sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      const legendItems = [
+        ...ISO_REGIONS.map(r => ({ color: r.fill, label: r.label })),
+        // Striped example chip — only when a split state was actually drawn
+        // hybrid. MISO:PJM at 2:1 mirrors the map's "denser = dominant" stripes.
+        ...(anyHybrid
+          ? [{ striped: true, stripeColors: [ISO_FILL.MISO, ISO_FILL.MISO, ISO_FILL.PJM], label: 'Split state — striped by ISO share (denser = dominant)' }]
+          : []),
+        { color: NO_REGION_FILL, label: 'ISO / RTO market with no sites, or outside any market' },
+      ];
+      const itemW = (label) => SWATCH + GAP_SWATCH_LABEL + ctx.measureText(label).width;
+      // Greedy row packing centred within the map width.
+      const legendRows = [];
+      let curRow = [];
+      let curW = 0;
+      for (const it of legendItems) {
+        const w = itemW(it.label);
+        const add = curRow.length ? GAP_ITEMS + w : w;
+        if (curRow.length && curW + add > MAP_W) { legendRows.push({ items: curRow, width: curW }); curRow = []; curW = 0; }
+        curRow.push(it);
+        curW += curRow.length === 1 ? w : GAP_ITEMS + w;
+      }
+      if (curRow.length) legendRows.push({ items: curRow, width: curW });
+      let legendY = TITLE_H + MAP_H + PAD + SWATCH / 2;
+      for (const lr of legendRows) {
+        let cursorX = PAD + (MAP_W - lr.width) / 2;
+        for (const it of lr.items) {
+          const swX = cursorX;
+          const swY = legendY - SWATCH / 2;
+          if (it.striped) {
+            // Diagonal striped swatch, mirroring the map's hybrid fill.
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(swX, swY, SWATCH, SWATCH);
+            ctx.clip();
+            ctx.translate(swX + SWATCH / 2, swY + SWATCH / 2);
+            ctx.rotate(-Math.PI / 4);
+            const cols = it.stripeColors;
+            const sw = 4;
+            let k = 0;
+            for (let y = -SWATCH; y < SWATCH; y += sw, k += 1) {
+              ctx.fillStyle = cols[k % cols.length];
+              ctx.fillRect(-SWATCH, y, SWATCH * 2, sw + 0.5);
+            }
+            ctx.restore();
+          } else {
+            ctx.fillStyle = it.color;
+            ctx.fillRect(swX, swY, SWATCH, SWATCH);
+          }
+          ctx.strokeStyle = NO_REGION_STROKE;
+          ctx.lineWidth = 0.8;
+          ctx.strokeRect(swX, swY, SWATCH, SWATCH);
+          ctx.fillStyle = '#0F172A';
+          ctx.fillText(it.label, cursorX + SWATCH + GAP_SWATCH_LABEL, legendY);
+          cursorX += itemW(it.label) + GAP_ITEMS;
+        }
+        legendY += ROW_H;
+      }
+
+      const dataUrl = canvas.toDataURL('image/png');
+      const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
+
+      ws.mergeCells(1, 1, 1, COLS);
+      const title = ws.getCell(1, 1);
+      title.value = 'ISO View — North America Site Distribution by Wholesale Market Region';
+      title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(1).height = 30;
+
+      ws.mergeCells(2, 1, 2, COLS);
+      const sub = ws.getCell(2, 1);
+      const unmappedNote = unmappedCount > 0
+        ? ` (${unmappedCount} site${unmappedCount === 1 ? '' : 's'} outside any ISO / RTO market — the non-ISO West / Southeast, most of Canada, AK / HI — are excluded)`
+        : '';
+      sub.value = `${naSiteCount} North America site${naSiteCount === 1 ? '' : 's'} across ${isoAggs.size} ISO / RTO market${isoAggs.size === 1 ? '' : 's'}, aligned to the ISO/RTO Council map (US markets plus Alberta, Ontario, and New Brunswick). Each site is placed in its market by electric utility, then ZIP, then state / province, so split-state sites land in the right ISO. States / provinces with portfolio sites are shaded by that market's hue and site count (darker = more sites); markets with no portfolio sites are shown as plain grey states, the same as areas outside every ISO / RTO market. States that straddle two markets are drawn hybrid — diagonal stripes proportioned to each market's share (denser stripes = the dominant ISO, e.g. Texas reads mostly ERCOT with a Southwest Power Pool minority; Illinois and Indiana mostly MISO with PJM to the northeast), plus a shaded block over the minority market's corner (e.g. the SPP Panhandle of northwest Texas). The choropleth colours whole states / provinces, so the drawn boundaries are indicative, not authoritative seams.${unmappedNote}`;
+      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+      sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      ws.getRow(2).height = 36;
+
+      ws.addImage(imageId, {
+        tl: { col: 0, row: 3 },
+        ext: { width: W, height: H },
+      });
+
+      // ISO Overview table — one row per region that has portfolio sites,
+      // ranked by annual cost descending. Anchored clear of the map image.
+      const SUMMARY_START = 40;
+      ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
+      const sumHdr = ws.getCell(SUMMARY_START, 1);
+      sumHdr.value = 'ISO / RTO Overview';
+      sumHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      sumHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      sumHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(SUMMARY_START).height = 22;
+
+      const tableHeaderRow = SUMMARY_START + 1;
+      const overviewHeaders = ['ISO / RTO Region', 'Sites', 'Sites %', 'Load (kWh)', 'Load (Dth)', 'Annual Cost ($)'];
+      const hdr = ws.getRow(tableHeaderRow);
+      overviewHeaders.forEach((label, i) => {
+        const cell = hdr.getCell(i + 1);
+        cell.value = label;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        cell.border = {
+          top:    { style: 'thin', color: { argb: SE_BORDER } },
+          bottom: { style: 'thin', color: { argb: SE_BORDER } },
+          left:   { style: 'thin', color: { argb: SE_BORDER } },
+          right:  { style: 'thin', color: { argb: SE_BORDER } },
+        };
+      });
+      hdr.height = 22;
+
+      const totalSites = Array.from(isoAggs.values()).reduce((a, x) => a + x.sites, 0);
+      const regionRows = ISO_REGIONS
+        .map(r => ({ region: r, agg: isoAggs.get(r.key) }))
+        .filter(x => x.agg && x.agg.sites > 0)
+        .sort((a, b) => (b.agg.cost - a.agg.cost) || String(a.region.label).localeCompare(String(b.region.label)));
+
+      regionRows.forEach((x, i) => {
+        const rr = ws.getRow(tableHeaderRow + 1 + i);
+        const { region, agg } = x;
+        rr.getCell(1).value = region.label;
+        rr.getCell(2).value = agg.sites;
+        rr.getCell(3).value = totalSites > 0 ? agg.sites / totalSites : 0;
+        rr.getCell(4).value = Math.round(agg.kwh);
+        rr.getCell(5).value = Math.round(agg.therms / 10);
+        rr.getCell(6).value = Math.round(agg.cost);
+        rr.getCell(3).numFmt = '0.0%';
+        rr.getCell(4).numFmt = '#,##0';
+        rr.getCell(5).numFmt = '#,##0';
+        rr.getCell(6).numFmt = '"$"#,##0';
+        for (let ci = 1; ci <= overviewHeaders.length; ci++) {
+          rr.getCell(ci).font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          rr.getCell(ci).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          rr.getCell(ci).border = {
+            bottom: { style: 'hair', color: { argb: SE_BORDER } },
+            right:  { style: 'hair', color: { argb: SE_BORDER } },
+          };
+        }
+        // Tint the region cell with its map hue so the table reads like
+        // the map legend.
+        const fillHex = 'FF' + String(region.fill).replace(/^#/, '').toUpperCase();
+        // ERCOT's near-black hue needs white text; everything else is light
+        // enough for dark text.
+        const [rr0, gg0, bb0] = argbToRgb(region.fill);
+        const luminance = 0.299 * rr0 + 0.587 * gg0 + 0.114 * bb0;
+        rr.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillHex } };
+        rr.getCell(1).font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: luminance < 140 ? 'FFFFFFFF' : 'FF1E293B' } };
+        rr.height = 20;
+      });
+
+      // Total row.
+      if (regionRows.length > 0) {
+        const totalRow = ws.getRow(tableHeaderRow + 1 + regionRows.length);
+        const totKwh = regionRows.reduce((a, x) => a + x.agg.kwh, 0);
+        const totTherms = regionRows.reduce((a, x) => a + x.agg.therms, 0);
+        const totCost = regionRows.reduce((a, x) => a + x.agg.cost, 0);
+        totalRow.getCell(1).value = 'Total';
+        totalRow.getCell(2).value = totalSites;
+        totalRow.getCell(3).value = 1;
+        totalRow.getCell(4).value = Math.round(totKwh);
+        totalRow.getCell(5).value = Math.round(totTherms / 10);
+        totalRow.getCell(6).value = Math.round(totCost);
+        totalRow.getCell(3).numFmt = '0.0%';
+        totalRow.getCell(4).numFmt = '#,##0';
+        totalRow.getCell(5).numFmt = '#,##0';
+        totalRow.getCell(6).numFmt = '"$"#,##0';
+        for (let ci = 1; ci <= overviewHeaders.length; ci++) {
+          totalRow.getCell(ci).font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: SE_TEXT_DARK } };
+          totalRow.getCell(ci).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          totalRow.getCell(ci).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+          totalRow.getCell(ci).border = { top: { style: 'thin', color: { argb: SE_BORDER } } };
+        }
+        totalRow.height = 20;
+      }
+
+      // ---- ISO / RTO Site Explorer ------------------------------
+      // A dropdown-driven site list: pick an ISO / RTO market and its sites
+      // spill in below. The picker is a data-validation list sourced from the
+      // Overview rows above; the list itself is a dynamic-array FILTER over a
+      // hidden per-site table off to the right (columns O–V). FILTER spills
+      // live in Excel 365 and Google Sheets, and a forced recalc-on-open fills
+      // the list without the reader having to touch anything.
+      if (regionRows.length > 0 && siteRecords.length > 0) {
+        const firstRegionRow = tableHeaderRow + 1;
+        const lastRegionRow = tableHeaderRow + regionRows.length;
+
+        // Row layout for the explorer, a few rows below the Overview total.
+        const secRow = lastRegionRow + 3;   // section header
+        const noteRow = secRow + 1;         // instruction line
+        const pickRow = noteRow + 1;        // label + dropdown
+        const listHdrRow = pickRow + 2;     // site-list header
+        const listStart = listHdrRow + 1;   // first site row
+        const pickRef = `$B$${pickRow}`;
+
+        // Hidden source table (cols O–W): 7 display columns, the ISO label as
+        // the match key (V), and a running match-rank helper (W) that numbers
+        // 1,2,3… down the rows of whichever market is picked. Kept in hidden
+        // columns clear of the visible layout so only the assembled list shows.
+        const SRC_DISP0 = 15;  // first display column (O)
+        const SRC_ISO = 22;    // ISO match-key column (V)
+        const SRC_RANK = 23;   // running match-rank column (W)
+        const SRC_FIRST = 2;
+        const SRC_LAST = SRC_FIRST + siteRecords.length - 1;
+        const L = (n) => ws.getColumn(n).letter;
+        const vCol = L(SRC_ISO);
+        const wCol = L(SRC_RANK);
+
+        // The list defaults to the top market; cache that view as each
+        // formula's stored result so the list is right on open even in a
+        // viewer that doesn't recalculate (the Master Analysis file is
+        // re-zipped after export, which can drop the recalc-on-open flag).
+        const defaultIso = regionRows[0].region.label;
+        const defaultMatches = siteRecords.filter(s => s.iso === defaultIso);
+
+        let defRank = 0;
+        siteRecords.forEach((s, i) => {
+          const rowNum = SRC_FIRST + i;
+          const sr = ws.getRow(rowNum);
+          sr.getCell(SRC_DISP0 + 0).value = s.siteName;
+          sr.getCell(SRC_DISP0 + 1).value = s.city;
+          sr.getCell(SRC_DISP0 + 2).value = s.state;
+          sr.getCell(SRC_DISP0 + 3).value = s.zip;
+          sr.getCell(SRC_DISP0 + 4).value = s.electric;
+          sr.getCell(SRC_DISP0 + 5).value = s.kwh;
+          sr.getCell(SRC_DISP0 + 6).value = s.cost;
+          sr.getCell(SRC_ISO).value = s.iso;
+          const isDefault = s.iso === defaultIso;
+          if (isDefault) defRank += 1;
+          sr.getCell(SRC_RANK).value = {
+            formula: `IF($${vCol}$${rowNum}=${pickRef},COUNTIF($${vCol}$${SRC_FIRST}:$${vCol}$${rowNum},${pickRef}),"")`,
+            result: isDefault ? defRank : '',
+          };
+        });
+        for (let c = SRC_DISP0; c <= SRC_RANK; c++) {
+          const col = ws.getColumn(c);
+          if (!col.width) col.width = 12;
+          col.hidden = true;
+        }
+
+        // Explorer section header.
+        ws.mergeCells(secRow, 1, secRow, COLS);
+        const secHdr = ws.getCell(secRow, 1);
+        secHdr.value = 'ISO / RTO Site Explorer';
+        secHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+        secHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        secHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        ws.getRow(secRow).height = 22;
+
+        ws.mergeCells(noteRow, 1, noteRow, COLS);
+        const note = ws.getCell(noteRow, 1);
+        note.value = 'Pick an ISO / RTO market from the dropdown to list its sites below.';
+        note.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+        note.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        ws.getRow(noteRow).height = 18;
+
+        // Picker row: label + dropdown cell (data validation list).
+        const pickLabel = ws.getCell(pickRow, 1);
+        pickLabel.value = 'ISO / RTO market:';
+        pickLabel.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_TEXT_DARK } };
+        pickLabel.alignment = { vertical: 'middle', horizontal: 'right' };
+        const pickCell = ws.getCell(pickRow, 2);
+        pickCell.value = defaultIso; // default to the top market
+        pickCell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
+        pickCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        pickCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF7CC' } };
+        pickCell.border = {
+          top:    { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          left:   { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          right:  { style: 'thin', color: { argb: SE_GREEN_DARK } },
+        };
+        ws.dataValidations.add(`B${pickRow}`, {
+          type: 'list',
+          allowBlank: false,
+          formulae: [`$A$${firstRegionRow}:$A$${lastRegionRow}`],
+          showErrorMessage: true,
+          errorStyle: 'warning',
+          showInputMessage: true,
+          promptTitle: 'ISO / RTO market',
+          prompt: 'Pick a market to list its sites below.',
+        });
+        ws.getRow(pickRow).height = 20;
+
+        // Site-list header row.
+        const listHeaders = ['Site Name', 'City', 'State / Province', 'ZIP', 'Electric Utility', 'Load (kWh)', 'Annual Cost ($)'];
+        const lh = ws.getRow(listHdrRow);
+        listHeaders.forEach((label, i) => {
+          const cell = lh.getCell(i + 1);
+          cell.value = label;
+          cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+          cell.alignment = { vertical: 'middle', horizontal: (i >= 5) ? 'right' : 'left', indent: 1 };
+          cell.border = {
+            top:    { style: 'thin', color: { argb: SE_BORDER } },
+            bottom: { style: 'thin', color: { argb: SE_BORDER } },
+            left:   { style: 'thin', color: { argb: SE_BORDER } },
+            right:  { style: 'thin', color: { argb: SE_BORDER } },
+          };
+        });
+        lh.height = 22;
+
+        // Assemble the list: a fixed block sized to the largest single market,
+        // each cell pulling the rank-th matching site via INDEX/MATCH against
+        // the running-rank helper. These are plain formulas (no dynamic
+        // arrays), so they work in every Excel version and Google Sheets, and
+        // they re-evaluate whenever the dropdown changes. Cached results show
+        // the default market on open.
+        const maxListRows = Math.max(1, ...regionRows.map(x => x.agg.sites));
+        const fieldByCol = ['siteName', 'city', 'state', 'zip', 'electric', 'kwh', 'cost'];
+        for (let k = 0; k < maxListRows; k++) {
+          const rowNum = listStart + k;
+          const rank = k + 1;
+          const rec = defaultMatches[k];
+          const rr = ws.getRow(rowNum);
+          for (let c = 1; c <= 7; c++) {
+            const srcCol = L(SRC_DISP0 + (c - 1));
+            const cell = rr.getCell(c);
+            const cached = rec ? rec[fieldByCol[c - 1]] : '';
+            cell.value = {
+              formula: `IFERROR(INDEX($${srcCol}$${SRC_FIRST}:$${srcCol}$${SRC_LAST},MATCH(${rank},$${wCol}$${SRC_FIRST}:$${wCol}$${SRC_LAST},0)),"")`,
+              result: (cached === undefined || cached === null) ? '' : cached,
+            };
+            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            cell.alignment = { vertical: 'middle', horizontal: (c >= 6) ? 'right' : 'left', indent: 1 };
+            cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } } };
+            if (c === 6) cell.numFmt = '#,##0';
+            if (c === 7) cell.numFmt = '"$"#,##0';
+          }
+          rr.height = 18;
+        }
+        // The Cost column is width 6 (map underlay) — widen it so currency
+        // fits. The map image is pixel-sized, so this doesn't shift it.
+        if ((ws.getColumn(7).width || 0) < 14) ws.getColumn(7).width = 14;
+
+        // Recalculate on open so the list reflects the current pick.
+        wb.calcProperties = wb.calcProperties || {};
+        wb.calcProperties.fullCalcOnLoad = true;
+      }
+    }
+
+    // ---- Europe View sheet -------------------------------------
+    // Same two-panel choropleth treatment as the NAM View, scoped to
+    // Europe. Country-level resolution (no per-region breakout): every
+    // country is shaded by its COUNTRY_DEREGULATION status for the panel's
+    // commodity (Natural Gas left, Electric Power right) and darkened by
+    // its portfolio site count; countries with no sites stay light grey.
+    // A site counts as European when its country resolves to a
+    // COUNTRY_DEREGULATION entry whose region starts with "Europe" (covers
+    // "Europe" and the trans-continental "Europe/Asia" entries).
+    {
+      const ws = wb.addWorksheet('Europe', {
+        properties: { tabColor: { argb: SE_GREEN_DARK } },
+        views: [{ showGridLines: false }],
+      });
+      const MAP_COLS = 14;
+      const LEGEND_COLS = 6;
+      const COLS = MAP_COLS + LEGEND_COLS;
+      const NUMERIC_WIDE_COLS = new Set([4, 5, 6, 7]);
+      ws.columns = [
+        ...Array.from({ length: MAP_COLS }, (_, i) => ({
+          width: NUMERIC_WIDE_COLS.has(i + 1) ? 17 : 12,
+        })),
+        { width: 4 }, { width: 6 }, { width: 6 },
+        { width: 12 }, { width: 12 }, { width: 12 },
+      ];
+
+      // NAM-style palette + helpers. statusTier returns dereg/some/reg/
+      // unknown for a country; tierToStatus folds it into the chart's
+      // dereg/limited/reg categories so the chips read the same as NAM.
+      const STATUS_FILL = {
+        reg:     '#94A3B8', // slate
+        dereg:   '#10B981', // emerald
+        limited: '#F59E0B', // amber
+      };
+      const STATUS_LABEL = {
+        reg:     'Regulated',
+        dereg:   'Deregulated',
+        limited: 'Limited Deregulation',
+      };
+      const NO_SITES_FILL   = '#E5E7EB';
+      const NO_SITES_STROKE = '#9CA3AF';
+      const tierToStatus = (tier) => {
+        if (tier === 'dereg') return 'dereg';
+        if (tier === 'some')  return 'limited';
+        return 'reg'; // 'reg' or 'unknown' both fall through
+      };
+      const argbFromHex = (hex) => 'FF' + String(hex).replace(/^#/, '').toUpperCase();
+
+      // Bucket European sites by country + aggregate load / cost. One row
+      // pass feeds the map (buckets), the Overview tier table
+      // (electric/gasTierAgg), and the per-country table (countryAggs).
+      const isEuropean = (c) => !!c && String(c.region || '').startsWith('Europe');
+      const finite = (v) => (typeof v === 'number' && Number.isFinite(v)) ? v : 0;
+      const buckets = new Map();
+      const countryAggs = new Map();
+      const blankTierAgg = () => ({ kwh: 0, therms: 0, cost: 0 });
+      const electricTierAgg = { dereg: blankTierAgg(), some: blankTierAgg(), reg: blankTierAgg(), unknown: blankTierAgg() };
+      const gasTierAgg      = { dereg: blankTierAgg(), some: blankTierAgg(), reg: blankTierAgg(), unknown: blankTierAgg() };
+      let euSiteCount = 0;
+      for (const r of rows) {
+        const rawCountry = String(r.__country__ || '').trim();
+        const country = normalizeCountryName(rawCountry) || rawCountry;
+        const c = COUNTRY_DEREGULATION[country];
+        if (!isEuropean(c)) continue;
+        euSiteCount++;
+        const eTier = statusTier(c.electric);
+        const gTier = statusTier(c.gas);
+        if (!buckets.has(country)) buckets.set(country, { elecTier: eTier, gasTier: gTier, count: 0 });
+        buckets.get(country).count++;
+        const kwh = finite(r.__kwh__);
+        const therms = finite(r.__therms__);
+        const eCost = finite(r.__electricCostActual__) || finite(r.__electricCostEstimated__);
+        const gCost = finite(r.__gasCostActual__) || finite(r.__gasCostEstimated__);
+        electricTierAgg[eTier].kwh += kwh; electricTierAgg[eTier].cost += eCost;
+        gasTierAgg[gTier].therms += therms; gasTierAgg[gTier].cost += gCost;
+        let agg = countryAggs.get(country);
+        if (!agg) {
+          agg = {
+            country,
+            elecTierKey: eTier, gasTierKey: gTier,
+            elecStatus: STATUS_LABEL[tierToStatus(eTier)],
+            gasStatus:  STATUS_LABEL[tierToStatus(gTier)],
+            sites: 0, kwh: 0, therms: 0, cost: 0,
+          };
+          countryAggs.set(country, agg);
+        }
+        agg.sites++; agg.kwh += kwh; agg.therms += therms; agg.cost += eCost + gCost;
+      }
+
+      // Tier roll-up for the Overview table — site counts per tier from
+      // the buckets, load + cost already attributed per row above.
+      let elecDereg = 0, elecSome = 0, elecReg = 0, elecUnknown = 0;
+      let gasDereg = 0, gasSome = 0, gasReg = 0, gasUnknown = 0;
+      let mappedSites = 0;
+      for (const b of buckets.values()) {
+        mappedSites += b.count;
+        if (b.elecTier === 'dereg') elecDereg += b.count;
+        else if (b.elecTier === 'some') elecSome += b.count;
+        else if (b.elecTier === 'reg') elecReg += b.count;
+        else elecUnknown += b.count;
+        if (b.gasTier === 'dereg') gasDereg += b.count;
+        else if (b.gasTier === 'some') gasSome += b.count;
+        else if (b.gasTier === 'reg') gasReg += b.count;
+        else gasUnknown += b.count;
+      }
+
+      // Site-count → fill shading. Sqrt scaling keeps a single-site
+      // country visibly tinted while the densest market hits the full
+      // status hue plus a 20 % darken.
+      const maxSiteCount = Math.max(1, ...Array.from(buckets.values()).map(b => b.count));
+      const argbToRgb = (hex) => {
+        const h = String(hex).replace(/^#/, '').replace(/^FF/i, '');
+        return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+      };
+      const rgbToHex = (rgb) => '#' + rgb.map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+      const shadeForCount = (statusHex, count) => {
+        if (count <= 0) return NO_SITES_FILL;
+        const [r, g, b] = argbToRgb(statusHex);
+        const t = Math.sqrt(count / maxSiteCount);
+        const sat  = 0.45 + 0.55 * t;
+        const dark = 0.20 * t;
+        const blend = (c) => (c * sat + 255 * (1 - sat)) * (1 - dark);
+        return rgbToHex([blend(r), blend(g), blend(b)]);
+      };
+
+      // Composite canvas — two panels side by side, each with its own
+      // legend strip underneath. Same panel dimensions as the NAM View so
+      // the two sheets' maps are identically sized; the cosine-corrected
+      // projection below centres Europe within the wider panel.
+      const MAP_W = 800;
+      const MAP_H = 500;
+      const PAD = 16;
+      const TITLE_H = 36;
+      const LEGEND_H = 70;
+      const W = MAP_W * 2 + PAD * 3;
+      const H = TITLE_H + MAP_H + LEGEND_H + PAD * 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = H;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, W, H);
+
+      // Europe bounding box. Iceland (~-22°) to western Russia / Turkey
+      // (~45°E), Mediterranean (~34°N) up to the top of Norway (~72°N).
+      // Longitude is compressed by cos(mid-latitude) so Europe isn't
+      // stretched horizontally the way a raw equirectangular projection
+      // would render it; the drawn map is then centred in the panel.
+      const EU_LNG_MIN = -25, EU_LNG_MAX = 45;
+      const EU_LAT_MIN = 34, EU_LAT_MAX = 72;
+      const EU_MID_LAT = (EU_LAT_MIN + EU_LAT_MAX) / 2;
+      const EU_LNG_K = Math.cos(EU_MID_LAT * Math.PI / 180);
+      const euLngSpan = (EU_LNG_MAX - EU_LNG_MIN) * EU_LNG_K;
+      const euLatSpan = EU_LAT_MAX - EU_LAT_MIN;
+      const euScale = Math.min(MAP_W / euLngSpan, MAP_H / euLatSpan);
+      const euOffX = (MAP_W - euLngSpan * euScale) / 2;
+      const euOffY = (MAP_H - euLatSpan * euScale) / 2;
+      const projectInto = (originX, originY) => (lng, lat) => [
+        originX + euOffX + (lng - EU_LNG_MIN) * EU_LNG_K * euScale,
+        originY + euOffY + (EU_LAT_MAX - lat) * euScale,
+      ];
+
+      // Antimeridian-aware feature drawing (Russia wraps past 180°).
+      const drawFeature = (project, rings) => {
+        for (const ring of rings) {
+          const subRings = [];
+          let cur = [];
+          let prevLng = null;
+          for (const pt of ring) {
+            if (prevLng !== null && Math.abs(pt[0] - prevLng) > 180) {
+              if (cur.length > 2) subRings.push(cur);
+              cur = [];
+            }
+            cur.push(pt);
+            prevLng = pt[0];
+          }
+          if (cur.length > 2) subRings.push(cur);
+          for (const sr of subRings) {
+            ctx.beginPath();
+            for (let i = 0; i < sr.length; i++) {
+              const [px, py] = project(sr[i][0], sr[i][1]);
+              if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+          }
+        }
+      };
+
+      const countryFeatures = getCountryFeatures();
+
+      const drawPanel = (originX, commodity, headerLabel) => {
+        const project = projectInto(originX, TITLE_H);
+        // Panel header above the map.
+        ctx.fillStyle = '#0F172A';
+        ctx.font = 'bold 18px Nunito Sans, Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText(headerLabel, originX + MAP_W / 2, TITLE_H - 10);
+
+        // Clip every layer to the panel so geometry outside the Europe
+        // box (the rest of Asia / Africa) is cut flush with the edge.
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(originX, TITLE_H, MAP_W, MAP_H);
+        ctx.clip();
+
+        // Light ocean tint so land with no sites (grey) stays distinct.
+        ctx.fillStyle = '#F1F5F9';
+        ctx.fillRect(originX, TITLE_H, MAP_W, MAP_H);
+
+        ctx.lineWidth = 0.5;
+        ctx.strokeStyle = NO_SITES_STROKE;
+        for (const feat of countryFeatures) {
+          const derGKey = TOPO_NAME_TO_DEREG_KEY[feat.name] || feat.name;
+          const c = COUNTRY_DEREGULATION[derGKey];
+          const tier = c ? statusTier(commodity === 'gas' ? c.gas : c.electric) : 'unknown';
+          const status = tierToStatus(tier);
+          const sites = buckets.get(derGKey)?.count || 0;
+          ctx.fillStyle = sites > 0 ? shadeForCount(STATUS_FILL[status], sites) : NO_SITES_FILL;
+          drawFeature(project, feat.rings);
+        }
+        ctx.restore();
+      };
+
+      drawPanel(PAD,             'gas',      'Natural Gas Markets');
+      drawPanel(PAD * 2 + MAP_W, 'electric', 'Electric Power Markets');
+
+      // Per-panel legends along the bottom — same chip set on both maps.
+      const SWATCH = 22;
+      const GAP_SWATCH_LABEL = 8;
+      const GAP_ITEMS = 22;
+      ctx.font = '13px Nunito Sans, Arial, sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      const itemW = (label) => SWATCH + GAP_SWATCH_LABEL + ctx.measureText(label).width;
+      const drawPanelLegend = (originX) => {
+        const labels = [
+          { color: STATUS_FILL.dereg,   label: STATUS_LABEL.dereg },
+          { color: STATUS_FILL.limited, label: STATUS_LABEL.limited },
+          { color: STATUS_FILL.reg,     label: STATUS_LABEL.reg },
+          { color: NO_SITES_FILL,       label: 'No portfolio sites' },
+        ];
+        const totalW = labels.reduce((a, it) => a + itemW(it.label), 0) + GAP_ITEMS * (labels.length - 1);
+        let cursorX = originX + (MAP_W - totalW) / 2;
+        const legendY = TITLE_H + MAP_H + PAD * 2;
+        for (const it of labels) {
+          ctx.fillStyle = it.color;
+          ctx.fillRect(cursorX, legendY, SWATCH, SWATCH);
+          ctx.strokeStyle = NO_SITES_STROKE;
+          ctx.lineWidth = 0.8;
+          ctx.strokeRect(cursorX, legendY, SWATCH, SWATCH);
+          ctx.fillStyle = '#0F172A';
+          ctx.fillText(it.label, cursorX + SWATCH + GAP_SWATCH_LABEL, legendY + SWATCH / 2);
+          cursorX += itemW(it.label) + GAP_ITEMS;
+        }
+      };
+      drawPanelLegend(PAD);
+      drawPanelLegend(PAD * 2 + MAP_W);
+
+      const dataUrl = canvas.toDataURL('image/png');
+      const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
+
+      // Title band.
+      ws.mergeCells(1, 1, 1, COLS);
+      const title = ws.getCell(1, 1);
+      title.value = 'Europe View — Site Distribution by Market';
+      title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(1).height = 30;
+
+      ws.mergeCells(2, 1, 2, COLS);
+      const sub = ws.getCell(2, 1);
+      sub.value = `${euSiteCount} Europe site${euSiteCount === 1 ? '' : 's'} across ${buckets.size} countr${buckets.size === 1 ? 'y' : 'ies'}. Natural Gas (left) and Electric Power (right) maps each shade every country by its market status (hue) and portfolio site count (darker = more sites); countries with no sites stay light grey.`;
+      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+      sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      ws.getRow(2).height = 36;
+
+      ws.addImage(imageId, {
+        tl: { col: 0, row: 3 },
+        ext: { width: W, height: H },
+      });
+
+      // Overview tier table — same rollup shape as the NAM View, scoped
+      // to European sites. Anchored at row 39 (same as the NAM View) to
+      // clear the bottom edge of the now NAM-sized 638-px map image.
+      const SUMMARY_START = 39;
+      ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
+      const sumHdr = ws.getCell(SUMMARY_START, 1);
+      sumHdr.value = 'Europe Overview';
+      sumHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      sumHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      sumHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(SUMMARY_START).height = 22;
+
+      const tableHeaderRow = SUMMARY_START + 1;
+      const overviewHeaders = ['Tier', 'Electric Sites', 'Electric %', 'Gas Sites', 'Gas %', 'Load (kWh)', 'Load (Dth)', 'Total Cost ($)'];
+      const hdr = ws.getRow(tableHeaderRow);
+      overviewHeaders.forEach((label, i) => {
+        const cell = hdr.getCell(i + 1);
+        cell.value = label;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      });
+      hdr.height = 22;
+      const tierRows = [
+        ['Deregulated',           'dereg',   elecDereg,   gasDereg],
+        ['Limited Deregulation',  'some',    elecSome,    gasSome],
+        ['Regulated / unlikely',  'reg',     elecReg,     gasReg],
+        ['No data',               'unknown', elecUnknown, gasUnknown],
+      ];
+      const pct = (n) => mappedSites > 0 ? n / mappedSites : 0;
+      tierRows.forEach((tr, i) => {
+        const r = ws.getRow(tableHeaderRow + 1 + i);
+        const [label, tierKey, eSites, gSites] = tr;
+        const kwh = electricTierAgg[tierKey]?.kwh || 0;
+        const therms = gasTierAgg[tierKey]?.therms || 0;
+        const cost = (electricTierAgg[tierKey]?.cost || 0) + (gasTierAgg[tierKey]?.cost || 0);
+        r.getCell(1).value = label;
+        r.getCell(2).value = eSites;
+        r.getCell(3).value = pct(eSites);
+        r.getCell(4).value = gSites;
+        r.getCell(5).value = pct(gSites);
+        r.getCell(6).value = Math.round(kwh);
+        r.getCell(7).value = Math.round(therms / 10);
+        r.getCell(8).value = Math.round(cost);
+        r.getCell(3).numFmt = '0.0%';
+        r.getCell(5).numFmt = '0.0%';
+        r.getCell(6).numFmt = '#,##0';
+        r.getCell(7).numFmt = '#,##0';
+        r.getCell(8).numFmt = '"$"#,##0';
+        for (let ci = 1; ci <= overviewHeaders.length; ci++) {
+          r.getCell(ci).font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          r.getCell(ci).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          r.getCell(ci).border = {
+            bottom: { style: 'hair', color: { argb: SE_BORDER } },
+            right:  { style: 'hair', color: { argb: SE_BORDER } },
+          };
+        }
+        r.height = 20;
+      });
+
+      // Per-country deregulation table — only countries with portfolio
+      // sites (same rule as the NAM state table), ranked by Annual Cost
+      // descending then country name. NG / EP status cells are tinted with
+      // their tier hue so the table reads like the map legend.
+      const euCountryRows = [...countryAggs.values()]
+        .sort((a, b) => (b.cost - a.cost) || String(a.country).localeCompare(String(b.country)));
+      if (euCountryRows.length > 0) {
+        const cHdrRow = tableHeaderRow + tierRows.length + 3;
+        ws.mergeCells(cHdrRow, 1, cHdrRow, COLS);
+        const cHdr = ws.getCell(cHdrRow, 1);
+        cHdr.value = 'Country deregulation status';
+        cHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+        cHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        cHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        ws.getRow(cHdrRow).height = 22;
+
+        const cTblHdrRow = cHdrRow + 1;
+        const cCols = ['Country', 'Natural Gas', 'Electric Power', 'Sites', 'Load (kWh)', 'Load (Dth)', 'Annual Cost ($)'];
+        const cHdrCells = ws.getRow(cTblHdrRow);
+        cCols.forEach((label, i) => {
+          const cell = cHdrCells.getCell(i + 1);
+          cell.value = label;
+          cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        });
+        cHdrCells.height = 22;
+
+        // Flag high-consumption markets: any European country whose annual
+        // electric load exceeds 100 GWh gets a ⚑ marker on its name and a
+        // red highlight on the Load (kWh) cell so the biggest power users
+        // jump out of the table. 100 GWh = 100,000,000 kWh.
+        const HIGH_LOAD_KWH = 100_000_000; // 100 GWh
+        const FLAG_FILL = 'FFFDEAEA';      // light red
+        const FLAG_TEXT = 'FFB91C1C';      // strong red
+        let flaggedCount = 0;
+
+        euCountryRows.forEach((cr, i) => {
+          const rr = ws.getRow(cTblHdrRow + 1 + i);
+          const highLoad = cr.kwh > HIGH_LOAD_KWH;
+          if (highLoad) flaggedCount++;
+          rr.getCell(1).value = highLoad ? `⚑ ${cr.country}` : cr.country;
+          rr.getCell(2).value = cr.gasStatus;
+          rr.getCell(3).value = cr.elecStatus;
+          rr.getCell(4).value = cr.sites;
+          rr.getCell(5).value = Math.round(cr.kwh);
+          rr.getCell(6).value = Math.round(cr.therms / 10);
+          rr.getCell(7).value = Math.round(cr.cost);
+          rr.getCell(4).numFmt = '#,##0';
+          rr.getCell(5).numFmt = '#,##0';
+          rr.getCell(6).numFmt = '#,##0';
+          rr.getCell(7).numFmt = '"$"#,##0';
+          for (let ci = 1; ci <= cCols.length; ci++) {
+            rr.getCell(ci).font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            rr.getCell(ci).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+            rr.getCell(ci).border = {
+              bottom: { style: 'hair', color: { argb: SE_BORDER } },
+              right:  { style: 'hair', color: { argb: SE_BORDER } },
+            };
+          }
+          // Tint the status cells with their tier hue (amber gets dark
+          // text, the darker green / slate get white) so the table mirrors
+          // the map's colour key.
+          const tintStatusCell = (cell, tierKey) => {
+            const status = tierToStatus(tierKey);
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: argbFromHex(STATUS_FILL[status]) } };
+            cell.font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: status === 'limited' ? SE_TEXT_DARK : 'FFFFFFFF' } };
+          };
+          tintStatusCell(rr.getCell(2), cr.gasTierKey);
+          tintStatusCell(rr.getCell(3), cr.elecTierKey);
+          // Highlight the country + Load (kWh) cells for flagged markets.
+          if (highLoad) {
+            rr.getCell(1).font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: FLAG_TEXT } };
+            rr.getCell(5).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: FLAG_FILL } };
+            rr.getCell(5).font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: FLAG_TEXT } };
+          }
+          rr.height = 20;
+        });
+
+        // Footnote explaining the ⚑ flag, shown only when something tripped
+        // the 100 GWh threshold.
+        if (flaggedCount > 0) {
+          const noteRow = cTblHdrRow + 1 + euCountryRows.length;
+          ws.mergeCells(noteRow, 1, noteRow, COLS);
+          const note = ws.getCell(noteRow, 1);
+          note.value = `⚑ Flags ${flaggedCount} ${flaggedCount === 1 ? 'country' : 'countries'} with more than 100 GWh of annual electric power consumption.`;
+          note.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: FLAG_TEXT } };
+          note.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          ws.getRow(noteRow).height = 18;
+        }
       }
     }
 
@@ -4277,8 +6462,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // SPAN so the headings stay aligned across both sections.
     const SPAN = 26;
     const widths = [
-      22, 14, 11, 13, 16, 18, 16,        // ST/Prov/Country..Range (7)
-      11,                                // Savings % (scenario, 1)
+      22, 14, 11, 13, 16, 18, 13,        // ST/Prov/Country..Low % (7)
+      13,                                // High % (1)
+      11,                                // Savings % (1)
       16, 14, 14, 14, 14, 14,            // Annual Savings + Year 1-5 (6)
       24, 24, 14, 14,                    // Utility/Supplier/Contract Start/End (4)
       4,                                 // spacer (1)
@@ -4394,6 +6580,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     ws.getRow(3).height = 30;
 
     let r = 5;
+    // Captures each section's Total → Indicative Annual Savings cell
+    // address + its Base (mid) dollar value, so the Savings Summary band
+    // at the top of the sheet can sum electric + gas with a live,
+    // scenario-aware formula. Keyed by the section label.
+    const annualTotals = {};
     function writeSection(label, sectionRows, columnDefs) {
       // Section header band — light green wash with dark green text.
       ws.mergeCells(r, 1, r, SPAN);
@@ -4458,7 +6649,14 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const TOO_LOW_FILL = 'FFFEEAD2';
       const isTooLow = (row) => {
         const flags = String(row?.flags || '');
-        return flags.includes('small electric market') || flags.includes('too low for sourcing');
+        if (flags.includes('small electric market') || flags.includes('too low for sourcing')) return true;
+        // Deregulated markets that surface no deregulated spend have
+        // nothing to pursue — tint them amber like the small markets so
+        // the user can scan past them. Catches rows like OH whose status
+        // is Deregulated but every site there is regulated / carries no
+        // spend on file, which the "small market" flag (spend > 0) skips.
+        if (!row?.isParent && !(Number(row?.spend) > 0)) return true;
+        return false;
       };
       // Hide regulated leaf rows outright. Statuses 'no' (US/CA per-
       // state regulated), 'Regulated', 'Unlikely', and 'No opportunity'
@@ -4498,7 +6696,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           // a mix of children; user edits happen on the per-state
           // rows nested below.
           if ((c.editable === 'lowPct' || c.editable === 'highPct') && !row.isParent) {
-            if (typeof v === 'number' && Number.isFinite(v)) cell.value = v;
+            // European markets carry no committed range — show "TBD"
+            // text rather than a blank (which reads as 0 %) or a number.
+            if (row.isTbd) {
+              cell.value = 'TBD';
+              cell.ignoredErrors = { numberStoredAsText: true };
+            }
+            else if (typeof v === 'number' && Number.isFinite(v)) cell.value = v;
             else writeBlank(cell, !!c.numFmt);
             cell.font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: SE_TEXT_DARK } };
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: INPUT_FILL } };
@@ -4522,7 +6726,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             // Parent aggregate rows have no editable Low/High cells
             // to point at, so write the precomputed mid value as a
             // plain number instead of a formula referencing blanks.
-            if (lowRef && highRef && !row.isParent) {
+            if (lowRef && highRef && !row.isParent && !row.isTbd) {
               const formula = `IF(${SCENARIO_REF}="Conservative",${lowRef},IF(${SCENARIO_REF}="Aggressive",${highRef},(${lowRef}+${highRef})/2))`;
               cell.value = { formula, result: midResult };
               cell.ignoredErrors = { formula: true, formulaRange: true, numberStoredAsText: true };
@@ -4535,7 +6739,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             const spendRef = cellRef('spend', r);
             const pctRef = cellRef('savingsPct', r);
             const midResult = (v && typeof v === 'object' && Number.isFinite(v.mid)) ? Math.round(v.mid) : 0;
-            if (spendRef && pctRef && !row.isParent) {
+            if (spendRef && pctRef && !row.isParent && !row.isTbd) {
               cell.value = { formula: `${spendRef}*${pctRef}`, result: midResult };
               cell.ignoredErrors = { formula: true, formulaRange: true, numberStoredAsText: true };
             } else {
@@ -4551,7 +6755,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             const annualRef = cellRef('annualSavings', r);
             const N = c.yearGate;
             const midResult = (v && typeof v === 'object' && Number.isFinite(v.mid)) ? Math.round(v.mid * (N || 1)) : 0;
-            if (annualRef && N && !row.isParent) {
+            if (annualRef && N && !row.isParent && !row.isTbd) {
               cell.value = {
                 formula: `IF(--${YEARS_REF}>=${N},${annualRef}*${N},0)`,
                 result: midResult,
@@ -4620,6 +6824,61 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         dataRow.height = anyWrap ? 32 : 16;
         r += 1;
       }
+      // Capture the last deregulated data row BEFORE we append the
+      // regulated-summary line below — the Total row's SUM / SUMPRODUCT
+      // formulas need to skip the summary so the weighted savings %
+      // doesn't get diluted by zero-savings regulated spend.
+      const dataEndRow = r - 1;
+
+      // Regulated-markets summary row — single greyed-out line that
+      // surfaces the sites we filtered out of the leaf rows above (any
+      // state / province whose status is 'no' / 'Regulated' / etc.).
+      // The user still sees the count + the underlying spend / load but
+      // every savings column reads $0 / 0 %, signalling that those
+      // markets carry no deregulated motion.
+      const hiddenRegulatedRows = sectionRows.filter(row =>
+        !row.isParent && REGULATED_STATUSES.has(row.status)
+      );
+      const sumOf = (key) => hiddenRegulatedRows.reduce((s, x) => s + (Number(x[key]) || 0), 0);
+      // Lifted above the if-block so the Total-row roll-up below can
+      // fold the regulated count into the headline Total Sites figure.
+      const aggTotalSites  = sumOf('totalSites');
+      const aggConsumption = sumOf('consumption');
+      const aggSpend       = sumOf('spend');
+      if (hiddenRegulatedRows.length > 0) {
+        const REG_ROW_FILL = 'FFE5E7EB';
+        const REG_ROW_TEXT = SE_SLATE;
+        const aggRow = ws.getRow(r);
+        columnDefs.forEach((c, i) => {
+          const cell = aggRow.getCell(i + 1);
+          if (c.spacer) return;
+          if (i === 0) {
+            cell.value = `Remaining sites in regulated markets (${hiddenRegulatedRows.length} state${hiddenRegulatedRows.length === 1 ? '' : 's'} / province${hiddenRegulatedRows.length === 1 ? '' : 's'})`;
+          } else if (c.label === 'Deregulated Status') {
+            cell.value = 'Regulated';
+          } else if (c.sumKey === 'totalSites') {
+            cell.value = aggTotalSites;
+          } else if (c.sumKey === 'consumption') {
+            cell.value = aggConsumption;
+          } else if (c.tag === 'spend' || c.sumKey === 'spend') {
+            cell.value = aggSpend;
+          } else if (c.numFmt && c.numFmt.includes('"$"')) {
+            cell.value = 0;
+          } else if (c.numFmt && c.numFmt.includes('%')) {
+            cell.value = 0;
+          } else {
+            writeBlank(cell, !!c.numFmt);
+          }
+          cell.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: REG_ROW_TEXT } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: REG_ROW_FILL } };
+          cell.alignment = { vertical: 'bottom', horizontal: 'left', indent: 1 };
+          if (c.numFmt) cell.numFmt = c.numFmt;
+          cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } } };
+        });
+        aggRow.height = 18;
+        r += 1;
+      }
+
       // Total row — green double rule above and below. Scenario
       // columns sum each scenario branch independently then write
       // the same toggle-driven formula so the totals follow the
@@ -4633,6 +6892,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // States / Canada) carry sum-of-children values; summing them
       // alongside their children would double-count the totals.
       const summable = visibleRows.filter(row => !row.isParent);
+      // Record this section's Total → Indicative Annual Savings cell (the
+      // total row is at `r`) and its Base value for the Savings Summary
+      // band. Base = sum of each visible leaf row's mid annual savings.
+      const annualColIdx = columnDefs.findIndex(c => c.formulaKind === 'annualSavings');
+      if (annualColIdx >= 0) {
+        const annualBaseMid = summable.reduce((sum, row) => {
+          const t = row.annualSavings;
+          return sum + (t && typeof t === 'object' && Number.isFinite(t.mid) ? t.mid : 0);
+        }, 0);
+        annualTotals[label] = { cell: `${colLetterFor(annualColIdx + 1)}${r}`, base: annualBaseMid };
+      }
       for (const c of columnDefs) {
         if (!c.sumKey) continue;
         if (c.scenario) {
@@ -4652,7 +6922,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           scalarTotals[c.sumKey] = s;
         }
       }
-      const dataEndRow = r - 1;
+      // Fold the regulated-markets summary into the headline Total
+      // Sites count so the Total row reflects the entire portfolio,
+      // not just the deregulated motion. Spend / consumption / savings
+      // columns stay dereg-only — the summary row's spend is real but
+      // doesn't roll into the deregulated rate motion, so summing it
+      // into the Total Spend / Savings would muddy the savings story.
+      if (hiddenRegulatedRows.length > 0 && scalarTotals.totalSites != null) {
+        scalarTotals.totalSites += aggTotalSites;
+      }
       const colRange = (tag) => {
         const col = colByTag[tag];
         if (!col || dataEndRow < dataStartRow) return null;
@@ -4727,9 +7005,16 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       r += 2;
     }
 
+    // The savings tables carry the raw deregulation status ('yes' for
+    // deregulated US / Canadian states, 'Limited', country-level
+    // 'Deregulated', etc.). 'yes' is an internal flag — surface it as the
+    // human-readable "Deregulated" in the exported Indicative Savings tabs
+    // so every deregulated market reads consistently.
+    const displayDeregStatus = (s) => (s === 'yes' ? 'Deregulated' : s);
+
     const electricCols = [
       { label: 'ST / Prov / Country', get: (g) => g.state },
-      { label: 'Deregulated Status', get: (g) => g.status },
+      { label: 'Deregulated Status', get: (g) => displayDeregStatus(g.status) },
       { label: 'Total Sites', get: (g) => g.totalSites, numFmt: '#,##0', sumKey: 'totalSites' },
       { label: 'Deregulated Sites', get: (g) => g.deregulatedSites, numFmt: '#,##0', sumKey: 'deregulatedSites' },
       { label: 'Deregulated Consumption kWh/yr', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
@@ -4775,7 +7060,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     ];
     const gasCols = [
       { label: 'ST / Prov / Country', get: (g) => g.state },
-      { label: 'Deregulated Status', get: (g) => g.status },
+      { label: 'Deregulated Status', get: (g) => displayDeregStatus(g.status) },
       { label: 'Sites', get: (g) => g.totalSites, numFmt: '#,##0', sumKey: 'totalSites' },
       { label: 'Deregulated Sites', get: (g) => g.deregulatedSites, numFmt: '#,##0', sumKey: 'deregulatedSites' },
       { label: 'Deregulated Consumption Dth/yr', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
@@ -4816,6 +7101,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     const smallElectricStates = collectStates(electricRows, 'Spend < $1M');
     const mexicoStates = collectStates(electricRows, 'Mexico sourcing');
     const smallGasStates = collectStates(gasRows, 'too low for sourcing');
+    // Limited-market gating flags surfaced in the summary band so the
+    // seller doesn't have to scan each row's Flags cell.
+    const vaHeavyLoadStates = collectStates(electricRows, 'Virginia site exceeds 45,000 MWh');
+    const limitedSupplyStates = collectStates(electricRows, 'can only help if 3rd-party supply');
     // Portfolio-wide VPPA opportunity flag. North America electric
     // load above 100,000 MWh/yr is the threshold where a Virtual PPA
     // typically pencils out. NA = US states + Canadian provinces
@@ -4834,6 +7123,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     if (wholesalePlusStates.length) {
       summaryFindings.push(`Wholesale Plus should be explored (>44,000 MWh) — ${wholesalePlusStates.join(', ')}`);
     }
+    if (vaHeavyLoadStates.length) {
+      summaryFindings.push('Virginia site exceeds 45,000 MWh/yr — large-load deregulation threshold met');
+    }
+    if (limitedSupplyStates.length) {
+      summaryFindings.push(`Limited market — can only help if 3rd-party supply is already in place — ${limitedSupplyStates.join(', ')}`);
+    }
     if (smallElectricStates.length) {
       summaryFindings.push(`Small electric market — Deregulated spend < $1M — ${smallElectricStates.join(', ')}`);
     }
@@ -4843,6 +7138,20 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     if (smallGasStates.length) {
       summaryFindings.push(`Natural gas consumption might be too low for sourcing (<$30K) — ${smallGasStates.join(', ')}`);
     }
+
+    // Reserve the top-of-body rows for the Savings Summary band. It's
+    // filled in after the Electric / Gas sections are written (so their
+    // Total cells exist to reference), but it lives here — above the
+    // Findings & Recommendations band and the by-state tables.
+    const summaryBandHeaderRow = r;
+    const summaryBandValueRow = r + 1;
+    const summaryBandCumulativeRow = r + 2;
+    // Two data-quality lines (estimated usage / estimated cost shares).
+    // Written even later than the rest of the band — the per-site
+    // estimate flags only exist once the Site Detail rows are built.
+    const summaryBandUsageQualityRow = r + 3;
+    const summaryBandCostQualityRow = r + 4;
+    r += 6; // band header + annual + cumulative + 2 data-quality lines + a breather row
 
     if (summaryFindings.length > 0) {
       // Section band, same look as the Electric Power / Natural Gas
@@ -4969,6 +7278,362 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     writeSection('Electric Power', restructureForGlobal(electricRows), electricCols);
     writeSection('Natural Gas',   restructureForGlobal(gasRows),       gasCols);
 
+    // ---- Savings Summary band (top of the Indicative Savings sheet) --
+    // Combined indicative annual savings across electric + gas, written
+    // into the rows reserved above. Uses a live formula that sums each
+    // section's Total → Indicative Annual Savings cell, so the headline
+    // follows the Savings Scenario toggle exactly like the tables below.
+    {
+      ws.mergeCells(summaryBandHeaderRow, 1, summaryBandHeaderRow, SPAN);
+      const sHead = ws.getCell(summaryBandHeaderRow, 1);
+      sHead.value = 'Savings Summary';
+      sHead.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      sHead.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      sHead.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(summaryBandHeaderRow).height = 22;
+
+      const elecTot = annualTotals['Electric Power'];
+      const gasTot = annualTotals['Natural Gas'];
+      const refs = [elecTot?.cell, gasTot?.cell].filter(Boolean);
+      const baseResult = Math.round((elecTot?.base || 0) + (gasTot?.base || 0));
+
+      // Label (cols 1–9) · value (col 10) · note (cols 11–SPAN).
+      ws.mergeCells(summaryBandValueRow, 1, summaryBandValueRow, 9);
+      const sLabel = ws.getCell(summaryBandValueRow, 1);
+      sLabel.value = 'Total Indicative Annual Savings (Electric + Natural Gas)';
+      sLabel.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_TEXT_DARK } };
+      sLabel.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+
+      const sValue = ws.getCell(summaryBandValueRow, 10);
+      if (refs.length) {
+        sValue.value = { formula: refs.join('+'), result: baseResult };
+        sValue.ignoredErrors = { formula: true };
+      } else {
+        sValue.value = baseResult;
+      }
+      sValue.numFmt = '"$"#,##0';
+      sValue.font = { name: 'Nunito Sans', bold: true, size: 14, color: { argb: SE_GREEN_DARK } };
+      sValue.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+
+      ws.mergeCells(summaryBandValueRow, 11, summaryBandValueRow, SPAN);
+      const sNote = ws.getCell(summaryBandValueRow, 11);
+      sNote.value = 'Follows the Savings Scenario toggle above (Base = average of the Low / High range).';
+      sNote.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+      sNote.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+      ws.getRow(summaryBandValueRow).height = 24;
+
+      // Cumulative line — annual total × the # of Years dropdown, so
+      // the headline re-derives whenever the user changes the term.
+      const defaultTermYears = Number(ws.getCell(YEARS_LOCAL_CELL).value) || 1;
+      ws.mergeCells(summaryBandCumulativeRow, 1, summaryBandCumulativeRow, 9);
+      const cLabel = ws.getCell(summaryBandCumulativeRow, 1);
+      cLabel.value = 'Total Indicative Cumulative Savings over the Term (Electric + Natural Gas)';
+      cLabel.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_TEXT_DARK } };
+      cLabel.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+
+      const cValue = ws.getCell(summaryBandCumulativeRow, 10);
+      if (refs.length) {
+        cValue.value = {
+          formula: `(${refs.join('+')})*--${YEARS_REF}`,
+          result: baseResult * defaultTermYears,
+        };
+        cValue.ignoredErrors = { formula: true };
+      } else {
+        cValue.value = baseResult * defaultTermYears;
+      }
+      cValue.numFmt = '"$"#,##0';
+      cValue.font = { name: 'Nunito Sans', bold: true, size: 14, color: { argb: SE_GREEN_DARK } };
+      cValue.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+
+      ws.mergeCells(summaryBandCumulativeRow, 11, summaryBandCumulativeRow, SPAN);
+      const cNote = ws.getCell(summaryBandCumulativeRow, 11);
+      cNote.value = 'Annual savings × the # of Years selected above — adjusts automatically when the term changes.';
+      cNote.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+      cNote.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+      ws.getRow(summaryBandCumulativeRow).height = 24;
+
+      // ---- Populate the Executive Summary tab (tab #1) -------------
+      // The two headline savings figures mirror the band just written —
+      // via live cross-sheet references so they keep following the
+      // Savings Scenario + # of Years toggles on the Indicative Savings
+      // tab — sitting above the building-compliance screening KPIs so
+      // the first tab reads as the portfolio snapshot the user wants.
+      {
+        const SUM_NCOLS = 8;
+        const usdShort = (n) => {
+          if (n == null || !Number.isFinite(n)) return '$-';
+          const a = Math.abs(n);
+          if (a >= 1e6) return '$' + (n / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace(/\.0$/, '') + 'M';
+          if (a >= 1e3) return '$' + Math.round(n / 1e3) + 'K';
+          return '$' + Math.round(n);
+        };
+        summarySheet.columns = [
+          { width: 32 }, { width: 15 }, { width: 15 }, { width: 15 },
+          { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 },
+        ];
+
+        // Title + subtitle band.
+        summarySheet.mergeCells(1, 1, 1, SUM_NCOLS);
+        const sumTitle = summarySheet.getCell(1, 1);
+        sumTitle.value = 'Executive Summary';
+        sumTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN } };
+        sumTitle.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+        sumTitle.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        summarySheet.getRow(1).height = 38;
+
+        summarySheet.mergeCells(2, 1, 2, SUM_NCOLS);
+        const sumSub = summarySheet.getCell(2, 1);
+        sumSub.value = `Indicative savings headline and building-compliance exposure across the portfolio.  Generated ${new Date().toLocaleDateString()}`;
+        sumSub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+        sumSub.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        summarySheet.getRow(2).height = 20;
+        summarySheet.getRow(3).height = 6;
+
+        const sumSection = (rowNum, text) => {
+          summarySheet.mergeCells(rowNum, 1, rowNum, SUM_NCOLS);
+          const c = summarySheet.getCell(rowNum, 1);
+          c.value = text;
+          c.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+          c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          summarySheet.getRow(rowNum).height = 22;
+        };
+
+        // Section 1: Indicative Savings — the two headline figures,
+        // pulled live from the Indicative Savings tab's Savings Summary
+        // band (column J of the two band rows).
+        const savingsFigure = (rowNum, label, formulaRef, resultVal) => {
+          summarySheet.mergeCells(rowNum, 1, rowNum, 5);
+          const lab = summarySheet.getCell(rowNum, 1);
+          lab.value = label;
+          lab.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_TEXT_DARK } };
+          lab.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+          summarySheet.mergeCells(rowNum, 6, rowNum, SUM_NCOLS);
+          const val = summarySheet.getCell(rowNum, 6);
+          if (refs.length) {
+            val.value = { formula: formulaRef, result: resultVal };
+            val.ignoredErrors = { formula: true };
+          } else {
+            val.value = resultVal;
+          }
+          val.numFmt = '"$"#,##0';
+          val.font = { name: 'Nunito Sans', bold: true, size: 14, color: { argb: SE_GREEN_DARK } };
+          val.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          summarySheet.getRow(rowNum).height = 26;
+        };
+        sumSection(4, 'Indicative Savings');
+        savingsFigure(
+          5,
+          'Total Indicative Annual Savings (Electric + Natural Gas)',
+          `'${SCENARIO_SHEET_NAME}'!$J$${summaryBandValueRow}`,
+          baseResult,
+        );
+        savingsFigure(
+          6,
+          'Total Indicative Cumulative Savings over the Term (Electric + Natural Gas)',
+          `'${SCENARIO_SHEET_NAME}'!$J$${summaryBandCumulativeRow}`,
+          baseResult * defaultTermYears,
+        );
+        summarySheet.mergeCells(7, 1, 7, SUM_NCOLS);
+        const savNote = summarySheet.getCell(7, 1);
+        savNote.value = 'Mirrors the Indicative Savings tab, following the Savings Scenario and # of Years selections made there.';
+        savNote.font = { name: 'Nunito Sans', italic: true, size: 9.5, color: { argb: SE_SLATE } };
+        savNote.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+        summarySheet.getRow(7).height = 18;
+
+        // From here down the sections vary in length (the states table has
+        // one row per state), so track the next free row rather than hard-
+        // coding row numbers.
+        let sumRow = 8;
+        summarySheet.getRow(sumRow++).height = 6; // spacer
+
+        // Section 1b: Top 5 States by Indicative Savings — the five
+        // highest-savings states / provinces / countries for electric and
+        // for natural gas, side by side. Ranked by the Base (mid) Year 1
+        // indicative savings from the same by-state buckets that drive the
+        // Indicative Savings tab, so the figures line up with that sheet.
+        const topSavingsBy = (bucketRows) => bucketRows
+          .map(g => ({ state: g.state, sites: g.totalSites || 0, savings: (g.year1 && g.year1.mid) || 0 }))
+          .filter(x => x.savings > 0)
+          .sort((a, b) => b.savings - a.savings)
+          .slice(0, 5);
+        const topElectric = topSavingsBy(electricRows);
+        const topGas = topSavingsBy(gasRows);
+
+        if (topElectric.length || topGas.length) {
+          sumSection(sumRow++, 'Top 5 States by Indicative Savings');
+          // Commodity header row: Electric (cols 1-4) | Natural Gas (cols 5-8).
+          const comHdrRowNum = sumRow++;
+          [{ c: 1, t: 'Electric' }, { c: 5, t: 'Natural Gas' }].forEach(h => {
+            summarySheet.mergeCells(comHdrRowNum, h.c, comHdrRowNum, h.c + 3);
+            const cell = summarySheet.getCell(comHdrRowNum, h.c);
+            cell.value = h.t;
+            cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
+            cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          });
+          summarySheet.getRow(comHdrRowNum).height = 18;
+          // Sub-header row: ST / Prov / Country | Sites | Yr 1 Savings (x2).
+          const subHdrRowNum = sumRow++;
+          const subHdrs = [
+            { c: 1, t: 'ST / Prov / Country' }, { c: 2, t: 'Sites' }, { c: 3, span: 2, t: 'Yr 1 Savings' },
+            { c: 5, t: 'ST / Prov / Country' }, { c: 6, t: 'Sites' }, { c: 7, span: 2, t: 'Yr 1 Savings' },
+          ];
+          subHdrs.forEach(h => {
+            if (h.span) summarySheet.mergeCells(subHdrRowNum, h.c, subHdrRowNum, h.c + h.span - 1);
+            const cell = summarySheet.getCell(subHdrRowNum, h.c);
+            cell.value = h.t;
+            cell.font = { name: 'Nunito Sans', bold: true, size: 9, color: { argb: SE_SLATE } };
+            cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+            cell.border = { bottom: { style: 'thin', color: { argb: SE_BORDER } } };
+          });
+          summarySheet.getRow(subHdrRowNum).height = 16;
+          // Up to five ranked rows, electric on the left, gas on the right.
+          const writeTopBlock = (rowNum, startCol, item) => {
+            const stCell = summarySheet.getCell(rowNum, startCol);
+            stCell.value = item ? item.state : '';
+            stCell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_TEXT_DARK } };
+            stCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+            const siCell = summarySheet.getCell(rowNum, startCol + 1);
+            siCell.value = item ? item.sites : '';
+            siCell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            siCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+            summarySheet.mergeCells(rowNum, startCol + 2, rowNum, startCol + 3);
+            const svCell = summarySheet.getCell(rowNum, startCol + 2);
+            svCell.value = item ? item.savings : '';
+            if (item) svCell.numFmt = '"$"#,##0';
+            svCell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
+            svCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          };
+          const nTop = Math.max(topElectric.length, topGas.length);
+          for (let i = 0; i < nTop; i++) {
+            const rowNum = sumRow++;
+            writeTopBlock(rowNum, 1, topElectric[i]);
+            writeTopBlock(rowNum, 5, topGas[i]);
+            summarySheet.getRow(rowNum).height = 18;
+          }
+          summarySheet.mergeCells(sumRow, 1, sumRow, SUM_NCOLS);
+          const topNote = summarySheet.getCell(sumRow, 1);
+          topNote.value = 'Ranked by Base (mid) Year 1 indicative savings. Mirrors the per-state figures on the Indicative Savings tab.';
+          topNote.font = { name: 'Nunito Sans', italic: true, size: 9.5, color: { argb: SE_SLATE } };
+          topNote.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+          summarySheet.getRow(sumRow++).height = 18;
+          summarySheet.getRow(sumRow++).height = 6; // spacer
+        }
+
+        // Section 2: Building Compliance Screening — KPI tiles mirroring
+        // the on-page Compliance Screening dashboard. Same derivation as
+        // the compliance report: sites screened, sites with any eligible
+        // mandate, distinct matched jurisdictions, and the summed max
+        // yearly penalty across the three mandate types.
+        const complianceResults = screenSites(complianceSites);
+        const cMatched = complianceResults.filter(r => r.matched);
+        const cJurisdictions = new Set(cMatched.map(r => r.govId)).size;
+        const cWithMandate = complianceResults.filter(r => CATEGORIES.some(c => r[c]?.eligible === true)).length;
+        const cGrandPenalty = CATEGORIES.reduce((sum, c) => sum + totalPenalty(complianceResults, c), 0);
+        const cSiteCount = complianceResults.length;
+
+        sumSection(sumRow++, 'Building Compliance Screening');
+        const kpis = [
+          { v: String(cSiteCount), l: 'Sites Screened', c: SE_GREEN_DARK },
+          { v: String(cWithMandate), l: 'Sites With a Mandate', c: 'FF3DCD58' },
+          { v: String(cJurisdictions), l: 'Jurisdictions Matched', c: 'FF29ABE2' },
+          { v: usdShort(cGrandPenalty), l: 'Est. Max Yearly Exposure', c: 'FFF7941E' },
+        ];
+        const kpiNumRowNum = sumRow++;
+        const kpiLblRowNum = sumRow++;
+        const kpiNumRow = summarySheet.getRow(kpiNumRowNum);
+        const kpiLblRow = summarySheet.getRow(kpiLblRowNum);
+        kpis.forEach((k, i) => {
+          const c0 = i * 2 + 1;
+          summarySheet.mergeCells(kpiNumRowNum, c0, kpiNumRowNum, c0 + 1);
+          summarySheet.mergeCells(kpiLblRowNum, c0, kpiLblRowNum, c0 + 1);
+          const num = kpiNumRow.getCell(c0);
+          num.value = k.v;
+          num.font = { name: 'Nunito Sans', bold: true, size: 22, color: { argb: SE_TEXT_DARK } };
+          num.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          num.border = {
+            top: { style: 'medium', color: { argb: k.c } },
+            left: { style: 'thin', color: { argb: SE_BORDER } },
+            right: { style: 'thin', color: { argb: SE_BORDER } },
+          };
+          const lbl = kpiLblRow.getCell(c0);
+          lbl.value = k.l.toUpperCase();
+          lbl.font = { name: 'Nunito Sans', bold: true, size: 9, color: { argb: SE_SLATE } };
+          lbl.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          lbl.border = {
+            bottom: { style: 'thin', color: { argb: SE_BORDER } },
+            left: { style: 'thin', color: { argb: SE_BORDER } },
+            right: { style: 'thin', color: { argb: SE_BORDER } },
+          };
+        });
+        kpiNumRow.height = 30;
+        kpiLblRow.height = 16;
+
+        const cmpNoteRowNum = sumRow++;
+        summarySheet.mergeCells(cmpNoteRowNum, 1, cmpNoteRowNum, SUM_NCOLS);
+        const cmpNote = summarySheet.getCell(cmpNoteRowNum, 1);
+        cmpNote.value = "Preliminary BBS / energy-audit / BPS applicability across the portfolio. Est. max yearly exposure sums each eligible site's maximum annual penalty across the three mandate types.";
+        cmpNote.font = { name: 'Nunito Sans', italic: true, size: 9.5, color: { argb: SE_SLATE } };
+        cmpNote.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
+        summarySheet.getRow(cmpNoteRowNum).height = 30;
+        summarySheet.getRow(sumRow++).height = 6; // spacer
+
+        // Section 2b: BPS — Prioritization. One row per (deadline,
+        // jurisdiction) over the BPS-eligible sites, matching the compliance
+        // exports + on-page table.
+        const bpsRows = bpsPrioritization(complianceResults);
+        if (bpsRows.length) {
+          sumSection(sumRow++, 'BPS Prioritization');
+          const bpsHdrRowNum = sumRow++;
+          const bpsHdrs = [
+            { c: 1, t: 'Upcoming Deadline' },
+            { c: 2, t: 'Compliance Government' },
+            { c: 3, t: 'BPS Fines for Exceeding Limits' },
+            { c: 4, t: 'Eligible sites' },
+            { c: 5, span: 2, t: 'Sum of Est. Penalty (non-reporting)' },
+            { c: 7, span: 2, t: 'Fee for exceeding limits' },
+          ];
+          bpsHdrs.forEach(h => {
+            if (h.span) summarySheet.mergeCells(bpsHdrRowNum, h.c, bpsHdrRowNum, h.c + h.span - 1);
+            const cell = summarySheet.getCell(bpsHdrRowNum, h.c);
+            cell.value = h.t;
+            cell.font = { name: 'Nunito Sans', bold: true, size: 9, color: { argb: SE_SLATE } };
+            cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: h.c !== 7 };
+            cell.border = { bottom: { style: 'thin', color: { argb: SE_BORDER } } };
+          });
+          summarySheet.getRow(bpsHdrRowNum).height = 28;
+          for (const g of bpsRows) {
+            const rowNum = sumRow++;
+            const cells = [
+              { c: 1, v: g.deadline ? `${Number(g.deadline.split('-')[1])}/${Number(g.deadline.split('-')[2])}/${g.deadline.split('-')[0]}` : '', align: 'left', bold: true, dark: true },
+              { c: 2, v: g.government || '', align: 'left', bold: true, dark: true },
+              { c: 3, v: g.fine, align: 'left' },
+              { c: 4, v: g.sites, align: 'left', dark: true },
+            ];
+            cells.forEach(cd => {
+              const cell = summarySheet.getCell(rowNum, cd.c);
+              cell.value = cd.v;
+              cell.font = { name: 'Nunito Sans', size: 10, bold: !!cd.bold, color: { argb: cd.dark ? SE_TEXT_DARK : SE_SLATE } };
+              cell.alignment = { vertical: 'middle', horizontal: cd.align, indent: 1 };
+            });
+            summarySheet.mergeCells(rowNum, 5, rowNum, 6);
+            const penCell = summarySheet.getCell(rowNum, 5);
+            penCell.value = g.penaltyKnown ? g.penalty : '';
+            if (g.penaltyKnown) penCell.numFmt = '"$"#,##0';
+            penCell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_TEXT_DARK } };
+            penCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+            summarySheet.mergeCells(rowNum, 7, rowNum, 8);
+            const feeCell = summarySheet.getCell(rowNum, 7);
+            feeCell.value = g.feeExceeding;
+            feeCell.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: SE_SLATE } };
+            feeCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: false };
+            summarySheet.getRow(rowNum).height = 18;
+          }
+          summarySheet.getRow(sumRow++).height = 6; // spacer
+        }
+      }
+    }
+
     // ---- Second sheet: Site Detail ---------------------------------
     // Flat per-site listing so the user can see the underlying data
     // that rolled up into the by-state summary above.
@@ -4981,17 +7646,24 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       { label: 'ST / Prov', get: (s) => s.state, width: 14 },
       { label: 'Country', get: (s) => s.country, width: 18 },
       { label: 'Zip', get: (s) => s.zip, width: 9 },
+      { label: 'Property Type', get: (s) => s.propertyType, width: 22 },
+      { label: 'Size (ft²)', get: (s) => s.sqft, numFmt: '#,##0', width: 12 },
       { label: 'Electric Utility', get: (s) => s.electricUtility, width: 22 },
+      { label: 'ISO / RTO', get: (s) => s.iso, width: 11 },
       { label: 'Electric Supplier', get: (s) => s.electricSupplier, width: 22 },
+      { label: 'Electric Market', get: (s) => s.electricMarket, width: 18 },
       { label: 'Reg. Rate Savings Opportunity', get: (s) => s.regRateOpportunity, width: 28 },
-      { label: 'Annual Electric (kWh)', get: (s) => s.kwh, numFmt: '#,##0', width: 18 },
-      { label: 'Total Electric Cost', get: (s) => s.electricCost, numFmt: '"$"#,##0', width: 16 },
+      { label: 'Annual Electric (kWh)', get: (s) => s.kwh, numFmt: '#,##0', width: 18, estimated: (s) => s.kwhEstimated },
+      { label: 'Electric Rate ($/kWh)', get: (s) => s.electricRate, numFmt: '"$"0.0000', width: 16, estimated: () => true },
+      { label: 'Total Electric Cost', get: (s) => s.electricCost, numFmt: '"$"#,##0', width: 16, estimated: (s) => s.electricCostEstimated },
       { label: 'Electric Contract Start', get: (s) => s.electricStart, width: 18, numFmt: 'm/d/yyyy', dateColumn: true },
       { label: 'Electric Contract End', get: (s) => s.electricEnd, width: 18, numFmt: 'm/d/yyyy', dateColumn: true },
       { label: 'Gas Utility', get: (s) => s.gasUtility, width: 22 },
       { label: 'Gas Supplier', get: (s) => s.gasSupplier, width: 22 },
-      { label: 'Annual Gas (Dth)', get: (s) => s.dth, numFmt: '#,##0', width: 16 },
-      { label: 'Total Natural Gas Cost', get: (s) => s.gasCost, numFmt: '"$"#,##0', width: 18 },
+      { label: 'Gas Market', get: (s) => s.gasMarket, width: 18 },
+      { label: 'Annual Gas (Dth)', get: (s) => s.dth, numFmt: '#,##0', width: 16, estimated: (s) => s.thermsEstimated },
+      { label: 'Gas Rate ($/Dth)', get: (s) => s.gasRate, numFmt: '"$"0.00', width: 14, estimated: () => true },
+      { label: 'Total Natural Gas Cost', get: (s) => s.gasCost, numFmt: '"$"#,##0', width: 18, estimated: (s) => s.gasCostEstimated },
       { label: 'Gas Contract Start', get: (s) => s.gasStart, width: 18, numFmt: 'm/d/yyyy', dateColumn: true },
       { label: 'Gas Contract End', get: (s) => s.gasEnd, width: 18, numFmt: 'm/d/yyyy', dateColumn: true },
       // Per-site Mexico-sourcing flag (any Mexican site with > 1 MWh
@@ -5006,7 +7678,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     const detailHeader = detailSheet.getRow(1);
     detailCols.forEach((c, i) => {
       const cell = detailHeader.getCell(i + 1);
-      cell.value = c.label;
+      // Mark columns that can carry estimated / indicative data with a
+      // dagger; the legend below the table explains it.
+      cell.value = c.estimated ? `${c.label} †` : c.label;
       cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
       cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
@@ -5052,12 +7726,14 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           if (trimmed) return trimmed;
           return supplierPresent ? 'TBD' : '';
         };
-        const stateCode = r.__state__ || '';
+        const stateCode = effectiveStateCode(r);
         const rawCountry = String(r.__country__ || '').trim();
-        // Use the canonical country label when there's no state so the
-        // ST / Prov / Country column on Site Detail matches the by-
-        // state sheet's bucket labels for international sites.
-        const canonicalCountry = stateCode ? '' : (normalizeCountryName(rawCountry) || rawCountry);
+        // ST / Prov column: US/CA sites show the 2-letter code, every
+        // other country shows the full subdivision name from the upload
+        // (falling back to the country label when no state was given).
+        // Computed once at row build time so this sheet and the Contract
+        // Overview tab stay in sync. See __stateProvinceDisplay__.
+        const stateProvince = r.__stateProvinceDisplay__ || '';
         // US/CA reg-rate motion is per-utility curated; country sites
         // pick up the reg-rate flag from the Power Rate Optimization
         // column on the country reference instead.
@@ -5065,12 +7741,43 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           ? (!!electricUtility && isRegulatedRateOpportunity(stateCode, electricUtility))
           : countryHasRegulatedRateOpportunity(rawCountry);
         const country = rawCountry;
+        // Per-commodity Regulated / Deregulated status. When we know
+        // the utility (US/CA), use the same per-utility classification
+        // the Utility Lookup page renders — so e.g. LADWP and Roseville
+        // Electric come through as Regulated even though California is
+        // a Direct Access state overall. When the utility isn't known
+        // (or for international sites), fall back to the state-level
+        // NA deregulation map / COUNTRY_DEREGULATION reference.
+        const isUSSite = /^(united states|usa|us)$/i.test(rawCountry);
+        const isCASite = /^(canada|ca)$/i.test(rawCountry);
+        const naCat = (isUSSite || isCASite) ? naCategoryFor(stateCode, isUSSite, isCASite) : null;
+        const countryDereg = (!isUSSite && !isCASite) ? COUNTRY_DEREGULATION[normalizeCountryName(rawCountry) || rawCountry] : null;
+        const electricMarket = electricUtility
+          ? (classifyUtility(electricUtility) || '')
+          : (naCat ? (naCat.ep || '') : (countryDereg?.electric || ''));
+        const gasMarket = gasUtility
+          ? (classifyUtility(gasUtility) || '')
+          : (naCat ? (naCat.ng || '') : (countryDereg?.gas || ''));
+        // ISO / RTO market for the site, resolved the same fine way as the
+        // ISO tab — electric utility first, then ZIP, then state / province.
+        // Only US/CA sites carry a market; everything else (and NA sites
+        // outside an IRC-mapped footprint) stays blank.
+        const iso = (isUSSite || isCASite)
+          ? (ISO_LABEL[resolveSiteIso({
+              admin: isCASite ? 'CA' : 'US',
+              code: stateCode,
+              zip: r.__zipNorm__,
+              utility: electricUtility,
+            })] || '')
+          : '';
         const kwh = typeof r.__kwh__ === 'number' ? Math.round(r.__kwh__) : null;
         // Mexico flag: Baja sites are off CFE's grid so they don't
         // get tagged at all. Other Mexican sites get either the
         // sourcing-opportunity flag (CFE + > 6 GWh/yr) or the
-        // too-low-consumption flag (< 6 GWh/yr).
-        const mxFlag = mexicoSiteFlag(country, stateCode, electricUtility, kwh);
+        // too-low-consumption flag (< 6 GWh/yr). Pass the raw state
+        // string here (not the US/CA-only stateCode) so the Baja
+        // exclusion still sees a "Baja California" tag on Mexican rows.
+        const mxFlag = mexicoSiteFlag(country, r.__state__ || '', electricUtility, kwh);
         // Property-type mapping flag: when the upload carried a raw
         // property-type value but normalizePropertyType couldn't
         // resolve it to a canonical entry, the per-property-type
@@ -5084,27 +7791,106 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const allFlags = [mxFlag, propertyTypeFlag].filter(Boolean).join('\n');
         return {
           siteName: siteNameColumn ? String(r[siteNameColumn] || '').trim() : '',
-          state: stateCode || canonicalCountry,
+          state: stateProvince,
           zip: r.__zipNorm__ || '',
           country,
+          // Prefer the canonical property type so the value here lines
+          // up with what the Property Type Estimates sheet keys on; if
+          // the upload's raw value wasn't recognized, surface it as-is
+          // (the Flags column already calls out the unrecognized case).
+          propertyType: r.__propertyType__ || r.__propertyTypeRaw__ || '',
+          // Mapped property size (sq ft) when the user provided one.
+          sqft: (typeof r.__propertySizeFt2__ === 'number' && Number.isFinite(r.__propertySizeFt2__)) ? Math.round(r.__propertySizeFt2__) : null,
           electricUtility,
+          iso,
           electricSupplier,
+          electricMarket,
           regRateOpportunity: isRegRateOpportunity ? 'Yes' : '',
           kwh,
+          // Indicative $/kWh used to derive the estimated cost. Always an
+          // indicative (state / country) rate, never a billed tariff.
+          electricRate: (typeof r.__electricRate__ === 'number' && Number.isFinite(r.__electricRate__)) ? r.__electricRate__ : null,
           electricCost: typeof r.__electricCost__ === 'number' ? Math.round(r.__electricCost__) : null,
           electricStart: tbdIfMissing(r.__electricStart__, !!electricSupplier),
           electricEnd: tbdIfMissing(r.__electricEnd__, !!electricSupplier),
           gasUtility,
           gasSupplier,
+          gasMarket,
           dth,
+          // __gasRate__ is $/therm; ×10 → $/Dth to match the Dth column.
+          gasRate: (typeof r.__gasRate__ === 'number' && Number.isFinite(r.__gasRate__)) ? r.__gasRate__ * 10 : null,
           gasCost: typeof r.__gasCost__ === 'number' ? Math.round(r.__gasCost__) : null,
           gasStart: tbdIfMissing(r.__gasStart__, !!gasSupplier),
           gasEnd: tbdIfMissing(r.__gasEnd__, !!gasSupplier),
           flags: allFlags,
+          // Estimate flags drive the italic-amber "estimated data" call-out
+          // on the matching columns. Consumption is modeled from the
+          // property type; cost is estimated when no actual $ was provided.
+          kwhEstimated: !!r.__kwhFromEstimate__,
+          thermsEstimated: !!r.__thermsFromEstimate__,
+          electricCostEstimated: r.__electricCostActual__ == null && typeof r.__electricCost__ === 'number',
+          gasCostEstimated: r.__gasCostActual__ == null && typeof r.__gasCost__ === 'number',
         };
       })
       .filter(s => s.siteName)
       .sort((a, b) => (a.state || '').localeCompare(b.state || '') || a.siteName.localeCompare(b.siteName));
+
+    // ---- Savings Summary: estimated-data share lines ----------------
+    // Written into the rows reserved in the Savings Summary band, but
+    // computed here — the per-site estimate flags only exist on the
+    // Site Detail rows built above. A "data point" is one site's value
+    // for one commodity (electric usage, gas usage, electric cost, gas
+    // cost); sites with no value for a commodity don't count against it.
+    {
+      const tally = () => ({ est: 0, tot: 0, elecEst: 0, elecTot: 0, gasEst: 0, gasTot: 0 });
+      const usage = tally();
+      const cost = tally();
+      const bump = (c, side, isEst) => {
+        c.tot += 1;
+        c[`${side}Tot`] += 1;
+        if (isEst) { c.est += 1; c[`${side}Est`] += 1; }
+      };
+      for (const s of sitesForDetail) {
+        if (s.kwh != null) bump(usage, 'elec', s.kwhEstimated);
+        if (s.dth != null) bump(usage, 'gas', s.thermsEstimated);
+        if (s.electricCost != null) bump(cost, 'elec', s.electricCostEstimated);
+        if (s.gasCost != null) bump(cost, 'gas', s.gasCostEstimated);
+      }
+      const writeQualityLine = (rowNum, label, c, noteTail) => {
+        ws.mergeCells(rowNum, 1, rowNum, 9);
+        const qLabel = ws.getCell(rowNum, 1);
+        qLabel.value = label;
+        qLabel.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_TEXT_DARK } };
+        qLabel.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+
+        const qValue = ws.getCell(rowNum, 10);
+        qValue.value = c.tot > 0 ? c.est / c.tot : 0;
+        qValue.numFmt = '0%';
+        qValue.font = { name: 'Nunito Sans', bold: true, size: 14, color: { argb: SE_EST } };
+        qValue.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+
+        ws.mergeCells(rowNum, 11, rowNum, SPAN);
+        const qNote = ws.getCell(rowNum, 11);
+        qNote.value = c.tot > 0
+          ? `Electric: ${c.elecEst} of ${c.elecTot} sites · Gas: ${c.gasEst} of ${c.gasTot} sites — ${noteTail}`
+          : 'No data points available.';
+        qNote.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+        qNote.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+        ws.getRow(rowNum).height = 24;
+      };
+      writeQualityLine(
+        summaryBandUsageQualityRow,
+        'Estimated Usage Data (% of usage data points)',
+        usage,
+        'usage modeled from property type when none was uploaded.'
+      );
+      writeQualityLine(
+        summaryBandCostQualityRow,
+        'Estimated Cost Data (% of cost data points)',
+        cost,
+        'cost derived from indicative rates when no actual spend was uploaded.'
+      );
+    }
 
     sitesForDetail.forEach((s, idx) => {
       const dataRow = detailSheet.getRow(2 + idx);
@@ -5124,7 +7910,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         } else {
           cell.value = ceilForFmt(v, c.numFmt);
         }
-        cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+        // Estimated / indicative values render italic + amber so the
+        // user can see at a glance which numbers are modeled rather than
+        // taken from the uploaded file. Skip the styling on blank cells.
+        const isEst = !!c.estimated && c.estimated(s) && v !== '' && v != null;
+        cell.font = isEst
+          ? { name: 'Nunito Sans', size: 10, italic: true, color: { argb: SE_EST } }
+          : { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
         // Flags can carry multiple newline-separated lines; wrap so
         // the user sees both the Mexico flag and the property-type
         // warning when they fire on the same row. Other columns stay
@@ -5152,6 +7944,18 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         to: { row: 1 + sitesForDetail.length, column: detailCols.length },
       };
     }
+    // Legend for the estimated-data call-out: one row below the table,
+    // spanning the width so it reads as a footnote rather than data.
+    {
+      const legendRowIdx = 2 + sitesForDetail.length + 1;
+      const legendRow = detailSheet.getRow(legendRowIdx);
+      const legendCell = legendRow.getCell(1);
+      legendCell.value = '† Columns that can contain estimated data. Italic amber values are estimated — annual consumption is modeled from the property type, costs are derived from indicative rates when no actual cost was provided, and the rate columns are indicative ($/kWh and $/Dth), not billed tariffs. Upright black values come from the uploaded file.';
+      legendCell.font = { name: 'Nunito Sans', size: 9, italic: true, color: { argb: SE_EST } };
+      legendCell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+      detailSheet.mergeCells(legendRowIdx, 1, legendRowIdx, Math.min(detailCols.length, 8));
+      legendRow.height = 42;
+    }
 
     // ---- Third sheet: Monthly Savings Breakdown ---------------------
     // Per-site / per-commodity audit of how the by-state savings are
@@ -5170,7 +7974,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         || a.commodity.localeCompare(b.commodity));
 
     if (allSiteRows.length > 0) {
-      const monthlySheet = wb.addWorksheet('Deregulated Monthly Savings', {
+      const monthlySheet = wb.addWorksheet('Monthly Savings', {
+        // Hidden by default — a supporting per-site audit ledger for the
+        // by-state numbers, surfaced only when a reader unhides it. Same
+        // treatment as the Hedging Analysis / Gas Market Timing tabs.
+        state: 'hidden',
         properties: { tabColor: { argb: SE_GREEN } },
         views: [{ showGridLines: false, state: 'frozen', ySplit: 2, xSplit: 3 }],
       });
@@ -5219,7 +8027,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // Title row.
       monthlySheet.mergeCells(1, 1, 1, cols.length);
       const title = monthlySheet.getCell(1, 1);
-      title.value = 'Deregulated Monthly Savings Breakdown';
+      title.value = 'Monthly Savings Breakdown';
       title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
       title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
       title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -5348,14 +8156,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       };
     }
 
-    // ---- Property Type Estimates sheet ------------------------------
+    // ---- Property Type Estimates (per site) -------------------------
     // Reference-table-driven estimate of annual consumption and the
     // expected utility-account count per commodity, keyed off the
     // Property Type column on the source sheet. Optional Size_ft2
     // column scales the consumption numbers proportionally to the
     // reference Size_ft2 baked into the table; account counts are
     // independent of size. Skips sites with no recognized property
-    // type, and skips the whole sheet when no site carried one.
+    // type. These per-site rows are rendered as a section on the hidden
+    // Methodology tab (no longer a standalone sheet).
     const propertyTypeSiteRows = rows
       .map((r) => {
         const canonicalType = r.__propertyType__;
@@ -5380,112 +8189,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         };
       })
       .filter(Boolean);
-
-    if (propertyTypeSiteRows.length > 0) {
-      const ws = wb.addWorksheet('Property Type Estimates', {
-        properties: { tabColor: { argb: SE_GREEN } },
-        views: [{ showGridLines: false, state: 'frozen', ySplit: 2, xSplit: 1 }],
-      });
-      const ptCols = [
-        { label: 'Site Name',                  width: 28, get: (s) => s.siteName },
-        { label: 'ST / Prov / Country',        width: 22, get: (s) => s.state || s.country },
-        { label: 'Property Type',              width: 30, get: (s) => s.propertyType },
-        { label: 'Category',                   width: 11, get: (s) => s.category },
-        { label: 'Size (ft²)',                 width: 13, get: (s) => s.sizeFt2 ?? '', numFmt: '#,##0' },
-        { label: 'Reference Size (ft²)',       width: 16, get: (s) => s.referenceSizeFt2 ?? '', numFmt: '#,##0' },
-        { label: 'Est. Annual Electric (kWh)', width: 22, get: (s) => s.electricKwh ?? '', numFmt: '#,##0' },
-        { label: 'Est. Annual Gas (Dth)',      width: 18, get: (s) => s.gasDth ?? '', numFmt: '#,##0' },
-        { label: 'Est. Annual Gas (kWh equiv)', width: 22, get: (s) => s.gasKwh ?? '', numFmt: '#,##0' },
-        { label: 'Est. Total Energy (kWh equiv)', width: 24, get: (s) => s.totalKwh ?? '', numFmt: '#,##0' },
-        { label: 'Water Accounts',    width: 13, get: (s) => s.accounts?.water?.label ?? '',    sumValue: (s) => s.accounts?.water?.count ?? 0,    numFmt: '0.##' },
-        { label: 'Steam Accounts',    width: 13, get: (s) => s.accounts?.steam?.label ?? '',    sumValue: (s) => s.accounts?.steam?.count ?? 0,    numFmt: '0.##' },
-        { label: 'Gas Accounts',      width: 14, get: (s) => s.accounts?.gas?.label ?? '',      sumValue: (s) => s.accounts?.gas?.count ?? 0,      numFmt: '0.##' },
-        { label: 'Electric Accounts', width: 14, get: (s) => s.accounts?.electric?.label ?? '', sumValue: (s) => s.accounts?.electric?.count ?? 0, numFmt: '0.##' },
-        { label: 'Waste Accounts',    width: 13, get: (s) => s.accounts?.waste?.label ?? '',    sumValue: (s) => s.accounts?.waste?.count ?? 0,    numFmt: '0.##' },
-      ];
-      ws.columns = ptCols.map((c) => ({ width: c.width }));
-
-      ws.mergeCells(1, 1, 1, ptCols.length);
-      const ptTitle = ws.getCell(1, 1);
-      ptTitle.value = 'Property Type Estimates';
-      ptTitle.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
-      ptTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-      ptTitle.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(1).height = 28;
-
-      const ptHdr = ws.getRow(2);
-      ptCols.forEach((c, i) => {
-        const cell = ptHdr.getCell(i + 1);
-        cell.value = c.label;
-        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-        cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
-        cell.border = {
-          bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
-          right:  { style: 'hair', color: { argb: 'FFFFFFFF' } },
-        };
-      });
-      ptHdr.height = 36;
-
-      propertyTypeSiteRows.forEach((s, idx) => {
-        const dataRow = ws.getRow(3 + idx);
-        ptCols.forEach((c, i) => {
-          const cell = dataRow.getCell(i + 1);
-          const v = c.get(s);
-          if (v === '' || v == null) {
-            writeBlank(cell, !!c.numFmt);
-          } else {
-            cell.value = v;
-          }
-          cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-          if (c.numFmt) cell.numFmt = c.numFmt;
-          cell.border = {
-            bottom: { style: 'hair', color: { argb: SE_BORDER } },
-            right:  { style: 'hair', color: { argb: SE_BORDER } },
-          };
-        });
-        dataRow.height = 18;
-      });
-
-      // Totals row — sum the numeric columns (consumption + the
-      // count-fields-via-sumValue accessor for accounts). "Multiple"
-      // is treated as 3 for totals; the label still reads "Multiple"
-      // on the per-site row so the user keeps the qualitative signal.
-      const totalIdx = 3 + propertyTypeSiteRows.length;
-      const totalRow = ws.getRow(totalIdx);
-      ptCols.forEach((c, i) => {
-        const cell = totalRow.getCell(i + 1);
-        if (i === 0) {
-          cell.value = 'Total';
-        } else if (c.sumValue) {
-          const sum = propertyTypeSiteRows.reduce((a, s) => a + (Number(c.sumValue(s)) || 0), 0);
-          cell.value = Math.round(sum * 100) / 100;
-        } else if (c.numFmt && c.label.startsWith('Est.')) {
-          const sum = propertyTypeSiteRows.reduce((a, s) => {
-            const v = c.get(s);
-            return a + (Number.isFinite(Number(v)) ? Number(v) : 0);
-          }, 0);
-          cell.value = Math.round(sum);
-        } else {
-          writeBlank(cell, !!c.numFmt);
-        }
-        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-        if (c.numFmt) cell.numFmt = c.numFmt;
-        cell.border = {
-          top:    { style: 'thin', color: { argb: SE_GREEN_DARK } },
-          bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
-        };
-      });
-      totalRow.height = 20;
-
-      ws.autoFilter = {
-        from: { row: 2, column: 1 },
-        to:   { row: 2 + propertyTypeSiteRows.length, column: ptCols.length },
-      };
-    }
 
     // ---- Contract Overview sheet ------------------------------------
     // One row per (site, commodity) where any contract field is filled
@@ -5567,17 +8270,38 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // Interactive example. Two editable inputs (Annual Volume on E4,
     // Spot Reference on H4) plus per-tranche allocation (column C)
     // and locked price (column E) drive Excel formulas through the
-    // Volume / Locked Cost / Spot Cost / Saving columns, the totals
-    // row, and the Result block. Edit any yellow cell and Excel
-    // recomputes the analysis live.
+    // Volume / Current Position Cost / Example Hedge Position Cost /
+    // Saving columns, the totals row, and the Result block. The
+    // Result block sits to the right of the tranche table (cols M-P)
+    // and breaks Current vs Example vs Delta down by year so the
+    // savings concentration reads at a glance.
     {
-      const ws = wb.addWorksheet('Hedging Strategy Example', {
+      const ws = wb.addWorksheet('Hedging Analysis', {
+        // Hidden by default — supporting illustrative tab, surfaced only
+        // when a reader unhides it. Same treatment as Gas Market Timing
+        // and Floating vs Hedging Example.
+        state: 'hidden',
         properties: { tabColor: { argb: SE_GREEN_DARK } },
         views: [{ showGridLines: false, state: 'frozen', ySplit: 6 }],
       });
 
-      const COLS = 10;
-      const widths = [6, 16, 11, 14, 19, 19, 14, 16, 16, 18];
+      const TABLE_COLS = 11;
+      // Result block is a year × {Current, Example, Delta} grid sitting
+      // to the right of the tranche table. Four columns wide.
+      const RESULT_FIRST_COL = 13;
+      const RESULT_LAST_COL = 16;
+      const COLS = RESULT_LAST_COL;
+      // Column widths — width index matches column position 1..16.
+      //   A #          | B Date     | C Hedge%(Cur) | D Hedge%(Ex)
+      //   E Volume     | F Fixed    | G Index       | H Adders
+      //   I Current    | J Example  | K Saving
+      //   L gutter
+      //   M Year       | N Current  | O Example     | P Delta
+      // Cols Q-T (17-20) are chart-area padding so the Spot Price
+      // Savings vs Current Hedging chart (anchored below the year-
+      // result block at col M) renders over right-sized cells instead
+      // of Excel's default-narrow columns.
+      const widths = [10, 16, 12, 14.5, 19, 19, 14, 20, 18, 22, 18, 3, 10, 16, 18, 16, 12, 12, 12, 12];
       ws.columns = widths.map(w => ({ width: w }));
 
       const INPUT_FILL = 'FFFFF9C3';
@@ -5591,67 +8315,29 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       ws.mergeCells(1, 1, 1, COLS);
       const title = ws.getCell(1, 1);
-      title.value = 'Layered Hedging Strategy — Interactive Example';
+      title.value = 'Hedging Analysis';
       title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
       title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
       title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
       ws.getRow(1).height = 30;
 
-      ws.mergeCells(2, 1, 2, COLS);
-      const sub = ws.getCell(2, 1);
-      sub.value = 'Edit the yellow cells (Annual Volume on E4, Spot Reference on H4, plus per-tranche allocation in column C and locked price in column E) to recompute the analysis. Volume / Locked Cost / Spot Cost / Saving and the totals + Result block are Excel formulas — they update live as inputs change.';
-      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
-      sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
-      ws.getRow(2).height = 46;
+      // Row 2 is the single white spacer between the green title
+      // band (row 1) and the tranche-table header (row 3). The
+      // Annual Volume + Current Fixed Price inputs that used to sit
+      // here have been inlined into the tranche formulas (volume =
+      // 100,000 / 60 per tranche, fixed price = $75) so the sheet
+      // stays slim.
 
-      ws.mergeCells(3, 1, 3, COLS);
-      const sh0 = ws.getCell(3, 1);
-      sh0.value = 'Inputs (edit yellow cells)';
-      sh0.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
-      sh0.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-      sh0.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(3).height = 22;
-
-      // Row 4 — two label / value pairs on one row.
-      ws.mergeCells(4, 1, 4, 4);
-      ws.getCell(4, 1).value = 'Annual Volume (MWh)';
-      ws.getCell(4, 1).font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_SLATE } };
-      ws.getCell(4, 1).alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
-      const volInput = ws.getCell('E4');
-      volInput.value = 100000;
-      volInput.numFmt = '#,##0';
-      volInput.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: INPUT_FILL } };
-      volInput.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_TEXT_DARK } };
-      volInput.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
-      volInput.border = inputBorder;
-
-      ws.mergeCells(4, 6, 4, 7);
-      ws.getCell(4, 6).value = 'Spot Reference ($/MWh)';
-      ws.getCell(4, 6).font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_SLATE } };
-      ws.getCell(4, 6).alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
-      const spotInput = ws.getCell('H4');
-      spotInput.value = 75.00;
-      spotInput.numFmt = '"$"0.00';
-      spotInput.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: INPUT_FILL } };
-      spotInput.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_TEXT_DARK } };
-      spotInput.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
-      spotInput.border = inputBorder;
-      ws.getRow(4).height = 22;
-
-      ws.mergeCells(5, 1, 5, COLS);
-      const sh1 = ws.getCell(5, 1);
-      sh1.value = '10 Hedge Layers Executed Across the Year';
-      sh1.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
-      sh1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-      sh1.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(5).height = 22;
-
+      // Tranche-table headers sit on row 3, with one blank spacer
+      // (row 2) above it.
+      const HEADER_ROW = 3;
       const headers = [
-        '#', 'Execution Date', 'Tranche %', 'Cumulative %',
-        'Locked Price ($/MWh)', 'Spot Ref. ($/MWh)', 'Volume (MWh)',
-        'Locked Cost', 'Spot Cost', 'Saving vs Spot',
+        'Month', 'Execution Date', 'Hedge % (Current)', 'Hedge % (Example)',
+        'Volume (MWh)', 'Fixed Position ($/MWh)', 'Index Price ($/MWh)',
+        'Adders & Noncommodity Components ($/MWh)',
+        'Current Position Cost', 'Example Hedge Position Cost', 'Saving vs Spot',
       ];
-      const hr = ws.getRow(6);
+      const hr = ws.getRow(HEADER_ROW);
       headers.forEach((h, i) => {
         const c = hr.getCell(i + 1);
         c.value = h;
@@ -5660,11 +8346,16 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         c.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
         c.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
       });
-      hr.height = 32;
+      hr.height = 45;
 
-      // Default tranche inputs — prices follow a plausible 2026
-      // forward-curve shape; allocations default to 10 % each so the
-      // user sees a clean 100 % baseline.
+      // Default tranche inputs — 60 monthly layers across 2026-2030.
+      // Prices follow a plausible forward-curve shape with seasonal
+      // cycling. Hedge % columns hold the cumulative hedge ratio for
+      // each scenario; per-tranche allocation falls out of the row-
+      // to-row delta. Current defaults to a full 100 % buildup
+      // (1/60 per layer); the Example scenario defaults to a 50 %
+      // buildup (1/120 per layer) so the side-by-side reads as
+      // "full hedge vs partial hedge" out of the box.
       const hedges = [
         { date: '2026-01-14', price: 74.50 },
         { date: '2026-02-11', price: 71.25 },
@@ -5676,27 +8367,124 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         { date: '2026-08-19', price: 78.40 },
         { date: '2026-09-16', price: 74.60 },
         { date: '2026-10-14', price: 73.20 },
+        { date: '2026-11-11', price: 71.50 },
+        { date: '2026-12-09', price: 70.40 },
+        { date: '2027-01-13', price: 69.80 },
+        { date: '2027-02-10', price: 68.50 },
+        { date: '2027-03-17', price: 67.20 },
+        { date: '2027-04-14', price: 66.90 },
+        { date: '2027-05-12', price: 68.40 },
+        { date: '2027-06-09', price: 71.50 },
+        { date: '2027-07-14', price: 75.60 },
+        { date: '2027-08-11', price: 77.20 },
+        { date: '2027-09-15', price: 73.80 },
+        { date: '2027-10-13', price: 72.40 },
+        { date: '2027-11-10', price: 70.80 },
+        { date: '2027-12-08', price: 69.50 },
+        { date: '2028-01-12', price: 68.90 },
+        { date: '2028-02-09', price: 67.30 },
+        { date: '2028-03-15', price: 66.10 },
+        { date: '2028-04-12', price: 65.80 },
+        { date: '2028-05-10', price: 67.20 },
+        { date: '2028-06-14', price: 70.40 },
+        { date: '2028-07-12', price: 74.30 },
+        { date: '2028-08-09', price: 75.90 },
+        { date: '2028-09-13', price: 72.60 },
+        { date: '2028-10-11', price: 71.30 },
+        { date: '2028-11-08', price: 69.70 },
+        { date: '2028-12-13', price: 68.40 },
+        { date: '2029-01-10', price: 67.80 },
+        { date: '2029-02-14', price: 66.20 },
+        { date: '2029-03-14', price: 65.00 },
+        { date: '2029-04-11', price: 64.70 },
+        { date: '2029-05-09', price: 66.10 },
+        { date: '2029-06-13', price: 69.30 },
+        { date: '2029-07-11', price: 73.20 },
+        { date: '2029-08-08', price: 74.80 },
+        { date: '2029-09-12', price: 71.50 },
+        { date: '2029-10-10', price: 70.20 },
+        { date: '2029-11-14', price: 68.60 },
+        { date: '2029-12-12', price: 67.30 },
+        { date: '2030-01-09', price: 66.70 },
+        { date: '2030-02-13', price: 65.10 },
+        { date: '2030-03-13', price: 63.90 },
+        { date: '2030-04-10', price: 63.60 },
+        { date: '2030-05-08', price: 65.00 },
+        { date: '2030-06-12', price: 68.20 },
+        { date: '2030-07-10', price: 72.10 },
+        { date: '2030-08-14', price: 73.70 },
+        { date: '2030-09-11', price: 70.40 },
+        { date: '2030-10-09', price: 69.10 },
+        { date: '2030-11-13', price: 67.50 },
+        { date: '2030-12-11', price: 66.20 },
       ];
+      const CURRENT_STEP = 1 / hedges.length;        // 1/60 → 100% at end
+      const PROPOSED_STEP = 1 / (hedges.length * 2); // 1/120 → 50% at end
+      const TRANCHE_VOL = 100000 * CURRENT_STEP;
 
       hedges.forEach((h, i) => {
-        const rowNum = 7 + i;
+        const rowNum = HEADER_ROW + 1 + i;
         const r = ws.getRow(rowNum);
         r.getCell(1).value = i + 1;
         // Write the execution date as a real Date so Excel applies
         // the m/d/yyyy short-date format on column B.
         r.getCell(2).value = new Date(h.date + 'T00:00:00Z');
-        r.getCell(3).value = 0.10;
-        r.getCell(4).value = i === 0
-          ? { formula: `C${rowNum}`, result: 0.10 }
-          : { formula: `D${rowNum - 1}+C${rowNum}`, result: (i + 1) * 0.10 };
-        r.getCell(5).value = h.price;
-        r.getCell(6).value = { formula: '$H$4', result: 75 };
-        r.getCell(7).value = { formula: `$E$4*C${rowNum}`, result: 100000 * 0.10 };
-        r.getCell(8).value = { formula: `E${rowNum}*G${rowNum}`, result: h.price * 10000 };
-        r.getCell(9).value = { formula: `F${rowNum}*G${rowNum}`, result: 75 * 10000 };
-        r.getCell(10).value = { formula: `I${rowNum}-H${rowNum}`, result: (75 - h.price) * 10000 };
+        // Columns C/D are direct cumulative-hedge inputs — user-
+        // editable. The default ladders are linear to 100% (Current)
+        // and 50% (Example); editing one cell only affects this
+        // row's slice in that scenario, so the buildup can be
+        // shaped however the user wants.
+        r.getCell(3).value = (i + 1) * CURRENT_STEP;
+        r.getCell(4).value = (i + 1) * PROPOSED_STEP;
+        // Per-tranche volume (E) falls out of the Current cumulative
+        // delta — for the first data row that delta is just C{row}.
+        r.getCell(5).value = i === 0
+          ? { formula: `100000*C${rowNum}`, result: TRANCHE_VOL }
+          : { formula: `100000*(C${rowNum}-C${rowNum - 1})`, result: TRANCHE_VOL };
+        r.getCell(6).value = 75;
+        r.getCell(7).value = h.price;
+        // Adders & Noncommodity Components ($/MWh) — user input, layered
+        // on top of the per-row pricing for both the Current Position
+        // Cost AND the Example Hedge Position Cost so the same
+        // non-commodity charge hits both scenarios. Default 0 so the
+        // column reads as opt-in.
+        r.getCell(8).value = 0;
+        // Current Position Cost — every tranche fully locked at the
+        // Current Fixed Price + Adder, i.e. the baseline the user is
+        // already on. Becomes the reference the Example scenario is
+        // measured against.
+        r.getCell(9).value = { formula: `(F${rowNum}+H${rowNum})*E${rowNum}`, result: 75 * TRANCHE_VOL };
+        // Example Hedge Position Cost — for each tranche, the slice
+        // hedged only in Current (C − D) takes the Index Price (G), and
+        // the slice hedged in the Example scenario (D) takes the Fixed
+        // Position (F). Adders ride on top of both legs so the non-
+        // commodity charge hits whichever side carries the volume:
+        //   ((C − D) × E) × (G + Adder)   (Current-only slice priced
+        //                                  at Index + Adder)
+        // + (D × E × (F + Adder))         (Example-hedged slice priced
+        //                                  at Fixed + Adder)
+        r.getCell(10).value = {
+          formula: `((C${rowNum}-D${rowNum})*E${rowNum})*(G${rowNum}+H${rowNum})+(D${rowNum}*E${rowNum}*(F${rowNum}+H${rowNum}))`,
+          result: ((CURRENT_STEP - PROPOSED_STEP) * TRANCHE_VOL) * h.price + (PROPOSED_STEP * TRANCHE_VOL * 75),
+        };
+        // Saving = Current − Example. Positive when the Example
+        // scenario beats Current (Index pricing comes in below Fixed
+        // on the un-hedged slice).
+        r.getCell(11).value = { formula: `I${rowNum}-J${rowNum}`, result: (75 - h.price) * (CURRENT_STEP - PROPOSED_STEP) * TRANCHE_VOL };
+        // Helper columns U (21) and V (22) feed the chart's
+        // stacked-area "savings shading" between the Index Price and
+        // the Current Fixed Price:
+        //   U = MIN(index, fixed)    — invisible base of the stack
+        //   V = MAX(fixed - index, 0) — the green band, only present
+        //                               when index sits below fixed
+        // Columns are hidden below; the chart references them and
+        // renders the area via plotVisOnly=0 in the chart XML.
+        r.getCell(21).value = { formula: `MIN(G${rowNum},F${rowNum})`, result: Math.min(h.price, 75) };
+        r.getCell(22).value = { formula: `MAX(F${rowNum}-G${rowNum},0)`, result: Math.max(75 - h.price, 0) };
+        r.getCell(21).numFmt = '"$"0.00';
+        r.getCell(22).numFmt = '"$"0.00';
 
-        for (let ci = 1; ci <= 10; ci++) {
+        for (let ci = 1; ci <= 11; ci++) {
           const c = r.getCell(ci);
           c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
           c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -5708,36 +8496,57 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         r.getCell(2).numFmt = 'm/d/yyyy';
         r.getCell(3).numFmt = '0%';
         r.getCell(4).numFmt = '0%';
-        r.getCell(5).numFmt = '"$"0.00';
+        r.getCell(5).numFmt = '#,##0';
         r.getCell(6).numFmt = '"$"0.00';
-        r.getCell(7).numFmt = '#,##0';
-        r.getCell(8).numFmt = '"$"#,##0';
+        r.getCell(7).numFmt = '"$"0.00';
+        r.getCell(8).numFmt = '"$"0.00';
         r.getCell(9).numFmt = '"$"#,##0';
-        r.getCell(10).numFmt = '"$"#,##0;[Red]("$"#,##0)';
+        r.getCell(10).numFmt = '"$"#,##0';
+        r.getCell(11).numFmt = '"$"#,##0;[Red]("$"#,##0)';
 
-        // Mark the editable cells (tranche % + locked price) yellow
-        // so the user sees where input is welcome. Conditional
-        // formatting takes over the locked-price color (green when
-        // it beats Spot Ref, red when it lags).
-        for (const col of [3, 5]) {
+        // Mark the editable cells (both Hedge % columns + Index Price
+        // + Adders) yellow. Conditional formatting takes over Index
+        // Price's color (green when it beats Fixed Position, red
+        // when it lags).
+        for (const col of [3, 4, 7, 8]) {
           const c = r.getCell(col);
           c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: INPUT_FILL } };
         }
         r.height = 20;
       });
 
-      // Row 17 — totals via SUM formulas. The blended price is the
+      // Totals via SUM formulas. The blended index price is the
       // weighted average (total locked cost / total volume).
-      const tr = ws.getRow(17);
+      const FIRST_DATA_ROW = HEADER_ROW + 1;
+      const TOTAL_ROW = FIRST_DATA_ROW + hedges.length;
+      const LAST_DATA_ROW = TOTAL_ROW - 1;
+      const dataRange = (col) => `${col}${FIRST_DATA_ROW}:${col}${LAST_DATA_ROW}`;
+      // Plausible defaults that Excel will recompute on open.
+      const sumPrices = hedges.reduce((a, h) => a + h.price, 0);
+      const blendedPriceDefault = sumPrices / hedges.length;
+      const totalLockedCostDefault = blendedPriceDefault * 100000;
+      const totalSpotCostDefault = 75 * 100000;
+      const tr = ws.getRow(TOTAL_ROW);
       tr.getCell(2).value = 'TOTAL';
-      tr.getCell(4).value = { formula: 'SUM(C7:C16)', result: 1.0 };
-      tr.getCell(5).value = { formula: 'H17/G17', result: 72.635 };
-      tr.getCell(6).value = { formula: '$H$4', result: 75 };
-      tr.getCell(7).value = { formula: 'SUM(G7:G16)', result: 100000 };
-      tr.getCell(8).value = { formula: 'SUM(H7:H16)', result: 7263500 };
-      tr.getCell(9).value = { formula: 'SUM(I7:I16)', result: 7500000 };
-      tr.getCell(10).value = { formula: 'SUM(J7:J16)', result: 236500 };
-      for (let ci = 1; ci <= 10; ci++) {
+      // C/D hold cumulative hedge ratios — the total is just the last
+      // row's value, not a SUM.
+      tr.getCell(3).value = { formula: `C${LAST_DATA_ROW}`, result: 1.0 };
+      tr.getCell(4).value = { formula: `D${LAST_DATA_ROW}`, result: 0.5 };
+      tr.getCell(5).value = { formula: `SUM(${dataRange('E')})`, result: 100000 };
+      tr.getCell(6).value = 75;
+      // Volume-weighted average Index Price and Adder for the totals
+      // row. Locked / Spot now include Adder, so I/E would mix
+      // commodity + non-commodity into the "Index Price" cell — use
+      // SUMPRODUCT to keep the totals row honest about each piece.
+      tr.getCell(7).value  = { formula: `SUMPRODUCT(${dataRange('G')},${dataRange('E')})/${`E${TOTAL_ROW}`}`, result: blendedPriceDefault };
+      tr.getCell(8).value  = { formula: `SUMPRODUCT(${dataRange('H')},${dataRange('E')})/${`E${TOTAL_ROW}`}`, result: 0 };
+      // Col I (Current Position Cost) totals to fixed × volume; col J
+      // (Example Hedge Position Cost) totals to the index-weighted
+      // result of the partial hedge. K (Saving) is Current − Example.
+      tr.getCell(9).value  = { formula: `SUM(${dataRange('I')})`, result: totalSpotCostDefault };
+      tr.getCell(10).value = { formula: `SUM(${dataRange('J')})`, result: totalLockedCostDefault };
+      tr.getCell(11).value = { formula: `SUM(${dataRange('K')})`, result: totalSpotCostDefault - totalLockedCostDefault };
+      for (let ci = 1; ci <= 11; ci++) {
         const c = tr.getCell(ci);
         c.font = { name: 'Nunito Sans', size: 11, bold: true, color: { argb: SE_TEXT_DARK } };
         c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
@@ -5747,29 +8556,33 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
         };
       }
+      tr.getCell(3).numFmt = '0%';
       tr.getCell(4).numFmt = '0%';
-      tr.getCell(5).numFmt = '"$"0.00';
+      tr.getCell(5).numFmt = '#,##0';
       tr.getCell(6).numFmt = '"$"0.00';
-      tr.getCell(7).numFmt = '#,##0';
-      tr.getCell(8).numFmt = '"$"#,##0';
+      tr.getCell(7).numFmt = '"$"0.00';
+      tr.getCell(8).numFmt = '"$"0.00';
       tr.getCell(9).numFmt = '"$"#,##0';
-      tr.getCell(10).numFmt = '"$"#,##0;[Red]("$"#,##0)';
+      tr.getCell(10).numFmt = '"$"#,##0';
+      tr.getCell(11).numFmt = '"$"#,##0;[Red]("$"#,##0)';
       tr.height = 26;
 
-      // Locked-Price color flips live via conditional formatting that
-      // compares column E to column F (the per-row spot ref formula).
+      // Index-Price color flips live via conditional formatting that
+      // compares column G (Index Price) to column F (the per-row Fixed
+      // Position formula). Green when the index beats the fixed
+      // price, red when it lags.
       ws.addConditionalFormatting({
-        ref: 'E7:E16',
+        ref: `G${FIRST_DATA_ROW}:G${LAST_DATA_ROW}`,
         rules: [
           {
-            type: 'cellIs', operator: 'lessThan', formulae: ['F7'], priority: 1,
+            type: 'cellIs', operator: 'lessThan', formulae: [`F${FIRST_DATA_ROW}`], priority: 1,
             style: {
               fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFDCFCE7' } },
               font: { color: { argb: 'FF166534' }, bold: true },
             },
           },
           {
-            type: 'cellIs', operator: 'greaterThanOrEqual', formulae: ['F7'], priority: 2,
+            type: 'cellIs', operator: 'greaterThanOrEqual', formulae: [`F${FIRST_DATA_ROW}`], priority: 2,
             style: {
               fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFFEE2E2' } },
               font: { color: { argb: 'FF991B1B' }, bold: true },
@@ -5779,7 +8592,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       });
 
       ws.addConditionalFormatting({
-        ref: 'J7:J16',
+        ref: `K${FIRST_DATA_ROW}:K${LAST_DATA_ROW}`,
         rules: [{
           type: 'dataBar',
           cfvo: [{ type: 'num', value: -50000 }, { type: 'num', value: 100000 }],
@@ -5789,88 +8602,527 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         }],
       });
 
-      ws.mergeCells(19, 1, 19, COLS);
-      const rh = ws.getCell(19, 1);
-      rh.value = 'Result';
-      rh.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
-      rh.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-      rh.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(19).height = 22;
+      // Result block — sits to the RIGHT of the tranche table and
+      // rolls the per-tranche Current / Example / Saving columns up
+      // into rolling 12-month buckets (Year 1 = first 12 tranches,
+      // Year 2 = next 12, …). Each value cell is a live SUM over the
+      // bucket's I / J / K slice so the grid updates whenever the
+      // user edits the tranche inputs.
+      const RESULT_HEADER_ROW = HEADER_ROW;
+      const dataRangeI = `$I$${FIRST_DATA_ROW}:$I$${LAST_DATA_ROW}`;
+      const dataRangeJ = `$J$${FIRST_DATA_ROW}:$J$${LAST_DATA_ROW}`;
+      const resultHeaders = ['Year', 'Current', 'Example', 'Delta'];
+      const hr2 = ws.getRow(RESULT_HEADER_ROW);
+      resultHeaders.forEach((h, i) => {
+        const c = hr2.getCell(RESULT_FIRST_COL + i);
+        c.value = h;
+        c.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        c.alignment = { vertical: 'middle', horizontal: i === 0 ? 'left' : 'right', wrapText: true, indent: 1 };
+        c.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+      });
 
-      // Rows 20-24 — label / value pairs. Each value is a live
-      // formula referencing the inputs / totals so the user sees the
-      // result update when they tweak any yellow cell.
-      const stats = [
-        { label: 'Blended Hedged Price', formula: 'H17/G17', result: 72.635, fmt: '"$"0.00" / MWh"' },
-        { label: 'Spot-Only Reference Price', formula: '$H$4', result: 75, fmt: '"$"0.00" / MWh"' },
-        { labelFormula: '"Total Hedged Cost ("&TEXT(G17,"#,##0")&" MWh)"', labelFallback: 'Total Hedged Cost', formula: 'H17', result: 7263500, fmt: '"$"#,##0' },
-        { labelFormula: '"Total Spot Cost ("&TEXT(G17,"#,##0")&" MWh)"', labelFallback: 'Total Spot Cost', formula: 'I17', result: 7500000, fmt: '"$"#,##0' },
-        { label: 'Savings vs Spot', valueFormula: 'TEXT(J17,"$#,##0")&"   ("&TEXT(J17/I17,"0.00%")&")"', result: '$236,500   (3.15%)' },
-      ];
-      stats.forEach((s, i) => {
-        const rowIdx = 20 + i;
-        ws.mergeCells(rowIdx, 1, rowIdx, 4);
-        ws.mergeCells(rowIdx, 5, rowIdx, COLS);
+      // Bucket the tranches into rolling 12-month groups: rows 1-12
+      // → Year 1, rows 13-24 → Year 2, etc. The labels are sequential
+      // ("Year 1", "Year 2" …) instead of calendar years so the
+      // breakdown stays meaningful even if the user shifts execution
+      // dates around or runs the analysis off-calendar.
+      const MONTHS_PER_YEAR = 12;
+      const buckets = [];
+      for (let start = 0; start < hedges.length; start += MONTHS_PER_YEAR) {
+        const slice = hedges.slice(start, start + MONTHS_PER_YEAR);
+        let current = 0;
+        let example = 0;
+        for (const h of slice) {
+          // Current: (Fixed $75 + Adder $0) × per-tranche volume
+          current += 75 * TRANCHE_VOL;
+          // Example: ((C-D) × vol × (G + H)) + (D × vol × (F + H))
+          example += ((CURRENT_STEP - PROPOSED_STEP) * TRANCHE_VOL) * h.price
+            + (PROPOSED_STEP * TRANCHE_VOL * 75);
+        }
+        buckets.push({
+          label: `Year ${buckets.length + 1}`,
+          firstRow: FIRST_DATA_ROW + start,
+          lastRow: FIRST_DATA_ROW + start + slice.length - 1,
+          current,
+          example,
+        });
+      }
+
+      buckets.forEach((bucket, i) => {
+        const rowIdx = RESULT_HEADER_ROW + 1 + i;
         const row = ws.getRow(rowIdx);
-        const labelCell = row.getCell(1);
-        const valCell = row.getCell(5);
-        if (s.labelFormula) {
-          labelCell.value = { formula: s.labelFormula, result: s.labelFallback };
-        } else {
-          labelCell.value = s.label;
+        const rangeI = `$I$${bucket.firstRow}:$I$${bucket.lastRow}`;
+        const rangeJ = `$J$${bucket.firstRow}:$J$${bucket.lastRow}`;
+        const rangeK = `$K$${bucket.firstRow}:$K$${bucket.lastRow}`;
+        const yearCell = row.getCell(RESULT_FIRST_COL);
+        yearCell.value = bucket.label;
+        const currentCell = row.getCell(RESULT_FIRST_COL + 1);
+        currentCell.value = { formula: `SUM(${rangeI})`, result: bucket.current };
+        const exampleCell = row.getCell(RESULT_FIRST_COL + 2);
+        exampleCell.value = { formula: `SUM(${rangeJ})`, result: bucket.example };
+        const deltaCell = row.getCell(RESULT_FIRST_COL + 3);
+        deltaCell.value = { formula: `SUM(${rangeK})`, result: bucket.current - bucket.example };
+        for (let ci = 0; ci < 4; ci++) {
+          const c = row.getCell(RESULT_FIRST_COL + ci);
+          c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          c.alignment = { vertical: 'middle', horizontal: ci === 0 ? 'left' : 'right', indent: 1 };
+          c.border = {
+            bottom: { style: 'hair', color: { argb: SE_BORDER } },
+          };
         }
-        if (s.valueFormula) {
-          valCell.value = { formula: s.valueFormula, result: s.result };
-        } else if (s.formula) {
-          valCell.value = { formula: s.formula, result: s.result };
-          if (s.fmt) valCell.numFmt = s.fmt;
-        } else {
-          valCell.value = s.result;
-        }
-        const isHighlight = i === stats.length - 1;
-        labelCell.font = {
-          name: 'Nunito Sans',
-          size: isHighlight ? 12 : 11,
-          bold: isHighlight,
-          color: { argb: isHighlight ? SE_GREEN_DARK : SE_SLATE },
-        };
-        labelCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-        valCell.font = {
-          name: 'Nunito Sans',
-          size: isHighlight ? 14 : 11,
-          bold: isHighlight,
-          color: { argb: isHighlight ? SE_GREEN_DARK : SE_TEXT_DARK },
-        };
-        valCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-        if (isHighlight) {
-          labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-          valCell.fill   = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-        }
-        row.height = isHighlight ? 30 : 20;
+        currentCell.numFmt = '"$"#,##0';
+        exampleCell.numFmt = '"$"#,##0';
+        deltaCell.numFmt = '"$"#,##0;[Red]("$"#,##0)';
+        row.height = 20;
       });
 
-      ws.mergeCells(26, 1, 26, COLS);
-      const wh = ws.getCell(26, 1);
-      wh.value = 'Why layering works';
-      wh.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
-      wh.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-      wh.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(26).height = 22;
+      // TOTAL row at the bottom of the year grid — sums each column
+      // across the buildup. Highlighted band so the headline savings
+      // number reads at a glance.
+      const yearTotalRowIdx = RESULT_HEADER_ROW + 1 + buckets.length;
+      const yearTotalRow = ws.getRow(yearTotalRowIdx);
+      const totalCurrentDefault = buckets.reduce((s, b) => s + b.current, 0);
+      const totalExampleDefault = buckets.reduce((s, b) => s + b.example, 0);
+      const totLabel = yearTotalRow.getCell(RESULT_FIRST_COL);
+      totLabel.value = 'TOTAL';
+      const totCurrent = yearTotalRow.getCell(RESULT_FIRST_COL + 1);
+      totCurrent.value = { formula: `SUM(${dataRangeI})`, result: totalCurrentDefault };
+      const totExample = yearTotalRow.getCell(RESULT_FIRST_COL + 2);
+      totExample.value = { formula: `SUM(${dataRangeJ})`, result: totalExampleDefault };
+      const totDelta = yearTotalRow.getCell(RESULT_FIRST_COL + 3);
+      totDelta.value = { formula: `K${TOTAL_ROW}`, result: totalCurrentDefault - totalExampleDefault };
+      for (let ci = 0; ci < 4; ci++) {
+        const c = yearTotalRow.getCell(RESULT_FIRST_COL + ci);
+        c.font = { name: 'Nunito Sans', size: 11, bold: true, color: { argb: SE_GREEN_DARK } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        c.alignment = { vertical: 'middle', horizontal: ci === 0 ? 'left' : 'right', indent: 1 };
+        c.border = {
+          top: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+        };
+      }
+      totCurrent.numFmt = '"$"#,##0';
+      totExample.numFmt = '"$"#,##0';
+      totDelta.numFmt = '"$"#,##0;[Red]("$"#,##0)';
+      yearTotalRow.height = 26;
 
-      const bullets = [
-        'Splitting the buy into tranches catches multiple points on the forward curve instead of betting on a single execution date.',
-        'Edit the locked prices in column E to model different curve scenarios. Green cells beat the spot reference, red cells lag — each tranche\'s drag or gain is weighted by its allocation in column C.',
-        'Adjust the Annual Volume input on E4 to size the analysis to a specific customer (industrial, multi-site portfolio, etc.). The same approach applies to natural gas — swap MWh for MMBtu / Dth and the variance-reduction benefit is identical.',
+      // Hide the chart-helper columns U + V so they don't clutter the
+      // sheet but stay live for the chart (plotVisOnly=0 in the chart
+      // XML lets Excel keep plotting hidden ranges).
+      ws.getColumn(21).hidden = true;
+      ws.getColumn(22).hidden = true;
+
+      // Stash the row range so the chart injection at the end of the
+      // export knows which cells to plot. The chart is injected after
+      // wb.xlsx.writeBuffer() (ExcelJS has no chart API), so we ferry
+      // these bounds out via closure.
+      //
+      // For the % of Portfolio Hedged chart we also zoom the Y axis to
+      // 10 percentage points above the highest cumulative-hedge value
+      // and 10 below the lowest (clamped at 0 on the bottom so the
+      // axis never goes negative). With the linear ladder defaults
+      // (Current: 1/60 → 100 %, Example: 1/120 → 50 %) this lands at
+      // ~0 %–110 %; if the user re-shapes the ladders to a tighter
+      // range, the export captures that as a tighter axis on next
+      // export.
+      const hedgePctValues = hedges.flatMap((_, i) => [
+        (i + 1) * CURRENT_STEP,
+        (i + 1) * PROPOSED_STEP,
+      ]);
+      const minHedge = Math.min(...hedgePctValues);
+      const maxHedge = Math.max(...hedgePctValues);
+      const PAD = 0.10;
+      hedgingChartRange = {
+        firstRow: FIRST_DATA_ROW,
+        lastRow: LAST_DATA_ROW,
+        hedgePctYMin: Math.max(0, minHedge - PAD),
+        hedgePctYMax: maxHedge + PAD,
+      };
+    }
+
+    // ---- Gas Market Timing sheet ------------------------------------
+    // Compares two natural-gas procurement strategies across 60 months:
+    //   1) "30-Day Arbitrary Buy" — equal 1/60 layering on a calendar
+    //      cadence, ignoring market signals (the baseline).
+    //   2) "Market-Timed Layered Hedge" — same total volume, but front-
+    //      loaded into months where the forward curve sits below its
+    //      long-run average and pulled back when it sits above.
+    // Both strategies execute at the prevailing forward price each
+    // month, so the savings story is purely "WHEN you buy" rather than
+    // "fixed vs float". Layout mirrors the Hedging Analysis tab: yellow
+    // editable cells for the cumulative allocation columns + forward
+    // price + adders, conditional formatting on the forward-price column
+    // (green below long-run average, red above), data-bar on the Saving
+    // column, year-by-year result block at cols M-P, and two live Excel
+    // charts (savings shading vs long-run average + cumulative
+    // allocation curve per strategy).
+    {
+      const ws = wb.addWorksheet('Gas Market Timing', {
+        // Hidden by default — supporting illustrative tab, surfaced only
+        // when a reader unhides it.
+        state: 'hidden',
+        properties: { tabColor: { argb: SE_GREEN_DARK } },
+        views: [{ showGridLines: false, state: 'frozen', ySplit: 6 }],
+      });
+
+      const TABLE_COLS = 11;
+      const RESULT_FIRST_COL = 13;
+      const RESULT_LAST_COL = 16;
+      const COLS = RESULT_LAST_COL;
+      // Column widths — width index matches column position 1..20.
+      //   A #          | B Date     | C Alloc%(Arb) | D Alloc%(MT)
+      //   E Vol(Arb)   | F Vol(MT)  | G Forward $   | H Adders
+      //   I Arb Cost   | J MT Cost  | K Saving
+      //   L gutter
+      //   M Year       | N Arbitrary | O Market-Timed | P Delta
+      // Cols Q-T (17-20) are chart-area padding so the charts anchored
+      // below the year-result block render over right-sized cells.
+      const widths = [10, 16, 14, 16, 16, 18, 16, 18, 18, 20, 18, 3, 10, 16, 18, 16, 12, 12, 12, 12];
+      ws.columns = widths.map(w => ({ width: w }));
+
+      const INPUT_FILL = 'FFFFF9C3';
+      const INPUT_BORDER = 'FFCA8A04';
+
+      ws.mergeCells(1, 1, 1, COLS);
+      const title = ws.getCell(1, 1);
+      title.value = 'Gas Market Timing Analysis';
+      title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(1).height = 30;
+
+      ws.mergeCells(2, 1, 2, COLS);
+      const sub = ws.getCell(2, 1);
+      sub.value = 'Layered hedging weighted toward low-price months (Market-Timed) vs. equal 1/60 monthly layering (30-Day Arbitrary Buy). Both strategies buy 100,000 Dth at the forward price prevailing in each execution month — the only difference is timing. Edit the yellow cells (cumulative allocation %, forward price, adders) to model your own curve.';
+      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+      sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      ws.getRow(2).height = 42;
+
+      const HEADER_ROW = 3;
+      const headers = [
+        'Month', 'Execution Date',
+        'Allocation % (30-Day Arbitrary)', 'Allocation % (Market-Timed)',
+        'Volume Arbitrary (Dth)', 'Volume Market-Timed (Dth)',
+        'Forward Price ($/Dth)', 'Adders & Noncommodity ($/Dth)',
+        'Arbitrary Buy Cost', 'Market-Timed Buy Cost', 'Saving vs Arbitrary',
       ];
-      bullets.forEach((b, i) => {
-        const rowIdx = 27 + i;
-        ws.mergeCells(rowIdx, 1, rowIdx, COLS);
-        const cell = ws.getCell(rowIdx, 1);
-        cell.value = `•  ${b}`;
-        cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-        cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
-        ws.getRow(rowIdx).height = 32;
+      const hr = ws.getRow(HEADER_ROW);
+      headers.forEach((h, i) => {
+        const c = hr.getCell(i + 1);
+        c.value = h;
+        c.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        c.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+        c.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
       });
+      hr.height = 45;
+
+      // Plausible 60-month Henry Hub-like forward curve. Strong winter
+      // peaks (Dec-Feb) and summer lows (May-Jul), trending mildly upward
+      // year over year. Average across the 60 months lands at ~$3.75/Dth
+      // — the value the Market-Timed strategy uses as its "buy more when
+      // we're under, less when we're over" pivot.
+      const gasHedges = [
+        { date: '2026-01-14', price: 4.80 }, { date: '2026-02-11', price: 4.65 },
+        { date: '2026-03-18', price: 3.85 }, { date: '2026-04-22', price: 3.20 },
+        { date: '2026-05-13', price: 2.75 }, { date: '2026-06-10', price: 2.70 },
+        { date: '2026-07-15', price: 2.85 }, { date: '2026-08-19', price: 3.05 },
+        { date: '2026-09-16', price: 3.20 }, { date: '2026-10-14', price: 3.45 },
+        { date: '2026-11-11', price: 4.10 }, { date: '2026-12-09', price: 4.75 },
+        { date: '2027-01-13', price: 4.85 }, { date: '2027-02-10', price: 4.70 },
+        { date: '2027-03-17', price: 3.90 }, { date: '2027-04-14', price: 3.25 },
+        { date: '2027-05-12', price: 2.80 }, { date: '2027-06-09', price: 2.75 },
+        { date: '2027-07-14', price: 2.90 }, { date: '2027-08-11', price: 3.10 },
+        { date: '2027-09-15', price: 3.25 }, { date: '2027-10-13', price: 3.50 },
+        { date: '2027-11-10', price: 4.15 }, { date: '2027-12-08', price: 4.80 },
+        { date: '2028-01-12', price: 4.90 }, { date: '2028-02-09', price: 4.75 },
+        { date: '2028-03-15', price: 3.95 }, { date: '2028-04-12', price: 3.30 },
+        { date: '2028-05-10', price: 2.85 }, { date: '2028-06-14', price: 2.80 },
+        { date: '2028-07-12', price: 2.95 }, { date: '2028-08-09', price: 3.15 },
+        { date: '2028-09-13', price: 3.30 }, { date: '2028-10-11', price: 3.55 },
+        { date: '2028-11-08', price: 4.20 }, { date: '2028-12-13', price: 4.85 },
+        { date: '2029-01-10', price: 4.95 }, { date: '2029-02-14', price: 4.80 },
+        { date: '2029-03-14', price: 4.00 }, { date: '2029-04-11', price: 3.35 },
+        { date: '2029-05-09', price: 2.90 }, { date: '2029-06-13', price: 2.85 },
+        { date: '2029-07-11', price: 3.00 }, { date: '2029-08-08', price: 3.20 },
+        { date: '2029-09-12', price: 3.35 }, { date: '2029-10-10', price: 3.60 },
+        { date: '2029-11-14', price: 4.25 }, { date: '2029-12-12', price: 4.90 },
+        { date: '2030-01-09', price: 5.00 }, { date: '2030-02-13', price: 4.85 },
+        { date: '2030-03-13', price: 4.05 }, { date: '2030-04-10', price: 3.40 },
+        { date: '2030-05-08', price: 2.95 }, { date: '2030-06-12', price: 2.90 },
+        { date: '2030-07-10', price: 3.05 }, { date: '2030-08-14', price: 3.25 },
+        { date: '2030-09-11', price: 3.40 }, { date: '2030-10-09', price: 3.65 },
+        { date: '2030-11-13', price: 4.30 }, { date: '2030-12-11', price: 4.95 },
+      ];
+      const TOTAL_VOLUME = 100000; // Dth
+      const ARB_STEP = 1 / gasHedges.length; // uniform 1/60 per month
+      const avgPrice = gasHedges.reduce((s, h) => s + h.price, 0) / gasHedges.length;
+      // Inverse-price weighting: months below the long-run average get
+      // a heavier allocation. Squaring sharpens the contrast so the
+      // story reads clearly in the chart — flat weights would visually
+      // collapse the two cumulative curves.
+      const mtWeights = gasHedges.map(h => Math.pow(avgPrice / h.price, 2));
+      const mtWeightSum = mtWeights.reduce((a, b) => a + b, 0);
+      const mtSteps = mtWeights.map(w => w / mtWeightSum);
+
+      // Precompute cumulative defaults so the closed-form row values
+      // can seed Excel's recompute on open.
+      const arbCum = gasHedges.map((_, i) => (i + 1) * ARB_STEP);
+      const mtCum = [];
+      let mtRun = 0;
+      for (const s of mtSteps) { mtRun += s; mtCum.push(mtRun); }
+
+      gasHedges.forEach((h, i) => {
+        const rowNum = HEADER_ROW + 1 + i;
+        const r = ws.getRow(rowNum);
+        r.getCell(1).value = i + 1;
+        r.getCell(2).value = new Date(h.date + 'T00:00:00Z');
+        // C/D — cumulative allocation %, user-editable.
+        r.getCell(3).value = arbCum[i];
+        r.getCell(4).value = mtCum[i];
+        // E/F — per-tranche volume = total × cumulative delta. First row
+        // is just total × C{first} since there's no prior row to subtract.
+        r.getCell(5).value = i === 0
+          ? { formula: `${TOTAL_VOLUME}*C${rowNum}`, result: TOTAL_VOLUME * arbCum[0] }
+          : { formula: `${TOTAL_VOLUME}*(C${rowNum}-C${rowNum - 1})`, result: TOTAL_VOLUME * ARB_STEP };
+        r.getCell(6).value = i === 0
+          ? { formula: `${TOTAL_VOLUME}*D${rowNum}`, result: TOTAL_VOLUME * mtCum[0] }
+          : { formula: `${TOTAL_VOLUME}*(D${rowNum}-D${rowNum - 1})`, result: TOTAL_VOLUME * mtSteps[i] };
+        r.getCell(7).value = h.price;
+        r.getCell(8).value = 0;
+        // Cost = volume × (forward price + adder). Same formula shape
+        // for both strategies; the difference is which volume column
+        // they reference.
+        r.getCell(9).value  = { formula: `E${rowNum}*(G${rowNum}+H${rowNum})`, result: TOTAL_VOLUME * ARB_STEP * h.price };
+        r.getCell(10).value = { formula: `F${rowNum}*(G${rowNum}+H${rowNum})`, result: TOTAL_VOLUME * mtSteps[i] * h.price };
+        r.getCell(11).value = { formula: `I${rowNum}-J${rowNum}`, result: (ARB_STEP - mtSteps[i]) * TOTAL_VOLUME * h.price };
+        // Helper columns for the savings chart's stacked-area shading.
+        // U is the invisible base (MIN of forward vs long-run average);
+        // V is the green band (positive when forward sits below average,
+        // i.e. a favorable buying window). W carries the long-run
+        // average as a horizontal reference line.
+        r.getCell(21).value = { formula: `MIN(G${rowNum},$W$${rowNum})`, result: Math.min(h.price, avgPrice) };
+        r.getCell(22).value = { formula: `MAX($W$${rowNum}-G${rowNum},0)`, result: Math.max(avgPrice - h.price, 0) };
+        r.getCell(23).value = { formula: `AVERAGE($G$${HEADER_ROW + 1}:$G$${HEADER_ROW + gasHedges.length})`, result: avgPrice };
+        r.getCell(21).numFmt = '"$"0.00';
+        r.getCell(22).numFmt = '"$"0.00';
+        r.getCell(23).numFmt = '"$"0.00';
+
+        for (let ci = 1; ci <= 11; ci++) {
+          const c = r.getCell(ci);
+          c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          c.border = {
+            bottom: { style: 'hair', color: { argb: SE_BORDER } },
+            right:  { style: 'hair', color: { argb: SE_BORDER } },
+          };
+        }
+        r.getCell(2).numFmt = 'm/d/yyyy';
+        r.getCell(3).numFmt = '0.00%';
+        r.getCell(4).numFmt = '0.00%';
+        r.getCell(5).numFmt = '#,##0';
+        r.getCell(6).numFmt = '#,##0';
+        r.getCell(7).numFmt = '"$"0.00';
+        r.getCell(8).numFmt = '"$"0.00';
+        r.getCell(9).numFmt  = '"$"#,##0';
+        r.getCell(10).numFmt = '"$"#,##0';
+        r.getCell(11).numFmt = '"$"#,##0;[Red]("$"#,##0)';
+
+        // Yellow editable cells: both cumulative allocation columns
+        // plus forward price + adder.
+        for (const col of [3, 4, 7, 8]) {
+          const c = r.getCell(col);
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: INPUT_FILL } };
+        }
+        r.height = 20;
+      });
+
+      const FIRST_DATA_ROW = HEADER_ROW + 1;
+      const TOTAL_ROW = FIRST_DATA_ROW + gasHedges.length;
+      const LAST_DATA_ROW = TOTAL_ROW - 1;
+      const dataRange = (col) => `${col}${FIRST_DATA_ROW}:${col}${LAST_DATA_ROW}`;
+      const sumArbCost = gasHedges.reduce((s, h) => s + h.price * ARB_STEP * TOTAL_VOLUME, 0);
+      const sumMtCost = gasHedges.reduce((s, h, i) => s + h.price * mtSteps[i] * TOTAL_VOLUME, 0);
+      const tr = ws.getRow(TOTAL_ROW);
+      tr.getCell(2).value = 'TOTAL';
+      tr.getCell(3).value = { formula: `C${LAST_DATA_ROW}`, result: 1.0 };
+      tr.getCell(4).value = { formula: `D${LAST_DATA_ROW}`, result: 1.0 };
+      tr.getCell(5).value = { formula: `SUM(${dataRange('E')})`, result: TOTAL_VOLUME };
+      tr.getCell(6).value = { formula: `SUM(${dataRange('F')})`, result: TOTAL_VOLUME };
+      // Volume-weighted average forward price + adder so the totals row
+      // reads as "$ per Dth across the portfolio" rather than a flat
+      // mean across the months.
+      tr.getCell(7).value = { formula: `SUMPRODUCT(${dataRange('G')},${dataRange('E')})/${`E${TOTAL_ROW}`}`, result: avgPrice };
+      tr.getCell(8).value = { formula: `SUMPRODUCT(${dataRange('H')},${dataRange('E')})/${`E${TOTAL_ROW}`}`, result: 0 };
+      tr.getCell(9).value  = { formula: `SUM(${dataRange('I')})`, result: sumArbCost };
+      tr.getCell(10).value = { formula: `SUM(${dataRange('J')})`, result: sumMtCost };
+      tr.getCell(11).value = { formula: `SUM(${dataRange('K')})`, result: sumArbCost - sumMtCost };
+      for (let ci = 1; ci <= 11; ci++) {
+        const c = tr.getCell(ci);
+        c.font = { name: 'Nunito Sans', size: 11, bold: true, color: { argb: SE_TEXT_DARK } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+        c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        c.border = {
+          top:    { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+        };
+      }
+      tr.getCell(3).numFmt = '0.00%';
+      tr.getCell(4).numFmt = '0.00%';
+      tr.getCell(5).numFmt = '#,##0';
+      tr.getCell(6).numFmt = '#,##0';
+      tr.getCell(7).numFmt = '"$"0.00';
+      tr.getCell(8).numFmt = '"$"0.00';
+      tr.getCell(9).numFmt = '"$"#,##0';
+      tr.getCell(10).numFmt = '"$"#,##0';
+      tr.getCell(11).numFmt = '"$"#,##0;[Red]("$"#,##0)';
+      tr.height = 26;
+
+      // Forward-price color flips against the long-run average (col W).
+      // Green when the forward sits below the average → favorable
+      // buying window; red when it sits above → market timing pulls
+      // back. Comparison is against the per-row $W reference (a
+      // constant equal to AVERAGE(G:G)) so the cells recolor whenever
+      // the user edits the forward curve.
+      ws.addConditionalFormatting({
+        ref: `G${FIRST_DATA_ROW}:G${LAST_DATA_ROW}`,
+        rules: [
+          {
+            type: 'cellIs', operator: 'lessThan', formulae: [`$W$${FIRST_DATA_ROW}`], priority: 1,
+            style: {
+              fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFDCFCE7' } },
+              font: { color: { argb: 'FF166534' }, bold: true },
+            },
+          },
+          {
+            type: 'cellIs', operator: 'greaterThanOrEqual', formulae: [`$W$${FIRST_DATA_ROW}`], priority: 2,
+            style: {
+              fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFFEE2E2' } },
+              font: { color: { argb: 'FF991B1B' }, bold: true },
+            },
+          },
+        ],
+      });
+
+      ws.addConditionalFormatting({
+        ref: `K${FIRST_DATA_ROW}:K${LAST_DATA_ROW}`,
+        rules: [{
+          type: 'dataBar',
+          cfvo: [{ type: 'num', value: -5000 }, { type: 'num', value: 5000 }],
+          color: { argb: 'FF22C55E' },
+          showValue: true,
+          gradient: false,
+        }],
+      });
+
+      // Result block — year × {Arbitrary, Market-Timed, Delta}. Each
+      // value cell is a live SUM over the bucket's I / J / K slice so
+      // the grid updates whenever the user edits the tranche inputs.
+      const RESULT_HEADER_ROW = HEADER_ROW;
+      const resultHeaders = ['Year', 'Arbitrary', 'Market-Timed', 'Delta'];
+      const hr2 = ws.getRow(RESULT_HEADER_ROW);
+      resultHeaders.forEach((h, i) => {
+        const c = hr2.getCell(RESULT_FIRST_COL + i);
+        c.value = h;
+        c.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        c.alignment = { vertical: 'middle', horizontal: i === 0 ? 'left' : 'right', wrapText: true, indent: 1 };
+        c.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+      });
+
+      const MONTHS_PER_YEAR = 12;
+      const buckets = [];
+      for (let start = 0; start < gasHedges.length; start += MONTHS_PER_YEAR) {
+        const slice = gasHedges.slice(start, start + MONTHS_PER_YEAR);
+        let arb = 0;
+        let mt = 0;
+        for (let k = 0; k < slice.length; k++) {
+          arb += slice[k].price * ARB_STEP * TOTAL_VOLUME;
+          mt += slice[k].price * mtSteps[start + k] * TOTAL_VOLUME;
+        }
+        buckets.push({
+          label: `Year ${buckets.length + 1}`,
+          firstRow: FIRST_DATA_ROW + start,
+          lastRow: FIRST_DATA_ROW + start + slice.length - 1,
+          arb,
+          mt,
+        });
+      }
+
+      buckets.forEach((bucket, i) => {
+        const rowIdx = RESULT_HEADER_ROW + 1 + i;
+        const row = ws.getRow(rowIdx);
+        const rangeI = `$I$${bucket.firstRow}:$I$${bucket.lastRow}`;
+        const rangeJ = `$J$${bucket.firstRow}:$J$${bucket.lastRow}`;
+        const rangeK = `$K$${bucket.firstRow}:$K$${bucket.lastRow}`;
+        const yearCell = row.getCell(RESULT_FIRST_COL);
+        yearCell.value = bucket.label;
+        const arbCell = row.getCell(RESULT_FIRST_COL + 1);
+        arbCell.value = { formula: `SUM(${rangeI})`, result: bucket.arb };
+        const mtCell = row.getCell(RESULT_FIRST_COL + 2);
+        mtCell.value = { formula: `SUM(${rangeJ})`, result: bucket.mt };
+        const deltaCell = row.getCell(RESULT_FIRST_COL + 3);
+        deltaCell.value = { formula: `SUM(${rangeK})`, result: bucket.arb - bucket.mt };
+        for (let ci = 0; ci < 4; ci++) {
+          const c = row.getCell(RESULT_FIRST_COL + ci);
+          c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          c.alignment = { vertical: 'middle', horizontal: ci === 0 ? 'left' : 'right', indent: 1 };
+          c.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } } };
+        }
+        arbCell.numFmt = '"$"#,##0';
+        mtCell.numFmt = '"$"#,##0';
+        deltaCell.numFmt = '"$"#,##0;[Red]("$"#,##0)';
+        row.height = 20;
+      });
+
+      const yearTotalRowIdx = RESULT_HEADER_ROW + 1 + buckets.length;
+      const yearTotalRow = ws.getRow(yearTotalRowIdx);
+      const totArbDefault = buckets.reduce((s, b) => s + b.arb, 0);
+      const totMtDefault = buckets.reduce((s, b) => s + b.mt, 0);
+      yearTotalRow.getCell(RESULT_FIRST_COL).value = 'TOTAL';
+      const totArbCell = yearTotalRow.getCell(RESULT_FIRST_COL + 1);
+      totArbCell.value = { formula: `SUM($I$${FIRST_DATA_ROW}:$I$${LAST_DATA_ROW})`, result: totArbDefault };
+      const totMtCell = yearTotalRow.getCell(RESULT_FIRST_COL + 2);
+      totMtCell.value = { formula: `SUM($J$${FIRST_DATA_ROW}:$J$${LAST_DATA_ROW})`, result: totMtDefault };
+      const totDeltaCell = yearTotalRow.getCell(RESULT_FIRST_COL + 3);
+      totDeltaCell.value = { formula: `K${TOTAL_ROW}`, result: totArbDefault - totMtDefault };
+      for (let ci = 0; ci < 4; ci++) {
+        const c = yearTotalRow.getCell(RESULT_FIRST_COL + ci);
+        c.font = { name: 'Nunito Sans', size: 11, bold: true, color: { argb: SE_GREEN_DARK } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        c.alignment = { vertical: 'middle', horizontal: ci === 0 ? 'left' : 'right', indent: 1 };
+        c.border = {
+          top: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+        };
+      }
+      totArbCell.numFmt = '"$"#,##0';
+      totMtCell.numFmt = '"$"#,##0';
+      totDeltaCell.numFmt = '"$"#,##0;[Red]("$"#,##0)';
+      yearTotalRow.height = 26;
+
+      // Hide chart-helper columns U / V / W so they don't clutter the
+      // sheet but stay live for the chart (plotVisOnly=0 in the chart
+      // XML lets Excel keep plotting hidden ranges).
+      ws.getColumn(21).hidden = true;
+      ws.getColumn(22).hidden = true;
+      ws.getColumn(23).hidden = true;
+
+      // Y-axis bounds for the cumulative allocation chart — 10 pp above
+      // the highest and 10 pp below the lowest, clamped at 0. Both
+      // strategies converge at 100 % by the last row so max is always
+      // ≥1.0.
+      const allocValues = arbCum.concat(mtCum);
+      const minAlloc = Math.min(...allocValues);
+      const maxAlloc = Math.max(...allocValues);
+      const PAD = 0.10;
+      gasTimingChartRange = {
+        firstRow: FIRST_DATA_ROW,
+        lastRow: LAST_DATA_ROW,
+        allocYMin: Math.max(0, minAlloc - PAD),
+        allocYMax: maxAlloc + PAD,
+      };
     }
 
     // ---- Floating vs Hedging Example sheet --------------------------
@@ -5881,6 +9133,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // column is an Excel formula so edits update live.
     {
       const ws = wb.addWorksheet('Floating vs Hedging Example', {
+        // Hidden by default — supporting illustrative tab, surfaced only
+        // when a reader unhides it.
+        state: 'hidden',
         properties: { tabColor: { argb: SE_GREEN_DARK } },
         views: [{ showGridLines: false }],
       });
@@ -6186,7 +9441,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         'Floating pays the spot / index price every month — when the curve averages below the hedge price, that gap compounds across the year into the Saving figure above. The 100 % hedge locks the price at H4 regardless of where the market actually settles.',
         'Edit column C to weight months by your real load shape — a winter-peaking gas portfolio pays more for the January and February spot cells than a flat MWh assumption, which can flip the answer.',
         'Edit column E to model curve scenarios: a low-summer / high-winter shape (heating-led demand), an industrial flat curve, or a stressed winter where spot blows past the hedge for two months. Green spot cells beat the hedge, red cells lag.',
-        'Reality is between the two extremes. Most portfolios use this comparison to decide a layered-hedge ratio (e.g. 60 / 40 hedged-to-float) — see the Hedging Strategy Example tab for the layered approach.',
+        'Reality is between the two extremes. Most portfolios use this comparison to decide a layered-hedge ratio (e.g. 60 / 40 hedged-to-float) — see the Hedging Analysis tab for the layered approach.',
       ];
       floatBullets.forEach((b, i) => {
         const rowIdx = 29 + i;
@@ -6223,8 +9478,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         // → Methodology to see the reference tables when needed.
         state: 'hidden',
       });
-      const COLS = 7;
-      ws.columns = [38, 13, 17, 19, 17, 21, 24].map(w => ({ width: w }));
+      // 15 columns wide: the three reference sections use columns 1–7,
+      // and the per-site Property Type Estimates section (section 4)
+      // uses all 15. Title band + section banners merge across COLS so
+      // they span the full width of the widest section.
+      const COLS = 15;
+      ws.columns = [38, 13, 17, 19, 17, 21, 24, 18, 22, 24, 13, 13, 14, 14, 13].map(w => ({ width: w }));
 
       let r = 1;
 
@@ -6320,7 +9579,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       // ---- Section 3: Country deregulation reference ----
       sectionBanner('3. Country Deregulation Reference');
-      paragraph('Per-country bucket for each commodity. "Deregulated" / "Some deregulation" on Electric Power or Gas opens the commodity-savings motion (2 – 4 % on annual spend). "Deregulated" / "Some deregulation" on Power Rate Optimization opens the regulated-rate motion (0.25 % on regulated electric spend) — the two motions are mutually exclusive per site, so a country whose Electric Power is already deregulated does not also earn reg-rate savings on top. "Unlikely" and "No opportunity" disqualify a country from each motion.');
+      paragraph('Per-country bucket for each commodity. "Deregulated" / "Some deregulation" on Electric Power or Gas opens the commodity-savings motion (2 – 4 % on annual spend) — except in European markets, which surface "TBD" rather than a committed range. "Deregulated" / "Some deregulation" on Power Rate Optimization opens the regulated-rate motion (0.25 % on regulated electric spend) — the two motions are mutually exclusive per site, so a country whose Electric Power is already deregulated does not also earn reg-rate savings on top. "Unlikely" and "No opportunity" disqualify a country from each motion.');
       blank();
       headerRow(['Country', 'Region', 'Electric Power', 'Gas', 'Power Rate Optimization', '', '']);
       const countryRows = Object.entries(COUNTRY_DEREGULATION)
@@ -6365,54 +9624,453 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         from: { row: countryTableHeaderRow, column: 1 },
         to:   { row: r - 1, column: 5 },
       };
+
+      // ---- Section 4: Indicative savings range by state / province ----
+      // The per-jurisdiction savings reference behind the Indicative
+      // Savings (Power / Gas) tabs: each deregulated state / province and
+      // the savings range applied to its deregulated annual spend. The
+      // country-level equivalent lives in section 3 (Deregulated / Some
+      // deregulation countries earn the flat 2 – 4 % motion).
+      blank();
+      blank();
+      sectionBanner('4. Indicative Savings Range by State / Province');
+      paragraph('Per-state / province deregulation status and the indicative savings range applied to that jurisdiction\'s deregulated annual spend on the Indicative Savings tabs. "Deregulated" markets earn the listed range; "Limited" / "Large load only" markets are surfaced for visibility but resolve to 0 %. States / provinces not listed are treated as regulated and earn no commodity savings. Country-level markets apply a flat 2 – 4 % when the country is Deregulated / Some deregulation (European markets surface "TBD" instead of a committed range) — see section 3.');
+      blank();
+
+      const savingsStatusLabel = (s) => (s === 'yes' ? 'Deregulated' : s);
+      const savingsRefRow = (code, entry) => dataRow(
+        [code, savingsStatusLabel(entry.status), entry.range || '', entry.lowPct ?? '', entry.highPct ?? '', '', ''],
+        [null, null, null, '0.0%', '0.0%', null, null]
+      );
+
+      // Electric power.
+      headerRow(['State / Prov (Electric Power)', 'Deregulated Status', 'Indicative Savings Range', 'Low %', 'High %', '', '']);
+      Object.entries(ELECTRIC_DEREGULATION)
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .forEach(([code, entry]) => savingsRefRow(code, entry));
+
+      blank();
+
+      // Natural gas.
+      headerRow(['State / Prov (Natural Gas)', 'Deregulated Status', 'Indicative Savings Range', 'Low %', 'High %', '', '']);
+      Object.entries(GAS_DEREGULATION)
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .forEach(([code, entry]) => savingsRefRow(code, entry));
+
+      // ---- Section 5: Property Type Estimates (per site) ----
+      // The per-site application of the section 1 & 2 reference profiles:
+      // estimated annual consumption (scaled by Size_ft² when provided)
+      // and expected utility-account counts for each site that carried a
+      // recognized property type. Moved here from its own standalone tab.
+      if (propertyTypeSiteRows.length > 0) {
+        blank();
+        blank();
+        sectionBanner('5. Property Type Estimates — Per Site');
+        paragraph('Per-site application of the reference profiles above: estimated annual consumption (scaled linearly by Size_ft² when provided) and expected utility-account counts. The Total row sums the numeric columns; account labels such as "Multiple" / "0 – 1" / "N/A" map to 3 / 0.5 / 0 for that roll-up while the per-site cell keeps the original label.');
+        blank();
+        const ptCols = [
+          { label: 'Site Name',                     get: (s) => s.siteName },
+          { label: 'ST / Prov / Country',           get: (s) => s.state || s.country },
+          { label: 'Property Type',                 get: (s) => s.propertyType },
+          { label: 'Category',                      get: (s) => s.category },
+          { label: 'Size (ft²)',                    get: (s) => s.sizeFt2 ?? '', numFmt: '#,##0' },
+          { label: 'Reference Size (ft²)',          get: (s) => s.referenceSizeFt2 ?? '', numFmt: '#,##0' },
+          { label: 'Est. Annual Electric (kWh)',    get: (s) => s.electricKwh ?? '', numFmt: '#,##0' },
+          { label: 'Est. Annual Gas (Dth)',         get: (s) => s.gasDth ?? '', numFmt: '#,##0' },
+          { label: 'Est. Annual Gas (kWh equiv)',   get: (s) => s.gasKwh ?? '', numFmt: '#,##0' },
+          { label: 'Est. Total Energy (kWh equiv)', get: (s) => s.totalKwh ?? '', numFmt: '#,##0' },
+          { label: 'Water Accounts',    get: (s) => s.accounts?.water?.label ?? '',    sumValue: (s) => s.accounts?.water?.count ?? 0,    numFmt: '0.##' },
+          { label: 'Steam Accounts',    get: (s) => s.accounts?.steam?.label ?? '',    sumValue: (s) => s.accounts?.steam?.count ?? 0,    numFmt: '0.##' },
+          { label: 'Gas Accounts',      get: (s) => s.accounts?.gas?.label ?? '',      sumValue: (s) => s.accounts?.gas?.count ?? 0,      numFmt: '0.##' },
+          { label: 'Electric Accounts', get: (s) => s.accounts?.electric?.label ?? '', sumValue: (s) => s.accounts?.electric?.count ?? 0, numFmt: '0.##' },
+          { label: 'Waste Accounts',    get: (s) => s.accounts?.waste?.label ?? '',    sumValue: (s) => s.accounts?.waste?.count ?? 0,    numFmt: '0.##' },
+        ];
+        // Header row.
+        ptCols.forEach((c, i) => {
+          const cell = ws.getCell(r, i + 1);
+          cell.value = c.label;
+          cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+          cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+          cell.border = {
+            bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+            right:  { style: 'hair', color: { argb: 'FFFFFFFF' } },
+          };
+        });
+        ws.getRow(r).height = 36;
+        r += 1;
+        // Per-site data rows.
+        propertyTypeSiteRows.forEach((s) => {
+          ptCols.forEach((c, i) => {
+            const cell = ws.getCell(r, i + 1);
+            const v = c.get(s);
+            cell.value = (v === '' || v == null) ? ' ' : v;
+            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+            if (c.numFmt) cell.numFmt = c.numFmt;
+            cell.border = {
+              bottom: { style: 'hair', color: { argb: SE_BORDER } },
+              right:  { style: 'hair', color: { argb: SE_BORDER } },
+            };
+          });
+          ws.getRow(r).height = 18;
+          r += 1;
+        });
+        // Totals row — "Multiple" counts as 3, "0 – 1" as 0.5, "N/A" as 0.
+        ptCols.forEach((c, i) => {
+          const cell = ws.getCell(r, i + 1);
+          if (i === 0) {
+            cell.value = 'Total';
+          } else if (c.sumValue) {
+            const sum = propertyTypeSiteRows.reduce((a, s) => a + (Number(c.sumValue(s)) || 0), 0);
+            cell.value = Math.round(sum * 100) / 100;
+          } else if (c.numFmt && c.label.startsWith('Est.')) {
+            const sum = propertyTypeSiteRows.reduce((a, s) => {
+              const v = c.get(s);
+              return a + (Number.isFinite(Number(v)) ? Number(v) : 0);
+            }, 0);
+            cell.value = Math.round(sum);
+          } else {
+            cell.value = ' ';
+          }
+          cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          if (c.numFmt) cell.numFmt = c.numFmt;
+          cell.border = {
+            top:    { style: 'thin', color: { argb: SE_GREEN_DARK } },
+            bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          };
+        });
+        ws.getRow(r).height = 20;
+        r += 1;
+      }
     }
 
-    const rawBuf = await wb.xlsx.writeBuffer();
-    // Inject a native Excel chart into the Floating vs Hedging Example
-    // sheet. Combo chart: a stacked area chart underneath supplies the
-    // green "savings" band wherever spot sits below hedge (driven by
-    // hidden helper columns U + V), and a line chart on top draws the
-    // Spot and Hedge series. Helper data, axis bounds, and all series
-    // resolve from live cell ranges so the chart recomputes as the
-    // user edits the yellow inputs.
-    const SHEET = 'Floating vs Hedging Example';
-    // Y axis bounds derived from the *default* dataset so the axis
-    // stays tight (≤30 % padding above/below the data range) without
-    // depending on Excel's autoscale.
-    const _spotDefaults = [84,82,68,63,60,65,78,80,72,66,74,80];
-    const _hedgeDefault = 75;
-    const _dataMin = Math.min(_hedgeDefault, ..._spotDefaults);
-    const _dataMax = Math.max(_hedgeDefault, ..._spotDefaults);
-    const yMin = Math.floor(_dataMin * 0.7);
-    const yMax = Math.ceil(_dataMax * 1.3);
-    const buf = await injectLiveLineChart(rawBuf, {
-      sheetName: SHEET,
-      title: 'Spot Price Savings vs. Current Hedging Scenario',
-      catRef: `'${SHEET}'!$B$7:$B$18`,
-      // Area series first → drawn underneath. Index 0 is the
-      // invisible base (min of spot/hedge); index 1 is the green
-      // savings band (hedge − spot, clipped to ≥0). Both share the
-      // category axis with the lines.
-      areaSeries: [
-        { name: '',        valRef: `'${SHEET}'!$U$7:$U$18`, noFill: true },
-        { name: 'Savings', valRef: `'${SHEET}'!$V$7:$V$18`, color: '22C55E', alpha: 40000 },
-      ],
-      lineSeries: [
-        { name: 'Spot Price',  color: 'F97316', marker: 'circle', markerSize: 6, valRef: `'${SHEET}'!$E$7:$E$18` },
-        { name: '100 % Hedge', color: '1E40AF', dash: 'dash',                    valRef: `'${SHEET}'!$F$7:$F$18` },
-      ],
-      // The invisible base series would otherwise show up as a blank
-      // chip in the legend — strip it.
-      hideLegendIndices: [0],
-      yMin,
-      yMax,
-      // ~640 × 340 px (1 px ≈ 9525 EMU), anchored just right of the
-      // 9-column data table with a 0.2-col gutter so the chart sits
-      // beside the inputs instead of overlapping them. Row index is
-      // 0-based, so row: 5 = Excel row 6.
-      anchor: { col: 9, colOff: 190500, row: 5, rowOff: 0, cx: 6096000, cy: 3238500 },
+    // Findings & Recommendations rule catalog. Lists every alert
+    // currently wired up — the per-state flags emitted into the
+    // electricRows / gasRows arrays plus the portfolio-wide VPPA
+    // signal — so the seller can hand the buyer (or themselves) a
+    // single page that documents what each alert actually means and
+    // when it fires. Independent of this run's results; this is a
+    // reference of "what's mapped so far."
+    {
+      const SE_GREEN = 'FF3DCD58';
+      const SE_GREEN_DARK = 'FF009530';
+      const SE_GREEN_LIGHT = 'FFE6F7EC';
+      const SE_TEXT_DARK = 'FF1E293B';
+      const SE_BORDER = 'FFD4DDE1';
+      const ws = wb.addWorksheet('Alerts Catalog', {
+        properties: { tabColor: { argb: SE_GREEN } },
+        views: [{ showGridLines: false, state: 'frozen', ySplit: 3 }],
+        // Hidden by default (like the Methodology tab) so the workbook
+        // opens on the headline sheets. Right-click any visible tab →
+        // Unhide → Alerts Catalog to see the reference list.
+        state: 'hidden',
+      });
+      const COLS = 5;
+      ws.columns = [34, 12, 38, 24, 56].map(w => ({ width: w }));
+
+      let r = 1;
+      // Row 1 — title band
+      ws.mergeCells(r, 1, r, COLS);
+      const title = ws.getCell(r, 1);
+      title.value = 'Findings & Recommendations — Alert Catalog';
+      title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(r).height = 30;
+      r += 1;
+      // Row 2 — subtitle paragraph
+      ws.mergeCells(r, 1, r, COLS);
+      const sub = ws.getCell(r, 1);
+      sub.value = 'Every alert below feeds the Findings & Recommendations band at the top of the Indicative Savings sheet. Each row documents the alert name, which commodity it targets, the trigger threshold, and the action it suggests.';
+      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: 'FF64748B' } };
+      sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      ws.getRow(r).height = 32;
+      r += 1;
+      // Row 3 — column headers
+      const headers = ['Alert', 'Commodity', 'Trigger', 'Threshold', 'Recommendation'];
+      headers.forEach((h, i) => {
+        const c = ws.getCell(r, i + 1);
+        c.value = h;
+        c.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+        c.border = {
+          top: { style: 'thin', color: { argb: SE_BORDER } },
+          bottom: { style: 'thin', color: { argb: SE_BORDER } },
+          left: { style: 'thin', color: { argb: SE_BORDER } },
+          right: { style: 'thin', color: { argb: SE_BORDER } },
+        };
+      });
+      ws.getRow(r).height = 24;
+      r += 1;
+
+      const catalog = [
+        {
+          alert: 'VPPA opportunity',
+          commodity: 'Electric (portfolio)',
+          trigger: 'Total North America electric consumption (all US states + Canadian provinces, regulated and deregulated combined)',
+          threshold: '> 100,000 MWh / yr',
+          action: 'A Virtual PPA should be explored — load is large enough to anchor an off-site renewable contract.',
+        },
+        {
+          alert: 'Risk Management',
+          commodity: 'Electric (per state, NAM only)',
+          trigger: 'State-level deregulated electric consumption — NAM markets only (US states, Canadian provinces, Mexico); international markets are excluded',
+          threshold: '> 10,000 MWh / yr',
+          action: 'Risk Management strategy (hedge layering, structured product) should be considered.',
+        },
+        {
+          alert: 'Wholesale Plus',
+          commodity: 'Electric (per state)',
+          trigger: 'State-level deregulated electric consumption',
+          threshold: '> 44,000 MWh / yr',
+          action: 'Wholesale Plus structured procurement should be explored — load justifies the product.',
+        },
+        {
+          alert: 'Virginia large-load gating',
+          commodity: 'Electric (Virginia)',
+          trigger: 'Largest single VA site\'s annual consumption (no aggregation across sites)',
+          threshold: '> 45,000 MWh / yr',
+          action: 'Site meets Virginia\'s large-load retail-choice threshold and can leave the regulated tariff.',
+        },
+        {
+          alert: 'Limited market (3rd-party supply only)',
+          commodity: 'Electric (AZ, MI)',
+          trigger: 'Any electric consumption on an AZ or MI site',
+          threshold: '> 0 kWh',
+          action: 'We can only support these customers when they already hold a third-party supply contract — surface the gating up front.',
+        },
+        {
+          alert: 'Small electric market',
+          commodity: 'Electric (per state)',
+          trigger: 'State-level deregulated electric spend',
+          threshold: '$0 < spend < $1M / yr',
+          action: 'Small market — sourcing motion may not pencil out. Flag for review.',
+        },
+        {
+          alert: 'Mexico sourcing opportunity',
+          commodity: 'Electric (Mexico)',
+          trigger: 'CFE-supplied Mexican site (Baja California / Baja California Sur excluded — separate grid)',
+          threshold: '> 6,000,000 kWh / yr',
+          action: 'Potential CFE sourcing opportunity — load is large enough to consider Mexican retail choice.',
+        },
+        {
+          alert: 'Low gas spend',
+          commodity: 'Natural gas (per state)',
+          trigger: 'State-level deregulated gas spend',
+          threshold: '$0 < spend < $30K / yr',
+          action: 'Consumption might be too low for a gas sourcing motion. Flag for review.',
+        },
+      ];
+
+      catalog.forEach((row, idx) => {
+        const zebra = idx % 2 === 1;
+        const cells = [row.alert, row.commodity, row.trigger, row.threshold, row.action];
+        cells.forEach((v, i) => {
+          const c = ws.getCell(r, i + 1);
+          c.value = v;
+          c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK }, bold: i === 0 };
+          c.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+          c.border = {
+            top:    { style: 'hair', color: { argb: SE_BORDER } },
+            bottom: { style: 'hair', color: { argb: SE_BORDER } },
+            left:   { style: 'hair', color: { argb: SE_BORDER } },
+            right:  { style: 'hair', color: { argb: SE_BORDER } },
+          };
+          if (zebra) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        });
+        // Row height tuned to the widest free-text column (Recommendation
+        // at 56 chars wide). Bumps up when the wrap would otherwise
+        // truncate.
+        const longest = Math.max(row.trigger.length, row.action.length);
+        ws.getRow(r).height = Math.max(28, Math.ceil(longest / 50) * 16);
+        r += 1;
+      });
+    }
+
+    // Normalize every em dash (—) to a plain hyphen (-) across all
+    // populated cells so the exported workbook never shows "—" — titles,
+    // banners, table headers, summary lines, and placeholder values all
+    // resolve to "-". Runs once over the finished workbook so new strings
+    // added anywhere upstream are covered automatically.
+    const dashFix = (s) => (typeof s === 'string' ? s.replace(/—/g, '-') : s);
+    wb.eachSheet((ws) => {
+      ws.eachRow({ includeEmpty: false }, (row) => {
+        row.eachCell({ includeEmpty: false }, (cell) => {
+          const v = cell.value;
+          if (typeof v === 'string') {
+            cell.value = dashFix(v);
+          } else if (v && typeof v === 'object') {
+            if (Array.isArray(v.richText)) {
+              v.richText.forEach((run) => { run.text = dashFix(run.text); });
+              cell.value = v;
+            } else if (typeof v.text === 'string') {
+              cell.value = { ...v, text: dashFix(v.text) };
+            } else if (typeof v.result === 'string') {
+              cell.value = { ...v, result: dashFix(v.result) };
+            }
+          }
+        });
+      });
     });
-    const fileName = `Indicative Savings by State - ${new Date().toISOString().slice(0, 10)}.xlsx`;
+
+    // Native Excel charts are injected into the written .xlsx buffer
+    // (ExcelJS has no chart API). Collect the injection descriptors here
+    // and apply them after the workbook is written — in combined-export
+    // mode the caller writes the merged workbook and applies these, so the
+    // charts land on the same sheets inside the master file.
+    const SHEET = 'Floating vs Hedging Example';
+    // Combo chart on the Floating vs Hedging Example sheet: a stacked area
+    // chart underneath supplies the green "savings" band wherever spot sits
+    // below hedge (driven by hidden helper columns U + V), and a line chart
+    // on top draws the Spot and Hedge series. Helper data and all series
+    // resolve from live cell ranges so the chart recomputes as the user
+    // edits the yellow inputs. Y-axis bounds are omitted so Excel
+    // autoscales — a spot price beyond the default range expands the chart
+    // instead of clipping.
+    const chartInjections = [
+      {
+        sheetName: SHEET,
+        title: 'Spot Price Savings vs. Current Hedging Scenario',
+        catRef: `'${SHEET}'!$B$7:$B$18`,
+        // Area series first → drawn underneath. Index 0 is the invisible
+        // base (min of spot/hedge); index 1 is the green savings band
+        // (hedge − spot, clipped to ≥0). Both share the category axis.
+        areaSeries: [
+          { name: '',        valRef: `'${SHEET}'!$U$7:$U$18`, noFill: true },
+          { name: 'Savings', valRef: `'${SHEET}'!$V$7:$V$18`, color: '22C55E', alpha: 40000 },
+        ],
+        lineSeries: [
+          { name: 'Spot Price',  color: 'F97316', marker: 'circle', markerSize: 6, valRef: `'${SHEET}'!$E$7:$E$18` },
+          { name: '100 % Hedge', color: '1E40AF', dash: 'dash',                    valRef: `'${SHEET}'!$F$7:$F$18` },
+        ],
+        // The invisible base series would otherwise show up as a blank
+        // chip in the legend — strip it.
+        hideLegendIndices: [0],
+        // ~640 × 340 px (1 px ≈ 9525 EMU), anchored just right of the
+        // 9-column data table with a 0.2-col gutter. Row index is 0-based,
+        // so row: 5 = Excel row 6.
+        anchor: { col: 9, colOff: 190500, row: 5, rowOff: 0, cx: 6096000, cy: 3238500 },
+      },
+    ];
+
+    // Mirror the same Spot Price Savings vs Current Hedging Scenario
+    // chart onto the Hedging Analysis tab so the tranche table has the
+    // same visual comparison. Spot = Index Price (col G), Hedge =
+    // Current Fixed Price (col F, locked to $H$4), Savings band feeds
+    // off hidden helper columns U + V on rows 7..LAST_DATA_ROW. No
+    // explicit yMin/yMax → Excel autoscales the Y axis, so any tranche
+    // value driven above or below the default range expands the chart
+    // range automatically.
+    if (hedgingChartRange) {
+      const HSHEET = 'Hedging Analysis';
+      const { firstRow, lastRow, hedgePctYMin, hedgePctYMax } = hedgingChartRange;
+      chartInjections.push({
+        sheetName: HSHEET,
+        charts: [
+          {
+            title: 'Spot Price Savings vs. Current Hedging Scenario',
+            catRef: `'${HSHEET}'!$B$${firstRow}:$B$${lastRow}`,
+            areaSeries: [
+              { name: '',        valRef: `'${HSHEET}'!$U$${firstRow}:$U$${lastRow}`, noFill: true },
+              { name: 'Savings', valRef: `'${HSHEET}'!$V$${firstRow}:$V$${lastRow}`, color: '22C55E', alpha: 40000 },
+            ],
+            lineSeries: [
+              { name: 'Index Price',          color: 'F97316', marker: 'circle', markerSize: 4, valRef: `'${HSHEET}'!$G$${firstRow}:$G$${lastRow}` },
+              { name: 'Current Fixed Price',  color: '1E40AF', dash: 'dash',                    valRef: `'${HSHEET}'!$F$${firstRow}:$F$${lastRow}` },
+            ],
+            hideLegendIndices: [0],
+            // Anchored at Excel col M (0-indexed 12), row 11 (0-indexed
+            // 10) — sits below the Year-by-Year result block (rows 3–9)
+            // and to the right of the 60-row tranche table. ~720 × 360 px.
+            anchor: { col: 12, colOff: 0, row: 10, rowOff: 0, cx: 6858000, cy: 3429000 },
+          },
+          {
+            // % of portfolio hedged over time — cumulative hedge ratio
+            // from columns C (Current) and D (Example). The Y axis is
+            // zoomed to 10 percentage points above the highest hedge
+            // value and 10 below the lowest (clamped at 0). Major unit
+            // is forced to 10 % so the new top tick label (e.g. 110 %)
+            // actually renders — without it Excel rounds to "nice"
+            // intervals and hides the extra padding in invisible
+            // whitespace above the 100 % tick. Anchored immediately
+            // below the Spot Price chart (row 11 + ~18 default-height
+            // rows ≈ row 29).
+            title: '% of Portfolio Hedged Over Time',
+            catRef: `'${HSHEET}'!$B$${firstRow}:$B$${lastRow}`,
+            lineSeries: [
+              { name: 'Current Hedge %', color: '1E40AF', dash: 'dash',  valRef: `'${HSHEET}'!$C$${firstRow}:$C$${lastRow}` },
+              { name: 'Example Hedge %', color: '22C55E', marker: 'circle', markerSize: 4, valRef: `'${HSHEET}'!$D$${firstRow}:$D$${lastRow}` },
+            ],
+            yMin: hedgePctYMin,
+            yMax: hedgePctYMax,
+            yMajorUnit: 0.10,
+            numFmt: '0%',
+            anchor: { col: 12, colOff: 0, row: 28, rowOff: 0, cx: 6858000, cy: 3429000 },
+          },
+        ],
+      });
+    }
+    // Mirror the same two-chart layout onto the Gas Market Timing tab:
+    // savings shading (forward price vs long-run average) on top, and a
+    // cumulative allocation curve per strategy underneath. The savings
+    // chart's reference line is the AVERAGE() formula in hidden col W,
+    // so it tracks any edits to the forward-price column.
+    if (gasTimingChartRange) {
+      const GSHEET = 'Gas Market Timing';
+      const { firstRow, lastRow, allocYMin, allocYMax } = gasTimingChartRange;
+      chartInjections.push({
+        sheetName: GSHEET,
+        charts: [
+          {
+            title: 'Forward Curve vs Long-Run Average ($/Dth)',
+            catRef: `'${GSHEET}'!$B$${firstRow}:$B$${lastRow}`,
+            areaSeries: [
+              { name: '',        valRef: `'${GSHEET}'!$U$${firstRow}:$U$${lastRow}`, noFill: true },
+              { name: 'Favorable Buy Window', valRef: `'${GSHEET}'!$V$${firstRow}:$V$${lastRow}`, color: '22C55E', alpha: 40000 },
+            ],
+            lineSeries: [
+              { name: 'Forward Price',     color: 'F97316', marker: 'circle', markerSize: 4, valRef: `'${GSHEET}'!$G$${firstRow}:$G$${lastRow}` },
+              { name: 'Long-Run Average',  color: '1E40AF', dash: 'dash',                    valRef: `'${GSHEET}'!$W$${firstRow}:$W$${lastRow}` },
+            ],
+            hideLegendIndices: [0],
+            numFmt: '"$"0.00',
+            anchor: { col: 12, colOff: 0, row: 10, rowOff: 0, cx: 6858000, cy: 3429000 },
+          },
+          {
+            title: 'Cumulative Allocation % - Market Timing vs 30-Day Buy',
+            catRef: `'${GSHEET}'!$B$${firstRow}:$B$${lastRow}`,
+            lineSeries: [
+              { name: '30-Day Arbitrary Buy', color: '1E40AF', dash: 'dash',                    valRef: `'${GSHEET}'!$C$${firstRow}:$C$${lastRow}` },
+              { name: 'Market-Timed Hedge',   color: '22C55E', marker: 'circle', markerSize: 4, valRef: `'${GSHEET}'!$D$${firstRow}:$D$${lastRow}` },
+            ],
+            yMin: allocYMin,
+            yMax: allocYMax,
+            yMajorUnit: 0.10,
+            numFmt: '0%',
+            anchor: { col: 12, colOff: 0, row: 28, rowOff: 0, cx: 6858000, cy: 3429000 },
+          },
+        ],
+      });
+    }
+    // Name the file after the company when one is available — e.g.
+    // "Acme Corp_Indicative Savings Analysis.xlsx". Falls back to a
+    // dated generic name when no company name is mapped.
+    const exportCompany = sanitizeFileNamePart(deriveExportCompanyName(companyName));
+    const fileName = exportCompany
+      ? `${exportCompany}_Indicative Savings Analysis.xlsx`
+      : `Indicative Savings Analysis - ${new Date().toISOString().slice(0, 10)}.xlsx`;
+    // Combined-export mode: hand the (already-added) sheets and the chart
+    // descriptors back so the master export writes the merged workbook once
+    // and injects the charts itself.
+    if (targetWb) return { chartInjections, fileName };
+    let buf = await wb.xlsx.writeBuffer();
+    for (const injection of chartInjections) {
+      buf = await injectLiveLineChart(buf, injection);
+    }
     if (returnBuffer) return { buffer: buf, fileName };
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
@@ -6424,6 +10082,524 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     a.remove();
     URL.revokeObjectURL(url);
     return null;
+  }
+
+  // Master Analysis export: one workbook combining the Utility Lookup
+  // exports — Indicative Savings, the Building Compliance report (+ its Site
+  // Detail), Corporate Compliance (company footprint + California ops), and
+  // the Compliance Report Methodology. Each builder adds its sheets to a
+  // shared ExcelJS workbook; the Indicative Savings native charts are
+  // injected after the merged workbook is written (the compliance report's
+  // Site Detail is renamed so it doesn't collide with Indicative Savings' own
+  // Site Detail). Empty sections still emit their tab so the tab set stays
+  // consistent.
+  async function exportMasterAnalysis() {
+    if (!rows.length) {
+      throw new Error('No sites available to export — re-check the uploaded file or the Site Name column mapping.');
+    }
+    const { Workbook } = await import('exceljs');
+    const wb = new Workbook();
+    wb.creator = 'Schneider Electric · Prospect Tracker';
+
+    // 1. Indicative Savings sheets (returns its native-chart descriptors).
+    const indicative = await exportIndicativeSavings({ targetWb: wb });
+    const chartInjections = indicative?.chartInjections || [];
+
+    // 2. Building Compliance report + Site Detail, screened from the same
+    //    site list the compliance subtabs use. Site Detail is renamed to
+    //    avoid colliding with Indicative Savings' Site Detail sheet.
+    const complianceResults = screenSites(complianceSites);
+    await exportComplianceReportXlsx(complianceResults, {
+      targetWb: wb,
+      generatedAt: new Date().toLocaleString('en-US'),
+      siteCount: complianceSites.length,
+      siteDetailSheetName: 'Compliance Site Detail',
+      companyName: deriveExportCompanyName(null),
+    });
+
+    // 3. Corporate Compliance — company-level portfolio view (site footprint
+    //    + California operations), Schneider-formatted.
+    buildCorporateComplianceSheet(wb, complianceSites, {
+      generatedAt: new Date().toLocaleString('en-US'),
+      companyName: deriveExportCompanyName(null),
+    });
+
+    // 4. Compliance Report Methodology — how the estimated fines were derived,
+    //    by mandate, plus the per-jurisdiction penalty inputs behind them.
+    buildComplianceMethodologySheet(wb, complianceResults, {
+      generatedAt: new Date().toLocaleString('en-US'),
+      companyName: deriveExportCompanyName(null),
+    });
+
+    // Write the merged workbook once, then inject the Indicative Savings
+    // native charts (ExcelJS drops charts on re-load, so this must run on
+    // the final buffer, last).
+    let buf = await wb.xlsx.writeBuffer();
+    for (const injection of chartInjections) {
+      buf = await injectLiveLineChart(buf, injection);
+    }
+
+    const exportCompany = sanitizeFileNamePart(deriveExportCompanyName(null));
+    const fileName = exportCompany
+      ? `${exportCompany}_Master Analysis.xlsx`
+      : `Master Analysis - ${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  // Styled multi-tab utility-mapping workbook, launched from the Utility
+  // Mapping page's "Download Analysis" button. Sheets:
+  //   1. NAM — a North-America choropleth: each state / province shaded by
+  //      the share of its portfolio sites mapped to a known utility.
+  //   2. State Breakdown — one row per state / province with mapping counts,
+  //      unique-utility count, and the Has Access split (sorted by most
+  //      Has Access sites).
+  //   3. Site Detail — one row per site with its mapping state, zip, the
+  //      matched uploaded name, mapped-to utility, Status, and Requirements.
+  // `nameMapList` is the Utility Name Mapping table passed up from
+  // UtilityMappingView; each site's electric utility is classified against it.
+  async function exportUtilityMappingAnalysis(nameMapList) {
+    if (!rows.length) {
+      throw new Error('No sites available to export — re-check the uploaded file or the Site Name column mapping.');
+    }
+    // Classify each Utility-Lookup site's electric utility against the
+    // Utility Name Mapping table: is its utility present in that table, and
+    // is it mapped to one of the app's known utilities? Buckets:
+    //   mapped     — utility found and mapped to a known utility
+    //   unmapped   — utility found but not (yet) mapped to a known utility
+    //   notInList  — utility absent from the mapping table (or site has none)
+    const nameMapRows = Array.isArray(nameMapList) ? nameMapList : [];
+    const mapNames = nameMapRows.map(x => x.name).filter(Boolean);
+    const byName = new Map();
+    for (const x of nameMapRows) if (x.name && !byName.has(x.name)) byName.set(x.name, x);
+    const knownSet = new Set((knownUtilityNames || []).map(n => String(n || '').trim()).filter(Boolean));
+    const classify = (utility) => {
+      const u = String(utility || '').trim();
+      if (!u) return { status: 'notInList', detail: 'No electric utility on the site', matched: '', mappedTo: '', rowStatus: '', requirements: '' };
+      const hit = mapNames.length ? findFuzzyMatch(u, mapNames, { threshold: 40 }) : null;
+      if (!hit) return { status: 'notInList', detail: 'Utility not in the Utility Name Mapping table', matched: '', mappedTo: '', rowStatus: '', requirements: '' };
+      const row = byName.get(hit.name) || {};
+      const mappedTo = String(row.mappedTo || '').trim();
+      const rowStatus = String(row.status || '').trim();
+      const requirements = String(row.requirements || '').trim();
+      if (mappedTo && knownSet.has(mappedTo)) return { status: 'mapped', detail: 'Mapped to a known utility', matched: hit.name, mappedTo, rowStatus, requirements };
+      if (mappedTo) return { status: 'unmapped', detail: 'Mapped value is not a known utility', matched: hit.name, mappedTo, rowStatus, requirements };
+      return { status: 'unmapped', detail: 'In the mapping table but not yet mapped', matched: hit.name, mappedTo: '', rowStatus, requirements };
+    };
+    const bumpBucket = (b, status) => {
+      b.total++;
+      if (status === 'mapped') b.mapped++;
+      else if (status === 'unmapped') b.unmapped++;
+      else b.notInList++;
+    };
+    // A site "has access" when its utility's Status reads available /
+    // positive; explicit negatives (no / not available / pending / …)
+    // read as no-access. Blank / unknown returns null and is left out of
+    // both counts. Drives the access split on the State Breakdown tab.
+    const statusHasAccess = (v) => {
+      const s = String(v ?? '').trim().toLowerCase();
+      if (!s) return null;
+      if (/^(no|n|none|false|0|unavailable|not\s*available|no\s*access|n\/a|na|tbd|unknown|pending|-)$/.test(s)) return false;
+      return true;
+    };
+
+    // Per-site detail rows + per-state (NAM) buckets for the choropleth.
+    const detailRows = [];
+    const buckets = new Map(); // key -> { center, total, mapped, unmapped, notInList, label, stateCode, countryLabel }
+    const stateBuckets = new Map(); // `${country}|||${state}` -> { country, state, total, mapped, unmapped, notInList, accessYes, accessNo, utilities:Set, requirements:Set }
+    const allUtilities = new Set(); // distinct electric utilities portfolio-wide (for the State Breakdown total row)
+    let totMapped = 0, totUnmapped = 0, totNotInList = 0;
+    let totAccessYes = 0, totAccessNo = 0;
+    for (const r of rows) {
+      const siteName = siteNameColumn ? String(r[siteNameColumn] || '').trim() : '';
+      const electricUtility = String(r.__electric__ || '').trim();
+      const utilityKey = electricUtility.toLowerCase();
+      const rawCountry = String(r.__country__ || '').trim();
+      const country = normalizeCountryName(rawCountry) || rawCountry;
+      const isUS = /^(united states|usa|us)$/i.test(country);
+      const isCA = /^(canada|ca)$/i.test(country);
+      // US sites already resolve __state__ to a 2-letter code via the zip
+      // lookup; Canadian sites keep whatever province string was uploaded
+      // ("Ontario", "Québec", "ON"), so normalize it to the 2-letter postal
+      // code the province-centre table and the admin-1 map polygons key on —
+      // otherwise provinces never match a map bucket and stay unfilled.
+      const rawState = String(r.__state__ || '').trim();
+      const stateCode = isCA
+        ? (normalizeProvince(r.__stateProvinceDisplay__) || normalizeProvince(rawState) || rawState.toUpperCase())
+        : rawState.toUpperCase();
+      const stateDisplay = r.__stateProvinceDisplay__ || stateCode || '—';
+      const cls = classify(electricUtility);
+      if (cls.status === 'mapped') totMapped++;
+      else if (cls.status === 'unmapped') totUnmapped++;
+      else totNotInList++;
+      if (utilityKey) allUtilities.add(utilityKey);
+      // Utility access (from the Status column) + requirements text,
+      // surfaced per state on the State Breakdown tab.
+      const access = statusHasAccess(cls.rowStatus);
+      if (access === true) totAccessYes++;
+      else if (access === false) totAccessNo++;
+      // State / province breakdown across the whole portfolio (NAM + intl).
+      {
+        const sKey = `${rawCountry}|||${stateDisplay}`;
+        let sb = stateBuckets.get(sKey);
+        if (!sb) { sb = { country: rawCountry, state: stateDisplay, total: 0, mapped: 0, unmapped: 0, notInList: 0, accessYes: 0, accessNo: 0, utilities: new Set(), requirements: new Set() }; stateBuckets.set(sKey, sb); }
+        bumpBucket(sb, cls.status);
+        if (access === true) sb.accessYes++;
+        else if (access === false) sb.accessNo++;
+        if (utilityKey) sb.utilities.add(utilityKey);
+        if (cls.requirements) sb.requirements.add(cls.requirements);
+      }
+      detailRows.push({
+        siteName,
+        state: stateDisplay,
+        country: rawCountry,
+        zip: r.__zipNorm__ || '',
+        electricUtility,
+        matched: cls.matched,
+        mappedTo: cls.mappedTo,
+        rowStatus: cls.rowStatus,
+        requirements: cls.requirements,
+        status: cls.status === 'mapped' ? 'Mapped' : (cls.status === 'unmapped' ? 'Unmapped' : 'Not in mapping list'),
+        detail: cls.detail,
+      });
+      let center = null, label = '', countryLabel = '';
+      if (isUS && US_STATE_CENTERS[stateCode]) { center = US_STATE_CENTERS[stateCode]; label = `${stateCode}, USA`; countryLabel = 'United States'; }
+      else if (isCA && CANADA_PROVINCE_CENTERS[stateCode]) { center = CANADA_PROVINCE_CENTERS[stateCode]; label = `${stateCode}, Canada`; countryLabel = 'Canada'; }
+      if (!center) continue;
+      const key = `${isUS ? 'US' : 'CA'}/${stateCode}`;
+      let b = buckets.get(key);
+      if (!b) { b = { center, total: 0, mapped: 0, unmapped: 0, notInList: 0, label, stateCode, countryLabel }; buckets.set(key, b); }
+      bumpBucket(b, cls.status);
+    }
+
+    const { Workbook } = await import('exceljs');
+    const SE_GREEN_DARK = 'FF009530';
+    const SE_GREEN = 'FF3DCD58';
+    const SE_GREEN_LIGHT = 'FFE6F7EC';
+    const SE_TEXT_DARK = 'FF1E293B';
+    const SE_BORDER = 'FFD4DDE1';
+    const SE_SLATE = 'FF475569';
+    const wb = new Workbook();
+    wb.creator = 'Schneider Electric · Prospect Tracker';
+
+    // ---- Sheet 1: NAM utility-mapping dot map ----
+    {
+      const COLS = 16;
+      const ws = wb.addWorksheet('NAM', {
+        properties: { tabColor: { argb: SE_GREEN_DARK } },
+        views: [{ showGridLines: false }],
+      });
+      ws.columns = Array.from({ length: COLS }, () => ({ width: 12 }));
+
+      // Composite canvas — single NA panel with a gradient legend below.
+      const MAP_W = 900, MAP_H = 520, PAD = 16, TITLE_H = 30, LEGEND_H = 70;
+      const W = MAP_W + PAD * 2;
+      const H = TITLE_H + MAP_H + LEGEND_H + PAD * 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = H;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, W, H);
+
+      const NA_LNG_MIN = -170, NA_LNG_MAX = -52, NA_LAT_MIN = 18, NA_LAT_MAX = 84;
+      const originX = PAD, originY = TITLE_H + PAD;
+      const project = (lng, lat) => [
+        originX + ((lng - NA_LNG_MIN) / (NA_LNG_MAX - NA_LNG_MIN)) * MAP_W,
+        originY + ((NA_LAT_MAX - lat) / (NA_LAT_MAX - NA_LAT_MIN)) * MAP_H,
+      ];
+      // Split rings that cross the antimeridian (Alaska's Aleutians) so we
+      // don't draw a connector across the whole panel.
+      const drawFeature = (rings, fill, stroke) => {
+        ctx.fillStyle = fill; ctx.strokeStyle = stroke; ctx.lineWidth = 0.5;
+        for (const ring of rings) {
+          const subRings = []; let cur = []; let prevLng = null;
+          for (const pt of ring) {
+            if (prevLng !== null && Math.abs(pt[0] - prevLng) > 180) { if (cur.length > 2) subRings.push(cur); cur = []; }
+            cur.push(pt); prevLng = pt[0];
+          }
+          if (cur.length > 2) subRings.push(cur);
+          for (const sr of subRings) {
+            ctx.beginPath();
+            for (let i = 0; i < sr.length; i++) { const [px, py] = project(sr[i][0], sr[i][1]); if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py); }
+            ctx.closePath(); ctx.fill(); ctx.stroke();
+          }
+        }
+      };
+
+      // Choropleth — each NA state / province is filled by the share of its
+      // portfolio sites whose electric utility is mapped to a known utility
+      // (light → dark green). States with no portfolio sites stay light grey.
+      // Mirrors the filled-map style of the Indicative Savings export.
+      const lerp = (a, b, t) => a + (b - a) * t;
+      const GREEN_LIGHT = [220, 252, 231]; // #DCFCE7
+      const GREEN_DARK = [4, 120, 87];     // #047857
+      const NO_SITES_FILL = '#E5E7EB';
+      const NO_SITES_STROKE = '#9CA3AF';
+      const pctFill = (b) => {
+        const t = b.total ? b.mapped / b.total : 0;
+        return `rgb(${Math.round(lerp(GREEN_LIGHT[0], GREEN_DARK[0], t))},${Math.round(lerp(GREEN_LIGHT[1], GREEN_DARK[1], t))},${Math.round(lerp(GREEN_LIGHT[2], GREEN_DARK[2], t))})`;
+      };
+
+      ctx.save();
+      ctx.beginPath(); ctx.rect(originX, originY, MAP_W, MAP_H); ctx.clip();
+      // Uniform grey panel background — matches the Indicative Savings NAM
+      // map. No ocean tint, so no-site land (notably the Canadian
+      // territories above BC / AB / SK) blends into the background instead
+      // of reading as a hard grey "cap" that makes the provinces look cut
+      // off half-way up.
+      ctx.fillStyle = NO_SITES_FILL; ctx.fillRect(originX, originY, MAP_W, MAP_H);
+      const countryFeatures = getCountryFeatures();
+      const naFeatures = getNAAdmin1Features();
+      // Only Mexico from the country layer — the US + Canada landmass is the
+      // admin-1 state / province polygons themselves, drawn next.
+      for (const feat of countryFeatures) {
+        if ((TOPO_NAME_TO_DEREG_KEY[feat.name] || feat.name) !== 'Mexico' && feat.name !== 'Mexico') continue;
+        drawFeature(feat.rings, NO_SITES_FILL, NO_SITES_STROKE);
+      }
+      // States / provinces shaded by mapping coverage; hairline borders.
+      for (const feat of naFeatures) {
+        const b = buckets.get(`${feat.admin}/${feat.postal}`);
+        drawFeature(feat.rings, b ? pctFill(b) : NO_SITES_FILL, NO_SITES_STROKE);
+      }
+      ctx.restore();
+
+      // Legend — gradient bar (0–100 % mapped) + grey "no sites" swatch.
+      const legendY = originY + MAP_H + PAD;
+      ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; ctx.font = '13px Nunito Sans, Arial, sans-serif';
+      const gradX = originX, gradW = 280, gradH = 16;
+      const grad = ctx.createLinearGradient(gradX, 0, gradX + gradW, 0);
+      grad.addColorStop(0, `rgb(${GREEN_LIGHT.join(',')})`);
+      grad.addColorStop(1, `rgb(${GREEN_DARK.join(',')})`);
+      ctx.fillStyle = grad; ctx.fillRect(gradX, legendY, gradW, gradH);
+      ctx.strokeStyle = NO_SITES_STROKE; ctx.lineWidth = 0.8; ctx.strokeRect(gradX, legendY, gradW, gradH);
+      ctx.fillStyle = '#0F172A';
+      ctx.fillText('0%', gradX, legendY + gradH + 13);
+      ctx.textAlign = 'right'; ctx.fillText('100 % mapped to a known utility', gradX + gradW, legendY + gradH + 13);
+      ctx.textAlign = 'left';
+      const gx = gradX + gradW + 48;
+      ctx.fillStyle = NO_SITES_FILL; ctx.fillRect(gx, legendY, gradH, gradH);
+      ctx.strokeStyle = NO_SITES_STROKE; ctx.strokeRect(gx, legendY, gradH, gradH);
+      ctx.fillStyle = '#0F172A'; ctx.fillText('No portfolio sites', gx + gradH + 8, legendY + gradH / 2);
+
+      const dataUrl = canvas.toDataURL('image/png');
+      const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
+
+      // Title + subtitle bands.
+      ws.mergeCells(1, 1, 1, COLS);
+      const title = ws.getCell(1, 1);
+      title.value = 'Utility Mapping Coverage — North America';
+      title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(1).height = 30;
+
+      ws.mergeCells(2, 1, 2, COLS);
+      const sub = ws.getCell(2, 1);
+      sub.value = `${detailRows.length} site${detailRows.length === 1 ? '' : 's'} · ${totMapped} mapped to a known utility · ${totUnmapped} in the table but unmapped · ${totNotInList} not in the mapping list. Each NA state / province is shaded by the share of its portfolio sites whose electric utility is mapped to a known utility (light → dark green); states with no portfolio sites stay light grey.`;
+      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+      sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      ws.getRow(2).height = 36;
+
+      ws.addImage(imageId, { tl: { col: 0, row: 3 }, ext: { width: W, height: H } });
+
+      // Per-state breakdown table below the map.
+      const SUMMARY_START = 3 + Math.ceil(H / 15) + 2;
+      ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
+      const sumHdr = ws.getCell(SUMMARY_START, 1);
+      sumHdr.value = 'Utility Mapping by State / Province';
+      sumHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      sumHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      sumHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(SUMMARY_START).height = 22;
+
+      const tableHeaderRow = SUMMARY_START + 1;
+      const breakdownCols = ['State / Prov', 'Country', 'Total Sites', 'Mapped', 'Unmapped', 'Not in List', '% Mapped'];
+      const hdr = ws.getRow(tableHeaderRow);
+      breakdownCols.forEach((label, i) => {
+        const cell = hdr.getCell(i + 1);
+        cell.value = label;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+        cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+      });
+      hdr.height = 24;
+      const breakdown = Array.from(buckets.values())
+        .sort((a, b) => b.total - a.total || a.label.localeCompare(b.label));
+      breakdown.forEach((b, i) => {
+        const row = ws.getRow(tableHeaderRow + 1 + i);
+        const vals = [b.stateCode, b.countryLabel, b.total, b.mapped, b.unmapped, b.notInList, b.total ? b.mapped / b.total : 0];
+        const fmts = [null, null, '#,##0', '#,##0', '#,##0', '#,##0', '0%'];
+        vals.forEach((v, ci) => {
+          const cell = row.getCell(ci + 1);
+          cell.value = v;
+          cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          if (fmts[ci]) cell.numFmt = fmts[ci];
+          cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } } };
+        });
+        row.height = 18;
+      });
+      // Total row.
+      const total = totMapped + totUnmapped + totNotInList;
+      const totalRow = ws.getRow(tableHeaderRow + 1 + breakdown.length);
+      const totVals = ['Total', '', total, totMapped, totUnmapped, totNotInList, total ? totMapped / total : 0];
+      const totFmts = [null, null, '#,##0', '#,##0', '#,##0', '#,##0', '0%'];
+      totVals.forEach((v, ci) => {
+        const cell = totalRow.getCell(ci + 1);
+        cell.value = v;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        if (totFmts[ci]) cell.numFmt = totFmts[ci];
+        cell.border = { top: { style: 'thin', color: { argb: SE_GREEN_DARK } }, bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+      });
+      totalRow.height = 20;
+    }
+
+    // ---- Sheet 2: State Breakdown ----
+    // One row per state / province (across every country in the portfolio)
+    // with its utility-mapping coverage, so the user can scan jurisdictions
+    // without reading the map.
+    {
+      const ws = wb.addWorksheet('State Breakdown', {
+        properties: { tabColor: { argb: SE_GREEN } },
+        views: [{ showGridLines: false, state: 'frozen', ySplit: 1 }],
+      });
+      const cols = [
+        { label: 'ST / Prov', get: (s) => s.state, width: 16, numFmt: null },
+        { label: 'Country', get: (s) => s.country, width: 18, numFmt: null },
+        { label: 'Total Sites', get: (s) => s.total, width: 12, numFmt: '#,##0' },
+        { label: 'Mapped', get: (s) => s.mapped, width: 12, numFmt: '#,##0' },
+        { label: 'Unmapped', get: (s) => s.unmapped, width: 12, numFmt: '#,##0' },
+        { label: 'Not in List', get: (s) => s.notInList, width: 12, numFmt: '#,##0' },
+        { label: 'Unique Utilities', get: (s) => (s.utilities ? s.utilities.size : 0), width: 14, numFmt: '#,##0' },
+        { label: '% Mapped', get: (s) => (s.total ? s.mapped / s.total : 0), width: 12, numFmt: '0%' },
+        { label: 'Has Access', get: (s) => s.accessYes, width: 12, numFmt: '#,##0' },
+        { label: 'No Access', get: (s) => s.accessNo, width: 12, numFmt: '#,##0' },
+        { label: '% With Access', get: (s) => (s.total ? s.accessYes / s.total : 0), width: 13, numFmt: '0%' },
+        { label: 'Requirements / Comments', get: (s) => [...s.requirements].map(x => `• ${x}`).join('\n'), width: 46, numFmt: null, wrap: true },
+      ];
+      ws.columns = cols.map(c => ({ width: c.width }));
+      const head = ws.getRow(1);
+      cols.forEach((c, i) => {
+        const cell = head.getCell(i + 1);
+        cell.value = c.label;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+        cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } }, right: { style: 'hair', color: { argb: 'FFFFFFFF' } } };
+      });
+      head.height = 28;
+      // Sort by states with the most "Has Access" sites first, then by total
+      // sites, then alphabetically.
+      const stateRows = Array.from(stateBuckets.values()).sort((a, b) =>
+        b.accessYes - a.accessYes ||
+        b.total - a.total ||
+        String(a.country).localeCompare(String(b.country)) ||
+        String(a.state).localeCompare(String(b.state)));
+      stateRows.forEach((s, ri) => {
+        const row = ws.getRow(2 + ri);
+        cols.forEach((c, i) => {
+          const cell = row.getCell(i + 1);
+          const v = c.get(s);
+          cell.value = (v === '' || v == null) ? ' ' : v;
+          cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          cell.alignment = { vertical: c.wrap ? 'top' : 'middle', horizontal: 'left', indent: 1, wrapText: !!c.wrap };
+          if (c.numFmt) cell.numFmt = c.numFmt;
+          cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } }, right: { style: 'hair', color: { argb: SE_BORDER } } };
+        });
+        // Grow the row when the requirements cell carries multiple
+        // bullets so every line stays visible.
+        const reqLines = s.requirements ? s.requirements.size : 0;
+        row.height = reqLines > 1 ? Math.min(18 + (reqLines - 1) * 14, 120) : 18;
+      });
+      // Total row.
+      const total = totMapped + totUnmapped + totNotInList;
+      const totalRow = ws.getRow(2 + stateRows.length);
+      const totVals = ['Total', '', total, totMapped, totUnmapped, totNotInList, allUtilities.size, total ? totMapped / total : 0, totAccessYes, totAccessNo, total ? totAccessYes / total : 0, ''];
+      totVals.forEach((v, i) => {
+        const cell = totalRow.getCell(i + 1);
+        cell.value = v;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        if (cols[i].numFmt) cell.numFmt = cols[i].numFmt;
+        cell.border = { top: { style: 'thin', color: { argb: SE_GREEN_DARK } }, bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+      });
+      totalRow.height = 20;
+      ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols.length } };
+    }
+
+    // ---- Sheet 3: Site Detail ----
+    {
+      const ws = wb.addWorksheet('Site Detail', {
+        properties: { tabColor: { argb: SE_GREEN } },
+        views: [{ showGridLines: false, state: 'frozen', ySplit: 1 }],
+      });
+      const cols = [
+        { label: 'Site Name', get: (s) => s.siteName, width: 30 },
+        { label: 'ST / Prov', get: (s) => s.state, width: 12 },
+        { label: 'Country', get: (s) => s.country, width: 16 },
+        { label: 'Zip', get: (s) => s.zip, width: 9 },
+        { label: 'Electric Utility', get: (s) => s.electricUtility, width: 28 },
+        { label: 'Matched Uploaded Name', get: (s) => s.matched, width: 28 },
+        { label: 'Mapped-To Known Utility', get: (s) => s.mappedTo, width: 28 },
+        { label: 'Status', get: (s) => s.rowStatus, width: 18 },
+        { label: 'Requirements / Comments', get: (s) => s.requirements, width: 36 },
+        { label: 'Mapping State', get: (s) => s.status, width: 18 },
+        { label: 'Detail', get: (s) => s.detail, width: 34 },
+      ];
+      ws.columns = cols.map(c => ({ width: c.width }));
+      const head = ws.getRow(1);
+      cols.forEach((c, i) => {
+        const cell = head.getCell(i + 1);
+        cell.value = c.label;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+        cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } }, right: { style: 'hair', color: { argb: 'FFFFFFFF' } } };
+      });
+      head.height = 30;
+      // Mapped → Unmapped → Not in mapping list, then site name.
+      const order = { Mapped: 0, Unmapped: 1, 'Not in mapping list': 2 };
+      const sorted = detailRows.slice().sort((a, b) =>
+        (order[a.status] - order[b.status]) || String(a.siteName).localeCompare(String(b.siteName)));
+      const STATUS_TEXT = { Mapped: 'FF166534', Unmapped: 'FF92400E', 'Not in mapping list': 'FFB91C1C' };
+      sorted.forEach((s, ri) => {
+        const row = ws.getRow(2 + ri);
+        cols.forEach((c, i) => {
+          const cell = row.getCell(i + 1);
+          const v = c.get(s);
+          cell.value = (v === '' || v == null) ? ' ' : v;
+          const isStatus = c.label === 'Mapping State';
+          cell.font = { name: 'Nunito Sans', size: 10, bold: isStatus, color: { argb: isStatus ? (STATUS_TEXT[s.status] || SE_TEXT_DARK) : SE_TEXT_DARK } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } }, right: { style: 'hair', color: { argb: SE_BORDER } } };
+        });
+        row.height = 18;
+      });
+      ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols.length } };
+    }
+
+    sanitizeExcelWorkbook(wb);
+    const buf = await wb.xlsx.writeBuffer();
+    const fileName = `Utility Mapping Analysis - ${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   }
 
   // Schneider Electric branded export — title band, green headers,
@@ -6813,6 +10989,43 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   }
 
   return (
+    <div className={styles.pageWrap}>
+      <div className={styles.subtabBar}>
+        <button
+          type="button"
+          className={mainTab === 'lookup' ? styles.subtabActive : styles.subtab}
+          onClick={() => setMainTab('lookup')}
+        >Utility Lookup</button>
+        <button
+          type="button"
+          className={mainTab === 'mapping' ? styles.subtabActive : styles.subtab}
+          onClick={() => setMainTab('mapping')}
+        >Utility Mapping</button>
+        <button
+          type="button"
+          className={mainTab === 'compliance' ? styles.subtabActive : styles.subtab}
+          onClick={() => setMainTab('compliance')}
+        >Compliance Screening</button>
+        <button
+          type="button"
+          className={mainTab === 'roadmap' ? styles.subtabActive : styles.subtab}
+          onClick={() => setMainTab('roadmap')}
+        >Compliance Roadmap</button>
+        <button
+          type="button"
+          className={mainTab === 'corporate' ? styles.subtabActive : styles.subtab}
+          onClick={() => setMainTab('corporate')}
+        >Corporate Compliance</button>
+      </div>
+      {mainTab === 'corporate' ? (
+        <CorporateCompliance sites={complianceSites} settings={settings} updateSettingsPath={updateSettingsPath} />
+      ) : mainTab === 'roadmap' ? (
+        <ComplianceRoadmap sites={complianceSites} />
+      ) : mainTab === 'compliance' ? (
+        <BuildingComplianceScreening sites={complianceSites} companyName={deriveExportCompanyName(null)} />
+      ) : mainTab === 'mapping' ? (
+        <UtilityMappingView siteUtilities={siteUtilities} referenceUtilityNames={knownUtilityNames} onExportSiteMapping={exportUtilityMappingAnalysis} />
+      ) : (
     <div
       className={styles.wrapper}
       onDrop={handleDrop}
@@ -6855,6 +11068,49 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
               </>
             )}
           </div>
+          {missingStats.total > 0 && (
+            <div style={{ marginTop: 4 }}>
+              {missingStats.anyMissing > 0 ? (
+                <span
+                  title={`Missing breakdown:\n${[
+                    missingStats.noZip > 0 ? `  • ${missingStats.noZip} no zip code` : null,
+                    missingStats.noElectric > 0 ? `  • ${missingStats.noElectric} no electric consumption (actual or estimate)` : null,
+                    missingStats.noGas > 0 ? `  • ${missingStats.noGas} no gas consumption (actual or estimate)` : null,
+                  ].filter(Boolean).join('\n')}\n\nFirst ${missingStats.samples.length} site${missingStats.samples.length === 1 ? '' : 's'}:\n${missingStats.samples.join('\n')}`}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0.2rem 0.55rem', borderRadius: 999, background: '#FEF3C7', border: '1px solid #FCD34D', color: '#92400E', fontSize: '0.72rem', fontWeight: 600 }}
+                >
+                  <span aria-hidden="true">⚠</span>
+                  <span>
+                    {missingStats.anyMissing} of {missingStats.total} site{missingStats.total === 1 ? '' : 's'} missing data
+                  </span>
+                  <span style={{ color: '#78350F', fontWeight: 500 }}>
+                    ({[
+                      missingStats.noZip > 0 ? `${missingStats.noZip} no zip` : null,
+                      missingStats.noElectric > 0 ? `${missingStats.noElectric} no electric consumption` : null,
+                      missingStats.noGas > 0 ? `${missingStats.noGas} no gas consumption` : null,
+                    ].filter(Boolean).join(' · ')})
+                  </span>
+                </span>
+              ) : (
+                <span
+                  title="Every uploaded site has a zip code and a consumption value (actual or property-type estimate) for both electric and gas."
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0.2rem 0.55rem', borderRadius: 999, background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534', fontSize: '0.72rem', fontWeight: 600 }}
+                >
+                  <span aria-hidden="true">✓</span>
+                  <span>All {missingStats.total} site{missingStats.total === 1 ? '' : 's'} have zip + electric + gas data</span>
+                </span>
+              )}
+              {missingStats.estimatedZip > 0 && (
+                <span
+                  title={`${missingStats.estimatedZip} site${missingStats.estimatedZip === 1 ? '' : 's'} had no zip code, so a representative zip was estimated from the city + state using zips already in the utility lookup. Estimated zips show "(est)" in the zip column and drive the utility / state / rate match like a real zip.`}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 8, padding: '0.2rem 0.55rem', borderRadius: 999, background: '#EFF6FF', border: '1px solid #BFDBFE', color: '#1E40AF', fontSize: '0.72rem', fontWeight: 600 }}
+                >
+                  <span aria-hidden="true">📍</span>
+                  <span>{missingStats.estimatedZip} zip{missingStats.estimatedZip === 1 ? '' : 's'} estimated from city + state</span>
+                </span>
+              )}
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           <input
@@ -6883,11 +11139,52 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           {sitesData.length > 0 && (
             <button
               type="button"
-              onClick={() => exportIndicativeSavings()}
+              onClick={openUpdateColumnMapping}
+              title="Re-open the column mapping modal against the currently loaded sites. Adjust which file column drives each Utility Lookup field without re-uploading. (Columns dropped on the original import aren't recoverable — re-upload the source file to bring them back.)"
+              style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
+            >
+              Update Column Mapping
+            </button>
+          )}
+          {sitesData.length > 0 && (
+            <button
+              type="button"
+              onClick={async () => {
+                // Surface failures: the export is a big async pipeline
+                // (60+ tranches, multiple worksheets, a live chart
+                // injection) and any thrown error inside it would
+                // otherwise vanish into an unhandled promise rejection,
+                // leaving the user staring at a button that "does
+                // nothing." Console.error keeps the stack trace for
+                // diagnosis; alert tells the user the export tripped.
+                try {
+                  await exportIndicativeSavings();
+                } catch (err) {
+                  console.error('Indicative Savings export failed:', err);
+                  alert(`Indicative Savings export failed:\n\n${err?.message || err}`);
+                }
+              }}
               title="Download an Indicative Savings by State workbook (Schneider-branded). Aggregates the loaded sites by state with 2 % – 4 % savings on the deregulated spend, plus supplier name + contract dates."
               style={{ padding: '0.4rem 0.8rem', border: '1px solid #009530', background: '#009530', color: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
             >
               ⬇ Indicative Savings
+            </button>
+          )}
+          {sitesData.length > 0 && (
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await exportMasterAnalysis();
+                } catch (err) {
+                  console.error('Master Analysis export failed:', err);
+                  alert(`Master Analysis export failed:\n\n${err?.message || err}`);
+                }
+              }}
+              title="Download one master workbook that combines the Indicative Savings and Building Compliance (Excel) tabs plus a Corporate Compliance tab and a Compliance Report Methodology tab."
+              style={{ padding: '0.4rem 0.8rem', border: '1px solid #005A9E', background: '#005A9E', color: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
+            >
+              ⬇ Master Analysis
             </button>
           )}
           {sitesData.length > 0 && (
@@ -6923,6 +11220,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           }}>{saveStatus.message}</div>
         )}
       </div>
+
+      <CompanySiteListLookup
+        prospects={prospects}
+        companySiteLists={settings?.companySiteLists || {}}
+        onUseCompany={setPortfolioCompanyName}
+        activeCompany={portfolioCompanyName}
+      />
 
       {savePickerSearch !== null && createPortal(
         <div
@@ -7037,6 +11341,49 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         )}
       </div>
 
+      {/* Fallback zip table — supplies a zip for sites that arrive with a
+          city + state but no zip, ahead of the zips inferred from the
+          utility lookup. */}
+      <div className={styles.utilityBar}>
+        <input
+          ref={zipFallbackFileRef}
+          type="file"
+          accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          onChange={handleZipFallbackFileSelect}
+          style={{ display: 'none' }}
+        />
+        {zipFbMeta ? (
+          <>
+            <span className={styles.utilityBarLoaded}>
+              ✓ Fallback zip list loaded: {zipFbMeta.entryCount?.toLocaleString() || '?'} city/state → zip entries
+              {zipFbMeta.fileName && <> · <span style={{ color: '#64748B', fontWeight: 500 }}>{zipFbMeta.fileName}</span></>}
+            </span>
+            <button
+              className={styles.utilityBarButton}
+              onClick={() => zipFallbackFileRef.current?.click()}
+              disabled={zipFallbackBusy}
+            >Replace</button>
+            <button className={styles.utilityBarDanger} onClick={handleClearZipFallback} disabled={zipFallbackBusy}>Clear</button>
+          </>
+        ) : (
+          <>
+            <span className={styles.utilityBarEmpty}>
+              No fallback zip list loaded. Upload a file with City / State / Zip columns to estimate zips for sites missing one.
+            </span>
+            <button
+              className={styles.utilityBarButton}
+              onClick={() => zipFallbackFileRef.current?.click()}
+              disabled={zipFallbackBusy}
+            >{zipFallbackBusy ? 'Working…' : 'Upload Fallback Zips'}</button>
+          </>
+        )}
+        {zipFbMeta?.importedAt && (
+          <span style={{ color: '#94A3B8', fontSize: '0.7rem', marginLeft: 'auto' }}>
+            Imported {new Date(zipFbMeta.importedAt).toLocaleDateString()}
+          </span>
+        )}
+      </div>
+
       {sitesData.length > 0 && (
         <div className={styles.utilityBar} style={{ background: '#F1F5F9' }}>
           <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>Consumption columns:</span>
@@ -7088,6 +11435,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       {analysisSummary && (() => {
         const s = analysisSummary;
+        const m = marketSummary || { total: s.total, electric: { deregulated: 0, regulated: 0, unknown: s.total }, gas: { deregulated: 0, regulated: 0, unknown: s.total } };
         const ELEC = '#92400E';
         const GAS = '#1E3A8A';
         const SLATE = '#475569';
@@ -7095,44 +11443,61 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const cardStyle = { border: '1px solid #E2E8F0', borderRadius: 8, background: '#FFFFFF', padding: '0.65rem 0.85rem' };
         const cardTitleStyle = { fontSize: '0.72rem', fontWeight: 700, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.45rem' };
         const rowStyle = { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.5rem', padding: '0.2rem 0', borderBottom: '1px dashed #F1F5F9' };
+        // Red flag styling for rows whose value is Unknown / missing —
+        // a tinted background, padding, and a left accent bar so the
+        // data gap stands out in the summary cards.
+        const dangerRowStyle = { ...rowStyle, background: '#FEF2F2', borderLeft: '3px solid #DC2626', borderRadius: 4, padding: '0.2rem 0.4rem', margin: '0 -0.4rem' };
         const labelStyle = (color) => ({ fontSize: '0.72rem', color, fontWeight: 600, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
         const valueStyle = { fontSize: '0.78rem', fontWeight: 600, color: '#0F172A', fontVariantNumeric: 'tabular-nums' };
         const subStyle = { fontSize: '0.65rem', color: MUTED, fontWeight: 500, marginLeft: '0.35rem' };
         const fmtInt = (n) => Math.round(n).toLocaleString();
         const fmtPct = (num, den) => den > 0 ? `${Math.round((num / den) * 100)}%` : '0%';
-        const sumLine = (color, label, value, sub) => (
-          <div style={rowStyle}>
-            <span style={labelStyle(color)}>{label}</span>
+        const sumLine = (color, label, value, sub, danger = false) => (
+          <div style={danger ? dangerRowStyle : rowStyle}>
+            <span style={labelStyle(danger ? '#991B1B' : color)}>{label}</span>
             <span>
-              <span style={valueStyle}>{value}</span>
+              <span style={danger ? { ...valueStyle, color: '#991B1B' } : valueStyle}>{value}</span>
               {sub && <span style={subStyle}>{sub}</span>}
             </span>
           </div>
         );
         return (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', margin: '0.5rem 1.25rem 0.75rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem', margin: '0.5rem 1.25rem 0.75rem' }}>
             <div style={cardStyle}>
               <div style={cardTitleStyle}>Consumption</div>
               {sumLine(ELEC, 'Electric — Actual',    `${fmtInt(s.consumption.electric.actual)} kWh`,   `${s.consumption.electric.actualSites} site${s.consumption.electric.actualSites === 1 ? '' : 's'}`)}
               {sumLine(ELEC, 'Electric — Estimated', `${fmtInt(s.consumption.electric.est)} kWh`,      `${s.consumption.electric.estSites} site${s.consumption.electric.estSites === 1 ? '' : 's'}`)}
+              {sumLine(SLATE, 'Electric — Missing',  `${fmtInt(s.consumption.electric.missingSites)} sites`, null, s.consumption.electric.missingSites > 0)}
               {sumLine(GAS,  'Gas — Actual',         `${fmtInt(s.consumption.gas.actual)} therms`,     `${s.consumption.gas.actualSites} site${s.consumption.gas.actualSites === 1 ? '' : 's'}`)}
               {sumLine(GAS,  'Gas — Estimated',      `${fmtInt(s.consumption.gas.est)} therms`,        `${s.consumption.gas.estSites} site${s.consumption.gas.estSites === 1 ? '' : 's'}`)}
+              {sumLine(SLATE, 'Gas — Missing',       `${fmtInt(s.consumption.gas.missingSites)} sites`, null, s.consumption.gas.missingSites > 0)}
             </div>
             <div style={cardStyle}>
               <div style={cardTitleStyle}>Cost</div>
               {sumLine(ELEC, 'Electric — Actual',    formatMoney(s.cost.electric.actual), `${s.cost.electric.actualSites} site${s.cost.electric.actualSites === 1 ? '' : 's'}`)}
               {sumLine(ELEC, 'Electric — Estimated', formatMoney(s.cost.electric.est),    `${s.cost.electric.estSites} site${s.cost.electric.estSites === 1 ? '' : 's'}`)}
+              {sumLine(SLATE, 'Electric — Missing',  `${fmtInt(s.cost.electric.missingSites)} sites`, null, s.cost.electric.missingSites > 0)}
               {sumLine(GAS,  'Gas — Actual',         formatMoney(s.cost.gas.actual),      `${s.cost.gas.actualSites} site${s.cost.gas.actualSites === 1 ? '' : 's'}`)}
               {sumLine(GAS,  'Gas — Estimated',      formatMoney(s.cost.gas.est),         `${s.cost.gas.estSites} site${s.cost.gas.estSites === 1 ? '' : 's'}`)}
+              {sumLine(SLATE, 'Gas — Missing',       `${fmtInt(s.cost.gas.missingSites)} sites`, null, s.cost.gas.missingSites > 0)}
             </div>
             <div style={cardStyle}>
               <div style={cardTitleStyle} title="Source = the upload's supplier column named a utility we recognized. Zip lookup = no supplier in the source, utility derived from the rates file via zip code.">Utility Companies</div>
               {sumLine(ELEC, 'Electric — From Supplier',  fmtInt(s.utility.electric.fromSupplier), fmtPct(s.utility.electric.fromSupplier, s.total))}
               {sumLine(ELEC, 'Electric — From Zip Lookup', fmtInt(s.utility.electric.fromZip),     fmtPct(s.utility.electric.fromZip, s.total))}
-              {sumLine(SLATE, 'Electric — Unknown',        fmtInt(s.utility.electric.unknown),     fmtPct(s.utility.electric.unknown, s.total))}
+              {sumLine(SLATE, 'Electric — Unknown',        fmtInt(s.utility.electric.unknown),     fmtPct(s.utility.electric.unknown, s.total), s.utility.electric.unknown > 0)}
               {sumLine(GAS,  'Gas — From Supplier',        fmtInt(s.utility.gas.fromSupplier),     fmtPct(s.utility.gas.fromSupplier, s.total))}
               {sumLine(GAS,  'Gas — From Zip Lookup',      fmtInt(s.utility.gas.fromZip),          fmtPct(s.utility.gas.fromZip, s.total))}
-              {sumLine(SLATE, 'Gas — Unknown',             fmtInt(s.utility.gas.unknown),          fmtPct(s.utility.gas.unknown, s.total))}
+              {sumLine(SLATE, 'Gas — Unknown',             fmtInt(s.utility.gas.unknown),          fmtPct(s.utility.gas.unknown, s.total), s.utility.gas.unknown > 0)}
+            </div>
+            <div style={cardStyle}>
+              <div style={cardTitleStyle} title="Market structure per site. Classified from the utility provider when known, otherwise from the site's US/CA state deregulation map. Deregulated = competitive retail market (supplier choice — sourcing opportunity). Regulated = single-utility monopoly market. Unknown = no provider and no recognized US/CA state.">Market</div>
+              {sumLine(ELEC, 'Electric — Deregulated', fmtInt(m.electric.deregulated), fmtPct(m.electric.deregulated, m.total))}
+              {sumLine(ELEC, 'Electric — Regulated',   fmtInt(m.electric.regulated),   fmtPct(m.electric.regulated, m.total))}
+              {sumLine(SLATE, 'Electric — Unknown',     fmtInt(m.electric.unknown),     fmtPct(m.electric.unknown, m.total), m.electric.unknown > 0)}
+              {sumLine(GAS,  'Gas — Deregulated',       fmtInt(m.gas.deregulated),      fmtPct(m.gas.deregulated, m.total))}
+              {sumLine(GAS,  'Gas — Regulated',         fmtInt(m.gas.regulated),        fmtPct(m.gas.regulated, m.total))}
+              {sumLine(SLATE, 'Gas — Unknown',          fmtInt(m.gas.unknown),          fmtPct(m.gas.unknown, m.total), m.gas.unknown > 0)}
             </div>
           </div>
         );
@@ -7181,12 +11546,14 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         (() => {
           const TARGET_FIELDS = [
             { key: 'siteName', label: 'Site Name', required: true, hint: 'Row label / blank-row filter.' },
+            { key: 'companyName', label: 'Company Name', required: false, hint: 'Company / portfolio the site belongs to. Surfaced as a column on the Utility Lookup page and used to name the Indicative Savings export file (e.g. "Acme Corp_Indicative Savings Analysis.xlsx").' },
             { key: 'address', label: 'Address', required: false, hint: 'Street address of the site. Optional reference field — surfaced on the Site Detail and Contract Overview tabs of the Indicative Savings export.' },
             { key: 'city', label: 'City', required: false, hint: 'City / town of the site. Optional reference field. Falls back to the utility-rates file lookup when blank.' },
             { key: 'state', label: 'State / Province', required: false, hint: 'State or province. Optional reference field. Auto-derived from Zip for US / Canada sites when blank.' },
             { key: 'zip', label: 'Zip / Postal Code', required: false, hint: 'Required for US and Canada sites — drives the utility lookup. Leave blank on international rows; mapping the column at all is optional if the file has no US / Canada sites.' },
             { key: 'country', label: 'Country', required: false, hint: 'Country of the site. Falls back to the utility-rates file when blank.' },
             { key: 'propertyType', label: 'Property Type', required: false, hint: 'Building / use type (Office, Hospital, Warehouse, etc.) — drives the per-property-type consumption + account-count estimates surfaced on the page and on the Indicative Savings export.' },
+            { key: 'segment', label: 'Segment (Commercial / Industrial)', required: false, hint: 'Customer class for rate selection. Values like "Commercial"/"Industrial" (or C / I) override the segment otherwise inferred from Property Type. Industrial sites use the state industrial indicative rate; everything else uses commercial.' },
             { key: 'siteDescription', label: 'Site Description', required: false, hint: 'Free-text annotation for the site (building name, internal code, notes). Passthrough only; surfaced next to Property Type on the Utility Lookup page.' },
             { key: 'propertySize', label: 'Size (ft²)', required: false, hint: 'Square footage of the site. Scales the property-type reference consumption linearly. Optional — when blank the reference size for the property type is used as-is.' },
             { key: 'electric', label: 'Annual Electric Consumption', required: false, hint: 'Annual electric usage. Pair with Electric UoM to control how the value is converted to kWh for cost estimates.' },
@@ -7216,12 +11583,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             { name: 'State', from: 'looked up from Zip' },
             { name: 'Electric Utility', from: 'rates file × Zip (or Supplier when known)' },
             { name: 'Electric Market', from: 'regulated vs. deregulated rule' },
-            { name: 'Electric Rate', from: 'state commercial average' },
+            { name: 'Segment', from: 'Commercial / Industrial — from mapped column or property type' },
+            { name: 'Electric Rate', from: 'state commercial / industrial average (by segment)' },
             { name: 'Total Electric Cost', from: 'actual cost when mapped, else kWh × rate' },
             { name: 'GAC Opportunity (Ontario)', from: 'Ontario sites only — tiered by annual kWh as a Class A proxy' },
             { name: 'Gas Utility', from: 'rates file × Zip (or Supplier when known)' },
             { name: 'Gas Market', from: 'regulated vs. deregulated rule' },
-            { name: 'Gas Rate', from: 'state commercial average' },
+            { name: 'Gas Rate', from: 'state commercial / industrial average (by segment)' },
             { name: 'Total Natural Gas Cost', from: 'actual cost when mapped, else Dth × rate' },
             { name: 'Total Est. Cost', from: 'Electric + Gas cost' },
             { name: 'Water Utility', from: 'rates file × Zip' },
@@ -7264,7 +11632,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             <div className={styles.modalBackdrop} onClick={() => setSitesMappingModal(null)}>
               <div className={styles.modalCard} onClick={e => e.stopPropagation()} style={{ maxWidth: 1000, width: '95vw' }}>
                 <div className={styles.modalHeader}>
-                  <h3 className={styles.modalTitle}>Sites File — Column Mapping</h3>
+                  <h3 className={styles.modalTitle}>{sitesMappingModal.mode === 'update' ? 'Update Column Mapping' : 'Sites File — Column Mapping'}</h3>
                   <button className={styles.modalClose} onClick={() => setSitesMappingModal(null)}>×</button>
                 </div>
                 {sitesMappingModal.sheets.length > 1 && (
@@ -7361,7 +11729,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
                     onClick={executeSitesImport}
                     disabled={missingRequired.length > 0}
                   >
-                    Import {active.rows.length.toLocaleString()} sites
+                    {sitesMappingModal.mode === 'update'
+                      ? 'Update mapping'
+                      : `Import ${active.rows.length.toLocaleString()} sites`}
                   </button>
                 </div>
               </div>
@@ -7462,6 +11832,97 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           );
         })(),
         document.body
+      )}
+
+      {zipFbMappingModal && createPortal(
+        (() => {
+          const TARGET_FIELDS = [
+            { key: 'city', label: 'City', required: true },
+            { key: 'state', label: 'State', required: true },
+            { key: 'zip', label: 'Zip / Postal Code', required: true },
+          ];
+          const targetForHeader = {};
+          for (const t of TARGET_FIELDS) {
+            const h = zipFbMappingModal.mapping[t.key];
+            if (h) targetForHeader[h] = t.key;
+          }
+          function setTargetForHeader(header, targetKey) {
+            setZipFbMappingModal(m => {
+              if (!m) return m;
+              const next = { ...m.mapping };
+              for (const t of TARGET_FIELDS) {
+                if (next[t.key] === header) next[t.key] = '';
+              }
+              if (targetKey) next[targetKey] = header;
+              return { ...m, mapping: next };
+            });
+          }
+          const missingRequired = TARGET_FIELDS
+            .filter(t => t.required && !zipFbMappingModal.mapping[t.key])
+            .map(t => t.label);
+          return (
+            <div className={styles.modalBackdrop} onClick={() => !zipFallbackBusy && setZipFbMappingModal(null)}>
+              <div className={styles.modalCard} onClick={e => e.stopPropagation()} style={{ maxWidth: 720, width: '90vw' }}>
+                <div className={styles.modalHeader}>
+                  <h3 className={styles.modalTitle}>Fallback Zips — Column Mapping</h3>
+                  <button className={styles.modalClose} onClick={() => setZipFbMappingModal(null)} disabled={zipFallbackBusy}>×</button>
+                </div>
+                <p className={styles.modalHelp}>
+                  {zipFbMappingModal.rows.length.toLocaleString()} rows found{zipFbMappingModal.sheetName ? ` on sheet "${zipFbMappingModal.sheetName}"` : ''}. Pick which column maps to City, State, and Zip (or leave one on "Ignore"). All three are required to estimate zips for sites missing one.
+                </p>
+                {missingRequired.length > 0 && (
+                  <div style={{ margin: '0 0 0.5rem', padding: '0.4rem 0.6rem', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 6, fontSize: '0.75rem', color: '#991B1B', fontWeight: 600 }}>
+                    Still need to map: {missingRequired.join(', ')}
+                  </div>
+                )}
+                <div style={{ maxHeight: '60vh', overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: 6 }}>
+                  {zipFbMappingModal.headers.map(h => {
+                    const target = targetForHeader[h] || '';
+                    return (
+                      <div
+                        key={h}
+                        className={styles.modalRow}
+                        style={{ borderBottom: '1px solid #F1F5F9', padding: '0.4rem 0.6rem' }}
+                      >
+                        <div className={styles.modalLabel} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={h}>
+                          {h}
+                        </div>
+                        <span style={{ color: '#94A3B8', fontSize: '0.75rem' }}>→</span>
+                        <select
+                          className={`${styles.modalSelect} ${target ? styles.modalSelectMapped : ''}`}
+                          value={target}
+                          onChange={e => setTargetForHeader(h, e.target.value)}
+                          disabled={zipFallbackBusy}
+                        >
+                          <option value="">— Ignore —</option>
+                          {TARGET_FIELDS.map(t => (
+                            <option key={t.key} value={t.key}>
+                              {t.label}{t.required ? ' *' : ''}
+                            </option>
+                          ))}
+                        </select>
+                        {target && <span style={{ color: '#10B981', fontSize: '0.75rem', fontWeight: 600 }}>✓</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className={styles.modalActions}>
+                  <button className={styles.modalCancel} onClick={() => setZipFbMappingModal(null)} disabled={zipFallbackBusy}>Cancel</button>
+                  <button
+                    className={styles.modalConfirm}
+                    onClick={executeZipFallbackImport}
+                    disabled={zipFallbackBusy || missingRequired.length > 0}
+                  >
+                    {zipFallbackBusy ? 'Importing…' : 'Import Fallback Zips'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })(),
+        document.body
+      )}
+    </div>
       )}
     </div>
   );

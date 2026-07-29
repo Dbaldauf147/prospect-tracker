@@ -6,12 +6,37 @@
 // passes this for any batch that produces more than 3 drafts so the
 // user's main Drafts folder doesn't get flooded.
 
-export default async function handler(req, res) {
+import { withAuth } from './_lib/http.js';
+import { injectTracking, createTrackingDoc, newTrackingId, trackingBaseUrl } from './_lib/tracking.js';
+
+async function handler(req, res, auth) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { accessToken, drafts, folderName } = req.body;
+  const { accessToken, drafts, folderName, track } = req.body;
   if (!accessToken || !drafts || !Array.isArray(drafts)) {
     return res.status(400).json({ error: 'Missing accessToken or drafts array' });
+  }
+
+  // Open/click tracking is opt-in per batch. When on, inject a unique
+  // pixel + rewrite links into each draft's body before it's created,
+  // and remember the trackingId/links so we can persist the tracking doc
+  // once Outlook confirms the draft was created.
+  const trackingEnabled = track === true;
+  const baseUrl = trackingEnabled ? trackingBaseUrl(req) : '';
+  const trackingByIndex = [];
+  if (trackingEnabled) {
+    drafts.forEach((draft, i) => {
+      try {
+        const trackingId = newTrackingId();
+        const { html, links } = injectTracking(draft.body || '', { trackingId, baseUrl });
+        draft.body = html;
+        trackingByIndex[i] = { trackingId, links };
+      } catch (err) {
+        // Tracking must never block a send — leave the body untouched.
+        console.error('outlook-draft: tracking injection failed:', err?.message || err);
+        trackingByIndex[i] = null;
+      }
+    });
   }
 
   // Resolve the target folder id once. When no folderName is passed
@@ -33,7 +58,8 @@ export default async function handler(req, res) {
     : 'https://graph.microsoft.com/v1.0/me/messages';
 
   const results = [];
-  for (const draft of drafts) {
+  for (let i = 0; i < drafts.length; i++) {
+    const draft = drafts[i];
     try {
       const response = await fetch(messagesPath, {
         method: 'POST',
@@ -62,7 +88,24 @@ export default async function handler(req, res) {
 
       if (response.ok) {
         const data = await response.json();
-        results.push({ to: draft.to, success: true, id: data.id });
+        const tracking = trackingEnabled ? trackingByIndex[i] : null;
+        if (tracking) {
+          try {
+            await createTrackingDoc({
+              trackingId: tracking.trackingId,
+              uid: auth?.uid,
+              ownerEmail: auth?.email,
+              to: draft.to,
+              name: draft.name,
+              subject: draft.subject,
+              links: tracking.links,
+            });
+          } catch (err) {
+            // Draft was created; just couldn't persist tracking. Don't fail the send.
+            console.error('outlook-draft: failed to save tracking doc:', err?.message || err);
+          }
+        }
+        results.push({ to: draft.to, success: true, id: data.id, tracked: !!tracking });
       } else {
         const err = await response.json().catch(() => ({}));
         if (response.status === 401) {
@@ -85,6 +128,8 @@ export default async function handler(req, res) {
     folderError,
   });
 }
+
+export default withAuth(handler);
 
 // Look up or create a subfolder of the named parent (e.g. "drafts")
 // by displayName. Returns the folder id.

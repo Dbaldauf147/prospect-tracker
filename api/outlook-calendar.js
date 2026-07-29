@@ -1,16 +1,17 @@
 // Fetches today's calendar events + attendees from Microsoft Graph.
-// Requires a valid Outlook access token passed via the Authorization header.
+// The caller's Firebase ID token goes in Authorization (verified by
+// withAuth); the user's own Microsoft Graph token goes in X-MS-Token.
+import { withAuth } from './_lib/http.js';
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Missing or invalid Authorization header' });
+  const accessToken = req.headers['x-ms-token'];
+  if (!accessToken) {
+    return res.status(401).json({ error: 'Missing X-MS-Token (Outlook access token)' });
   }
-  const accessToken = authHeader.slice(7);
 
   // Optional ?startDays=-7&endDays=7 to widen the window. Defaults to today only.
   const startDays = Number(req.query?.startDays || 0);
@@ -70,3 +71,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: err.message || 'Unknown error' });
   }
 }
+
+export default withAuth(handler);
