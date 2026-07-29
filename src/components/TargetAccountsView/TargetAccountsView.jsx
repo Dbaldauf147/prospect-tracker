@@ -5,43 +5,11 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { DataTable } from '../common/DataTable';
 import { dbGet, dbPut } from '../../utils/db';
+import { userLsGet, userLsSet } from '../../utils/userLs';
 import { CompareTab } from './CompareTab';
+import { loadOpps2Newest } from '../../utils/opps2Store';
+import { buildActiveOppsIndex, activeOppsForCompany, findUntiedActiveOpps } from '../../utils/targetAccountOpps';
 import styles from './TargetAccountsView.module.css';
-
-function FilterDrop({ label, options, selected, onToggle }) {
-  const [open, setOpen] = useState(false);
-  const [filterSearch, setFilterSearch] = useState('');
-  const ref = useRef(null);
-  useEffect(() => {
-    if (!open) return;
-    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
-  }, [open]);
-  const count = selected.length;
-  const shown = filterSearch.trim() ? options.filter(o => o.toLowerCase().includes(filterSearch.toLowerCase())) : options;
-  return (
-    <div className={styles.filterGroup} ref={ref}>
-      <button className={count > 0 ? styles.filterBtnActive : styles.filterBtn} onClick={() => { setOpen(p => !p); setFilterSearch(''); }}>
-        {label}{count > 0 && <span className={styles.filterCount}>{count}</span>}
-      </button>
-      {open && (
-        <div className={styles.filterDropdown}>
-          {options.length > 8 && (
-            <input className={styles.filterSearch} type="text" placeholder="Search..." value={filterSearch} onChange={e => setFilterSearch(e.target.value)} autoFocus />
-          )}
-          {shown.length === 0 && <div className={styles.filterEmpty}>No matches</div>}
-          {shown.map(opt => (
-            <label key={opt} className={styles.filterItem}>
-              <input type="checkbox" checked={selected.includes(opt)} onChange={() => onToggle(opt)} style={{ accentColor: 'var(--color-accent)' }} />
-              {opt}
-            </label>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 const STORE_NAME = 'target-accounts';
 
@@ -107,7 +75,7 @@ const BLOCKED_EVENT = 'target-accounts:blocked-changed';
 
 function loadBlockedAccountNames() {
   try {
-    const raw = localStorage.getItem(BLOCKED_KEY);
+    const raw = userLsGet(BLOCKED_KEY);
     const arr = raw ? JSON.parse(raw) : [];
     return new Set(Array.isArray(arr) ? arr.map(s => String(s).toLowerCase().trim()).filter(Boolean) : []);
   } catch { return new Set(); }
@@ -115,9 +83,60 @@ function loadBlockedAccountNames() {
 
 function persistBlockedAccountNames(set) {
   try {
-    localStorage.setItem(BLOCKED_KEY, JSON.stringify([...set]));
+    userLsSet(BLOCKED_KEY, JSON.stringify([...set]));
   } catch { /* noop */ }
   try { window.dispatchEvent(new Event(BLOCKED_EVENT)); } catch { /* noop */ }
+}
+
+// ── Company-rename hooks (called by the company-rename cascade) ─────────
+// Persist a target-accounts payload to both Firestore (canonical) and the
+// IndexedDB cache, mirroring how the view saves after an inline edit.
+export async function saveTargetAccountsToDB(userId, data) {
+  if (userId) await saveToFirestore(userId, data);
+  await saveCache(data);
+}
+
+// Rewrite the account-name column (the leftmost column of each sheet, which
+// is the name by this view's own convention: nameKey = headers[0]) so target
+// rows follow a company rename. Pure — returns { data, count }.
+export function renameTargetAccountRows(data, oldName, newName) {
+  const o = String(oldName || '').trim().toLowerCase();
+  const n = String(newName || '').trim();
+  if (!data?.sheets || !o || !n || o === n.toLowerCase()) return { data, count: 0 };
+  let count = 0;
+  const sheets = {};
+  for (const [name, sheet] of Object.entries(data.sheets)) {
+    const key = sheet?.headers?.[0];
+    if (!key || !Array.isArray(sheet.records)) { sheets[name] = sheet; continue; }
+    sheets[name] = {
+      ...sheet,
+      records: sheet.records.map(r => {
+        if (String(r?.[key] || '').trim().toLowerCase() === o) { count++; return { ...r, [key]: n }; }
+        return r;
+      }),
+    };
+  }
+  return count > 0 ? { data: { ...data, sheets }, count } : { data, count: 0 };
+}
+
+// Blocked-account-name set (suppress-from-suggestions), keyed by lowercased
+// account name — move the entry so the suppression follows a rename.
+export function countBlockedAccountRename(oldName, newName) {
+  const o = String(oldName || '').trim().toLowerCase();
+  const n = String(newName || '').trim().toLowerCase();
+  if (!o || !n || o === n) return 0;
+  return loadBlockedAccountNames().has(o) ? 1 : 0;
+}
+
+export function renameBlockedAccountName(oldName, newName) {
+  if (!countBlockedAccountRename(oldName, newName)) return 0;
+  const o = String(oldName || '').trim().toLowerCase();
+  const n = String(newName || '').trim().toLowerCase();
+  const set = loadBlockedAccountNames();
+  set.delete(o);
+  set.add(n);
+  persistBlockedAccountNames(set);
+  return 1;
 }
 
 function InlineEditCell({ value, rowIndex, colKey, onSave }) {
@@ -143,7 +162,7 @@ function InlineEditCell({ value, rowIndex, colKey, onSave }) {
   return <span style={{ cursor: 'default', padding: '1px 3px', borderRadius: '4px' }} onDoubleClick={startEdit}>{value || '—'}</span>;
 }
 
-export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdmName }) {
+export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdmName, onListUploaded }) {
   const { user } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -152,13 +171,15 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
   const [search, setSearch] = useState('');
   const [activeSheet, setActiveSheet] = useState(null);
   const [dragOver, setDragOver] = useState(false);
-  const [filters, setFilters] = useState({});
   const [blockedAccountNames, setBlockedAccountNamesState] = useState(loadBlockedAccountNames);
-  const [hideBlockedRows, setHideBlockedRows] = useState(false);
   // Sub-section within Target Accounts: the canonical list or a
   // diff view that compares an ad-hoc upload against the current list
   // filtered to the configured CDM.
   const [innerTab, setInnerTab] = useState('list');
+  // Active opps from the Opps 2 tab, loaded once so the list can show a
+  // per-company active-opp count and flag opps for companies that aren't
+  // tied to the configured CDM on the list.
+  const [oppsRecords, setOppsRecords] = useState([]);
   const fileRef = useRef(null);
   function toggleBlockedAccount(rawName) {
     const key = String(rawName || '').toLowerCase().trim();
@@ -183,6 +204,64 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
       setLoading(false);
     });
   }, [user]);
+
+  // Load the Opps 2 dataset (newest of local cache / Firestore) so the
+  // list can tie opps to accounts. Independent of the target-list load.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const d = await loadOpps2Newest(user?.uid);
+        const recs = Array.isArray(d?.records) ? d.records : [];
+        if (!cancelled) setOppsRecords(recs);
+      } catch { if (!cancelled) setOppsRecords([]); }
+    })();
+    return () => { cancelled = true; };
+  }, [user]);
+
+  // One-time migration so the new "Active Opps" column surfaces for users
+  // who've customized this table's visible columns (DataTable otherwise
+  // keeps any column added later hidden). Adds it to their saved set —
+  // both the localStorage copy and the Firestore-synced tablePrefs. Sticky
+  // flag; only ADDs.
+  useEffect(() => {
+    if (!settings) return;
+    const tid = 'target-accounts';
+    const flag = `${tid}:mig-active-opps-col`;
+    let alreadyDone = true;
+    try { alreadyDone = !!localStorage.getItem(flag); } catch { /* storage blocked */ }
+    if (alreadyDone) return;
+    const remote = settings.tablePrefs?.[tid]?.visible;
+    let lsSaved = null;
+    try {
+      const raw = JSON.parse(localStorage.getItem(`prospect-col-visible-${tid}`));
+      if (Array.isArray(raw)) lsSaved = raw;
+    } catch { /* ignore malformed */ }
+    const saved = Array.isArray(remote) && remote.length > 0
+      ? remote
+      : (Array.isArray(lsSaved) && lsSaved.length > 0 ? lsSaved : null);
+    try { localStorage.setItem(flag, '1'); } catch { /* storage blocked */ }
+    if (!saved || saved.includes('__activeOpps__')) return;
+    // Slot it just after the account-name column (the first non-control
+    // key) when we can find one, else append.
+    const next = [...saved];
+    const firstDataIdx = next.findIndex(k => !String(k).startsWith('__'));
+    if (firstDataIdx >= 0) next.splice(firstDataIdx + 1, 0, '__activeOpps__');
+    else next.push('__activeOpps__');
+    try { localStorage.setItem(`prospect-col-visible-${tid}`, JSON.stringify(next)); } catch { /* storage blocked */ }
+    if (updateSettings) {
+      const curEntry = settings.tablePrefs?.[tid] || {};
+      updateSettings({ tablePrefs: { ...(settings.tablePrefs || {}), [tid]: { ...curEntry, visible: next } } });
+    }
+  }, [settings, updateSettings]);
+
+  // Index of active opps by account, plus the set of active opps whose
+  // company isn't tied to the configured CDM on the target list.
+  const oppsIndex = useMemo(() => buildActiveOppsIndex(oppsRecords), [oppsRecords]);
+  const untiedOpps = useMemo(
+    () => findUntiedActiveOpps(oppsRecords, data, cdmName, settings?.targetCdmColumn),
+    [oppsRecords, data, cdmName, settings?.targetCdmColumn]
+  );
 
   function processFile(file) {
     if (!file) return;
@@ -241,8 +320,15 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
         saveCache(result);
         if (user?.uid) saveToFirestore(user.uid, result);
         if (onDataLoaded) onDataLoaded(result);
+        // A new list is a fresh slate — clear any previously-dismissed tier
+        // mismatches so they re-surface against the newly uploaded tiers.
+        let clearedNote = '';
+        if (onListUploaded) {
+          const cleared = onListUploaded();
+          if (cleared) clearedNote = ` — reset ${cleared} tier-mismatch dismissal${cleared > 1 ? 's' : ''}`;
+        }
         setActiveSheet(sheetNames[0]);
-        setStatus(`Uploaded "${file.name}" — ${sheetNames.length} sheet${sheetNames.length > 1 ? 's' : ''}, ${sheetNames.map(n => `${sheets[n].records.length} rows in ${n}`).join(', ')}`);
+        setStatus(`Uploaded "${file.name}" — ${sheetNames.length} sheet${sheetNames.length > 1 ? 's' : ''}, ${sheetNames.map(n => `${sheets[n].records.length} rows in ${n}`).join(', ')}${clearedNote}`);
       } catch (err) {
         setError(`Failed to parse file: ${err.message}`);
       } finally {
@@ -395,72 +481,66 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
         );
       },
     };
-    return [blockCol, deleteCol, ...dataCols];
-  }, [headers, blockedAccountNames, nameKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Active opps (from the Opps 2 tab) tied to this account. Count badge
+    // with a hover breakdown of each opp's Account → Stage; sorts by count
+    // and filters on Has active opps / None.
+    const oppsCol = {
+      key: '__activeOpps__',
+      label: 'Active Opps',
+      defaultWidth: 110,
+      getSortValue: (row) => activeOppsForCompany(nameKey ? row[nameKey] : '', oppsIndex).length,
+      getFilterValue: (row) => activeOppsForCompany(nameKey ? row[nameKey] : '', oppsIndex).length > 0 ? 'Has active opps' : 'None',
+      render: (row) => {
+        const opps = activeOppsForCompany(nameKey ? row[nameKey] : '', oppsIndex);
+        if (opps.length === 0) return <span style={{ color: '#CBD5E1' }}>—</span>;
+        const tip = opps
+          .slice(0, 12)
+          .map(o => `${o.account} — ${o.stage || 'No stage'}`)
+          .join('\n') + (opps.length > 12 ? `\n…and ${opps.length - 12} more` : '');
+        return (
+          <span
+            title={tip}
+            style={{ display: 'inline-block', minWidth: 22, textAlign: 'center', padding: '1px 8px', borderRadius: 999, fontSize: '0.68rem', fontWeight: 700, background: '#DCFCE7', color: '#166534' }}
+          >{opps.length}</span>
+        );
+      },
+    };
+    return [blockCol, deleteCol, ...(dataCols.length > 0 ? [dataCols[0], oppsCol, ...dataCols.slice(1)] : [oppsCol])];
+  }, [headers, blockedAccountNames, nameKey, oppsIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Detect filterable columns (those with <=50 unique non-empty values)
-  const filterableColumns = useMemo(() => {
-    const result = [];
-    for (const h of headers) {
-      if (!h) continue;
-      const vals = new Set();
-      for (const r of records) {
-        const v = (r[h] || '').trim();
-        if (v && v !== '-' && v !== '#N/A') vals.add(v);
-        if (vals.size > 50) break;
-      }
-      if (vals.size > 1 && vals.size <= 50) {
-        result.push({ key: h, options: [...vals].sort() });
+  // Union of column headers across every sheet — feeds the "Salesperson /
+  // CDM column" picker so the mapping works no matter which sheet is
+  // active. My Accounts (and other pages) read settings.targetCdmColumn to
+  // resolve the salesperson/CDM column from this exact header.
+  const allHeaderOptions = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const name of data?.sheetNames || []) {
+      for (const h of (data?.sheets?.[name]?.headers || [])) {
+        const key = String(h || '').trim();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push(key);
       }
     }
-    return result;
-  }, [headers, records]);
+    return out;
+  }, [data]);
+  // The column that holds the salesperson/CDM who owns each account.
+  // My Accounts (and the prospect modal, bulk Agenda, etc.) use this to
+  // decide whose account a row is, instead of guessing by header keyword.
+  const cdmColumn = String(settings?.targetCdmColumn || '');
 
-  // Reset filters when sheet changes
-  useEffect(() => { setFilters({}); }, [activeSheet]);
-
-  function toggleFilter(key, value) {
-    setFilters(prev => {
-      const arr = prev[key] || [];
-      return { ...prev, [key]: arr.includes(value) ? arr.filter(v => v !== value) : [...arr, value] };
-    });
-  }
-
-  const activeFilterCount = Object.values(filters).reduce((s, a) => s + a.length, 0);
-
-  // Count of records currently flagged as blocked, used on the toolbar
-  // to show how many fuzzy-lookup suppressions are active.
-  const blockedCount = useMemo(() => {
-    if (!nameKey) return 0;
-    let n = 0;
-    for (const r of records) {
-      const k = String(r[nameKey] || '').toLowerCase().trim();
-      if (k && blockedAccountNames.has(k)) n++;
-    }
-    return n;
-  }, [records, blockedAccountNames, nameKey]);
-
-  // Filtered records
+  // Filtered records — text search only.
   const filtered = useMemo(() => {
     let result = records;
-    // Apply column filters
-    for (const [key, values] of Object.entries(filters)) {
-      if (values.length > 0) {
-        result = result.filter(r => values.includes((r[key] || '').trim()));
-      }
-    }
-    // Apply text search
     if (search.trim()) {
       const term = search.toLowerCase();
       result = result.filter(r =>
         Object.values(r).some(v => v && String(v).toLowerCase().includes(term))
       );
     }
-    if (hideBlockedRows && nameKey) {
-      result = result.filter(r => !blockedAccountNames.has(String(r[nameKey] || '').toLowerCase().trim()));
-    }
     return result;
-  }, [records, search, filters, hideBlockedRows, blockedAccountNames, nameKey]);
+  }, [records, search]);
 
   // Set active sheet on first load
   if (data && !activeSheet && data.sheetNames?.length > 0) {
@@ -471,7 +551,14 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
     <div className={styles.wrapper}>
       <div className={styles.header}>
         <div>
-          <h2 className={styles.title}>Target Accounts List</h2>
+          <div className={styles.titleRow}>
+            <h2 className={styles.title}>Target Accounts List</h2>
+            <div className={styles.tierLegend}>
+              <div><strong>Tier 1:</strong> Existing Clients</div>
+              <div><strong>Tier 2:</strong> Critical/Major Prospects (10 total)</div>
+              <div><strong>Tier 3:</strong> All remaining assigned in your segments</div>
+            </div>
+          </div>
           {data?.uploadedAt && (
             <span className={styles.lastUpload}>
               {data.fileName} — uploaded {new Date(data.uploadedAt).toLocaleString()}
@@ -514,21 +601,78 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
           setActiveSheet={setActiveSheet}
           search={search}
           setSearch={setSearch}
-          filterableColumns={filterableColumns}
-          filters={filters}
-          toggleFilter={toggleFilter}
-          hideBlockedRows={hideBlockedRows}
-          setHideBlockedRows={setHideBlockedRows}
-          blockedCount={blockedCount}
-          activeFilterCount={activeFilterCount}
-          setFilters={setFilters}
           filtered={filtered}
-          records={records}
           handleFileChange={handleFileChange}
           columns={columns}
           settings={settings}
           updateSettings={updateSettings}
+          cdmColumn={cdmColumn}
+          allHeaderOptions={allHeaderOptions}
+          untiedOpps={untiedOpps}
+          cdmName={cdmName}
         />
+      )}
+    </div>
+  );
+}
+
+// Top-of-page warning listing active opps whose company isn't tied to the
+// configured CDM on the target list — i.e. opps you're working for
+// companies missing from (or attributed to someone else on) your list.
+// Collapsed to a one-line summary by default; expands to the per-company
+// breakdown. Renders nothing when there's nothing to flag.
+function UntiedOppsWarning({ untiedOpps, cdmName }) {
+  const [open, setOpen] = useState(false);
+  if (!untiedOpps || untiedOpps.totalCompanies === 0) return null;
+  const { groups, totalOpps, totalCompanies } = untiedOpps;
+  const who = cdmName || 'your CDM';
+  return (
+    <div style={{ margin: '0 0 0.75rem', border: '1px solid #FCA5A5', background: '#FEF2F2', borderRadius: 8, overflow: 'hidden' }}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '0.6rem 0.85rem', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}
+      >
+        <span style={{ fontSize: '1rem', flexShrink: 0 }}>⚠️</span>
+        <span style={{ fontSize: '0.8rem', color: '#991B1B', fontWeight: 700 }}>
+          {totalOpps} active opp{totalOpps === 1 ? '' : 's'} across {totalCompanies} compan{totalCompanies === 1 ? 'y' : 'ies'} not tied to {who}
+        </span>
+        <span style={{ marginLeft: 'auto', fontSize: '0.72rem', color: '#B91C1C', fontWeight: 700 }}>{open ? 'Hide ▲' : 'Show ▼'}</span>
+      </button>
+      {open && (
+        <div style={{ padding: '0 0.85rem 0.75rem' }}>
+          <div style={{ fontSize: '0.72rem', color: '#7F1D1D', margin: '0 0 0.5rem' }}>
+            These companies are on the Target Accounts list and have active opportunities in the Opps tab, but they&apos;re tied to another CDM (or none) rather than {who}. Fix the account owner so they&apos;re tracked under you. Companies not on the target list at all are ignored here.
+          </div>
+          <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid #FECACA', borderRadius: 6, background: '#fff' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
+              <thead>
+                <tr style={{ background: '#FFF1F2', position: 'sticky', top: 0 }}>
+                  <th style={{ textAlign: 'left', padding: '0.35rem 0.6rem', color: '#9F1239', fontWeight: 700, borderBottom: '1px solid #FECACA' }}>Company</th>
+                  <th style={{ textAlign: 'left', padding: '0.35rem 0.6rem', color: '#9F1239', fontWeight: 700, borderBottom: '1px solid #FECACA' }}>Tied To (CDM)</th>
+                  <th style={{ textAlign: 'center', padding: '0.35rem 0.6rem', color: '#9F1239', fontWeight: 700, borderBottom: '1px solid #FECACA', width: 70 }}>Opps</th>
+                  <th style={{ textAlign: 'left', padding: '0.35rem 0.6rem', color: '#9F1239', fontWeight: 700, borderBottom: '1px solid #FECACA' }}>Stages</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groups.map((g, i) => (
+                  <tr key={g.account} style={{ background: i % 2 ? '#FFFBFB' : '#fff' }}>
+                    <td style={{ padding: '0.3rem 0.6rem', color: '#1E293B', fontWeight: 600, borderBottom: '1px solid #FEE2E2' }}>{g.account}</td>
+                    <td style={{ padding: '0.3rem 0.6rem', borderBottom: '1px solid #FEE2E2' }}>
+                      {g.onList
+                        ? (g.cdms.length > 0
+                          ? <span style={{ color: '#1E293B' }}>{g.owner}</span>
+                          : <span style={{ color: '#B45309', fontStyle: 'italic' }}>On list · no CDM</span>)
+                        : <span style={{ color: '#B91C1C', fontWeight: 700 }}>Not on target list</span>}
+                    </td>
+                    <td style={{ padding: '0.3rem 0.6rem', textAlign: 'center', color: '#991B1B', fontWeight: 700, borderBottom: '1px solid #FEE2E2' }}>{g.count}</td>
+                    <td style={{ padding: '0.3rem 0.6rem', color: '#64748B', borderBottom: '1px solid #FEE2E2' }}>{g.stages.join(', ') || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -536,15 +680,15 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
 
 function ListSection({
   error, status, data, loading, dragOver, setDragOver, handleDrop, fileRef,
-  activeSheet, setActiveSheet, search, setSearch, filterableColumns, filters,
-  toggleFilter, hideBlockedRows, setHideBlockedRows, blockedCount,
-  activeFilterCount, setFilters, filtered, records, handleFileChange, columns,
-  settings, updateSettings,
+  activeSheet, setActiveSheet, search, setSearch, filtered, handleFileChange,
+  columns, settings, updateSettings, cdmColumn, allHeaderOptions,
+  untiedOpps, cdmName,
 }) {
   return (
     <>
       {error && <div className={styles.error}>{error}</div>}
       {status && <div className={styles.success}>{status}</div>}
+      {data && <UntiedOppsWarning untiedOpps={untiedOpps} cdmName={cdmName} />}
 
       {!data && !loading && (
         <>
@@ -640,36 +784,21 @@ function ListSection({
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
-            {filterableColumns.map(fc => (
-              <FilterDrop key={fc.key} label={fc.key} options={fc.options} selected={filters[fc.key] || []} onToggle={v => toggleFilter(fc.key, v)} />
-            ))}
-            <button
-              type="button"
-              onClick={() => setHideBlockedRows(v => !v)}
-              title="Show only the accounts blocked from fuzzy-match suggestions, or hide them from this view"
-              style={{
-                padding: '0.35rem 0.7rem',
-                border: `1px solid ${hideBlockedRows ? '#DC2626' : 'var(--color-border)'}`,
-                borderRadius: 6,
-                background: hideBlockedRows ? '#FEE2E2' : '#fff',
-                color: hideBlockedRows ? '#991B1B' : 'var(--color-text-secondary)',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-                whiteSpace: 'nowrap',
-              }}
+            <label
+              title="Pick which column holds the salesperson / CDM who owns each account. My Accounts (and the prospect modal, Agenda, and other pages) use this column to decide whose account a row is, instead of guessing by header name — leave on Auto to keep the keyword guess."
+              style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}
             >
-              {hideBlockedRows ? 'Showing only un-blocked' : 'Hide blocked'}
-              {blockedCount > 0 && (
-                <span style={{ marginLeft: 6, fontSize: '0.68rem', color: hideBlockedRows ? '#991B1B' : '#94A3B8' }}>
-                  {blockedCount} blocked
-                </span>
-              )}
-            </button>
-            {activeFilterCount > 0 && <button className={styles.clearBtn} onClick={() => setFilters({})}>Clear all</button>}
-            <span className={styles.resultCount}>{filtered.length} of {records.length}</span>
-            <label className={styles.uploadBtn} style={{ marginLeft: 'auto', fontSize: 'var(--font-size-xs)', padding: '0.3rem 0.6rem' }}>
+              Salesperson / CDM column
+              <select
+                value={cdmColumn}
+                onChange={e => updateSettings({ targetCdmColumn: e.target.value })}
+                style={{ padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 6, background: '#fff', fontSize: '0.72rem', fontFamily: 'inherit', color: 'var(--color-text)', maxWidth: 200 }}
+              >
+                <option value="">Auto (guess)</option>
+                {allHeaderOptions.map(h => <option key={h} value={h}>{h}</option>)}
+              </select>
+            </label>
+            <label className={styles.uploadBtn} style={{ fontSize: 'var(--font-size-xs)', padding: '0.3rem 0.6rem' }}>
               Re-upload
               <input className={styles.fileInput} type="file" accept=".xlsx,.xls,.csv,.tsv" onChange={handleFileChange} />
             </label>
@@ -679,6 +808,7 @@ function ListSection({
             columns={columns}
             rows={filtered}
             alwaysVisible={[]}
+            enableColumnFilters
             emptyMessage="No records found"
             settings={settings}
             updateSettings={updateSettings}

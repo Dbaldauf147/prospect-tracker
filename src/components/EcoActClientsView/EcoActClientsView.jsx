@@ -7,7 +7,7 @@ export function EcoActClientsView({ prospects = [], onSelectProspect, cdmName, s
     <UploadedListView
       storageKey="ecoact-clients-override"
       tableIdPrefix="ecoact-clients"
-      title="EcoAct Clients"
+      title="EcoAct"
       singular="client"
       plural="clients"
       prospects={prospects}

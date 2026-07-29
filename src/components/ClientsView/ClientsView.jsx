@@ -1,16 +1,20 @@
 import { useMemo, useState, useEffect } from 'react';
 import { DataTable } from '../common/DataTable';
+import { FollowUpOnSaleCell } from '../common/FollowUpOnSaleCell';
 import { matchesCdm } from '../../utils/cdmMatch';
+import { buildTargetTierResolver } from '../../utils/targetTier';
 import { DealsView } from '../DealsView/DealsView';
 import { CommissionsView } from './CommissionsView';
-import { loadDealsList } from '../../utils/dealsStore';
+import { loadDealsList, saveDealsOverride } from '../../utils/dealsStore';
 import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../../utils/dealClientMap';
 import {
   loadClientManagerMap, setClientManager, CLIENT_MANAGER_EVENT,
   loadClientInPersonMap, setClientInPerson, CLIENT_IN_PERSON_EVENT,
   loadClientStatusMap, setClientStatus, CLIENT_STATUS_EVENT,
+  loadClientStatusSetAtMap, setClientStatusSetAt, CLIENT_STATUS_SET_AT_EVENT,
   loadClientNotesMap, setClientNotes, CLIENT_NOTES_EVENT,
   loadClientUntrackedMap, setClientUntracked, CLIENT_UNTRACKED_EVENT,
+  loadClientLouisvilleMap, setClientLouisville, CLIENT_LOUISVILLE_EVENT,
 } from '../../utils/clientManagerStore';
 import {
   asDate, fmtCurrency, fmtPercent, fmtDate, isTruthy,
@@ -21,40 +25,41 @@ import {
   SelectCell, MultiSelectCell, LinkColumnsModal,
 } from '../common/columnLinks';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
+// Shared with the Issues tab so both surfaces agree on what's expired.
+import { isInactiveAgreement, normClientName, soonestExpiration } from '../../utils/clientIssues';
 
-// The Paperwork column doubles as a status field in this dataset —
-// values like "Cancelled" and "Expired" mark agreements that no
-// longer count, regardless of their End Date.
-const INACTIVE_STATUSES = new Set(['cancelled', 'canceled', 'expired']);
-function isInactiveAgreement(deal) {
-  const status = String(deal?.['Paperwork completed'] || '').trim().toLowerCase();
-  return INACTIVE_STATUSES.has(status);
-}
-
-// Earliest contract End Date across the client's active deals, plus
-// integer days from today (negative when the date is already past).
-// Cancelled / Expired agreements are skipped; everything else counts
-// regardless of whether the date is in the future — a Fully Executed
-// row with a date that already slipped past is exactly the kind of
-// thing this column needs to surface.
 const MS_PER_DAY = 86400000;
-function soonestExpiration(deals) {
-  if (!deals || deals.length === 0) return { date: null, days: null };
+
+// A client row is tinted light red as a "needs a status" warning when its
+// soonest renewal is inside this many days AND the Status column is still
+// blank. Shared by the row-highlight logic and the on-page legend so the two
+// can't drift apart.
+const RENEWAL_WARNING_DAYS = 270;
+
+// "Reached out to CM" is a time-boxed status: it auto-clears this many days
+// after it's set, and a countdown shows how long is left. Kept as one
+// constant so the timer, the badge, and any copy stay in sync.
+const REACHED_OUT_TIMER_DAYS = 30;
+function isReachedOutToCM(status) {
+  const s = String(status || '');
+  return /reached\s*out/i.test(s) && /\bcm\b/i.test(s);
+}
+// Days left before a "Reached out to CM" status auto-clears, given the ISO
+// date it was set. null when there's no stamp. Can go 0 / negative once the
+// window has elapsed (the row-scan effect then clears the status).
+function reachedOutDaysLeft(setAtISO) {
+  if (!setAtISO) return null;
+  const set = new Date(setAtISO);
+  if (Number.isNaN(set.getTime())) return null;
+  set.setHours(0, 0, 0, 0);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const todayMs = today.getTime();
-  let bestMs = null;
-  for (const d of deals) {
-    if (isInactiveAgreement(d)) continue;
-    const parsed = asDate(d['End Date']);
-    if (!parsed) continue;
-    const dayStart = new Date(parsed);
-    dayStart.setHours(0, 0, 0, 0);
-    const ms = dayStart.getTime();
-    if (bestMs == null || ms < bestMs) bestMs = ms;
-  }
-  if (bestMs == null) return { date: null, days: null };
-  return { date: new Date(bestMs), days: Math.round((bestMs - todayMs) / MS_PER_DAY) };
+  const elapsed = Math.round((today.getTime() - set.getTime()) / MS_PER_DAY);
+  return REACHED_OUT_TIMER_DAYS - elapsed;
+}
+function todayISODate() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 // Column layout for the per-client contract drill-down. Each entry's
@@ -97,8 +102,23 @@ function renderDaysToEnd(endRaw, inactive) {
   return <span style={{ color, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{label}</span>;
 }
 
-function normClientName(s) {
-  return String(s || '').trim().toLowerCase();
+// Shared Tier pill used by both the account's own Tier column and the
+// mapped Target Tier column. Tier 1 pops red (top accounts), Tier 2 blue,
+// anything else slate; blank / "-" renders an em dash. `title` adds a
+// hover tooltip (e.g. which target account the mapped tier came from).
+function tierBadge(tier, title) {
+  const t = String(tier || '').trim();
+  if (!t || t === '-') return <span style={{ color: '#94A3B8' }} title={title}>—</span>;
+  const palette = /1/.test(t)
+    ? { bg: '#FEE2E2', color: '#B91C1C' }
+    : /2/.test(t)
+    ? { bg: '#DBEAFE', color: '#1E40AF' }
+    : { bg: '#F1F5F9', color: '#475569' };
+  return (
+    <span title={title} style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: palette.bg, color: palette.color, whiteSpace: 'nowrap' }}>
+      {t}
+    </span>
+  );
 }
 
 // Inline editor for the Client Manager column. Local draft so typing
@@ -310,11 +330,238 @@ function ContractTable({ deals }) {
   );
 }
 
+// A deal needs a post-sale follow-up when its "Follow Up On Sale" cell is
+// blank (or a placeholder dash / Excel #N/A error). Mirrors how the Deals
+// subtab stores that date column so the two agree on what counts as "no
+// value". A deliberate "N/A" (marked from the follow-up editor to say a deal
+// never needs a follow-up) counts as resolved and drops the row off the list;
+// only Excel's #N/A error placeholder still reads as missing.
+function isBlankFollowUp(row) {
+  const v = String(row?.['Follow Up On Sale'] ?? '').trim();
+  if (!v) return true;
+  return ['-', '—', '#n/a'].includes(v.toLowerCase());
+}
+
+// The date a deal closed/sold. Deals don't carry an explicit close date, so
+// we use Original Contract Start — the same field the Deals tab treats as the
+// deal's canonical date. Returns a Date or null.
+function dealSoldDate(row) {
+  return asDate(row?.['Original Contract Start']);
+}
+
+// Whole-day delta between when a deal was sold and today, rendered as a
+// colored cell. A post-sale follow-up should land soon after the sale, so the
+// longer a deal has gone without one the more overdue it is: rows past 30 days
+// run red, rows past a week run amber. Undated rows render an em dash.
+function renderDaysSinceSold(soldRaw) {
+  const d = asDate(soldRaw);
+  if (!d) return <span style={{ color: '#94A3B8' }}>—</span>;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const start = new Date(d);
+  start.setHours(0, 0, 0, 0);
+  const days = Math.round((today.getTime() - start.getTime()) / MS_PER_DAY);
+  const color = days > 30 ? '#B91C1C'
+    : days > 7 ? '#92400E'
+    : '#334155';
+  const label = days === 0
+    ? 'Today'
+    : days > 0 ? `${days}d ago`
+    : `in ${Math.abs(days)}d`;
+  return <span style={{ color, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{label}</span>;
+}
+
+// Columns shown on the Post-Sale Follow-Up subtab. A post-sale follow-up is
+// driven by how long it's been since the deal was sold (not when the contract
+// expires), so this leads with Date Sold / Days Since Sold.
+const POST_SALE_COLUMNS = [
+  { key: 'Client Name',       label: 'Client', minWidth: 200 },
+  { key: 'Agreement Name',    label: 'Agreement Name', minWidth: 360 },
+  { key: '__dateSold',        label: 'Date Sold', minWidth: 120 },
+  { key: '__daysSinceSold',   label: 'Days Since Sold', minWidth: 130 },
+  { key: 'Closed Won',        label: 'Closed Won', minWidth: 110 },
+  { key: 'Follow Up On Sale', label: 'Follow Up On Sale', minWidth: 170 },
+];
+
+// Persisted, user-adjustable column widths for the Post-Sale Follow-Up
+// table. Mirrors the DataTable convention (prospect-col-widths-<tableId>)
+// so the storage layout stays consistent across the app, but this bespoke
+// table isn't a DataTable so it manages its own widths here. Widths below
+// this floor are clamped so a column can't be dragged shut.
+const POST_SALE_WIDTHS_KEY = 'prospect-col-widths-postsale';
+const POST_SALE_MIN_WIDTH = 60;
+
+function loadPostSaleWidths() {
+  try { return JSON.parse(localStorage.getItem(POST_SALE_WIDTHS_KEY)) || {}; } catch { return {}; }
+}
+function savePostSaleWidths(w) {
+  try { localStorage.setItem(POST_SALE_WIDTHS_KEY, JSON.stringify(w)); } catch {}
+}
+
+// "Post-Sale Follow-Up" subtab: every uploaded deal missing a Follow Up On
+// Sale value, flagged for attention. Sourced from the same uploaded deals
+// list the Deals subtab shows (so it stays in sync with that data).
+function PostSaleFollowUpView({ deals, onUpdateFollowUp }) {
+  const [query, setQuery] = useState('');
+  const [colWidths, setColWidths] = useState(loadPostSaleWidths);
+
+  const getWidth = (col) => colWidths[col.key] || col.minWidth;
+
+  // Drag-to-resize a column from its right edge. Tracks the pointer on
+  // document (not the handle) so the drag keeps working past the header,
+  // persisting the new width to localStorage as it goes.
+  function handleResizeStart(e, colKey) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const col = POST_SALE_COLUMNS.find(c => c.key === colKey);
+    const startWidth = colWidths[colKey] || col.minWidth;
+
+    function onMouseMove(ev) {
+      const next = Math.max(POST_SALE_MIN_WIDTH, startWidth + (ev.clientX - startX));
+      setColWidths(prev => {
+        const updated = { ...prev, [colKey]: next };
+        savePostSaleWidths(updated);
+        return updated;
+      });
+    }
+    function onMouseUp() {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
+
+  function resetWidths() {
+    setColWidths({});
+    savePostSaleWidths({});
+  }
+
+  const flagged = useMemo(() => {
+    const out = [];
+    for (const d of (deals || [])) {
+      const client = String(d['Client Name'] ?? d['Client Name '] ?? '').trim();
+      const agreement = String(d['Agreement Name'] ?? '').trim();
+      if (!client && !agreement) continue;  // skip blank spacer rows
+      if (!isBlankFollowUp(d)) continue;     // only deals still needing follow-up
+      out.push(d);
+    }
+    // Longest since sold first — the deals sold furthest back with still no
+    // follow-up are the most overdue. Rows with no sold date sink to the bottom.
+    out.sort((a, b) => {
+      const da = dealSoldDate(a);
+      const db = dealSoldDate(b);
+      if (!da && !db) return 0;
+      if (!da) return 1;
+      if (!db) return -1;
+      return da.getTime() - db.getTime();
+    });
+    return out;
+  }, [deals]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return flagged;
+    return flagged.filter(d =>
+      String(d['Client Name'] ?? d['Client Name '] ?? '').toLowerCase().includes(q)
+      || String(d['Agreement Name'] ?? '').toLowerCase().includes(q));
+  }, [flagged, query]);
+
+  return (
+    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '1rem 1.25rem 1.5rem' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+        <div>
+          <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>Post-Sale Follow-Up</h2>
+          <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
+            Deals from the Deals subtab with no <strong>Follow Up On Sale</strong> value — these still need a post-sale follow-up.
+          </div>
+        </div>
+        <input
+          type="text"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="Filter by client or agreement…"
+          style={{ flex: '0 1 320px', padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
+        />
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: '#64748B', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+        <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 3, background: '#FEE2E2', border: '1px solid #FCA5A5', flexShrink: 0 }} />
+        <span><strong style={{ color: '#B91C1C' }}>{filtered.length}</strong> deal{filtered.length === 1 ? '' : 's'} flagged — missing a Follow Up On Sale value.</span>
+        <span style={{ color: '#CBD5E1' }}>·</span>
+        <span style={{ color: '#94A3B8' }}>Drag a column edge to resize.</span>
+        {Object.keys(colWidths).length > 0 && (
+          <button
+            type="button"
+            onClick={resetWidths}
+            style={{ background: 'transparent', border: '1px solid #E2E8F0', borderRadius: 4, fontSize: '0.68rem', color: '#64748B', cursor: 'pointer', padding: '1px 6px', fontFamily: 'inherit' }}
+            title="Restore the default column widths"
+          >Reset widths</button>
+        )}
+      </div>
+
+      {filtered.length === 0 ? (
+        <div style={{ padding: '0.75rem 0', color: '#64748B', fontSize: '0.8rem', fontStyle: 'italic' }}>
+          {deals && deals.length
+            ? 'Every uploaded deal has a Follow Up On Sale value — nothing to follow up on.'
+            : 'No deals uploaded yet. Upload contract data on the Deals subtab.'}
+        </div>
+      ) : (
+        <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: 8 }}>
+          <table style={{ borderCollapse: 'collapse', fontSize: '0.72rem', tableLayout: 'fixed', width: POST_SALE_COLUMNS.reduce((s, c) => s + getWidth(c), 0), minWidth: '100%' }}>
+            <colgroup>
+              {POST_SALE_COLUMNS.map(col => (
+                <col key={col.key} style={{ width: getWidth(col) }} />
+              ))}
+            </colgroup>
+            <thead>
+              <tr style={{ background: '#F1F5F9' }}>
+                {POST_SALE_COLUMNS.map(col => (
+                  <th key={col.key} style={{ position: 'relative', padding: '0.4rem 0.6rem', textAlign: 'left', color: '#475569', fontWeight: 700, fontSize: '0.66rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', borderBottom: '1px solid #CBD5E1' }} title={col.label}>
+                    {col.label}
+                    <span
+                      onMouseDown={e => handleResizeStart(e, col.key)}
+                      title="Drag to resize"
+                      style={{ position: 'absolute', top: 0, right: 0, height: '100%', width: 8, cursor: 'col-resize', userSelect: 'none' }}
+                    />
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((d, i) => (
+                <tr key={i} style={{ background: '#FEF2F2', borderBottom: '1px solid #FEE2E2' }}>
+                  {POST_SALE_COLUMNS.map(col => (
+                    <td key={col.key} style={{ padding: '0.35rem 0.6rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {col.key === '__dateSold'
+                        ? (dealSoldDate(d) ? <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtDate(d['Original Contract Start'])}</span> : <span style={{ color: '#94A3B8' }}>—</span>)
+                        : col.key === '__daysSinceSold'
+                        ? renderDaysSinceSold(d['Original Contract Start'])
+                        : col.key === 'Follow Up On Sale'
+                          ? <FollowUpOnSaleCell deal={d} onSave={onUpdateFollowUp} />
+                          : renderContractCell(col.key, d[col.key] ?? d[`${col.key} `])}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const SUBTAB_STORAGE_KEY = 'clients-view:active-subtab';
 function readSavedSubtab() {
   try {
     const s = localStorage.getItem(SUBTAB_STORAGE_KEY);
-    if (s === 'clients' || s === 'deals' || s === 'commissions') return s;
+    if (s === 'clients' || s === 'oldclients' || s === 'deals' || s === 'commissions' || s === 'postsale') return s;
   } catch {}
   return 'clients';
 }
@@ -331,12 +578,25 @@ function normStatus(s) {
 function isClient(p) { return normStatus(p.status) === 'client'; }
 function isOldClient(p) { return normStatus(p.status) === 'old client'; }
 
-export function ClientsView({ prospects = [], cdmName, settings, updateSettings }) {
+export function ClientsView({ prospects = [], cdmName, settings, updateSettings, user, targetAccountsData, addProspect }) {
   const [subtab, setSubtab] = useState(readSavedSubtab);
   function selectSubtab(key) {
     setSubtab(key);
     try { localStorage.setItem(SUBTAB_STORAGE_KEY, key); } catch {}
   }
+
+  // The Clients and Old Clients subtabs share this view; the only real
+  // difference is which Status the primary list filters on. The secondary
+  // "Include …" toggle pulls in the other bucket. Labels and the table id
+  // (so column widths persist independently) follow the active subtab.
+  const isOldMode = subtab === 'oldclients';
+  const primaryMatch = isOldMode ? isOldClient : isClient;
+  const secondaryMatch = isOldMode ? isClient : isOldClient;
+  const statusLabel = isOldMode ? 'Old Client' : 'Client';
+  const otherLabel = isOldMode ? 'Client' : 'Old Client';
+  const headingLabel = isOldMode ? 'Old Clients' : 'Clients';
+  const tableId = isOldMode ? 'oldclients' : 'clients';
+
   const [showOld, setShowOld] = useState(false);
   const [query, setQuery] = useState('');
   const [expandedIds, setExpandedIds] = useState(() => new Set());
@@ -349,8 +609,10 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
   const [managerMap, setManagerMap] = useState(() => loadClientManagerMap());
   const [inPersonMap, setInPersonMap] = useState(() => loadClientInPersonMap());
   const [statusMap, setStatusMap] = useState(() => loadClientStatusMap());
+  const [statusSetAtMap, setStatusSetAtMap] = useState(() => loadClientStatusSetAtMap());
   const [notesMap, setNotesMap] = useState(() => loadClientNotesMap());
   const [untrackedMap, setUntrackedMap] = useState(() => loadClientUntrackedMap());
+  const [louisvilleMap, setLouisvilleMap] = useState(() => loadClientLouisvilleMap());
   useEffect(() => {
     function onStorage(e) {
       if (e.key === 'deals-list-override') setDealsList(loadDealsList().data);
@@ -358,46 +620,126 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
       if (e.key === 'clients-manager-map') setManagerMap(loadClientManagerMap());
       if (e.key === 'clients-inperson-map') setInPersonMap(loadClientInPersonMap());
       if (e.key === 'clients-status-map') setStatusMap(loadClientStatusMap());
+      if (e.key === 'clients-status-set-at') setStatusSetAtMap(loadClientStatusSetAtMap());
       if (e.key === 'clients-notes-map') setNotesMap(loadClientNotesMap());
       if (e.key === 'clients-untracked-map') setUntrackedMap(loadClientUntrackedMap());
+      if (e.key === 'clients-louisville-map') setLouisvilleMap(loadClientLouisvilleMap());
     }
     function onClientMap() { setClientMap(loadDealClientMap()); }
     function onManagerMap() { setManagerMap(loadClientManagerMap()); }
     function onInPersonMap() { setInPersonMap(loadClientInPersonMap()); }
     function onStatusMap() { setStatusMap(loadClientStatusMap()); }
+    function onStatusSetAtMap() { setStatusSetAtMap(loadClientStatusSetAtMap()); }
     function onNotesMap() { setNotesMap(loadClientNotesMap()); }
     function onUntrackedMap() { setUntrackedMap(loadClientUntrackedMap()); }
+    function onLouisvilleMap() { setLouisvilleMap(loadClientLouisvilleMap()); }
     window.addEventListener('storage', onStorage);
     window.addEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
     window.addEventListener(CLIENT_MANAGER_EVENT, onManagerMap);
     window.addEventListener(CLIENT_IN_PERSON_EVENT, onInPersonMap);
     window.addEventListener(CLIENT_STATUS_EVENT, onStatusMap);
+    window.addEventListener(CLIENT_STATUS_SET_AT_EVENT, onStatusSetAtMap);
     window.addEventListener(CLIENT_NOTES_EVENT, onNotesMap);
     window.addEventListener(CLIENT_UNTRACKED_EVENT, onUntrackedMap);
+    window.addEventListener(CLIENT_LOUISVILLE_EVENT, onLouisvilleMap);
     return () => {
       window.removeEventListener('storage', onStorage);
       window.removeEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
       window.removeEventListener(CLIENT_MANAGER_EVENT, onManagerMap);
       window.removeEventListener(CLIENT_IN_PERSON_EVENT, onInPersonMap);
       window.removeEventListener(CLIENT_STATUS_EVENT, onStatusMap);
+      window.removeEventListener(CLIENT_STATUS_SET_AT_EVENT, onStatusSetAtMap);
       window.removeEventListener(CLIENT_NOTES_EVENT, onNotesMap);
       window.removeEventListener(CLIENT_UNTRACKED_EVENT, onUntrackedMap);
+      window.removeEventListener(CLIENT_LOUISVILLE_EVENT, onLouisvilleMap);
     };
   }, []);
   // Refresh deals + client map whenever we switch back to the Clients
   // subtab — same-window upload / mapping changes on the Deals subtab
   // don't fire storage.
   useEffect(() => {
-    if (subtab === 'clients') {
+    if (subtab === 'clients' || subtab === 'oldclients' || subtab === 'postsale') {
       setDealsList(loadDealsList().data);
       setClientMap(loadDealClientMap());
       setManagerMap(loadClientManagerMap());
       setInPersonMap(loadClientInPersonMap());
       setStatusMap(loadClientStatusMap());
+      setStatusSetAtMap(loadClientStatusSetAtMap());
       setNotesMap(loadClientNotesMap());
       setUntrackedMap(loadClientUntrackedMap());
+      setLouisvilleMap(loadClientLouisvilleMap());
     }
   }, [subtab]);
+
+  // Record (or clear) a deal's Follow Up On Sale date from the Post-Sale
+  // Follow-Up subtab. Matches the row by reference in the current list, writes
+  // the same M/D/YYYY string the Deals subtab stores, and persists through the
+  // shared deals override so the Deals subtab and Issues badge stay in sync.
+  function updateFollowUpOnSale(targetDeal, value) {
+    setDealsList(prev => {
+      const idx = prev.indexOf(targetDeal);
+      if (idx < 0) return prev;
+      const next = [...prev];
+      const current = { ...next[idx] };
+      const v = String(value ?? '').trim();
+      if (!v) delete current['Follow Up On Sale'];
+      else current['Follow Up On Sale'] = v;
+      next[idx] = current;
+      try { saveDealsOverride(next); } catch (err) { console.warn('Save follow-up failed', err); }
+      return next;
+    });
+  }
+
+  // One-time migration for the Tier / Target Tier columns. DataTable
+  // permanently hides any column that didn't exist when a user last
+  // customized their visible-columns set, so users who've touched the
+  // Columns menu would find these stuck under "Hidden columns". Inject any
+  // that are missing into their saved set — both the localStorage copy and
+  // the Firestore-synced tablePrefs — so they show without hunting. Sticky
+  // per-table flag (bumped when new columns are added) so re-hiding still
+  // sticks. Only ADDs; never removes a column.
+  useEffect(() => {
+    if (!settings) return;
+    const nextTablePrefs = { ...(settings.tablePrefs || {}) };
+    let touchedRemote = false;
+    for (const tid of ['clients', 'oldclients']) {
+      const flag = `clients-view:mig-tier-cols-v2-${tid}`;
+      let alreadyDone = true;
+      try { alreadyDone = !!localStorage.getItem(flag); } catch { /* storage blocked */ }
+      if (alreadyDone) continue;
+      const remote = settings.tablePrefs?.[tid]?.visible;
+      let lsSaved = null;
+      try {
+        const raw = JSON.parse(localStorage.getItem(`prospect-col-visible-${tid}`));
+        if (Array.isArray(raw)) lsSaved = raw;
+      } catch { /* ignore malformed */ }
+      // Firestore prefs win when present; else the local set. No saved
+      // customization at all means every column already shows.
+      const saved = Array.isArray(remote) && remote.length > 0
+        ? remote
+        : (Array.isArray(lsSaved) && lsSaved.length > 0 ? lsSaved : null);
+      try { localStorage.setItem(flag, '1'); } catch { /* storage blocked */ }
+      if (!saved) continue;
+      const next = [...saved];
+      let changed = false;
+      // Tier sits after CDM; Target Tier sits right after Tier.
+      if (!next.includes('tier')) {
+        const cdmIdx = next.indexOf('cdm');
+        if (cdmIdx >= 0) next.splice(cdmIdx, 0, 'tier'); else next.push('tier');
+        changed = true;
+      }
+      if (!next.includes('targetTier')) {
+        const tierIdx = next.indexOf('tier');
+        if (tierIdx >= 0) next.splice(tierIdx + 1, 0, 'targetTier'); else next.push('targetTier');
+        changed = true;
+      }
+      if (!changed) continue;
+      try { localStorage.setItem(`prospect-col-visible-${tid}`, JSON.stringify(next)); } catch { /* storage blocked */ }
+      nextTablePrefs[tid] = { ...(settings.tablePrefs?.[tid] || {}), visible: next };
+      touchedRemote = true;
+    }
+    if (touchedRemote && updateSettings) updateSettings({ tablePrefs: nextTablePrefs });
+  }, [settings, updateSettings]);
 
   // User-configurable column-to-Dropdowns-list bindings, mirroring the
   // Deals / Opps 2 "Link columns" feature. Lets the Status column on
@@ -439,14 +781,22 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
     });
   }
 
-  // Only the configured user's clients. Additionally filter to active
-  // Client by default, or include Old Client too when the toggle is on.
+  // Only the configured user's clients. Filter to the tab's primary
+  // Status by default, or include the other bucket when the toggle is on.
   const clients = useMemo(() => (
     prospects
       .filter(p => matchesCdm(p.cdm, cdmName))
-      .filter(p => isClient(p) || (showOld && isOldClient(p)))
+      .filter(p => primaryMatch(p) || (showOld && secondaryMatch(p)))
       .sort((a, b) => (a.company || '').localeCompare(b.company || ''))
-  ), [prospects, showOld, cdmName]);
+  ), [prospects, showOld, cdmName, primaryMatch, secondaryMatch]);
+
+  // Resolver for the Tier a client inherits from the Target Accounts list
+  // it's mapped to (explicit My Accounts mapping first, fuzzy name match as
+  // fallback). Rebuilt when the target book, CDM, or mapping changes.
+  const resolveTargetTier = useMemo(
+    () => buildTargetTierResolver({ targetAccountsData, cdmName, settings }),
+    [targetAccountsData, cdmName, settings?.targetMap, settings?.targetCdmColumn]
+  );
 
   const q = query.trim().toLowerCase();
   const filtered = q
@@ -455,6 +805,8 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
         return (
           (c.company || '').toLowerCase().includes(q) ||
           (c.cdm || '').toLowerCase().includes(q) ||
+          (c.tier || '').toLowerCase().includes(q) ||
+          (resolveTargetTier(c).tier || '').toLowerCase().includes(q) ||
           (c.type || '').toLowerCase().includes(q) ||
           (c.website || '').toLowerCase().includes(q) ||
           (managerMap[ck] || '').toLowerCase().includes(q) ||
@@ -464,12 +816,12 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
     : clients;
 
   const myProspects = useMemo(() => prospects.filter(p => matchesCdm(p.cdm, cdmName)), [prospects, cdmName]);
-  const activeCount = myProspects.filter(isClient).length;
-  const oldCount = myProspects.filter(isOldClient).length;
+  const activeCount = myProspects.filter(primaryMatch).length; // primary bucket for this tab
+  const oldCount = myProspects.filter(secondaryMatch).length;  // the "Include …" bucket
 
   // Diagnostic counts for the empty state.
   const totalProspects = prospects.length;
-  const allClients = useMemo(() => prospects.filter(isClient).length, [prospects]);
+  const allClients = useMemo(() => prospects.filter(primaryMatch).length, [prospects, primaryMatch]);
   const uniqueCdms = useMemo(() => {
     const s = new Set();
     for (const p of prospects) {
@@ -484,9 +836,13 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
     const clientDeals = dealsByClient.get(ck) || [];
     const next = soonestExpiration(clientDeals);
     const untracked = !!untrackedMap[ck];
+    const tt = resolveTargetTier(c);
     return {
       ...c,
       id: c.id,
+      targetTier: tt.tier,
+      targetTierName: tt.name,
+      targetTierSource: tt.source,
       services: getServicesCount(c),
       contractCount: clientDeals.length,
       soonestExpiration: next.date,
@@ -496,11 +852,31 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
       daysUntilExpiration: untracked ? null : next.days,
       clientManager: managerMap[ck] || '',
       inPersonMeeting: !!inPersonMap[ck],
+      invitedToLouisville: !!louisvilleMap[ck],
       Status: statusMap[ck] || '',
+      // Days left before a "Reached out to CM" status auto-clears (null for
+      // any other status, or until the set-at stamp is backfilled below).
+      reachedOutDaysLeft: isReachedOutToCM(statusMap[ck]) ? reachedOutDaysLeft(statusSetAtMap[ck]) : null,
       notes: notesMap[ck] || '',
       untracked,
     };
-  }), [filtered, dealsByClient, managerMap, inPersonMap, statusMap, notesMap, untrackedMap]);
+  }), [filtered, dealsByClient, managerMap, inPersonMap, louisvilleMap, statusMap, statusSetAtMap, notesMap, untrackedMap, resolveTargetTier]);
+
+  // Drive the "Reached out to CM" 30-day timer: start the clock for any such
+  // status that has no stamp yet (e.g. set before this shipped), and clear
+  // the status once the window has elapsed. Scans the CDM's client list on
+  // every relevant change; each branch only writes when something actually
+  // needs doing, so it settles rather than looping.
+  useEffect(() => {
+    for (const c of clients) {
+      const ck = normClientName(c.company);
+      if (!isReachedOutToCM(statusMap[ck])) continue;
+      const setAt = statusSetAtMap[ck];
+      if (!setAt) { setClientStatusSetAt(c.company, todayISODate()); continue; }
+      const left = reachedOutDaysLeft(setAt);
+      if (left != null && left <= 0) setClientStatus(c.company, '');
+    }
+  }, [clients, statusMap, statusSetAtMap]);
 
   const columns = useMemo(() => [
     {
@@ -538,26 +914,70 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
       },
     },
     {
-      key: 'Status', label: 'Status', defaultWidth: 160,
+      key: 'Status', label: 'Renewal Status', defaultWidth: 160,
       getSortValue: (row) => (row.Status || '').toLowerCase(),
       getFilterValue: (row) => row.Status || '',
       render: (row) => {
         const link = resolveColumnLink('Status', columnLinks);
+        let cell;
         if (link) {
           const opts = listRegistry?.get(link.listKey)?.options || [];
           const onChange = (v) => setClientStatus(row.company, v);
-          if (link.mode === 'multi') {
-            return <MultiSelectCell value={row.Status} onChange={onChange} options={opts} />;
-          }
-          return <SelectCell value={row.Status} onChange={onChange} options={opts} />;
+          cell = link.mode === 'multi'
+            ? <MultiSelectCell value={row.Status} onChange={onChange} options={opts} />
+            : <SelectCell value={row.Status} onChange={onChange} options={opts} />;
+        } else {
+          cell = (
+            <ClientStatusTextCell
+              company={row.company}
+              value={row.Status}
+              onCommit={setClientStatus}
+            />
+          );
         }
+        // Countdown badge for the time-boxed "Reached out to CM" status: how
+        // many days until it auto-clears (30 days after it was set).
+        if (row.reachedOutDaysLeft == null) return cell;
+        const left = Math.max(0, row.reachedOutDaysLeft);
         return (
-          <ClientStatusTextCell
-            company={row.company}
-            value={row.Status}
-            onCommit={setClientStatus}
-          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+            <span style={{ flex: 1, minWidth: 0 }}>{cell}</span>
+            <span
+              title={`This status auto-clears in ${left} day${left === 1 ? '' : 's'} — ${REACHED_OUT_TIMER_DAYS} days after "Reached out to CM" was set.`}
+              style={{ flexShrink: 0, fontSize: '0.64rem', fontWeight: 700, color: left <= 7 ? '#B45309' : '#92400E', background: '#FEF9C3', border: '1px solid #FDE047', borderRadius: 999, padding: '1px 6px', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}
+            >{left}d</span>
+          </div>
         );
+      },
+    },
+    {
+      key: 'tier', label: 'Tier', defaultWidth: 100,
+      // Order Tier 1 → 2 → 3, blanks last, so a Tier sort surfaces the
+      // top accounts first regardless of ascending / descending.
+      getSortValue: (row) => {
+        const m = String(row.tier || '').match(/(\d+)/);
+        return m ? Number(m[1]) : Number.POSITIVE_INFINITY;
+      },
+      getFilterValue: (row) => row.tier || '',
+      render: (row) => tierBadge(row.tier),
+    },
+    {
+      key: 'targetTier', label: 'Target Tier', defaultWidth: 120,
+      // Tier the account inherits from the Target Accounts list it's
+      // mapped to (via My Accounts). Sorts / filters like Tier.
+      getSortValue: (row) => {
+        const m = String(row.targetTier || '').match(/(\d+)/);
+        return m ? Number(m[1]) : Number.POSITIVE_INFINITY;
+      },
+      getFilterValue: (row) => row.targetTier || '',
+      render: (row) => {
+        if (!row.targetTier) {
+          return <span style={{ color: '#94A3B8' }} title="Not mapped to a Target Account (or the mapped account has no tier). Map it on the My Accounts tab.">—</span>;
+        }
+        const via = row.targetTierName
+          ? `From Target Account "${row.targetTierName}"${row.targetTierSource === 'fuzzy' ? ' (name match)' : ''}`
+          : 'From the mapped Target Account';
+        return tierBadge(row.targetTier, via);
       },
     },
     { key: 'cdm', label: 'CDM', defaultWidth: 160 },
@@ -581,6 +1001,18 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
           company={row.company}
           checked={row.inPersonMeeting}
           onChange={setClientInPerson}
+        />
+      ),
+    },
+    {
+      key: 'invitedToLouisville', label: 'Invited to Louisville?', defaultWidth: 160,
+      getSortValue: (row) => row.invitedToLouisville ? 1 : 0,
+      getFilterValue: (row) => row.invitedToLouisville ? 'Yes' : 'No',
+      render: (row) => (
+        <InPersonCell
+          company={row.company}
+          checked={row.invitedToLouisville}
+          onChange={setClientLouisville}
         />
       ),
     },
@@ -671,8 +1103,10 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
     <div style={{ display: 'flex', gap: '0.25rem', padding: '0.5rem 1.25rem 0', borderBottom: '1px solid #E2E8F0', flexShrink: 0 }}>
       {[
         { key: 'clients', label: 'Clients' },
+        { key: 'oldclients', label: 'Old Clients' },
         { key: 'deals', label: 'Deals' },
         { key: 'commissions', label: 'Commissions' },
+        { key: 'postsale', label: 'Post-Sale Follow-Up' },
       ].map(t => {
         const active = subtab === t.key;
         return (
@@ -704,7 +1138,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
         {subtabBar}
-        <DealsView settings={settings} updateSettings={updateSettings} prospects={prospects} cdmName={cdmName} />
+        <DealsView settings={settings} updateSettings={updateSettings} prospects={prospects} cdmName={cdmName} user={user} addProspect={addProspect} />
       </div>
     );
   }
@@ -718,20 +1152,29 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
     );
   }
 
+  if (subtab === 'postsale') {
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+        {subtabBar}
+        <PostSaleFollowUpView deals={dealsList} onUpdateFollowUp={updateFollowUpOnSale} />
+      </div>
+    );
+  }
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
       {subtabBar}
       <div style={{ padding: '1rem 1.25rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexShrink: 0, flexWrap: 'wrap' }}>
         <div>
-          <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>Clients</h2>
+          <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>{headingLabel}</h2>
           <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
-            {cdmName ? `${cdmName}'s clients` : 'Your clients'} — every prospect with CDM = {cdmName || 'your CDM'} and <strong>Status = Client</strong>
-            {showOld ? ' or Old Client' : ''}. Click ▸ to expand a client&apos;s contracts.
+            {cdmName ? `${cdmName}'s ${headingLabel.toLowerCase()}` : `Your ${headingLabel.toLowerCase()}`} — every prospect with CDM = {cdmName || 'your CDM'} and <strong>Status = {statusLabel}</strong>
+            {showOld ? ` or ${otherLabel}` : ''}. Click ▸ to expand a client&apos;s contracts.
           </div>
         </div>
         <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: '#475569', cursor: 'pointer' }}>
           <input type="checkbox" checked={showOld} onChange={e => setShowOld(e.target.checked)} />
-          <span>Include Old Clients ({oldCount})</span>
+          <span>Include {otherLabel}s ({oldCount})</span>
         </label>
       </div>
 
@@ -740,7 +1183,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
           type="text"
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder="Filter by company, CDM, Client Manager, Status, type, website…"
+          placeholder="Filter by company, CDM, Tier, Target Tier, Client Manager, Status, type, website…"
           style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
         <button
@@ -750,28 +1193,38 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
           style={{ padding: '0.4rem 0.8rem', border: '1px solid #E2E8F0', background: 'white', borderRadius: 6, fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit' }}
         >Link columns</button>
         <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
-          {filtered.length} of {activeCount}{showOld ? ` active · ${oldCount} old` : ''}
+          {filtered.length} of {activeCount}{showOld ? ` ${statusLabel.toLowerCase()} · ${oldCount} ${otherLabel.toLowerCase()}` : ''}
         </span>
       </div>
 
       {/* Always-visible diagnostic strip so 'blank page' is never actually blank. */}
       <div style={{ padding: '0 1.25rem 0.5rem', fontSize: '0.68rem', color: '#64748B', flexShrink: 0 }}>
-        Loaded {totalProspects} prospects · {myProspects.length} match CDM &quot;{cdmName || '(unset)'}&quot; · {allClients} are Status=Client · showing {clients.length}
+        Loaded {totalProspects} prospects · {myProspects.length} match CDM &quot;{cdmName || '(unset)'}&quot; · {allClients} are Status={statusLabel} · showing {clients.length}
+      </div>
+
+      {/* Legend so the red row tint is self-explanatory on the page. */}
+      <div style={{ padding: '0 1.25rem 0.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.68rem', color: '#64748B', flexShrink: 0, flexWrap: 'wrap' }}>
+        <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 3, background: '#FEE2E2', border: '1px solid #FCA5A5', flexShrink: 0 }} />
+        <span>
+          Red rows need attention: the soonest contract expires within {RENEWAL_WARNING_DAYS} days and the <strong>Status</strong> column is still blank. Set a Status to clear the highlight.
+        </span>
+        <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 3, background: '#FEF9C3', border: '1px solid #FDE047', flexShrink: 0, marginLeft: '0.6rem' }} />
+        <span>Yellow rows are in progress — <strong>Status</strong> is &ldquo;Reached out to CM&rdquo;; the badge counts down the {REACHED_OUT_TIMER_DAYS} days until that status auto-clears.</span>
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {clients.length === 0 ? (
           <div style={{ margin: '0 1.25rem', padding: '1.25rem', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
-            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem', textAlign: 'center' }}>No clients found for {cdmName || 'this user'}</div>
+            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem', textAlign: 'center' }}>No {headingLabel.toLowerCase()} found for {cdmName || 'this user'}</div>
             <div style={{ fontSize: '0.78rem', marginBottom: '0.75rem', textAlign: 'center' }}>
-              Set a prospect&apos;s <strong>CDM</strong> to {cdmName || 'your CDM name'} and <strong>Status</strong> to <code>Client</code> in My Accounts to list it here.
+              Set a prospect&apos;s <strong>CDM</strong> to {cdmName || 'your CDM name'} and <strong>Status</strong> to <code>{statusLabel}</code> in My Accounts to list it here.
             </div>
             <div style={{ fontSize: '0.72rem', background: '#F8FAFC', padding: '0.6rem 0.8rem', borderRadius: 6, color: '#334155' }}>
               <div><strong>Diagnostic:</strong></div>
               <div>Total prospects loaded: {totalProspects}</div>
               <div>Prospects matching CDM &quot;{cdmName || '(unset)'}&quot;: {myProspects.length}</div>
-              <div>Prospects with Status = Client: {allClients}</div>
-              <div>{cdmName || 'Your CDM'} + Client: {activeCount}</div>
+              <div>Prospects with Status = {statusLabel}: {allClients}</div>
+              <div>{cdmName || 'Your CDM'} + {statusLabel}: {activeCount}</div>
               {totalProspects === 0 && (
                 <div style={{ color: '#B91C1C', marginTop: '0.5rem' }}>
                   Prospects haven&apos;t loaded yet. If this sticks, check your network / login.
@@ -790,7 +1243,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
           </div>
         ) : (
           <DataTable
-            tableId="clients"
+            tableId={tableId}
             columns={columns}
             rows={rows}
             alwaysVisible={['company']}
@@ -802,12 +1255,18 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
               if (row.untracked) {
                 return { background: '#F1F5F9', color: '#94A3B8' };
               }
+              const s = String(row.Status || '').trim();
+              // Tint yellow once the user has "Reached out to CM" about a
+              // client — these are in progress, distinct from the red rows
+              // that still need any status at all.
+              if (/reached\s*out/i.test(s) && /\bcm\b/i.test(s)) {
+                return { background: '#FEF9C3' };
+              }
               // Tint the row light red when a renewal is closing in
               // (<270 days) and the Status column is unset — those are
               // the clients that need a status set before they slip.
-              const s = String(row.Status || '').trim();
               const noStatus = s === '' || s === '-' || s === '—' || s === '–';
-              if (row.daysUntilExpiration != null && row.daysUntilExpiration < 270 && noStatus) {
+              if (row.daysUntilExpiration != null && row.daysUntilExpiration < RENEWAL_WARNING_DAYS && noStatus) {
                 return { background: '#FEE2E2' };
               }
               return undefined;

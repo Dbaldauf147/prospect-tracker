@@ -2,10 +2,12 @@ import { useState, useEffect, useMemo } from 'react';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import { LineChart, Line, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
+import { LineChart, Line, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 import { buildCompanyIndex, hasMatchInIndex } from '../../utils/companyIndex';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
+import { userLsGet } from '../../utils/userLs';
+import { getOppsSheetCsvUrl } from '../../utils/oppsSheetUrl';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { matchesCdm } from '../../utils/cdmMatch';
 
@@ -48,10 +50,88 @@ const CHART_VIEW_OPTIONS = [
   { key: 'stackedArea', label: 'Stacked Area' },
 ];
 
-function ProgressChart({ title, data, series, isPct, defaultView = 'line', secondarySeries, onHide, onRename }) {
+// When a line-chart data point hits 100%, paint its dot dark green so a
+// maxed-out metric jumps out at a glance.
+const DARK_GREEN = '#15803D';
+function makeDot(color, baseR) {
+  function Dot(props) {
+    const { cx, cy, value, index } = props;
+    if (cx == null || cy == null) return null;
+    const hit = value === 100;
+    return (
+      <circle
+        key={`dot-${index}`}
+        cx={cx}
+        cy={cy}
+        r={hit ? baseR + 1 : baseR}
+        fill={hit ? DARK_GREEN : color}
+        stroke={hit ? DARK_GREEN : color}
+        strokeWidth={1}
+      />
+    );
+  }
+  return Dot;
+}
+
+// Build a derived dataset that adds, for each percent series, a parallel
+// `${key}__green` key holding the value only where the point belongs to a
+// dark-green segment (it, or a neighbor, hits 100%) and null elsewhere.
+// A second Line drawn from this key with connectNulls=false overlays solid
+// dark green exactly on the maxed-out stretches — far more reliable than an
+// SVG stroke gradient, which renders inconsistently on near-flat lines.
+function withGreenKeys(data, series) {
+  return data.map((d, i) => {
+    const row = { ...d };
+    for (const s of series) {
+      const v = d[s.key];
+      const prev = i > 0 ? data[i - 1][s.key] : undefined;
+      const next = i < data.length - 1 ? data[i + 1][s.key] : undefined;
+      row[`${s.key}__green`] = (v === 100 || prev === 100 || next === 100) ? v : null;
+    }
+    return row;
+  });
+}
+
+function ProgressChart({ title, data, series, isPct, defaultView = 'line', secondarySeries, onHide, onRename, onViewChange, pins = [], onTogglePin, onClearPins, onDownload, onDownloadPoint }) {
   const [viewType, setViewType] = useState(defaultView);
+  // Persist the picked view so it becomes this chart's default next visit.
+  const changeView = (v) => { setViewType(v); if (onViewChange) onViewChange(v); };
+  // Resolve pinned week keys to the data rows still present, preserving
+  // chronological order so the callout reads left-to-right like the chart.
+  const pinnedRows = useMemo(() => {
+    const set = new Set(pins);
+    return data.filter(d => set.has(d.week));
+  }, [pins, data]);
+  // Clicking a point (or anywhere on a column's band) toggles a pin at that
+  // week. Recharts hands us the active x-axis label; map it back to the row.
+  const handleChartClick = (state) => {
+    if (!onTogglePin || !state || state.activeLabel == null) return;
+    const row = data.find(d => d.weekLabel === state.activeLabel);
+    if (row) onTogglePin(row.week);
+  };
+  // Vertical reference line marking each pinned week, drawn inside every
+  // chart variant so the pin shows regardless of the selected view.
+  const pinLines = pinnedRows.map(row => (
+    <ReferenceLine
+      key={`pin-${row.week}`}
+      x={row.weekLabel}
+      yAxisId="left"
+      stroke="#6366F1"
+      strokeDasharray="5 3"
+      ifOverflow="extendDomain"
+      label={{ value: '📌', position: 'top', fontSize: 12 }}
+    />
+  ));
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
+  // For percent line charts, augment the data with the green-overlay keys.
+  const lineData = useMemo(() => (isPct ? withGreenKeys(data, series) : data), [data, series, isPct]);
+  // Legend payload with explicit flat colors (the green overlay lines opt
+  // out of the legend, and secondary series keep their own color).
+  const lineLegendPayload = [
+    ...series.map(s => ({ value: s.name, type: 'line', id: s.key, color: s.color })),
+    ...(Array.isArray(secondarySeries) ? secondarySeries : []).map(s => ({ value: s.name, type: 'line', id: s.key, color: s.color })),
+  ];
   const yProps = isPct
     ? { domain: [0, 100], tickFormatter: v => `${v}%` }
     : { allowDecimals: false };
@@ -84,13 +164,24 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
           <select
             value={viewType}
-            onChange={e => setViewType(e.target.value)}
+            onChange={e => changeView(e.target.value)}
+            title="Chart view — your selection is saved as this chart's default"
             style={{ fontSize: '0.7rem', padding: '0.2rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: '5px', background: 'var(--color-surface)', color: 'var(--color-text)', fontFamily: 'inherit', cursor: 'pointer' }}
           >
             {CHART_VIEW_OPTIONS.map(opt => (
               <option key={opt.key} value={opt.key}>{opt.label}</option>
             ))}
           </select>
+          {onDownload && (
+            <button
+              type="button"
+              onClick={onDownload}
+              title="Download this chart's raw weekly data (Excel)"
+              style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: 5, color: 'var(--color-text-secondary)', cursor: 'pointer', padding: '0.1rem 0.45rem', fontSize: '0.8rem', lineHeight: 1, fontFamily: 'inherit' }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = '#059669'; e.currentTarget.style.borderColor = '#6EE7B7'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-secondary)'; e.currentTarget.style.borderColor = 'var(--color-border)'; }}
+            >⬇</button>
+          )}
           {onHide && (
             <button
               type="button"
@@ -105,13 +196,14 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
       </div>
       <ResponsiveContainer width="100%" height={250}>
         {viewType === 'bar' || viewType === 'stackedBar' ? (
-          <BarChart data={data}>
+          <BarChart data={data} onClick={handleChartClick}>
             <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
             <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
             <YAxis yAxisId="left" fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
             {hasSecondary && <YAxis yAxisId="right" orientation="right" fontSize={11} tick={{ fill: '#64748B' }} allowDecimals={false} />}
             <Tooltip formatter={tooltipFmt} />
             <Legend />
+            {pinLines}
             {series.map(s => (
               <Bar key={s.key} yAxisId="left" dataKey={s.key} name={s.name} fill={s.color} stackId={stacked ? 'a' : undefined} />
             ))}
@@ -120,13 +212,14 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
             ))}
           </BarChart>
         ) : viewType === 'area' || viewType === 'stackedArea' ? (
-          <AreaChart data={data}>
+          <AreaChart data={data} onClick={handleChartClick}>
             <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
             <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
             <YAxis yAxisId="left" fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
             {hasSecondary && <YAxis yAxisId="right" orientation="right" fontSize={11} tick={{ fill: '#64748B' }} allowDecimals={false} />}
             <Tooltip formatter={tooltipFmt} />
             <Legend />
+            {pinLines}
             {series.map(s => (
               <Area key={s.key} yAxisId="left" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} fill={s.color} fillOpacity={0.3} stackId={stacked ? 'a' : undefined} />
             ))}
@@ -135,30 +228,36 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
             ))}
           </AreaChart>
         ) : viewType === 'stackedLine' ? (
-          <AreaChart data={data}>
+          <AreaChart data={data} onClick={handleChartClick}>
             <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
             <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
             <YAxis yAxisId="left" fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
             {hasSecondary && <YAxis yAxisId="right" orientation="right" fontSize={11} tick={{ fill: '#64748B' }} allowDecimals={false} />}
             <Tooltip formatter={tooltipFmt} />
             <Legend />
+            {pinLines}
             {series.map(s => (
-              <Area key={s.key} yAxisId="left" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} fill="none" stackId="a" dot={{ r: 3, fill: s.color }} activeDot={{ r: 5 }} />
+              <Area key={s.key} yAxisId="left" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} fill="none" stackId="a" dot={isPct ? makeDot(s.color, 3) : { r: 3, fill: s.color }} activeDot={{ r: 5 }} />
             ))}
             {hasSecondary && secondarySeries.map(s => (
               <Line key={s.key} yAxisId="right" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: s.color }} />
             ))}
           </AreaChart>
         ) : (
-          <LineChart data={data}>
+          <LineChart data={lineData} onClick={handleChartClick}>
             <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
             <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
             <YAxis yAxisId="left" fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
             {hasSecondary && <YAxis yAxisId="right" orientation="right" fontSize={11} tick={{ fill: '#64748B' }} allowDecimals={false} />}
-            <Tooltip formatter={tooltipFmt} />
-            <Legend />
+            <Tooltip formatter={tooltipFmt} payloadUniqBy={isPct ? (o => o.name) : undefined} />
+            <Legend payload={isPct ? lineLegendPayload : undefined} />
+            {pinLines}
             {series.map(s => (
-              <Line key={s.key} yAxisId="left" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} dot={{ r: 4 }} />
+              <Line key={s.key} yAxisId="left" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} dot={isPct ? makeDot(s.color, 4) : { r: 4 }} />
+            ))}
+            {isPct && series.map(s => (
+              // Solid dark-green overlay on the maxed-out (100%) stretches.
+              <Line key={`${s.key}__green`} yAxisId="left" type="monotone" dataKey={`${s.key}__green`} name={s.name} stroke={DARK_GREEN} strokeWidth={2.5} dot={false} activeDot={false} connectNulls={false} legendType="none" isAnimationActive={false} />
             ))}
             {hasSecondary && secondarySeries.map(s => (
               <Line key={s.key} yAxisId="right" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: s.color }} />
@@ -166,6 +265,63 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
           </LineChart>
         )}
       </ResponsiveContainer>
+      {pinnedRows.length > 0 ? (
+        <div style={{ marginTop: '0.6rem', borderTop: '1px dashed var(--color-border)', paddingTop: '0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
+            <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>📌 Pinned points</span>
+            {onClearPins && (
+              <button
+                type="button"
+                onClick={onClearPins}
+                style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: 5, color: 'var(--color-text-secondary)', cursor: 'pointer', padding: '0.1rem 0.4rem', fontSize: '0.65rem', fontFamily: 'inherit' }}
+              >Clear all</button>
+            )}
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+            {pinnedRows.map(row => (
+              <div key={row.week} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', border: '1px solid #C7D2FE', background: '#EEF2FF', borderRadius: 6, padding: '0.2rem 0.4rem' }}>
+                <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#3730A3' }}>{row.weekLabel}</span>
+                <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+                  {[...series, ...(Array.isArray(secondarySeries) ? secondarySeries : [])].map(s => {
+                    const v = row[s.key];
+                    if (v == null) return null;
+                    const isPrimary = series.includes(s);
+                    const shown = isPct && isPrimary ? `${v}%` : v;
+                    return (
+                      <span key={s.key} style={{ fontSize: '0.68rem', color: 'var(--color-text)', whiteSpace: 'nowrap' }}>
+                        <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: s.color, marginRight: 3, verticalAlign: 'middle' }} />
+                        {s.name}: <strong>{shown}</strong>
+                      </span>
+                    );
+                  })}
+                </span>
+                {onDownloadPoint && (
+                  <button
+                    type="button"
+                    onClick={() => onDownloadPoint(row.week)}
+                    title="Download the raw data feeding this pinned point (Excel)"
+                    style={{ background: 'none', border: 'none', color: '#059669', cursor: 'pointer', padding: 0, fontSize: '0.8rem', lineHeight: 1 }}
+                  >⬇</button>
+                )}
+                {onTogglePin && (
+                  <button
+                    type="button"
+                    onClick={() => onTogglePin(row.week)}
+                    title="Unpin"
+                    style={{ background: 'none', border: 'none', color: '#6366F1', cursor: 'pointer', padding: 0, fontSize: '0.85rem', lineHeight: 1 }}
+                  >×</button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        onTogglePin && (
+          <div style={{ marginTop: '0.4rem', fontSize: '0.65rem', color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>
+            Tip: click a point on the chart to pin it.
+          </div>
+        )
+      )}
     </div>
   );
 }
@@ -215,14 +371,93 @@ function companiesMatch(a, b) {
 
 const HIDDEN_CHARTS_KEY = 'progress:hidden-charts';
 const CHART_TITLES_KEY = 'progress:chart-titles';
-const PROGRESS_CHART_DEFS = [
-  { id: 'contactPct',     label: '% of Accounts with HubSpot Contacts' },
-  { id: 'dmPct',          label: '% of Accounts with Decision Maker Identified' },
-  { id: 'connectedPct',   label: '% of Accounts Connected (Had Opportunity)' },
-  { id: 'inactivePct',    label: '% of Accounts Inactive (Lost / Hold Off / Old Client)' },
-  { id: 'tierTotals',     label: 'My Accounts by Tier' },
-  { id: 'noOppsActivity', label: 'Activity on Accounts with No Opportunities (30d)' },
+const CHART_VIEWS_KEY = 'progress:chart-views';
+const CHART_PINS_KEY = 'progress:chart-pins';
+
+// PE Stage → snapshot field + chart color. Mirrors the four PE_STAGES on
+// the PE Portfolio page so this chart tracks the same buckets. The snapshot
+// stores one count per stage plus a rollup total.
+const PE_STAGE_SERIES = [
+  { stage: 'Discovery',            key: 'peDiscovery',           color: '#3B82F6' },
+  { stage: 'Piloting',             key: 'pePiloting',            color: '#F59E0B' },
+  { stage: 'Existing Partnership', key: 'peExistingPartnership', color: '#10B981' },
+  { stage: 'Not Sold',             key: 'peNotSold',             color: '#DC2626' },
 ];
+
+// Single source of truth for every progress chart: its id, label, the
+// series (and optional secondary series) it plots, whether it's a percent
+// chart, and its default view. Both the rendered charts and the Excel
+// raw-data export read from this so the download always matches the charts.
+const PROGRESS_CHART_DEFS = [
+  { id: 'contactPct',   label: '% of Accounts with HubSpot Contacts', isPct: true,
+    series: [{ key: 't1ContactPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ContactPct', name: 'Tier 2', color: '#3B82F6' }] },
+  { id: 'dmPct',        label: '% of Accounts with Decision Maker Identified', isPct: true,
+    series: [{ key: 't1DMPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2DMPct', name: 'Tier 2', color: '#3B82F6' }] },
+  { id: 'connectedPct', label: '% of Accounts Connected (Had Opportunity)', isPct: true,
+    series: [{ key: 't1ConnectedPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ConnectedPct', name: 'Tier 2', color: '#3B82F6' }] },
+  { id: 'inactivePct',  label: '% of Accounts Inactive (Lost / Hold Off / Old Client)', isPct: true,
+    series: [{ key: 't1InactivePct', name: 'Tier 1', color: '#DC2626' }, { key: 't2InactivePct', name: 'Tier 2', color: '#3B82F6' }] },
+  { id: 'tierTotals',   label: 'My Accounts by Tier',
+    series: [
+      { key: 't1Total', name: 'Tier 1', color: '#DC2626' },
+      { key: 't2Total', name: 'Tier 2', color: '#3B82F6' },
+      { key: 't3Total', name: 'Tier 3', color: '#F59E0B' },
+    ],
+    secondarySeries: [{ key: 'totalAccounts', name: 'Total Accounts', color: '#111827' }] },
+  { id: 'noOppsActivity', label: 'Activity on Accounts with No Opportunities (30d)',
+    series: [
+      { key: 'noOppsActivityT1', name: 'Tier 1', color: '#DC2626' },
+      { key: 'noOppsActivityT2', name: 'Tier 2', color: '#3B82F6' },
+      { key: 'noOppsActivityT3', name: 'Tier 3', color: '#F59E0B' },
+    ],
+    secondarySeries: [{ key: 'noOppsAccountCount', name: 'No-Opps Accounts', color: '#111827' }] },
+  { id: 'peStages',     label: 'PE Firms by PE Stage', defaultView: 'stackedBar',
+    series: PE_STAGE_SERIES.map(s => ({ key: s.key, name: s.stage, color: s.color })),
+    secondarySeries: [{ key: 'peTotal', name: 'Total PE Firms', color: '#111827' }] },
+];
+
+// Build the account-level rows that PRODUCED a chart's data point for a
+// given week, from that week's saved `details` lists. Returns
+// { columns, rows } for the charts that store per-account drill-down, or
+// null for the count charts (tier totals, no-opps activity) that only
+// persist aggregates — those still get a summary sheet on export.
+function pointDetailRows(chartId, details) {
+  if (!details) return null;
+  const asStr = (v) => (typeof v === 'string' ? v : (v?.company || ''));
+  const yesNo = (metric, t1Yes, t1No, t2Yes, t2No) => {
+    const rows = [];
+    (details[t1Yes] || []).forEach(v => rows.push([asStr(v), 'Tier 1', 'Yes']));
+    (details[t1No] || []).forEach(v => rows.push([asStr(v), 'Tier 1', 'No']));
+    (details[t2Yes] || []).forEach(v => rows.push([asStr(v), 'Tier 2', 'Yes']));
+    (details[t2No] || []).forEach(v => rows.push([asStr(v), 'Tier 2', 'No']));
+    return { columns: ['Company', 'Tier', metric], rows };
+  };
+  switch (chartId) {
+    case 'contactPct':
+      return yesNo('Has HubSpot Contacts', 't1WithContacts', 't1NoContacts', 't2WithContacts', 't2NoContacts');
+    case 'dmPct':
+      return yesNo('Decision Maker Identified', 't1WithDM', 't1NoDM', 't2WithDM', 't2NoDM');
+    case 'connectedPct':
+      return yesNo('Connected (Had Opportunity)', 't1Connected', 't1NotConnected', 't2Connected', 't2NotConnected');
+    case 'inactivePct': {
+      // Only the inactive accounts (the numerator) are stored, each with
+      // its status. Those ARE the raw data behind the percentage.
+      const rows = [];
+      (details.t1Inactive || []).forEach(v => rows.push([asStr(v), 'Tier 1', typeof v === 'string' ? '' : (v.status || '')]));
+      (details.t2Inactive || []).forEach(v => rows.push([asStr(v), 'Tier 2', typeof v === 'string' ? '' : (v.status || '')]));
+      return { columns: ['Company', 'Tier', 'Inactive Status'], rows };
+    }
+    case 'peStages': {
+      const rows = [];
+      for (const s of PE_STAGE_SERIES) {
+        (details[s.key] || []).forEach(v => rows.push([asStr(v), s.stage]));
+      }
+      return { columns: ['Company', 'PE Stage'], rows };
+    }
+    default:
+      return null; // tierTotals, noOppsActivity — no per-account detail stored
+  }
+}
 function loadHiddenCharts() {
   try {
     const raw = localStorage.getItem(HIDDEN_CHARTS_KEY);
@@ -245,8 +480,37 @@ function persistChartTitles(map) {
   try { localStorage.setItem(CHART_TITLES_KEY, JSON.stringify(map)); } catch {}
 }
 
+// Per-chart default view (line / bar / area / …). Whatever view the user
+// picks from a chart's dropdown is saved here keyed by chart id, so it
+// becomes that chart's default on the next visit.
+function loadChartViews() {
+  try {
+    const raw = localStorage.getItem(CHART_VIEWS_KEY);
+    const obj = raw ? JSON.parse(raw) : null;
+    return obj && typeof obj === 'object' ? obj : {};
+  } catch { return {}; }
+}
+function persistChartViews(map) {
+  try { localStorage.setItem(CHART_VIEWS_KEY, JSON.stringify(map)); } catch {}
+}
+
+// Per-chart pinned data points. Keyed by chart id → array of week keys
+// (the snapshot's stable `week` value, not the display label) the user has
+// pinned. Pins render as a labelled reference line on the chart plus a
+// values callout below it, and persist across visits.
+function loadChartPins() {
+  try {
+    const raw = localStorage.getItem(CHART_PINS_KEY);
+    const obj = raw ? JSON.parse(raw) : null;
+    return obj && typeof obj === 'object' ? obj : {};
+  } catch { return {}; }
+}
+function persistChartPins(map) {
+  try { localStorage.setItem(CHART_PINS_KEY, JSON.stringify(map)); } catch {}
+}
+
 export function ProgressView({ prospects, settings, cdmName }) {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [history, setHistory] = useState([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [oppsRecordsState, setOppsRecordsState] = useState([]);
@@ -267,6 +531,14 @@ export function ProgressView({ prospects, settings, cdmName }) {
   const [hiddenCharts, setHiddenCharts] = useState(() => loadHiddenCharts());
   const [showChartsMenu, setShowChartsMenu] = useState(false);
   const [chartTitles, setChartTitles] = useState(() => loadChartTitles());
+  const [chartViews, setChartViews] = useState(() => loadChartViews());
+  const setChartView = (id, view) => {
+    setChartViews(prev => {
+      const next = { ...prev, [id]: view };
+      persistChartViews(next);
+      return next;
+    });
+  };
   const toggleChartHidden = (id) => {
     setHiddenCharts(prev => {
       const next = new Set(prev);
@@ -285,7 +557,29 @@ export function ProgressView({ prospects, settings, cdmName }) {
       return next;
     });
   };
+  const [chartPins, setChartPins] = useState(() => loadChartPins());
+  const toggleChartPin = (id, weekKey) => {
+    setChartPins(prev => {
+      const cur = Array.isArray(prev[id]) ? prev[id] : [];
+      const has = cur.includes(weekKey);
+      const nextList = has ? cur.filter(w => w !== weekKey) : [...cur, weekKey];
+      const next = { ...prev };
+      if (nextList.length) next[id] = nextList; else delete next[id];
+      persistChartPins(next);
+      return next;
+    });
+  };
+  const clearChartPins = (id) => {
+    setChartPins(prev => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      persistChartPins(next);
+      return next;
+    });
+  };
   const titleFor = (id, fallback) => chartTitles[id] || fallback;
+  const viewFor = (id, fallback = 'line') => chartViews[id] || fallback;
 
   // Load history from Firestore + opps data
   useEffect(() => {
@@ -307,11 +601,15 @@ export function ProgressView({ prospects, settings, cdmName }) {
         console.error('[ProgressView] Failed to load progress — auto-save disabled to avoid overwrite:', err);
       }
 
-      // Load opps: try Google Sheet directly, then Firestore, then IndexedDB, then localStorage
+      // Load opps: try the user's configured Opps sheet first, then
+      // Firestore, then IndexedDB, then localStorage. When the user
+      // hasn't configured a sheet (and isn't admin), skip the network
+      // fetch entirely so we don't pull another user's data.
       let records = [];
       try {
-        const sheetRes = await fetch('https://docs.google.com/spreadsheets/d/1ee0OREqA25jzDaR6xRDSrj_ZIZDymQjf1k2Z2_ajVKw/export?format=csv&gid=0');
-        if (sheetRes.ok) {
+        const oppsSheetUrl = getOppsSheetCsvUrl({ isAdmin, settings });
+        const sheetRes = oppsSheetUrl ? await fetch(oppsSheetUrl) : null;
+        if (sheetRes && sheetRes.ok) {
           const csvText = await sheetRes.text();
           const lines = csvText.split('\n');
           if (lines.length > 1) {
@@ -474,7 +772,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
     const activityByCompany = (() => {
       const counts = {};
       let cache = null;
-      try { cache = JSON.parse(localStorage.getItem('hubspot-activity-cache')); } catch {}
+      try { cache = JSON.parse(userLsGet('hubspot-activity-cache')); } catch {}
       if (!cache) return counts;
       const domainMap = new Map();
       const contactMap = new Map();
@@ -579,6 +877,22 @@ export function ProgressView({ prospects, settings, cdmName }) {
     const noOppsActivityTotal = noOppsActivityT1 + noOppsActivityT2 + noOppsActivityT3;
     const noOppsAccountCount = t1NotConnected.length + t2NotConnected.length + t3.filter(p => !hasOpp(p.company)).length;
 
+    // PE firms by PE Stage — mirrors the PE Portfolio page, which lists
+    // every prospect typed "Private Equity" and buckets it by the peStage
+    // set in its company popup (Discovery / Piloting / Existing Partnership
+    // / Not Sold). No CDM filter here, to match that page's total.
+    const peFirms = prospects.filter(p => p.type === 'Private Equity');
+    const peStageCounts = {};
+    const peStageDetails = {};
+    for (const s of PE_STAGE_SERIES) { peStageCounts[s.key] = 0; peStageDetails[s.key] = []; }
+    for (const p of peFirms) {
+      const s = PE_STAGE_SERIES.find(x => x.stage === String(p.peStage || '').trim());
+      if (!s) continue;
+      peStageCounts[s.key]++;
+      peStageDetails[s.key].push(p.company);
+    }
+    const peTotal = peFirms.length;
+
     return {
       week: getWeekKey(new Date()),
       t1Total, t2Total, t3Total: t3.length,
@@ -592,6 +906,8 @@ export function ProgressView({ prospects, settings, cdmName }) {
       noOppsActivityT3,
       noOppsActivityTotal,
       noOppsAccountCount,
+      ...peStageCounts,
+      peTotal,
       t1ContactPct: t1Total > 0 ? Math.round((t1WithContacts / t1Total) * 100) : 0,
       t2ContactPct: t2Total > 0 ? Math.round((t2WithContacts / t2Total) * 100) : 0,
       t1DMPct: t1Total > 0 ? Math.round((t1WithDM / t1Total) * 100) : 0,
@@ -616,6 +932,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
         t2NotConnected: t2NotConnected.map(p => p.company),
         t1Inactive: t1InactiveList.map(p => ({ company: p.company, status: p.status })),
         t2Inactive: t2InactiveList.map(p => ({ company: p.company, status: p.status })),
+        ...peStageDetails,
       },
     };
   }, [prospects, settings, oppsRecordsState, hubspotContactsState, cdmName]);
@@ -639,6 +956,9 @@ export function ProgressView({ prospects, settings, cdmName }) {
     currentSnapshot.t1Connected, currentSnapshot.t2Connected,
     currentSnapshot.t1Inactive, currentSnapshot.t2Inactive,
     currentSnapshot.noOppsActivityTotal, currentSnapshot.noOppsAccountCount,
+    currentSnapshot.peTotal,
+    currentSnapshot.peDiscovery, currentSnapshot.pePiloting,
+    currentSnapshot.peExistingPartnership, currentSnapshot.peNotSold,
   ]);
 
   // Save current week snapshot — re-reads Firestore first to avoid overwriting
@@ -729,10 +1049,104 @@ export function ProgressView({ prospects, settings, cdmName }) {
     return new Date(w + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   }
 
+  // Export the raw weekly data behind the charts to Excel. With no argument
+  // it exports every chart — a combined "All Data" sheet plus one sheet per
+  // chart. Passed a single chart def, it exports just that chart. Reads
+  // PROGRESS_CHART_DEFS so the download always mirrors what the charts plot,
+  // honoring any renamed titles.
+  async function downloadChartsData(onlyDef) {
+    if (!chartData.length) return;
+    const XLSX = await import('xlsx');
+    const wb = XLSX.utils.book_new();
+
+    const usedNames = new Set();
+    const uniqueSheetName = (desired, fallback) => {
+      const cleaned = String(desired || fallback || 'Sheet').replace(/[\\/?*[\]:]/g, ' ').replace(/\s+/g, ' ').trim();
+      let base = (cleaned || fallback || 'Sheet').slice(0, 28);
+      let name = base;
+      let n = 2;
+      while (usedNames.has(name.toLowerCase())) { name = `${base.slice(0, 25)} ${n++}`; }
+      usedNames.add(name.toLowerCase());
+      return name;
+    };
+    const appendChartSheet = (def, headerNames) => {
+      const cols = [...def.series, ...(def.secondarySeries || [])];
+      const aoa = [['Week', 'Week Start', ...cols.map((s, i) => (headerNames ? headerNames[i] : s.name))]];
+      for (const row of chartData) {
+        aoa.push([row.weekLabel, row.week, ...cols.map(s => (row[s.key] == null ? '' : row[s.key]))]);
+      }
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), uniqueSheetName(titleFor(def.id, def.label), def.id));
+    };
+
+    const defs = onlyDef ? [onlyDef] : PROGRESS_CHART_DEFS;
+
+    // For the full export, lead with a combined sheet: Week + every series
+    // across all charts (deduped by key). Column headers are prefixed with
+    // the chart title since several charts reuse series names like "Tier 1".
+    if (!onlyDef) {
+      const combinedCols = [];
+      const seenKeys = new Set();
+      for (const c of PROGRESS_CHART_DEFS) {
+        const chartTitle = titleFor(c.id, c.label);
+        for (const s of [...c.series, ...(c.secondarySeries || [])]) {
+          if (!seenKeys.has(s.key)) { seenKeys.add(s.key); combinedCols.push({ key: s.key, header: `${chartTitle} — ${s.name}` }); }
+        }
+      }
+      const combined = [['Week', 'Week Start', ...combinedCols.map(s => s.header)]];
+      for (const row of chartData) {
+        combined.push([row.weekLabel, row.week, ...combinedCols.map(s => (row[s.key] == null ? '' : row[s.key]))]);
+      }
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(combined), uniqueSheetName('All Data'));
+    }
+
+    for (const c of defs) appendChartSheet(c);
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    const fileBase = onlyDef
+      ? `${titleFor(onlyDef.id, onlyDef.label).replace(/[\\/?*[\]:]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)} - data`
+      : 'Weekly Progress Charts';
+    XLSX.writeFile(wb, `${fileBase} - ${stamp}.xlsx`);
+  }
+
+  // Export the raw data feeding a single PINNED data point: one specific
+  // chart at one specific week. Includes a Summary sheet with that week's
+  // plotted values and, when the chart stores per-account drill-down, an
+  // Accounts sheet listing the exact accounts that produced the point.
+  async function downloadPointData(def, weekKey) {
+    const row = chartData.find(d => d.week === weekKey);
+    if (!def || !row) return;
+    const XLSX = await import('xlsx');
+    const wb = XLSX.utils.book_new();
+    const title = titleFor(def.id, def.label);
+    const cols = [...def.series, ...(def.secondarySeries || [])];
+
+    // Summary: the plotted values for this week.
+    const summary = [
+      ['Chart', title],
+      ['Week', row.weekLabel],
+      ['Week Start', row.week],
+      [],
+      ['Series', 'Value'],
+      ...cols.map(s => [s.name, row[s.key] == null ? '' : (def.isPct && def.series.includes(s) ? `${row[s.key]}%` : row[s.key])]),
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), 'Summary');
+
+    // Accounts: the underlying rows that produced the point, when stored.
+    const detail = pointDetailRows(def.id, row.details);
+    if (detail && detail.rows.length) {
+      const aoa = [detail.columns, ...detail.rows];
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Accounts');
+    }
+
+    const safeTitle = title.replace(/[\\/?*[\]:]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 45);
+    const safeWeek = String(row.week).replace(/[\\/?*[\]:]/g, '-');
+    XLSX.writeFile(wb, `${safeTitle} - ${safeWeek}.xlsx`);
+  }
+
   if (loading) return <div style={{ padding: '2rem', color: 'var(--color-text-muted)' }}>Loading...</div>;
 
   return (
-    <div style={{ padding: '1.5rem' }}>
+    <div style={{ padding: '1.5rem', flex: 1, minHeight: 0, overflowY: 'auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
         <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-text)', margin: 0 }}>Weekly Progress</h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
@@ -825,7 +1239,15 @@ export function ProgressView({ prospects, settings, cdmName }) {
       {/* Charts */}
       {chartData.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', position: 'relative' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.5rem', position: 'relative' }}>
+            <button
+              type="button"
+              onClick={() => downloadChartsData()}
+              title="Download an Excel workbook with the raw weekly data behind every chart — a combined sheet plus one sheet per chart"
+              style={{ padding: '0.3rem 0.8rem', border: '1px solid #059669', borderRadius: 6, background: '#059669', color: '#fff', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+            >
+              ⬇ Excel (raw data)
+            </button>
             <button
               type="button"
               onClick={() => setShowChartsMenu(v => !v)}
@@ -849,78 +1271,25 @@ export function ProgressView({ prospects, settings, cdmName }) {
             )}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
-            {!hiddenCharts.has('contactPct') && (
+            {PROGRESS_CHART_DEFS.filter(c => !hiddenCharts.has(c.id)).map(c => (
               <ProgressChart
-                title={titleFor('contactPct', '% of Accounts with HubSpot Contacts')}
+                key={c.id}
+                title={titleFor(c.id, c.label)}
                 data={chartData}
-                series={[{ key: 't1ContactPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ContactPct', name: 'Tier 2', color: '#3B82F6' }]}
-                isPct
-                onHide={() => toggleChartHidden('contactPct')}
-                onRename={(t) => renameChart('contactPct', t)}
+                series={c.series}
+                secondarySeries={c.secondarySeries}
+                isPct={c.isPct}
+                defaultView={viewFor(c.id, c.defaultView || 'line')}
+                onViewChange={(v) => setChartView(c.id, v)}
+                onHide={() => toggleChartHidden(c.id)}
+                onRename={(t) => renameChart(c.id, t)}
+                pins={chartPins[c.id] || []}
+                onTogglePin={(wk) => toggleChartPin(c.id, wk)}
+                onClearPins={() => clearChartPins(c.id)}
+                onDownload={() => downloadChartsData(c)}
+                onDownloadPoint={(wk) => downloadPointData(c, wk)}
               />
-            )}
-            {!hiddenCharts.has('dmPct') && (
-              <ProgressChart
-                title={titleFor('dmPct', '% of Accounts with Decision Maker Identified')}
-                data={chartData}
-                series={[{ key: 't1DMPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2DMPct', name: 'Tier 2', color: '#3B82F6' }]}
-                isPct
-                onHide={() => toggleChartHidden('dmPct')}
-                onRename={(t) => renameChart('dmPct', t)}
-              />
-            )}
-            {!hiddenCharts.has('connectedPct') && (
-              <ProgressChart
-                title={titleFor('connectedPct', '% of Accounts Connected (Had Opportunity)')}
-                data={chartData}
-                series={[{ key: 't1ConnectedPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ConnectedPct', name: 'Tier 2', color: '#3B82F6' }]}
-                isPct
-                onHide={() => toggleChartHidden('connectedPct')}
-                onRename={(t) => renameChart('connectedPct', t)}
-              />
-            )}
-            {!hiddenCharts.has('inactivePct') && (
-              <ProgressChart
-                title={titleFor('inactivePct', '% of Accounts Inactive (Lost / Hold Off / Old Client)')}
-                data={chartData}
-                series={[{ key: 't1InactivePct', name: 'Tier 1', color: '#DC2626' }, { key: 't2InactivePct', name: 'Tier 2', color: '#3B82F6' }]}
-                isPct
-                onHide={() => toggleChartHidden('inactivePct')}
-                onRename={(t) => renameChart('inactivePct', t)}
-              />
-            )}
-            {!hiddenCharts.has('tierTotals') && (
-              <ProgressChart
-                title={titleFor('tierTotals', 'My Accounts by Tier')}
-                data={chartData}
-                series={[
-                  { key: 't1Total', name: 'Tier 1', color: '#DC2626' },
-                  { key: 't2Total', name: 'Tier 2', color: '#3B82F6' },
-                  { key: 't3Total', name: 'Tier 3', color: '#F59E0B' },
-                ]}
-                secondarySeries={[
-                  { key: 'totalAccounts', name: 'Total Accounts', color: '#111827' },
-                ]}
-                onHide={() => toggleChartHidden('tierTotals')}
-                onRename={(t) => renameChart('tierTotals', t)}
-              />
-            )}
-            {!hiddenCharts.has('noOppsActivity') && (
-              <ProgressChart
-                title={titleFor('noOppsActivity', 'Activity on Accounts with No Opportunities (30d)')}
-                data={chartData}
-                series={[
-                  { key: 'noOppsActivityT1', name: 'Tier 1', color: '#DC2626' },
-                  { key: 'noOppsActivityT2', name: 'Tier 2', color: '#3B82F6' },
-                  { key: 'noOppsActivityT3', name: 'Tier 3', color: '#F59E0B' },
-                ]}
-                secondarySeries={[
-                  { key: 'noOppsAccountCount', name: 'No-Opps Accounts', color: '#111827' },
-                ]}
-                onHide={() => toggleChartHidden('noOppsActivity')}
-                onRename={(t) => renameChart('noOppsActivity', t)}
-              />
-            )}
+            ))}
           </div>
 
           {/* History table */}

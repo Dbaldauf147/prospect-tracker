@@ -1,10 +1,14 @@
 // Research a private equity firm's portfolio companies using Claude.
 // Returns a structured array of { companyName, sector, hqCity, hqCountry, energyGwh, siteCount, pcDescription, acquisitionYear }.
+import { withAuth } from './_lib/http.js';
+import { enforceRateLimit } from './_lib/rateLimit.js';
 
-export default async function handler(req, res) {
+async function handler(req, res, auth) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+  if (!(await enforceRateLimit(res, auth.uid, 'research-portfolio', 30, 5 * 60 * 1000))) return;
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -100,3 +104,5 @@ Return up to 100 companies. If unsure about a field, use your best estimate. Do 
     return res.status(500).json({ error: err.message || 'Unknown error' });
   }
 }
+
+export default withAuth(handler);

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { apiFetch } from '../../utils/apiFetch';
 import { getHubspotCache, setHubspotCache } from '../../utils/hubspotContactsCache';
 import styles from './DedupeView.module.css';
 
@@ -159,7 +160,7 @@ export function DedupeView() {
     let deleted = 0, errors = 0;
     for (const c of toDelete) {
       try {
-        const res = await fetch('/api/hubspot?action=delete-contact', {
+        const res = await apiFetch('/api/hubspot?action=delete-contact', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contactId: c.id }),

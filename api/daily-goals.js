@@ -2,11 +2,15 @@
 // context — recent days' bullets + completion stats, the user's own
 // notes about what's coming up, etc. — and returns a JSON array of
 // short, action-oriented strings.
+import { withAuth } from './_lib/http.js';
+import { enforceRateLimit } from './_lib/rateLimit.js';
 
-export default async function handler(req, res) {
+async function handler(req, res, auth) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+  if (!(await enforceRateLimit(res, auth.uid, 'daily-goals', 30, 5 * 60 * 1000))) return;
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -107,3 +111,5 @@ ${notes ? `Notes from me about today / this week:\n${notes}\n\n` : ''}Diagnose t
     return res.status(500).json({ error: err?.message || 'Unknown error' });
   }
 }
+
+export default withAuth(handler);

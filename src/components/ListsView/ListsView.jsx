@@ -4,24 +4,29 @@ import { TargetAccountsView } from '../TargetAccountsView/TargetAccountsView';
 import { RECAClientsView } from '../RECAClientsView/RECAClientsView';
 import { EcoActClientsView } from '../EcoActClientsView/EcoActClientsView';
 import { SitesView } from '../SitesView/SitesView';
+import { MasterSiteListView } from '../MasterSiteListView/MasterSiteListView';
 import { UploadedListView } from '../UploadedListView/UploadedListView';
 import { loadList as loadListFromIDB } from '../../utils/uploadedListStore';
 import { matchesCdm } from '../../utils/cdmMatch';
+import { userLsGet } from '../../utils/userLs';
 import styles from './ListsView.module.css';
 
 const SUBTABS = [
   { key: 'raclients', label: 'RA Clients' },
-  { key: 'targets', label: 'Target Accounts' },
+  { key: 'targets', label: 'Targets' },
+  { key: 'largest', label: 'Largest', storageKey: 'largest-list-override' },
   { key: 'strategic', label: 'Strategic Accounts', storageKey: 'strategic-accounts-override' },
   { key: 'sites', label: 'Utility Lookup' },
-  { key: 'recaclients', label: 'RECA Clients', storageKey: 'reca-clients-override' },
-  { key: 'ecoactclients', label: 'EcoAct Clients', storageKey: 'ecoact-clients-override' },
+  { key: 'mastersites', label: 'Master Site List' },
+  { key: 'recaclients', label: 'RECA', storageKey: 'reca-clients-override' },
+  { key: 'ecoactclients', label: 'EcoAct', storageKey: 'ecoact-clients-override' },
   { key: 'csrd', label: 'CSRD', storageKey: 'csrd-list-override' },
   { key: 'cdp', label: 'CDP', storageKey: 'cdp-list-override' },
   { key: 'gresb', label: 'GRESB', storageKey: 'gresb-list-override' },
   { key: 'sbt', label: 'SBT', storageKey: 'sbt-list-override' },
-  { key: 'unpri', label: 'UN PRI', storageKey: 'unpri-list-override' },
   { key: 'casb', label: 'CA SB', storageKey: 'casb-list-override' },
+  { key: 'betterbuildings', label: 'Better Buildings', storageKey: 'better-buildings-override' },
+  { key: 'bfoopps', label: 'BFO Opps', storageKey: 'bfo-opps-override' },
 ];
 
 const LIST_CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
@@ -37,11 +42,11 @@ function normalizeListCompany(name) {
 }
 function pickListNameKey(headers) {
   if (!headers?.length) return null;
-  return headers.find(k => /company|name|organi[sz]ation|signatory|entity/i.test(k)) || headers[0];
+  return headers.find(k => /company|name|organi[sz]ation|signatory|entity|\bfirm\b/i.test(k)) || headers[0];
 }
 function safeReadMap(key) {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = userLsGet(key);
     return raw ? (JSON.parse(raw) || {}) : {};
   } catch { return {}; }
 }
@@ -159,7 +164,7 @@ function DataSourceLink({ storageKey }) {
   );
 }
 
-export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectProspect, cdmName, settings, updateSettings, updateSettingsPath }) {
+export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectProspect, cdmName, settings, updateSettings, updateSettingsPath, updateProspect }) {
   const [subtab, setSubtab] = useState('raclients');
   // { [subtabKey]: { mapped, touched, pct } } — green subtab when pct===100.
   const [coverageByKey, setCoverageByKey] = useState({});
@@ -187,6 +192,22 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
     };
   }, []);
 
+  // When a brand-new Target Accounts list is uploaded, wipe every
+  // per-prospect tier-mismatch dismissal so the new list starts from a
+  // clean slate — any mismatch that was previously "Dismissed" on the My
+  // Accounts page will re-surface for re-review against the fresh tiers.
+  // Returns the number of prospects whose dismissal was cleared.
+  function clearTierMismatchIgnores() {
+    let cleared = 0;
+    for (const p of prospects) {
+      if (p.ignoreTierMismatch) {
+        if (updateProspect) updateProspect(p.id, { ignoreTierMismatch: false });
+        cleared++;
+      }
+    }
+    return cleared;
+  }
+
   const listDefinitions = useMemo(
     () => SUBTABS.filter(t => t.storageKey),
     []
@@ -200,7 +221,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
       // signal before My Accounts is opened.
       let myAccountNames = null;
       try {
-        const raw = localStorage.getItem('my-accounts:active-names');
+        const raw = userLsGet('my-accounts:active-names');
         myAccountNames = raw ? JSON.parse(raw) : null;
       } catch {}
       // Globally-blocked Target Accounts are excluded from
@@ -209,7 +230,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
       // can't see or resolve.
       const blockedAccountNames = new Set();
       try {
-        const raw = localStorage.getItem('target-accounts:blocked-names');
+        const raw = userLsGet('target-accounts:blocked-names');
         const arr = raw ? JSON.parse(raw) : [];
         if (Array.isArray(arr)) {
           for (const s of arr) {
@@ -375,7 +396,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
       </div>
       <div className={styles.content}>
         {subtab === 'raclients' && <RAClientsView settings={settings} updateSettings={updateSettings} />}
-        {subtab === 'targets' && <TargetAccountsView onDataLoaded={onTargetAccountsLoaded} settings={settings} updateSettings={updateSettings} cdmName={cdmName} />}
+        {subtab === 'targets' && <TargetAccountsView onDataLoaded={onTargetAccountsLoaded} settings={settings} updateSettings={updateSettings} cdmName={cdmName} onListUploaded={clearTierMismatchIgnores} />}
         {subtab === 'recaclients' && <RECAClientsView prospects={prospects} onSelectProspect={onSelectProspect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} />}
         {subtab === 'ecoactclients' && <EcoActClientsView prospects={prospects} onSelectProspect={onSelectProspect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} />}
         {subtab === 'strategic' && (
@@ -393,7 +414,25 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             updateSettingsPath={updateSettingsPath}
           />
         )}
-        {subtab === 'sites' && <SitesView settings={settings} updateSettings={updateSettings} prospects={prospects} />}
+        {subtab === 'largest' && (
+          <UploadedListView
+            storageKey="largest-list-override"
+            tableIdPrefix="largest-list"
+            title="Largest"
+            singular="company"
+            plural="companies"
+            accountSource="targetAccounts"
+            accountLabel="Target Accounts"
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
+            cdmName={cdmName}
+            settings={settings}
+            updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
+          />
+        )}
+        {subtab === 'sites' && <SitesView settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} prospects={prospects} />}
+        {subtab === 'mastersites' && <MasterSiteListView prospects={prospects} />}
         {subtab === 'csrd' && (
           <UploadedListView
             storageKey="csrd-list-override"
@@ -454,13 +493,13 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             updateSettingsPath={updateSettingsPath}
           />
         )}
-        {subtab === 'unpri' && (
+        {subtab === 'casb' && (
           <UploadedListView
-            storageKey="unpri-list-override"
-            tableIdPrefix="unpri-list"
-            title="UN PRI"
-            singular="signatory"
-            plural="signatories"
+            storageKey="casb-list-override"
+            tableIdPrefix="casb-list"
+            title="CA SB"
+            singular="company"
+            plural="companies"
             prospects={prospects}
             onSelectProspect={onSelectProspect}
             cdmName={cdmName}
@@ -469,13 +508,32 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             updateSettingsPath={updateSettingsPath}
           />
         )}
-        {subtab === 'casb' && (
+        {subtab === 'betterbuildings' && (
           <UploadedListView
-            storageKey="casb-list-override"
-            tableIdPrefix="casb-list"
-            title="CA SB"
+            storageKey="better-buildings-override"
+            tableIdPrefix="better-buildings"
+            title="Better Buildings"
             singular="company"
             plural="companies"
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
+            cdmName={cdmName}
+            settings={settings}
+            updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
+          />
+        )}
+        {subtab === 'bfoopps' && (
+          <UploadedListView
+            storageKey="bfo-opps-override"
+            tableIdPrefix="bfo-opps"
+            title="BFO Opps"
+            singular="opportunity"
+            plural="opportunities"
+            shortDateColumns={['Close Date']}
+            defaultHideWhere={{ column: 'Opportunity Leader', values: ['Daniel Baldauf'], label: 'Daniel Baldauf' }}
+            prospectFieldFill={{ field: 'bfoCompanyName', label: 'BFO Company Name', fillFromColumn: 'Account Name' }}
+            updateProspect={updateProspect}
             prospects={prospects}
             onSelectProspect={onSelectProspect}
             cdmName={cdmName}

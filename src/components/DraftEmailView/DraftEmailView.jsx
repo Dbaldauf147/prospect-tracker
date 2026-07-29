@@ -1,11 +1,131 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import ReactQuill from 'react-quill-new';
+import { createPortal } from 'react-dom';
+import { apiFetch } from '../../utils/apiFetch';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
+import { ContactEditModal } from '../ProspectModal/ProspectModal';
+import ReactQuill, { Quill } from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { secureSet, secureGet, secureClear } from '../../utils/secureStorage';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
+import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { useDraftCampaignQueue, clearQueuedContacts, setQueuedContactIds } from '../../utils/draftCampaignQueue';
+import { useDraftLeadsQueue, clearQueuedLeads, removeQueuedLead, leadQueueKey } from '../../utils/draftLeadsQueue';
+import { useDraftRecipientsQueue, clearQueuedRecipients, removeQueuedRecipient, recipientQueueKey } from '../../utils/draftRecipientsQueue';
+import { userLsGet, userLsSet } from '../../utils/userLs';
 import styles from './DraftEmailView.module.css';
+
+// Register an <hr> divider blot once so the editor can hold a horizontal
+// page-break line (inserted from the Insert menu). Quill drops any tag that
+// isn't a registered format, so the embed plus the 'divider' entry in the
+// editor's `formats` whitelist are both required for the rule to survive.
+const BlockEmbed = Quill.import('blots/block/embed');
+class DividerBlot extends BlockEmbed {}
+DividerBlot.blotName = 'divider';
+DividerBlot.tagName = 'hr';
+Quill.register(DividerBlot, true);
+
+// Quill emits one <p> per line and <p><br></p> for an intentionally blank
+// line. The trap: every <p> is its own Word paragraph, and when Outlook
+// re-serialises the message on *Send* it re-applies its compose-time "space
+// after paragraph" setting to each one — re-inflating the gaps no matter how
+// aggressively we zero the <p> margins inline or via a <style> block. That's
+// why the body looks tight while composing but the gaps double once it's sent.
+//
+// The fix is to stop using paragraph blocks at all: collapse the whole body
+// into a SINGLE block whose lines are separated by <br>. Inside one paragraph
+// a <br> is just a line break, not a paragraph boundary, so Word has no
+// inter-paragraph spacing to add — two <br>s render exactly one blank line, in
+// the draft AND in the sent message. Lists are kept as real lists (with their
+// stock Word margins zeroed) since they can't be expressed with <br>s.
+//
+// Shared by the Outlook draft (Graph API), the .eml export, and the
+// clipboard-paste paths so all three render identically.
+// Core of the body transform, shared by the sent-email builder and the
+// on-screen preview. Collapses Quill's <p> paragraphs into a single block
+// separated by <br>, keeps lists as lists, and strips the breaks Word would
+// otherwise re-inflate (leading/trailing blank lines + blanks touching a
+// list). In `preview` mode those stripped breaks are kept as \x00DROP\x00
+// sentinels instead of being deleted, so the preview can show the user
+// exactly which line breaks won't survive in the sent message.
+function collapseBodyToBreaks(pBodyHtml, { preview = false } = {}) {
+  const DROP = '\x00DROP\x00';
+  const dropMarks = (s) => DROP.repeat((s.match(/<br>/gi) || []).length);
+  const html = pBodyHtml
+    // Replace non-breaking spaces with regular spaces — pasted text often has
+    // &nbsp; for every space which prevents wrapping. First mark double spaces
+    // (e.g. after periods) to preserve them.
+    .replace(/&nbsp;&nbsp;/g, '\x00DOUBLE\x00')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\x00DOUBLE\x00/g, '&nbsp;&nbsp;')
+    // Empty paragraphs (Quill's <p><br></p> blank-line markers) → a single
+    // sentinel so they survive the paragraph-stripping below as one <br>.
+    .replace(/<p[^>]*>\s*(?:<br\s*\/?>\s*)*<\/p>/gi, '\x00BR\x00')
+    // Every remaining paragraph: drop the opening tag and turn the close into a
+    // single <br>, so consecutive lines sit directly underneath one another
+    // (single Enter = tight line break, double Enter = one blank line).
+    .replace(/<p[^>]*>/gi, '')
+    .replace(/<\/p>/gi, '\x00BR\x00')
+    // Keep lists as lists, but zero the stock Word margins so they sit flush
+    // with the surrounding lines instead of gaining auto spacing on Send.
+    .replace(/<(ul|ol)([^>]*)>/gi, (_, tag, a = '') => `<${tag}${a} style="margin:0;padding-left:1.5em;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;">`)
+    .replace(/<li([^>]*)>/gi, (_, a = '') => `<li${a} style="margin:0;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;">`)
+    // The divider/page-break rule: give it explicit borders + margin so it
+    // renders as a thin grey line and Outlook doesn't re-inflate the spacing.
+    .replace(/<hr\s*\/?>/gi, '<hr style="border:none;border-top:1px solid #CBD5E1;margin:12px 0;" />')
+    // Materialise the sentinels as real <br>s now that all <p> tags are gone.
+    .replace(/\x00BR\x00/g, '<br>\n');
+
+  // A list or divider is already block-level, so a <br> butting straight up
+  // against it would add a phantom blank line; and a message shouldn't open or
+  // close on a blank line. The sent email deletes these; the preview keeps
+  // them as DROP sentinels so they can be surfaced as struck-through markers.
+  return html
+    .replace(/((?:<br>\s*)+)(<(?:ul|ol)\b)/gi, (_, brs, list) => (preview ? dropMarks(brs) : '') + list)
+    // Blank lines *after* a list collapse to a single break instead of being
+    // deleted outright, so one intentional gap (e.g. a Page break between the
+    // bullets and the next line) survives on Send while Outlook still can't
+    // re-inflate a whole stack of them. In preview the surviving break shows as
+    // a faint ↵ and any collapsed extras as struck-through DROP markers.
+    .replace(/(<\/(?:ul|ol)>)\s*((?:<br>\s*)+)/gi, (_, end, brs) => {
+      if (!preview) return end + '<br>\n';
+      const n = (brs.match(/<br>/gi) || []).length;
+      return end + '<br>' + DROP.repeat(Math.max(0, n - 1));
+    })
+    .replace(/((?:<br>\s*)+)(<hr\b)/gi, (_, brs, hr) => (preview ? dropMarks(brs) : '') + hr)
+    .replace(/(<hr[^>]*>)\s*((?:<br>\s*)+)/gi, (_, hr, brs) => hr + (preview ? dropMarks(brs) : ''))
+    .replace(/^((?:\s*<br>\s*)+)/i, (_, brs) => (preview ? dropMarks(brs) : ''))
+    .replace(/((?:\s*<br>\s*)+)$/i, (_, brs) => (preview ? dropMarks(brs) : ''));
+}
+
+// Build the preview body HTML. It always reflects the sent email accurately
+// (same collapse/trim as buildStyledBodyHtml). When showBreaks is on, every
+// surviving line break gets a faint ↵ marker and every break that the sent
+// email strips gets a struck-through red ↵, so the user can see which breaks
+// won't appear.
+function buildPreviewBodyHtml(pBodyHtml, { showBreaks = false } = {}) {
+  let html = collapseBodyToBreaks(pBodyHtml, { preview: showBreaks });
+  if (showBreaks) {
+    html = html
+      .replace(/\x00DROP\x00/g, `<span class="${styles.lbDrop}" title="This line break is removed in the sent email">↵</span>`)
+      .replace(/<br>/gi, `<span class="${styles.lbKeep}" title="Line break in the sent email">↵</span><br>`);
+  }
+  return html;
+}
+
+function buildStyledBodyHtml(pBodyHtml, { signature = '' } = {}) {
+  const htmlContent = collapseBodyToBreaks(pBodyHtml);
+
+  // Signature sits a real blank line below the body, indented slightly from
+  // the left so it isn't flush against the body text (matches the look of
+  // an Outlook-inserted signature). Two <br>s make that blank line — the same
+  // "double break = one blank line" rule the body uses — since a single <br>
+  // would drop the signature onto the very next line with no gap. Plain <br>s
+  // (not <p> paragraphs) so Outlook's Word renderer can't re-inflate them.
+  const sigBlock = signature ? `<br>\n<br>\n<div style="margin-left:24px;">\n${signature}\n</div>` : '';
+  return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">\n<head>\n<!--[if gte mso 9]><xml><w:WordDocument><w:DontHyphenate/><w:DoNotHyphenateCaps/></w:WordDocument></xml><![endif]-->\n<style>\np{margin:0pt;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\nul,ol{margin:0pt;padding-left:1.5em;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\nli{margin:0pt;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\ndiv{mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\n</style>\n</head>\n<body style="margin:0;padding:0;">\n<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;">\n${htmlContent}\n</div>${sigBlock}\n</body>\n</html>`;
+}
 
 // Pulls contacts whose notes (HubSpot's `notes` / `hs_content_membership_notes`
 // / `message` fields, plus the local-only override stored at
@@ -205,6 +325,70 @@ function CritiquePanel({ critique, onClose, onUseRewrite }) {
   );
 }
 
+// Variable-coverage cells the user can edit inline. Maps each variable
+// token to its underlying field: `hubspot` writes through to HubSpot via
+// the update-contact endpoint (with the matching property name and the
+// local key on the flattened contact object); `custom` is the app-side
+// {custom} value persisted in settings.customField. Tokens not listed
+// here (fullName, company, companyType) stay read-only — they're either
+// composite or derived from other fields.
+const COVERAGE_EDITABLE = {
+  '{firstName}': { kind: 'hubspot', prop: 'firstname', local: 'firstName' },
+  '{lastName}':  { kind: 'hubspot', prop: 'lastname',  local: 'lastName' },
+  '{title}':     { kind: 'hubspot', prop: 'jobtitle',  local: 'title' },
+  '{phone}':     { kind: 'hubspot', prop: 'phone',     local: 'phone' },
+  '{city}':      { kind: 'hubspot', prop: 'city',      local: 'city' },
+  '{state}':     { kind: 'hubspot', prop: 'state',     local: 'state' },
+  '{email}':     { kind: 'hubspot', prop: 'email',     local: 'email' },
+  // {goesBy} is the app-side "Goes By" nickname stored in
+  // settings.contactNicknames, keyed by HubSpot contact id.
+  '{goesBy}':    { kind: 'nickname' },
+  '{custom}':    { kind: 'custom' },
+};
+
+// One editable coverage cell — click to edit, commit on blur / Enter,
+// cancel on Escape. Read-only tokens just render the value (or the red
+// missing dash) without the click affordance.
+function CoverageEditCell({ value, editable, missingTitle, cellStyle, onCommit }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  useEffect(() => { setDraft(value); }, [value]);
+  const has = String(value || '').trim().length > 0;
+  if (editing) {
+    return (
+      <td style={{ ...cellStyle, padding: 0, maxWidth: 180 }}>
+        <input
+          autoFocus
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={() => { setEditing(false); if (draft !== value) onCommit(draft); }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+            else if (e.key === 'Escape') { setDraft(value); setEditing(false); }
+          }}
+          style={{ width: '100%', boxSizing: 'border-box', padding: '0.3rem 0.5rem', fontSize: '0.74rem', border: '1px solid #2563EB', borderRadius: 3, fontFamily: 'inherit', outline: 'none' }}
+        />
+      </td>
+    );
+  }
+  if (has) {
+    return (
+      <td
+        style={{ ...cellStyle, color: '#1E293B', cursor: editable ? 'pointer' : 'default' }}
+        title={editable ? `${value} · click to edit` : value}
+        onClick={editable ? () => setEditing(true) : undefined}
+      >{value}</td>
+    );
+  }
+  return (
+    <td
+      style={{ ...cellStyle, color: '#B91C1C', fontStyle: 'italic', fontWeight: 700, cursor: editable ? 'pointer' : 'default' }}
+      title={editable ? 'Click to add a value' : missingTitle}
+      onClick={editable ? () => setEditing(true) : undefined}
+    >—</td>
+  );
+}
+
 // Variable coverage table — one row per selected contact, one column
 // per variable token that's actually used in the current subject /
 // body. Helps spot gaps in the data BEFORE sending: missing values
@@ -213,7 +397,7 @@ function CritiquePanel({ critique, onClose, onUseRewrite }) {
 // intersection of "tokens INSERT_VARIABLES knows about" and "tokens
 // that appear in the draft", so unused variables don't pollute the
 // table.
-function VariableCoverageTable({ subject, body, contacts, insertVariables, resolve }) {
+function VariableCoverageTable({ subject, body, contacts, insertVariables, resolve, isEditable, onEditField }) {
   const usedTokens = useMemo(() => {
     const haystack = `${subject || ''}\n${body || ''}`;
     const out = [];
@@ -311,17 +495,16 @@ function VariableCoverageTable({ subject, body, contacts, insertVariables, resol
                 </td>
                 {usedTokens.map(v => {
                   const val = String(resolve(c, v.token) || '').trim();
-                  if (val) {
-                    return (
-                      <td key={v.token} style={{ ...cellStyle, color: '#1E293B' }} title={val}>
-                        {val}
-                      </td>
-                    );
-                  }
+                  const editable = !!(isEditable && isEditable(v.token));
                   return (
-                    <td key={v.token} style={{ ...cellStyle, color: '#B91C1C', fontStyle: 'italic', fontWeight: 700 }} title={`Missing — ${v.label} will render blank for this recipient`}>
-                      —
-                    </td>
+                    <CoverageEditCell
+                      key={v.token}
+                      value={val}
+                      editable={editable}
+                      missingTitle={`Missing — ${v.label} will render blank for this recipient`}
+                      cellStyle={cellStyle}
+                      onCommit={nv => onEditField && onEditField(c, v.token, nv)}
+                    />
                   );
                 })}
               </tr>
@@ -529,8 +712,150 @@ function CampaignQueueSection({ allContacts, selectedContacts, setSelectedContac
   );
 }
 
+// Renders the "queued from Marketing Leads" section inside the Custom
+// Email Campaign card. Reads the full contact objects the Marketing Leads
+// page pushed via useDraftLeadsQueue (Marketing Leads aren't necessarily
+// HubSpot contacts, so they carry their own name / email / company rather
+// than an id resolved against the HubSpot cache) and offers Add / Clear.
+// Hidden entirely until at least one lead has been sent over.
+function MarketingLeadsQueueSection({ selectedContacts, setSelectedContacts }) {
+  const queuedLeads = useDraftLeadsQueue();
+  if (queuedLeads.length === 0) return null;
+
+  const selectedIds = new Set(selectedContacts.map(c => c.id));
+  const selectedEmails = new Set(selectedContacts.map(c => String(c.email || '').trim().toLowerCase()).filter(Boolean));
+  const inDraft = (c) => selectedIds.has(c.id) || (c.email && selectedEmails.has(c.email.toLowerCase()));
+  const allInDraft = queuedLeads.every(inDraft);
+
+  const addAll = () => {
+    setSelectedContacts(prev => {
+      const ids = new Set(prev.map(c => c.id));
+      const emails = new Set(prev.map(c => String(c.email || '').trim().toLowerCase()).filter(Boolean));
+      const toAdd = queuedLeads.filter(c => c.email && !ids.has(c.id) && !emails.has(c.email.toLowerCase()));
+      return [...prev, ...toAdd];
+    });
+  };
+
+  return (
+    <div style={{ borderTop: '1px solid #E2E8F0', marginTop: '0.75rem', paddingTop: '0.75rem' }}>
+      <h4 style={{ margin: '0 0 0.5rem', fontSize: '0.78rem', fontWeight: 700, color: '#1E293B' }}>From Marketing Leads</h4>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: '0.74rem', color: '#475569' }}>
+          <strong>{queuedLeads.length}</strong> lead{queuedLeads.length === 1 ? '' : 's'} sent from the Marketing Leads page
+        </div>
+        <div style={{ display: 'inline-flex', gap: 6 }}>
+          <button
+            type="button"
+            onClick={addAll}
+            disabled={allInDraft}
+            title={allInDraft ? 'All queued leads are already in the draft' : 'Add every queued lead to the current draft'}
+            style={{ fontSize: '0.7rem', padding: '0.25rem 0.55rem', border: '1px solid #7C3AED', background: allInDraft ? '#F1F5F9' : '#7C3AED', color: allInDraft ? '#94A3B8' : '#fff', borderRadius: 4, cursor: allInDraft ? 'default' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
+          >Add all to draft</button>
+          <button
+            type="button"
+            onClick={() => clearQueuedLeads()}
+            title="Empty the Marketing Leads queue (does not affect the draft)"
+            style={{ fontSize: '0.7rem', padding: '0.25rem 0.55rem', border: '1px solid #CBD5E1', background: '#fff', color: '#475569', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit' }}
+          >Clear queue</button>
+        </div>
+      </div>
+      <div style={{ maxHeight: 160, overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: 4, background: '#F8FAFC' }}>
+        {queuedLeads.map(c => {
+          const isIn = inDraft(c);
+          return (
+            <div key={leadQueueKey(c)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0.25rem 0.5rem', borderTop: '1px solid #E2E8F0', fontSize: '0.72rem' }}>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`${c.name}${c.company ? ` · ${c.company}` : ''}${c.email ? ` · ${c.email}` : ''}`}>
+                <span style={{ fontWeight: 600, color: '#1E293B' }}>{c.name || c.email}</span>
+                {c.company && <span style={{ color: '#64748B' }}> · {c.company}</span>}
+              </span>
+              {isIn ? <span style={{ fontSize: '0.62rem', color: '#16A34A', fontWeight: 700 }}>in draft</span> : null}
+              <button
+                type="button"
+                onClick={() => removeQueuedLead(leadQueueKey(c))}
+                title="Remove from queue"
+                style={{ border: '1px solid #CBD5E1', background: '#fff', color: '#64748B', borderRadius: 3, fontSize: '0.65rem', cursor: 'pointer', fontFamily: 'inherit', padding: '0 5px', lineHeight: 1.4 }}
+              >×</button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Renders the "From Email Campaigns" section inside the Custom Email Campaign
+// card. Reads recipients pushed from the Email Campaign tracker's "Add unsent
+// to Draft" button (full contact objects, since campaign rosters hold raw
+// emails, not HubSpot ids) and offers Add / Clear. Hidden until at least one
+// recipient has been queued. Mirrors MarketingLeadsQueueSection.
+function CampaignRecipientsQueueSection({ selectedContacts, setSelectedContacts }) {
+  const queued = useDraftRecipientsQueue();
+  if (queued.length === 0) return null;
+
+  const selectedIds = new Set(selectedContacts.map(c => c.id));
+  const selectedEmails = new Set(selectedContacts.map(c => String(c.email || '').trim().toLowerCase()).filter(Boolean));
+  const inDraft = (c) => selectedIds.has(c.id) || (c.email && selectedEmails.has(c.email.toLowerCase()));
+  const allInDraft = queued.every(inDraft);
+
+  const addAll = () => {
+    setSelectedContacts(prev => {
+      const ids = new Set(prev.map(c => c.id));
+      const emails = new Set(prev.map(c => String(c.email || '').trim().toLowerCase()).filter(Boolean));
+      const toAdd = queued.filter(c => c.email && !ids.has(c.id) && !emails.has(c.email.toLowerCase()));
+      return [...prev, ...toAdd];
+    });
+  };
+
+  return (
+    <div style={{ borderTop: '1px solid #E2E8F0', marginTop: '0.75rem', paddingTop: '0.75rem' }}>
+      <h4 style={{ margin: '0 0 0.5rem', fontSize: '0.78rem', fontWeight: 700, color: '#1E293B' }}>From Email Campaigns</h4>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: '0.74rem', color: '#475569' }}>
+          <strong>{queued.length}</strong> unsent recipient{queued.length === 1 ? '' : 's'} sent from the Email Campaigns page
+        </div>
+        <div style={{ display: 'inline-flex', gap: 6 }}>
+          <button
+            type="button"
+            onClick={addAll}
+            disabled={allInDraft}
+            title={allInDraft ? 'All queued recipients are already in the draft' : 'Add every queued recipient to the current draft'}
+            style={{ fontSize: '0.7rem', padding: '0.25rem 0.55rem', border: '1px solid #1D4ED8', background: allInDraft ? '#F1F5F9' : '#1D4ED8', color: allInDraft ? '#94A3B8' : '#fff', borderRadius: 4, cursor: allInDraft ? 'default' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
+          >Add all to draft</button>
+          <button
+            type="button"
+            onClick={() => clearQueuedRecipients()}
+            title="Empty the Email Campaigns queue (does not affect the draft)"
+            style={{ fontSize: '0.7rem', padding: '0.25rem 0.55rem', border: '1px solid #CBD5E1', background: '#fff', color: '#475569', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit' }}
+          >Clear queue</button>
+        </div>
+      </div>
+      <div style={{ maxHeight: 160, overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: 4, background: '#F8FAFC' }}>
+        {queued.map(c => {
+          const isIn = inDraft(c);
+          return (
+            <div key={recipientQueueKey(c)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0.25rem 0.5rem', borderTop: '1px solid #E2E8F0', fontSize: '0.72rem' }}>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`${c.name || ''}${c.company ? ` · ${c.company}` : ''}${c.email ? ` · ${c.email}` : ''}`}>
+                <span style={{ fontWeight: 600, color: '#1E293B' }}>{c.name || c.email}</span>
+                {c.company && <span style={{ color: '#64748B' }}> · {c.company}</span>}
+              </span>
+              {isIn ? <span style={{ fontSize: '0.62rem', color: '#16A34A', fontWeight: 700 }}>in draft</span> : null}
+              <button
+                type="button"
+                onClick={() => removeQueuedRecipient(recipientQueueKey(c))}
+                title="Remove from queue"
+                style={{ border: '1px solid #CBD5E1', background: '#fff', color: '#64748B', borderRadius: 3, fontSize: '0.65rem', cursor: 'pointer', fontFamily: 'inherit', padding: '0 5px', lineHeight: 1.4 }}
+              >×</button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function PreviewTabs({ contacts, subject, body, personalizeForContact, draftCc, ccMap, toAlsoMap }) {
   const [activeIdx, setActiveIdx] = useState(0);
+  const [showBreaks, setShowBreaks] = useState(true);
   const c = contacts[activeIdx] || contacts[0];
   if (!c) return null;
 
@@ -542,6 +867,12 @@ function PreviewTabs({ contacts, subject, body, personalizeForContact, draftCc, 
     <div className={styles.previewSection}>
       <div className={styles.previewHeader}>
         <h4 className={styles.previewTitle}>Preview</h4>
+        <button
+          type="button"
+          onClick={() => setShowBreaks(v => !v)}
+          className={showBreaks ? styles.breakToggleOn : styles.breakToggle}
+          title="Show line-break markers. ↵ marks each break in the sent email; a struck-through red ↵ marks a break you typed that the email will drop (leading/trailing blank lines and blanks next to bullet lists)."
+        >¶ {showBreaks ? 'Hide breaks' : 'Show breaks'}</button>
         <div className={styles.previewTabs}>
           {contacts.map((ct, i) => (
             <button
@@ -564,7 +895,7 @@ function PreviewTabs({ contacts, subject, body, personalizeForContact, draftCc, 
           </div>
         )}
         <div className={styles.previewSubject}>{personalizeForContact(subject, c)}</div>
-        <div className={styles.previewBody} dangerouslySetInnerHTML={{ __html: personalizeForContact(body, c) }} />
+        <div className={styles.previewBody} dangerouslySetInnerHTML={{ __html: buildPreviewBodyHtml(personalizeForContact(body, c), { showBreaks }) }} />
       </div>
     </div>
   );
@@ -572,21 +903,45 @@ function PreviewTabs({ contacts, subject, body, personalizeForContact, draftCc, 
 
 const AUTOSAVE_KEY = 'prospect-draft-autosave';
 
+// The body "Clear all" resets to — a personalized greeting kept as a real
+// {goesBy} token so it still resolves per recipient on send/preview, followed
+// by two blank lines so the cursor starts a couple of returns below the
+// greeting. The signature lives in its own field, so it's untouched by a
+// compose clear.
+const GREETING_BODY = '<p>Hi {goesBy},</p><p><br></p><p><br></p>';
+
+// "Clear all" leaves the user's own address in the To line rather than an
+// empty recipient list, so a freshly-cleared compose is ready to send a test
+// to self. Shaped like a contact record (id/name/email) so it flows through
+// the To rendering and {goesBy}/{firstName} token resolution unchanged.
+const SELF_RECIPIENT = Object.freeze({
+  id: 'self:daniel.baldauf@se.com',
+  name: 'Daniel Baldauf',
+  firstName: 'Daniel',
+  lastName: 'Baldauf',
+  email: 'daniel.baldauf@se.com',
+  company: '',
+});
+
 export function DraftEmailView({ prospects, settings, updateSettings }) {
+  const { isAdmin, user } = useAuth();
   // Restore auto-saved compose state
   const [subject, setSubject] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(AUTOSAVE_KEY))?.subject || ''; } catch { return ''; }
+    try { return JSON.parse(userLsGet(AUTOSAVE_KEY))?.subject || ''; } catch { return ''; }
   });
   const [body, setBody] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(AUTOSAVE_KEY))?.body || ''; } catch { return ''; }
+    try { return JSON.parse(userLsGet(AUTOSAVE_KEY))?.body || ''; } catch { return ''; }
   });
   const [selectedContacts, setSelectedContacts] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(AUTOSAVE_KEY))?.contacts || []; } catch { return []; }
+    try { return JSON.parse(userLsGet(AUTOSAVE_KEY))?.contacts || []; } catch { return []; }
   });
   const [contactSearch, setContactSearch] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
+  // Opt-in open/click tracking for the drafts this batch produces.
+  // Persisted so the choice sticks between sessions; defaults on.
+  const [trackEmails, setTrackEmails] = useState(settings?.trackEmails !== false);
   const drafts = settings?.emailDrafts || [];
   function setDrafts(updater) {
     const next = typeof updater === 'function' ? updater(drafts) : updater;
@@ -607,7 +962,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     setCritique(null);
     setCritiqueBusy(true);
     try {
-      const res = await fetch('/api/critique-email', {
+      const res = await apiFetch('/api/critique-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ subject, body }),
@@ -627,11 +982,15 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
   const [lastFocused, setLastFocused] = useState('body'); // 'subject' or 'body'
   const [attachments, setAttachments] = useState([]);
   const [draftCc, setDraftCc] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(AUTOSAVE_KEY))?.cc || []; } catch { return []; }
+    try { return JSON.parse(userLsGet(AUTOSAVE_KEY))?.cc || []; } catch { return []; }
   });
   const [draftCcInput, setDraftCcInput] = useState('');
   const [showDraftCcSuggestions, setShowDraftCcSuggestions] = useState(false);
-  const DEFAULT_SIGNATURE = DEFAULT_EMAIL_SIGNATURE;
+  // The bundled DEFAULT_EMAIL_SIGNATURE is Dan's personal signature
+  // (name, phone, address). Only auto-apply it for the admin account —
+  // every other user starts with no signature until they save one in
+  // the editor below.
+  const DEFAULT_SIGNATURE = isAdmin ? DEFAULT_EMAIL_SIGNATURE : '';
   const [signature, setSignature] = useState(() => DEFAULT_SIGNATURE);
   // Sync signature from Firestore when settings load
   useEffect(() => {
@@ -649,18 +1008,24 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
   // Auto-save compose state so it's never lost
   useEffect(() => {
     const timer = setTimeout(() => {
-      localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ subject, body, contacts: selectedContacts, cc: draftCc }));
+      userLsSet(AUTOSAVE_KEY, JSON.stringify({ subject, body, contacts: selectedContacts, cc: draftCc }));
     }, 500);
     return () => clearTimeout(timer);
   }, [subject, body, selectedContacts, draftCc]);
 
-  // Load HubSpot contacts from cache
+  // Load HubSpot contacts from cache. We keep BOTH the flattened list the
+  // composer works with (allContacts) and the raw HubSpot records
+  // (rawContacts) — the contact popup (ContactEditModal) edits raw HubSpot
+  // fields (firstname / lastname / jobtitle / tags…), so clicking a
+  // recipient name resolves back to its raw record here.
   const [allContacts, setAllContacts] = useState([]);
+  const [rawContacts, setRawContacts] = useState([]);
   useEffect(() => {
     let cancelled = false;
     const refresh = () => {
       getHubspotContacts().then(contacts => {
         if (cancelled) return;
+        setRawContacts(contacts);
         setAllContacts(contacts.filter(c => c.email).map(c => ({
           id: c.id,
           name: [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email,
@@ -680,6 +1045,121 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     window.addEventListener('hubspot-cache-updated', refresh);
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
+
+  // Contact popup (same ContactEditModal used on the Contacts pages),
+  // opened by clicking a recipient's name. Holds the RAW HubSpot record —
+  // the modal edits raw fields (firstname / lastname / jobtitle / tags…),
+  // not the flattened { name, title } shape the composer carries.
+  const [editingContact, setEditingContact] = useState(null);
+  const rawById = useMemo(() => {
+    const m = new Map();
+    for (const c of rawContacts) {
+      const id = c?.id ?? c?.vid;
+      if (id != null) m.set(String(id), c);
+    }
+    return m;
+  }, [rawContacts]);
+
+  // Resolve a clicked recipient (a flattened composer contact) to the raw
+  // HubSpot record. When it isn't in the cache — e.g. a Marketing Lead added
+  // to the draft that was never a HubSpot contact — synthesize a raw-shaped
+  // object from the flattened fields so the popup still opens and can create
+  // the contact in HubSpot on save (mirrors MarketingLeadsView.buildLeadContact).
+  function openContact(flat) {
+    if (!flat) return;
+    const raw = flat.id != null ? rawById.get(String(flat.id)) : null;
+    if (raw) { setEditingContact(raw); return; }
+    const parts = String(flat.name || '').trim().split(/\s+/).filter(Boolean);
+    setEditingContact({
+      id: flat.id,
+      firstname: flat.firstName || parts[0] || '',
+      lastname: flat.lastName || (parts.length > 1 ? parts.slice(1).join(' ') : ''),
+      email: flat.email || '',
+      jobtitle: flat.title || '',
+      company: flat.company || '',
+      phone: flat.phone || '',
+      city: flat.city || '',
+      state: flat.state || '',
+      hs_linkedin_url: flat.linkedinUrl || '',
+    });
+  }
+
+  // Per-contact metadata handlers for the popup — thin settings-map updaters,
+  // identical in shape to the Key Contacts / Marketing Leads pages so notes,
+  // nicknames, tags, etc. written from here land in the same Firestore settings.
+  const handleContactSaved = (_updated, opts) => { if (!opts?.silent) setEditingContact(null); };
+  const saveSettingsMap = (mapKey, cid, value) => {
+    if (cid == null) return;
+    const cur = settings?.[mapKey] || {};
+    const next = { ...cur };
+    if (value && String(value).trim()) next[cid] = value; else delete next[cid];
+    updateSettings({ [mapKey]: next });
+  };
+
+  // Same-company HubSpot contacts + company-name autocomplete for the popup's
+  // Reports-To / company fields, mirroring the Key Contacts wiring.
+  const editCompanyContacts = useMemo(() => {
+    if (!editingContact) return [];
+    const k = String(editingContact.company || '').trim().toLowerCase();
+    if (!k) return [];
+    return rawContacts.filter(c => String(c?.company || '').trim().toLowerCase() === k);
+  }, [editingContact, rawContacts]);
+  const editEmailDomains = useMemo(() => {
+    if (!editingContact) return [];
+    const k = String(editingContact.company || '').trim().toLowerCase();
+    const matched = (prospects || []).find(p => String(p.company || '').trim().toLowerCase() === k);
+    return matched?.emailDomain
+      ? String(matched.emailDomain).split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)
+      : [];
+  }, [editingContact, prospects]);
+  const editCompanyNames = useMemo(() => (prospects || []).map(p => p.company).filter(Boolean), [prospects]);
+
+  // Inline edits from the Variable Coverage table. `{custom}` writes the
+  // app-side value (settings.customField); HubSpot-backed variables push
+  // through to HubSpot and optimistically update the selected-contact row
+  // so the cell (and the live preview) reflect the change immediately.
+  const handleCoverageEdit = async (contact, token, rawValue) => {
+    const meta = COVERAGE_EDITABLE[token];
+    if (!meta || !contact?.id) return;
+    const value = String(rawValue ?? '').trim();
+    if (meta.kind === 'custom') {
+      const cur = settings?.customField || {};
+      const next = { ...cur };
+      if (value) next[contact.id] = value; else delete next[contact.id];
+      updateSettings({ customField: next });
+      return;
+    }
+    if (meta.kind === 'nickname') {
+      const cur = settings?.contactNicknames || {};
+      const next = { ...cur };
+      if (value) next[contact.id] = value; else delete next[contact.id];
+      updateSettings({ contactNicknames: next });
+      return;
+    }
+    if (String(contact[meta.local] ?? '').trim() === value) return;
+    const recomputeName = (c) => [c.firstName, c.lastName].filter(Boolean).join(' ') || c.email || c.name;
+    setSelectedContacts(prev => prev.map(c => {
+      if (c.id !== contact.id) return c;
+      const nc = { ...c, [meta.local]: value };
+      if (meta.local === 'firstName' || meta.local === 'lastName') nc.name = recomputeName(nc);
+      return nc;
+    }));
+    try {
+      const res = await apiFetch('/api/hubspot?action=update-contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactId: contact.id, properties: { [meta.prop]: value } }),
+      });
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+    } catch (err) {
+      // Revert the optimistic change and surface the failure.
+      setSelectedContacts(prev => prev.map(c => (
+        c.id === contact.id ? { ...c, [meta.local]: contact[meta.local] || '', name: contact.name } : c
+      )));
+      alert(`Couldn't save ${meta.prop} to HubSpot: ${err?.message || err}`);
+    }
+  };
 
 
   // Check if Outlook is connected (encrypted token storage)
@@ -750,6 +1230,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
 
   const INSERT_VARIABLES = [
     { token: '{firstName}', label: 'First Name', example: 'John' },
+    { token: '{goesBy}', label: 'Goes By', example: 'Bob' },
     { token: '{lastName}', label: 'Last Name', example: 'Smith' },
     { token: '{fullName}', label: 'Full Name', example: 'John Smith' },
     { token: '{email}', label: 'Email', example: 'john@company.com' },
@@ -759,6 +1240,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     { token: '{phone}', label: 'Phone', example: '555-0100' },
     { token: '{city}', label: 'City', example: 'Denver' },
     { token: '{state}', label: 'State', example: 'CO' },
+    { token: '{custom}', label: 'Custom', example: 'great meeting you at the conference' },
   ];
 
   // Lookup map: lower-cased company name → matched prospect's `type`
@@ -820,6 +1302,21 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     }
   }
 
+  // Insert a blank line (extra spacing) into the body — same effect as
+  // pressing Enter, no horizontal rule. Always targets the Quill editor;
+  // a spacer makes no sense in the subject line.
+  function insertDivider() {
+    const quill = bodyRef.current?.getEditor?.();
+    if (quill) {
+      const range = quill.getSelection(true);
+      const idx = range ? range.index : quill.getLength();
+      quill.insertText(idx, '\n', 'user');
+      quill.setSelection(idx + 1, 0);
+      quill.focus();
+    }
+    setShowInsertMenu(false);
+  }
+
   const filteredContacts = contactSearch.trim()
     ? allContacts.filter(c =>
         !selectedContacts.some(s => s.id === c.id) &&
@@ -839,6 +1336,36 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     setSelectedContacts(prev => prev.filter(c => c.id !== id));
   }
 
+  // "Clear all" — reset the composer to a fresh email: drop the CC list, the
+  // subject, the attachments, and the message body, and reset the To line to
+  // just the user's own address (SELF_RECIPIENT). The body resets to the
+  // "Hi {goesBy}," greeting rather than going fully blank, and the saved
+  // signature (a separate field) is left untouched.
+  function clearCompose() {
+    const ok = window.confirm('Clear the CC, subject, message, and attachments? The To line is reset to your own address (daniel.baldauf@se.com), and the "Hi {goesBy}," greeting and your signature are kept.');
+    if (!ok) return;
+    setSelectedContacts([SELF_RECIPIENT]);
+    setDraftCc([]);
+    setSubject('');
+    setBody(GREETING_BODY);
+    setAttachments([]);
+    setCritique(null);
+  }
+
+  // The saved-draft list is capped so it never grows unbounded, but that cap
+  // applies to UNPINNED drafts only: every pinned draft is kept, plus at most
+  // the 5 most recent unpinned ones (the list is newest-first). Pinning a
+  // draft therefore protects it from being auto-removed.
+  const UNPINNED_DRAFT_LIMIT = 5;
+  function capUnpinnedDrafts(list) {
+    let unpinned = 0;
+    return list.filter(d => {
+      if (d.pinned) return true;
+      unpinned += 1;
+      return unpinned <= UNPINNED_DRAFT_LIMIT;
+    });
+  }
+
   function saveDraft() {
     // Quill wraps empty content in <p><br></p> — check for actual content
     const bodyText = body.replace(/<[^>]*>/g, '').trim();
@@ -850,11 +1377,18 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       contacts: selectedContacts,
       cc: draftCc,
       createdAt: new Date().toISOString(),
+      pinned: false,
     };
-    const updated = [draft, ...drafts];
+    const updated = capUnpinnedDrafts([draft, ...drafts]);
     setDrafts(updated);
     setResult({ type: 'success', message: 'Draft saved' });
     setTimeout(() => setResult(null), 3000);
+  }
+
+  // Pin / unpin a saved draft. Pinned drafts are exempt from the auto-drop
+  // cap in saveDraft, so they stick around until deleted by hand.
+  function togglePin(id) {
+    setDrafts(drafts.map(d => (d.id === id ? { ...d, pinned: !d.pinned } : d)));
   }
 
   function loadDraft(draft) {
@@ -866,6 +1400,236 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
 
   function deleteDraft(id) {
     setDrafts(drafts.filter(d => d.id !== id));
+  }
+
+  function clearAllDrafts() {
+    if (drafts.length === 0) return;
+    const ok = window.confirm(`Delete all ${drafts.length} saved draft${drafts.length === 1 ? '' : 's'}? This cannot be undone.`);
+    if (!ok) return;
+    setDrafts([]);
+    setResult({ type: 'success', message: 'All drafts cleared' });
+  }
+
+  // "Move to Email Campaign": save the current recipients as a named campaign
+  // in Firestore (emailCampaigns/{uid}) — the same collection the Email
+  // Campaigns subtab reads and the All Contacts "Email Campaigns" column
+  // matches against (by lowercased email). The contacts stay in the draft
+  // (copy, not a destructive move). Campaign shape mirrors
+  // EmailCampaignView.handleSave so both places render it consistently; the
+  // send/reply counters start at zero since nothing's been sent yet, and a
+  // later real subject-search Save in the campaign tracker overwrites this
+  // placeholder by subject.
+  const [namingCampaign, setNamingCampaign] = useState(false);
+  const [campaignName, setCampaignName] = useState('');
+  const [savingCampaign, setSavingCampaign] = useState(false);
+  // Existing campaigns offered in the "Add to existing campaign" picker,
+  // loaded fresh from Firestore each time the panel opens so the list is
+  // current. `targetCampaign` is the chosen campaign's subject.
+  const [existingCampaigns, setExistingCampaigns] = useState([]);
+  const [targetCampaign, setTargetCampaign] = useState('');
+  // Preview shown before merging into an existing campaign: which selected
+  // contacts are new (will be added) and which are already on that campaign's
+  // roster (will be skipped), so duplicates can't be added blind.
+  const [campaignPreview, setCampaignPreview] = useState(null);
+
+  // Open the campaign panel and pull the current campaign list so the user
+  // can either name a new campaign or add to one that already exists.
+  async function openCampaignPanel() {
+    setCampaignName(subject.trim() || '');
+    setTargetCampaign('');
+    setNamingCampaign(true);
+    if (!user?.uid) { setExistingCampaigns([]); return; }
+    try {
+      const snap = await getDoc(doc(db, 'emailCampaigns', user.uid));
+      const list = snap.exists() ? (snap.data().campaigns || []) : [];
+      setExistingCampaigns(list);
+    } catch { setExistingCampaigns([]); }
+  }
+
+  // Build campaign contact rows from the current selection, deduped by
+  // lowercased email and skipping any email already present in `skipEmails`
+  // (used when merging into an existing campaign's roster).
+  function buildCampaignContacts(skipEmails = []) {
+    const seen = new Set(skipEmails.map(e => String(e || '').trim().toLowerCase()).filter(Boolean));
+    const contacts = [];
+    for (const c of selectedContacts) {
+      const email = String(c.email || '').trim();
+      const key = email.toLowerCase();
+      if (!email || seen.has(key)) continue;
+      seen.add(key);
+      contacts.push({ email, name: c.name || '', company: c.company || '', sentDate: '', replied: false, repliedBy: '', replyDate: '', recipientCount: 1, eventStatus: '' });
+    }
+    return contacts;
+  }
+
+  // Recompute the campaign summary counts from its roster after a merge,
+  // mirroring EmailCampaignView.deriveCounts so both places agree. totalEmails
+  // (real emails found by subject search) is left untouched.
+  function deriveCampaignCounts(contacts) {
+    const list = contacts || [];
+    const sent = list.filter(c => !!c.sentDate).length;
+    const replies = list.filter(c => c.replied).length;
+    const responseRate = sent > 0 ? parseFloat(((replies / sent) * 100).toFixed(1)) : 0;
+    return { totalContacts: list.length, sent, replies, uniqueRecipients: sent, uniqueRepliers: replies, responseRate };
+  }
+
+  // Split the current selection against a target campaign's roster (deduped by
+  // lowercased email): which contacts are new (toAdd), which are already on the
+  // roster or repeated within the selection (duplicates), and which can't be
+  // added because they have no email (noEmail). Drives the confirmation popup.
+  function splitSelectionForCampaign(target) {
+    const rosterEmails = new Set(
+      (Array.isArray(target?.contacts) ? target.contacts : [])
+        .map(c => String(c.email || '').trim().toLowerCase())
+        .filter(Boolean),
+    );
+    const seen = new Set();
+    const toAdd = [];
+    const duplicates = [];
+    const noEmail = [];
+    for (const c of selectedContacts) {
+      const email = String(c.email || '').trim();
+      const key = email.toLowerCase();
+      if (!email) { noEmail.push(c); continue; }
+      if (rosterEmails.has(key) || seen.has(key)) { duplicates.push(c); continue; }
+      seen.add(key);
+      toAdd.push(c);
+    }
+    return { toAdd, duplicates, noEmail };
+  }
+
+  // Build the "which will be added / skipped" preview for the chosen campaign
+  // and open the confirmation popup, rather than merging blind. Uses the
+  // campaign list already loaded into the panel.
+  function previewAddToExistingCampaign() {
+    const name = targetCampaign.trim();
+    if (!name) return;
+    if (selectedContacts.length === 0) {
+      setResult({ type: 'error', message: 'Add at least one contact before adding to a campaign' });
+      return;
+    }
+    const target = existingCampaigns.find(c => String(c.subject || '').trim().toLowerCase() === name.toLowerCase());
+    if (!target) {
+      setResult({ type: 'error', message: `Campaign "${name}" no longer exists — refresh and try again.` });
+      return;
+    }
+    setCampaignPreview({ name, ...splitSelectionForCampaign(target) });
+  }
+
+  // Commit the preview: add the current selection to the already-saved
+  // campaign, deduped by email against a FRESH copy of its roster (so a
+  // concurrent edit can't reintroduce a duplicate). Preserves tracking data.
+  async function confirmAddToExistingCampaign() {
+    const name = (campaignPreview?.name || targetCampaign).trim();
+    if (!name) return;
+    if (selectedContacts.length === 0) {
+      setResult({ type: 'error', message: 'Add at least one contact before adding to a campaign' });
+      return;
+    }
+    if (!user?.uid) {
+      setResult({ type: 'error', message: 'You must be signed in to update a campaign' });
+      return;
+    }
+    setSavingCampaign(true);
+    try {
+      const ref = doc(db, 'emailCampaigns', user.uid);
+      const snap = await getDoc(ref);
+      const existing = snap.exists() ? (snap.data().campaigns || []) : [];
+      const idx = existing.findIndex(c => String(c.subject || '').trim().toLowerCase() === name.toLowerCase());
+      if (idx === -1) {
+        setResult({ type: 'error', message: `Campaign "${name}" no longer exists — refresh and try again.` });
+        setCampaignPreview(null);
+        setSavingCampaign(false);
+        return;
+      }
+      const target = existing[idx];
+      const currentContacts = Array.isArray(target.contacts) ? target.contacts : [];
+      const added = buildCampaignContacts(currentContacts.map(c => c.email));
+      if (added.length === 0) {
+        setResult({ type: 'error', message: 'Every selected contact with an email is already in that campaign.' });
+        setCampaignPreview(null);
+        setSavingCampaign(false);
+        return;
+      }
+      const mergedContacts = [...currentContacts, ...added];
+      const nowISO = new Date().toISOString();
+      const updated = { ...target, contacts: mergedContacts, ...deriveCampaignCounts(mergedContacts) };
+      const nextCampaigns = existing.map((c, i) => (i === idx ? updated : c));
+      await setDoc(ref, { campaigns: nextCampaigns, updatedAt: nowISO });
+      // Keep the in-panel campaign list current so the dropdown count and any
+      // follow-up preview reflect the just-added contacts.
+      setExistingCampaigns(nextCampaigns);
+      setResult({ type: 'success', message: `Added ${added.length} contact${added.length === 1 ? '' : 's'} to Email Campaign "${name}".` });
+      setCampaignPreview(null);
+      setNamingCampaign(false);
+      setTargetCampaign('');
+      setTimeout(() => setResult(null), 5000);
+    } catch (err) {
+      setResult({ type: 'error', message: 'Failed to add to campaign: ' + (err?.message || 'unknown error') });
+    } finally {
+      setSavingCampaign(false);
+    }
+  }
+
+  async function saveAsCampaign() {
+    const name = campaignName.trim();
+    if (!name) return;
+    if (selectedContacts.length === 0) {
+      setResult({ type: 'error', message: 'Add at least one contact before moving to a campaign' });
+      return;
+    }
+    if (!user?.uid) {
+      setResult({ type: 'error', message: 'You must be signed in to save a campaign' });
+      return;
+    }
+    setSavingCampaign(true);
+    try {
+      const ref = doc(db, 'emailCampaigns', user.uid);
+      const snap = await getDoc(ref);
+      const existing = snap.exists() ? (snap.data().campaigns || []) : [];
+      // Don't clobber an existing campaign (which may hold real tracking
+      // data) that happens to share this name — ask for a unique one.
+      if (existing.some(c => String(c.subject || '').trim().toLowerCase() === name.toLowerCase())) {
+        setResult({ type: 'error', message: `A campaign named "${name}" already exists — choose a different name or add to it instead.` });
+        setSavingCampaign(false);
+        return;
+      }
+      // Recipients, deduped by lowercased email.
+      const contacts = buildCampaignContacts();
+      if (contacts.length === 0) {
+        setResult({ type: 'error', message: 'None of the selected contacts have an email address' });
+        setSavingCampaign(false);
+        return;
+      }
+      const nowISO = new Date().toISOString();
+      // Nothing has been emailed yet, so the send/reply counters start at zero;
+      // the roster is tracked separately as totalContacts. Opening the campaign
+      // in the Email Campaigns tab folds in real send/reply activity by subject.
+      const campaign = {
+        subject: name,
+        savedAt: nowISO,
+        source: 'draft-emails',
+        uniqueRecipients: 0,
+        uniqueRepliers: 0,
+        responseRate: 0,
+        totalEmails: contacts.length,
+        totalContacts: contacts.length,
+        sent: 0,
+        replies: 0,
+        autoRepliesSuppressed: 0,
+        removedEmails: [],
+        contacts,
+      };
+      await setDoc(ref, { campaigns: [campaign, ...existing], updatedAt: nowISO });
+      setResult({ type: 'success', message: `Saved ${contacts.length} contact${contacts.length === 1 ? '' : 's'} to Email Campaign "${name}" — find it under the Email Campaigns tab.` });
+      setNamingCampaign(false);
+      setCampaignName('');
+      setTimeout(() => setResult(null), 5000);
+    } catch (err) {
+      setResult({ type: 'error', message: 'Failed to save campaign: ' + (err?.message || 'unknown error') });
+    } finally {
+      setSavingCampaign(false);
+    }
   }
 
   async function createOutlookDrafts() {
@@ -900,7 +1664,12 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       const allCc = [...new Set([...contactCc, ...draftCc])];
       const toAlso = toAlsoMap[c.email] || [];
       const allTo = [c.email, ...toAlso].join(';');
-      return { to: allTo, name: c.name, subject: pSubject, body: pBodyHtml, cc: allCc };
+      // Run the body through the same paragraph-spacing fix the .eml path uses
+      // (zeroed <p> margins + <p><br></p> → <br>). Without it Outlook's Word
+      // renderer adds a blank line between every paragraph on Send. No
+      // signature is appended here — Outlook adds the user's own signature when
+      // the draft is opened, so injecting one would duplicate it.
+      return { to: allTo, name: c.name, subject: pSubject, body: buildStyledBodyHtml(pBodyHtml), cc: allCc };
     });
 
     try {
@@ -924,7 +1693,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
             return `Prospect Tracker · ${stamp} · ${slug || 'untitled'}`;
           })()
         : null;
-      const res = await fetch('/api/outlook-draft', {
+      const res = await apiFetch('/api/outlook-draft', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ accessToken, drafts, folderName }),
@@ -951,6 +1720,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
   function htmlToPlainText(html) {
     return html
       .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<hr[^>]*>/gi, '\n----------------------\n')
       .replace(/<\/p>\s*<p[^>]*>/gi, '\n\n')
       .replace(/<\/li>\s*/gi, '\n')
       .replace(/<li[^>]*>/gi, '• ')
@@ -974,8 +1744,16 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
   function personalizeForContact(text, c) {
     const toAlsoMap = settings?.toAlsoMap || {};
     const hasToAlso = (toAlsoMap[c.email] || []).length > 0;
+    // {custom} pulls from settings.customField — a per-contact value
+    // typed manually in the "Custom" column on the Contacts page,
+    // keyed by HubSpot contact id.
+    const customField = (settings?.customField || {})[c.id] || '';
+    // {goesBy} uses the saved nickname when present, otherwise falls back to
+    // the first name so a greeting never renders blank.
+    const goesBy = (settings?.contactNicknames || {})[c.id] || '';
     return text
       .replace(/\{firstName\}/gi, hasToAlso ? 'Team' : (c.firstName || c.name.split(' ')[0] || ''))
+      .replace(/\{goesBy\}/gi, hasToAlso ? 'Team' : (goesBy || c.firstName || c.name.split(' ')[0] || ''))
       .replace(/\{lastName\}/gi, hasToAlso ? '' : (c.lastName || ''))
       .replace(/\{fullName\}/gi, hasToAlso ? 'Team' : (c.name || ''))
       .replace(/\{email\}/gi, c.email || '')
@@ -984,12 +1762,13 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       .replace(/\{title\}/gi, c.title || '')
       .replace(/\{phone\}/gi, c.phone || '')
       .replace(/\{city\}/gi, c.city || '')
-      .replace(/\{state\}/gi, c.state || '');
+      .replace(/\{state\}/gi, c.state || '')
+      .replace(/\{custom\}/gi, customField);
   }
 
   function openDraftForContact(c) {
     const personalBodyHtml = personalizeForContact(body, c);
-    const styledHtml = buildStyledHtml(personalBodyHtml);
+    const styledHtml = buildStyledBodyHtml(personalBodyHtml);
     const personalBodyPlain = htmlToPlainText(personalBodyHtml);
     const personalSubject = personalizeForContact(subject, c);
     let trimmedBody = personalBodyPlain;
@@ -1062,7 +1841,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     }).join('\r\n');
   }
 
-  function generateEmlFiles({ onlyFirst = false } = {}) {
+  async function generateEmlFiles({ onlyFirst = false } = {}) {
     if (selectedContacts.length === 0 || !subject.trim()) return;
 
     const ccMap = settings?.ccMap || {};
@@ -1072,8 +1851,8 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     // drafts for the whole list.
     const contactsToProcess = onlyFirst ? selectedContacts.slice(0, 1) : selectedContacts;
 
-    // Build every recipient's .eml in memory first.
-    const built = contactsToProcess.map((c) => {
+    // Assemble each recipient's headers + HTML body first.
+    const prepared = contactsToProcess.map((c) => {
       const pBodyHtml = personalizeForContact(body, c);
       const pSubject = personalizeForContact(subject, c);
       const contactCc = ccMap[c.email] || [];
@@ -1084,74 +1863,47 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       const toHeader = allTo.map((addr, j) => j === 0 ? `${c.name} <${addr}>` : `<${addr}>`).join(', ');
       const ccHeader = allCc.length > 0 ? `Cc: ${allCc.join(', ')}\r\n` : '';
 
-      // Merge a `key:value` declaration into a tag's existing style="…"
-      // attrs, replacing any prior value for that key. Used below to
-      // zero a <p>'s margin-bottom only in the spots where the user's
-      // text touches a list or the signature.
-      const setStyle = (attrs, key, value) => {
-        const m = /style\s*=\s*"([^"]*)"/i.exec(attrs);
-        if (m) {
-          const re = new RegExp(`${key}\\s*:[^;]*;?`, 'i');
-          const cleaned = m[1].replace(re, '').replace(/;\s*;/g, ';').replace(/^\s*;|\s*;\s*$/g, '').trim();
-          const next = (cleaned ? cleaned + ';' : '') + `${key}:${value}`;
-          return attrs.replace(/style\s*=\s*"[^"]*"/i, `style="${next}"`);
+      // Same paragraph-spacing fix as the Outlook draft path, plus the
+      // signature block (the .eml is opened/sent as-is, so it carries its own
+      // signature rather than relying on Outlook to add one).
+      const htmlContent = buildStyledBodyHtml(pBodyHtml, { signature });
+      return { c, pSubject, toHeader, ccHeader, htmlContent };
+    });
+
+    // When tracking is on, hand each body to the server to inject the
+    // open pixel + rewrite links and register the tracking docs. The
+    // returned HTML replaces the plain body. A failure here is
+    // non-fatal — we fall back to the untracked body so the send still
+    // goes out.
+    if (trackEmails) {
+      try {
+        const res = await apiFetch('/api/track-prepare', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            items: prepared.map(p => ({
+              to: p.c.email,
+              name: p.c.name,
+              subject: p.pSubject,
+              html: p.htmlContent,
+            })),
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          (data.items || []).forEach((it, i) => {
+            if (it && typeof it.html === 'string' && prepared[i]) prepared[i].htmlContent = it.html;
+          });
+        } else {
+          console.error('track-prepare failed:', res.status);
         }
-        return `${attrs} style="${key}:${value}"`;
-      };
+      } catch (err) {
+        console.error('track-prepare error:', err?.message || err);
+      }
+    }
 
-      // Zero out every margin-related property Outlook honours on
-      // the given attrs string. Used on <div>s we synthesise above
-      // lists / before the signature, and on every <li> so the
-      // first/last items don't pick up Word's stock auto spacing.
-      const zeroBlockSpacing = (attrs) => {
-        let a = setStyle(attrs || '', 'margin', '0pt');
-        a = setStyle(a, 'margin-top', '0pt');
-        a = setStyle(a, 'margin-bottom', '0pt');
-        a = setStyle(a, 'mso-margin-top-alt', '0pt');
-        a = setStyle(a, 'mso-margin-bottom-alt', '0pt');
-        return a;
-      };
-      const zeroListSpacing = (attrs) => {
-        let a = setStyle(attrs || '', 'margin', '0pt');
-        a = setStyle(a, 'padding-left', '1.5em');
-        a = setStyle(a, 'mso-margin-top-alt', '0pt');
-        a = setStyle(a, 'mso-margin-bottom-alt', '0pt');
-        return a;
-      };
-
-      let htmlContent = pBodyHtml
-        // Replace non-breaking spaces with regular spaces — pasted text often has &nbsp; for every space which prevents wrapping
-        // First, mark double spaces (e.g. after periods) to preserve them
-        .replace(/&nbsp;&nbsp;/g, '\x00DOUBLE\x00')
-        .replace(/&nbsp;/g, ' ')
-        .replace(/\x00DOUBLE\x00/g, '&nbsp;&nbsp;')
-        // Convert empty paragraphs (Quill's <p><br></p> double-Enter
-        // markers) into a stand-alone <br>. Outlook's Word renderer
-        // collapses <p><br></p> to zero height once we've zeroed the
-        // <p> margins, which was killing the user's typed blank
-        // lines. A bare <br> always consumes a line of height, so
-        // double Enter reliably shows a visible blank line again.
-        .replace(/<p[^>]*>\s*(?:<br\s*\/?>\s*)*<\/p>/gi, '<br>')
-        // Force zero margins on EVERY remaining <p>. With <p> margins
-        // at 0pt, a single Enter produces a tight line break (line2
-        // sits directly under line1, no auto Normal-style gap), and
-        // the standalone <br>s synthesised above are the only source
-        // of visible blank lines.
-        .replace(/<p(\s[^>]*)?>/gi, (_, a = '') => `<p${zeroBlockSpacing(a)}>`)
-        // Lists themselves so they sit flush.
-        .replace(/<ul(\s[^>]*)?>/gi, (_, a = '') => `<ul${zeroListSpacing(a)}>`)
-        .replace(/<ol(\s[^>]*)?>/gi, (_, a = '') => `<ol${zeroListSpacing(a)}>`)
-        // And every <li> — Word's stock auto top spacing would
-        // otherwise re-introduce a gap on the first item.
-        .replace(/<li(\s[^>]*)?>/gi, (_, a = '') => `<li${zeroBlockSpacing(a)}>`);
-      // Insert line breaks after closing tags — Outlook's MIME parser can misrender very long single-line HTML
-      htmlContent = htmlContent.replace(/<\/p>/gi, '</p>\n').replace(/<\/li>/gi, '</li>\n').replace(/<\/ul>/gi, '</ul>\n').replace(/<\/ol>/gi, '</ol>\n');
-      // Signature attaches directly — no leading <br>, since every
-      // <p> in the body is now zero-margin. Visible blank lines
-      // come from <p><br></p> blocks the user typed.
-      const sigBlock = signature ? `\n<div>\n${signature}\n</div>` : '';
-      htmlContent = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">\n<head>\n<!--[if gte mso 9]><xml><w:WordDocument><w:DontHyphenate/><w:DoNotHyphenateCaps/></w:WordDocument></xml><![endif]-->\n<style>\np{margin:0pt;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\nul,ol{margin:0pt;padding-left:1.5em;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\nli{margin:0pt;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\ndiv{mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\n</style>\n</head>\n<body style="margin:0;padding:0;">\n<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;">\n${htmlContent}\n</div>${sigBlock}\n</body>\n</html>`;
-
+    // Build every recipient's .eml in memory.
+    const built = prepared.map(({ c, pSubject, toHeader, ccHeader, htmlContent }) => {
       let eml;
       if (attachments.length > 0) {
         const boundary = '----=_Part_' + Date.now() + '_' + Math.random().toString(36).slice(2);
@@ -1226,6 +1978,36 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     saveDraft();
   }
 
+  // Duplicate detection for the To section. An address that would actually be
+  // delivered more than once from THIS section is a double-send, so we tally
+  // every address the section sends to — each primary recipient plus each
+  // contact's folded-in "To Also" and "CC" extras — and flag any address whose
+  // total count is 2+. Only real duplicates within this section are flagged: a
+  // contact's own address isn't counted against itself, and the separate
+  // draft-level CC field is intentionally left out of the tally.
+  const sectionEmailCounts = (() => {
+    const counts = new Map();
+    const bump = (addr) => {
+      const a = (addr || '').trim().toLowerCase();
+      if (!a) return;
+      counts.set(a, (counts.get(a) || 0) + 1);
+    };
+    for (const c of selectedContacts) {
+      const self = (c.email || '').trim().toLowerCase();
+      bump(self);
+      for (const addr of ((settings?.toAlsoMap || {})[c.email] || [])) {
+        const a = (addr || '').trim().toLowerCase();
+        if (a && a !== self) bump(a);
+      }
+      for (const addr of ((settings?.ccMap || {})[c.email] || [])) {
+        const a = (addr || '').trim().toLowerCase();
+        if (a && a !== self) bump(a);
+      }
+    }
+    return counts;
+  })();
+  const isSectionDuplicate = (addr) => (sectionEmailCounts.get((addr || '').trim().toLowerCase()) || 0) >= 2;
+
   return (
     <div className={styles.page}>
       <div className={styles.header}>
@@ -1236,18 +2018,99 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       <div className={styles.layout}>
         {/* Compose area */}
         <div className={styles.composeCard}>
-          <h3 className={styles.cardTitle}>Compose</h3>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: '1rem' }}>
+            <h3 className={styles.cardTitle} style={{ marginBottom: 0 }}>Compose</h3>
+            <button
+              type="button"
+              onClick={clearCompose}
+              title={'Clear recipients, subject, message, and attachments. Keeps the "Hi {goesBy}," greeting and your signature.'}
+              style={{ padding: '0.25rem 0.6rem', border: '1px solid #FCA5A5', borderRadius: 6, background: '#fff', color: '#B91C1C', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+            >Clear all</button>
+          </div>
 
           {/* Tagged contacts */}
           <div className={styles.field}>
             <label className={styles.label}>To {selectedContacts.length > 0 && <button onClick={() => setSelectedContacts([])} style={{ background: 'none', border: 'none', color: '#9CA3AF', fontSize: '0.65rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 400, textTransform: 'none', letterSpacing: 0, padding: 0, marginLeft: '0.3rem' }}>Clear all</button>}</label>
             <div className={styles.contactsBox}>
-              {selectedContacts.map(c => (
-                <span key={c.id} className={styles.contactTag}>
-                  {c.name} <span className={styles.contactEmail}>({c.email})</span>
-                  <button className={styles.removeTag} onClick={() => removeContact(c.id)}>&times;</button>
-                </span>
-              ))}
+              {selectedContacts.map(c => {
+                // Surface the per-contact extra recipients configured in the
+                // contact popup so they're visible right in the To box, not
+                // just on hover. "To Also" addresses (amber) get folded into
+                // this contact's To line on send; "CC" addresses (blue) get
+                // CC'd. A CC address that is ALSO a primary To recipient in
+                // this draft would double-send, so it's flagged red.
+                const toAlso = (settings?.toAlsoMap || {})[c.email] || [];
+                const contactCc = (settings?.ccMap || {})[c.email] || [];
+                const selfDup = isSectionDuplicate(c.email);
+                const hasExtras = toAlso.length > 0 || contactCc.length > 0;
+                const extraPill = {
+                  display: 'inline-flex', alignItems: 'center', gap: 3,
+                  maxWidth: '100%', padding: '0 6px', borderRadius: 999,
+                  fontSize: '0.62rem', lineHeight: 1.7, whiteSpace: 'nowrap',
+                  overflow: 'hidden', textOverflow: 'ellipsis',
+                };
+                const pillLabel = { fontWeight: 800, fontSize: '0.55rem', textTransform: 'uppercase', letterSpacing: '0.03em' };
+                return (
+                  <span
+                    key={c.id}
+                    className={styles.contactTag}
+                    title={selfDup ? 'Duplicate recipient — this address also appears elsewhere in the To section (double-send)' : undefined}
+                    style={{
+                      ...(hasExtras ? { flexDirection: 'column', alignItems: 'flex-start', whiteSpace: 'normal', gap: '0.2rem' } : {}),
+                      ...(selfDup ? { background: '#FEE2E2', borderColor: '#FCA5A5', color: '#991B1B' } : {}),
+                    }}
+                  >
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', maxWidth: '100%' }}>
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => openContact(c)}
+                        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openContact(c); } }}
+                        title={`Open ${c.name}`}
+                        style={{ cursor: 'pointer', textDecoration: 'underline' }}
+                      >{c.name}</span> <span className={styles.contactEmail}>({c.email})</span>
+                      {selfDup && <span title="Double-send — this address appears more than once in the To section" style={{ fontWeight: 800, color: '#991B1B' }}>⚑</span>}
+                      <button className={styles.removeTag} onClick={() => removeContact(c.id)}>&times;</button>
+                    </span>
+                    {hasExtras && (
+                      <span style={{ display: 'flex', flexWrap: 'wrap', gap: '0.2rem', maxWidth: '100%' }}>
+                        {toAlso.map(email => {
+                          const dup = isSectionDuplicate(email);
+                          return (
+                          <span
+                            key={`to|${email}`}
+                            title={dup ? `Appears more than once in the To section — would receive two copies` : `Added to the To line alongside ${c.name}`}
+                            style={{ ...extraPill, ...(dup
+                              ? { background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B' }
+                              : { background: '#FEF3C7', border: '1px solid #FDE68A', color: '#92400E' }) }}
+                          >
+                            <span style={pillLabel}>To</span>
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{email}</span>
+                            {dup && <span title="Double-send" style={{ fontWeight: 800 }}>⚑</span>}
+                          </span>
+                          );
+                        })}
+                        {contactCc.map(email => {
+                          const dup = isSectionDuplicate(email);
+                          return (
+                            <span
+                              key={`cc|${email}`}
+                              title={dup ? `Appears more than once in the To section — would receive two copies (once on To, once on CC)` : `CC'd on the email to ${c.name}`}
+                              style={{ ...extraPill, ...(dup
+                                ? { background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B' }
+                                : { background: '#EFF6FF', border: '1px solid #BFDBFE', color: '#1E40AF' }) }}
+                            >
+                              <span style={pillLabel}>CC</span>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{email}</span>
+                              {dup && <span title="Double-send" style={{ fontWeight: 800 }}>⚑</span>}
+                            </span>
+                          );
+                        })}
+                      </span>
+                    )}
+                  </span>
+                );
+              })}
               <div style={{ position: 'relative', flex: 1, minWidth: '150px' }} ref={searchRef}>
                 <input
                   className={styles.contactSearchInput}
@@ -1363,6 +2226,16 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                           <span className={styles.insertExample}>e.g. {v.example}</span>
                         </button>
                       ))}
+                      <div className={styles.insertDivLine} />
+                      <button
+                        className={styles.insertOption}
+                        onClick={insertDivider}
+                        type="button"
+                      >
+                        <span className={styles.insertToken}>↵</span>
+                        <span className={styles.insertLabel}>Page break</span>
+                        <span className={styles.insertExample}>blank line, like pressing Enter</span>
+                      </button>
                     </div>
                   )}
                 </div>
@@ -1395,7 +2268,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                   ],
                   clipboard: { matchVisual: false },
                 }}
-                formats={['bold', 'italic', 'underline', 'strike', 'list', 'link']}
+                formats={['bold', 'italic', 'underline', 'strike', 'list', 'link', 'divider']}
               />
             </div>
           </div>
@@ -1471,6 +2344,19 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
             </div>
           )}
 
+          <label
+            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '0 0 0.6rem', fontSize: '0.76rem', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
+            title="Adds an invisible open pixel and rewrites links so you can see opens & clicks in the Email Tracking tab. Note: opens are approximate — Apple Mail & Gmail can pre-load or block the pixel."
+          >
+            <input
+              type="checkbox"
+              checked={trackEmails}
+              onChange={e => { setTrackEmails(e.target.checked); updateSettings({ trackEmails: e.target.checked }); }}
+              style={{ width: 16, height: 16, cursor: 'pointer' }}
+            />
+            <span>Track opens &amp; clicks <span style={{ color: 'var(--color-text-muted)' }}>(view in the Email Tracking tab)</span></span>
+          </label>
+
           <div className={styles.actions}>
             <button className={styles.primaryBtn} onClick={() => generateEmlFiles()} disabled={selectedContacts.length === 0 || !subject.trim()}>
               Download {selectedContacts.length || ''} Draft{selectedContacts.length !== 1 ? 's' : ''} for Outlook
@@ -1510,8 +2396,87 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
               feed the same draft, deduped by contact id. */}
           <div className={`${styles.draftsCard} ${styles.coverageCard}`}>
             <h3 className={styles.cardTitle}>Custom Email Campaign</h3>
+            {/* Save the assembled recipients as a named campaign (Email
+                Campaigns tab). Contacts stay in the draft. */}
+            <div style={{ marginBottom: '0.6rem' }}>
+              {!namingCampaign ? (
+                <button
+                  type="button"
+                  onClick={openCampaignPanel}
+                  disabled={selectedContacts.length === 0}
+                  title={selectedContacts.length === 0 ? 'Add contacts first' : 'Add these contacts to a new or existing campaign under the Email Campaigns tab'}
+                  style={{ width: '100%', padding: '0.4rem 0.6rem', border: '1px solid #1D4ED8', borderRadius: 6, background: selectedContacts.length === 0 ? '#F1F5F9' : '#1D4ED8', color: selectedContacts.length === 0 ? '#94A3B8' : '#fff', fontSize: '0.74rem', fontWeight: 700, fontFamily: 'inherit', cursor: selectedContacts.length === 0 ? 'default' : 'pointer' }}
+                >Add to Email Campaign{selectedContacts.length > 0 ? ` (${selectedContacts.length})` : ''}</button>
+              ) : (
+                <div style={{ border: '1px solid #BFDBFE', background: '#EFF6FF', borderRadius: 6, padding: '0.5rem 0.6rem' }}>
+                  {/* Add to an existing campaign — only shown when the user has
+                      saved campaigns to add to. Merges into that roster. */}
+                  {existingCampaigns.length > 0 && (
+                    <div style={{ marginBottom: '0.6rem' }}>
+                      <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 700, color: '#1E3A8A', marginBottom: 4 }}>Add to existing campaign</label>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <select
+                          value={targetCampaign}
+                          onChange={e => setTargetCampaign(e.target.value)}
+                          style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', padding: '0.35rem 0.4rem', border: '1px solid #93C5FD', borderRadius: 4, fontSize: '0.74rem', fontFamily: 'inherit', background: '#fff' }}
+                        >
+                          <option value="">Choose a campaign…</option>
+                          {existingCampaigns.map((c, i) => {
+                            const subj = String(c.subject || '').trim();
+                            const count = c.totalContacts ?? c.contacts?.length ?? 0;
+                            return <option key={i} value={subj}>{subj || '(untitled)'} — {count}</option>;
+                          })}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={previewAddToExistingCampaign}
+                          disabled={savingCampaign || !targetCampaign}
+                          style={{ padding: '0.25rem 0.7rem', border: 'none', background: (savingCampaign || !targetCampaign) ? '#93C5FD' : '#1D4ED8', color: '#fff', borderRadius: 4, fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit', cursor: (savingCampaign || !targetCampaign) ? 'default' : 'pointer', whiteSpace: 'nowrap' }}
+                        >{savingCampaign ? 'Adding…' : 'Review & add'}</button>
+                      </div>
+                      <div style={{ textAlign: 'center', fontSize: '0.66rem', fontWeight: 700, color: '#93A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', margin: '0.55rem 0 0.2rem' }}>or create new</div>
+                    </div>
+                  )}
+                  <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 700, color: '#1E3A8A', marginBottom: 4 }}>Name this campaign</label>
+                  <input
+                    autoFocus
+                    type="text"
+                    value={campaignName}
+                    onChange={e => setCampaignName(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') { e.preventDefault(); saveAsCampaign(); }
+                      else if (e.key === 'Escape') { setNamingCampaign(false); setCampaignName(''); setTargetCampaign(''); }
+                    }}
+                    placeholder="e.g. Q3 PE Outreach"
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '0.35rem 0.5rem', border: '1px solid #93C5FD', borderRadius: 4, fontSize: '0.76rem', fontFamily: 'inherit', marginBottom: '0.45rem' }}
+                  />
+                  <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      onClick={() => { setNamingCampaign(false); setCampaignName(''); setTargetCampaign(''); }}
+                      disabled={savingCampaign}
+                      style={{ padding: '0.25rem 0.6rem', border: '1px solid #CBD5E1', background: '#fff', color: '#475569', borderRadius: 4, fontSize: '0.7rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
+                    >Cancel</button>
+                    <button
+                      type="button"
+                      onClick={saveAsCampaign}
+                      disabled={savingCampaign || !campaignName.trim()}
+                      style={{ padding: '0.25rem 0.7rem', border: 'none', background: (savingCampaign || !campaignName.trim()) ? '#93C5FD' : '#1D4ED8', color: '#fff', borderRadius: 4, fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit', cursor: (savingCampaign || !campaignName.trim()) ? 'default' : 'pointer' }}
+                    >{savingCampaign ? 'Saving…' : `Save ${selectedContacts.length} contact${selectedContacts.length === 1 ? '' : 's'}`}</button>
+                  </div>
+                </div>
+              )}
+            </div>
             <CampaignQueueSection
               allContacts={allContacts}
+              selectedContacts={selectedContacts}
+              setSelectedContacts={setSelectedContacts}
+            />
+            <MarketingLeadsQueueSection
+              selectedContacts={selectedContacts}
+              setSelectedContacts={setSelectedContacts}
+            />
+            <CampaignRecipientsQueueSection
               selectedContacts={selectedContacts}
               setSelectedContacts={setSelectedContacts}
             />
@@ -1545,28 +2510,6 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
             </div>
           </div>
 
-          {/* Saved drafts */}
-          <div className={`${styles.draftsCard} ${styles.coverageCard}`}>
-            <h3 className={styles.cardTitle}>Saved Drafts ({drafts.length})</h3>
-            {drafts.length === 0 ? (
-              <p className={styles.emptyDrafts}>No saved drafts yet</p>
-            ) : (
-              <div className={styles.draftsList}>
-                {drafts.map(d => (
-                  <div key={d.id} className={styles.draftItem}>
-                    <button className={styles.draftLoad} onClick={() => loadDraft(d)}>
-                      <span className={styles.draftSubject}>{d.subject || '(No subject)'}</span>
-                      <span className={styles.draftMeta}>
-                        {d.contacts?.length || 0} contact{(d.contacts?.length || 0) !== 1 ? 's' : ''} · {new Date(d.createdAt).toLocaleDateString()}
-                      </span>
-                    </button>
-                    <button className={styles.draftDelete} onClick={() => deleteDraft(d.id)}>&times;</button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
           {/* Variable Coverage — table view of every selected contact
               and the resolved value for every variable token used in
               the current subject + body. Empty cells render in red so
@@ -1581,12 +2524,15 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
               body={body}
               contacts={selectedContacts}
               insertVariables={INSERT_VARIABLES}
+              isEditable={token => !!COVERAGE_EDITABLE[token]}
+              onEditField={handleCoverageEdit}
               resolve={(c, token) => {
                 // Return what personalizeForContact would substitute
                 // for `token` on this contact, but unwrapped per-token
                 // so we can colour empties.
                 switch (token) {
                   case '{firstName}': return c.firstName || (c.name || '').split(' ')[0] || '';
+                  case '{goesBy}':    return (settings?.contactNicknames || {})[c.id] || c.firstName || (c.name || '').split(' ')[0] || '';
                   case '{lastName}':  return c.lastName || '';
                   case '{fullName}':  return c.name || '';
                   case '{email}':     return c.email || '';
@@ -1596,13 +2542,185 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                   case '{phone}':     return c.phone || '';
                   case '{city}':      return c.city || '';
                   case '{state}':     return c.state || '';
+                  case '{custom}':    return (settings?.customField || {})[c.id] || '';
                   default:            return '';
                 }
               }}
             />
           </div>
+
+          {/* Saved drafts — sits below Variable Coverage. Unpinned drafts are
+              capped at the 5 most recent (older ones drop automatically when a
+              new draft is saved); pinned drafts (📌) are exempt and kept until
+              deleted by hand. */}
+          <div className={`${styles.draftsCard} ${styles.coverageCard}`}>
+            <div className={styles.draftsHeader}>
+              <h3 className={styles.cardTitle}>Saved Drafts ({drafts.length})</h3>
+              {drafts.length > 0 && (
+                <button className={styles.clearAllDrafts} onClick={clearAllDrafts} title="Delete all saved drafts">
+                  Clear all
+                </button>
+              )}
+            </div>
+            {drafts.length === 0 ? (
+              <p className={styles.emptyDrafts}>No saved drafts yet</p>
+            ) : (
+              <>
+                <p className={styles.draftsHint}>
+                  Only the 5 most recent drafts are kept automatically. Pin a draft (📌) to keep it from being removed.
+                </p>
+                <div className={styles.draftsList}>
+                  {[...drafts]
+                    .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0))
+                    .map(d => (
+                      <div key={d.id} className={`${styles.draftItem} ${d.pinned ? styles.draftItemPinned : ''}`}>
+                        <button
+                          className={`${styles.draftPin} ${d.pinned ? styles.draftPinActive : ''}`}
+                          onClick={() => togglePin(d.id)}
+                          aria-pressed={d.pinned}
+                          title={d.pinned ? 'Pinned — kept from auto-removal. Click to unpin.' : 'Pin to keep this draft from being auto-removed.'}
+                        >📌</button>
+                        <button className={styles.draftLoad} onClick={() => loadDraft(d)}>
+                          <span className={styles.draftSubject}>{d.subject || '(No subject)'}</span>
+                          <span className={styles.draftMeta}>
+                            {d.contacts?.length || 0} contact{(d.contacts?.length || 0) !== 1 ? 's' : ''} · {new Date(d.createdAt).toLocaleDateString()}
+                          </span>
+                        </button>
+                        <button className={styles.draftDelete} onClick={() => deleteDraft(d.id)}>&times;</button>
+                      </div>
+                    ))}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
+      {campaignPreview && createPortal(
+        (() => {
+          const { name, toAdd = [], duplicates = [], noEmail = [] } = campaignPreview;
+          const label = (c) => `${c.name || c.email || '—'}${c.company ? ` · ${c.company}` : ''}`;
+          const listBox = { maxHeight: 200, overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: 6, padding: '0.35rem 0.5rem', background: '#fff' };
+          const rowStyle = { fontSize: '0.74rem', padding: '0.12rem 0', color: '#1E293B', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
+          const headStyle = { fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', margin: '0 0 0.3rem' };
+          return (
+            <div
+              onClick={() => { if (!savingCampaign) setCampaignPreview(null); }}
+              style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}
+            >
+              <div
+                onClick={e => e.stopPropagation()}
+                style={{ width: 'min(560px, 100%)', maxHeight: '85vh', overflowY: 'auto', background: '#fff', borderRadius: 10, boxShadow: '0 20px 50px rgba(15,23,42,0.3)', padding: '1.1rem 1.25rem' }}
+              >
+                <h3 style={{ margin: '0 0 0.2rem', fontSize: '1rem', fontWeight: 700, color: '#0F172A' }}>
+                  Add contacts to “{name}”
+                </h3>
+                <p style={{ margin: '0 0 0.85rem', fontSize: '0.76rem', color: '#475569' }}>
+                  <strong style={{ color: '#166534' }}>{toAdd.length} new</strong> will be added
+                  {duplicates.length > 0 && <> · <strong style={{ color: '#92400E' }}>{duplicates.length} already in the campaign</strong> (skipped)</>}
+                  {noEmail.length > 0 && <> · <strong style={{ color: '#991B1B' }}>{noEmail.length} without an email</strong> (skipped)</>}
+                </p>
+
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <div style={{ ...headStyle, color: '#166534' }}>Will be added ({toAdd.length})</div>
+                  <div style={listBox}>
+                    {toAdd.length ? toAdd.map((c, i) => <div key={c.id ?? c.email ?? i} style={rowStyle}>{label(c)}</div>)
+                      : <div style={{ ...rowStyle, color: '#94A3B8', fontStyle: 'italic' }}>Nothing new — every selected contact is already in this campaign.</div>}
+                  </div>
+                </div>
+
+                {duplicates.length > 0 && (
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <div style={{ ...headStyle, color: '#92400E' }}>Already in campaign — skipped ({duplicates.length})</div>
+                    <div style={{ ...listBox, background: '#FFFBEB' }}>
+                      {duplicates.map((c, i) => <div key={c.id ?? c.email ?? i} style={{ ...rowStyle, color: '#78716C' }}>{label(c)}</div>)}
+                    </div>
+                  </div>
+                )}
+
+                {noEmail.length > 0 && (
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <div style={{ ...headStyle, color: '#991B1B' }}>No email — can’t be added ({noEmail.length})</div>
+                    <div style={{ ...listBox, background: '#FEF2F2' }}>
+                      {noEmail.map((c, i) => <div key={c.id ?? i} style={{ ...rowStyle, color: '#B91C1C' }}>{label(c)}</div>)}
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => setCampaignPreview(null)}
+                    disabled={savingCampaign}
+                    style={{ padding: '0.4rem 0.85rem', border: '1px solid #CBD5E1', background: '#fff', color: '#475569', borderRadius: 6, fontSize: '0.76rem', fontWeight: 600, fontFamily: 'inherit', cursor: savingCampaign ? 'default' : 'pointer' }}
+                  >Cancel</button>
+                  <button
+                    type="button"
+                    onClick={confirmAddToExistingCampaign}
+                    disabled={savingCampaign || toAdd.length === 0}
+                    style={{ padding: '0.4rem 0.95rem', border: 'none', background: (savingCampaign || toAdd.length === 0) ? '#93C5FD' : '#1D4ED8', color: '#fff', borderRadius: 6, fontSize: '0.76rem', fontWeight: 700, fontFamily: 'inherit', cursor: (savingCampaign || toAdd.length === 0) ? 'default' : 'pointer' }}
+                  >{savingCampaign ? 'Adding…' : `Add ${toAdd.length} contact${toAdd.length === 1 ? '' : 's'}`}</button>
+                </div>
+              </div>
+            </div>
+          );
+        })(),
+        document.body,
+      )}
+
+      {editingContact && createPortal(
+        <ContactEditModal
+          contact={editingContact}
+          onSave={handleContactSaved}
+          onClose={() => setEditingContact(null)}
+          contactNotes={settings?.contactNotes || {}}
+          onSaveNote={(cid, v) => saveSettingsMap('contactNotes', cid, v)}
+          contactOldEmails={settings?.contactOldEmails || {}}
+          onSaveOldEmails={(cid, v) => saveSettingsMap('contactOldEmails', cid, v)}
+          contactOldCompany={settings?.contactOldCompany || {}}
+          onSaveOldCompany={(cid, v) => saveSettingsMap('contactOldCompany', cid, v)}
+          contactNicknames={settings?.contactNicknames || {}}
+          onSaveNickname={(cid, v) => saveSettingsMap('contactNicknames', cid, v)}
+          contactTeamNames={settings?.contactTeamNames || {}}
+          onSaveTeamName={(cid, v) => saveSettingsMap('contactTeamNames', cid, v && v.trim())}
+          contactReportsTo={settings?.contactReportsTo || {}}
+          onSaveReportsTo={(cid, managerIds) => {
+            if (cid == null) return;
+            const cur = settings?.contactReportsTo || {};
+            const next = { ...cur };
+            const arr = Array.isArray(managerIds) ? managerIds.filter(Boolean).map(String) : (managerIds ? [String(managerIds)] : []);
+            if (arr.length) next[cid] = arr; else delete next[cid];
+            updateSettings({ contactReportsTo: next });
+          }}
+          ccMap={settings?.ccMap || {}}
+          onSaveCcMap={m => updateSettings({ ccMap: m })}
+          toAlsoMap={settings?.toAlsoMap || {}}
+          onSaveToAlsoMap={m => updateSettings({ toAlsoMap: m })}
+          contactFamilies={settings?.contactFamilies || {}}
+          onSaveFamily={(cid, info) => {
+            if (cid == null) return;
+            const cur = settings?.contactFamilies || {};
+            const next = { ...cur };
+            const partner = String(info?.partner || '').trim();
+            const kids = String(info?.kids || '').trim();
+            if (!partner && !kids) delete next[cid]; else next[cid] = { partner, kids };
+            updateSettings({ contactFamilies: next });
+          }}
+          contactMetInPerson={settings?.contactMetInPerson || {}}
+          onSaveMetInPerson={(cid, met) => {
+            if (cid == null) return;
+            updateSettings({ contactMetInPerson: { ...(settings?.contactMetInPerson || {}), [cid]: !!met } });
+          }}
+          contactInvitedToLouisville={settings?.contactInvitedToLouisville || {}}
+          onSaveInvitedToLouisville={(cid, invited) => {
+            if (cid == null) return;
+            updateSettings({ contactInvitedToLouisville: { ...(settings?.contactInvitedToLouisville || {}), [cid]: !!invited } });
+          }}
+          companyContacts={editCompanyContacts}
+          emailDomains={editEmailDomains}
+          companyNames={editCompanyNames}
+        />,
+        document.body,
+      )}
     </div>
   );
 }

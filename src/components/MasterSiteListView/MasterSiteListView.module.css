@@ -1,0 +1,408 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.25rem 0.75rem;
+}
+
+.spacer { flex: 1; }
+
+.btn {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 0.74rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover { background: var(--color-surface-alt); }
+
+.btnPrimary {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: #fff;
+}
+.btnPrimary:hover { background: var(--color-accent-hover); }
+
+.btnDanger { color: var(--color-danger); border-color: var(--color-danger); }
+.btnDanger:hover { background: var(--color-danger-light); }
+
+/* Toggle button in its "on" state (Filter row shown / filters active). */
+.btnActive {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--color-accent);
+  border-radius: 6px;
+  background: var(--color-accent-light);
+  color: var(--color-accent);
+  font-size: 0.74rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.clearLink {
+  border: none;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0.2rem 0.35rem;
+  white-space: nowrap;
+}
+.clearLink:hover { text-decoration: underline; }
+
+.select {
+  padding: 0.38rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 0.74rem;
+  font-family: inherit;
+  max-width: 220px;
+}
+
+.count {
+  font-size: 0.74rem;
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.tableWrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+}
+
+.table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  font-size: 0.74rem;
+}
+
+.table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--color-surface-alt);
+  color: var(--color-text-secondary);
+  text-align: left;
+  font-weight: 700;
+  padding: 0.5rem 0.5rem;
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+/* Clickable label + sort arrow. Click anywhere on it to cycle the sort;
+   the resize handle to its right stops propagation so a drag never sorts. */
+.thHead {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  padding-right: 6px;
+  user-select: none;
+}
+
+/* Header label clips with ellipsis so a narrow column stays tidy and
+   leaves room for the resize handle on the right edge. */
+.thLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Idle sort hint (faint, appears on hover) vs the active sort arrow. */
+.sortArrow {
+  flex: none;
+  font-size: 0.6rem;
+  color: var(--color-text-muted);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.thHead:hover .sortArrow { opacity: 0.55; }
+.sortArrowActive {
+  flex: none;
+  font-size: 0.6rem;
+  color: var(--color-accent);
+}
+
+.filterInput {
+  width: 100%;
+  margin-top: 4px;
+  padding: 0.2rem 0.35rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 0.7rem;
+  font-weight: 400;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+.filterInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+/* Grab strip on the right edge of each header cell. */
+.resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+}
+.resizer::after {
+  content: '';
+  position: absolute;
+  top: 20%;
+  right: 2px;
+  height: 60%;
+  width: 2px;
+  background: var(--color-border);
+  border-radius: 1px;
+}
+.resizer:hover::after { background: var(--color-accent); }
+
+.table td {
+  padding: 0;
+  border-bottom: 1px solid var(--color-border-light);
+  overflow: hidden;
+}
+
+.table tbody tr:hover td { background: var(--color-accent-light); }
+
+.cellInput {
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.74rem;
+  font-family: inherit;
+  color: var(--color-text);
+  box-sizing: border-box;
+}
+.cellInput:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+  background: var(--color-surface);
+}
+
+.derived {
+  padding: 0.4rem 0.5rem;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Columns show/hide popover */
+.colMenuWrap { position: relative; display: inline-flex; }
+.colMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 50;
+  min-width: 200px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.18);
+  padding: 0.35rem;
+}
+.colMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.74rem;
+  color: var(--color-text);
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.colMenuItem:hover { background: var(--color-surface-alt); }
+.colMenuItem input { cursor: pointer; }
+.colMenuDivider { height: 1px; background: var(--color-border); margin: 0.35rem 0.25rem; }
+.colMenuReset {
+  width: 100%;
+  text-align: left;
+  padding: 0.35rem 0.5rem;
+  border: none;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.colMenuReset:hover { background: var(--color-accent-light); }
+
+.badge {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 700;
+}
+.badgeReg { background: var(--color-warning-light); color: #B45309; }
+.badgeDereg { background: var(--color-success-light); color: #047857; }
+
+.rowNum {
+  color: var(--color-text-muted);
+  font-size: 0.66rem;
+  text-align: right;
+  padding: 0 0.4rem;
+  width: 1%;
+  white-space: nowrap;
+}
+
+.del {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0.2rem 0.45rem;
+}
+.del:hover { color: var(--color-danger); }
+
+.empty {
+  padding: 2rem;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+.hint {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  padding: 0.4rem 0.25rem 0;
+}
+
+/* Paste modal */
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 400;
+}
+.modal {
+  background: var(--color-surface);
+  border-radius: 10px;
+  padding: 1.1rem 1.2rem;
+  width: min(640px, 92vw);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+}
+.modalWide {
+  background: var(--color-surface);
+  border-radius: 10px;
+  padding: 1.1rem 1.2rem;
+  width: min(560px, 92vw);
+  max-height: 86vh;
+  overflow: auto;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+}
+.modalTitle { font-size: 0.9rem; font-weight: 700; margin: 0 0 0.4rem; }
+.modalText { font-size: 0.74rem; color: var(--color-text-secondary); margin: 0 0 0.6rem; }
+.textarea {
+  width: 100%;
+  min-height: 180px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0.5rem;
+  font-size: 0.72rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  box-sizing: border-box;
+  resize: vertical;
+}
+.modalActions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.75rem; }
+.checkRow { display: flex; align-items: center; gap: 0.4rem; font-size: 0.74rem; margin: 0.5rem 0; color: var(--color-text-secondary); }
+
+/* Column-matcher field → source-column grid */
+.mapGrid { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.5rem; }
+.mapRow { display: grid; grid-template-columns: 120px 1fr; align-items: center; gap: 0.6rem; }
+.mapField { font-size: 0.74rem; font-weight: 600; color: var(--color-text); }
+.mapRow .select { max-width: none; width: 100%; }
+
+/* Unmapped-companies match popup */
+.unmappedList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  max-height: 52vh;
+  overflow: auto;
+  padding-right: 2px;
+}
+.unmappedRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) auto minmax(0, 1.3fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+}
+.unmappedName {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.unmappedCount { color: var(--color-text-muted); font-weight: 500; }
+.unmappedArrow { color: var(--color-text-muted); font-size: 0.8rem; }
+.unmappedInput {
+  width: 100%;
+  padding: 0.32rem 0.45rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-family: inherit;
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-sizing: border-box;
+}
+.unmappedInput:focus { outline: none; border-color: var(--color-accent); }
+.unmappedCheck,
+.unmappedCheckOn {
+  width: 1.1rem;
+  text-align: center;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+.unmappedCheckOn { color: var(--color-success, #16a34a); }
+.unmappedDone {
+  text-align: center;
+  color: var(--color-text-secondary);
+  padding: 1.25rem 0.5rem;
+  font-size: 0.82rem;
+}
