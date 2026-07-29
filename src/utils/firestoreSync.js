@@ -1,4 +1,6 @@
-import { collection, doc, setDoc, updateDoc, deleteDoc, getDocs, writeBatch, onSnapshot, serverTimestamp } from 'firebase/firestore';
+// `getDoc` is aliased: this module already has a local getDoc(id) helper
+// that builds a prospect doc ref, and the two names would collide.
+import { collection, doc, getDoc as fsGetDoc, setDoc, updateDoc, deleteDoc, getDocs, writeBatch, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 
 // Subcollection path for analyses saved against a prospect. Kept
@@ -359,6 +361,22 @@ export async function saveIndicativeAnalysis(prospectId, { fileName, dataBase64,
     chunkCount: chunks.length,
     capturedAt: serverTimestamp(),
   });
+}
+
+// Metadata-only read of a saved analysis: fetches just the `main` doc and
+// never touches the chunk docs, so callers that only need "does an analysis
+// exist, and when was it saved" stay at a single document read. Returns
+// { fileName, sizeBytes, savedAt } or null when nothing is saved.
+export async function getIndicativeAnalysisMeta(prospectId) {
+  if (!prospectId) return null;
+  const snap = await fsGetDoc(doc(getAnalysisCol(prospectId), ANALYSIS_DOC_ID));
+  if (!snap.exists()) return null;
+  const meta = snap.data() || {};
+  return {
+    fileName: meta.fileName || '',
+    sizeBytes: Number(meta.sizeBytes) || 0,
+    savedAt: meta.capturedAt?.toDate?.()?.toISOString() || null,
+  };
 }
 
 export function subscribeIndicativeAnalysis(prospectId, onChange) {

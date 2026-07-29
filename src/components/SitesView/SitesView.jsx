@@ -35,7 +35,7 @@ import { ComplianceRoadmap } from './ComplianceRoadmap';
 import CorporateCompliance from './CorporateCompliance';
 import { screenSites, CATEGORIES, totalPenalty, bpsPrioritization } from '../../utils/complianceMandates';
 import { exportComplianceReportXlsx, buildCorporateComplianceSheet, buildComplianceMethodologySheet } from '../../utils/complianceReportXlsx';
-import { saveIndicativeAnalysis, deleteIndicativeAnalysis } from '../../utils/firestoreSync';
+import { saveIndicativeAnalysis, deleteIndicativeAnalysis, getIndicativeAnalysisMeta } from '../../utils/firestoreSync';
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
 import { classifyUtility } from '../../utils/utilityClassify';
@@ -412,6 +412,24 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
     };
   }, [picked, bySlug, prospectBySlug]);
 
+  // The prospect-record marker is only stamped on saves made after it was
+  // introduced, so analyses saved before that would read "Not saved". Fall
+  // back to a metadata-only read of the picked company's analyses doc — one
+  // document read, and only for the company currently on screen.
+  const [fetchedAnalysis, setFetchedAnalysis] = useState(null);
+  const resultProspectId = result?.prospect?.id || null;
+  useEffect(() => {
+    setFetchedAnalysis(null);
+    if (!resultProspectId) return;
+    let cancelled = false;
+    getIndicativeAnalysisMeta(resultProspectId)
+      .then((meta) => { if (!cancelled) setFetchedAnalysis(meta); })
+      .catch(() => { /* absent or unreadable — leave the marker-based value */ });
+    return () => { cancelled = true; };
+  }, [resultProspectId]);
+
+  const analysisMeta = result?.analysis || fetchedAnalysis || null;
+
   function choose(name) {
     setPicked(name);
     setQuery(name);
@@ -555,11 +573,11 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
               <span style={{ flexShrink: 0, minWidth: 118, fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#94A3B8' }}>
                 Indicative savings
               </span>
-              {result.analysis ? (
+              {analysisMeta ? (
                 <span style={{ fontSize: '0.74rem', color: '#166534', fontWeight: 600 }}>
                   ✓ Saved
-                  {result.analysis.savedAt
-                    ? <span style={{ color: '#15803D', fontWeight: 400 }}> · {new Date(result.analysis.savedAt).toLocaleDateString()}</span>
+                  {analysisMeta.savedAt
+                    ? <span style={{ color: '#15803D', fontWeight: 400 }}> · {new Date(analysisMeta.savedAt).toLocaleDateString()}</span>
                     : null}
                 </span>
               ) : (
