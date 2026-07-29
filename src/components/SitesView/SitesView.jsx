@@ -448,13 +448,16 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
       style={{
         marginTop: '0.6rem', padding: '0.6rem 0.75rem',
         border: '1px solid var(--color-border)', borderRadius: 8, background: '#fff',
-        maxWidth: 680,
+        maxWidth: 1040,
       }}
     >
       <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#0F172A', marginBottom: '0.45rem' }}>
         Company Look Up
       </div>
-      <div style={{ position: 'relative' }}>
+      {/* Search on the left, the looked-up company's details to its right.
+          Wraps back to stacked on narrow viewports. */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1.25rem', flexWrap: 'wrap' }}>
+      <div style={{ position: 'relative', flex: '0 0 280px', minWidth: 220 }}>
         <input
           type="text"
           value={query}
@@ -510,7 +513,7 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
       </div>
 
       {result && (
-        <div style={{ marginTop: '0.55rem' }}>
+        <div style={{ flex: '1 1 380px', minWidth: 0 }}>
           {/* Mapped company name — clickable to open the company popup when a
               matching Table View record exists. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
@@ -550,11 +553,11 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
             </button>
           </div>
 
-          {/* Two status items: site list mapped + company revenue — laid out
-              side by side so they read horizontally instead of stacked. */}
-          <div style={{ marginTop: '0.5rem', display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '0.4rem 2rem' }}>
+          {/* Status items stack in this right-hand column so each label /
+              value pair stays on one line at the column's width. */}
+          <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
-              <span style={{ flexShrink: 0, fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#94A3B8' }}>
+              <span style={{ flexShrink: 0, minWidth: 118, fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#94A3B8' }}>
                 Site list mapped
               </span>
               {result.entry ? (
@@ -585,7 +588,7 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
               )}
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
-              <span style={{ flexShrink: 0, fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#94A3B8' }}>
+              <span style={{ flexShrink: 0, minWidth: 118, fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#94A3B8' }}>
                 Company revenue
               </span>
               {result.revenue ? (
@@ -597,6 +600,7 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
