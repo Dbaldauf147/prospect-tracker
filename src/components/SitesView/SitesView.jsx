@@ -11203,11 +11203,31 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           {sitesData.length > 0 && (
             <button
               type="button"
-              onClick={() => { setSavePickerSearch(''); setSaveStatus({ state: 'idle', message: '' }); }}
-              title="Save the current Indicative Savings analysis against a specific company. The saved file shows up on that company's prospect / client popup and can be downloaded from there."
+              onClick={() => {
+                // Default target: the company mapped to this page (the
+                // portfolio company). If it resolves to a known prospect,
+                // save straight to it — no picker. Only when nothing is
+                // mapped (or the mapped name has no matching prospect) do
+                // we fall back to the search picker, pre-seeded with the
+                // mapped name so the user can confirm / pick.
+                const mapped = portfolioCompanyName;
+                if (mapped) {
+                  const target = mapped.toLowerCase();
+                  const match = (prospects || []).find(
+                    (p) => p.company && p.company.trim().toLowerCase() === target,
+                  );
+                  if (match) {
+                    saveIndicativeSavingsToCompany(match);
+                    return;
+                  }
+                }
+                setSavePickerSearch(mapped || '');
+                setSaveStatus({ state: 'idle', message: '' });
+              }}
+              title="Save the current Indicative Savings analysis to the company mapped to this page. If no company is mapped, search for one. The saved file shows up on that company's prospect / client popup and can be downloaded from there."
               style={{ padding: '0.4rem 0.8rem', border: '1px solid #009530', background: '#fff', color: '#009530', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
             >
-              💾 Save to Company
+              💾 {portfolioCompanyName ? `Save to ${portfolioCompanyName}` : 'Save to Company'}
             </button>
           )}
           {sitesData.length > 0 && (
