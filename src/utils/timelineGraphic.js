@@ -440,7 +440,11 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   const bandH = groups.map(g => Math.max(62, g.steps.length * PHASED.rowStep + PHASED.phasePad));
   const gridTop = PHASED.headH + PHASED.monthsRowH;
   const gridH = bandH.reduce((a, b) => a + b, 0);
-  const height = gridTop + gridH + PHASED.footH + 8;
+  // Steps running past a hand-picked month count are clamped to the last
+  // column; say so rather than let them pile up there unannounced.
+  const overflow = placed.filter(p => p.month + p.span - 1 > monthCount);
+  const overflowH = overflow.length ? 20 : 0;
+  const height = gridTop + gridH + overflowH + PHASED.footH + 8;
 
   const clientName = String(template?.clientName || '').trim() || 'Client';
   const x0 = PHASED.labelW;
@@ -561,8 +565,14 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
     y += h;
   });
 
+  if (overflow.length) {
+    const names = overflow.map(p => p.stage.name || 'Untitled step').join(', ');
+    const line = wrapText(`Runs past month ${monthCount}, shown clamped to the last column: ${names}`, width - 80, 11.5, 1);
+    s += `<text x="20" y="${gridTop + gridH + 15}" font-size="11.5" fill="#92400E">${esc(line[0] || '')}</text>`;
+  }
+
   // Footer band.
-  const footY = gridTop + gridH + 8;
+  const footY = gridTop + gridH + 8 + overflowH;
   s += `<rect x="0" y="${footY}" width="${width}" height="${PHASED.footH}" fill="${SE_GREEN}"/>`;
   s += `<text x="20" y="${footY + 17}" font-size="10.5" font-weight="700" fill="#FFFFFF">Confidential Property of Schneider Electric</text>`;
   if (branded) {

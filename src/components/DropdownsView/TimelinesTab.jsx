@@ -15,6 +15,10 @@ import styles from './DropdownsView.module.css';
 
 // Which pill style each owner gets. Keeps the owner readable at a glance
 // when scanning a long stage table for the hand-offs.
+// Month-count choices for the implementation format. "Auto" (blank) fits the
+// steps, with a floor of 12 so a short timeline still reads as a year.
+const MONTH_COUNT_OPTIONS = [3, 6, 9, 12, 18, 24, 36];
+
 const OWNER_PILL_CLASS = {
   'Schneider Electric': styles.ownerPillSe,
   'Client': styles.ownerPillClient,
@@ -470,12 +474,23 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
             onCommit={(next) => onChange({ ...template, clientName: next })}
           />
           <span className={styles.timelineServicesLabel}>Months</span>
-          <NumberCell
-            value={template.monthCount}
-            placeholder="12"
-            title="How many month columns to draw"
-            onCommit={(next) => onChange({ ...template, monthCount: next })}
-          />
+          <select
+            value={template.monthCount === '' || template.monthCount == null ? '' : String(template.monthCount)}
+            onChange={(e) => onChange({
+              ...template,
+              monthCount: e.target.value === '' ? '' : Number(e.target.value),
+            })}
+            title="How many month columns to show — applies to the visual and every export"
+            className={styles.settingSelect}
+          >
+            <option value="">Auto (fit the steps)</option>
+            {MONTH_COUNT_OPTIONS.map(n => <option key={n} value={n}>{n} months</option>)}
+            {/* A value typed before this became a picker still shows. */}
+            {template.monthCount !== '' && template.monthCount != null
+              && !MONTH_COUNT_OPTIONS.includes(Number(template.monthCount)) && (
+              <option value={String(template.monthCount)}>{template.monthCount} months</option>
+            )}
+          </select>
           <select
             value={template.monthMode === 'calendar' ? 'calendar' : 'numbers'}
             onChange={(e) => {

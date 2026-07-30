@@ -31,6 +31,19 @@ const FONT = 'Nunito Sans';
 const DAY_MS = 86400000;
 
 const fill = (c) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: c } });
+
+// Light rule on all four sides, so the grid reads as a table rather than
+// floating bars. Applied to the whole block including empty cells.
+const THIN = { style: 'thin', color: { argb: LINE } };
+const BOXED = { top: THIN, left: THIN, bottom: THIN, right: THIN };
+function applyGridBorders(ws, r1, c1, r2, c2) {
+  for (let r = r1; r <= r2; r += 1) {
+    for (let c = c1; c <= c2; c += 1) {
+      const cell = ws.getCell(r, c);
+      cell.border = { ...(cell.border || {}), ...BOXED };
+    }
+  }
+}
 // Excel reads a JS Date in local time; anchoring at UTC noon keeps a date from
 // sliding to the previous day west of Greenwich.
 const excelDate = (isoStr) => {
@@ -151,12 +164,14 @@ function writePhasedSheet(wb, ws, template, meta) {
   const anchor = String(template?.anchorMonth || '').trim();
   const todayCol = calendar ? todayMonthIndex(anchor, monthCount) : null;
 
-  const LEAD = 3; // Stages | Step | Workstream
-  const NCOLS = LEAD + monthCount;
+  const LEAD = 3;                      // Stages | Step | Workstream
+  const DESC = LEAD + monthCount + 1;  // Description, past the right of the grid
+  const NCOLS = DESC;
   ws.getColumn(1).width = 32;
   ws.getColumn(2).width = 46;
   ws.getColumn(3).width = 20;
   for (let i = 0; i < monthCount; i += 1) ws.getColumn(LEAD + 1 + i).width = calendar ? 11 : 6;
+  ws.getColumn(DESC).width = 64;
 
   writeBandHeader(wb, ws, template, meta, NCOLS, Math.max(3.2, NCOLS - (calendar ? 5 : 9)));
 
@@ -177,6 +192,11 @@ function writePhasedSheet(wb, ws, template, meta) {
     cell.fill = fill(m === todayCol ? argb('#0E7C36') : argb(SE_GREEN));
     cell.alignment = { vertical: 'middle', horizontal: 'center' };
   }
+  const descHead = ws.getCell(headRow, DESC);
+  descHead.value = 'Description';
+  descHead.font = { name: FONT, bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+  descHead.fill = fill(argb(SE_GREEN));
+  descHead.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
   ws.getRow(headRow).height = 22;
 
   // One row per step; phase names merge down column A over their band.
@@ -189,7 +209,8 @@ function writePhasedSheet(wb, ws, template, meta) {
       const cell = ws.getCell(runFrom, 1);
       cell.font = { name: FONT, bold: true, size: 11, color: { argb: INK } };
       cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
-      cell.border = { top: { style: 'thin', color: { argb: 'FF9AA5B1' } } };
+      // Keep the light box, darken only the rule that separates bands.
+      cell.border = { ...BOXED, ...(cell.border || {}), top: { style: 'thin', color: { argb: 'FF9AA5B1' } } };
     }
   };
 
@@ -218,21 +239,32 @@ function writePhasedSheet(wb, ws, template, meta) {
     wsCell.font = { name: FONT, bold: true, size: 9.5, color: { argb: color } };
     wsCell.alignment = { vertical: 'middle', indent: 1 };
 
+    const from = Math.min(pos.month, monthCount);
+    const to = Math.min(pos.month + pos.span - 1, monthCount);
     for (let m = 1; m <= monthCount; m += 1) {
       const cell = ws.getCell(r, LEAD + m);
       if (m === todayCol) cell.fill = fill('FFEAF7EE');
-      if (m < pos.month || m > pos.month + pos.span - 1) continue;
+      if (m < from || m > to) continue;
       cell.fill = fill(color);
-      if (m === pos.month) {
+      if (m === from) {
         cell.value = i + 1;
         cell.font = { name: FONT, bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
         cell.alignment = { vertical: 'middle', horizontal: 'center' };
       }
     }
+    const descCell = ws.getCell(r, DESC);
+    descCell.value = stage.description || '';
+    descCell.font = { name: FONT, size: 10, color: { argb: SLATE } };
+    descCell.alignment = { vertical: 'middle', indent: 1 };
+
     ws.getRow(r).height = 20;
     r += 1;
   });
-  closeBand(r - 1);
+  const lastStageRow = r - 1;
+  // Borders before the merges: a merged range draws its master cell's box, so
+  // the band still gets an outline.
+  applyGridBorders(ws, headRow, 1, lastStageRow, NCOLS);
+  closeBand(lastStageRow);
 
   ws.views = [{ state: 'frozen', xSplit: LEAD, ySplit: headRow, showGridLines: false }];
 
@@ -253,6 +285,15 @@ function writePhasedSheet(wb, ws, template, meta) {
     ? 'Numbers match the step order · the highlighted column is the current month'
     : 'Numbers match the step order · columns are months from kickoff';
   ws.getCell(r, 1).font = { name: FONT, italic: true, size: 9, color: { argb: MUTE } };
+
+  // Same warning the graphic carries when the month count cuts steps short.
+  const overflow = placed.filter(p => p.month + p.span - 1 > monthCount);
+  if (overflow.length) {
+    r += 1;
+    ws.getCell(r, 1).value = `Runs past month ${monthCount}, shown clamped to the last column: `
+      + overflow.map(p => p.stage.name || 'Untitled step').join(', ');
+    ws.getCell(r, 1).font = { name: FONT, italic: true, size: 9, color: { argb: 'FF92400E' } };
+  }
 }
 
 export async function exportTimelineXlsx(template, meta = {}) {
@@ -285,12 +326,14 @@ export async function exportTimelineXlsx(template, meta = {}) {
   // Narrow rotated headers once there are too many columns to label flat.
   const rotate = cols.length > 14;
   const timeWidth = unit === 'week' ? (rotate ? 4.2 : 6) : (rotate ? 4.6 : 11);
-  const NCOLS = LEAD + cols.length;
+  const DESC_COL = LEAD + cols.length + 1;
+  const NCOLS = DESC_COL;
 
   ws.getColumn(1).width = 34;
   ws.getColumn(2).width = 20;
   ws.getColumn(3).width = 17;
   cols.forEach((_, i) => { ws.getColumn(LEAD + 1 + i).width = timeWidth; });
+  ws.getColumn(DESC_COL).width = 64;
 
   writeBandHeader(wb, ws, template, meta, NCOLS, Math.max(3.2, NCOLS - (unit === 'week' ? 9 : 5)));
   let r = 4;
@@ -338,9 +381,16 @@ export async function exportTimelineXlsx(template, meta = {}) {
     lc.border = { bottom: { style: 'thin', color: { argb: LINE } } };
     if (todayMs >= col.startMs && todayMs <= col.endMs) todayCol = LEAD + 1 + i;
   });
+  const descHead = ws.getCell(groupRow, DESC_COL);
+  descHead.value = 'DESCRIPTION';
+  descHead.font = { name: FONT, bold: true, size: 9, color: { argb: SLATE } };
+  descHead.fill = fill(BAND);
+  descHead.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  ws.mergeCells(groupRow, DESC_COL, labelRow, DESC_COL);
   ws.getRow(groupRow).height = 18;
   ws.getRow(labelRow).height = rotate ? 42 : 18;
   r = labelRow + 1;
+  const firstStageRow = r;
 
   // --- one row per stage ---
   rows.forEach(({ stage, range }, i) => {
@@ -364,6 +414,11 @@ export async function exportTimelineXlsx(template, meta = {}) {
     timingCell.font = { name: FONT, size: 9.5, color: { argb: range ? SLATE : MUTE }, italic: !range };
     timingCell.alignment = { vertical: 'middle', indent: 1 };
 
+    const descCell = ws.getCell(r, DESC_COL);
+    descCell.value = stage.description || '';
+    descCell.font = { name: FONT, size: 10, color: { argb: SLATE } };
+    descCell.alignment = { vertical: 'middle', indent: 1 };
+
     cols.forEach((col, ci) => {
       const cell = ws.getCell(r, LEAD + 1 + ci);
       if (i % 2 === 1) cell.fill = fill(ZEBRA);
@@ -382,6 +437,12 @@ export async function exportTimelineXlsx(template, meta = {}) {
       }
     });
     r += 1;
+  });
+  applyGridBorders(ws, groupRow, 1, r - 1, DESC_COL);
+  // The owner accent on the stage name stays, over the light box.
+  rows.forEach((row, i) => {
+    const cell = ws.getCell(firstStageRow + i, 1);
+    cell.border = { ...(cell.border || {}), left: { style: 'medium', color: { argb: argb(ownerColor(row.stage.owner)) } } };
   });
 
   // Freeze the stage labels and the axis so a wide chart stays navigable.
