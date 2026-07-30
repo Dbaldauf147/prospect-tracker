@@ -40,7 +40,7 @@ import {
 } from '../../data/corporateComplianceScreening';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { exportComplianceReportXlsx, buildCorporateComplianceSheet, buildComplianceMethodologySheet } from '../../utils/complianceReportXlsx';
-import { saveIndicativeAnalysis, deleteIndicativeAnalysis, getIndicativeAnalysisMeta } from '../../utils/firestoreSync';
+import { saveIndicativeAnalysis, deleteIndicativeAnalysis, getIndicativeAnalysisMeta, loadIndicativeAnalysis } from '../../utils/firestoreSync';
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
 import { classifyUtility } from '../../utils/utilityClassify';
@@ -467,7 +467,7 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose }) {
   );
 }
 
-function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCompany, activeCompany = '', onSelectProspect, resetSignal = 0 }) {
+function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCompany, activeCompany = '', onSelectProspect, resetSignal = 0, onImportAnalysis, importStatus = { state: 'idle', message: '' } }) {
   // Seed the lookup from an already-mapped portfolio company so its name and
   // status show on load without re-searching.
   const [query, setQuery] = useState(activeCompany || '');
@@ -787,7 +787,38 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
             ) : (
               <span style={{ fontSize: '0.74rem', color: '#94A3B8' }}>Not saved</span>
             )}
+            {/* Pull that saved analysis back onto the page — the site
+                list it was built from, its column mapping and supplier
+                decisions, which between them repopulate every subtab.
+                Only offered when the company has an analysis to import
+                and a prospect record to read it from. */}
+            {onImportAnalysis && analysisMeta && result.prospect && (
+              <button
+                type="button"
+                onClick={() => onImportAnalysis(result.prospect)}
+                disabled={importStatus.state === 'loading'}
+                title={`Import ${result.company}'s saved Master Analysis into the Utility Lookup page — loads its site list and refills every subtab (Utility Mapping, Building Compliance, Roadmap, Corporate Compliance). Replaces the sites currently loaded.`}
+                style={{
+                  padding: '0.2rem 0.55rem', border: '1px solid #005A9E',
+                  background: importStatus.state === 'loading' ? '#E2E8F0' : '#005A9E',
+                  color: importStatus.state === 'loading' ? '#64748B' : '#fff',
+                  borderRadius: 6, fontSize: '0.66rem',
+                  cursor: importStatus.state === 'loading' ? 'default' : 'pointer',
+                  fontFamily: 'inherit', fontWeight: 700, whiteSpace: 'nowrap',
+                }}
+              >
+                {importStatus.state === 'loading' ? 'Importing…' : '⬆ Import Analysis'}
+              </button>
+            )}
           </div>
+          {importStatus.state !== 'idle' && importStatus.message && (
+            <div style={{
+              flexShrink: 0, whiteSpace: 'nowrap', padding: '0.2rem 0.5rem', borderRadius: 6,
+              fontSize: '0.7rem',
+              background: importStatus.state === 'success' ? '#DCFCE7' : importStatus.state === 'error' ? '#FEE2E2' : '#F1F5F9',
+              color: importStatus.state === 'success' ? '#166534' : importStatus.state === 'error' ? '#991B1B' : '#475569',
+            }}>{importStatus.message}</div>
+          )}
           <div style={{ flexShrink: 0, display: 'flex', alignItems: 'baseline', gap: '0.4rem', whiteSpace: 'nowrap' }}>
             <span style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#94A3B8' }}>
               Company revenue
@@ -835,6 +866,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // uploaded to Firestore.
   const [savePickerSearch, setSavePickerSearch] = useState(null);
   const [saveStatus, setSaveStatus] = useState({ state: 'idle', message: '' });
+  // Mirror of saveStatus for the reverse trip — pulling a company's
+  // saved Master Analysis back onto the page. Shown inside the Company
+  // Look Up panel, next to the Import button that drives it.
+  const [importStatus, setImportStatus] = useState({ state: 'idle', message: '' });
   const [electricColOverride, setElectricColOverride] = useState(null);
   const [gasColOverride, setGasColOverride] = useState(null);
   const [siteNameOverride, setSiteNameOverride] = useState(null);
@@ -1058,6 +1093,32 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sitesMappingModal, mappingModal]);
 
+  // Column mapping for the "Site List" tab of one of our own exports.
+  // The mapping the workbook was exported with (from its hidden state
+  // sheet) is authoritative: it's exactly what the page was applying
+  // when the workbook was built, and a field it left blank was
+  // deliberately unmapped. Auto-detection only stands in when there's no
+  // saved mapping — a workbook written before the state sheet carried
+  // one — or for the two fields the lookup can't run without. Detecting
+  // over the saved mapping instead would map the export's own snapshot
+  // columns: the per-site rate columns read as gas consumption and
+  // electric cost.
+  function mappingForExportedSheet(headers, roundTripState) {
+    const detected = detectSitesMapping(headers);
+    const saved = (roundTripState?.mapping && typeof roundTripState.mapping === 'object')
+      ? roundTripState.mapping
+      : null;
+    if (!saved) return detected;
+    const headerSet = new Set(headers);
+    const mapping = {};
+    for (const [key, col] of Object.entries(saved)) {
+      mapping[key] = (col && headerSet.has(col)) ? col : '';
+    }
+    if (!mapping.siteName) mapping.siteName = detected.siteName;
+    if (!mapping.zip) mapping.zip = detected.zip;
+    return mapping;
+  }
+
   async function loadSitesFromFile(file) {
     if (!file) return;
     setUploadError('');
@@ -1117,6 +1178,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         if (preferredIdx >= 0) selectedIdx = preferredIdx;
       }
       const roundTripState = isExportRoundTrip ? readRoundTripState(bytes) : null;
+      // One of our own exports dropped back on the page: seed the Site
+      // List tab from the mapping it was exported with rather than
+      // re-detecting, so the modal opens on the same columns the export
+      // was built from. The user can still change any of them.
+      if (isExportRoundTrip && roundTripState?.mapping) {
+        const idx = sheets.findIndex(s => s.sheetName === 'Site List');
+        if (idx >= 0) {
+          sheets[idx] = { ...sheets[idx], mapping: mappingForExportedSheet(sheets[idx].headers, roundTripState) };
+        }
+      }
       setSitesMappingModal({
         fileName: file.name,
         sheets,
@@ -1128,23 +1199,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     }
   }
 
-  // Re-open the column mapping modal against the data the user has
-  // already imported. Lets the user re-target which column drives
-  // each Utility Lookup field without re-uploading. Only columns that
-  // survived the previous import are available (unmapped columns
-  // were dropped on import) — to bring back a dropped column, the
-  // user has to re-upload the original file.
-  function openUpdateColumnMapping() {
-    if (!sitesData.length) return;
-    const headers = Object.keys(sitesData[0]);
+  // The mapping the page is currently applying, in the shape the import
+  // path consumes. `headers` scopes it to a column list: any override
+  // pointing at a column that isn't in it is dropped. Shared by the
+  // update-mapping modal and the Master Analysis round-trip sheet, so an
+  // exported workbook carries the exact mapping it was built with.
+  function currentSitesMapping(headers) {
     const noneToEmpty = (v) => (v === '__none__' || v == null) ? '' : v;
-    // Build the mapping object from the per-target *Override states so
-    // the modal opens reflecting the user's last applied mapping. Any
-    // override pointing at a column that's no longer present (rare —
-    // would only happen after a partial state migration) is dropped.
-    const headerSet = new Set(headers);
+    const headerSet = new Set(headers || []);
     const safe = (v) => (v && headerSet.has(v)) ? v : '';
-    const mapping = {
+    return {
       siteName:              safe(noneToEmpty(siteNameOverride)),
       companyName:           safe(noneToEmpty(companyNameOverride)),
       address:               safe(noneToEmpty(addressOverride)),
@@ -1175,6 +1239,18 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       gasContractName:       safe(noneToEmpty(gasContractNameOverride)),
       gasProductType:        safe(noneToEmpty(gasProductTypeOverride)),
     };
+  }
+
+  // Re-open the column mapping modal against the data the user has
+  // already imported. Lets the user re-target which column drives
+  // each Utility Lookup field without re-uploading. Only columns that
+  // survived the previous import are available (unmapped columns
+  // were dropped on import) — to bring back a dropped column, the
+  // user has to re-upload the original file.
+  function openUpdateColumnMapping() {
+    if (!sitesData.length) return;
+    const headers = Object.keys(sitesData[0]);
+    const mapping = currentSitesMapping(headers);
     setUploadError('');
     setSitesMappingModal({
       fileName: '(currently loaded sites)',
@@ -1199,8 +1275,24 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     if (!sitesMappingModal) return;
     const active = sitesMappingModal.sheets[sitesMappingModal.selectedIdx];
     if (!active) return;
-    const isUpdate = sitesMappingModal.mode === 'update';
-    const { rows, mapping } = active;
+    await commitSitesImport({
+      rows: active.rows,
+      mapping: active.mapping,
+      isUpdate: sitesMappingModal.mode === 'update',
+      roundTripState: sitesMappingModal.roundTripState,
+    });
+    setSitesMappingModal(null);
+  }
+
+  // The import itself, independent of the modal: keep only the mapped
+  // columns, persist them, and point every per-field override at the
+  // column that drives it. Called by the mapping modal's Import button
+  // and by the "import a company's saved Master Analysis" flow, which
+  // has a mapping already (from the workbook's round-trip sheet) and so
+  // never opens the modal. Throws nothing — failures land in
+  // uploadError, same as before, and come back as a `false` return so a
+  // caller can report them in its own status line.
+  async function commitSitesImport({ rows, mapping, isUpdate = false, roundTripState = null }) {
     setUploadError('');
     try {
       // Drop columns the user didn't assign a target — otherwise every
@@ -1271,23 +1363,32 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       setElectricProductTypeOverride(mapping.electricProductType || null);
       setGasContractNameOverride(mapping.gasContractName || null);
       setGasProductTypeOverride(mapping.gasProductType || null);
-      // Restore round-trip state from an Indicative Savings export's
-      // hidden sheet (vendor accept/reject decisions). Replaces — not
-      // merges — to match the supplierOverrides "fresh slate" model:
+      // Restore round-trip state from an export's hidden sheet (vendor
+      // accept/reject decisions, per-row supplier overrides). Replaces —
+      // not merges — to match the supplierOverrides "fresh slate" model:
       // an export-then-import flow is a session restore, not a merge
       // of two different sessions. Skipped on update-mapping — the
       // user's existing vendor decisions stay put.
       if (!isUpdate) {
-        const rt = sitesMappingModal.roundTripState;
+        const rt = roundTripState;
         if (rt && rt.vendorDecisions && typeof rt.vendorDecisions === 'object') {
           setVendorDecisions(rt.vendorDecisions);
           try { localStorage.setItem('utility-lookup:vendor-decisions', JSON.stringify(rt.vendorDecisions)); } catch {}
         }
+        // Per-row supplier edits are keyed by row index, and the export
+        // wrote its rows in the page's own row order, so the indexes
+        // still line up on the way back in. Restored after the wipe
+        // above so the cells show the same manual picks they had.
+        if (rt && rt.supplierOverrides && typeof rt.supplierOverrides === 'object') {
+          setSupplierOverrides(rt.supplierOverrides);
+          try { localStorage.setItem('utility-lookup:supplier-overrides', JSON.stringify(rt.supplierOverrides)); } catch { /* noop */ }
+        }
       }
+      return true;
     } catch (err) {
       setUploadError(err?.message || 'Failed to save the sites file');
+      return false;
     }
-    setSitesMappingModal(null);
   }
 
   async function handleSitesUpload(e) {
@@ -3895,6 +3996,92 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     } catch (err) {
       console.error('Save indicative analysis failed:', err);
       setSaveStatus({ state: 'error', message: err?.message || 'Save failed.' });
+    }
+  }
+
+  // The reverse of saveMasterAnalysisToCompany: pull the Master Analysis
+  // saved against a company back onto this page. The workbook carries a
+  // "Site List" tab (the rows it was built from, with resolved values
+  // baked in) plus a hidden state sheet with the column mapping, vendor
+  // decisions and per-row supplier edits — enough to restore the site
+  // list without asking the user to re-map anything. Loading those rows
+  // repopulates every Utility Lookup subtab, since Utility Mapping,
+  // Building Compliance, the Roadmap and Corporate Compliance all derive
+  // from the same site list + portfolio company.
+  //
+  // Analyses saved before the round-trip sheets existed have no Site List
+  // tab; those fall back to the column-mapping modal so the user can map
+  // one of the workbook's other tabs by hand.
+  async function importMasterAnalysisFromCompany(prospect) {
+    if (!prospect?.id) return;
+    const label = prospect.company || 'company';
+    if (sitesData.length > 0 && !window.confirm(
+      `Replace the ${sitesData.length} site${sitesData.length === 1 ? '' : 's'} currently loaded with ${label}'s saved Master Analysis?`
+    )) return;
+    setImportStatus({ state: 'loading', message: `Loading ${label}'s analysis…` });
+    try {
+      const saved = await loadIndicativeAnalysis(prospect.id);
+      if (!saved?.dataBase64) {
+        setImportStatus({ state: 'error', message: `No saved analysis found on ${label}.` });
+        return;
+      }
+      const binary = atob(saved.dataBase64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const rt = readRoundTripState(bytes);
+      const sheets = parseAllSheets(bytes).map(s => ({
+        sheetName: s.sheetName,
+        rows: s.rows,
+        headers: s.headers,
+        mapping: detectSitesMapping(s.headers),
+        isMerged: false,
+      }));
+      const siteListIdx = sheets.findIndex(s => s.sheetName === 'Site List');
+      if (siteListIdx < 0) {
+        // Pre-round-trip analysis. Hand the workbook to the mapping modal
+        // (defaulting to the Site Detail tab, the closest thing it has to
+        // a site list) rather than guessing at a mapping.
+        if (sheets.length === 0) {
+          setImportStatus({ state: 'error', message: 'That saved analysis has no readable data tabs.' });
+          return;
+        }
+        const detailIdx = sheets.findIndex(s => /site\s*detail/i.test(s.sheetName));
+        setUploadError('');
+        setSitesMappingModal({
+          fileName: saved.fileName || `${label} Master Analysis`,
+          sheets,
+          selectedIdx: detailIdx >= 0 ? detailIdx : 0,
+          roundTripState: rt,
+        });
+        setImportStatus({ state: 'idle', message: '' });
+        return;
+      }
+      const siteList = sheets[siteListIdx];
+      const mapping = mappingForExportedSheet(siteList.headers, rt);
+      const ok = await commitSitesImport({
+        rows: siteList.rows,
+        mapping,
+        isUpdate: false,
+        roundTripState: rt,
+      });
+      if (!ok) {
+        setImportStatus({ state: 'error', message: 'Could not load the sites from that analysis.' });
+        return;
+      }
+      // Naming the portfolio company is what carries the import through to
+      // Corporate Compliance (its screening answers, revenue research and
+      // compliance links are all stored per company).
+      setPortfolioCompanyName(prospect.company || rt?.portfolioCompanyName || '');
+      setMainTab('lookup');
+      const n = siteList.rows.length;
+      setImportStatus({
+        state: 'success',
+        message: `Imported ${n} site${n === 1 ? '' : 's'} from ${label}'s Master Analysis.`,
+      });
+      setTimeout(() => setImportStatus({ state: 'idle', message: '' }), 5000);
+    } catch (err) {
+      console.error('Import saved analysis failed:', err);
+      setImportStatus({ state: 'error', message: err?.message || 'Import failed.' });
     }
   }
 
@@ -10809,6 +10996,110 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // Site Detail is renamed so it doesn't collide with Indicative Savings' own
   // Site Detail). Empty sections still emit their tab so the tab set stays
   // consistent.
+  // Adds the two sheets that make an exported workbook re-importable:
+  //
+  //   Site List    — the uploaded rows with every resolved value baked
+  //                  back in (per-row supplier edits, fuzzy-matched
+  //                  supplier names, zip-derived state), plus derived
+  //                  snapshot columns. Named "Site List" so the upload's
+  //                  tab picker auto-selects it on the way back in.
+  //   __rt_state__ — hidden single-cell JSON with the page state the
+  //                  columns can't carry: the column mapping, vendor
+  //                  accept/reject decisions, per-row supplier edits and
+  //                  the mapped portfolio company. readRoundTripState
+  //                  picks it up; parseAllSheets skips `__` sheets, so
+  //                  it never shows up as an importable tab.
+  //
+  // Written by both the Site List export and the Master Analysis, so a
+  // Master Analysis saved to a company can be pulled back onto the page
+  // exactly as it left.
+  function addRoundTripSheets(wb) {
+    const SE_GREEN = 'FF3DCD58';
+    const SE_GREEN_DARK = 'FF009530';
+    let sourceHeaders = [];
+    if (cleanSitesData.length > 0) {
+      sourceHeaders = Object.keys(cleanSitesData[0]);
+      // Decide where the resolved supplier values go: overwrite the
+      // mapped source column when present, else append a new one with
+      // a name detectSitesMapping will recognize on re-upload.
+      const electricSupplierCol = electricSupplierOverride || 'Electric Supplier';
+      const gasSupplierCol = gasSupplierOverride || 'Gas Supplier';
+      const stateCol = stateColumnOverride || 'State';
+      const appended = [];
+      const addAppended = (name) => {
+        if (!sourceHeaders.includes(name) && !appended.includes(name)) appended.push(name);
+      };
+      addAppended(electricSupplierCol);
+      addAppended(gasSupplierCol);
+      addAppended(stateCol);
+      // Informational snapshot columns — not mapping targets, so
+      // they're dropped on re-import (the page re-derives them).
+      const SNAPSHOT_UTILITY_ELECTRIC = 'Electric Utility';
+      const SNAPSHOT_UTILITY_GAS = 'Gas Utility';
+      const SNAPSHOT_RATE_ELECTRIC = 'Electric Rate ($/kWh)';
+      const SNAPSHOT_RATE_GAS = 'Gas Rate ($/therm)';
+      addAppended(SNAPSHOT_UTILITY_ELECTRIC);
+      addAppended(SNAPSHOT_UTILITY_GAS);
+      addAppended(SNAPSHOT_RATE_ELECTRIC);
+      addAppended(SNAPSHOT_RATE_GAS);
+      const inputHeaders = [...sourceHeaders, ...appended];
+
+      // Build enriched rows from the derived `rows` array so the
+      // baked-in values reflect everything the page is showing —
+      // per-row supplier overrides, fuzzy-match canonicalization,
+      // zip-derived state, rates-file utility lookups. Keep the raw
+      // source values for every other column.
+      const enrichedRows = rows.map(r => {
+        const out = {};
+        for (const h of sourceHeaders) out[h] = r[h];
+        const electricResolved = r.__electricSupplier__ || '';
+        const gasResolved = r.__gasSupplier__ || '';
+        if (electricResolved) out[electricSupplierCol] = electricResolved;
+        else if (!(electricSupplierCol in out)) out[electricSupplierCol] = '';
+        if (gasResolved) out[gasSupplierCol] = gasResolved;
+        else if (!(gasSupplierCol in out)) out[gasSupplierCol] = '';
+        const stateResolved = r.__state__ || '';
+        if (stateResolved) out[stateCol] = stateResolved;
+        else if (!(stateCol in out)) out[stateCol] = '';
+        out[SNAPSHOT_UTILITY_ELECTRIC] = r.__electric__ || '';
+        out[SNAPSHOT_UTILITY_GAS] = r.__gas__ || '';
+        out[SNAPSHOT_RATE_ELECTRIC] = typeof r.__electricRate__ === 'number' ? r.__electricRate__ : '';
+        out[SNAPSHOT_RATE_GAS] = typeof r.__gasRate__ === 'number' ? r.__gasRate__ : '';
+        return out;
+      });
+
+      const inputWs = wb.addWorksheet('Site List', {
+        properties: { tabColor: { argb: SE_GREEN } },
+        views: [{ state: 'frozen', ySplit: 1 }],
+      });
+      inputWs.columns = inputHeaders.map(h => ({
+        header: h,
+        key: h,
+        width: Math.max(String(h).length + 2, 14),
+      }));
+      for (const row of enrichedRows) inputWs.addRow(row);
+      const hdr = inputWs.getRow(1);
+      hdr.font = { name: 'Nunito Sans', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+      hdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      hdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      hdr.height = 22;
+      inputWs.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: inputHeaders.length } };
+    }
+
+    const stateWs = wb.addWorksheet('__rt_state__', { state: 'hidden' });
+    stateWs.getCell('A1').value = JSON.stringify({
+      version: 2,
+      exportedAt: new Date().toISOString(),
+      // Scoped to the source headers: the mapping only ever points at
+      // columns that came from the upload, never at the derived
+      // snapshot columns appended above.
+      mapping: currentSitesMapping(sourceHeaders),
+      vendorDecisions,
+      supplierOverrides,
+      portfolioCompanyName,
+    });
+  }
+
   async function exportMasterAnalysis({ returnBuffer = false, companyName = null } = {}) {
     if (!rows.length) {
       throw new Error('No sites available to export — re-check the uploaded file or the Site Name column mapping.');
@@ -10853,6 +11144,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       generatedAt: new Date().toLocaleString('en-US'),
       companyName: company,
     });
+
+    // 5. Round-trip sheets — the Site List the whole workbook was built
+    //    from, plus the hidden state sheet. These are what let the
+    //    analysis be imported back onto the Utility Lookup page (and
+    //    from there onto every subtab) later, from this company's
+    //    saved copy.
+    addRoundTripSheets(wb);
 
     // Write the merged workbook once, then inject the Indicative Savings
     // native charts (ExcelJS drops charts on re-load, so this must run on
@@ -11611,95 +11909,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       renderSheet(extra.name, `${extra.name}  ·  ${new Date().toLocaleDateString()}`, headers, vals);
     }
 
-    // Site List tab — round-trippable input. Bakes resolved /
-    // manually-edited supplier values back into the source supplier
-    // columns (or appends new columns if the source had none), and
-    // appends derived snapshot columns (State, Electric/Gas Utility,
-    // Electric/Gas Rate). Named "Site List" so the upload's tab
-    // picker auto-selects this tab when the workbook is dropped back
-    // onto the Utility Lookup page.
-    if (cleanSitesData.length > 0) {
-      const sourceHeaders = Object.keys(cleanSitesData[0]);
-      // Decide where the resolved supplier values go: overwrite the
-      // mapped source column when present, else append a new one with
-      // a name detectSitesMapping will recognize on re-upload.
-      const electricSupplierCol = electricSupplierOverride || 'Electric Supplier';
-      const gasSupplierCol = gasSupplierOverride || 'Gas Supplier';
-      const stateCol = stateColumnOverride || 'State';
-      const appended = [];
-      const addAppended = (name) => {
-        if (!sourceHeaders.includes(name) && !appended.includes(name)) appended.push(name);
-      };
-      addAppended(electricSupplierCol);
-      addAppended(gasSupplierCol);
-      addAppended(stateCol);
-      // Informational snapshot columns — not mapping targets, so
-      // they're dropped on re-import (the page re-derives them).
-      const SNAPSHOT_UTILITY_ELECTRIC = 'Electric Utility';
-      const SNAPSHOT_UTILITY_GAS = 'Gas Utility';
-      const SNAPSHOT_RATE_ELECTRIC = 'Electric Rate ($/kWh)';
-      const SNAPSHOT_RATE_GAS = 'Gas Rate ($/therm)';
-      addAppended(SNAPSHOT_UTILITY_ELECTRIC);
-      addAppended(SNAPSHOT_UTILITY_GAS);
-      addAppended(SNAPSHOT_RATE_ELECTRIC);
-      addAppended(SNAPSHOT_RATE_GAS);
-      const inputHeaders = [...sourceHeaders, ...appended];
-
-      // Build enriched rows from the derived `rows` array so the
-      // baked-in values reflect everything the page is showing —
-      // per-row supplier overrides, fuzzy-match canonicalization,
-      // zip-derived state, rates-file utility lookups. Keep the raw
-      // source values for every other column.
-      const enrichedRows = rows.map(r => {
-        const out = {};
-        for (const h of sourceHeaders) out[h] = r[h];
-        const electricResolved = r.__electricSupplier__ || '';
-        const gasResolved = r.__gasSupplier__ || '';
-        if (electricResolved) out[electricSupplierCol] = electricResolved;
-        else if (!(electricSupplierCol in out)) out[electricSupplierCol] = '';
-        if (gasResolved) out[gasSupplierCol] = gasResolved;
-        else if (!(gasSupplierCol in out)) out[gasSupplierCol] = '';
-        const stateResolved = r.__state__ || '';
-        if (stateResolved) out[stateCol] = stateResolved;
-        else if (!(stateCol in out)) out[stateCol] = '';
-        out[SNAPSHOT_UTILITY_ELECTRIC] = r.__electric__ || '';
-        out[SNAPSHOT_UTILITY_GAS] = r.__gas__ || '';
-        out[SNAPSHOT_RATE_ELECTRIC] = typeof r.__electricRate__ === 'number' ? r.__electricRate__ : '';
-        out[SNAPSHOT_RATE_GAS] = typeof r.__gasRate__ === 'number' ? r.__gasRate__ : '';
-        return out;
-      });
-
-      const inputWs = wb.addWorksheet('Site List', {
-        properties: { tabColor: { argb: SE_GREEN } },
-        views: [{ state: 'frozen', ySplit: 1 }],
-      });
-      inputWs.columns = inputHeaders.map(h => ({
-        header: h,
-        key: h,
-        width: Math.max(String(h).length + 2, 14),
-      }));
-      for (const row of enrichedRows) inputWs.addRow(row);
-      const hdr = inputWs.getRow(1);
-      hdr.font = { name: 'Nunito Sans', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
-      hdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-      hdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      hdr.height = 22;
-      inputWs.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: inputHeaders.length } };
-    }
-
-    // Hidden round-trip state sheet — single JSON blob at A1 carrying
-    // page state that doesn't live in the column data (vendor
-    // accept/reject decisions). readRoundTripState picks this up on
-    // re-upload; the user never sees it in Excel because the sheet is
-    // hidden and starts with `__` so parseAllSheets skips it.
-    {
-      const stateWs = wb.addWorksheet('__rt_state__', { state: 'hidden' });
-      stateWs.getCell('A1').value = JSON.stringify({
-        version: 1,
-        exportedAt: new Date().toISOString(),
-        vendorDecisions,
-      });
-    }
+    addRoundTripSheets(wb);
 
     const buf = await wb.xlsx.writeBuffer();
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -11972,6 +12182,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         resetSignal={lookupResetSignal}
         activeCompany={portfolioCompanyName}
         onSelectProspect={onSelectProspect}
+        onImportAnalysis={importMasterAnalysisFromCompany}
+        importStatus={importStatus}
       />
 
       {propertyTypeModalOpen && (

@@ -379,6 +379,36 @@ export async function getIndicativeAnalysisMeta(prospectId) {
   };
 }
 
+// One-shot read of a saved analysis, chunks and all. Same reassembly as
+// subscribeIndicativeAnalysis, but for callers that want the workbook
+// once (e.g. the Utility Lookup page importing a company's saved Master
+// Analysis) rather than a live subscription. Returns
+// { fileName, sizeBytes, savedAt, dataBase64 } or null when nothing is
+// saved against the prospect.
+export async function loadIndicativeAnalysis(prospectId) {
+  if (!prospectId) return null;
+  const col = getAnalysisCol(prospectId);
+  const snap = await fsGetDoc(doc(col, ANALYSIS_DOC_ID));
+  if (!snap.exists()) return null;
+  const meta = snap.data() || {};
+  const base = {
+    fileName: meta.fileName || '',
+    sizeBytes: Number(meta.sizeBytes) || 0,
+    savedAt: meta.capturedAt?.toDate?.()?.toISOString() || null,
+  };
+  // Legacy single-doc format: the whole base64 lived on the main doc.
+  if (typeof meta.dataBase64 === 'string') return { ...base, dataBase64: meta.dataBase64 };
+  const chunkCount = Number(meta.chunkCount) || 0;
+  if (chunkCount === 0) return { ...base, dataBase64: '' };
+  const all = await getDocs(col);
+  const parts = new Array(chunkCount).fill('');
+  all.forEach((d) => {
+    const idx = analysisChunkIndex(d.id);
+    if (idx != null && idx >= 0 && idx < chunkCount) parts[idx] = d.data()?.data || '';
+  });
+  return { ...base, dataBase64: parts.join('') };
+}
+
 export function subscribeIndicativeAnalysis(prospectId, onChange) {
   const col = getAnalysisCol(prospectId);
   // Guards against out-of-order async chunk reads: only the newest
