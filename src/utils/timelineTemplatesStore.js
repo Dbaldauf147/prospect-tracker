@@ -20,6 +20,7 @@
 //       owner:       'Schneider Electric', // one of TIMELINE_STAGE_OWNERS
 //       timing:      '8/7/2026',           // free text — a date, a window, "2 weeks"
 //       description: '',
+//       icon:        'handshake',          // marker artwork, see STAGE_ICONS
 //     }],
 //   }]
 //
@@ -51,6 +52,9 @@ function normalizeStage(stage) {
     owner,
     timing: String(stage?.timing ?? ''),
     description: String(stage?.description ?? ''),
+    // 'number' draws the stage position in the marker; anything else selects
+    // artwork from STAGE_ICONS in timelineGraphic.
+    icon: String(stage?.icon || 'number'),
   };
 }
 

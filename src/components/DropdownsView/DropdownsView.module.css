@@ -545,6 +545,97 @@
   border-color: var(--color-accent);
 }
 
+.iconSelect {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 0.72rem;
+  font-family: inherit;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.iconSelect:hover {
+  border-color: var(--color-border-light);
+  color: var(--color-text);
+}
+
+/* The SE-formatted graphic + its export row, under each timeline's table. */
+.visualPanel {
+  border-top: 1px solid var(--color-border-light);
+  background: var(--color-bg);
+}
+
+.visualToolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.6rem;
+}
+
+.visualLabel {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary);
+}
+
+.visualHint {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+}
+
+.exportBtn {
+  flex: 0 0 auto;
+  padding: 0.25rem 0.7rem;
+  border: 1px solid #A7F3D0;
+  border-radius: 4px;
+  background: #ECFDF5;
+  color: #047857;
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.exportBtn:hover:not(:disabled) {
+  background: #D1FAE5;
+  border-color: #6EE7B7;
+}
+
+.exportBtn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.visualScroll {
+  overflow-x: auto;
+  padding: 0 0.6rem 0.6rem;
+}
+
+.visualSvg {
+  min-width: 0;
+  background: #fff;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  padding: 0.25rem;
+}
+
+/* Direct child only: the graphic embeds the Schneider lockup as a nested
+   <svg>, and a descendant selector would override its height and blow the
+   lockup up to the full canvas. */
+.visualSvg > svg {
+  display: block;
+  height: auto;
+  max-width: 100%;
+}
+
 .timelineEmptyState {
   max-width: 520px;
   margin: 1.5rem auto;

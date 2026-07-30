@@ -21,6 +21,7 @@ export const BUILTIN_TIMELINE_TEMPLATES = [
         owner: 'Client',
         timing: '7/31/2026',
         description: 'Client signs the SE statement of work.',
+        icon: 'turbine',
       },
       {
         id: 'tl-budget-inputs',
@@ -28,6 +29,7 @@ export const BUILTIN_TIMELINE_TEMPLATES = [
         owner: 'Client',
         timing: '8/7/2026',
         description: 'Client provides required information to SE.',
+        icon: 'handshake',
       },
       {
         id: 'tl-budget-build',
@@ -35,6 +37,7 @@ export const BUILTIN_TIMELINE_TEMPLATES = [
         owner: 'Schneider Electric',
         timing: 'Aug–Sep 2026',
         description: 'SE builds EP, NG, and water budgets.',
+        icon: 'laptop',
       },
       {
         id: 'tl-budget-delivery',
@@ -42,6 +45,7 @@ export const BUILTIN_TIMELINE_TEMPLATES = [
         owner: 'Schneider Electric',
         timing: '9/25/2026',
         description: 'Site-level budgets delivered in Excel format.',
+        icon: 'chart',
       },
       {
         id: 'tl-budget-fy',
@@ -49,6 +53,7 @@ export const BUILTIN_TIMELINE_TEMPLATES = [
         owner: 'Client',
         timing: 'Jan 2027',
         description: 'Budgets cover fiscal year Jan–Dec 2027.',
+        icon: 'leaf',
       },
     ],
   },
