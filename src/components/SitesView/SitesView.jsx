@@ -12198,61 +12198,75 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         const cardStyle = { border: '1px solid #E2E8F0', borderRadius: 8, background: '#FFFFFF', padding: '0.65rem 0.85rem' };
         const cardTitleStyle = { fontSize: '0.72rem', fontWeight: 700, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.45rem' };
         const rowStyle = { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.5rem', padding: '0.2rem 0', borderBottom: '1px dashed #F1F5F9' };
-        // Red flag styling for rows whose value is Unknown / missing —
-        // a tinted background, padding, and a left accent bar so the
-        // data gap stands out in the summary cards.
-        const dangerRowStyle = { ...rowStyle, background: '#FEF2F2', borderLeft: '3px solid #DC2626', borderRadius: 4, padding: '0.2rem 0.4rem', margin: '0 -0.4rem' };
+        // Data-quality tone per row — a tinted background and a left
+        // accent bar so the mix of hard / derived / absent data reads at
+        // a glance: green for actual, amber for estimated, red for
+        // missing. Only applied when the row actually carries a value;
+        // a zero row stays plain so empty cards don't light up.
+        const toneRowStyle = (bg, bar) => ({ ...rowStyle, background: bg, borderLeft: `3px solid ${bar}`, borderRadius: 4, padding: '0.2rem 0.4rem', margin: '0 -0.4rem' });
+        const ROW_TONES = {
+          good:   toneRowStyle('#F0FDF4', '#16A34A'),
+          warn:   toneRowStyle('#FFFBEB', '#F59E0B'),
+          danger: toneRowStyle('#FEF2F2', '#DC2626'),
+        };
         const labelStyle = (color) => ({ fontSize: '0.72rem', color, fontWeight: 600, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
         const valueStyle = { fontSize: '0.78rem', fontWeight: 600, color: '#0F172A', fontVariantNumeric: 'tabular-nums' };
         const subStyle = { fontSize: '0.65rem', color: MUTED, fontWeight: 500, marginLeft: '0.35rem' };
         const fmtInt = (n) => Math.round(n).toLocaleString();
         const fmtPct = (num, den) => den > 0 ? `${Math.round((num / den) * 100)}%` : '0%';
-        const sumLine = (color, label, value, sub, danger = false) => (
-          <div style={danger ? dangerRowStyle : rowStyle}>
-            <span style={labelStyle(danger ? '#991B1B' : color)}>{label}</span>
+        // `tone` is 'good' | 'warn' | 'danger' | null. The commodity
+        // colour stays on the label for good/warn so the electric / gas
+        // distinction survives the tint; danger keeps its red label.
+        const sumLine = (color, label, value, sub, tone = null) => (
+          <div style={ROW_TONES[tone] || rowStyle}>
+            <span style={labelStyle(tone === 'danger' ? '#991B1B' : color)}>{label}</span>
             <span>
-              <span style={danger ? { ...valueStyle, color: '#991B1B' } : valueStyle}>{value}</span>
+              <span style={tone === 'danger' ? { ...valueStyle, color: '#991B1B' } : valueStyle}>{value}</span>
               {sub && <span style={subStyle}>{sub}</span>}
             </span>
           </div>
         );
+        // Tone helpers: colour only once the row has something in it.
+        const good = (n) => (n > 0 ? 'good' : null);
+        const warn = (n) => (n > 0 ? 'warn' : null);
+        const bad  = (n) => (n > 0 ? 'danger' : null);
         return (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem', margin: '0.5rem 1.25rem 0.75rem' }}>
             <div style={cardStyle}>
               <div style={cardTitleStyle}>Consumption</div>
-              {sumLine(ELEC, 'Electric — Actual',    `${fmtInt(s.consumption.electric.actual)} kWh`,   `${s.consumption.electric.actualSites} site${s.consumption.electric.actualSites === 1 ? '' : 's'}`)}
-              {sumLine(ELEC, 'Electric — Estimated', `${fmtInt(s.consumption.electric.est)} kWh`,      `${s.consumption.electric.estSites} site${s.consumption.electric.estSites === 1 ? '' : 's'}`)}
-              {sumLine(SLATE, 'Electric — Missing',  `${fmtInt(s.consumption.electric.missingSites)} sites`, null, s.consumption.electric.missingSites > 0)}
-              {sumLine(GAS,  'Gas — Actual',         `${fmtInt(s.consumption.gas.actual)} therms`,     `${s.consumption.gas.actualSites} site${s.consumption.gas.actualSites === 1 ? '' : 's'}`)}
-              {sumLine(GAS,  'Gas — Estimated',      `${fmtInt(s.consumption.gas.est)} therms`,        `${s.consumption.gas.estSites} site${s.consumption.gas.estSites === 1 ? '' : 's'}`)}
-              {sumLine(SLATE, 'Gas — Missing',       `${fmtInt(s.consumption.gas.missingSites)} sites`, null, s.consumption.gas.missingSites > 0)}
+              {sumLine(ELEC, 'Electric — Actual',    `${fmtInt(s.consumption.electric.actual)} kWh`,   `${s.consumption.electric.actualSites} site${s.consumption.electric.actualSites === 1 ? '' : 's'}`, good(s.consumption.electric.actual))}
+              {sumLine(ELEC, 'Electric — Estimated', `${fmtInt(s.consumption.electric.est)} kWh`,      `${s.consumption.electric.estSites} site${s.consumption.electric.estSites === 1 ? '' : 's'}`, warn(s.consumption.electric.est))}
+              {sumLine(SLATE, 'Electric — Missing',  `${fmtInt(s.consumption.electric.missingSites)} sites`, null, bad(s.consumption.electric.missingSites))}
+              {sumLine(GAS,  'Gas — Actual',         `${fmtInt(s.consumption.gas.actual)} therms`,     `${s.consumption.gas.actualSites} site${s.consumption.gas.actualSites === 1 ? '' : 's'}`, good(s.consumption.gas.actual))}
+              {sumLine(GAS,  'Gas — Estimated',      `${fmtInt(s.consumption.gas.est)} therms`,        `${s.consumption.gas.estSites} site${s.consumption.gas.estSites === 1 ? '' : 's'}`, warn(s.consumption.gas.est))}
+              {sumLine(SLATE, 'Gas — Missing',       `${fmtInt(s.consumption.gas.missingSites)} sites`, null, bad(s.consumption.gas.missingSites))}
             </div>
             <div style={cardStyle}>
               <div style={cardTitleStyle}>Cost</div>
-              {sumLine(ELEC, 'Electric — Actual',    formatMoney(s.cost.electric.actual), `${s.cost.electric.actualSites} site${s.cost.electric.actualSites === 1 ? '' : 's'}`)}
-              {sumLine(ELEC, 'Electric — Estimated', formatMoney(s.cost.electric.est),    `${s.cost.electric.estSites} site${s.cost.electric.estSites === 1 ? '' : 's'}`)}
-              {sumLine(SLATE, 'Electric — Missing',  `${fmtInt(s.cost.electric.missingSites)} sites`, null, s.cost.electric.missingSites > 0)}
-              {sumLine(GAS,  'Gas — Actual',         formatMoney(s.cost.gas.actual),      `${s.cost.gas.actualSites} site${s.cost.gas.actualSites === 1 ? '' : 's'}`)}
-              {sumLine(GAS,  'Gas — Estimated',      formatMoney(s.cost.gas.est),         `${s.cost.gas.estSites} site${s.cost.gas.estSites === 1 ? '' : 's'}`)}
-              {sumLine(SLATE, 'Gas — Missing',       `${fmtInt(s.cost.gas.missingSites)} sites`, null, s.cost.gas.missingSites > 0)}
+              {sumLine(ELEC, 'Electric — Actual',    formatMoney(s.cost.electric.actual), `${s.cost.electric.actualSites} site${s.cost.electric.actualSites === 1 ? '' : 's'}`, good(s.cost.electric.actual))}
+              {sumLine(ELEC, 'Electric — Estimated', formatMoney(s.cost.electric.est),    `${s.cost.electric.estSites} site${s.cost.electric.estSites === 1 ? '' : 's'}`, warn(s.cost.electric.est))}
+              {sumLine(SLATE, 'Electric — Missing',  `${fmtInt(s.cost.electric.missingSites)} sites`, null, bad(s.cost.electric.missingSites))}
+              {sumLine(GAS,  'Gas — Actual',         formatMoney(s.cost.gas.actual),      `${s.cost.gas.actualSites} site${s.cost.gas.actualSites === 1 ? '' : 's'}`, good(s.cost.gas.actual))}
+              {sumLine(GAS,  'Gas — Estimated',      formatMoney(s.cost.gas.est),         `${s.cost.gas.estSites} site${s.cost.gas.estSites === 1 ? '' : 's'}`, warn(s.cost.gas.est))}
+              {sumLine(SLATE, 'Gas — Missing',       `${fmtInt(s.cost.gas.missingSites)} sites`, null, bad(s.cost.gas.missingSites))}
             </div>
             <div style={cardStyle}>
               <div style={cardTitleStyle} title="Source = the upload's supplier column named a utility we recognized. Zip lookup = no supplier in the source, utility derived from the rates file via zip code.">Utility Companies</div>
               {sumLine(ELEC, 'Electric — From Supplier',  fmtInt(s.utility.electric.fromSupplier), fmtPct(s.utility.electric.fromSupplier, s.total))}
               {sumLine(ELEC, 'Electric — From Zip Lookup', fmtInt(s.utility.electric.fromZip),     fmtPct(s.utility.electric.fromZip, s.total))}
-              {sumLine(SLATE, 'Electric — Unknown',        fmtInt(s.utility.electric.unknown),     fmtPct(s.utility.electric.unknown, s.total), s.utility.electric.unknown > 0)}
+              {sumLine(SLATE, 'Electric — Unknown',        fmtInt(s.utility.electric.unknown),     fmtPct(s.utility.electric.unknown, s.total), bad(s.utility.electric.unknown))}
               {sumLine(GAS,  'Gas — From Supplier',        fmtInt(s.utility.gas.fromSupplier),     fmtPct(s.utility.gas.fromSupplier, s.total))}
               {sumLine(GAS,  'Gas — From Zip Lookup',      fmtInt(s.utility.gas.fromZip),          fmtPct(s.utility.gas.fromZip, s.total))}
-              {sumLine(SLATE, 'Gas — Unknown',             fmtInt(s.utility.gas.unknown),          fmtPct(s.utility.gas.unknown, s.total), s.utility.gas.unknown > 0)}
+              {sumLine(SLATE, 'Gas — Unknown',             fmtInt(s.utility.gas.unknown),          fmtPct(s.utility.gas.unknown, s.total), bad(s.utility.gas.unknown))}
             </div>
             <div style={cardStyle}>
               <div style={cardTitleStyle} title="Market structure per site. Classified from the utility provider when known, otherwise from the site's US/CA state deregulation map. Deregulated = competitive retail market (supplier choice — sourcing opportunity). Regulated = single-utility monopoly market. Unknown = no provider and no recognized US/CA state.">Market</div>
               {sumLine(ELEC, 'Electric — Deregulated', fmtInt(m.electric.deregulated), fmtPct(m.electric.deregulated, m.total))}
               {sumLine(ELEC, 'Electric — Regulated',   fmtInt(m.electric.regulated),   fmtPct(m.electric.regulated, m.total))}
-              {sumLine(SLATE, 'Electric — Unknown',     fmtInt(m.electric.unknown),     fmtPct(m.electric.unknown, m.total), m.electric.unknown > 0)}
+              {sumLine(SLATE, 'Electric — Unknown',     fmtInt(m.electric.unknown),     fmtPct(m.electric.unknown, m.total), bad(m.electric.unknown))}
               {sumLine(GAS,  'Gas — Deregulated',       fmtInt(m.gas.deregulated),      fmtPct(m.gas.deregulated, m.total))}
               {sumLine(GAS,  'Gas — Regulated',         fmtInt(m.gas.regulated),        fmtPct(m.gas.regulated, m.total))}
-              {sumLine(SLATE, 'Gas — Unknown',          fmtInt(m.gas.unknown),          fmtPct(m.gas.unknown, m.total), m.gas.unknown > 0)}
+              {sumLine(SLATE, 'Gas — Unknown',          fmtInt(m.gas.unknown),          fmtPct(m.gas.unknown, m.total), bad(m.gas.unknown))}
             </div>
           </div>
         );
