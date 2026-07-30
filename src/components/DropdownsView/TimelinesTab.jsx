@@ -1,0 +1,415 @@
+import { useMemo, useState, useEffect, useId } from 'react';
+import {
+  TIMELINE_STAGE_OWNERS,
+  DEFAULT_STAGE_OWNER,
+  getTimelineTemplates,
+  makeTimelineId,
+  summarizeStageOwners,
+  shortOwnerLabel,
+} from '../../utils/timelineTemplatesStore';
+import styles from './DropdownsView.module.css';
+
+// Which pill style each owner gets. Keeps the owner readable at a glance
+// when scanning a long stage table for the hand-offs.
+const OWNER_PILL_CLASS = {
+  'Schneider Electric': styles.ownerPillSe,
+  'Client': styles.ownerPillClient,
+  'Both': styles.ownerPillBoth,
+};
+
+// Text field that holds a local draft so typing is instant and only tells
+// the parent on commit (blur / Enter) — one settings write per edit, not per
+// keystroke. Escape reverts. Same contract as the option rows on the Lists
+// tab so the whole page feels alike.
+function DraftInput({ value, onCommit, placeholder, className, style, title, multiline }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => { setDraft(value); }, [value]);
+
+  function commit() {
+    const trimmed = draft.trim();
+    if (trimmed === value) return;
+    onCommit(trimmed);
+  }
+  const shared = {
+    value: draft,
+    placeholder,
+    title,
+    className,
+    style,
+    onChange: (e) => setDraft(e.target.value),
+    onBlur: commit,
+    onKeyDown: (e) => {
+      if (e.key === 'Enter' && (!multiline || !e.shiftKey)) { e.preventDefault(); e.currentTarget.blur(); }
+      else if (e.key === 'Escape') { e.preventDefault(); setDraft(value); e.currentTarget.blur(); }
+    },
+  };
+  return multiline ? <textarea rows={1} {...shared} /> : <input type="text" {...shared} />;
+}
+
+// One stage inside a timeline. Name / timing / description commit on blur;
+// the owner select commits immediately since there's no half-typed state to
+// protect. The arrows move the stage within its timeline — order is the
+// sequence the work actually happens in.
+function StageRow({ index, total, stage, onChange, onMove, onRemove }) {
+  return (
+    <tr>
+      <td className={styles.stageOrderCell}>{index + 1}</td>
+      <td>
+        <DraftInput
+          value={stage.name}
+          placeholder="Stage name"
+          className={styles.stageInput}
+          onCommit={(next) => onChange({ ...stage, name: next })}
+        />
+      </td>
+      <td>
+        <select
+          value={stage.owner}
+          onChange={(e) => onChange({ ...stage, owner: e.target.value })}
+          title="Who owns this stage?"
+          className={`${styles.ownerSelect} ${OWNER_PILL_CLASS[stage.owner] || ''}`}
+        >
+          {TIMELINE_STAGE_OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+      </td>
+      <td>
+        <DraftInput
+          value={stage.timing}
+          placeholder="7/31/2026 · Aug–Sep 2026 · 2 weeks"
+          className={styles.stageInput}
+          onCommit={(next) => onChange({ ...stage, timing: next })}
+        />
+      </td>
+      <td>
+        <DraftInput
+          value={stage.description}
+          placeholder="What happens at this stage"
+          className={styles.stageInput}
+          multiline
+          onCommit={(next) => onChange({ ...stage, description: next })}
+        />
+      </td>
+      <td className={styles.stageActionsCell}>
+        <button
+          type="button"
+          className={styles.stageMoveBtn}
+          onClick={() => onMove(-1)}
+          disabled={index === 0}
+          title="Move stage earlier"
+          aria-label="Move stage earlier"
+        >↑</button>
+        <button
+          type="button"
+          className={styles.stageMoveBtn}
+          onClick={() => onMove(1)}
+          disabled={index === total - 1}
+          title="Move stage later"
+          aria-label="Move stage later"
+        >↓</button>
+        <button
+          type="button"
+          className={styles.stageRemoveBtn}
+          onClick={onRemove}
+          title="Remove this stage"
+          aria-label="Remove this stage"
+        >×</button>
+      </td>
+    </tr>
+  );
+}
+
+// The services a timeline is attached to, as removable chips plus a
+// predictive box listing the Solutions-catalog services it isn't attached to
+// yet. This is the hook for saving a timeline against specific services.
+function ServiceChips({ services, serviceOptions, onAdd, onRemove }) {
+  const [draft, setDraft] = useState('');
+  // Each timeline gets its own datalist so the "already attached" filtering
+  // is per-card; useId keeps the ids unique without a render-time random.
+  const listId = `timeline-services-${useId()}`;
+
+  const available = useMemo(() => {
+    const attached = new Set(services.map(s => s.toLowerCase()));
+    return (serviceOptions || [])
+      .map(s => String(s || '').trim())
+      .filter(s => s && !attached.has(s.toLowerCase()))
+      .sort((a, b) => a.localeCompare(b));
+  }, [services, serviceOptions]);
+
+  function commit() {
+    const value = draft.trim();
+    setDraft('');
+    if (!value) return;
+    if (services.some(s => s.toLowerCase() === value.toLowerCase())) return;
+    onAdd(value);
+  }
+
+  return (
+    <div className={styles.timelineServices}>
+      <span className={styles.timelineServicesLabel}>Saves to</span>
+      {services.length === 0 && (
+        <span className={styles.timelineServicesEmpty}>no services yet</span>
+      )}
+      {services.map(svc => (
+        <span key={svc} className={styles.serviceChip}>
+          {svc}
+          <button
+            type="button"
+            className={styles.serviceChipRemove}
+            onClick={() => onRemove(svc)}
+            title={`Detach ${svc}`}
+            aria-label={`Detach ${svc}`}
+          >×</button>
+        </span>
+      ))}
+      <input
+        type="text"
+        list={listId}
+        value={draft}
+        placeholder="+ attach a service…"
+        className={styles.serviceChipInput}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); commit(); }
+          else if (e.key === 'Escape') { e.preventDefault(); setDraft(''); e.currentTarget.blur(); }
+        }}
+      />
+      <datalist id={listId}>
+        {available.map(s => <option key={s} value={s} />)}
+      </datalist>
+    </div>
+  );
+}
+
+// One timeline: an editable name, the services it's attached to, and its
+// ordered stages. The parent owns the array and hands down a single
+// onChange so every edit lands as one settings write.
+function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) {
+  const { stages } = template;
+  const counts = summarizeStageOwners(stages);
+
+  function updateStage(idx, next) {
+    onChange({ ...template, stages: stages.map((s, i) => (i === idx ? next : s)) });
+  }
+  function moveStage(idx, delta) {
+    const target = idx + delta;
+    if (target < 0 || target >= stages.length) return;
+    const next = [...stages];
+    [next[idx], next[target]] = [next[target], next[idx]];
+    onChange({ ...template, stages: next });
+  }
+  function removeStage(idx) {
+    onChange({ ...template, stages: stages.filter((_, i) => i !== idx) });
+  }
+  function addStage() {
+    onChange({
+      ...template,
+      stages: [...stages, { id: makeTimelineId('st'), name: '', owner: DEFAULT_STAGE_OWNER, timing: '', description: '' }],
+    });
+  }
+  function addService(name) {
+    onChange({ ...template, services: [...template.services, name] });
+  }
+  function removeService(name) {
+    onChange({ ...template, services: template.services.filter(s => s !== name) });
+  }
+  function handleRemove() {
+    const label = template.name.trim() || 'this timeline';
+    if (!window.confirm(`Delete "${label}" and its ${stages.length} stage${stages.length === 1 ? '' : 's'}? This can't be undone.`)) return;
+    onRemove();
+  }
+
+  // Filter narrows the visible stages but edits still address the real
+  // index, so a filtered view stays safe to edit.
+  const term = filter.trim().toLowerCase();
+  const visibleStages = stages
+    .map((stage, idx) => ({ stage, idx }))
+    .filter(({ stage }) => !term || [stage.name, stage.owner, stage.timing, stage.description]
+      .some(v => String(v || '').toLowerCase().includes(term)));
+
+  return (
+    <div className={styles.card}>
+      <div className={styles.cardHeader}>
+        <DraftInput
+          value={template.name}
+          placeholder="Untitled timeline"
+          title="Click to rename"
+          className={styles.cardTitle}
+          style={{ flex: 1, minWidth: 0, padding: '2px 4px', border: '1px solid transparent', borderRadius: 4, background: 'transparent', fontFamily: 'inherit' }}
+          onCommit={(next) => onChange({ ...template, name: next })}
+        />
+        <span className={styles.cardCount}>{stages.length} stage{stages.length === 1 ? '' : 's'}</span>
+        {TIMELINE_STAGE_OWNERS.filter(o => counts[o] > 0).map(o => (
+          <span key={o} className={`${styles.ownerPill} ${OWNER_PILL_CLASS[o]}`}>
+            {counts[o]} {shortOwnerLabel(o)}
+          </span>
+        ))}
+        <button
+          type="button"
+          className={styles.timelineDeleteBtn}
+          onClick={handleRemove}
+          title="Delete this timeline"
+          aria-label="Delete this timeline"
+        >🗑</button>
+      </div>
+
+      <ServiceChips
+        services={template.services}
+        serviceOptions={serviceOptions}
+        onAdd={addService}
+        onRemove={removeService}
+      />
+
+      <div className={styles.timelineTableWrap}>
+        <table className={styles.stageTable}>
+          <colgroup>
+            <col style={{ width: 34 }} />
+            <col />
+            <col style={{ width: 170 }} />
+            <col style={{ width: 150 }} />
+            <col />
+            <col style={{ width: 84 }} />
+          </colgroup>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Stage</th>
+              <th>Owner</th>
+              <th>Timing</th>
+              <th>Description</th>
+              <th aria-hidden="true" />
+            </tr>
+          </thead>
+          <tbody>
+            {visibleStages.length === 0 ? (
+              <tr>
+                <td colSpan={6} className={styles.serviceEmpty}>
+                  {stages.length === 0 ? 'No stages yet — add the first one below.' : 'No stages match the search.'}
+                </td>
+              </tr>
+            ) : (
+              visibleStages.map(({ stage, idx }) => (
+                <StageRow
+                  key={stage.id}
+                  index={idx}
+                  total={stages.length}
+                  stage={stage}
+                  onChange={(next) => updateStage(idx, next)}
+                  onMove={(delta) => moveStage(idx, delta)}
+                  onRemove={() => removeStage(idx)}
+                />
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className={styles.timelineFooter}>
+        <button type="button" className={styles.addStageBtn} onClick={addStage}>+ Add stage</button>
+      </div>
+    </div>
+  );
+}
+
+// Dropdowns → Timelines. Builds the reusable timeline templates — a named
+// sequence of stages, each owned by the client or Schneider Electric — that
+// get attached to services. Everything persists under
+// settings.timelineTemplates and syncs alongside the other dropdown data.
+export function TimelinesTab({ settings, updateSettings, serviceOptions = [] }) {
+  const [search, setSearch] = useState('');
+  // Narrow to the one settings key we read so the memo only re-runs when the
+  // timelines themselves change, not on every unrelated settings write.
+  const saved = settings?.timelineTemplates;
+  const templates = useMemo(() => getTimelineTemplates({ timelineTemplates: saved }), [saved]);
+
+  function saveTemplates(next) {
+    updateSettings?.({ timelineTemplates: next });
+  }
+  function updateTemplate(id, next) {
+    saveTemplates(templates.map(t => (t.id === id ? next : t)));
+  }
+  function removeTemplate(id) {
+    saveTemplates(templates.filter(t => t.id !== id));
+  }
+  function addTimeline() {
+    const name = window.prompt('Name for the new timeline:', '');
+    if (name === null) return;
+    saveTemplates([
+      ...templates,
+      { id: makeTimelineId('tl'), name: (name || '').trim(), services: [], stages: [] },
+    ]);
+  }
+
+  const term = search.trim().toLowerCase();
+  // A timeline stays visible when its name, one of its services, or one of
+  // its stages matches — the card itself then dims the non-matching stages.
+  const visible = templates.filter(tpl => {
+    if (!term) return true;
+    if (tpl.name.toLowerCase().includes(term)) return true;
+    if (tpl.services.some(s => s.toLowerCase().includes(term))) return true;
+    return tpl.stages.some(s => [s.name, s.owner, s.timing, s.description]
+      .some(v => String(v || '').toLowerCase().includes(term)));
+  });
+
+  const totalStages = templates.reduce((a, t) => a + t.stages.length, 0);
+
+  return (
+    <>
+      <div className={styles.searchRow}>
+        <input
+          type="text"
+          className={styles.searchInput}
+          placeholder="Search timelines, stages, owners…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <button
+          type="button"
+          onClick={addTimeline}
+          title="Create a new timeline"
+          style={{
+            padding: '0.4rem 0.8rem',
+            background: 'var(--color-accent)', color: '#fff',
+            border: 'none', borderRadius: 'var(--radius-md)',
+            fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+          }}
+        >+ New timeline</button>
+        <span className={styles.resultCount}>
+          {term
+            ? `${visible.length} of ${templates.length} timelines`
+            : `${templates.length} timeline${templates.length === 1 ? '' : 's'} · ${totalStages} stage${totalStages === 1 ? '' : 's'}`}
+        </span>
+      </div>
+
+      <div className={styles.scroll}>
+        {templates.length === 0 ? (
+          <div className={styles.timelineEmptyState}>
+            <p><strong>No timelines yet.</strong></p>
+            <p>
+              Build a timeline for the work you deliver repeatedly, then add the stages in the
+              order they happen and mark each one as owned by <em>Schneider Electric</em>, the{' '}
+              <em>Client</em>, or <em>Both</em>. Attach the finished timeline to the services it
+              applies to so it can be reused from there.
+            </p>
+          </div>
+        ) : visible.length === 0 ? (
+          <div className={styles.timelineEmptyState}>
+            <p>No timelines match “{search.trim()}”.</p>
+          </div>
+        ) : (
+          visible.map(tpl => (
+            <div key={tpl.id} className={styles.section}>
+              <TimelineCard
+                template={tpl}
+                serviceOptions={serviceOptions}
+                filter={search}
+                onChange={(next) => updateTemplate(tpl.id, next)}
+                onRemove={() => removeTemplate(tpl.id)}
+              />
+            </div>
+          ))
+        )}
+      </div>
+    </>
+  );
+}

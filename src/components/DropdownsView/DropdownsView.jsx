@@ -6,6 +6,8 @@ import {
   makeCustomListKey,
 } from '../../utils/dropdownListsStore';
 import { QuestionsTab } from './QuestionsTab';
+import { TimelinesTab } from './TimelinesTab';
+import { getTimelineTemplates } from '../../utils/timelineTemplatesStore';
 import styles from './DropdownsView.module.css';
 
 const SERVICE_TABLE_COLUMNS = [
@@ -650,6 +652,14 @@ export function DropdownsView({ settings, updateSettings }) {
   const visibleNamed = namedLists.filter(cardMatches);
   const solutionsVisible = solutions && cardMatches(solutions);
 
+  // Badge on the Timelines subtab — counts the saved templates (or the
+  // built-in seeds while the user hasn't edited any).
+  const savedTimelines = settings?.timelineTemplates;
+  const timelineCount = useMemo(
+    () => getTimelineTemplates({ timelineTemplates: savedTimelines }).length,
+    [savedTimelines]
+  );
+
   const totalOptions = useMemo(
     () => lists.reduce((a, l) => a + l.options.length, 0),
     [lists]
@@ -683,6 +693,11 @@ export function DropdownsView({ settings, updateSettings }) {
           className={activeTab === 'services' ? styles.subtabActive : styles.subtab}
           onClick={() => setActiveTab('services')}
         >Services <span className={styles.subtabCount}>{serviceRows.length}</span></button>
+        <button
+          type="button"
+          className={activeTab === 'timelines' ? styles.subtabActive : styles.subtab}
+          onClick={() => setActiveTab('timelines')}
+        >Timelines <span className={styles.subtabCount}>{timelineCount}</span></button>
         <button
           type="button"
           className={activeTab === 'questions' ? styles.subtabActive : styles.subtab}
@@ -827,6 +842,8 @@ export function DropdownsView({ settings, updateSettings }) {
             </div>
           </div>
         </>
+      ) : activeTab === 'timelines' ? (
+        <TimelinesTab settings={settings} updateSettings={updateSettings} serviceOptions={serviceRows.map(r => r.name)} />
       ) : (
         <QuestionsTab settings={settings} updateSettings={updateSettings} serviceOptions={serviceRows.map(r => r.name)} />
       )}
