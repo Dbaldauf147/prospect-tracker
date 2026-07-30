@@ -55,6 +55,12 @@ function normalizeStage(stage) {
     // is parsed out of `timing` instead — see utils/timelineDates.
     start: String(stage?.start ?? ''),
     end: String(stage?.end ?? ''),
+    // Implementation format: the phase band this step sits in, and its
+    // position in months from kickoff. Blank month/span fall back to the
+    // stage's calendar position.
+    phase: String(stage?.phase ?? ''),
+    startMonth: stage?.startMonth === '' || stage?.startMonth == null ? '' : Number(stage.startMonth),
+    months: stage?.months === '' || stage?.months == null ? '' : Number(stage.months),
     description: String(stage?.description ?? ''),
     // 'number' draws the stage position in the marker; anything else selects
     // artwork from STAGE_ICONS in timelineGraphic.
@@ -68,7 +74,12 @@ function normalizeTemplate(tpl) {
     name: String(tpl?.name ?? ''),
     // Which layout the visual and exports render. Timelines saved before the
     // Gantt existed have no format and pick up the default.
-    format: tpl?.format === 'milestone' ? 'milestone' : 'gantt',
+    format: ['milestone', 'phased', 'gantt'].includes(tpl?.format) ? tpl.format : 'gantt',
+    // Implementation-format trimmings: who the client workstream belongs to,
+    // how many month columns to draw, and the caveat box above the title.
+    clientName: String(tpl?.clientName ?? ''),
+    monthCount: tpl?.monthCount === '' || tpl?.monthCount == null ? '' : Number(tpl.monthCount),
+    note: String(tpl?.note ?? ''),
     services: Array.isArray(tpl?.services)
       ? tpl.services.map(s => String(s ?? '').trim()).filter(Boolean)
       : [],
