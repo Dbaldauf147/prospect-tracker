@@ -1176,9 +1176,21 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   }
 
   async function handleRemoveSites() {
-    if (!window.confirm('Remove the uploaded sites list?')) return;
+    // The portfolio company is persisted in settings, so it outlives the
+    // sites it was mapped to — leaving it set would keep labelling the
+    // Save button ("Save to Acme Corp") and Corporate Compliance's
+    // Portfolio company field for a portfolio that no longer exists.
+    // Clear it with the sites, and say so in the prompt. The per-column
+    // mappings are transient state re-derived on the next upload, so
+    // they need no cleanup here.
+    const mapped = portfolioCompanyName;
+    const prompt = mapped
+      ? `Remove the uploaded sites list and clear the mapped company (${mapped})?`
+      : 'Remove the uploaded sites list?';
+    if (!window.confirm(prompt)) return;
     await clearListFromIDB(SITES_STORAGE_KEY);
     setSitesData([]);
+    if (mapped) setPortfolioCompanyName('');
   }
 
   async function handleUtilityFileSelect(e) {
