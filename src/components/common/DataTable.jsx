@@ -1144,6 +1144,16 @@ export function DataTable({
                 val = col.exportValue(row);
               } else {
                 val = row[col.key];
+                // Render-only columns hold nothing on the row — mapping
+                // cells like __myAccountsList__ derive what they show from
+                // lookups, so row[col.key] is undefined and the cell
+                // exported blank. getFilterValue already returns exactly
+                // the visible text (it's what column filtering matches
+                // against), so fall back to it before giving up.
+                if ((val == null || val === '') && typeof col.getFilterValue === 'function') {
+                  const derived = col.getFilterValue(row);
+                  if (derived != null && typeof derived !== 'object') val = derived;
+                }
               }
               obj[label] = Array.isArray(val) ? val.join(', ') : (val ?? '');
             }
