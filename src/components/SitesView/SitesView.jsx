@@ -12170,7 +12170,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                   </div>
                 )}
                 {consumptionUnavailable && (
-                  <div style={{ margin: '0 0 0.5rem', padding: '0.45rem 0.6rem', background: '#FEF3C7', border: '1px solid #FCD34D', borderRadius: 6, fontSize: '0.75rem', color: '#92400E' }}>
+                  <div style={{ margin: '0 0 0.5rem', padding: '0.45rem 0.6rem', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 6, fontSize: '0.75rem', color: '#991B1B' }}>
                     <strong>⚠ Consumption will not be available.</strong>{' '}
                     Nothing is mapped to <strong>Annual Electric Consumption</strong> or <strong>Annual Gas Consumption</strong>, and no <strong>Property Type</strong> column is mapped to estimate from. Without one or the other, consumption — and the cost and savings figures derived from it — will be blank for every site. Map a consumption column, or map Property Type to use modeled estimates.
                   </div>
