@@ -12126,6 +12126,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           const missingRequired = TARGET_FIELDS
             .filter(t => t.required && !active.mapping[t.key])
             .map(t => t.label);
+          // Consumption comes from a mapped electric/gas column, or — when
+          // none is mapped — is modeled from Property Type. With neither,
+          // every consumption (and therefore cost and savings) figure is
+          // null, which is easy to miss until the table renders empty. All
+          // three are optional, so this warns rather than blocks.
+          const noConsumptionCols = !active.mapping.electric && !active.mapping.gas;
+          const noPropertyType = !active.mapping.propertyType;
+          const consumptionUnavailable = noConsumptionCols && noPropertyType;
           const targetLabel = (key) => TARGET_FIELDS.find(t => t.key === key)?.label || key;
           const colHeader = { fontSize: '0.7rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', padding: '0.5rem 0.75rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' };
           const cellBase = { padding: '0.4rem 0.75rem', borderBottom: '1px solid #F1F5F9', fontSize: '0.78rem' };
@@ -12159,6 +12167,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                 {missingRequired.length > 0 && (
                   <div style={{ margin: '0 0 0.5rem', padding: '0.4rem 0.6rem', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 6, fontSize: '0.75rem', color: '#991B1B', fontWeight: 600 }}>
                     Still need to map: {missingRequired.join(', ')}
+                  </div>
+                )}
+                {consumptionUnavailable && (
+                  <div style={{ margin: '0 0 0.5rem', padding: '0.45rem 0.6rem', background: '#FEF3C7', border: '1px solid #FCD34D', borderRadius: 6, fontSize: '0.75rem', color: '#92400E' }}>
+                    <strong>⚠ Consumption will not be available.</strong>{' '}
+                    Nothing is mapped to <strong>Annual Electric Consumption</strong> or <strong>Annual Gas Consumption</strong>, and no <strong>Property Type</strong> column is mapped to estimate from. Without one or the other, consumption — and the cost and savings figures derived from it — will be blank for every site. Map a consumption column, or map Property Type to use modeled estimates.
                   </div>
                 )}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', maxHeight: '60vh' }}>
