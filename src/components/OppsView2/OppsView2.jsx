@@ -6,6 +6,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { toggleContactInEvents } from '../../utils/eventsStore';
 import { DataTable } from '../common/DataTable';
+import { DateCell } from '../common/DateCell';
+import { toISODate, formatDateDisplay } from '../../utils/isoDate';
 import {
   buildListRegistry,
   buildAvailableLists,
@@ -752,80 +754,9 @@ function AddCompanyCombobox({ suggestions, onCommit, placeholder = 'Add company�
 // `suggestions` is provided, the input also shows a prefix-then-
 // substring autocomplete dropdown so the user can pick an existing
 // company name (used for the Account column on Opps 2).
-// Date cell — renders the value as M/D/YYYY for display, and pops a
-// native HTML5 date input (calendar) on click so the user can pick a
-// new value. Stores the chosen date as ISO (YYYY-MM-DD) so it round-
-// trips cleanly through the same `<input type="date">` later.
-function toISODate(raw) {
-  if (!raw) return '';
-  const s = String(raw).trim();
-  // Already ISO?
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  const t = Date.parse(s);
-  if (isNaN(t)) return '';
-  const d = new Date(t);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-function formatDateDisplay(raw) {
-  const iso = toISODate(raw);
-  if (!iso) return String(raw || '');
-  // Render as M/D/YYYY without time-zone offset surprises (parse the
-  // ISO string in local time, not UTC).
-  const [y, m, d] = iso.split('-').map(n => parseInt(n, 10));
-  return `${m}/${d}/${y}`;
-}
-
-function DateCell({ value, onChange }) {
-  // The native <input type="date"> is permanently mounted but visually
-  // hidden and not directly interactable (pointer-events: none, tab
-  // disabled). The only way to change the value is via the calendar
-  // popup, which we open programmatically from the visible span's
-  // click. This blocks every "edit the date itself" affordance the
-  // browser exposes on a focused date input — segment typing, arrow-
-  // key increments, and spin buttons — so the user can only pick a
-  // calendar day.
-  const inputRef = useRef(null);
-  const iso = toISODate(value);
-  const isEmpty = !value;
-  return (
-    <span
-      onClick={(e) => {
-        e.stopPropagation();
-        const el = inputRef.current;
-        if (!el) return;
-        try { el.showPicker?.(); } catch { /* older browser — no-op */ }
-      }}
-      style={{
-        position: 'relative',
-        display: 'block', cursor: 'pointer', minHeight: '1em',
-        padding: '1px 2px',
-        color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
-      }}
-      title="Click to pick a date"
-    >
-      {isEmpty ? '—' : formatDateDisplay(value)}
-      <input
-        ref={inputRef}
-        type="date"
-        value={iso}
-        onChange={(e) => onChange(e.target.value)}
-        onClick={(e) => e.stopPropagation()}
-        tabIndex={-1}
-        aria-hidden="true"
-        style={{
-          position: 'absolute', left: 0, top: 0,
-          width: '100%', height: '100%',
-          opacity: 0, pointerEvents: 'none',
-          border: 0, padding: 0, margin: 0, background: 'transparent',
-        }}
-      />
-    </span>
-  );
-}
+// Date cell, plus the ISO / display helpers it travels with, now live in
+// components/common/DateCell so the Deals tab renders dates the same way.
+// Re-exported through the import below; all call sites here are unchanged.
 
 // Break a free-text Next Steps cell into bullet items. Splits on
 // newlines, strips any leading marker the user typed (- * • 1. etc.),
