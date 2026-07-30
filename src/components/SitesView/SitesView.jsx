@@ -12484,11 +12484,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         const cardStyle = { border: '1px solid #E2E8F0', borderRadius: 8, background: '#FFFFFF', padding: '0.65rem 0.85rem' };
         const cardTitleStyle = { fontSize: '0.72rem', fontWeight: 700, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.45rem' };
         const rowStyle = { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.5rem', padding: '0.2rem 0', borderBottom: '1px dashed #F1F5F9' };
-        // Data-quality tone per row — a tinted background and a left
-        // accent bar so the mix of hard / derived / absent data reads at
-        // a glance: green for actual, amber for estimated, red for
-        // missing. Only applied when the row actually carries a value;
-        // a zero row stays plain so empty cards don't light up.
+        // Tone per row — a tinted background and a left accent bar so the
+        // shape of the portfolio reads at a glance. Green / amber / red
+        // means best / qualified / worst in whatever that card measures:
+        // actual vs estimated vs missing on Consumption and Cost, taken
+        // from the source vs derived from the zip vs unknown on Utility
+        // Companies, and deregulated (a sourcing opportunity) vs
+        // regulated vs unknown on Market. Only applied when the row
+        // actually carries a value; a zero row stays plain so empty
+        // cards don't light up.
         const toneRowStyle = (bg, bar) => ({ ...rowStyle, background: bg, borderLeft: `3px solid ${bar}`, borderRadius: 4, padding: '0.2rem 0.4rem', margin: '0 -0.4rem' });
         const ROW_TONES = {
           good:   toneRowStyle('#F0FDF4', '#16A34A'),
@@ -12538,20 +12542,20 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             </div>
             <div style={cardStyle}>
               <div style={cardTitleStyle} title="Source = the upload's supplier column named a utility we recognized. Zip lookup = no supplier in the source, utility derived from the rates file via zip code.">Utility Companies</div>
-              {sumLine(ELEC, 'Electric — From Supplier',  fmtInt(s.utility.electric.fromSupplier), fmtPct(s.utility.electric.fromSupplier, s.total))}
-              {sumLine(ELEC, 'Electric — From Zip Lookup', fmtInt(s.utility.electric.fromZip),     fmtPct(s.utility.electric.fromZip, s.total))}
+              {sumLine(ELEC, 'Electric — From Supplier',  fmtInt(s.utility.electric.fromSupplier), fmtPct(s.utility.electric.fromSupplier, s.total), good(s.utility.electric.fromSupplier))}
+              {sumLine(ELEC, 'Electric — From Zip Lookup', fmtInt(s.utility.electric.fromZip),     fmtPct(s.utility.electric.fromZip, s.total), warn(s.utility.electric.fromZip))}
               {sumLine(SLATE, 'Electric — Unknown',        fmtInt(s.utility.electric.unknown),     fmtPct(s.utility.electric.unknown, s.total), bad(s.utility.electric.unknown))}
-              {sumLine(GAS,  'Gas — From Supplier',        fmtInt(s.utility.gas.fromSupplier),     fmtPct(s.utility.gas.fromSupplier, s.total))}
-              {sumLine(GAS,  'Gas — From Zip Lookup',      fmtInt(s.utility.gas.fromZip),          fmtPct(s.utility.gas.fromZip, s.total))}
+              {sumLine(GAS,  'Gas — From Supplier',        fmtInt(s.utility.gas.fromSupplier),     fmtPct(s.utility.gas.fromSupplier, s.total), good(s.utility.gas.fromSupplier))}
+              {sumLine(GAS,  'Gas — From Zip Lookup',      fmtInt(s.utility.gas.fromZip),          fmtPct(s.utility.gas.fromZip, s.total), warn(s.utility.gas.fromZip))}
               {sumLine(SLATE, 'Gas — Unknown',             fmtInt(s.utility.gas.unknown),          fmtPct(s.utility.gas.unknown, s.total), bad(s.utility.gas.unknown))}
             </div>
             <div style={cardStyle}>
               <div style={cardTitleStyle} title="Market structure per site. Classified from the utility provider when known, otherwise from the site's US/CA state deregulation map. Deregulated = competitive retail market (supplier choice — sourcing opportunity). Regulated = single-utility monopoly market. Unknown = no provider and no recognized US/CA state.">Market</div>
-              {sumLine(ELEC, 'Electric — Deregulated', fmtInt(m.electric.deregulated), fmtPct(m.electric.deregulated, m.total))}
-              {sumLine(ELEC, 'Electric — Regulated',   fmtInt(m.electric.regulated),   fmtPct(m.electric.regulated, m.total))}
+              {sumLine(ELEC, 'Electric — Deregulated', fmtInt(m.electric.deregulated), fmtPct(m.electric.deregulated, m.total), good(m.electric.deregulated))}
+              {sumLine(ELEC, 'Electric — Regulated',   fmtInt(m.electric.regulated),   fmtPct(m.electric.regulated, m.total), warn(m.electric.regulated))}
               {sumLine(SLATE, 'Electric — Unknown',     fmtInt(m.electric.unknown),     fmtPct(m.electric.unknown, m.total), bad(m.electric.unknown))}
-              {sumLine(GAS,  'Gas — Deregulated',       fmtInt(m.gas.deregulated),      fmtPct(m.gas.deregulated, m.total))}
-              {sumLine(GAS,  'Gas — Regulated',         fmtInt(m.gas.regulated),        fmtPct(m.gas.regulated, m.total))}
+              {sumLine(GAS,  'Gas — Deregulated',       fmtInt(m.gas.deregulated),      fmtPct(m.gas.deregulated, m.total), good(m.gas.deregulated))}
+              {sumLine(GAS,  'Gas — Regulated',         fmtInt(m.gas.regulated),        fmtPct(m.gas.regulated, m.total), warn(m.gas.regulated))}
               {sumLine(SLATE, 'Gas — Unknown',          fmtInt(m.gas.unknown),          fmtPct(m.gas.unknown, m.total), bad(m.gas.unknown))}
             </div>
           </div>
