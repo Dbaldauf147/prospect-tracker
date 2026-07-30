@@ -388,10 +388,11 @@ DATA:
     body: `Populate the file attached in this project (or an Excel file with the standard schema below) with the detailed site/buildings that this company owns or operates.
 Buildings can be owned or rented.
 Ensure this is a global search. Please leverage the company website provided as well as other public sources of data about the company.
-Include all site types (e.g., headquarters, offices, manufacturing plants, R&D, warehouses, etc.).
+Include every kind of site the company operates (headquarters, offices, manufacturing plants, R&D, warehouses, etc.).
 Include the zip / postal code for each site wherever it is available from public sources.
 Provide the final deliverable in Excel format — in the template attached to this project.
 Do this for {COMPANY_NAME}.
+Name the column that classifies each building "Property Type" (not "Site Type"), and fill it for every row.
 Property Type must match one of the following categories as closely as possible (controlled vocabulary — do not invent new categories):
 
 
