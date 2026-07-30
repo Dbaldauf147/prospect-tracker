@@ -186,6 +186,53 @@ export function formatRangeLabel(range) {
   return range.milestone ? short(range.start) : `${short(range.start)} – ${short(range.end)}`;
 }
 
+// --- Relative months ----------------------------------------------------
+// The implementation format counts in months from kickoff ("month 1") rather
+// than on a calendar, because that's how a proposal timeline is written
+// before a contract is signed. A stage can say so directly via startMonth /
+// months; otherwise its calendar range is measured against the earliest dated
+// stage in the timeline, so a dated timeline still renders in this format.
+
+function monthOrdinal(isoDate) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || ''));
+  if (!m) return null;
+  return Number(m[1]) * 12 + (Number(m[2]) - 1);
+}
+
+// The month ordinal of the earliest dated stage, or null when nothing in the
+// timeline carries a date.
+export function timelineBaseMonth(stages) {
+  const ords = (Array.isArray(stages) ? stages : [])
+    .map(s => { const r = getStageRange(s); return r ? monthOrdinal(r.start) : null; })
+    .filter(v => v != null);
+  return ords.length ? Math.min(...ords) : null;
+}
+
+// { month, span } for a stage, both 1-based counts of whole months. Explicit
+// startMonth wins; a blank one falls back to the calendar position, and a
+// stage with neither lands in month 1 so it still appears.
+export function getStageMonths(stage, baseMonth) {
+  const explicitStart = Number(stage?.startMonth);
+  const explicitSpan = Number(stage?.months);
+  let month = Number.isFinite(explicitStart) && explicitStart >= 1 ? Math.floor(explicitStart) : null;
+  let span = Number.isFinite(explicitSpan) && explicitSpan >= 1 ? Math.floor(explicitSpan) : null;
+
+  if (month == null || span == null) {
+    const range = getStageRange(stage);
+    if (range && baseMonth != null) {
+      const startOrd = monthOrdinal(range.start);
+      const endOrd = monthOrdinal(range.end);
+      if (startOrd != null && month == null) month = startOrd - baseMonth + 1;
+      if (startOrd != null && endOrd != null && span == null) span = endOrd - startOrd + 1;
+    }
+  }
+  return {
+    month: Math.max(1, month ?? 1),
+    span: Math.max(1, span ?? 1),
+    explicit: Number.isFinite(explicitStart) && explicitStart >= 1,
+  };
+}
+
 // Month label for an axis tick: "Aug 2026", or just "Aug" when the year is
 // already established by an earlier tick.
 export function monthLabel(y, m, withYear) {

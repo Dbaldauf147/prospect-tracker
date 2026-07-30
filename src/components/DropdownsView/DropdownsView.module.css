@@ -617,7 +617,65 @@
   color: #92400E;
 }
 
-/* Milestone / Gantt switch. */
+/* Implementation-format cells: month × span, and the per-timeline settings. */
+.numberCell {
+  width: 46px;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 0.74rem;
+  font-family: inherit;
+  color: var(--color-text);
+  text-align: center;
+}
+
+.numberCell:hover {
+  border-color: var(--color-border-light);
+}
+
+.numberCell:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  background: #fff;
+}
+
+.monthCell {
+  white-space: nowrap;
+}
+
+.phasedSettings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--color-border-light);
+  background: var(--color-surface);
+}
+
+.settingInput {
+  width: 150px;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border-light);
+  border-radius: 4px;
+  background: #fff;
+  font-size: 0.72rem;
+  font-family: inherit;
+  color: var(--color-text);
+}
+
+.settingInputWide {
+  flex: 1;
+  min-width: 220px;
+}
+
+.settingInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+/* Milestone / Gantt / Implementation switch. */
 .formatToggle {
   display: inline-flex;
   border: 1px solid var(--color-border);

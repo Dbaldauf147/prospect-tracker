@@ -8,7 +8,7 @@ import {
   shortOwnerLabel,
 } from '../../utils/timelineTemplatesStore';
 import { buildTimelineSvg, STAGE_ICONS, TIMELINE_FORMATS } from '../../utils/timelineGraphic';
-import { getStageRange } from '../../utils/timelineDates';
+import { getStageRange, getStageMonths } from '../../utils/timelineDates';
 import { openTimelineReport, downloadTimelineSvg, downloadTimelinePng } from '../../utils/timelineExport';
 import { exportTimelineXlsx } from '../../utils/timelineXlsx';
 import styles from './DropdownsView.module.css';
@@ -50,16 +50,60 @@ function DraftInput({ value, onCommit, placeholder, className, style, title, mul
   return multiline ? <textarea rows={1} {...shared} /> : <input type="text" {...shared} />;
 }
 
-// One stage inside a timeline. Name / timing / description commit on blur;
-// the owner select commits immediately since there's no half-typed state to
-// protect. The arrows move the stage within its timeline — order is the
-// sequence the work actually happens in.
-function StageRow({ index, total, stage, onChange, onMove, onRemove }) {
+// Small numeric cell for the implementation format's Month / Span. Blank
+// means "work it out from the dates", so an empty string is a real value
+// here rather than a zero.
+function NumberCell({ value, onCommit, min = 1, placeholder, title }) {
+  const asText = value === '' || value == null ? '' : String(value);
+  const [draft, setDraft] = useState(asText);
+  // Re-sync during render rather than in an effect: adjusting state when a
+  // prop changes is a render-phase job, and an effect here would cost an
+  // extra render pass on every keystroke elsewhere in the row.
+  const [lastValue, setLastValue] = useState(asText);
+  if (asText !== lastValue) {
+    setLastValue(asText);
+    setDraft(asText);
+  }
+  function commit() {
+    const raw = draft.trim();
+    if (raw === '') { if (asText !== '') onCommit(''); return; }
+    const n = Math.max(min, Math.floor(Number(raw)));
+    if (!Number.isFinite(n)) { setDraft(asText); return; }
+    if (String(n) !== asText) onCommit(n);
+  }
+  return (
+    <input
+      type="number"
+      min={min}
+      value={draft}
+      placeholder={placeholder}
+      title={title}
+      className={styles.numberCell}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+        else if (e.key === 'Escape') { e.preventDefault(); setDraft(asText); e.currentTarget.blur(); }
+      }}
+    />
+  );
+}
+
+// One stage inside a timeline. Text cells commit on blur; the selects commit
+// immediately since there's no half-typed state to protect. The arrows move
+// the stage within its timeline — order is the sequence the work happens in,
+// and in the implementation format it's also the step numbering. Which
+// columns appear follows the timeline's format, so each layout shows only
+// the controls that drive it.
+function StageRow({ index, total, stage, format, onChange, onMove, onRemove }) {
   // Effective calendar range: the explicit dates when set, otherwise whatever
   // the Timing text parses to. `auto` means nothing was typed into the date
   // cells — they're mirroring the label.
   const range = getStageRange(stage);
   const auto = !!range && range.derivedStart && range.derivedEnd;
+  // Placeholder values for the Month / Span cells: what the renderer would
+  // work out on its own, so a blank cell shows what it's actually doing.
+  const months = getStageMonths(stage, null);
   return (
     <tr>
       <td className={styles.stageOrderCell}>{index + 1}</td>
@@ -81,16 +125,46 @@ function StageRow({ index, total, stage, onChange, onMove, onRemove }) {
           {TIMELINE_STAGE_OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
         </select>
       </td>
-      <td>
-        <select
-          value={stage.icon || 'number'}
-          onChange={(e) => onChange({ ...stage, icon: e.target.value })}
-          title="Marker artwork on the visual"
-          className={styles.iconSelect}
-        >
-          {STAGE_ICONS.map(i => <option key={i.key} value={i.key}>{i.label}</option>)}
-        </select>
-      </td>
+      {format === 'milestone' && (
+        <td>
+          <select
+            value={stage.icon || 'number'}
+            onChange={(e) => onChange({ ...stage, icon: e.target.value })}
+            title="Marker artwork on the visual"
+            className={styles.iconSelect}
+          >
+            {STAGE_ICONS.map(i => <option key={i.key} value={i.key}>{i.label}</option>)}
+          </select>
+        </td>
+      )}
+      {format === 'phased' && (
+        <>
+          <td>
+            <DraftInput
+              value={stage.phase}
+              placeholder="Phase / stage band"
+              title="Steps sharing a phase name are grouped into one band"
+              className={styles.stageInput}
+              onCommit={(next) => onChange({ ...stage, phase: next })}
+            />
+          </td>
+          <td className={styles.monthCell}>
+            <NumberCell
+              value={stage.startMonth}
+              placeholder={String(months.month)}
+              title="Month from kickoff. Blank uses the stage's dates."
+              onCommit={(next) => onChange({ ...stage, startMonth: next })}
+            />
+            <span className={styles.dateSep}>×</span>
+            <NumberCell
+              value={stage.months}
+              placeholder={String(months.span)}
+              title="How many months the bar spans"
+              onCommit={(next) => onChange({ ...stage, months: next })}
+            />
+          </td>
+        </>
+      )}
       <td>
         <DraftInput
           value={stage.timing}
@@ -99,6 +173,7 @@ function StageRow({ index, total, stage, onChange, onMove, onRemove }) {
           onCommit={(next) => onChange({ ...stage, timing: next })}
         />
       </td>
+      {format === 'gantt' && (
       <td className={styles.stageDatesCell}>
         <input
           type="date"
@@ -122,6 +197,7 @@ function StageRow({ index, total, stage, onChange, onMove, onRemove }) {
           <span className={styles.undatedTag} title="This stage can't be placed on the Gantt until it has dates.">no date</span>
         )}
       </td>
+      )}
       <td>
         <DraftInput
           value={stage.description}
@@ -309,6 +385,7 @@ function TimelineVisual({ template, onChangeFormat }) {
 function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) {
   const { stages } = template;
   const counts = summarizeStageOwners(stages);
+  const format = template.format || 'gantt';
 
   function updateStage(idx, next) {
     onChange({ ...template, stages: stages.map((s, i) => (i === idx ? next : s)) });
@@ -382,26 +459,58 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
         onRemove={removeService}
       />
 
+      {format === 'phased' && (
+        <div className={styles.phasedSettings}>
+          <span className={styles.timelineServicesLabel}>Client workstream</span>
+          <DraftInput
+            value={template.clientName}
+            placeholder="Client"
+            title="Names the client's workstream in the legend, e.g. PROLOGIS"
+            className={styles.settingInput}
+            onCommit={(next) => onChange({ ...template, clientName: next })}
+          />
+          <span className={styles.timelineServicesLabel}>Months</span>
+          <NumberCell
+            value={template.monthCount}
+            placeholder="12"
+            title="How many month columns to draw"
+            onCommit={(next) => onChange({ ...template, monthCount: next })}
+          />
+          <span className={styles.timelineServicesLabel}>Caveat</span>
+          <DraftInput
+            value={template.note}
+            placeholder="*All timelines are subject to…"
+            title="Shown in the box at the top-left of the slide"
+            className={`${styles.settingInput} ${styles.settingInputWide}`}
+            onCommit={(next) => onChange({ ...template, note: next })}
+          />
+        </div>
+      )}
+
       <div className={styles.timelineTableWrap}>
         <table className={styles.stageTable}>
           <colgroup>
             <col style={{ width: 34 }} />
             <col />
             <col style={{ width: 170 }} />
-            <col style={{ width: 118 }} />
+            {format === 'milestone' && <col style={{ width: 118 }} />}
+            {format === 'phased' && <col style={{ width: 190 }} />}
+            {format === 'phased' && <col style={{ width: 118 }} />}
             <col style={{ width: 160 }} />
-            <col style={{ width: 290 }} />
+            {format === 'gantt' && <col style={{ width: 290 }} />}
             <col />
             <col style={{ width: 84 }} />
           </colgroup>
           <thead>
             <tr>
               <th>#</th>
-              <th>Stage</th>
-              <th>Owner</th>
-              <th>Icon</th>
+              <th>{format === 'phased' ? 'Step' : 'Stage'}</th>
+              <th>{format === 'phased' ? 'Workstream' : 'Owner'}</th>
+              {format === 'milestone' && <th>Icon</th>}
+              {format === 'phased' && <th>Phase</th>}
+              {format === 'phased' && <th title="Start month from kickoff × how many months it spans">Month × Span</th>}
               <th>Timing</th>
-              <th>Dates</th>
+              {format === 'gantt' && <th>Dates</th>}
               <th>Description</th>
               <th aria-hidden="true" />
             </tr>
@@ -409,7 +518,7 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
           <tbody>
             {visibleStages.length === 0 ? (
               <tr>
-                <td colSpan={8} className={styles.serviceEmpty}>
+                <td colSpan={format === 'phased' ? 9 : 8} className={styles.serviceEmpty}>
                   {stages.length === 0 ? 'No stages yet — add the first one below.' : 'No stages match the search.'}
                 </td>
               </tr>
@@ -420,6 +529,7 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
                   index={idx}
                   total={stages.length}
                   stage={stage}
+                  format={format}
                   onChange={(next) => updateStage(idx, next)}
                   onMove={(delta) => moveStage(idx, delta)}
                   onRemove={() => removeStage(idx)}

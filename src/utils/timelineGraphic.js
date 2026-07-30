@@ -15,6 +15,7 @@ import { SE_GREEN, SE_GREEN_DARK, schneiderLogoSvg } from './schneiderLogo';
 import { TIMELINE_STAGE_OWNERS, DEFAULT_STAGE_OWNER } from './timelineTemplatesStore';
 import {
   getStageRange, formatRangeLabel, isoToMs, msToIso, daysInMonth, monthLabel,
+  timelineBaseMonth, getStageMonths,
 } from './timelineDates';
 
 const SE_INK = '#0F172A';
@@ -366,6 +367,182 @@ export function buildGanttSvg(template, { branded = true } = {}) {
     + `</svg>`;
 }
 
+// --- Implementation (phased workstream) ---------------------------------
+//
+// The proposal-deck layout: months counted from kickoff rather than dated,
+// stages grouped into phase bands down the left, and each step drawn as a
+// numbered chip in its workstream's colour with the step text beside it. The
+// numbers run straight through the timeline so they can be referenced from a
+// following slide.
+//
+// This format uses a workstream palette rather than the ring colours of the
+// other two — blue for the client, green for Schneider Electric — because
+// that's the convention these decks are read in. The legend names both.
+
+export const WORKSTREAM_COLOR = {
+  'Client': '#29ABE2',
+  'Schneider Electric': '#3DCD58',
+  'Both': '#1FA9A0',
+};
+
+function workstreamColor(owner) {
+  return WORKSTREAM_COLOR[owner] || WORKSTREAM_COLOR[DEFAULT_STAGE_OWNER];
+}
+
+const PHASED = {
+  headH: 152,       // green band: note box, title, legend
+  monthsRowH: 34,   // the "1 2 3 …" row, still inside the band
+  labelW: 258,      // phase-name column
+  minColW: 62,
+  rowStep: 30,      // one step line
+  phasePad: 18,
+  footH: 26,
+};
+
+// Consecutive stages sharing a phase name form one band; a stage with no
+// phase stands alone. Order is the table's, never re-sorted.
+function groupPhases(stages) {
+  const groups = [];
+  stages.forEach((stage, index) => {
+    const phase = String(stage.phase || '').trim();
+    const prev = groups[groups.length - 1];
+    if (prev && phase && prev.phase === phase) prev.steps.push({ stage, index });
+    else groups.push({ phase, steps: [{ stage, index }] });
+  });
+  return groups;
+}
+
+export function buildPhasedSvg(template, { branded = true } = {}) {
+  const stages = Array.isArray(template?.stages) ? template.stages : [];
+  if (!stages.length) return null;
+
+  const baseMonth = timelineBaseMonth(stages);
+  const placed = stages.map(stage => ({ stage, ...getStageMonths(stage, baseMonth) }));
+  const needed = Math.max(...placed.map(p => p.month + p.span - 1), 1);
+  const monthCount = Math.max(
+    1,
+    Math.min(36, Number(template?.monthCount) > 0 ? Math.floor(template.monthCount) : Math.max(12, needed)),
+  );
+
+  const colW = Math.max(PHASED.minColW, Math.min(96, 1000 / monthCount));
+  const gridW = colW * monthCount;
+  const width = PHASED.labelW + gridW + 40;
+
+  const groups = groupPhases(stages);
+  const bandH = groups.map(g => Math.max(62, g.steps.length * PHASED.rowStep + PHASED.phasePad));
+  const gridTop = PHASED.headH + PHASED.monthsRowH;
+  const gridH = bandH.reduce((a, b) => a + b, 0);
+  const height = gridTop + gridH + PHASED.footH + 8;
+
+  const clientName = String(template?.clientName || '').trim() || 'Client';
+  const x0 = PHASED.labelW;
+  const colX = (m) => x0 + (m - 1) * colW;
+
+  let s = `<rect x="0" y="0" width="${width}" height="${height}" fill="#FFFFFF"/>`;
+  // Green header band, carrying the title and the month numbers.
+  s += `<rect x="0" y="0" width="${width}" height="${gridTop}" fill="${SE_GREEN}"/>`;
+
+  // Optional caveat box, top-left, in a deeper green so it reads as an aside.
+  const note = String(template?.note || '').trim();
+  if (note) {
+    const lines = wrapText(note, 268, 11.5, 3);
+    const boxH = 14 + lines.length * 15;
+    s += `<rect x="8" y="8" width="292" height="${boxH}" fill="#2FB350"/>`;
+    lines.forEach((ln, i) => {
+      s += `<text x="18" y="${26 + i * 15}" font-size="11.5" font-weight="700" fill="#FFFFFF">${esc(ln)}</text>`;
+    });
+  }
+
+  // Legend, top-right: one dot per workstream plus the numbering note.
+  const legendW = 236, legendX = width - legendW - 8;
+  s += `<rect x="${legendX}" y="8" width="${legendW}" height="126" fill="#FFFFFF"/>`;
+  [[clientName, 'Client'], ['SE', 'Schneider Electric']].forEach(([label, owner], i) => {
+    const cy = 32 + i * 28;
+    s += `<circle cx="${legendX + 22}" cy="${cy}" r="9" fill="${workstreamColor(owner)}"/>`;
+    s += `<text x="${legendX + 40}" y="${cy + 5}" font-size="12.5" font-weight="700" fill="${SE_INK}">${esc(String(label).toUpperCase())} WORKSTREAM</text>`;
+  });
+  wrapText('*Numbering on the timeline corresponds to a step in the process on the next slide', legendW - 28, 11, 4)
+    .forEach((ln, i) => {
+      s += `<text x="${legendX + 14}" y="${84 + i * 13}" font-size="11" font-weight="700" fill="${SE_SLATE}">${esc(ln)}</text>`;
+    });
+
+  const title = template?.name?.trim() || 'Implementation Timeline';
+  s += `<text x="40" y="${PHASED.headH - 26}" font-size="27" fill="#FFFFFF">${esc(title)}</text>`;
+
+  // "Stages" / "Months" captions and the month numbers, all on the band.
+  s += `<text x="40" y="${gridTop - 9}" font-size="17" font-weight="700" fill="#FFFFFF">Stages</text>`;
+  s += `<text x="${x0 + 8}" y="${PHASED.headH - 4}" font-size="15" font-weight="700" fill="#FFFFFF">Months</text>`;
+  for (let m = 1; m <= monthCount; m += 1) {
+    s += `<line x1="${colX(m)}" y1="${PHASED.headH + 2}" x2="${colX(m)}" y2="${gridTop}" stroke="#FFFFFF" stroke-width="1"/>`;
+    s += `<text x="${colX(m) + 7}" y="${gridTop - 9}" font-size="15" font-weight="700" fill="#FFFFFF">${m}</text>`;
+  }
+
+  // Grid: column rules the full height, then a rule under each phase band.
+  let y = gridTop;
+  for (let m = 1; m <= monthCount + 1; m += 1) {
+    s += `<line x1="${colX(m)}" y1="${gridTop}" x2="${colX(m)}" y2="${gridTop + gridH}" stroke="${SE_LINE}" stroke-width="1"/>`;
+  }
+  groups.forEach((group, gi) => {
+    const h = bandH[gi];
+    s += `<line x1="0" y1="${y + h}" x2="${width}" y2="${y + h}" stroke="#9AA5B1" stroke-width="1"/>`;
+
+    // Phase name, vertically centred in its band.
+    const labelLines = wrapText(group.phase, PHASED.labelW - 56, 15.5, 3);
+    const labelTop = y + h / 2 - ((labelLines.length - 1) * 19) / 2 + 5;
+    labelLines.forEach((ln, i) => {
+      s += `<text x="38" y="${labelTop + i * 19}" font-size="15.5" font-weight="800" fill="${SE_INK}">${esc(ln)}</text>`;
+    });
+
+    group.steps.forEach((step, si) => {
+      const pos = placed[step.index];
+      const rowY = y + PHASED.phasePad / 2 + si * PHASED.rowStep + 4;
+      const chipX = colX(Math.min(pos.month, monthCount)) + 3;
+      const spanCols = Math.min(pos.span, monthCount - Math.min(pos.month, monthCount) + 1);
+      const chipW = Math.max(30, spanCols * colW - 6);
+      const color = workstreamColor(step.stage.owner);
+
+      if (step.stage.owner === 'Both') {
+        // Split chip: both workstreams own the step.
+        s += `<rect x="${chipX}" y="${rowY}" width="${chipW / 2}" height="24" fill="${workstreamColor('Client')}"/>`;
+        s += `<rect x="${chipX + chipW / 2}" y="${rowY}" width="${chipW / 2}" height="24" fill="${workstreamColor('Schneider Electric')}"/>`;
+      } else {
+        s += `<rect x="${chipX}" y="${rowY}" width="${chipW}" height="24" fill="${color}"/>`;
+      }
+      s += `<text x="${chipX + (chipW > 60 ? 10 : chipW / 2)}" y="${rowY + 17}" text-anchor="${chipW > 60 ? 'start' : 'middle'}" font-size="13.5" font-weight="800" fill="#FFFFFF">${step.index + 1}</text>`;
+
+      // Label placement, in order of preference: beside the chip, inside it
+      // when it's a wide bar with no room to the right, and failing that to
+      // the left. A step that runs to the last month otherwise loses its text
+      // off the edge of the canvas.
+      const label = step.stage.name || '';
+      if (label) {
+        const textW = label.length * 6.3;
+        const roomRight = width - 8 - (chipX + chipW + 8);
+        if (textW <= roomRight) {
+          s += `<text x="${chipX + chipW + 8}" y="${rowY + 17}" font-size="12" fill="${SE_SLATE}">${esc(label)}</text>`;
+        } else if (chipW > 110) {
+          const inner = wrapText(label, chipW - 44, 12, 1);
+          s += `<text x="${chipX + 32}" y="${rowY + 17}" font-size="12" font-weight="600" fill="#FFFFFF">${esc(inner[0] || '')}</text>`;
+        } else {
+          s += `<text x="${chipX - 8}" y="${rowY + 17}" text-anchor="end" font-size="12" fill="${SE_SLATE}">${esc(label)}</text>`;
+        }
+      }
+    });
+    y += h;
+  });
+
+  // Footer band.
+  const footY = gridTop + gridH + 8;
+  s += `<rect x="0" y="${footY}" width="${width}" height="${PHASED.footH}" fill="${SE_GREEN}"/>`;
+  s += `<text x="20" y="${footY + 17}" font-size="10.5" font-weight="700" fill="#FFFFFF">Confidential Property of Schneider Electric</text>`;
+  if (branded) {
+    // White lockup, sized to sit inside the 26px band rather than overflow it.
+    s += `<g transform="translate(${width - 132} ${footY + 1})">${schneiderLogoSvg({ onDark: true, width: 108 })}</g>`;
+  }
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="${esc(title)}" font-family="'Nunito Sans','Segoe UI',Arial,Helvetica,sans-serif">${s}</svg>`;
+}
+
 // --- Milestone (the alternating-callout format) -------------------------
 
 // Build the timeline as an SVG string.
@@ -410,14 +587,18 @@ export function buildMilestoneSvg(template, { branded = true } = {}) {
 // they can never disagree about which one is current.
 export const TIMELINE_FORMATS = [
   { key: 'gantt', label: 'Gantt', hint: 'Calendar-scaled — shows duration and overlap' },
+  { key: 'phased', label: 'Implementation', hint: 'Months from kickoff, phase bands, numbered workstream steps' },
   { key: 'milestone', label: 'Milestone', hint: 'Evenly spaced markers above and below one line' },
 ];
 
 export const DEFAULT_TIMELINE_FORMAT = 'gantt';
 
+const FORMAT_KEYS = TIMELINE_FORMATS.map(f => f.key);
+
 export function buildTimelineSvg(template, opts = {}) {
-  const format = template?.format === 'milestone' ? 'milestone' : DEFAULT_TIMELINE_FORMAT;
+  const format = FORMAT_KEYS.includes(template?.format) ? template.format : DEFAULT_TIMELINE_FORMAT;
   if (format === 'milestone') return buildMilestoneSvg(template, opts);
+  if (format === 'phased') return buildPhasedSvg(template, opts);
   // A Gantt with nothing datable would render as an empty grid; fall back to
   // the milestone layout so the user still sees their stages.
   return buildGanttSvg(template, opts) || buildMilestoneSvg(template, opts);
