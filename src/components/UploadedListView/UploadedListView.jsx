@@ -2234,6 +2234,12 @@ export function UploadedListView({
         <DataTable
           key={tableId}
           tableId={tableId}
+          // Without this the export falls back to tableId for its file name —
+          // and tableId is the prefix plus every column key joined by "|", so
+          // the CSRD list downloaded as "csrd-list-__sel-cdm-company-country-
+          // employees-…​ - 2026-07-30.xlsx". Name it after the list instead;
+          // DataTable appends " - <today>" itself.
+          exportFileName={`${title} export`}
           columns={columns}
           rows={filtered}
           alwaysVisible={alwaysVisible}
