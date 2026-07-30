@@ -284,6 +284,287 @@
   width: 20px;
 }
 
+/* ---- Timelines subtab ---------------------------------------------- */
+
+.timelineServices {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--color-border-light);
+  background: var(--color-surface);
+}
+
+.timelineServicesLabel {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary);
+  margin-right: 2px;
+}
+
+.timelineServicesEmpty {
+  font-size: 0.72rem;
+  font-style: italic;
+  color: var(--color-text-muted);
+}
+
+.serviceChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 4px 1px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-accent-light);
+  color: var(--color-text);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.serviceChipRemove {
+  padding: 0;
+  width: 15px;
+  height: 15px;
+  line-height: 1;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.serviceChipRemove:hover {
+  color: #B91C1C;
+}
+
+.serviceChipInput {
+  width: 160px;
+  padding: 2px 6px;
+  border: 1px dashed var(--color-border);
+  border-radius: 999px;
+  background: transparent;
+  font-size: 0.7rem;
+  font-family: inherit;
+  color: var(--color-text);
+}
+
+.serviceChipInput:focus {
+  outline: none;
+  border-style: solid;
+  border-color: var(--color-accent);
+  background: #fff;
+}
+
+.timelineTableWrap {
+  padding: 0.35rem 0.6rem 0.1rem;
+  overflow-x: auto;
+}
+
+.stageTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.stageTable th {
+  text-align: left;
+  padding: 0.3rem 0.4rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.stageTable td {
+  padding: 0.2rem 0.4rem;
+  border-bottom: 1px solid var(--color-border-light);
+  vertical-align: middle;
+}
+
+.stageTable tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.stageOrderCell {
+  text-align: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--color-text-muted);
+}
+
+.stageInput {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 0.78rem;
+  font-family: inherit;
+  color: var(--color-text);
+  resize: vertical;
+}
+
+.stageInput:hover {
+  border-color: var(--color-border-light);
+}
+
+.stageInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  background: #fff;
+}
+
+.ownerSelect {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.ownerPill {
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 0.62rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* Schneider green for SE-owned stages, blue for the client, amber for joint. */
+.ownerPillSe {
+  background: #ECFDF5;
+  border-color: #A7F3D0;
+  color: #047857;
+}
+
+.ownerPillClient {
+  background: var(--color-accent-light);
+  border-color: #BFDBFE;
+  color: #1E40AF;
+}
+
+.ownerPillBoth {
+  background: #FEF3C7;
+  border-color: #FDE68A;
+  color: #92400E;
+}
+
+.stageActionsCell {
+  white-space: nowrap;
+  text-align: right;
+}
+
+.stageMoveBtn,
+.stageRemoveBtn {
+  padding: 0;
+  width: 20px;
+  height: 20px;
+  line-height: 1;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: #94A3B8;
+  font-size: 0.8rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.stageMoveBtn:hover:not(:disabled) {
+  color: var(--color-accent);
+  border-color: var(--color-border);
+}
+
+.stageMoveBtn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.stageRemoveBtn {
+  font-size: 0.9rem;
+}
+
+.stageRemoveBtn:hover {
+  color: #B91C1C;
+  border-color: #FCA5A5;
+}
+
+.timelineDeleteBtn {
+  flex: 0 0 auto;
+  padding: 0;
+  width: 22px;
+  height: 22px;
+  line-height: 1;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: #94A3B8;
+  font-size: 0.9rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.timelineDeleteBtn:hover {
+  color: #B91C1C;
+  border-color: #FCA5A5;
+}
+
+.timelineFooter {
+  padding: 0.3rem 0.6rem 0.5rem;
+  border-top: 1px solid var(--color-border-light);
+  background: var(--color-bg);
+}
+
+.addStageBtn {
+  width: 100%;
+  padding: 0.3rem 0.5rem;
+  background: transparent;
+  border: 1px dashed var(--color-border);
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.addStageBtn:hover {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.timelineEmptyState {
+  max-width: 520px;
+  margin: 1.5rem auto;
+  padding: 1rem 1.25rem;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.timelineEmptyState p {
+  margin: 0 0 0.5rem;
+}
+
+.timelineEmptyState p:last-child {
+  margin-bottom: 0;
+}
+
 .section {
   padding-top: 0.75rem;
 }
