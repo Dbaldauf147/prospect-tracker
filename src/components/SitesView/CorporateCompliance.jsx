@@ -1044,7 +1044,43 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                       table: one CardRow per section instead of stacked
                       blocks. */}
                   <div style={{ marginTop: '0.6rem' }}>
-                    <CardRow label="Sites" first>
+                    {/* Framework / List matches — first row on the card, so the
+                        frameworks a company already reports to (GRESB, CDP, …)
+                        read before the site / revenue detail. */}
+                    <CardRow label={`Lists${c.name !== UNNAMED && matches.length > 0 ? ` (${matches.length})` : ''}`} first>
+                      {c.name === UNNAMED ? (
+                        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
+                          Add a company name to match against lists.
+                        </div>
+                      ) : scanning && matches.length === 0 ? (
+                        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>Scanning…</div>
+                      ) : matches.length === 0 ? (
+                        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>No list matches</div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                          {matches.map((m, i) => {
+                            const color = chipColor(m.list);
+                            const pct = Math.round((m.score || 0) * 100);
+                            return (
+                              <div key={`${m.storageKey}::${i}`} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0 }}>
+                                <span style={{
+                                  flexShrink: 0, fontSize: '0.62rem', fontWeight: 700, padding: '0.1rem 0.4rem',
+                                  borderRadius: 4, background: color.bg, color: color.text,
+                                }}>{m.list}</span>
+                                <span style={{ flex: 1, minWidth: 0, fontSize: 'var(--font-size-xs)', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={m.rawName}>
+                                  {m.rawName || <em style={{ color: 'var(--color-text-muted)' }}>(unnamed row)</em>}
+                                </span>
+                                <span style={{ flexShrink: 0, fontSize: '0.62rem', fontWeight: 700, color: m.state === 'mapped' ? '#166534' : 'var(--color-text-muted)' }}>
+                                  {m.state === 'mapped' ? 'mapped' : `${pct}%`}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </CardRow>
+
+                    <CardRow label="Sites">
                       <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>
                         {c.total} {c.total === 1 ? 'site' : 'sites'}
                         {c.california > 0 && (
@@ -1108,40 +1144,6 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                         researchError={screenState[c.key]?.error || null}
                         research={complianceResearch[c.key] || null}
                       />
-                    </CardRow>
-
-                    {/* Framework / List matches */}
-                    <CardRow label={`Lists${c.name !== UNNAMED && matches.length > 0 ? ` (${matches.length})` : ''}`}>
-                      {c.name === UNNAMED ? (
-                        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
-                          Add a company name to match against lists.
-                        </div>
-                      ) : scanning && matches.length === 0 ? (
-                        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>Scanning…</div>
-                      ) : matches.length === 0 ? (
-                        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>No list matches</div>
-                      ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-                          {matches.map((m, i) => {
-                            const color = chipColor(m.list);
-                            const pct = Math.round((m.score || 0) * 100);
-                            return (
-                              <div key={`${m.storageKey}::${i}`} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0 }}>
-                                <span style={{
-                                  flexShrink: 0, fontSize: '0.62rem', fontWeight: 700, padding: '0.1rem 0.4rem',
-                                  borderRadius: 4, background: color.bg, color: color.text,
-                                }}>{m.list}</span>
-                                <span style={{ flex: 1, minWidth: 0, fontSize: 'var(--font-size-xs)', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={m.rawName}>
-                                  {m.rawName || <em style={{ color: 'var(--color-text-muted)' }}>(unnamed row)</em>}
-                                </span>
-                                <span style={{ flexShrink: 0, fontSize: '0.62rem', fontWeight: 700, color: m.state === 'mapped' ? '#166534' : 'var(--color-text-muted)' }}>
-                                  {m.state === 'mapped' ? 'mapped' : `${pct}%`}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
                     </CardRow>
 
                     {c.caSites.length > 0 && (
