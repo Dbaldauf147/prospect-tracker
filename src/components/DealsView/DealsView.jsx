@@ -789,10 +789,6 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
     const isCurrency = DEAL_CURRENCY_KEYS.has(k);
     const isPercent = DEAL_PERCENT_KEYS.has(k);
     const isDate = DEAL_DATE_KEYS.has(k);
-    // The two contract-term dates pick from a calendar rather than being
-    // typed. The remaining date columns (Due Date, End Date, Follow Up On
-    // Sale) still edit as text.
-    const isTermDate = k === 'Current Term Start Date' || k === 'Original Contract Start';
     const isCheck = DEAL_CHECK_KEYS.has(k);
     const isRevenueRecorded = k === 'Revenue Recorded';
     const isPaidToDate = k === 'Paid to Date';
@@ -1015,12 +1011,15 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
         if ((isRevenueRecorded || isPaidToDate) && lookupCommissionNumerator(row) != null) {
           return renderCompound(row, row[k], true);
         }
-        // Contract term dates get the shared click-to-pick calendar cell
+        // Every date column gets the shared click-to-pick calendar cell
         // instead of the double-click text editor, matching how dates
         // behave elsewhere in the app. Picking a day stores ISO
         // (YYYY-MM-DD), which fmtDate/asDate already read, so sorting,
         // the derived Year column and exports keep working unchanged.
-        if (isTermDate) {
+        // A value the calendar can't represent (e.g. the 'N/A' a deal can
+        // carry on Follow Up On Sale, set from the Clients tab) still
+        // renders as its own text rather than being blanked.
+        if (isDate) {
           return (
             <DateCell
               value={row[k]}
