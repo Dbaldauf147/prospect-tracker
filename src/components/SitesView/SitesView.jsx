@@ -354,6 +354,9 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose }) {
     return seed;
   });
   const chosen = Object.values(draft).filter(Boolean).length;
+  // Rows still without a target, judged against the draft so the copy
+  // updates as the user fills the table in.
+  const pending = items.filter((it) => !draft[it.key]).length;
 
   return createPortal(
     <div
@@ -375,13 +378,28 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose }) {
             Map property types
           </div>
           <div style={{ fontSize: '0.75rem', color: '#64748B', marginTop: '0.25rem', lineHeight: 1.45 }}>
-            {items.length} property {items.length === 1 ? 'type' : 'types'} in your site list {items.length === 1 ? "doesn't" : "don't"} match
-            the types we support. Pick the closest match for each so the sites pick up
-            consumption and account estimates. Anything you leave blank stays unmapped.
+            {items.length === 0 ? (
+              <>Nothing to map — every property type in your site list already matches a type we support.</>
+            ) : pending > 0 ? (
+              <>
+                {pending} property {pending === 1 ? 'type' : 'types'} in your site list {pending === 1 ? "doesn't" : "don't"} match
+                the types we support. Pick the closest match for each so the sites pick up
+                consumption and account estimates. Anything you leave blank stays unmapped.
+              </>
+            ) : (
+              <>Every property type is mapped. Change a target below to re-map it, or set one back
+                to &ldquo;leave unmapped&rdquo; to drop the mapping.</>
+            )}
           </div>
         </div>
 
         <div style={{ overflowY: 'auto', flex: 1, padding: '0.4rem 1.1rem 0.8rem' }}>
+          {items.length === 0 && (
+            <div style={{ padding: '1.4rem 0.2rem', textAlign: 'center', color: '#94A3B8', fontSize: '0.8rem' }}>
+              No property types need mapping.
+            </div>
+          )}
+          {items.length > 0 && (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
             <thead>
               <tr>
@@ -423,11 +441,12 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose }) {
               ))}
             </tbody>
           </table>
+          )}
         </div>
 
         <div style={{ padding: '0.7rem 1.1rem', borderTop: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem' }}>
           <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
-            {chosen} of {items.length} mapped
+            {items.length > 0 ? `${chosen} of ${items.length} mapped` : ''}
           </span>
           <div style={{ display: 'flex', gap: '0.4rem' }}>
             <button
@@ -2018,6 +2037,36 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     }
     return [...counts.values()].sort((a, b) => b.count - a.count || a.raw.localeCompare(b.raw));
   }, [rows]);
+
+  // Everything the mapping modal can act on: the property types in the
+  // current file with no canonical match (the ones needing attention),
+  // plus every value already hand-mapped — so opening it from the toolbar
+  // can edit or clear an existing mapping, not only fill in blanks.
+  const propertyTypeMappingItems = useMemo(() => {
+    // Original casing + per-file counts for whatever the upload carries.
+    const rawByKey = new Map();
+    const counts = new Map();
+    for (const r of rows) {
+      const raw = String(r.__propertyTypeRaw__ || '').trim();
+      if (!raw) continue;
+      const k = raw.toLowerCase();
+      if (!rawByKey.has(k)) rawByKey.set(k, raw);
+      counts.set(k, (counts.get(k) || 0) + 1);
+    }
+    const byKey = new Map();
+    for (const it of unmappedPropertyTypes) byKey.set(it.key, it);
+    for (const [key, target] of Object.entries(propertyTypeMap || {})) {
+      if (!target || byKey.has(key)) continue;
+      byKey.set(key, { key, raw: rawByKey.get(key) || key, count: counts.get(key) || 0 });
+    }
+    // Unmapped first (they need attention), then the most-used, then A-Z.
+    return [...byKey.values()].sort((a, b) => {
+      const aPending = !propertyTypeMap?.[a.key];
+      const bPending = !propertyTypeMap?.[b.key];
+      if (aPending !== bPending) return aPending ? -1 : 1;
+      return b.count - a.count || a.raw.localeCompare(b.raw);
+    });
+  }, [rows, unmappedPropertyTypes, propertyTypeMap]);
 
   // Auto-open the mapping modal after an import that brought in property
   // types we can't place. Only on import — the modal stays reachable
@@ -11789,24 +11838,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
               )}
             </div>
           )}
-          {/* Unresolved Property Type values. Clicking reopens the mapping
-              modal, so it stays reachable after the post-import auto-open
-              is dismissed. */}
-          {unmappedPropertyTypes.length > 0 && (
-            <div style={{ marginTop: 4 }}>
-              <button
-                type="button"
-                onClick={() => setPropertyTypeModalOpen(true)}
-                title={`Property types in your file with no match:\n${unmappedPropertyTypes.slice(0, 8).map(t => `  • ${t.raw} (${t.count})`).join('\n')}${unmappedPropertyTypes.length > 8 ? `\n  …and ${unmappedPropertyTypes.length - 8} more` : ''}\n\nClick to map them.`}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0.2rem 0.55rem', borderRadius: 999, background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#B91C1C', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
-              >
-                <span aria-hidden="true">🏷</span>
-                <span>
-                  {unmappedPropertyTypes.length} property {unmappedPropertyTypes.length === 1 ? 'type' : 'types'} unmapped — map {unmappedPropertyTypes.length === 1 ? 'it' : 'them'}
-                </span>
-              </button>
-            </div>
-          )}
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           <input
@@ -11831,6 +11862,20 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
           >
             {sitesData.length ? 'Replace Sites File' : 'Upload Sites File'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setPropertyTypeModalOpen(true)}
+            title="Map the Property Type values in your site list onto the types we support. Unmapped types get no consumption or account estimates; mappings are remembered and reused across uploads."
+            style={{
+              padding: '0.4rem 0.8rem', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit',
+              border: unmappedPropertyTypes.length > 0 ? '1px solid #FCA5A5' : '1px solid var(--color-border)',
+              background: unmappedPropertyTypes.length > 0 ? '#FEF2F2' : '#fff',
+              color: unmappedPropertyTypes.length > 0 ? '#B91C1C' : '#1E293B',
+              fontWeight: unmappedPropertyTypes.length > 0 ? 600 : 400,
+            }}
+          >
+            🏷 Property Types{unmappedPropertyTypes.length > 0 ? ` (${unmappedPropertyTypes.length})` : ''}
           </button>
           {sitesData.length > 0 && (
             <button
@@ -11929,9 +11974,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         onSelectProspect={onSelectProspect}
       />
 
-      {propertyTypeModalOpen && unmappedPropertyTypes.length > 0 && (
+      {propertyTypeModalOpen && (
         <PropertyTypeMappingModal
-          items={unmappedPropertyTypes}
+          items={propertyTypeMappingItems}
           value={propertyTypeMap}
           onClose={() => setPropertyTypeModalOpen(false)}
           onSave={(draft) => {
