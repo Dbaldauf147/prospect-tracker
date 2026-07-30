@@ -5,6 +5,7 @@
 // Compliance page.
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
+import { researchBudgetMs } from './_lib/researchBudget.js';
 
 async function handler(req, res, auth) {
   if (req.method !== 'POST') {
@@ -42,12 +43,12 @@ Return ONLY a single JSON object (no prose, no markdown fences) with these field
 
 Prefer official filings and the company's own investor relations pages over third-party estimators. If the company is private and no credible revenue figure surfaces, return the object with revenue and revenueUsd empty/null and explain in summary.`;
 
-  // The agentic web-search loop (up to 6 sequential searches plus generation)
-  // can run long. Abort it a little before the function's own maxDuration so a
-  // stuck call returns a clean, retryable error rather than letting Vercel kill
-  // the whole invocation with an opaque FUNCTION_INVOCATION_TIMEOUT page.
+  // The agentic web-search loop (sequential searches plus generation) can run
+  // long, so abort inside the deployment's own function limit — see
+  // researchBudget.js for why that limit, not vercel.json's maxDuration, is
+  // what has to be beaten.
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 290_000);
+  const timeout = setTimeout(() => controller.abort(), researchBudgetMs());
   try {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -60,7 +61,7 @@ Prefer official filings and the company's own investor relations pages over thir
         model: 'claude-sonnet-4-5',
         max_tokens: 4096,
         system: systemPrompt,
-        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 6 }],
+        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 4 }],
         messages: [
           { role: 'user', content: `Research the most recent annual revenue for "${company}". Return the JSON object as specified.` },
         ],
@@ -112,7 +113,9 @@ Prefer official filings and the company's own investor relations pages over thir
     });
   } catch (err) {
     if (err?.name === 'AbortError') {
-      return res.status(504).json({ error: 'Revenue research timed out. Please try again.' });
+      return res.status(504).json({
+        error: `Revenue research timed out after ${Math.round(researchBudgetMs() / 1000)}s. Try again — if it keeps timing out, raise RESEARCH_TIMEOUT_MS (needs a plan whose function limit allows it).`,
+      });
     }
     return res.status(500).json({ error: err.message || 'Unknown error' });
   } finally {

@@ -6,6 +6,7 @@
 // verdicts (the user can still override any answer by hand).
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
+import { researchBudgetMs } from './_lib/researchBudget.js';
 
 // The jurisdiction keys the client persists under, paired with the exact
 // question wording so Claude answers the same thing the UI screens for.
@@ -57,11 +58,11 @@ Return ONLY a single JSON object (no prose, no markdown fences) with these field
 
 Every question key must appear in both answers and notes.`;
 
-  // The agentic web-search loop can run long; abort a little before the
-  // function's maxDuration so a stuck call returns a clean, retryable error
-  // rather than an opaque FUNCTION_INVOCATION_TIMEOUT.
+  // The agentic web-search loop can run long, so abort inside the
+  // deployment's own function limit — see researchBudget.js for why that
+  // limit, not vercel.json's maxDuration, is what has to be beaten.
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 290_000);
+  const timeout = setTimeout(() => controller.abort(), researchBudgetMs());
   try {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -74,7 +75,7 @@ Every question key must appear in both answers and notes.`;
         model: 'claude-sonnet-4-5',
         max_tokens: 4096,
         system: systemPrompt,
-        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 8 }],
+        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 6 }],
         messages: [
           { role: 'user', content: `Screen "${company}" against the six questions. Return the JSON object as specified.` },
         ],
@@ -129,7 +130,9 @@ Every question key must appear in both answers and notes.`;
     });
   } catch (err) {
     if (err?.name === 'AbortError') {
-      return res.status(504).json({ error: 'Compliance research timed out. Please try again.' });
+      return res.status(504).json({
+        error: `Compliance research timed out after ${Math.round(researchBudgetMs() / 1000)}s. Try again — if it keeps timing out, raise RESEARCH_TIMEOUT_MS (needs a plan whose function limit allows it).`,
+      });
     }
     return res.status(500).json({ error: err.message || 'Unknown error' });
   } finally {
