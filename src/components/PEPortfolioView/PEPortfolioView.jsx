@@ -16,6 +16,7 @@ import { DataTable } from '../common/DataTable';
 import { PasteAddModal } from '../TableView/PasteAddModal';
 import { splitPeOwners } from '../../utils/peOwners';
 import { loadClientManagerMap, setClientManager, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
+import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 
 // Reference list behind the "Strategies" sub-tab — the core private-equity
 // investment strategies, each with a short plain-language description. The
@@ -1630,6 +1631,50 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect }) {
   const [search, setSearch] = useState('');
   const [ownerFilter, setOwnerFilter] = useState('');
 
+  // External Frameworks: the same list-flag signal the PC analysis table
+  // in the prospect modal shows (CDP, GRESB, SBT, …), computed here for
+  // every mapped portfolio company. Refreshes when a Lists-page mapping
+  // is saved elsewhere (custom coverage-changed event) or another tab
+  // writes to storage, so the column stays in step with those surfaces.
+  const [listFlagsByCompany, setListFlagsByCompany] = useState(() => new Map());
+  const [flagVersion, setFlagVersion] = useState(0);
+  useEffect(() => {
+    const bump = () => setFlagVersion(v => v + 1);
+    window.addEventListener('my-accounts-coverage-changed', bump);
+    window.addEventListener('storage', bump);
+    return () => {
+      window.removeEventListener('my-accounts-coverage-changed', bump);
+      window.removeEventListener('storage', bump);
+    };
+  }, []);
+  const pcNames = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const pe of firms) {
+      for (const pc of (Array.isArray(pe.portfolioCompanies) ? pe.portfolioCompanies : [])) {
+        const name = (pc.companyName || '').trim();
+        if (!name) continue;
+        const k = name.toLowerCase();
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push(name);
+      }
+    }
+    return out;
+  }, [firms]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (pcNames.length === 0) {
+        if (!cancelled) setListFlagsByCompany(new Map());
+        return;
+      }
+      const flags = await computeListFlags(pcNames, { prospects });
+      if (!cancelled) setListFlagsByCompany(flags);
+    })();
+    return () => { cancelled = true; };
+  }, [pcNames, prospects, flagVersion]);
+
   // Dropdown vocabulary: every PE firm that contributed rows + every
   // distinct PE Owner set on a Table View prospect, deduped
   // case-insensitively and sorted.
@@ -1697,13 +1742,14 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect }) {
           raClientMatch: pc.raClientMatch || '',
           clientManager: pc.clientManager || '',
           targetAccount: pc.targetAccount || '',
+          frameworks: [...(listFlagsByCompany.get((pc.companyName || '').trim().toLowerCase()) || [])],
           pcDescription: pc.pcDescription || '',
           notes: pc.notes || '',
         });
       }
     }
     return out;
-  }, [firms]);
+  }, [firms, listFlagsByCompany]);
 
   const columns = useMemo(() => [
     { key: 'peFirm', label: 'PE Firm', defaultWidth: 190, sticky: true, render: (r) => (
@@ -1732,6 +1778,33 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect }) {
     { key: 'raClientMatch', label: 'RA Client Match', defaultWidth: 160 },
     { key: 'clientManager', label: 'Client Manager', defaultWidth: 160 },
     { key: 'targetAccount', label: 'Target Account', defaultWidth: 160 },
+    {
+      key: 'frameworks',
+      label: 'External Frameworks',
+      defaultWidth: 200,
+      headerTitle: 'External reporting / disclosure frameworks this company has been mapped onto from the Lists tab — same signal as the PC analysis table',
+      getFilterValue: (r) => r.frameworks.join(', '),
+      getSortValue: (r) => r.frameworks.join(', '),
+      exportValue: (r) => r.frameworks.join(', '),
+      render: (r) => (
+        r.frameworks.length === 0
+          ? <span style={{ color: '#CBD5E1', fontSize: '0.72rem' }}>—</span>
+          : (
+            <span style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+              {r.frameworks.map(label => {
+                const color = LIST_FLAG_BY_LABEL[label]?.color || { bg: '#F1F5F9', text: '#334155' };
+                return (
+                  <span
+                    key={label}
+                    title={`Flagged on the ${label} list`}
+                    style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: color.bg, color: color.text, whiteSpace: 'nowrap' }}
+                  >{label}</span>
+                );
+              })}
+            </span>
+          )
+      ),
+    },
     { key: 'pcDescription', label: 'PC Description', defaultWidth: 320 },
     { key: 'notes', label: 'Notes', defaultWidth: 220 },
   ], [firms, onSelectProspect]);
