@@ -337,7 +337,7 @@ function companySlug(name) {
 // settings.companySiteLists, keyed by the company-name slug, and are
 // uploaded from the company popup. This is a read-only convenience so the
 // user doesn't have to open each company to check.
-function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCompany, activeCompany = '', onSelectProspect }) {
+function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCompany, activeCompany = '', onSelectProspect, resetSignal = 0 }) {
   // Seed the lookup from an already-mapped portfolio company so its name and
   // status show on load without re-searching.
   const [query, setQuery] = useState(activeCompany || '');
@@ -476,6 +476,33 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
   }, [resultProspectId]);
 
   const analysisMeta = result?.analysis || fetchedAnalysis || null;
+
+  // `query` / `picked` are seeded from activeCompany on mount only, so a
+  // later change to the mapped portfolio company left this panel showing
+  // the old name — most visibly after Remove Sites, which clears the
+  // mapping but couldn't reach this local state. Re-sync whenever
+  // activeCompany actually changes. Typing alone doesn't move
+  // activeCompany, so an in-progress search is never stomped.
+  const lastActiveRef = useRef(activeCompany || '');
+  useEffect(() => {
+    const next = activeCompany || '';
+    if (next === lastActiveRef.current) return;
+    lastActiveRef.current = next;
+    setPicked(next);
+    setQuery(next);
+  }, [activeCompany]);
+
+  // Remove Sites empties the page, so it bumps `resetSignal` to empty this
+  // panel too. Needed on top of the sync above because a company can be
+  // looked up here without ever being mapped — activeCompany never moves
+  // in that case, so there'd be no change for the sync to react to.
+  const firstResetRef = useRef(true);
+  useEffect(() => {
+    if (firstResetRef.current) { firstResetRef.current = false; return; }
+    setPicked('');
+    setQuery('');
+    setOpen(false);
+  }, [resetSignal]);
 
   function choose(name) {
     setPicked(name);
@@ -719,6 +746,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     const v = String(name || '').trim();
     updateSettingsPath({ utilityLookupCompanyName: v || null });
   }, [updateSettingsPath]);
+  // Bumped by Remove Sites so the Company Look Up panel empties with the
+  // rest of the page — the company it shows is local state down there.
+  const [lookupResetSignal, setLookupResetSignal] = useState(0);
   const [addressOverride, setAddressOverride] = useState(null);
   const [cityOverride, setCityOverride] = useState(null);
   const [stateColumnOverride, setStateColumnOverride] = useState(null);
@@ -1191,6 +1221,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     await clearListFromIDB(SITES_STORAGE_KEY);
     setSitesData([]);
     if (mapped) setPortfolioCompanyName('');
+    setLookupResetSignal(n => n + 1);
   }
 
   async function handleUtilityFileSelect(e) {
@@ -11704,6 +11735,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         prospects={prospects}
         companySiteLists={settings?.companySiteLists || {}}
         onUseCompany={setPortfolioCompanyName}
+        resetSignal={lookupResetSignal}
         activeCompany={portfolioCompanyName}
         onSelectProspect={onSelectProspect}
       />
