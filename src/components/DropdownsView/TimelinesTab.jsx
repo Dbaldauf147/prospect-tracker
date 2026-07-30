@@ -8,7 +8,7 @@ import {
   shortOwnerLabel,
 } from '../../utils/timelineTemplatesStore';
 import { buildTimelineSvg, STAGE_ICONS, TIMELINE_FORMATS } from '../../utils/timelineGraphic';
-import { getStageRange, getStageMonths } from '../../utils/timelineDates';
+import { getStageRange, getStageMonths, currentMonthAnchor } from '../../utils/timelineDates';
 import { openTimelineReport, downloadTimelineSvg, downloadTimelinePng } from '../../utils/timelineExport';
 import { exportTimelineXlsx } from '../../utils/timelineXlsx';
 import styles from './DropdownsView.module.css';
@@ -476,6 +476,44 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
             title="How many month columns to draw"
             onCommit={(next) => onChange({ ...template, monthCount: next })}
           />
+          <select
+            value={template.monthMode === 'calendar' ? 'calendar' : 'numbers'}
+            onChange={(e) => {
+              const mode = e.target.value;
+              // Switching to calendar with no anchor yet starts at this month,
+              // which is what "show today" means for a timeline starting now.
+              onChange({
+                ...template,
+                monthMode: mode,
+                anchorMonth: mode === 'calendar' && !template.anchorMonth
+                  ? currentMonthAnchor()
+                  : template.anchorMonth,
+              });
+            }}
+            title="Number the months from kickoff, or pin them to the calendar"
+            className={styles.settingSelect}
+          >
+            <option value="numbers">Numbered 1…N</option>
+            <option value="calendar">Calendar months</option>
+          </select>
+          {template.monthMode === 'calendar' && (
+            <>
+              <span className={styles.timelineServicesLabel}>Month 1 =</span>
+              <input
+                type="month"
+                value={template.anchorMonth || ''}
+                onChange={(e) => onChange({ ...template, anchorMonth: e.target.value })}
+                title="Which real month is month 1"
+                className={styles.settingInput}
+              />
+              <button
+                type="button"
+                className={styles.thisMonthBtn}
+                onClick={() => onChange({ ...template, anchorMonth: currentMonthAnchor() })}
+                title="Start the timeline at the current month"
+              >This month</button>
+            </>
+          )}
           <span className={styles.timelineServicesLabel}>Caveat</span>
           <DraftInput
             value={template.note}

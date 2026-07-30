@@ -80,6 +80,10 @@ function normalizeTemplate(tpl) {
     clientName: String(tpl?.clientName ?? ''),
     monthCount: tpl?.monthCount === '' || tpl?.monthCount == null ? '' : Number(tpl.monthCount),
     note: String(tpl?.note ?? ''),
+    // 'numbers' keeps the axis relative to kickoff; 'calendar' pins month 1
+    // to anchorMonth ('YYYY-MM') and marks the month we're currently in.
+    monthMode: tpl?.monthMode === 'calendar' ? 'calendar' : 'numbers',
+    anchorMonth: String(tpl?.anchorMonth ?? ''),
     services: Array.isArray(tpl?.services)
       ? tpl.services.map(s => String(s ?? '').trim()).filter(Boolean)
       : [],

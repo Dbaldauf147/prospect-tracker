@@ -15,7 +15,7 @@ import { SE_GREEN, SE_GREEN_DARK, schneiderLogoSvg } from './schneiderLogo';
 import { TIMELINE_STAGE_OWNERS, DEFAULT_STAGE_OWNER } from './timelineTemplatesStore';
 import {
   getStageRange, formatRangeLabel, isoToMs, msToIso, daysInMonth, monthLabel,
-  timelineBaseMonth, getStageMonths,
+  timelineBaseMonth, getStageMonths, anchorPlus, todayMonthIndex,
 } from './timelineDates';
 
 const SE_INK = '#0F172A';
@@ -401,15 +401,23 @@ const PHASED = {
 
 // Consecutive stages sharing a phase name form one band; a stage with no
 // phase stands alone. Order is the table's, never re-sorted.
+//
+// A band with no phase name of its own borrows its single step's name, so the
+// Stages column is never blank — a timeline that hasn't been organised into
+// phases still reads as one row per stage. `borrowed` tells the renderer to
+// drop the label beside the chip, which would otherwise repeat it.
 function groupPhases(stages) {
   const groups = [];
   stages.forEach((stage, index) => {
     const phase = String(stage.phase || '').trim();
     const prev = groups[groups.length - 1];
     if (prev && phase && prev.phase === phase) prev.steps.push({ stage, index });
-    else groups.push({ phase, steps: [{ stage, index }] });
+    else groups.push({ phase, steps: [{ stage, index }], borrowed: !phase });
   });
-  return groups;
+  return groups.map(g => ({
+    ...g,
+    label: g.phase || (g.borrowed ? (g.steps[0].stage.name || '') : ''),
+  }));
 }
 
 export function buildPhasedSvg(template, { branded = true } = {}) {
@@ -437,6 +445,12 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   const clientName = String(template?.clientName || '').trim() || 'Client';
   const x0 = PHASED.labelW;
   const colX = (m) => x0 + (m - 1) * colW;
+
+  // Anchored mode swaps the 1…12 headings for real calendar months and marks
+  // the one we're in. Unanchored, the timeline stays relative to kickoff.
+  const calendar = template?.monthMode === 'calendar';
+  const anchor = String(template?.anchorMonth || '').trim();
+  const todayCol = calendar ? todayMonthIndex(anchor, monthCount) : null;
 
   let s = `<rect x="0" y="0" width="${width}" height="${height}" fill="#FFFFFF"/>`;
   // Green header band, carrying the title and the month numbers.
@@ -471,10 +485,21 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
 
   // "Stages" / "Months" captions and the month numbers, all on the band.
   s += `<text x="40" y="${gridTop - 9}" font-size="17" font-weight="700" fill="#FFFFFF">Stages</text>`;
-  s += `<text x="${x0 + 8}" y="${PHASED.headH - 4}" font-size="15" font-weight="700" fill="#FFFFFF">Months</text>`;
+  s += `<text x="${x0 + 8}" y="${PHASED.headH - 4}" font-size="15" font-weight="700" fill="#FFFFFF">${calendar ? 'Timeline' : 'Months'}</text>`;
+  // The today column gets a deeper green header and a line down the grid, so
+  // an anchored timeline shows where it currently stands.
+  if (todayCol) {
+    s += `<rect x="${colX(todayCol)}" y="${PHASED.headH + 2}" width="${colW}" height="${gridTop - PHASED.headH - 2}" fill="#0E7C36"/>`;
+  }
   for (let m = 1; m <= monthCount; m += 1) {
     s += `<line x1="${colX(m)}" y1="${PHASED.headH + 2}" x2="${colX(m)}" y2="${gridTop}" stroke="#FFFFFF" stroke-width="1"/>`;
-    s += `<text x="${colX(m) + 7}" y="${gridTop - 9}" font-size="15" font-weight="700" fill="#FFFFFF">${m}</text>`;
+    let label = String(m);
+    if (calendar) {
+      const cal = anchorPlus(anchor, m - 1);
+      label = cal ? monthLabel(cal.y, cal.m, m === 1 || cal.m === 1) : String(m);
+    }
+    const size = calendar ? (colW < 74 ? 10.5 : 12.5) : 15;
+    s += `<text x="${colX(m) + 7}" y="${gridTop - 9}" font-size="${size}" font-weight="700" fill="#FFFFFF">${esc(label)}</text>`;
   }
 
   // Grid: column rules the full height, then a rule under each phase band.
@@ -482,12 +507,16 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   for (let m = 1; m <= monthCount + 1; m += 1) {
     s += `<line x1="${colX(m)}" y1="${gridTop}" x2="${colX(m)}" y2="${gridTop + gridH}" stroke="${SE_LINE}" stroke-width="1"/>`;
   }
+  if (todayCol) {
+    s += `<rect x="${colX(todayCol)}" y="${gridTop}" width="${colW}" height="${gridH}" fill="${SE_GREEN}" opacity="0.09"/>`;
+    s += `<line x1="${colX(todayCol)}" y1="${gridTop}" x2="${colX(todayCol)}" y2="${gridTop + gridH}" stroke="${SE_GREEN_DARK}" stroke-width="1.8"/>`;
+  }
   groups.forEach((group, gi) => {
     const h = bandH[gi];
     s += `<line x1="0" y1="${y + h}" x2="${width}" y2="${y + h}" stroke="#9AA5B1" stroke-width="1"/>`;
 
     // Phase name, vertically centred in its band.
-    const labelLines = wrapText(group.phase, PHASED.labelW - 56, 15.5, 3);
+    const labelLines = wrapText(group.label, PHASED.labelW - 56, 15.5, 3);
     const labelTop = y + h / 2 - ((labelLines.length - 1) * 19) / 2 + 5;
     labelLines.forEach((ln, i) => {
       s += `<text x="38" y="${labelTop + i * 19}" font-size="15.5" font-weight="800" fill="${SE_INK}">${esc(ln)}</text>`;
@@ -514,7 +543,8 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
       // when it's a wide bar with no room to the right, and failing that to
       // the left. A step that runs to the last month otherwise loses its text
       // off the edge of the canvas.
-      const label = step.stage.name || '';
+      // Suppressed when the band already borrowed this step's name.
+      const label = group.borrowed ? '' : (step.stage.name || '');
       if (label) {
         const textW = label.length * 6.3;
         const roomRight = width - 8 - (chipX + chipW + 8);
