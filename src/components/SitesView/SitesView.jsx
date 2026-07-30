@@ -332,6 +332,15 @@ function companySlug(name) {
   return (name || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
 }
 
+// Canonical key the Corporate Compliance page saves screening answers,
+// research notes, reference links and findings under. Distinct from
+// companySlug, which is what the revenue research is keyed by — both are
+// needed to carry a company's research in and out of an export.
+function complianceKeyOf(name) {
+  const norm = normalizeCompany(name);
+  return norm ? norm.replace(/\s+/g, '-') : '';
+}
+
 // Look up a company (from Table View / any company that has a site list)
 // and show whether a site list is already mapped to it. Site lists live in
 // settings.companySiteLists, keyed by the company-name slug, and are
@@ -1382,6 +1391,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         if (rt && rt.supplierOverrides && typeof rt.supplierOverrides === 'object') {
           setSupplierOverrides(rt.supplierOverrides);
           try { localStorage.setItem('utility-lookup:supplier-overrides', JSON.stringify(rt.supplierOverrides)); } catch { /* noop */ }
+        }
+        // The company's researched facts, so an imported analysis restores
+        // the Corporate Compliance cards along with the site list.
+        if (rt && rt.companyResearch && typeof rt.companyResearch === 'object') {
+          restoreCompanyResearch(rt.companyResearch);
         }
       }
       return true;
@@ -11013,6 +11027,59 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // Written by both the Site List export and the Master Analysis, so a
   // Master Analysis saved to a company can be pulled back onto the page
   // exactly as it left.
+  // Gather everything the Corporate Compliance page knows about a company
+  // into one blob for the export's round-trip sheet. Returns null when the
+  // company has no research yet, so an export doesn't carry an empty
+  // object that a later import would treat as "wipe what's there".
+  function collectCompanyResearch(company) {
+    const name = String(company || '').trim();
+    if (!name) return null;
+    const key = complianceKeyOf(name);
+    const slug = companySlug(name);
+    const payload = {
+      company: name,
+      // Both keys travel with the data: screening/notes/links/findings are
+      // saved under the canonical key, revenue under the plain slug.
+      key,
+      slug,
+      revenue: (settings?.companyRevenueResearch || {})[slug] || null,
+      screening: (settings?.corporateComplianceScreening || {})[key] || null,
+      complianceResearch: (settings?.companyComplianceResearch || {})[key] || null,
+      complianceLinks: (settings?.companyComplianceLinks || {})[key] || null,
+      complianceFindings: (settings?.companyComplianceFindings || {})[key] || null,
+    };
+    const hasAny = payload.revenue || payload.screening || payload.complianceResearch
+      || payload.complianceLinks || payload.complianceFindings;
+    return hasAny ? payload : null;
+  }
+
+  // Write a round-tripped research blob back into settings, under the keys
+  // this account derives from the company name (rather than the exporting
+  // account's, in case the name was edited in between). Only branches the
+  // export actually carried are written, so importing an analysis that
+  // predates one of these maps can't blank it out.
+  function restoreCompanyResearch(research) {
+    if (!research || !updateSettingsPath) return false;
+    const name = String(research.company || '').trim();
+    if (!name) return false;
+    const key = complianceKeyOf(name);
+    const slug = companySlug(name);
+    const updates = {};
+    if (research.revenue) updates[`companyRevenueResearch.${slug}`] = research.revenue;
+    if (research.screening) updates[`corporateComplianceScreening.${key}`] = research.screening;
+    if (research.complianceResearch) updates[`companyComplianceResearch.${key}`] = research.complianceResearch;
+    if (research.complianceLinks) updates[`companyComplianceLinks.${key}`] = research.complianceLinks;
+    if (research.complianceFindings) updates[`companyComplianceFindings.${key}`] = research.complianceFindings;
+    if (Object.keys(updates).length === 0) return false;
+    try {
+      updateSettingsPath(updates);
+      return true;
+    } catch (e) {
+      console.warn('Could not restore company research from the analysis:', e);
+      return false;
+    }
+  }
+
   function addRoundTripSheets(wb) {
     const SE_GREEN = 'FF3DCD58';
     const SE_GREEN_DARK = 'FF009530';
@@ -11097,6 +11164,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       vendorDecisions,
       supplierOverrides,
       portfolioCompanyName,
+      // The company's researched facts — revenue/employees, the six
+      // jurisdiction answers, the research notes + sources behind them,
+      // and the reference links / findings recorded against each. None of
+      // it lives in a column, so without this an imported analysis lands
+      // on an account with the site list restored but every Corporate
+      // Compliance card blank.
+      companyResearch: collectCompanyResearch(portfolioCompanyName),
     });
   }
 
