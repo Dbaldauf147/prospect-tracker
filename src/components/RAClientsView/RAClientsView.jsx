@@ -208,6 +208,9 @@ export function RAClientsView({ settings, updateSettings } = {}) {
       <DataTable
         key={tableId}
         tableId={tableId}
+        // tableId is "ra-clients:" plus every column key, which would become
+        // the export's file name. Name the file after the list instead.
+        exportFileName="RA Clients export"
         columns={columns}
         rows={filtered}
         alwaysVisible={alwaysVisible}

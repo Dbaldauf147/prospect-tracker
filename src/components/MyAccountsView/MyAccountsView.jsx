@@ -3537,6 +3537,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       <div className={styles.tableWrap}>
         <DataTable
           tableId="my-accounts"
+          exportFileName="My Accounts export"
           columns={columnsWithSelect}
           rows={filteredAccounts}
           alwaysVisible={['__select__', 'company']}
