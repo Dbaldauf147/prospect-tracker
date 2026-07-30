@@ -337,6 +337,117 @@ function companySlug(name) {
 // settings.companySiteLists, keyed by the company-name slug, and are
 // uploaded from the company popup. This is a read-only convenience so the
 // user doesn't have to open each company to check.
+// Maps the Property Type strings an upload carried onto our canonical
+// list, for the values normalizePropertyType couldn't place. Opens
+// automatically after an import that brought in unrecognized types, and
+// stays reachable from the header chip. Left column is what the file
+// said (with how many sites use it); right column picks the type we
+// support. Unmapped rows are simply left alone — a site with no
+// resolvable property type still imports, it just gets no
+// consumption / account estimates.
+function PropertyTypeMappingModal({ items, value, onSave, onClose }) {
+  // Local draft so the table can be filled in before anything is
+  // committed; seeded with whatever is already mapped.
+  const [draft, setDraft] = useState(() => {
+    const seed = {};
+    for (const it of items) if (value[it.key]) seed[it.key] = value[it.key];
+    return seed;
+  });
+  const chosen = Object.values(draft).filter(Boolean).length;
+
+  return createPortal(
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)', zIndex: 10000,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff', borderRadius: 10, width: 'min(720px, 96vw)', maxHeight: '82vh',
+          display: 'flex', flexDirection: 'column', boxShadow: '0 16px 48px rgba(15, 23, 42, 0.25)',
+        }}
+      >
+        <div style={{ padding: '0.9rem 1.1rem 0.6rem', borderBottom: '1px solid #E2E8F0' }}>
+          <div style={{ fontSize: '1rem', fontWeight: 700, color: '#0F172A' }}>
+            Map property types
+          </div>
+          <div style={{ fontSize: '0.75rem', color: '#64748B', marginTop: '0.25rem', lineHeight: 1.45 }}>
+            {items.length} property {items.length === 1 ? 'type' : 'types'} in your site list {items.length === 1 ? "doesn't" : "don't"} match
+            the types we support. Pick the closest match for each so the sites pick up
+            consumption and account estimates. Anything you leave blank stays unmapped.
+          </div>
+        </div>
+
+        <div style={{ overflowY: 'auto', flex: 1, padding: '0.4rem 1.1rem 0.8rem' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left', padding: '0.4rem 0.5rem 0.4rem 0', fontSize: '0.66rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#64748B', borderBottom: '1px solid #E2E8F0' }}>
+                  In your file
+                </th>
+                <th style={{ textAlign: 'left', padding: '0.4rem 0.5rem', fontSize: '0.66rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#64748B', borderBottom: '1px solid #E2E8F0', width: '46%' }}>
+                  Map to
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((it) => (
+                <tr key={it.key}>
+                  <td style={{ padding: '0.4rem 0.5rem 0.4rem 0', borderBottom: '1px solid #F1F5F9', verticalAlign: 'middle' }}>
+                    <div style={{ fontWeight: 600, color: '#1E293B', wordBreak: 'break-word' }}>{it.raw}</div>
+                    <div style={{ fontSize: '0.68rem', color: '#94A3B8' }}>
+                      {it.count} {it.count === 1 ? 'site' : 'sites'}
+                    </div>
+                  </td>
+                  <td style={{ padding: '0.4rem 0.5rem', borderBottom: '1px solid #F1F5F9', verticalAlign: 'middle' }}>
+                    <select
+                      value={draft[it.key] || ''}
+                      onChange={(e) => setDraft((d) => ({ ...d, [it.key]: e.target.value }))}
+                      aria-label={`Map "${it.raw}" to a property type`}
+                      style={{
+                        width: '100%', padding: '0.3rem 0.4rem', borderRadius: 6, fontFamily: 'inherit',
+                        fontSize: '0.78rem', border: '1px solid #CBD5E1', background: '#fff',
+                        color: draft[it.key] ? '#0F172A' : '#94A3B8', cursor: 'pointer',
+                      }}
+                    >
+                      <option value="">— leave unmapped —</option>
+                      {PROPERTY_TYPE_OPTIONS.map((opt) => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ padding: '0.7rem 1.1rem', borderTop: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem' }}>
+          <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
+            {chosen} of {items.length} mapped
+          </span>
+          <div style={{ display: 'flex', gap: '0.4rem' }}>
+            <button
+              type="button"
+              onClick={onClose}
+              style={{ padding: '0.4rem 0.9rem', background: '#fff', border: '1px solid #CBD5E1', borderRadius: 6, fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer' }}
+            >Cancel</button>
+            <button
+              type="button"
+              onClick={() => onSave(draft)}
+              style={{ padding: '0.4rem 0.9rem', background: '#009530', border: '1px solid #009530', color: '#fff', borderRadius: 6, fontSize: '0.8rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}
+            >Apply mapping</button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCompany, activeCompany = '', onSelectProspect, resetSignal = 0 }) {
   // Seed the lookup from an already-mapped portfolio company so its name and
   // status show on load without re-searching.
@@ -758,6 +869,29 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // are optional; with only Property Type the export uses the
   // reference Size_ft2 for that type and skips per-site size scaling.
   const [propertyTypeOverride, setPropertyTypeOverride] = useState(null);
+  // Hand-drawn mapping from a raw Property Type string in the upload to
+  // one of our canonical types, for values normalizePropertyType can't
+  // resolve on its own ("Distribution Center", "Class A Office", …).
+  // Keyed by the lower-cased raw string so it applies to every row with
+  // that value, and kept in localStorage so a curated mapping survives a
+  // reload and carries across uploads — same treatment as the vendor
+  // decisions above.
+  const [propertyTypeMap, setPropertyTypeMap] = useState(() => {
+    try {
+      const raw = localStorage.getItem('utility-lookup:property-type-map');
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch { return {}; }
+  });
+  const persistPropertyTypeMap = useCallback((next) => {
+    setPropertyTypeMap(next);
+    try { localStorage.setItem('utility-lookup:property-type-map', JSON.stringify(next)); } catch {}
+  }, []);
+  // null = closed. Set to the pending list to open the mapping modal.
+  const [propertyTypeModalOpen, setPropertyTypeModalOpen] = useState(false);
+  // Set right after an import so the modal can auto-open once the rows
+  // (and therefore the unmapped list) have recomputed.
+  const [propertyTypeCheckPending, setPropertyTypeCheckPending] = useState(false);
   // Optional column mapping the user's own Commercial / Industrial
   // classification onto each site, overriding the property-type-derived
   // segment that drives commercial-vs-industrial rate selection.
@@ -1075,6 +1209,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           });
       await saveListToIDB(SITES_STORAGE_KEY, filteredRows);
       setSitesData(filteredRows);
+      // Surface any property types we can't place, once the rows have
+      // recomputed off the new upload.
+      setPropertyTypeCheckPending(true);
       // Wipe per-row supplier overrides from the previous sites list.
       // They're keyed by row index (e.g. `5_gas` -> "NRG Energy"), so
       // they bleed straight onto row 5 of the new list when row counts
@@ -1590,7 +1727,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // applies. An explicit Segment column wins; otherwise infer it
       // from the property type; absent both, default to commercial.
       const inputPropertyType = propertyTypeOverride ? String(r[propertyTypeOverride] || '').trim() : '';
-      const canonicalPropertyType = inputPropertyType ? normalizePropertyType(inputPropertyType) : null;
+      // A hand-drawn mapping wins over the automatic resolver: the user
+      // set it precisely because the resolver got this value wrong (or
+      // couldn't place it at all).
+      const mappedPropertyType = inputPropertyType
+        ? propertyTypeMap[inputPropertyType.toLowerCase()] || null
+        : null;
+      const canonicalPropertyType = mappedPropertyType
+        || (inputPropertyType ? normalizePropertyType(inputPropertyType) : null);
       const segmentFromColumn = segmentOverride ? normalizeSegment(r[segmentOverride]) : null;
       const segment = segmentFromColumn || propertyTypeSegment(canonicalPropertyType) || 'commercial';
       const segmentSource = segmentFromColumn ? 'column' : (propertyTypeSegment(canonicalPropertyType) ? 'propertyType' : 'default');
@@ -1856,7 +2000,34 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         __matched__: !!match || electricUtilityTokens.length > 0 || gasUtilityTokens.length > 0,
       };
     });
-  }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, companyNameOverride, portfolioCompanyName, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, segmentOverride, siteDescriptionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
+  }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, companyNameOverride, portfolioCompanyName, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, propertyTypeMap, segmentOverride, siteDescriptionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
+
+  // Distinct Property Type strings from the upload that still have no
+  // canonical match — the rows the mapping modal exists to resolve.
+  // Sorted by how many sites carry each value so the biggest wins are
+  // at the top.
+  const unmappedPropertyTypes = useMemo(() => {
+    const counts = new Map();
+    for (const r of rows) {
+      const raw = String(r.__propertyTypeRaw__ || '').trim();
+      if (!raw || r.__propertyType__) continue;
+      const key = raw.toLowerCase();
+      const prev = counts.get(key);
+      if (prev) prev.count += 1;
+      else counts.set(key, { key, raw, count: 1 });
+    }
+    return [...counts.values()].sort((a, b) => b.count - a.count || a.raw.localeCompare(b.raw));
+  }, [rows]);
+
+  // Auto-open the mapping modal after an import that brought in property
+  // types we can't place. Only on import — the modal stays reachable
+  // afterwards from the header chip, so it can't nag on every render.
+  useEffect(() => {
+    if (!propertyTypeCheckPending) return;
+    if (!sitesLoaded) return;
+    setPropertyTypeCheckPending(false);
+    if (unmappedPropertyTypes.length > 0) setPropertyTypeModalOpen(true);
+  }, [propertyTypeCheckPending, sitesLoaded, unmappedPropertyTypes]);
 
   // Sites fed to the Building Compliance Screening subtab. Built from the
   // processed rows so each site carries the derived square footage, property
@@ -11618,6 +11789,24 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
               )}
             </div>
           )}
+          {/* Unresolved Property Type values. Clicking reopens the mapping
+              modal, so it stays reachable after the post-import auto-open
+              is dismissed. */}
+          {unmappedPropertyTypes.length > 0 && (
+            <div style={{ marginTop: 4 }}>
+              <button
+                type="button"
+                onClick={() => setPropertyTypeModalOpen(true)}
+                title={`Property types in your file with no match:\n${unmappedPropertyTypes.slice(0, 8).map(t => `  • ${t.raw} (${t.count})`).join('\n')}${unmappedPropertyTypes.length > 8 ? `\n  …and ${unmappedPropertyTypes.length - 8} more` : ''}\n\nClick to map them.`}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0.2rem 0.55rem', borderRadius: 999, background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#B91C1C', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
+              >
+                <span aria-hidden="true">🏷</span>
+                <span>
+                  {unmappedPropertyTypes.length} property {unmappedPropertyTypes.length === 1 ? 'type' : 'types'} unmapped — map {unmappedPropertyTypes.length === 1 ? 'it' : 'them'}
+                </span>
+              </button>
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           <input
@@ -11739,6 +11928,24 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         activeCompany={portfolioCompanyName}
         onSelectProspect={onSelectProspect}
       />
+
+      {propertyTypeModalOpen && unmappedPropertyTypes.length > 0 && (
+        <PropertyTypeMappingModal
+          items={unmappedPropertyTypes}
+          value={propertyTypeMap}
+          onClose={() => setPropertyTypeModalOpen(false)}
+          onSave={(draft) => {
+            // Merge rather than replace: mappings for values not in this
+            // upload stay put, so a curated list builds up over time.
+            const next = { ...propertyTypeMap };
+            for (const [k, v] of Object.entries(draft)) {
+              if (v) next[k] = v; else delete next[k];
+            }
+            persistPropertyTypeMap(next);
+            setPropertyTypeModalOpen(false);
+          }}
+        />
+      )}
 
       {savePickerSearch !== null && createPortal(
         <div
