@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
+import { DateCell } from '../common/DateCell';
 import {
   buildListRegistry,
   buildAvailableLists,
@@ -788,6 +789,10 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
     const isCurrency = DEAL_CURRENCY_KEYS.has(k);
     const isPercent = DEAL_PERCENT_KEYS.has(k);
     const isDate = DEAL_DATE_KEYS.has(k);
+    // The two contract-term dates pick from a calendar rather than being
+    // typed. The remaining date columns (Due Date, End Date, Follow Up On
+    // Sale) still edit as text.
+    const isTermDate = k === 'Current Term Start Date' || k === 'Original Contract Start';
     const isCheck = DEAL_CHECK_KEYS.has(k);
     const isRevenueRecorded = k === 'Revenue Recorded';
     const isPaidToDate = k === 'Paid to Date';
@@ -1009,6 +1014,19 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
         // the Commissions tab.
         if ((isRevenueRecorded || isPaidToDate) && lookupCommissionNumerator(row) != null) {
           return renderCompound(row, row[k], true);
+        }
+        // Contract term dates get the shared click-to-pick calendar cell
+        // instead of the double-click text editor, matching how dates
+        // behave elsewhere in the app. Picking a day stores ISO
+        // (YYYY-MM-DD), which fmtDate/asDate already read, so sorting,
+        // the derived Year column and exports keep working unchanged.
+        if (isTermDate) {
+          return (
+            <DateCell
+              value={row[k]}
+              onChange={(v) => row.__onUpdate?.(row.id, k, v)}
+            />
+          );
         }
         const cellRender = (isRevenueRecorded || isPaidToDate)
           ? (v) => renderCompound(row, v)
