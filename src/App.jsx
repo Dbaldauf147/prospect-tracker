@@ -251,6 +251,16 @@ function App() {
     setModal({ prospect, isNew: false, editContact: editContact || null });
   }
 
+  // "Create <name>" from the sidebar search: open the same new-company popup
+  // as + New, prefilled with what was typed. Everything else (status, tier,
+  // …) keeps its usual defaults, so this is exactly + New with the name
+  // already filled in.
+  function handleCreateCompany(name) {
+    const company = String(name || '').trim();
+    if (!company) return;
+    setModal({ prospect: { company }, isNew: true });
+  }
+
   // Open a contact picked from the sidebar search. A contact is edited inside
   // its company's account popup, so resolve the contact to its prospect by
   // company name (respecting a pinned _companyOverride) and open that modal
@@ -287,6 +297,7 @@ function App() {
         contacts={effectiveHubspotContacts}
         onSelectProspect={handleSelect}
         onSelectContact={handleSelectContact}
+        onCreateCompany={handleCreateCompany}
       />
       <div className="main">
         {(view === 'accounts' || view === 'table' || view === 'kanban') && (

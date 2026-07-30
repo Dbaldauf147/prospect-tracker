@@ -122,6 +122,25 @@
   font-style: italic;
 }
 
+/* "Create <name>" row at the foot of the search dropdown — an action, not
+   a result, so it reads in the accent colour and is fenced off by a rule
+   when real matches sit above it. */
+.searchDivider {
+  height: 1px;
+  margin: 0.25rem 0;
+  background: #e2e8f0;
+}
+
+.searchCreate {
+  color: var(--color-accent, #005a9e);
+  font-weight: 600;
+}
+
+.searchCreatePlus {
+  font-weight: 700;
+  margin-right: 0.3rem;
+}
+
 .nav {
   flex: 1;
   padding: 0.75rem 0.5rem;

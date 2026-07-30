@@ -8,7 +8,7 @@ import styles from './Sidebar.module.css';
 // (onSelectContact) — the handlers the rest of the app uses. Matches prefer
 // names that start with the query, then ones that contain it; each group is
 // capped so the dropdown stays short.
-function CompanySearch({ prospects = [], contacts = [], onSelectProspect, onSelectContact }) {
+function CompanySearch({ prospects = [], contacts = [], onSelectProspect, onSelectContact, onCreateCompany }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -75,12 +75,32 @@ function CompanySearch({ prospects = [], contacts = [], onSelectProspect, onSele
     return [...starts, ...includes].slice(0, 6);
   }, [contacts, query]);
 
-  // Flat, keyboard-navigable list: companies first, then contacts. Each item
-  // carries its type so Enter / click routes to the right handler.
-  const items = useMemo(() => [
-    ...companyMatches.map(p => ({ type: 'company', data: p })),
-    ...contactMatches.map(c => ({ type: 'contact', data: c })),
-  ], [companyMatches, contactMatches]);
+  // Whether the typed name already exists as a company. Compared against the
+  // full roster, not just the capped match list, so a name that exists but
+  // ranked past the cap doesn't offer a duplicate-creating "Create" row.
+  const exactCompanyExists = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return false;
+    return companies.some(p => String(p.company).trim().toLowerCase() === q);
+  }, [companies, query]);
+
+  // Flat, keyboard-navigable list: companies first, then contacts, then the
+  // "create this company" row. Each item carries its type so Enter / click
+  // routes to the right handler. The create row is offered whenever the typed
+  // name isn't already a company — so it covers both "nothing matched" and
+  // "something matched, but not the company I meant". It sorts last so the
+  // default Enter still opens the top existing match.
+  const items = useMemo(() => {
+    const base = [
+      ...companyMatches.map(p => ({ type: 'company', data: p })),
+      ...contactMatches.map(c => ({ type: 'contact', data: c })),
+    ];
+    const name = query.trim();
+    if (onCreateCompany && name && !exactCompanyExists) {
+      base.push({ type: 'create', data: name });
+    }
+    return base;
+  }, [companyMatches, contactMatches, query, exactCompanyExists, onCreateCompany]);
 
   useEffect(() => { setActive(0); }, [query]);
 
@@ -95,6 +115,7 @@ function CompanySearch({ prospects = [], contacts = [], onSelectProspect, onSele
   function choose(item) {
     if (!item) return;
     if (item.type === 'company') onSelectProspect?.(item.data);
+    else if (item.type === 'create') onCreateCompany?.(item.data);
     else onSelectContact?.(item.data);
     setQuery('');
     setOpen(false);
@@ -126,11 +147,43 @@ function CompanySearch({ prospects = [], contacts = [], onSelectProspect, onSele
       />
       {showDropdown && (
         <div className={styles.searchDropdown} role="listbox">
-          {items.length > 0 ? items.map((item, i) => {
+          {/* Still say plainly that nothing matched — the create row below
+              is an offer, not a search result. */}
+          {companyMatches.length === 0 && contactMatches.length === 0 && (
+            <div className={styles.searchEmpty}>No companies or contacts match &ldquo;{query.trim()}&rdquo;.</div>
+          )}
+          {items.map((item, i) => {
             const isCompany = item.type === 'company';
+            const isCreate = item.type === 'create';
             const showCompaniesHeader = i === 0 && isCompany;
-            const showContactsHeader = i === firstContactIdx && !isCompany;
+            const showContactsHeader = i === firstContactIdx && !isCompany && !isCreate;
             const activeCls = i === active ? `${styles.searchItem} ${styles.searchItemActive}` : styles.searchItem;
+            if (isCreate) {
+              // No company by this name yet — offer to create it. Opens the
+              // same new-company popup as "+ New", prefilled with the name.
+              return (
+                <div key="create-company">
+                  {i > 0 && <div className={styles.searchDivider} />}
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={i === active}
+                    className={`${activeCls} ${styles.searchCreate}`}
+                    onMouseEnter={() => setActive(i)}
+                    onClick={() => choose(item)}
+                    title={`Create "${item.data}" as a new company`}
+                  >
+                    {/* Action on the first line, the name on the second —
+                        the sidebar is narrow, so this keeps "Create
+                        company" always readable and lets a long name
+                        ellipsize on its own line. */}
+                    <span className={styles.searchCreatePlus} aria-hidden="true">+</span>
+                    Create company
+                    <span className={styles.searchItemSub}>&ldquo;{item.data}&rdquo;</span>
+                  </button>
+                </div>
+              );
+            }
             if (isCompany) {
               const p = item.data;
               return (
@@ -171,16 +224,14 @@ function CompanySearch({ prospects = [], contacts = [], onSelectProspect, onSele
                 </button>
               </div>
             );
-          }) : (
-            <div className={styles.searchEmpty}>No companies or contacts match &ldquo;{query.trim()}&rdquo;.</div>
-          )}
+          })}
         </div>
       )}
     </div>
   );
 }
 
-export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, onOpenCdmName, onOpenDailyLog, isAdmin = false, dailyLogEnabled = true, whatToDoTodayEnabled = true, onToggleDailyLog, onToggleWhatToDoToday, issuesCount = 0, prospects = [], contacts = [], onSelectProspect, onSelectContact }) {
+export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, onOpenCdmName, onOpenDailyLog, isAdmin = false, dailyLogEnabled = true, whatToDoTodayEnabled = true, onToggleDailyLog, onToggleWhatToDoToday, issuesCount = 0, prospects = [], contacts = [], onSelectProspect, onSelectContact, onCreateCompany }) {
   const initials = user?.displayName
     ? user.displayName.split(' ').map(n => n[0]).join('').toUpperCase()
     : user?.email?.[0]?.toUpperCase() || '?';
@@ -231,7 +282,7 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
     <div className={styles.sidebar}>
       <div className={styles.logo}>
         <div className={styles.logoText}>Prospect Tracker</div>
-        <CompanySearch prospects={prospects} contacts={contacts} onSelectProspect={onSelectProspect} onSelectContact={onSelectContact} />
+        <CompanySearch prospects={prospects} contacts={contacts} onSelectProspect={onSelectProspect} onSelectContact={onSelectContact} onCreateCompany={onCreateCompany} />
       </div>
 
       <nav className={styles.nav}>
