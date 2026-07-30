@@ -420,7 +420,7 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
 const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', tier: 'Tier 3',
-  hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, competitors: {}, portfolioCompanies: [],
+  hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [],
   peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', contractingEntity: '', strategies: [], revenue: '',
 };
 
@@ -2172,6 +2172,15 @@ function SustainabilityResearchPanel({ state, onClear, onUseTargets, onMergeFram
   );
 }
 
+// Compact label for an SME chip: initials for a multi-word name ("Dan
+// Baldauf" -> "DB"), otherwise the first few characters. The full name is
+// on the chip's tooltip.
+function smeInitials(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return (parts[0] || '').slice(0, 4);
+}
+
 export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, onDeleteProspect, onUpdateProspect, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, updateSettingsPath = () => {}, targetAccountsData = null, cdmName = '', initialEditContact = null }) {
   const { isAdmin, user } = useAuth();
   const [fields, setFields] = useState(() => {
@@ -2184,6 +2193,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // filter callback (the callback fires during render, so the state
   // must be initialized first or we hit a temporal-dead-zone error).
   const [showHiddenContacts, setShowHiddenContacts] = useState(false);
+  // Which service row has its SME editor open (service key, or null).
+  const [expandedServiceSME, setExpandedServiceSME] = useState(null);
 
   // Indicative Savings analysis saved against this prospect from the
   // Utility Lookup page. Stored in a /analyses/main subcollection so
@@ -5585,6 +5596,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     e.stopPropagation();
                     const svc = fields.servicesExplored || {};
                     const svcNotes = fields.serviceNotes || {};
+                    const svcSMEs = fields.serviceSMEs || {};
                     const hidden = new Set(settings.hiddenServices || []);
                     const renames = settings.serviceRenames || {};
                     const categories = settings.customServiceCategories || SERVICE_CATEGORIES.map(c => ({ name: c.name, items: [...c.items] }));
@@ -5615,8 +5627,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         properties: { tabColor: { argb: SE_GREEN } },
                         views: [{ state: 'frozen', ySplit: 3 }],
                       });
-                      const headers = ['Category', 'Service', 'Status', 'Notes'];
-                      const colWidths = [28, 40, 18, 60];
+                      const headers = ['Category', 'Service', 'Status', 'SME', 'Notes'];
+                      const colWidths = [28, 40, 18, 24, 60];
                       ws.columns = colWidths.map(w => ({ width: w }));
 
                       ws.mergeCells(1, 1, 1, headers.length);
@@ -5658,13 +5670,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           const rawStatus = svc[item] || '';
                           const status = rawStatus && rawStatus !== '-' ? rawStatus : '';
                           const note = svcNotes[item] || '';
+                          const sme = svcSMEs[item] || '';
                           const row = ws.getRow(rowIdx);
                           const display = renames[item] || item;
-                          [cat.name, display, status, note].forEach((v, i) => {
+                          [cat.name, display, status, sme, note].forEach((v, i) => {
                             const cell = row.getCell(i + 1);
                             cell.value = v === '' || v == null ? null : v;
                             cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-                            cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: i === 3, indent: 1 };
+                            cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: i === 4, indent: 1 };
                             cell.border = {
                               bottom: { style: 'thin', color: { argb: SE_BORDER } },
                               left: { style: 'thin', color: { argb: SE_BORDER } },
@@ -5765,6 +5778,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     </div>
                   )}
                   <div style={{ marginTop: '0.5rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.4rem', maxHeight: '500px', overflowY: 'auto', padding: '0.15rem' }}>
+                  {/* Names already assigned as an SME on this card, offered
+                      as suggestions on every SME box below. */}
+                  <datalist id="service-sme-names">
+                    {[...new Set(Object.values(fields.serviceSMEs || {})
+                      .map(v => String(v || '').trim()).filter(Boolean))]
+                      .sort((a, b) => a.localeCompare(b))
+                      .map(n => <option key={n} value={n} />)}
+                  </datalist>
                   {categories.map(cat => {
                     const svc = fields.servicesExplored || {};
                     const visibleItems = servicesEditMode ? cat.items : cat.items.filter(item => !hiddenServices.has(item));
@@ -5869,6 +5890,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             const noteVal = (fields.serviceNotes || {})[noteKey] || '';
                             const hasNote = !!noteVal;
                             const isNoteOpen = expandedServiceNote === noteKey;
+                            const smeVal = (fields.serviceSMEs || {})[item] || '';
+                            const isSMEOpen = expandedServiceSME === item;
                             return (
                               <div key={item}>
                                 <div
@@ -5887,6 +5910,26 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                   <span style={{ flex: 1, fontSize: '0.68rem', color: colors.color || 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item}>
                                     {getDisplayName(item)}
                                   </span>
+                                  {/* SME — the Schneider contact who owns this
+                                      service. The service boxes sit in a
+                                      multi-column grid (~235px a row), so this
+                                      is a compact chip rather than a text box;
+                                      a full input here squeezed the service
+                                      name down to ~45px. Click to edit below. */}
+                                  <button
+                                    type="button"
+                                    onClick={() => setExpandedServiceSME(isSMEOpen ? null : item)}
+                                    title={smeVal ? `SME: ${smeVal}` : 'Add the Schneider SME for this service'}
+                                    style={{
+                                      flexShrink: 0, maxWidth: 52, overflow: 'hidden', textOverflow: 'ellipsis',
+                                      whiteSpace: 'nowrap', fontSize: '0.55rem', fontWeight: 700,
+                                      padding: '1px 3px', borderRadius: '3px', cursor: 'pointer',
+                                      fontFamily: 'inherit', lineHeight: 1.4,
+                                      border: `1px solid ${smeVal ? '#93C5FD' : 'var(--color-border)'}`,
+                                      background: smeVal ? '#EFF6FF' : 'var(--color-surface)',
+                                      color: smeVal ? '#1E40AF' : '#CBD5E1',
+                                    }}
+                                  >{smeVal ? smeInitials(smeVal) : 'SME'}</button>
                                   <select
                                     value={effectiveStatus}
                                     onChange={e => {
@@ -5920,6 +5963,34 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                     >↺</button>
                                   )}
                                 </div>
+                                {isSMEOpen && (
+                                  <div style={{ padding: '0.15rem 0.35rem 0.25rem 1.2rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span style={{ fontSize: '0.58rem', fontWeight: 700, color: 'var(--color-text-muted)', flexShrink: 0 }}>SME</span>
+                                    <input
+                                      type="text"
+                                      autoFocus
+                                      list="service-sme-names"
+                                      defaultValue={smeVal}
+                                      placeholder="Schneider contact"
+                                      onBlur={e => {
+                                        const v = e.target.value.trim();
+                                        if (v === smeVal) return;
+                                        const next = { ...(fields.serviceSMEs || {}) };
+                                        if (v) next[item] = v; else delete next[item];
+                                        set('serviceSMEs', next);
+                                      }}
+                                      onKeyDown={e => {
+                                        if (e.key === 'Enter') { e.currentTarget.blur(); setExpandedServiceSME(null); }
+                                        else if (e.key === 'Escape') { e.currentTarget.value = smeVal; setExpandedServiceSME(null); }
+                                      }}
+                                      style={{
+                                        flex: 1, minWidth: 0, fontSize: '0.62rem', padding: '1px 3px',
+                                        border: '1px solid var(--color-accent)', borderRadius: '3px',
+                                        background: '#fff', color: 'var(--color-text)', fontFamily: 'inherit',
+                                      }}
+                                    />
+                                  </div>
+                                )}
                                 {isNoteOpen && (
                                   <div style={{ padding: '0.15rem 0.35rem 0.25rem 1.2rem' }}>
                                     <ScopingNotesEditor
