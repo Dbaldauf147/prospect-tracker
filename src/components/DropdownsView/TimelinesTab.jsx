@@ -10,6 +10,7 @@ import {
 import { buildTimelineSvg, STAGE_ICONS, TIMELINE_FORMATS } from '../../utils/timelineGraphic';
 import { getStageRange } from '../../utils/timelineDates';
 import { openTimelineReport, downloadTimelineSvg, downloadTimelinePng } from '../../utils/timelineExport';
+import { exportTimelineXlsx } from '../../utils/timelineXlsx';
 import styles from './DropdownsView.module.css';
 
 // Which pill style each owner gets. Keeps the owner readable at a glance
@@ -246,6 +247,17 @@ function TimelineVisual({ template, onChangeFormat }) {
       setBusy('');
     }
   }
+  async function handleExcel() {
+    setBusy('xlsx');
+    try {
+      await exportTimelineXlsx(template, { generatedAt: new Date().toLocaleString() });
+    } catch (err) {
+      console.error('Timeline Excel export failed', err);
+      window.alert('Could not build the workbook: ' + (err?.message || 'unknown error'));
+    } finally {
+      setBusy('');
+    }
+  }
 
   return (
     <div className={styles.visualPanel}>
@@ -271,6 +283,15 @@ function TimelineVisual({ template, onChangeFormat }) {
         </button>
         <button type="button" className={styles.exportBtn} onClick={handlePng} disabled={!svg || busy === 'png'}>
           {busy === 'png' ? 'Building…' : 'PNG'}
+        </button>
+        <button
+          type="button"
+          className={styles.exportBtn}
+          onClick={handleExcel}
+          disabled={!template.stages?.length || busy === 'xlsx'}
+          title="Native Excel Gantt plus a filterable stage table"
+        >
+          {busy === 'xlsx' ? 'Building…' : 'Excel'}
         </button>
       </div>
       <div className={styles.visualScroll}>
