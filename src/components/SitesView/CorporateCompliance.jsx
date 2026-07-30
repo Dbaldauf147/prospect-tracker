@@ -259,6 +259,59 @@ function urlLabel(url) {
 // A reference link the user maintains for one question or regulation: click
 // to open, ✎ to edit, "+ link" when empty. Persisted per company alongside
 // the screening answers so it survives reloads and syncs across devices.
+// What the user recorded after reading the linked source. Free text, saved
+// on blur (and on Ctrl/Cmd+Enter) rather than per keystroke, so a paragraph
+// of notes doesn't become a write per character.
+function FindingsBox({ value, onSave, ariaLabel, disabled }) {
+  const [draft, setDraft] = useState(value || '');
+  useEffect(() => { setDraft(value || ''); }, [value]);
+  if (disabled) return null;
+  const dirty = draft !== (value || '');
+  return (
+    <textarea
+      value={draft}
+      rows={2}
+      placeholder="Findings from this source…"
+      aria-label={ariaLabel}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => { if (dirty) onSave(draft.trim()); }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); e.currentTarget.blur(); }
+        else if (e.key === 'Escape') { setDraft(value || ''); }
+      }}
+      style={{
+        width: '100%', boxSizing: 'border-box', marginTop: '0.25rem', resize: 'vertical',
+        padding: '0.2rem 0.3rem', fontSize: '0.63rem', fontFamily: 'inherit', lineHeight: 1.35,
+        color: 'var(--color-text)', background: 'var(--color-surface)',
+        // A subtle outline while unsaved, so it's clear blur will commit.
+        border: `1px solid ${dirty ? 'var(--color-accent)' : 'var(--color-border)'}`,
+        borderRadius: 4,
+      }}
+    />
+  );
+}
+
+// The right-hand column for one question / regulation: the user's reference
+// link stacked over the findings they recorded from it.
+function ReferenceCell({ url, findings, onSaveUrl, onSaveFindings, label, disabled }) {
+  return (
+    <div>
+      <ReferenceLink
+        url={url}
+        onSave={onSaveUrl}
+        ariaLabel={`Reference URL for ${label}`}
+        disabled={disabled}
+      />
+      <FindingsBox
+        value={findings}
+        onSave={onSaveFindings}
+        ariaLabel={`Findings for ${label}`}
+        disabled={disabled}
+      />
+    </div>
+  );
+}
+
 function ReferenceLink({ url, onSave, ariaLabel, disabled }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(url || '');
@@ -375,7 +428,7 @@ function answerSelectStyle(val, derived = false) {
 // california__sb-253: 'Yes', … }); `onSet(key, value)` persists one
 // answer. The "Research answers" button asks Claude (web search) to fill
 // the jurisdiction rows; `research` holds that run's rationale + sources.
-function JurisdictionScreening({ answers, links, onSetLink, caSiteCount = 0, revenue = '', onSet, disabled, onResearch, researching, researchError, research }) {
+function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindings, caSiteCount = 0, revenue = '', onSet, disabled, onResearch, researching, researchError, research }) {
   // Revenue drives the derived Applies? verdicts (SB 253 / SB 261). Parsed
   // once per render rather than per regulation row.
   const revenueLabel = String(revenue || '').trim();
@@ -422,9 +475,16 @@ function JurisdictionScreening({ answers, links, onSetLink, caSiteCount = 0, rev
           <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
             <thead>
               <tr>
-                <th style={{ ...th, width: '38%' }}>Jurisdiction</th>
-                <th style={{ ...th, width: '46%' }}>Screening</th>
-                <th style={{ ...th, width: '16%' }}>Applies?</th>
+                <th style={{ ...th, width: '24%' }}>Jurisdiction</th>
+                <th style={{ ...th, width: '29%' }}>Screening</th>
+                {/* Wide enough for the select plus the "auto" badge beside
+                    it — any narrower and the badge overflows into the
+                    Reference column. */}
+                <th style={{ ...th, width: '19%' }}>Applies?</th>
+                <th style={{ ...th, width: '28%' }}>
+                  Reference &amp; Findings
+                  <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}> — your link + notes</span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -438,12 +498,6 @@ function JurisdictionScreening({ answers, links, onSetLink, caSiteCount = 0, rev
                       <td style={td}>
                         <div style={{ fontWeight: 700 }}>{q.jurisdiction}</div>
                         <div style={{ color: 'var(--color-text-muted)', fontSize: '0.68rem' }}>{q.question}</div>
-                        <ReferenceLink
-                          url={links?.[q.key] || ''}
-                          onSave={(v) => onSetLink?.(q.key, v)}
-                          ariaLabel={`Reference URL for ${q.jurisdiction}`}
-                          disabled={disabled}
-                        />
                       </td>
                       <td style={td}>
                         {/* The screening signal for this jurisdiction: the
@@ -470,6 +524,16 @@ function JurisdictionScreening({ answers, links, onSetLink, caSiteCount = 0, rev
                           <option value="">—</option>
                           {SCREENING_ANSWERS.map((a) => <option key={a} value={a}>{a}</option>)}
                         </select>
+                      </td>
+                      <td style={td}>
+                        <ReferenceCell
+                          url={links?.[q.key] || ''}
+                          findings={findings?.[q.key] || ''}
+                          onSaveUrl={(v) => onSetLink?.(q.key, v)}
+                          onSaveFindings={(v) => onSetFindings?.(q.key, v)}
+                          label={q.jurisdiction}
+                          disabled={disabled}
+                        />
                       </td>
                     </tr>
                     {/* Regulations this jurisdiction triggers. Shown for a
@@ -498,12 +562,6 @@ function JurisdictionScreening({ answers, links, onSetLink, caSiteCount = 0, rev
                           <td style={{ ...td, paddingLeft: '1.4rem' }}>
                             <div style={{ fontWeight: 700 }}>{r.regulation}</div>
                             <div style={{ color: 'var(--color-text-muted)', fontSize: '0.68rem' }}>{r.timeline}</div>
-                            <ReferenceLink
-                              url={links?.[rKey] || ''}
-                              onSave={(v) => onSetLink?.(rKey, v)}
-                              ariaLabel={`Reference URL for ${r.regulation}`}
-                              disabled={disabled}
-                            />
                           </td>
                           <td style={td} title={r.description}>
                             {r.thresholds.length > 0
@@ -511,7 +569,7 @@ function JurisdictionScreening({ answers, links, onSetLink, caSiteCount = 0, rev
                               : <span style={{ color: 'var(--color-text-muted)' }}>{r.description}</span>}
                           </td>
                           <td style={td}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', minWidth: 0, flexWrap: 'wrap' }}>
                               <select
                                 value={shownVal}
                                 onChange={(e) => onSet(rKey, e.target.value)}
@@ -532,6 +590,16 @@ function JurisdictionScreening({ answers, links, onSetLink, caSiteCount = 0, rev
                                 >auto</span>
                               )}
                             </div>
+                          </td>
+                          <td style={td}>
+                            <ReferenceCell
+                              url={links?.[rKey] || ''}
+                              findings={findings?.[rKey] || ''}
+                              onSaveUrl={(v) => onSetLink?.(rKey, v)}
+                              onSaveFindings={(v) => onSetFindings?.(rKey, v)}
+                              label={r.regulation}
+                              disabled={disabled}
+                            />
                           </td>
                         </tr>
                       );
@@ -714,6 +782,13 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
   // their own map (company slug → question or regulation key) rather than
   // beside the answers, so a URL can never be read as a screening answer.
   const complianceLinks = settings?.companyComplianceLinks || {};
+  // Manual findings the user recorded from each reference link. Its own map
+  // for the same reason the links are: never confusable with an answer.
+  const complianceFindings = settings?.companyComplianceFindings || {};
+  const setComplianceFinding = (slug, key, text) => {
+    if (!updateSettingsPath || !slug) return;
+    updateSettingsPath({ [`companyComplianceFindings.${slug}.${key}`]: text || null });
+  };
   const setComplianceLink = useCallback((slug, key, url) => {
     if (!updateSettingsPath || !slug) return;
     updateSettingsPath({ [`companyComplianceLinks.${slug}.${key}`]: url || null });
@@ -1013,6 +1088,8 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                       <JurisdictionScreening
                         answers={screening[c.key] || null}
                         links={complianceLinks[c.key] || null}
+                        findings={complianceFindings[c.key] || null}
+                        onSetFindings={(fieldKey, text) => setComplianceFinding(c.key, fieldKey, text)}
                         onSetLink={(fieldKey, url) => setComplianceLink(c.key, fieldKey, url)}
                         caSiteCount={c.california}
                         // Feeds the derived SB 253 / SB 261 verdicts. Prefer
