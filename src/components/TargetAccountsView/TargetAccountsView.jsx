@@ -805,6 +805,7 @@ function ListSection({
           </div>
           <DataTable
             tableId="target-accounts"
+            exportFileName="Target Accounts export"
             columns={columns}
             rows={filtered}
             alwaysVisible={[]}

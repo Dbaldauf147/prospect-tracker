@@ -339,6 +339,8 @@ export function LookupListView({
         <DataTable
           key={tableId}
           tableId={tableId}
+          // tableId is the prefix plus every column key — not a file name.
+          exportFileName={`${title} export`}
           columns={columns}
           rows={filtered}
           alwaysVisible={alwaysVisible}

@@ -1244,6 +1244,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
         ) : (
           <DataTable
             tableId={tableId}
+            exportFileName={isOldMode ? 'Old Clients export' : 'Clients export'}
             columns={columns}
             rows={rows}
             alwaysVisible={['company']}
