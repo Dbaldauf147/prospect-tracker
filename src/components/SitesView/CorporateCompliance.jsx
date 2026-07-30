@@ -232,6 +232,105 @@ function EmployeesSection({ data, loading }) {
 }
 
 // Compact "value metric" list, e.g. "1,000 Employees · 450 Global Net Turnover".
+// Normalize a typed reference URL, and refuse anything that isn't http(s) —
+// a stored "javascript:" value would otherwise become a clickable script
+// once rendered as an anchor. Returns '' for anything unusable.
+function safeUrl(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  const withScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(s) ? s : `https://${s}`;
+  try {
+    const u = new URL(withScheme);
+    return (u.protocol === 'http:' || u.protocol === 'https:') ? u.href : '';
+  } catch { return ''; }
+}
+
+// Shorten a URL for display beside a question, so a long statute link can't
+// push the Applies? column off screen.
+function urlLabel(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    const tail = u.pathname.replace(/\/$/, '').split('/').filter(Boolean).pop();
+    return (tail ? `${host}/…/${tail}` : host).slice(0, 40);
+  } catch { return String(url).slice(0, 40); }
+}
+
+// A reference link the user maintains for one question or regulation: click
+// to open, ✎ to edit, "+ link" when empty. Persisted per company alongside
+// the screening answers so it survives reloads and syncs across devices.
+function ReferenceLink({ url, onSave, ariaLabel, disabled }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(url || '');
+  useEffect(() => { setDraft(url || ''); }, [url]);
+
+  const tiny = {
+    fontSize: '0.58rem', fontWeight: 700, fontFamily: 'inherit',
+    padding: '0.05rem 0.3rem', borderRadius: 4, cursor: 'pointer',
+    border: '1px solid var(--color-border)', background: 'var(--color-surface)',
+    color: 'var(--color-text-muted)', whiteSpace: 'nowrap',
+  };
+
+  if (disabled) return null;
+
+  if (editing) {
+    const invalid = !!draft.trim() && !safeUrl(draft);
+    const commit = () => {
+      // A non-empty entry that isn't a usable http(s) URL is rejected rather
+      // than saved as a dead link; clearing the box removes the link.
+      if (draft.trim() && !safeUrl(draft)) return;
+      onSave(draft.trim() ? safeUrl(draft) : '');
+      setEditing(false);
+    };
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', marginTop: '0.2rem' }}>
+        <input
+          type="text"
+          value={draft}
+          autoFocus
+          placeholder="https://…"
+          aria-label={ariaLabel}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            else if (e.key === 'Escape') { setDraft(url || ''); setEditing(false); }
+          }}
+          style={{
+            width: 170, padding: '0.1rem 0.3rem', fontSize: '0.62rem', fontFamily: 'inherit',
+            border: `1px solid ${invalid ? '#DC2626' : 'var(--color-border)'}`, borderRadius: 4,
+          }}
+        />
+        <button type="button" onClick={commit} title={invalid ? 'Enter a valid http(s) URL' : 'Save link'} style={tiny}>Save</button>
+        <button type="button" onClick={() => { setDraft(url || ''); setEditing(false); }} title="Cancel" style={tiny}>✕</button>
+      </span>
+    );
+  }
+
+  if (url) {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', marginTop: '0.2rem' }}>
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          title={url}
+          style={{ fontSize: '0.62rem', color: 'var(--color-accent)', textDecoration: 'underline', textUnderlineOffset: '2px' }}
+        >↗ {urlLabel(url)}</a>
+        <button type="button" onClick={() => setEditing(true)} title="Edit link" style={tiny}>✎</button>
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      title="Add a reference URL for this question"
+      style={{ ...tiny, marginTop: '0.2rem', opacity: 0.75 }}
+    >+ link</button>
+  );
+}
+
 function thresholdText(thresholds) {
   return (thresholds || []).map(t => `${t.value} ${t.metric}`).join(' · ');
 }
@@ -276,7 +375,7 @@ function answerSelectStyle(val, derived = false) {
 // california__sb-253: 'Yes', … }); `onSet(key, value)` persists one
 // answer. The "Research answers" button asks Claude (web search) to fill
 // the jurisdiction rows; `research` holds that run's rationale + sources.
-function JurisdictionScreening({ answers, caSiteCount = 0, revenue = '', onSet, disabled, onResearch, researching, researchError, research }) {
+function JurisdictionScreening({ answers, links, onSetLink, caSiteCount = 0, revenue = '', onSet, disabled, onResearch, researching, researchError, research }) {
   // Revenue drives the derived Applies? verdicts (SB 253 / SB 261). Parsed
   // once per render rather than per regulation row.
   const revenueLabel = String(revenue || '').trim();
@@ -339,6 +438,12 @@ function JurisdictionScreening({ answers, caSiteCount = 0, revenue = '', onSet, 
                       <td style={td}>
                         <div style={{ fontWeight: 700 }}>{q.jurisdiction}</div>
                         <div style={{ color: 'var(--color-text-muted)', fontSize: '0.68rem' }}>{q.question}</div>
+                        <ReferenceLink
+                          url={links?.[q.key] || ''}
+                          onSave={(v) => onSetLink?.(q.key, v)}
+                          ariaLabel={`Reference URL for ${q.jurisdiction}`}
+                          disabled={disabled}
+                        />
                       </td>
                       <td style={td}>
                         {/* The screening signal for this jurisdiction: the
@@ -393,6 +498,12 @@ function JurisdictionScreening({ answers, caSiteCount = 0, revenue = '', onSet, 
                           <td style={{ ...td, paddingLeft: '1.4rem' }}>
                             <div style={{ fontWeight: 700 }}>{r.regulation}</div>
                             <div style={{ color: 'var(--color-text-muted)', fontSize: '0.68rem' }}>{r.timeline}</div>
+                            <ReferenceLink
+                              url={links?.[rKey] || ''}
+                              onSave={(v) => onSetLink?.(rKey, v)}
+                              ariaLabel={`Reference URL for ${r.regulation}`}
+                              disabled={disabled}
+                            />
                           </td>
                           <td style={td} title={r.description}>
                             {r.thresholds.length > 0
@@ -597,6 +708,15 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
   const setScreeningAnswer = useCallback((slug, key, value) => {
     if (!updateSettingsPath || !slug) return;
     updateSettingsPath({ [`corporateComplianceScreening.${slug}.${key}`]: value || null });
+  }, [updateSettingsPath]);
+
+  // Reference URLs the user attaches to each question / regulation. Kept in
+  // their own map (company slug → question or regulation key) rather than
+  // beside the answers, so a URL can never be read as a screening answer.
+  const complianceLinks = settings?.companyComplianceLinks || {};
+  const setComplianceLink = useCallback((slug, key, url) => {
+    if (!updateSettingsPath || !slug) return;
+    updateSettingsPath({ [`companyComplianceLinks.${slug}.${key}`]: url || null });
   }, [updateSettingsPath]);
 
   // Portfolio company field. Writes the shared setting SitesView reads to
@@ -892,6 +1012,8 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                     <CardRow label="Compliance">
                       <JurisdictionScreening
                         answers={screening[c.key] || null}
+                        links={complianceLinks[c.key] || null}
+                        onSetLink={(fieldKey, url) => setComplianceLink(c.key, fieldKey, url)}
                         caSiteCount={c.california}
                         // Feeds the derived SB 253 / SB 261 verdicts. Prefer
                         // the researched figure shown in the Revenue row,
