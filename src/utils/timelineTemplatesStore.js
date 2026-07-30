@@ -51,6 +51,10 @@ function normalizeStage(stage) {
     name: String(stage?.name ?? ''),
     owner,
     timing: String(stage?.timing ?? ''),
+    // Optional explicit calendar dates for the Gantt. Left blank, the range
+    // is parsed out of `timing` instead — see utils/timelineDates.
+    start: String(stage?.start ?? ''),
+    end: String(stage?.end ?? ''),
     description: String(stage?.description ?? ''),
     // 'number' draws the stage position in the marker; anything else selects
     // artwork from STAGE_ICONS in timelineGraphic.
@@ -62,6 +66,9 @@ function normalizeTemplate(tpl) {
   return {
     id: tpl?.id || makeTimelineId('tl'),
     name: String(tpl?.name ?? ''),
+    // Which layout the visual and exports render. Timelines saved before the
+    // Gantt existed have no format and pick up the default.
+    format: tpl?.format === 'milestone' ? 'milestone' : 'gantt',
     services: Array.isArray(tpl?.services)
       ? tpl.services.map(s => String(s ?? '').trim()).filter(Boolean)
       : [],

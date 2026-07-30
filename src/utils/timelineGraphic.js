@@ -13,6 +13,9 @@
 
 import { SE_GREEN, SE_GREEN_DARK, schneiderLogoSvg } from './schneiderLogo';
 import { TIMELINE_STAGE_OWNERS, DEFAULT_STAGE_OWNER } from './timelineTemplatesStore';
+import {
+  getStageRange, formatRangeLabel, isoToMs, msToIso, daysInMonth, monthLabel,
+} from './timelineDates';
 
 const SE_INK = '#0F172A';
 const SE_SLATE = '#475569';
@@ -189,11 +192,187 @@ function legend(width) {
   return out;
 }
 
+// Header band shared by both formats: title, attached services, lockup, rule.
+function brandedHeader(template, width) {
+  const title = template?.name?.trim() || 'Timeline';
+  let out = `<text x="${LAYOUT.padX}" y="${LAYOUT.headerY}" font-size="24" font-weight="800" fill="${SE_INK}">${esc(title)}</text>`;
+  const services = (template?.services || []).join(' · ');
+  if (services) {
+    out += `<text x="${LAYOUT.padX}" y="${LAYOUT.headerY + 21}" font-size="12.5" font-weight="600" fill="${SE_MUTE}">${esc(services)}</text>`;
+  }
+  out += `<g transform="translate(${width - LAYOUT.padX - 172} 14)">${schneiderLogoSvg({ width: 172 })}</g>`;
+  out += `<line x1="${LAYOUT.padX}" y1="${LAYOUT.headerY + 34}" x2="${width - LAYOUT.padX}" y2="${LAYOUT.headerY + 34}" stroke="${SE_LINE}" stroke-width="1"/>`;
+  return out;
+}
+
+// --- Gantt --------------------------------------------------------------
+
+const GANTT = {
+  padX: 44,
+  labelW: 268,   // stage name + owner column
+  rowH: 56,
+  topY: 150,     // first row baseline area starts here
+  minTickW: 96,
+  maxTickW: 150,
+};
+
+const DAY_MS = 86400000;
+
+// Whole-month domain covering every dated stage, plus the tick series to draw
+// across it. Falls back to quarter ticks once a monthly axis would be too
+// dense to label.
+function ganttAxis(ranges) {
+  const startMs = Math.min(...ranges.map(r => isoToMs(r.start)));
+  const endMs = Math.max(...ranges.map(r => isoToMs(r.end)));
+  const s = new Date(startMs), e = new Date(endMs);
+  const y0 = s.getUTCFullYear(), m0 = s.getUTCMonth() + 1;
+  const y1 = e.getUTCFullYear(), m1 = e.getUTCMonth() + 1;
+
+  const months = [];
+  let y = y0, m = m0;
+  // Cap the span so a stray typo'd year can't generate thousands of ticks.
+  for (let guard = 0; guard < 600; guard += 1) {
+    months.push({ y, m });
+    if (y === y1 && m === m1) break;
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+  }
+  const domainStart = Date.UTC(y0, m0 - 1, 1);
+  const last = months[months.length - 1];
+  const domainEnd = Date.UTC(last.y, last.m - 1, daysInMonth(last.y, last.m)) + DAY_MS;
+
+  const byQuarter = months.length > 20;
+  const ticks = byQuarter
+    ? months.filter(t => (t.m - 1) % 3 === 0)
+    : months;
+  return { domainStart, domainEnd, ticks, byQuarter };
+}
+
+function ganttRow(stage, range, index, y, px, chartRight) {
+  const color = ownerColor(stage.owner);
+  const label = stage.timing?.trim() || formatRangeLabel(range);
+  let out = '';
+
+  if (index % 2 === 0) {
+    out += `<rect x="${GANTT.padX}" y="${y - 20}" width="${chartRight - GANTT.padX}" height="${GANTT.rowH - 8}" rx="5" fill="#FAFBFC"/>`;
+  }
+  const nameLines = wrapText(stage.name || 'Untitled stage', GANTT.labelW - 16, 14.5, 1);
+  out += `<text x="${GANTT.padX}" y="${y}" font-size="14.5" font-weight="800" fill="${SE_INK}">${esc(nameLines[0] || '')}</text>`;
+  out += `<text x="${GANTT.padX}" y="${y + 17}" font-size="10.5" font-weight="800" letter-spacing="0.7" fill="${color}">${esc(String(stage.owner || '').toUpperCase())}</text>`;
+
+  const x0 = px(isoToMs(range.start));
+  // Bars run to the END of their last day, so a one-week task reads as seven
+  // days wide rather than six.
+  const x1 = px(isoToMs(range.end) + DAY_MS);
+  const isMilestone = x1 - x0 < 14;
+
+  let labelX, anchor;
+  if (isMilestone) {
+    const cx = x0 + (x1 - x0) / 2;
+    out += `<path d="M${cx.toFixed(1)} ${y - 13}L${(cx + 12).toFixed(1)} ${y + 1}L${cx.toFixed(1)} ${y + 15}L${(cx - 12).toFixed(1)} ${y + 1}z" fill="${color}"/>`;
+    labelX = cx + 20; anchor = 'start';
+    if (labelX + label.length * 6.6 > chartRight) { labelX = cx - 20; anchor = 'end'; }
+  } else {
+    out += `<rect x="${x0.toFixed(1)}" y="${y - 11}" width="${(x1 - x0).toFixed(1)}" height="24" rx="5" fill="${color}" opacity="0.92"/>`;
+    labelX = x1 + 10; anchor = 'start';
+    if (labelX + label.length * 6.6 > chartRight) { labelX = x0 - 10; anchor = 'end'; }
+  }
+  if (label) {
+    out += `<text x="${labelX.toFixed(1)}" y="${y + 5}" text-anchor="${anchor}" font-size="12" font-weight="700" fill="${SE_SLATE}">${esc(label)}</text>`;
+  }
+  return out;
+}
+
+// Calendar-scaled view: one row per stage, bars for work with duration and
+// diamonds for point-in-time milestones, positioned on a real month axis.
+// Stages keep their table order rather than being sorted by date, so the
+// graphic always matches the rows above it.
+export function buildGanttSvg(template, { branded = true } = {}) {
+  const stages = Array.isArray(template?.stages) ? template.stages : [];
+  if (!stages.length) return null;
+
+  const dated = [];
+  const undated = [];
+  stages.forEach(stage => {
+    const range = getStageRange(stage);
+    if (range) dated.push({ stage, range });
+    else undated.push(stage);
+  });
+  if (!dated.length) return null;
+
+  const { domainStart, domainEnd, ticks, byQuarter } = ganttAxis(dated.map(d => d.range));
+  const tickW = Math.min(GANTT.maxTickW, Math.max(GANTT.minTickW, 1100 / Math.max(1, ticks.length)));
+  const chartW = Math.max(620, ticks.length * tickW);
+  const X0 = GANTT.padX + GANTT.labelW;
+  const width = X0 + chartW + GANTT.padX;
+  const chartRight = X0 + chartW;
+
+  const px = (ms) => X0 + ((ms - domainStart) / (domainEnd - domainStart)) * chartW;
+
+  // Unbranded (inside the report, which draws its own green band) there's no
+  // header to clear, so the rows start near the top instead of leaving a gap.
+  const rowsTop = branded ? GANTT.topY : 76;
+  const gridBottom = rowsTop + dated.length * GANTT.rowH - 12;
+  const noteY = gridBottom + 40;
+  const height = noteY + (undated.length ? 40 : 16);
+
+  let body = '';
+  // Axis ticks first, so the bars sit on top of the gridlines.
+  ticks.forEach((t, i) => {
+    const x = px(Date.UTC(t.y, t.m - 1, 1));
+    body += `<line x1="${x.toFixed(1)}" y1="${rowsTop - 34}" x2="${x.toFixed(1)}" y2="${gridBottom}" stroke="${SE_LINE}" stroke-width="1" stroke-dasharray="3 4"/>`;
+    const showYear = i === 0 || t.m === 1 || byQuarter;
+    const text = byQuarter
+      ? `Q${Math.floor((t.m - 1) / 3) + 1} ${t.y}`
+      : monthLabel(t.y, t.m, showYear);
+    body += `<text x="${(x + 8).toFixed(1)}" y="${rowsTop - 40}" font-size="11.5" font-weight="800" fill="${SE_MUTE}">${esc(text)}</text>`;
+  });
+  body += `<line x1="${GANTT.padX}" y1="${rowsTop - 30}" x2="${chartRight}" y2="${rowsTop - 30}" stroke="${SE_LINE}" stroke-width="1"/>`;
+
+  dated.forEach(({ stage, range }, i) => {
+    body += ganttRow(stage, range, i, rowsTop + i * GANTT.rowH, px, chartRight);
+  });
+
+  // "Today" only when it lands inside the charted window — a marker pinned to
+  // an edge would imply the timeline starts or ends now.
+  const todayMs = isoToMs(msToIso(Date.now()));
+  if (todayMs != null && todayMs >= domainStart && todayMs <= domainEnd) {
+    const x = px(todayMs);
+    body += `<line x1="${x.toFixed(1)}" y1="${rowsTop - 34}" x2="${x.toFixed(1)}" y2="${gridBottom}" stroke="${SE_GREEN}" stroke-width="1.6"/>`;
+    body += `<text x="${(x + 6).toFixed(1)}" y="${gridBottom + 14}" font-size="10.5" font-weight="800" fill="${SE_GREEN}">TODAY</text>`;
+  }
+
+  // Legend
+  let lx = GANTT.padX;
+  let legendSvg = '';
+  for (const owner of TIMELINE_STAGE_OWNERS) {
+    legendSvg += `<rect x="${lx}" y="${noteY - 9}" width="16" height="11" rx="3" fill="${ownerColor(owner)}"/>`;
+    legendSvg += `<text x="${lx + 22}" y="${noteY}" font-size="12" font-weight="700" fill="${SE_SLATE}">${esc(owner)}</text>`;
+    lx += 34 + owner.length * 7.2;
+  }
+  legendSvg += `<text x="${width - GANTT.padX}" y="${noteY}" text-anchor="end" font-size="11" fill="${SE_MUTE}">Bars show duration · diamonds are point-in-time milestones</text>`;
+  body += legendSvg;
+
+  // Never drop a stage silently: anything the parser couldn't place is named.
+  if (undated.length) {
+    const names = undated.map(s => s.name || 'Untitled stage').join(', ');
+    body += `<text x="${GANTT.padX}" y="${noteY + 26}" font-size="11.5" fill="${SE_MUTE}">Not shown — no readable dates: ${esc(names)}</text>`;
+  }
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="${esc(template?.name || 'Timeline')}" font-family="'Nunito Sans','Segoe UI',Arial,Helvetica,sans-serif">`
+    + `<rect x="0" y="0" width="${width}" height="${height}" fill="#FFFFFF"/>`
+    + (branded ? brandedHeader(template, width) : '')
+    + body
+    + `</svg>`;
+}
+
+// --- Milestone (the alternating-callout format) -------------------------
+
 // Build the timeline as an SVG string.
-//   template  — { name, services, stages: [{ name, owner, timing, description, icon }] }
+//   template  — { name, services, format, stages: [...] }
 //   options   — { branded } draws the title + Schneider lockup header band.
-// Returns null when the timeline has no stages to draw.
-export function buildTimelineSvg(template, { branded = true } = {}) {
+// Returns null when there's nothing to draw.
+export function buildMilestoneSvg(template, { branded = true } = {}) {
   const stages = Array.isArray(template?.stages) ? template.stages : [];
   if (!stages.length) return null;
 
@@ -217,20 +396,29 @@ export function buildTimelineSvg(template, { branded = true } = {}) {
     body += markerIcon(cx, axisY, stage, i);
   });
 
-  let header = '';
-  if (branded) {
-    const title = template?.name?.trim() || 'Timeline';
-    header += `<text x="${padX}" y="${LAYOUT.headerY}" font-size="24" font-weight="800" fill="${SE_INK}">${esc(title)}</text>`;
-    const services = (template?.services || []).join(' · ');
-    if (services) {
-      header += `<text x="${padX}" y="${LAYOUT.headerY + 21}" font-size="12.5" font-weight="600" fill="${SE_MUTE}">${esc(services)}</text>`;
-    }
-    header += `<g transform="translate(${width - padX - 172} 14)">${schneiderLogoSvg({ width: 172 })}</g>`;
-    header += `<line x1="${padX}" y1="${LAYOUT.headerY + 34}" x2="${width - padX}" y2="${LAYOUT.headerY + 34}" stroke="${SE_LINE}" stroke-width="1"/>`;
-  }
-
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="${esc(template?.name || 'Timeline')}" font-family="'Nunito Sans','Segoe UI',Arial,Helvetica,sans-serif">`
     + `<rect x="0" y="0" width="${width}" height="${height}" fill="#FFFFFF"/>`
-    + header + body + legend(width)
+    + (branded ? brandedHeader(template, width) : '')
+    + body + legend(width)
     + `</svg>`;
+}
+
+// --- Dispatch -----------------------------------------------------------
+
+// The layouts a timeline can render in. `format` on the template picks one;
+// every consumer (preview, SVG, PNG, report) goes through buildTimelineSvg so
+// they can never disagree about which one is current.
+export const TIMELINE_FORMATS = [
+  { key: 'gantt', label: 'Gantt', hint: 'Calendar-scaled — shows duration and overlap' },
+  { key: 'milestone', label: 'Milestone', hint: 'Evenly spaced markers above and below one line' },
+];
+
+export const DEFAULT_TIMELINE_FORMAT = 'gantt';
+
+export function buildTimelineSvg(template, opts = {}) {
+  const format = template?.format === 'milestone' ? 'milestone' : DEFAULT_TIMELINE_FORMAT;
+  if (format === 'milestone') return buildMilestoneSvg(template, opts);
+  // A Gantt with nothing datable would render as an empty grid; fall back to
+  // the milestone layout so the user still sees their stages.
+  return buildGanttSvg(template, opts) || buildMilestoneSvg(template, opts);
 }

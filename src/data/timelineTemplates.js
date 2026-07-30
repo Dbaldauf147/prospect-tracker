@@ -13,6 +13,7 @@ export const BUILTIN_TIMELINE_TEMPLATES = [
   {
     id: 'tl-budget',
     name: 'Budget timeline',
+    format: 'gantt',
     services: ['Budgets'],
     stages: [
       {
