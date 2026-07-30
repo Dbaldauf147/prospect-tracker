@@ -12,9 +12,12 @@
 // Browser-only: ExcelJS plus <canvas> for the logo, the same pairing the
 // compliance export already uses.
 
-import { schneiderLogoPngDataUrl, SE_GREEN_DARK } from './schneiderLogo.js';
-import { ownerColor } from './timelineGraphic.js';
-import { getStageRange, isoToMs, daysInMonth, monthLabel } from './timelineDates.js';
+import { schneiderLogoPngDataUrl, SE_GREEN_DARK, SE_GREEN } from './schneiderLogo.js';
+import { ownerColor, WORKSTREAM_COLOR } from './timelineGraphic.js';
+import {
+  getStageRange, isoToMs, daysInMonth, monthLabel,
+  timelineBaseMonth, getStageMonths, anchorPlus, todayMonthIndex,
+} from './timelineDates.js';
 
 const argb = (hex) => 'FF' + String(hex).replace('#', '').toUpperCase();
 const SE_DARK = argb(SE_GREEN_DARK);
@@ -107,6 +110,151 @@ function buildColumns(ranges) {
   return { cols, unit: 'quarter' };
 }
 
+// Shared brand band across the top of the Timeline sheet.
+function writeBandHeader(wb, ws, template, meta, ncols, logoCol) {
+  ws.mergeCells(1, 1, 1, Math.max(ncols, 6));
+  const title = ws.getCell(1, 1);
+  title.value = template?.name?.trim() || 'Timeline';
+  title.font = { name: FONT, bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+  title.fill = fill(SE_DARK);
+  title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  ws.getRow(1).height = 38;
+  try {
+    const logo = schneiderLogoPngDataUrl({ onDark: true, width: 175 });
+    const id = wb.addImage({ base64: logo.dataUrl, extension: 'png' });
+    ws.addImage(id, { tl: { col: logoCol, row: 0.14 }, ext: { width: logo.width, height: logo.height } });
+  } catch { /* canvas unavailable — skip the logo */ }
+
+  ws.mergeCells(2, 1, 2, Math.max(ncols, 6));
+  const sub = ws.getCell(2, 1);
+  const services = (template?.services || []).filter(Boolean).join(' · ');
+  const note = String(template?.note || '').trim();
+  sub.value = `${note || 'Engagement timeline'}${services ? ` — ${services}` : ''}${meta.generatedAt ? `   ·   Generated ${meta.generatedAt}` : ''}`;
+  sub.font = { name: FONT, italic: true, size: 10, color: { argb: SLATE } };
+  sub.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  ws.getRow(2).height = 18;
+}
+
+// Implementation layout in cells: phase names merged down column A, one row
+// per step, and the month grid to the right. Chips become filled cells
+// carrying the step number, so the numbering still lines up with the deck.
+function writePhasedSheet(wb, ws, template, meta) {
+  const stages = template.stages;
+  const baseMonth = timelineBaseMonth(stages);
+  const placed = stages.map(stage => ({ stage, ...getStageMonths(stage, baseMonth) }));
+  const needed = Math.max(...placed.map(p => p.month + p.span - 1), 1);
+  const monthCount = Math.max(
+    1,
+    Math.min(36, Number(template?.monthCount) > 0 ? Math.floor(template.monthCount) : Math.max(12, needed)),
+  );
+  const calendar = template?.monthMode === 'calendar';
+  const anchor = String(template?.anchorMonth || '').trim();
+  const todayCol = calendar ? todayMonthIndex(anchor, monthCount) : null;
+
+  const LEAD = 3; // Stages | Step | Workstream
+  const NCOLS = LEAD + monthCount;
+  ws.getColumn(1).width = 32;
+  ws.getColumn(2).width = 46;
+  ws.getColumn(3).width = 20;
+  for (let i = 0; i < monthCount; i += 1) ws.getColumn(LEAD + 1 + i).width = calendar ? 11 : 6;
+
+  writeBandHeader(wb, ws, template, meta, NCOLS, Math.max(3.2, NCOLS - (calendar ? 5 : 9)));
+
+  // Axis header.
+  const headRow = 4;
+  ['Stages', 'Step', 'Workstream'].forEach((label, i) => {
+    const cell = ws.getCell(headRow, i + 1);
+    cell.value = label;
+    cell.font = { name: FONT, bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+    cell.fill = fill(argb(SE_GREEN));
+    cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  });
+  for (let m = 1; m <= monthCount; m += 1) {
+    const cell = ws.getCell(headRow, LEAD + m);
+    const cal = calendar ? anchorPlus(anchor, m - 1) : null;
+    cell.value = cal ? monthLabel(cal.y, cal.m, m === 1 || cal.m === 1) : m;
+    cell.font = { name: FONT, bold: true, size: calendar ? 9 : 11, color: { argb: 'FFFFFFFF' } };
+    cell.fill = fill(m === todayCol ? argb('#0E7C36') : argb(SE_GREEN));
+    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+  }
+  ws.getRow(headRow).height = 22;
+
+  // One row per step; phase names merge down column A over their band.
+  let r = headRow + 1;
+  const bandStart = r;
+  let runPhase = null, runFrom = r;
+  const closeBand = (toRow) => {
+    if (runFrom <= toRow) {
+      if (toRow > runFrom) ws.mergeCells(runFrom, 1, toRow, 1);
+      const cell = ws.getCell(runFrom, 1);
+      cell.font = { name: FONT, bold: true, size: 11, color: { argb: INK } };
+      cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+      cell.border = { top: { style: 'thin', color: { argb: 'FF9AA5B1' } } };
+    }
+  };
+
+  stages.forEach((stage, i) => {
+    const pos = placed[i];
+    const phase = String(stage.phase || '').trim();
+    // Same grouping rule as the graphic: a step with no phase stands alone
+    // and borrows its own name, so column A is never blank.
+    const bandLabel = phase || stage.name || 'Untitled stage';
+    const sameBand = phase && phase === runPhase;
+    if (!sameBand) {
+      if (r > bandStart) closeBand(r - 1);
+      runPhase = phase || null;
+      runFrom = r;
+      ws.getCell(r, 1).value = bandLabel;
+    }
+
+    const stepCell = ws.getCell(r, 2);
+    stepCell.value = stage.name || 'Untitled stage';
+    stepCell.font = { name: FONT, size: 10, color: { argb: SLATE } };
+    stepCell.alignment = { vertical: 'middle', indent: 1 };
+
+    const color = argb(WORKSTREAM_COLOR[stage.owner] || WORKSTREAM_COLOR['Schneider Electric']);
+    const wsCell = ws.getCell(r, 3);
+    wsCell.value = stage.owner || '';
+    wsCell.font = { name: FONT, bold: true, size: 9.5, color: { argb: color } };
+    wsCell.alignment = { vertical: 'middle', indent: 1 };
+
+    for (let m = 1; m <= monthCount; m += 1) {
+      const cell = ws.getCell(r, LEAD + m);
+      if (m === todayCol) cell.fill = fill('FFEAF7EE');
+      if (m < pos.month || m > pos.month + pos.span - 1) continue;
+      cell.fill = fill(color);
+      if (m === pos.month) {
+        cell.value = i + 1;
+        cell.font = { name: FONT, bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+      }
+    }
+    ws.getRow(r).height = 20;
+    r += 1;
+  });
+  closeBand(r - 1);
+
+  ws.views = [{ state: 'frozen', xSplit: LEAD, ySplit: headRow, showGridLines: false }];
+
+  // Legend, naming the client workstream the way the graphic does.
+  r += 1;
+  const clientName = String(template?.clientName || '').trim() || 'Client';
+  ws.getCell(r, 1).value = 'Legend';
+  ws.getCell(r, 1).font = { name: FONT, bold: true, size: 9, color: { argb: SLATE } };
+  [[`${clientName.toUpperCase()} WORKSTREAM`, 'Client'], ['SE WORKSTREAM', 'Schneider Electric']].forEach(([label, owner], i) => {
+    const cell = ws.getCell(r, 2 + i);
+    cell.value = label;
+    cell.font = { name: FONT, bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
+    cell.fill = fill(argb(WORKSTREAM_COLOR[owner]));
+    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+  });
+  r += 1;
+  ws.getCell(r, 1).value = calendar
+    ? 'Numbers match the step order · the highlighted column is the current month'
+    : 'Numbers match the step order · columns are months from kickoff';
+  ws.getCell(r, 1).font = { name: FONT, italic: true, size: 9, color: { argb: MUTE } };
+}
+
 export async function exportTimelineXlsx(template, meta = {}) {
   const stages = Array.isArray(template?.stages) ? template.stages : [];
   if (!stages.length) return false;
@@ -115,6 +263,7 @@ export async function exportTimelineXlsx(template, meta = {}) {
   const wb = new Workbook();
   wb.creator = 'Prospect Tracker';
 
+  const phased = template?.format === 'phased';
   const rows = stages.map(stage => ({ stage, range: getStageRange(stage) }));
   const dated = rows.filter(r => r.range);
 
@@ -122,6 +271,12 @@ export async function exportTimelineXlsx(template, meta = {}) {
     properties: { tabColor: { argb: SE_DARK } },
     views: [{ showGridLines: false }],
   });
+
+  if (phased) {
+    writePhasedSheet(wb, ws, { ...template, stages }, meta);
+    writeStagesSheet(wb, rows, { phased, baseMonth: timelineBaseMonth(stages) });
+    return downloadWorkbook(wb, template);
+  }
 
   const LEAD = 3; // Stage | Owner | Timing
   const { cols, unit } = dated.length
@@ -137,35 +292,8 @@ export async function exportTimelineXlsx(template, meta = {}) {
   ws.getColumn(3).width = 17;
   cols.forEach((_, i) => { ws.getColumn(LEAD + 1 + i).width = timeWidth; });
 
-  let r = 1;
-
-  // --- brand band ---
-  ws.mergeCells(r, 1, r, Math.max(NCOLS, 6));
-  const title = ws.getCell(r, 1);
-  title.value = template?.name?.trim() || 'Timeline';
-  title.font = { name: FONT, bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
-  title.fill = fill(SE_DARK);
-  title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-  ws.getRow(r).height = 38;
-  try {
-    const logo = schneiderLogoPngDataUrl({ onDark: true, width: 175 });
-    const id = wb.addImage({ base64: logo.dataUrl, extension: 'png' });
-    // Anchored a couple of columns in from the right edge of the band.
-    ws.addImage(id, {
-      tl: { col: Math.max(3.2, NCOLS - (unit === 'week' ? 9 : 5)), row: r - 1 + 0.14 },
-      ext: { width: logo.width, height: logo.height },
-    });
-  } catch { /* canvas unavailable — skip the logo */ }
-  r += 1;
-
-  ws.mergeCells(r, 1, r, Math.max(NCOLS, 6));
-  const sub = ws.getCell(r, 1);
-  const services = (template?.services || []).filter(Boolean).join(' · ');
-  sub.value = `Engagement timeline${services ? ` — ${services}` : ''}${meta.generatedAt ? `   ·   Generated ${meta.generatedAt}` : ''}`;
-  sub.font = { name: FONT, italic: true, size: 10, color: { argb: SLATE } };
-  sub.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-  ws.getRow(r).height = 18;
-  r += 2;
+  writeBandHeader(wb, ws, template, meta, NCOLS, Math.max(3.2, NCOLS - (unit === 'week' ? 9 : 5)));
+  let r = 4;
 
   // --- axis header: group band over unit labels ---
   const groupRow = r, labelRow = r + 1;
@@ -287,9 +415,23 @@ export async function exportTimelineXlsx(template, meta = {}) {
     ws.getCell(r, 1).font = { name: FONT, italic: true, size: 9, color: { argb: 'FF92400E' } };
   }
 
-  // --- sheet 2: the flat table ---
+  writeStagesSheet(wb, rows, { phased: false });
+  return downloadWorkbook(wb, template);
+}
+
+// Sheet 2: the flat table. Phased timelines get the Phase / Month / Span
+// columns that drive their layout instead of a raw day count.
+function writeStagesSheet(wb, rows, { phased, baseMonth }) {
   const ds = wb.addWorksheet('Stages', { views: [{ showGridLines: false }] });
-  ds.columns = [
+  ds.columns = phased ? [
+    { header: '#', key: 'n', width: 5 },
+    { header: 'Phase', key: 'phase', width: 30 },
+    { header: 'Step', key: 'stage', width: 42 },
+    { header: 'Workstream', key: 'owner', width: 20 },
+    { header: 'Month', key: 'month', width: 9 },
+    { header: 'Span', key: 'span', width: 9 },
+    { header: 'Description', key: 'desc', width: 58 },
+  ] : [
     { header: '#', key: 'n', width: 5 },
     { header: 'Stage', key: 'stage', width: 30 },
     { header: 'Owner', key: 'owner', width: 20 },
@@ -307,7 +449,16 @@ export async function exportTimelineXlsx(template, meta = {}) {
     cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
   });
   rows.forEach(({ stage, range }, i) => {
-    const row = ds.addRow({
+    const months = phased ? getStageMonths(stage, baseMonth) : null;
+    const row = ds.addRow(phased ? {
+      n: i + 1,
+      phase: stage.phase || '',
+      stage: stage.name || 'Untitled stage',
+      owner: stage.owner || '',
+      month: months.month,
+      span: months.span,
+      desc: stage.description || '',
+    } : {
       n: i + 1,
       stage: stage.name || 'Untitled stage',
       owner: stage.owner || '',
@@ -324,14 +475,24 @@ export async function exportTimelineXlsx(template, meta = {}) {
       cell.border = { bottom: { style: 'hair', color: { argb: LINE } } };
       if (i % 2 === 1) cell.fill = fill(ZEBRA);
     });
-    row.getCell('owner').font = { name: FONT, bold: true, size: 10, color: { argb: argb(ownerColor(stage.owner)) } };
-    row.getCell('start').numFmt = 'm/d/yyyy';
-    row.getCell('end').numFmt = 'm/d/yyyy';
-    row.getCell('days').alignment = { vertical: 'middle', horizontal: 'center' };
+    const ownerArgb = argb(phased
+      ? (WORKSTREAM_COLOR[stage.owner] || WORKSTREAM_COLOR['Schneider Electric'])
+      : ownerColor(stage.owner));
+    row.getCell('owner').font = { name: FONT, bold: true, size: 10, color: { argb: ownerArgb } };
+    if (phased) {
+      row.getCell('month').alignment = { vertical: 'middle', horizontal: 'center' };
+      row.getCell('span').alignment = { vertical: 'middle', horizontal: 'center' };
+    } else {
+      row.getCell('start').numFmt = 'm/d/yyyy';
+      row.getCell('end').numFmt = 'm/d/yyyy';
+      row.getCell('days').alignment = { vertical: 'middle', horizontal: 'center' };
+    }
   });
-  ds.autoFilter = { from: { row: 1, column: 1 }, to: { row: rows.length + 1, column: 8 } };
+  ds.autoFilter = { from: { row: 1, column: 1 }, to: { row: rows.length + 1, column: ds.columns.length } };
   ds.views = [{ state: 'frozen', ySplit: 1, showGridLines: false }];
+}
 
+async function downloadWorkbook(wb, template) {
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);

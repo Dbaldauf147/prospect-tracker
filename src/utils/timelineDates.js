@@ -233,6 +233,46 @@ export function getStageMonths(stage, baseMonth) {
   };
 }
 
+// --- Calendar anchoring for the implementation format -------------------
+// A relative timeline ("month 1, month 2…") can be pinned to the calendar by
+// declaring which real month is month 1. Anchors are 'YYYY-MM' strings, the
+// same value an <input type="month"> produces.
+
+// The current month as an anchor string, for the "This month" button.
+export function currentMonthAnchor() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// Parse 'YYYY-MM' into { y, m }, or null.
+export function parseMonthAnchor(anchor) {
+  const m = /^(\d{4})-(\d{1,2})$/.exec(String(anchor || '').trim());
+  if (!m) return null;
+  const month = Number(m[2]);
+  if (month < 1 || month > 12) return null;
+  return { y: Number(m[1]), m: month };
+}
+
+// The calendar month `offset` months after an anchor (offset 0 = month 1).
+export function anchorPlus(anchor, offset) {
+  const base = parseMonthAnchor(anchor);
+  if (!base) return null;
+  const ord = base.y * 12 + (base.m - 1) + offset;
+  return { y: Math.floor(ord / 12), m: (ord % 12) + 1 };
+}
+
+// Which 1-based timeline month contains today, or null when today falls
+// outside the anchored window.
+export function todayMonthIndex(anchor, monthCount) {
+  const base = parseMonthAnchor(anchor);
+  if (!base) return null;
+  const now = new Date();
+  const nowOrd = now.getFullYear() * 12 + now.getMonth();
+  const baseOrd = base.y * 12 + (base.m - 1);
+  const index = nowOrd - baseOrd + 1;
+  return index >= 1 && index <= monthCount ? index : null;
+}
+
 // Month label for an axis tick: "Aug 2026", or just "Aug" when the year is
 // already established by an earlier tick.
 export function monthLabel(y, m, withYear) {
