@@ -364,7 +364,7 @@ function FindingsBox({ value, onSave, ariaLabel, disabled }) {
 
 // The right-hand column for one question / regulation: the user's reference
 // link stacked over the findings they recorded from it.
-function ReferenceCell({ url, findings, onSaveUrl, onSaveFindings, label, disabled }) {
+function ReferenceCell({ url, findings, onSaveUrl, onSaveFindings, label, disabled, shared }) {
   return (
     // Side by side: the link is a short fixed-width control, the notes box
     // takes the rest. Stacked, the two doubled every row's height for no
@@ -376,6 +376,7 @@ function ReferenceCell({ url, findings, onSaveUrl, onSaveFindings, label, disabl
           onSave={onSaveUrl}
           ariaLabel={`Reference URL for ${label}`}
           disabled={disabled}
+          shared={shared}
         />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -390,7 +391,11 @@ function ReferenceCell({ url, findings, onSaveUrl, onSaveFindings, label, disabl
   );
 }
 
-function ReferenceLink({ url, onSave, ariaLabel, disabled }) {
+// `shared` marks a link that belongs to the question rather than to the
+// company — the page you go to look the answer up. Saving one puts it on
+// every company's copy of that row, which is the point: the source doesn't
+// change from company to company, so nobody should have to re-paste it.
+function ReferenceLink({ url, onSave, ariaLabel, disabled, shared }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(url || '');
   useEffect(() => { setDraft(url || ''); }, [url]);
@@ -447,7 +452,12 @@ function ReferenceLink({ url, onSave, ariaLabel, disabled }) {
           title={url}
           style={{ fontSize: '0.62rem', color: 'var(--color-accent)', textDecoration: 'underline', textUnderlineOffset: '2px' }}
         >↗ {urlLabel(url)}</a>
-        <button type="button" onClick={() => setEditing(true)} title="Edit link" style={tiny}>✎</button>
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          title={shared ? 'Edit this shared link — it applies to every company' : 'Edit link'}
+          style={tiny}
+        >✎</button>
       </span>
     );
   }
@@ -456,7 +466,9 @@ function ReferenceLink({ url, onSave, ariaLabel, disabled }) {
     <button
       type="button"
       onClick={() => setEditing(true)}
-      title="Add a reference URL for this question"
+      title={shared
+        ? 'Add the page you look this up on — saved once and shown on every company'
+        : 'Add a reference URL for this question'}
       style={{ ...tiny, marginTop: '0.2rem', opacity: 0.75 }}
     >+ link</button>
   );
@@ -592,7 +604,7 @@ function answerSelectStyle(val, derived = false) {
 // california__sb-253: 'Yes', … }); `onSet(key, value)` persists one
 // answer. The "Research answers" button asks Claude (web search) to fill
 // the jurisdiction rows; `research` holds that run's rationale + sources.
-function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindings, caSiteCount = 0, revenue = '', employees = null, onSet, disabled, onResearch, researching, researchError, research }) {
+function JurisdictionScreening({ answers, links, onSetLink, sharedLinks, onSetSharedLink, findings, onSetFindings, caSiteCount = 0, revenue = '', employees = null, onSet, disabled, onResearch, researching, researchError, research }) {
   // Revenue drives the derived Applies? verdicts (SB 253 / SB 261). Parsed
   // once per render rather than per regulation row.
   const revenueLabel = String(revenue || '').trim();
@@ -881,13 +893,25 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                                 )}
                               </td>
                               <td style={td}>
+                                {/* A manual row is one somebody looks up, and
+                                    they look it up in the same place for every
+                                    company — so its link is shared, while the
+                                    findings beside it stay this company's. An
+                                    older per-company link still shows until a
+                                    shared one is saved over it, so nothing
+                                    already recorded disappears. */}
                                 <ReferenceCell
-                                  url={links?.[cKey] || ''}
+                                  url={row.source === 'manual'
+                                    ? (sharedLinks?.[cKey] || links?.[cKey] || '')
+                                    : (links?.[cKey] || '')}
                                   findings={findings?.[cKey] || ''}
-                                  onSaveUrl={(v) => onSetLink?.(cKey, v)}
+                                  onSaveUrl={(v) => (row.source === 'manual'
+                                    ? onSetSharedLink?.(cKey, v)
+                                    : onSetLink?.(cKey, v))}
                                   onSaveFindings={(v) => onSetFindings?.(cKey, v)}
                                   label={row.label}
                                   disabled={disabled}
+                                  shared={row.source === 'manual'}
                                 />
                               </td>
                             </tr>
@@ -1127,77 +1151,95 @@ function CaExcludedNote({ excluded }) {
 }
 
 
-// Compliance work left behind by a rename, and a way to put it back.
+// Compliance research filed against a company key no company on this page
+// carries. Usually that's simply another company, screened when a different
+// site list was loaded — the page shows one portfolio at a time, so most of
+// this list is history rather than a problem. It matters in one case: a
+// company renamed (the portfolio field retyped, a different Company Name
+// column mapped) files later work under the new name and leaves the earlier
+// work behind, and moving it across is how that's undone.
 //
-// A company is keyed by its normalized name, so retyping the portfolio
-// company (or mapping a different Company Name column) files everything
-// afterwards under a new key — the links, findings and answers recorded under
-// the old one are still saved but nothing reads them, which looks exactly like
-// the page having discarded them. This names what's stranded and moves it onto
-// whichever company on the page it belongs to.
-function StrandedResearchPanel({ stranded, companies, onReattach }) {
+// So it stays folded away by default and says what it is, rather than
+// announcing every company ever screened as though something had gone wrong.
+function OtherCompanyResearchPanel({ stranded, companies, onReattach }) {
+  const [open, setOpen] = useState(false);
   const [picks, setPicks] = useState({});
   if (companies.length === 0) return null;
   const only = companies.length === 1 ? companies[0].key : '';
   return (
     <div style={{
-      margin: '0 0 0.75rem', padding: '0.5rem 0.7rem',
-      border: '1px solid #FCD34D', borderRadius: 8, background: '#FFFBEB',
-      fontSize: 'var(--font-size-xs)', color: '#92400E',
+      margin: '0 0 0.6rem', fontSize: 'var(--font-size-xs)',
+      color: 'var(--color-text-muted)',
     }}>
-      <div style={{ fontWeight: 700, marginBottom: '0.3rem' }}>
-        Saved compliance research not attached to any company here
-      </div>
-      <div style={{ marginBottom: '0.4rem', lineHeight: 1.4 }}>
-        This was filed under a company name that no longer matches anything on
-        the page — renaming the portfolio company, or mapping a different
-        Company Name column, files later work under the new name and leaves the
-        earlier work behind. Nothing was deleted; move it back below.
-      </div>
-      {stranded.map((row) => {
-        const target = picks[row.key] || only;
-        return (
-          <div key={row.key} style={{
-            display: 'flex', alignItems: 'center', gap: '0.4rem',
-            flexWrap: 'wrap', padding: '0.2rem 0',
-          }}>
-            <strong style={{ color: 'var(--color-text)' }}>{row.key}</strong>
-            <span>— {describeStranded(row.parts)}</span>
-            <span>→</span>
-            <select
-              value={target}
-              onChange={(e) => setPicks(m => ({ ...m, [row.key]: e.target.value }))}
-              aria-label={`Move ${row.key} research to`}
-              style={{
-                fontSize: '0.68rem', fontFamily: 'inherit', padding: '0.1rem 0.25rem',
-                border: '1px solid var(--color-border)', borderRadius: 4,
-              }}
-            >
-              <option value="">Choose a company…</option>
-              {companies.map(c => <option key={c.key} value={c.key}>{c.name}</option>)}
-            </select>
-            <button
-              type="button"
-              disabled={!target}
-              onClick={() => {
-                const to = companies.find(c => c.key === target);
-                if (!to) return;
-                // Naming both ends: the move clears the old key, so picking
-                // the wrong company here isn't a click away from undoing.
-                if (!window.confirm(`Move the research saved under "${row.key}" (${describeStranded(row.parts)}) onto ${to.name}?\n\nAnything already recorded against ${to.name} is kept — this only fills in what's missing.`)) return;
-                onReattach(row.key, target);
-              }}
-              style={{
-                fontSize: '0.62rem', fontWeight: 700, fontFamily: 'inherit',
-                padding: '0.1rem 0.45rem', borderRadius: 4,
-                cursor: target ? 'pointer' : 'default',
-                border: '1px solid #FCA5A5', background: '#FFF1F2', color: '#991B1B',
-                opacity: target ? 1 : 0.5,
-              }}
-            >Move it here</button>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        style={{
+          fontSize: 'var(--font-size-xs)', fontFamily: 'inherit', padding: 0,
+          border: 'none', background: 'transparent', color: 'var(--color-text-muted)',
+          cursor: 'pointer', textAlign: 'left',
+        }}
+      >
+        {open ? '▾' : '▸'} Compliance research saved for {stranded.length} other{' '}
+        {stranded.length === 1 ? 'company' : 'companies'}
+        {open ? '' : ' — kept, not shown on this page'}
+      </button>
+      {open && (
+        <div style={{
+          marginTop: '0.35rem', padding: '0.45rem 0.6rem',
+          border: '1px solid var(--color-border-light)', borderRadius: 6,
+          background: 'var(--color-bg)',
+        }}>
+          <div style={{ marginBottom: '0.35rem', lineHeight: 1.4 }}>
+            Screened when a different site list was loaded, and kept for when it
+            comes back. Nothing here needs doing — unless one of them is a
+            company on this page under an old name, in which case move it over.
           </div>
-        );
-      })}
+          {stranded.map((row) => {
+            const target = picks[row.key] || only;
+            return (
+              <div key={row.key} style={{
+                display: 'flex', alignItems: 'center', gap: '0.4rem',
+                flexWrap: 'wrap', padding: '0.15rem 0',
+              }}>
+                <strong style={{ color: 'var(--color-text)' }}>{row.key}</strong>
+                <span>— {describeStranded(row.parts)}</span>
+                <select
+                  value={target}
+                  onChange={(e) => setPicks(m => ({ ...m, [row.key]: e.target.value }))}
+                  aria-label={`Move ${row.key} research to`}
+                  style={{
+                    fontSize: '0.68rem', fontFamily: 'inherit', padding: '0.1rem 0.25rem',
+                    border: '1px solid var(--color-border)', borderRadius: 4,
+                  }}
+                >
+                  <option value="">Move to…</option>
+                  {companies.map(c => <option key={c.key} value={c.key}>{c.name}</option>)}
+                </select>
+                <button
+                  type="button"
+                  disabled={!target}
+                  onClick={() => {
+                    const to = companies.find(c => c.key === target);
+                    if (!to) return;
+                    // Naming both ends: the move clears the old key, so a
+                    // wrong pick here isn't a click away from undoing.
+                    if (!window.confirm(`Move the research saved under "${row.key}" (${describeStranded(row.parts)}) onto ${to.name}?\n\nDo this only if they are the same company. Anything already recorded against ${to.name} is kept — this only fills in what's missing.`)) return;
+                    onReattach(row.key, target);
+                  }}
+                  style={{
+                    fontSize: '0.62rem', fontWeight: 700, fontFamily: 'inherit',
+                    padding: '0.1rem 0.45rem', borderRadius: 4,
+                    cursor: target ? 'pointer' : 'default',
+                    border: '1px solid var(--color-border)', background: 'var(--color-surface)',
+                    color: 'var(--color-text-muted)', opacity: target ? 1 : 0.5,
+                  }}
+                >Move</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -1302,6 +1344,16 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
   const setComplianceLink = useCallback((slug, key, url) => {
     if (!updateSettingsPath || !slug) return;
     updateSettingsPath({ [`companyComplianceLinks.${slug}.${key}`]: url || null });
+  }, [updateSettingsPath]);
+
+  // Reference links for the manual rows — the pages somebody goes to in order
+  // to answer them (the FTB sales-threshold page, a Secretary of State search).
+  // Those don't change from company to company, so they're filed by row key
+  // alone rather than under a company, and show on every card.
+  const sharedLinks = settings?.complianceReferenceLinks || {};
+  const setSharedLink = useCallback((key, url) => {
+    if (!updateSettingsPath || !key) return;
+    updateSettingsPath({ [`complianceReferenceLinks.${key}`]: url || null });
   }, [updateSettingsPath]);
 
   // Portfolio company field. Writes the shared setting SitesView reads to
@@ -1689,7 +1741,7 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
             {scanning && <span> · scanning lists…</span>}
           </div>
           {strandedResearch.length > 0 && (
-            <StrandedResearchPanel
+            <OtherCompanyResearchPanel
               stranded={strandedResearch}
               companies={companies.filter(c => c.key)}
               onReattach={reattachResearch}
@@ -1856,6 +1908,8 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                         findings={complianceFindings[c.key] || null}
                         onSetFindings={(fieldKey, text) => setComplianceFinding(c.key, fieldKey, text)}
                         onSetLink={(fieldKey, url) => setComplianceLink(c.key, fieldKey, url)}
+                        sharedLinks={sharedLinks}
+                        onSetSharedLink={setSharedLink}
                         caSiteCount={c.california}
                         // Prefills the CSRD Employee Count row.
                         employees={revenueResearch[revenueSlug(c.name)]?.employees ?? null}
