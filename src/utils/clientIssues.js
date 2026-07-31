@@ -309,24 +309,42 @@ function bfoLinkName(r) {
   const v = String(r?.['BFO Link'] || '').trim();
   return BFO_BLANK_SENTINELS.has(v.toLowerCase()) ? '' : v;
 }
+
+// Comparison key for a BFO Opportunity Name — trimmed, lower-cased,
+// internal whitespace collapsed. Same shape the Agents page uses, and
+// shared by both directions of the Opps ⇄ BFO Activity match so a stray
+// double space can't make one detector see a match and the other a miss.
+function normBfoOppName(s) {
+  return String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+// The BFO Activity tab's Opportunity Name / Account columns, or null when
+// the pasted data has no Opportunity Name column to match on.
+function bfoActivityColumns(bfoActivity) {
+  if (!bfoActivity?.headers?.length) return null;
+  const oppCol = bfoActivity.headers.find(h => /opportunity\s*name/i.test(h));
+  if (!oppCol) return null;
+  const acctCol = bfoActivity.headers.find(h => /^account(\s*name)?$/i.test(String(h).trim()))
+    || bfoActivity.headers.find(h => /account/i.test(h));
+  return { oppCol, acctCol };
+}
+
 function detectUntaggedBfoOppNames({ bfoActivity, oppsCache }) {
-  if (!bfoActivity?.headers?.length) return [];
+  const cols = bfoActivityColumns(bfoActivity);
+  if (!cols) return [];
+  const { oppCol, acctCol } = cols;
   const tagged = new Set();
   for (const r of (oppsCache?.records || [])) {
-    const k = bfoLinkName(r).toLowerCase();
+    const k = normBfoOppName(bfoLinkName(r));
     if (k) tagged.add(k);
   }
   if (tagged.size === 0) return [];
-  const oppCol = bfoActivity.headers.find(h => /opportunity\s*name/i.test(h));
-  if (!oppCol) return [];
-  const acctCol = bfoActivity.headers.find(h => /^account(\s*name)?$/i.test(String(h).trim()))
-    || bfoActivity.headers.find(h => /account/i.test(h));
   const seen = new Set();
   const issues = [];
   for (const row of bfoActivity.rows) {
     const raw = String(row[oppCol] || '').trim();
     if (!raw) continue;
-    const k = raw.toLowerCase();
+    const k = normBfoOppName(raw);
     if (tagged.has(k) || seen.has(k)) continue;
     seen.add(k);
     const account = acctCol ? String(row[acctCol] || '').trim() : '';
@@ -339,6 +357,68 @@ function detectUntaggedBfoOppNames({ bfoActivity, oppsCache }) {
       daysUntil: null,
       expirationDate: null,
       detail: `BFO Opportunity Name "${raw}" is not tagged to an opp on Opps${account ? ` — from ${account}` : ''}`,
+    });
+  }
+  return issues;
+}
+
+// ---- Active Opps whose BFO Opp Name isn't on the BFO Activity tab ----
+// Stages that mean the opp is closed (no longer active). Mirrors the
+// Agents page's CLOSED_OPP_STAGES so "active opp" means the same thing on
+// both pages.
+const CLOSED_OPP_STAGES = new Set(['sold', 'not sold']);
+
+// The mirror image of detectUntaggedBfoOppNames: an ACTIVE opp on the
+// Opps tab (Stage not Sold / Not Sold) carries a BFO Opportunity Name in
+// its "BFO Link" column that appears nowhere in the pasted BFO Activity
+// data. That means the tag on Opps points at a BFO opp that was renamed,
+// closed out, or never created — so the two sides have drifted apart.
+// One issue row per opp (not per name) so opps sharing a name can be
+// snoozed / actioned individually.
+//
+// Suppressed until the BFO Activity paste actually holds Opportunity
+// Names: with no Activity data (never pasted, or cleared) every tagged
+// opp would otherwise be flagged. Blank / "-" / "#N/A" BFO Link values
+// are skipped — those are the "no name yet" placeholders the New BFO Opp
+// flow handles, not a mismatch.
+function detectOppBfoNameNotInActivity({ bfoActivity, oppsCache, prospects = [] }) {
+  const cols = bfoActivityColumns(bfoActivity);
+  if (!cols) return [];
+  const activityNames = new Set();
+  for (const row of (bfoActivity.rows || [])) {
+    const k = normBfoOppName(row[cols.oppCol]);
+    if (k) activityNames.add(k);
+  }
+  if (activityNames.size === 0) return [];
+
+  // Normalized company → Table View prospect id, so the Issues row can
+  // link through to the account. First match wins, matching the lookup
+  // detectNewBfoMissingData uses.
+  const prospectIdByNorm = new Map();
+  for (const p of prospects) {
+    const norm = normalizeBfoCompany(p.company);
+    if (norm && !prospectIdByNorm.has(norm)) prospectIdByNorm.set(norm, p.id);
+  }
+
+  const issues = [];
+  for (const r of (oppsCache?.records || [])) {
+    const name = bfoLinkName(r);
+    if (!name) continue;
+    const stage = String(r.Stage || '').trim();
+    if (CLOSED_OPP_STAGES.has(stage.toLowerCase())) continue;
+    if (activityNames.has(normBfoOppName(name))) continue;
+    const account = String(r.Account || '').trim();
+    const scope = String(r.Scope || '').trim();
+    const context = [scope, stage].filter(Boolean).join(' · ');
+    issues.push({
+      id: `opp-bfo-name-missing:${r._id != null ? r._id : `${account}|${name}`}`,
+      source: 'Opps',
+      type: 'BFO Opp name not on Activity',
+      company: account || name,
+      prospectId: prospectIdByNorm.get(normalizeBfoCompany(account)) || null,
+      daysUntil: null,
+      expirationDate: null,
+      detail: `Active opp${context ? ` (${context})` : ''} is tagged to BFO Opportunity Name "${name}", which isn't on the BFO Activity tab — re-paste the latest BFO Activity export, or fix the name on Opps.`,
     });
   }
   return issues;
@@ -427,6 +507,7 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   issues.push(...detectMyAccountsFlags({ myAccountsFlags, prospects }));
   issues.push(...detectMarketingLeadStatuses({ marketingLeads }));
   issues.push(...detectUntaggedBfoOppNames({ bfoActivity, oppsCache }));
+  issues.push(...detectOppBfoNameNotInActivity({ bfoActivity, oppsCache, prospects }));
   issues.push(...detectNewBfoMissingData({ prospects, oppsCache, serviceOverrides }));
   return issues;
 }
