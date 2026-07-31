@@ -224,6 +224,41 @@ const BFO_ACTIVITY_KEY = 'current';
 // Closed stages don't belong in the live quoted pipeline buckets.
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
 
+// The three fields a rebuilt month end leans on: which bucket an opp falls in
+// (Chance?), whether it feeds Agreements Sent (Stage), and how much it puts
+// there (Quoted Amount). Opps 2 stamps each edit per field in
+// `_fieldUpdatedAt`, so a stamp later than the month end means the rebuild is
+// reading a value the opp did NOT carry at the time — the row is a suspect for
+// whatever gap the Totals check reports. The stamp records when a field
+// changed, not what it held before, so this can flag a row but never correct
+// it.
+const REBUILD_SENSITIVE_FIELDS = [
+  { label: 'Chance?', keys: ['Chance?', 'Chance'] },
+  { label: 'Stage', keys: ['Stage'] },
+  { label: 'Quoted Amount', keys: ['Quoted Amount'] },
+];
+
+const NOT_TRACKED = 'Not tracked — no edit history on this row';
+
+function changedSinceMonthEnd(record, monthEndMs) {
+  const stamps = record && typeof record._fieldUpdatedAt === 'object' && record._fieldUpdatedAt
+    ? record._fieldUpdatedAt : null;
+  if (!stamps) return { label: NOT_TRACKED, latest: null };
+  const hits = [];
+  let latest = null;
+  for (const field of REBUILD_SENSITIVE_FIELDS) {
+    for (const key of field.keys) {
+      const stamp = stamps[key];
+      if (Number.isFinite(stamp) && stamp > monthEndMs) {
+        hits.push(field.label);
+        if (latest == null || stamp > latest) latest = stamp;
+        break;
+      }
+    }
+  }
+  return { label: hits.length ? hits.join(', ') : 'No', latest };
+}
+
 function parseMoney(v) {
   if (v === null || v === undefined) return null;
   const s = String(v).replace(/[^0-9.-]/g, '');
@@ -1686,6 +1721,7 @@ export function YOYView() {
       // Closed at some unknown date: nothing places it in this month.
       if (closed && Number.isNaN(cts)) continue;
       const chance = String(r['Chance?'] ?? r['Chance'] ?? '').trim();
+      const changed = changedSinceMonthEnd(r, monthEndMs);
       const lower = chance.toLowerCase();
       const series =
         lower === 'weak' ? 'Quoted Weak'
@@ -1704,6 +1740,10 @@ export function YOYView() {
         'In the pipeline because': quotedKnown
           ? `Quoted ${quotedOn}, still open at month end`
           : 'No Quoted On date — open today, assumed open then',
+        // Which of the fields this rebuild depends on have been edited since
+        // the month end — i.e. how far to trust this row's bucket.
+        'Changed since month end': changed.label,
+        'Changed on': changed.latest ? new Date(changed.latest).toISOString().slice(0, 10) : '',
         'Open Year': parseYear(r['Open Year']) ?? '',
         'Quoted On': quotedOn,
         'Close Date': closeDate,
@@ -1770,6 +1810,35 @@ export function YOYView() {
       'Difference ($K)': plotted == null ? '' : Math.round((fromOpps - plotted) * 10) / 10,
     }));
   }
+  // How much of a rebuilt month sits on rows the rebuild can't vouch for.
+  // Groups the attached rows by what has been edited since the month end and
+  // totals the quoted $ on each group, so the gap the Totals check reports can
+  // be sized against the rows that could explain it. Rows stamped as changed
+  // are the prime suspects; "Not tracked" rows are unknowable either way.
+  function quotedChangedSummary(opps) {
+    const groups = new Map();
+    for (const o of opps) {
+      const label = o['Changed since month end'] || NOT_TRACKED;
+      const g = groups.get(label) || { rows: 0, amount: 0 };
+      g.rows += 1;
+      g.amount += Number(o['Quoted Amount ($)']) || 0;
+      groups.set(label, g);
+    }
+    // Changed rows first (they're the ones to look at), "No" last.
+    const order = (label) => (label === 'No' ? 2 : label === NOT_TRACKED ? 1 : 0);
+    return [...groups.entries()]
+      .sort((a, b) => order(a[0]) - order(b[0]) || b[1].amount - a[1].amount)
+      .map(([label, g]) => ({
+        'Changed since month end': label,
+        'Opp rows': g.rows,
+        'Quoted $K on those rows': Math.round(g.amount / 100) / 10,
+        'What it means': label === 'No'
+          ? 'Untouched since the month end — this row sat in the same bucket then.'
+          : label === NOT_TRACKED
+            ? 'Imported row with no edit history, so nothing says whether it moved. Treat as unknown.'
+            : 'Edited since the month end, so the rebuild is reading a value this opp did not carry then. The old value is not recorded — only that it changed.',
+      }));
+  }
   // Where each series comes from, spelled out in the workbook — the chart
   // mixes a live compute with recorded snapshots, so "which rows made this
   // number" has a different answer per month. `row` narrows the note to the
@@ -1802,6 +1871,11 @@ export function YOYView() {
             ? 'This month was never captured live, so both the plotted figures and these rows are reconstructions from the Opps data — the opps quoted by that month end that hadn\'t closed yet, carrying today\'s Chance? and Stage. They were reconstructed at different moments, so any Opps edit in between shows up on the Totals check sheet. Months captured live from now on carry their own rows and tie exactly.'
             : 'This month is a recorded month-end snapshot from before the opp rows were kept, so the rows behind it were never stored. The attached rows are rebuilt from today\'s Opps data — quoted by that month end, not yet closed — and carry today\'s Chance? and Stage. Opps edited, re-graded or deleted since won\'t tie back exactly; the Totals check sheet shows the gap. Months captured from now on carry their own rows and tie exactly.',
         'Raw rows in this file': 'Totals check',
+      });
+      notes.push({
+        Series: 'Which rebuilt rows to trust',
+        'Where the number comes from': 'Every attached row carries a "Changed since month end" column — whether its Chance?, Stage or Quoted Amount has been edited since, from the per-field edit stamps Opps 2 keeps. A stamped row is one the rebuild is reading today\'s value for, so it is a suspect for the gap on the Totals check. The stamps record when a field changed, not what it held before, so a flagged row can be identified but not corrected. "Changed since" totals the quoted $ per group.',
+        'Raw rows in this file': 'Changed since',
       });
     }
     if (!row) {
@@ -1839,6 +1913,9 @@ export function YOYView() {
     appendSheet(wb, `${row.month} ${row.year}`, [quotedSummaryRow(row)]);
     appendSheet(wb, oppSheet, opps);
     appendSheet(wb, 'Totals check', quotedTotalsCheck(row, opps));
+    // Only a rebuild needs the changed-since breakdown — captured rows carry
+    // the values they had at the time, and the live month has no "since".
+    if (!row._live && !useCaptured) appendSheet(wb, 'Changed since', quotedChangedSummary(opps));
     if (row._live) appendSheet(wb, 'BFO Activity', bfoActivityRows());
     else if (useCapturedBfo) appendSheet(wb, 'BFO Activity (captured)', entry.bfoRows);
     appendSheet(wb, 'Notes', quotedNotesRows(row, { entry, useCaptured, useCapturedBfo }));
