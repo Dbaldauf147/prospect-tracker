@@ -2643,11 +2643,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   // the first contact list for each empty account. Lives on this
   // view so we have direct access to filteredAccounts — no more
   // localStorage round-trip.
-  function downloadAccountsWithoutContacts() {
-    if (filteredAccounts.length === 0) {
-      alert('There are no accounts in the current view.');
-      return;
-    }
+  // Both Zoom CSVs are the same four columns matched the same way — Company
+  // plus the Zoom ID / name / website pulled off the matching prospect. Only
+  // the set of accounts differs, so the building and downloading lives here
+  // and each button just decides which rows to hand over.
+  function downloadZoomCsv(accounts, filename) {
     const CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
     const norm = s => String(s || '')
       .toLowerCase()
@@ -2667,21 +2667,9 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       if (k && !prospectByNorm.has(k)) prospectByNorm.set(k, p);
     }
 
-    // Use the same contact count the Contacts column shows (matches by
-    // company-name index across divisions AND by email domain, de-duped by
-    // contact ID). The previous exact-normalized-company-text match was
-    // stricter than the column, so accounts whose contacts only matched by
-    // domain or by a differently-worded Company field (e.g. PNC) were
-    // wrongly listed as having no contacts.
-    const empty = filteredAccounts.filter(a => (a.contactCount || 0) === 0);
-    if (empty.length === 0) {
-      alert('Every company in the current My Accounts view already has at least one HubSpot contact.');
-      return;
-    }
-
     const header = ['Company', 'Zoom Company ID', 'Zoom Company Name', 'Zoom Website'];
     const rows = [header];
-    for (const a of empty) {
+    for (const a of accounts) {
       const p = prospectByNorm.get(norm(a.company));
       rows.push([
         a.company || '',
@@ -2699,11 +2687,40 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `my-accounts-no-contacts-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }
+
+  function downloadAccountsWithoutContacts() {
+    if (filteredAccounts.length === 0) {
+      alert('There are no accounts in the current view.');
+      return;
+    }
+    // Use the same contact count the Contacts column shows (matches by
+    // company-name index across divisions AND by email domain, de-duped by
+    // contact ID). The previous exact-normalized-company-text match was
+    // stricter than the column, so accounts whose contacts only matched by
+    // domain or by a differently-worded Company field (e.g. PNC) were
+    // wrongly listed as having no contacts.
+    const empty = filteredAccounts.filter(a => (a.contactCount || 0) === 0);
+    if (empty.length === 0) {
+      alert('Every company in the current My Accounts view already has at least one HubSpot contact.');
+      return;
+    }
+    downloadZoomCsv(empty, `my-accounts-no-contacts-${new Date().toISOString().slice(0, 10)}.csv`);
+  }
+
+  // Same CSV, cut to the accounts still being worked by inside sales.
+  function downloadZoomExport() {
+    const insideSales = filteredAccounts.filter(a => a.status === 'Inside Sales');
+    if (insideSales.length === 0) {
+      alert('No accounts in the current view have a status of Inside Sales.');
+      return;
+    }
+    downloadZoomCsv(insideSales, `my-accounts-inside-sales-${new Date().toISOString().slice(0, 10)}.csv`);
   }
 
   // All company names from Target Accounts file (not just Dan Baldauf's)
@@ -3267,6 +3284,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           title="Download a CSV of the accounts in the current view that have no HubSpot contacts yet, with their Zoom / website data from Table View"
           style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-accent)', whiteSpace: 'nowrap' }}
         >⇩ Accounts w/o contacts</button>
+        <button
+          onClick={downloadZoomExport}
+          title="Download a CSV of the accounts in the current view whose status is Inside Sales, with their Zoom / website data from Table View"
+          style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-accent)', whiteSpace: 'nowrap' }}
+        >⇩ Zoom Export</button>
         <button
           onClick={applyAllTierFlags}
           disabled={tierSyncRunning || tierFlagged.length === 0}
