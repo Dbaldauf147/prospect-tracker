@@ -1581,16 +1581,120 @@ export function YOYView() {
       return out;
     });
   }
+  // Opp-level rows behind one month's figures.
+  //
+  // The live month is a straight read of today's pipeline — the same rows the
+  // chart sums. A past month is a recorded snapshot with no opp rows kept
+  // behind it, so this rebuilds the pipeline as it stood at that month end
+  // out of today's Opps data: every opp carrying a quoted amount that had
+  // been quoted by then and hadn't closed yet. Chance? and Stage are today's
+  // values, so an opp re-graded or advanced since is counted where it sits
+  // now — the totals land close to the recorded figures rather than on them,
+  // and the Totals check sheet shows by how much.
+  function quotedMonthOpps(monthKey, isLive) {
+    if (isLive) return contributingRecords.quotedSource;
+    const m = /^(\d{4})-(\d{2})$/.exec(String(monthKey || ''));
+    if (!m) return [];
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    // Last day of the month, end of day — the month-end the snapshot recorded.
+    const monthEndMs = Date.UTC(y, mo, 0) + 86399999;
+    const out = [];
+    for (const r of records) {
+      const amt = parseMoney(r['Quoted Amount']) || 0;
+      if (!amt) continue;
+      const stage = String(r.Stage || '').trim();
+      const closed = CLOSED_STAGES.has(stage);
+      const quotedOn = r['Quoted On'] || r['Quoted Date'] || '';
+      const closeDate = r['Close Date'] || '';
+      const qts = Date.parse(quotedOn);
+      const cts = Date.parse(closeDate);
+      const quotedKnown = !Number.isNaN(qts);
+      // Quoted after this month end — it wasn't in the pipeline yet.
+      if (quotedKnown && qts > monthEndMs) continue;
+      // Closed on or before this month end — it had already left.
+      if (closed && !Number.isNaN(cts) && cts <= monthEndMs) continue;
+      // Closed at some unknown date: nothing places it in this month.
+      if (closed && Number.isNaN(cts)) continue;
+      const chance = String(r['Chance?'] ?? r['Chance'] ?? '').trim();
+      const lower = chance.toLowerCase();
+      const series =
+        lower === 'weak' ? 'Quoted Weak'
+        : lower === 'ok' ? 'Quoted OK'
+        : lower === 'expected' ? 'Quoted Expected'
+        : '';
+      out.push({
+        Account: String(r.Account || '').trim(),
+        Stage: stage,
+        Status: String(r.Status || '').trim(),
+        'Chance?': chance,
+        'Quoted Amount ($)': amt,
+        'Quoted Amount ($K)': Math.round(amt / 100) / 10,
+        'Chart Series': series || '(no Chance — feeds no bucket)',
+        'Feeds Agreements Sent': stage === 'Agreement Sent' ? 'Yes' : 'No',
+        'In the pipeline because': quotedKnown
+          ? `Quoted ${quotedOn}, still open at month end`
+          : 'No Quoted On date — open today, assumed open then',
+        'Open Year': parseYear(r['Open Year']) ?? '',
+        'Quoted On': quotedOn,
+        'Close Date': closeDate,
+        Scope: String(r.Scope || '').trim(),
+      });
+    }
+    const ORDER = ['Quoted Weak', 'Quoted OK', 'Quoted Expected'];
+    out.sort((a, b) => {
+      const ia = ORDER.indexOf(a['Chart Series']);
+      const ib = ORDER.indexOf(b['Chart Series']);
+      return (ia < 0 ? ORDER.length : ia) - (ib < 0 ? ORDER.length : ib)
+        || b['Quoted Amount ($)'] - a['Quoted Amount ($)']
+        || a.Account.localeCompare(b.Account);
+    });
+    return out;
+  }
+  // What the attached opp rows add up to, against what the chart plots. On the
+  // live month the two agree; on a past month the gap is what has changed in
+  // the Opps data since the snapshot was recorded.
+  function quotedTotalsCheck(row, opps) {
+    const sumK = (pick) => {
+      const total = opps.reduce((n, o) => n + (pick(o) ? Number(o['Quoted Amount ($)']) : 0), 0);
+      return total ? Math.round(total / 100) / 10 : 0;
+    };
+    const series = [
+      ['Quoted Weak', row.weak, sumK(o => o['Chart Series'] === 'Quoted Weak')],
+      ['Quoted OK', row.ok, sumK(o => o['Chart Series'] === 'Quoted OK')],
+      ['Quoted Expected', row.expected, sumK(o => o['Chart Series'] === 'Quoted Expected')],
+      ['Agreements Sent', row.agreements, sumK(o => o['Feeds Agreements Sent'] === 'Yes')],
+    ];
+    return series.map(([name, plotted, fromOpps]) => ({
+      Series: name,
+      'Plotted ($K)': plotted ?? '',
+      'These opp rows ($K)': fromOpps,
+      'Difference ($K)': plotted == null ? '' : Math.round((fromOpps - plotted) * 10) / 10,
+    }));
+  }
   // Where each series comes from, spelled out in the workbook — the chart
   // mixes a live compute with recorded snapshots, so "which rows made this
-  // number" has a different answer per month.
-  function quotedNotesRows() {
-    return [
-      { Series: 'Quoted Weak / OK / Expected', 'Where the number comes from': 'Sum of Quoted Amount on open (non-Sold/Not Sold/Closed/Lost) opps, split by the Chance? column. Divided by 1,000 for the $K axis.', 'Raw rows in this file': 'Live Opps (source rows)' },
-      { Series: 'Agreements Sent', 'Where the number comes from': 'Sum of Quoted Amount on open opps whose Stage is "Agreement Sent" — the same $ also sits in its Chance bucket.', 'Raw rows in this file': 'Live Opps (source rows)' },
-      { Series: 'BFO Pipe Total', 'Where the number comes from': 'Sum of the Amount column across every row pasted into BFO Activity. Plotted on the right-hand axis.', 'Raw rows in this file': 'Live BFO Activity' },
-      { Series: 'Past months', 'Where the number comes from': 'Month-end snapshots — the figures captured at the time (auto-captured, seeded, or typed via "Edit values"). The per-opp rows behind a closed month are not retained, so only the recorded values are available.', 'Raw rows in this file': 'Recorded Months (store)' },
+  // number" has a different answer per month. `row` narrows the note to the
+  // pinned month when the export is for one.
+  function quotedNotesRows(row) {
+    const live = row ? !!row._live : null;
+    const oppSheet = row ? (live ? 'Opps (live pipeline)' : 'Opps (as of month end)') : 'Live Opps (source rows)';
+    const notes = [
+      { Series: 'Quoted Weak / OK / Expected', 'Where the number comes from': 'Sum of Quoted Amount on open (non-Sold/Not Sold/Closed/Lost) opps, split by the Chance? column. Divided by 1,000 for the $K axis.', 'Raw rows in this file': oppSheet },
+      { Series: 'Agreements Sent', 'Where the number comes from': 'Sum of Quoted Amount on open opps whose Stage is "Agreement Sent" — the same $ also sits in its Chance bucket.', 'Raw rows in this file': oppSheet },
+      { Series: 'BFO Pipe Total', 'Where the number comes from': 'Sum of the Amount column across every row pasted into BFO Activity. Plotted on the right-hand axis.', 'Raw rows in this file': live === false ? 'Not available — BFO Activity is only cached for now' : 'BFO Activity' },
     ];
+    if (live === false) {
+      notes.push({
+        Series: 'How this month\'s opp rows were built',
+        'Where the number comes from': 'This month is a recorded month-end snapshot; the opp rows behind it were never stored. The attached rows are rebuilt from today\'s Opps data — quoted by that month end, not yet closed — and carry today\'s Chance? and Stage. Opps edited, re-graded or deleted since won\'t tie back exactly; the Totals check sheet shows the gap.',
+        'Raw rows in this file': 'Totals check',
+      });
+    }
+    if (!row) {
+      notes.push({ Series: 'Past months', 'Where the number comes from': 'Month-end snapshots — the figures captured at the time (auto-captured, seeded, or typed via "Edit values"). Pin a month on the chart and use its ⬇ Excel button for the opp rows behind that month.', 'Raw rows in this file': 'Recorded Months (store)' });
+    }
+    return notes;
   }
   function downloadQuoted() {
     const wb = XLSX.utils.book_new();
@@ -1601,17 +1705,19 @@ export function YOYView() {
     appendSheet(wb, 'Notes', quotedNotesRows());
     XLSX.writeFile(wb, `yoy-quoted-projections-${currentYear}-${todayStamp()}.xlsx`);
   }
-  // Excel for a single pinned month: its plotted values, plus the raw opp
-  // and BFO rows it's summed from when that month is the live one.
+  // Excel for a single pinned month: its plotted values and the opp rows
+  // behind them — today's pipeline for the live month, the pipeline rebuilt
+  // as it stood at month end for a past one — plus a totals check tying the
+  // rows back to the plotted figures.
   function exportQuotedMonth(row) {
     if (!row || !row.monthKey) return;
+    const opps = quotedMonthOpps(row.monthKey, row._live);
     const wb = XLSX.utils.book_new();
     appendSheet(wb, `${row.month} ${row.year}`, [quotedSummaryRow(row)]);
-    if (row._live) {
-      appendSheet(wb, 'Live Opps (source rows)', contributingRecords.quotedSource);
-      appendSheet(wb, 'Live BFO Activity', bfoActivityRows());
-    }
-    appendSheet(wb, 'Notes', quotedNotesRows());
+    appendSheet(wb, row._live ? 'Opps (live pipeline)' : 'Opps (as of month end)', opps);
+    appendSheet(wb, 'Totals check', quotedTotalsCheck(row, opps));
+    if (row._live) appendSheet(wb, 'BFO Activity', bfoActivityRows());
+    appendSheet(wb, 'Notes', quotedNotesRows(row));
     XLSX.writeFile(wb, `yoy-quoted-projections-${row.monthKey}-${todayStamp()}.xlsx`);
   }
   function downloadCloseRate() {
@@ -2314,7 +2420,7 @@ function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload, onE
                   note: row._live
                     ? 'Live — computed now from Opps (quoted $ by Chance / Agreements Sent) + BFO Activity (Pipe Total). Pin this point and hit ⬇ Excel for the opp-level rows behind it. Use “Edit values” to record a fixed month-end snapshot.'
                     : (row._hasData
-                        ? 'Recorded month-end snapshot — “Download .xlsx” carries the stored values plus the current live source rows.'
+                        ? 'Recorded month-end snapshot — pin this point and hit ⬇ Excel for the opp rows rebuilt as the pipeline stood at that month end.'
                         : 'No values recorded for this month yet.'),
                 })}
               />
