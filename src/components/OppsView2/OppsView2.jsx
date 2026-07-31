@@ -305,6 +305,28 @@ function findCloseDerivedColumns(headers) {
   return { yearCols, monthCols };
 }
 
+// Once an opp reaches Contracting or Agreement Sent the deal is as good
+// as won, so "Chance?" stops being a judgement call — it's Expected.
+// Leaving a stale "OK" behind (Edward Jones sitting in Contracting at OK)
+// understates the pipeline everywhere Chance? is read, so we stamp it on
+// the stage move and heal rows that were already parked in those stages.
+const EXPECTED_CHANCE_STAGES = new Set(['contracting', 'agreement sent']);
+const EXPECTED_CHANCE = 'Expected';
+
+// Resolve the Chance? column name. The sheet ships it as "Chance?" but
+// older imports carry the bare "Chance" label, which is why every read
+// site falls back to it — write whichever key the row (or the header set)
+// actually uses so the auto-stamp lands where the app reads it.
+const CHANCE_RE = /^chance\??$/;
+function findChanceColumn(headers, row) {
+  if (row && 'Chance?' in row) return 'Chance?';
+  if (row && 'Chance' in row) return 'Chance';
+  for (const h of (headers || [])) {
+    if (CHANCE_RE.test(String(h || '').trim().toLowerCase())) return h;
+  }
+  return 'Chance?';
+}
+
 // Days-in-Stage constants + board live in ./daysInStage so the PE
 // Portfolio page can render the identical board over its PE-scoped opps.
 // TRACKED_STAGES, TRACKED_STAGES_SET, PULL_THROUGH_RE, stageActionFor,
@@ -7646,6 +7668,18 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       const { yearCols, monthCols } = findCloseDerivedColumns(dataRef.current?.headers);
       closeClear = { yearCols, monthCols };
     }
+    // When the Stage flips TO "Contracting" or "Agreement Sent", stamp
+    // Chance? as "Expected" (see EXPECTED_CHANCE_STAGES). Computed here so
+    // it can be snapshotted for undo and applied in the mapper below, and
+    // skipped when the row already reads Expected so we don't churn the
+    // field-level sync stamps on a no-op.
+    let chanceStamp = null;
+    if (stageChanged && EXPECTED_CHANCE_STAGES.has(newStageNorm)) {
+      const col = findChanceColumn(dataRef.current?.headers, row);
+      if (String(row?.[col] ?? '').trim() !== EXPECTED_CHANCE) {
+        chanceStamp = { col, value: EXPECTED_CHANCE };
+      }
+    }
     if (row) {
       const snap = (f) => ({ field: f, hadField: f in row, prevValue: f in row ? row[f] : undefined });
       const fields = [snap(field)];
@@ -7664,6 +7698,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         fields.push(snap('_stageEnteredAt'));
         fields.push(snap('_stageHistory'));
       }
+      // Snapshot the auto-stamped Chance? so one undo of the Contracting /
+      // Agreement Sent move restores the prior value alongside the Stage.
+      if (chanceStamp) fields.push(snap(chanceStamp.col));
       // No Further Action Today flips track when the row was marked
       // (see `_nfatSetAt`) so the daily start-of-day auto-clear can
       // tell yesterday's leftovers from today's marks. Snapshot it
@@ -7722,6 +7759,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             for (const c of closeClear.yearCols) next[c] = '';
             for (const c of closeClear.monthCols) next[c] = '';
           }
+          // Stamp Chance? = Expected on a move into Contracting /
+          // Agreement Sent (computed above).
+          if (chanceStamp) next[chanceStamp.col] = chanceStamp.value;
           // Stamp the stage-entry date whenever Stage flips to a new
           // value so Days-in-Stage measures "time since the last move"
           // rather than the row's age. We also push a history entry
@@ -7926,6 +7966,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             for (const c of closeDerivedCols.yearCols) next[c] = '';
             for (const c of closeDerivedCols.monthCols) next[c] = '';
           }
+          // Mirror the single-row updater: a bulk Stage move INTO
+          // Contracting / Agreement Sent stamps Chance? as "Expected".
+          if (
+            stamp
+            && EXPECTED_CHANCE_STAGES.has(newStageNorm)
+            && String(r['Stage'] ?? '') !== String(value ?? '')
+          ) {
+            next[findChanceColumn(prev?.headers, r)] = EXPECTED_CHANCE;
+          }
           // Track when No-Further-Action-Today gets flipped via the
           // mass-edit bar, same as the single-row updater. The 2 PM
           // Eastern sweep needs the stamp to decide what to clear.
@@ -8009,6 +8058,36 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     const t = window.setInterval(tick, 60_000);
     return () => window.clearInterval(t);
   }, [hydrated, nfatSchedules, clearNfat, saveNfatSchedules]);
+
+  // Heal opps already parked in Contracting / Agreement Sent with a stale
+  // Chance? (an "OK" that predates the auto-stamp, or a fresh sheet
+  // import that carried one in) so the rule holds for the whole book, not
+  // just rows edited from here on. Runs once per load, after hydration, so
+  // it patches the reconciled dataset rather than the cache paint — and so
+  // a deliberate override made during the session isn't snapped back
+  // under the user mid-edit. `_rowUpdatedAt` / `_fieldUpdatedAt` are
+  // bumped so the healed value wins the cross-device merge.
+  const expectedChanceHealedRef = useRef(false);
+  useEffect(() => {
+    if (!hydrated || expectedChanceHealedRef.current) return;
+    expectedChanceHealedRef.current = true;
+    setData(prev => {
+      const rs = prev?.records || [];
+      let touched = false;
+      const next = rs.map(r => {
+        if (!EXPECTED_CHANCE_STAGES.has(String(r?.['Stage'] ?? '').trim().toLowerCase())) return r;
+        const col = findChanceColumn(prev?.headers, r);
+        if (String(r?.[col] ?? '').trim() === EXPECTED_CHANCE) return r;
+        touched = true;
+        const now = Date.now();
+        const copy = { ...r, [col]: EXPECTED_CHANCE, _rowUpdatedAt: now };
+        copy._fieldUpdatedAt = stampChangedFields(r, copy, now);
+        return copy;
+      });
+      if (!touched) return prev;
+      return { ...prev, records: next };
+    });
+  }, [hydrated]);
 
   const headers = data?.headers || [];
   const columnLinks = data?.columnLinks || {};

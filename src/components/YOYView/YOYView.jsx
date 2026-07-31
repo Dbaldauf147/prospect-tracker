@@ -16,6 +16,7 @@ import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
 import { asNumber, dealYear } from '../../utils/dealsFormat';
 import {
   loadQuotedProjections, saveQuotedProjections, QUOTED_FIELDS, QUOTED_HISTORICAL_SEED,
+  juneRebuildDone, markJuneRebuildDone,
 } from '../../utils/quotedProjectionsStore';
 import {
   saveQuotedMonthRows, loadQuotedMonthRows, loadAllQuotedMonthRows,
@@ -254,6 +255,16 @@ function currentMonthKey(nowMs = Date.now()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+// The Quoted Projections fiscal year (Dec → Nov) `nowMs` falls in, named
+// by the calendar year it ends in. December already belongs to the *next*
+// fiscal year — without this the chart would keep showing last year's
+// Dec→Nov window all through December, leaving the in-progress month with
+// no slot to plot into or auto-capture.
+function quotedFiscalYear(nowMs = Date.now()) {
+  const d = new Date(nowMs);
+  return d.getMonth() === 11 ? d.getFullYear() + 1 : d.getFullYear();
+}
+
 function parseYear(v) {
   // Pull the first standalone 4-digit year out of the value. This keeps
   // plain "2026" working while still recognising date-formatted Open Year
@@ -289,6 +300,7 @@ function parseDateYear(v) {
 function quotedStoredSource(key, saved) {
   if (!saved) return 'No values recorded';
   if (saved._auto) return 'Auto-captured month-end snapshot (Opps + BFO Activity)';
+  if (saved._rebuilt) return 'Rebuilt from Opps as the pipeline stood at month end';
   const seed = QUOTED_HISTORICAL_SEED[key];
   if (seed && QUOTED_FIELDS.every(f => Number(seed[f]) === Number(saved[f]))) {
     return 'Seeded history (supplied figures)';
@@ -307,8 +319,9 @@ function quotedValueSource(row, quotedTable) {
 
 const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-// June 2026 was never captured before the month-end auto-persist existed,
-// leaving a gap on the chart. It's backfilled once with today's live values.
+// June 2026 was never captured before the month-end auto-persist existed. Its
+// first fill was a stand-in copy of the then-live totals; it's rebuilt once
+// from the Opps data as the pipeline stood at that month end.
 const JUNE_2026_KEY = '2026-06';
 
 // Quoted Projections runs on a Dec-to-Nov fiscal year, starting in
@@ -503,6 +516,9 @@ export function YOYView() {
   const records = useMemo(() => (opps && Array.isArray(opps.records)) ? opps.records : [], [opps]);
 
   const currentYear = new Date().getFullYear();
+  // Quoted Projections runs Dec→Nov, so its year rolls a month before the
+  // calendar one.
+  const quotedYear = quotedFiscalYear();
 
   // Leads — count of opps by Open Year. Bars go from earliest non-empty
   // year through the current year, then a separate "Projected" bar that
@@ -582,7 +598,7 @@ export function YOYView() {
       return Number.isFinite(n) ? n : null;
     };
     const liveKey = currentMonthKey();
-    return fiscalMonths(currentYear).map((m) => {
+    return fiscalMonths(quotedYear).map((m) => {
       const key = `${m.year}-${String(m.monthIdx + 1).padStart(2, '0')}`;
       // Manually-recorded values win; otherwise the current month falls
       // back to the live Opps 2 / BFO computation. An `_auto` entry is the
@@ -603,13 +619,13 @@ export function YOYView() {
       const _hasData = [weak, ok, expected, agreements, bfoPipe].some(x => x != null);
       return { month: m.label, year: m.year, monthKey: key, weak, ok, expected, agreements, bfoPipe, _hasData, _live: isLive && _hasData };
     });
-  }, [quotedTable, currentYear, liveCurrentMonth]);
+  }, [quotedTable, quotedYear, liveCurrentMonth]);
 
   // Persist the live current-month snapshot so it survives the calendar
-  // roll-over, and one-time backfill the June 2026 gap. Previously the
-  // in-progress month was only ever computed live and never written, so on
+  // roll-over, and rebuild any past month that was never captured. Previously
+  // the in-progress month was only ever computed live and never written, so on
   // the 1st of the next month it reverted to a gap — that's how June's
-  // figures vanished once July began. Both writes are batched into a single
+  // figures vanished once July began. The writes are batched into a single
   // update to avoid one clobbering the other.
   useEffect(() => {
     if (!liveCurrentMonth) return;
@@ -637,15 +653,27 @@ export function YOYView() {
         QUOTED_FIELDS.every(f => (curExisting[f] ?? null) === (snap[f] ?? null));
       if (snap && !unchanged) patch[curKey] = { ...snap, _auto: true };
     }
-    // 2) One-time backfill: June 2026 predates the auto-persist above, so
-    //    its point is a gap and its real month-end values are unrecoverable.
-    //    Fill it with today's live values (a deliberate stand-in) as a fixed
-    //    recorded entry the user can correct via "Edit values". Scoped to the
-    //    2026 fiscal year — the only time June 2026 is on the chart — and
-    //    self-limiting: once written it persists and won't be re-filled.
-    if (currentYear === 2026 && !quotedTable[JUNE_2026_KEY]) {
-      const snap = liveSnap();
-      if (snap) patch[JUNE_2026_KEY] = snap; // no `_auto` → fixed, editable
+    // 2) Any already-finished month on the chart with nothing recorded gets
+    //    rebuilt from the Opps data as the pipeline stood at that month end
+    //    (the same reconstruction the per-month Excel export attaches), not
+    //    from today's totals. A month only gets filled once — the write makes
+    //    it a recorded entry that "Edit values" can correct.
+    for (const m of fiscalMonths(quotedYear)) {
+      const key = `${m.year}-${String(m.monthIdx + 1).padStart(2, '0')}`;
+      if (key >= curKey || quotedTable[key]) continue; // in progress / future / already recorded
+      const snap = quotedMonthSnapshot(key);
+      if (snap) patch[key] = snap;
+    }
+    // 3) June 2026 was filled once with today's live totals as a stand-in
+    //    before the reconstruction above existed, so it's carrying July's
+    //    numbers rather than its own month end. Replace it with the rebuild,
+    //    once per user — a manual correction after that stands.
+    if (quotedYear === 2026 && !juneRebuildDone()) {
+      const snap = quotedMonthSnapshot(JUNE_2026_KEY);
+      if (snap) {
+        patch[JUNE_2026_KEY] = snap;
+        markJuneRebuildDone();
+      }
     }
     if (Object.keys(patch).length === 0) return;
     updateQuotedTable({ ...quotedTable, ...patch });
@@ -1692,6 +1720,35 @@ export function YOYView() {
     });
     return out;
   }
+  // A finished month's figures rebuilt from the Opps data, by summing the same
+  // rows the per-month export attaches — the opps that were quoted by that
+  // month end and hadn't closed yet. Values in whole $K, matching the store.
+  //
+  // It reads today's Chance? / Stage on those opps, so a bucket an opp has
+  // since moved between lands where it sits now; that's the same caveat the
+  // export's "Totals check" sheet already spells out. `bfoPipe` is left out
+  // entirely — BFO Activity is a pasted current snapshot with no history, so
+  // there's nothing to reconstruct it from and a blank beats today's total
+  // wearing a past month's label.
+  function quotedMonthSnapshot(monthKey) {
+    const opps = quotedMonthOpps(monthKey, false);
+    if (opps.length === 0) return null;
+    const totals = { weak: 0, ok: 0, expected: 0, agreements: 0 };
+    const BUCKET = { 'Quoted Weak': 'weak', 'Quoted OK': 'ok', 'Quoted Expected': 'expected' };
+    for (const o of opps) {
+      const amt = Number(o['Quoted Amount ($)']) || 0;
+      if (!amt) continue;
+      const bucket = BUCKET[o['Chart Series']];
+      if (bucket) totals[bucket] += amt;
+      if (o['Feeds Agreements Sent'] === 'Yes') totals.agreements += amt;
+    }
+    const snap = {};
+    let any = false;
+    for (const f of ['weak', 'ok', 'expected', 'agreements']) {
+      if (totals[f] > 0) { snap[f] = Math.round(totals[f] / 1000); any = true; }
+    }
+    return any ? { ...snap, _rebuilt: true } : null;
+  }
   // What the attached opp rows add up to, against what the chart plots. On the
   // live month the two agree; on a past month the gap is what has changed in
   // the Opps data since the snapshot was recorded.
@@ -1741,24 +1798,26 @@ export function YOYView() {
         Series: 'How this month\'s opp rows were built',
         'Where the number comes from': captured
           ? 'Opp rows WERE captured for this month, but the plotted figures have been edited since (via "Edit values") and no longer match them. The attached rows are rebuilt from today\'s Opps data instead — quoted by that month end, not yet closed — and carry today\'s Chance? and Stage. The Totals check sheet shows the gap.'
-          : 'This month is a recorded month-end snapshot from before the opp rows were kept, so the rows behind it were never stored. The attached rows are rebuilt from today\'s Opps data — quoted by that month end, not yet closed — and carry today\'s Chance? and Stage. Opps edited, re-graded or deleted since won\'t tie back exactly; the Totals check sheet shows the gap. Months captured from now on carry their own rows and tie exactly.',
+          : quotedTable[row.monthKey]?._rebuilt
+            ? 'This month was never captured live, so both the plotted figures and these rows are reconstructions from the Opps data — the opps quoted by that month end that hadn\'t closed yet, carrying today\'s Chance? and Stage. They were reconstructed at different moments, so any Opps edit in between shows up on the Totals check sheet. Months captured live from now on carry their own rows and tie exactly.'
+            : 'This month is a recorded month-end snapshot from before the opp rows were kept, so the rows behind it were never stored. The attached rows are rebuilt from today\'s Opps data — quoted by that month end, not yet closed — and carry today\'s Chance? and Stage. Opps edited, re-graded or deleted since won\'t tie back exactly; the Totals check sheet shows the gap. Months captured from now on carry their own rows and tie exactly.',
         'Raw rows in this file': 'Totals check',
       });
     }
     if (!row) {
-      notes.push({ Series: 'Past months', 'Where the number comes from': 'Month-end snapshots — the figures captured at the time (auto-captured, seeded, or typed via "Edit values"). Pin a month on the chart and use its ⬇ Excel button for the opp rows behind that month.', 'Raw rows in this file': 'Recorded Months (store)' });
+      notes.push({ Series: 'Past months', 'Where the number comes from': 'Month-end snapshots — the figures captured at the time (auto-captured, seeded, typed via "Edit values", or rebuilt from the Opps data for a month that was never captured). Pin a month on the chart and use its ⬇ Excel button for the opp rows behind that month.', 'Raw rows in this file': 'Recorded Months (store)' });
     }
     return notes;
   }
   async function downloadQuoted() {
     const capturedMap = await loadAllQuotedMonthRows();
     const wb = XLSX.utils.book_new();
-    appendSheet(wb, `Quoted Projections ${currentYear}`, quotedData.map(quotedSummaryRow));
+    appendSheet(wb, `Quoted Projections ${quotedYear}`, quotedData.map(quotedSummaryRow));
     appendSheet(wb, 'Recorded Months (store)', quotedStoredRows(capturedMap));
     appendSheet(wb, 'Live Opps (source rows)', contributingRecords.quotedSource);
     appendSheet(wb, 'Live BFO Activity', bfoActivityRows());
     appendSheet(wb, 'Notes', quotedNotesRows());
-    XLSX.writeFile(wb, `yoy-quoted-projections-${currentYear}-${todayStamp()}.xlsx`);
+    XLSX.writeFile(wb, `yoy-quoted-projections-${quotedYear}-${todayStamp()}.xlsx`);
   }
   // Excel for a single pinned month: its plotted values and the opp rows
   // behind them — today's pipeline for the live month, the pipeline rebuilt
@@ -2012,7 +2071,7 @@ export function YOYView() {
         {(() => {
           const charts = [
             { id: 'leads', node: <LeadsCard key="leads" data={leadsData} hasOpps={hasOpps} onDownload={downloadLeads} onExportPoint={(row) => exportPinnedOpps('leads', row)} /> },
-            { id: 'quotedProjections', node: <QuotedProjectionsCard key="quotedProjections" data={quotedData} quotedTable={quotedTable} onSaveTable={updateQuotedTable} onDownload={downloadQuoted} onExportPoint={exportQuotedMonth} /> },
+            { id: 'quotedProjections', node: <QuotedProjectionsCard key="quotedProjections" data={quotedData} quotedTable={quotedTable} live={liveCurrentMonth} onSaveTable={updateQuotedTable} onDownload={downloadQuoted} onExportPoint={exportQuotedMonth} /> },
             { id: 'closeRate', node: <CloseRateCard key="closeRate" data={closeRateData} hasOpps={hasOpps} onDownload={downloadCloseRate} onExportPoint={(row) => exportPinnedOpps('closeRate', row)} /> },
             { id: 'leadSources', node: <LeadSourcesCard key="leadSources" data={leadSourcesData} hasOpps={hasOpps} onDownload={downloadLeadSources} onExportPoint={(row) => exportPinnedOpps('leadSources', row)} /> },
             { id: 'quotedByYear', node: <QuotedByYearCard key="quotedByYear" data={quotedByYearData} hasOpps={hasOpps} onDownload={downloadQuotedByYear} onExportPoint={(row) => exportPinnedOpps('quotedByYear', row)} /> },
@@ -2437,9 +2496,13 @@ function LeadsCard({ data, hasOpps, onDownload, onExportPoint }) {
   );
 }
 
-function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload, onExportPoint }) {
+function QuotedProjectionsCard({ data, quotedTable, live, onSaveTable, onDownload, onExportPoint }) {
   const [editing, setEditing] = useState(false);
   const hasAnyValues = data.some(r => r._hasData);
+  // The in-progress month plots live figures unless it's been pinned to
+  // saved values — say so, otherwise a frozen point looks like a bug.
+  const liveRow = data.find(r => r.monthKey === currentMonthKey());
+  const pinned = !!live && !!liveRow && !liveRow._live && liveRow._hasData;
   // BFO Pipe Total starts hidden — it rides its own right-hand axis and
   // overwhelms the quoted buckets, so surface it only on demand via the legend.
   const { hidden, legendProps } = useInteractiveLegend({ bfoPipe: true });
@@ -2447,6 +2510,11 @@ function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload, onE
     <div className={styles.chartCard}>
       <ChartHeader title="Quoted Projections" hideId="quotedProjections" onDownload={onDownload} canDownload={hasAnyValues} />
       <div className={styles.quotedEditRow}>
+        {pinned && (
+          <span className={styles.quotedPinNote} title="This month is showing saved values instead of the live Opps + BFO figures. Tick “Auto (live)” in Edit values to resume auto-updating.">
+            {liveRow.month} pinned — not auto-updating
+          </span>
+        )}
         <span className={styles.quotedUnitNote}>values in $K</span>
         <button type="button" className={styles.editValuesBtn} onClick={() => setEditing(true)}>Edit values</button>
       </div>
@@ -2522,6 +2590,7 @@ function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload, onE
         <QuotedProjectionsEditor
           rows={data}
           table={quotedTable}
+          live={live}
           onClose={() => setEditing(false)}
           onSave={(next) => { onSaveTable(next); setEditing(false); }}
         />
@@ -2533,19 +2602,45 @@ function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload, onE
 // Editable month-by-month table behind the Quoted Projections "Edit
 // values" button. Lets the user record each month's figures (in $K);
 // blank cells are omitted. Seeded values come from the store.
-function QuotedProjectionsEditor({ rows, table, onClose, onSave }) {
+function QuotedProjectionsEditor({ rows, table, live, onClose, onSave }) {
+  const liveKey = currentMonthKey();
+  // The in-progress month's live figures as editor cells (whole $K). Read
+  // from the live computation rather than the row so the values are there
+  // even while the month is pinned and the chart is plotting typed ones.
+  const liveCells = useMemo(() => {
+    if (!live) return null;
+    const cells = {};
+    let any = false;
+    for (const f of QUOTED_FIELDS) {
+      const v = live[f];
+      const ok = v != null && Number.isFinite(v);
+      cells[f] = ok ? String(Math.round(v)) : '';
+      if (ok) any = true;
+    }
+    return any ? cells : null;
+  }, [live]);
+  // The in-progress month tracks the live Opps + BFO figures until it's
+  // deliberately pinned. Saving used to write every row as a fixed value,
+  // so editing any older month silently froze the current one — hence the
+  // explicit toggle, which also un-pins a month frozen that way.
+  const [autoLive, setAutoLive] = useState(() => {
+    if (!liveCells) return false;
+    const stored = table[liveKey];
+    return !stored || !!stored._auto;
+  });
   const [draft, setDraft] = useState(() => {
     const d = {};
     for (const r of rows) {
       const saved = table[r.monthKey];
-      // Pre-fill the live current month from its computed values (rounded
-      // to whole $K) so saving locks in what the chart already shows.
-      const live = r._live ? { weak: r.weak, ok: r.ok, expected: r.expected, agreements: r.agreements, bfoPipe: r.bfoPipe } : null;
-      const v = saved || live || {};
+      // Pre-fill the live current month from its computed values so the
+      // cells start on what the chart already shows.
+      const rowLive = r._live ? { weak: r.weak, ok: r.ok, expected: r.expected, agreements: r.agreements, bfoPipe: r.bfoPipe } : null;
+      const useLive = r._live && !!rowLive;
+      const v = (useLive ? rowLive : saved) || saved || rowLive || {};
       const cells = {};
       for (const f of QUOTED_FIELDS) {
         const raw = v[f];
-        cells[f] = (raw == null || raw === '') ? '' : String(saved ? raw : Math.round(raw));
+        cells[f] = (raw == null || raw === '') ? '' : String(useLive ? Math.round(raw) : raw);
       }
       d[r.monthKey] = cells;
     }
@@ -2553,10 +2648,15 @@ function QuotedProjectionsEditor({ rows, table, onClose, onSave }) {
   });
   const setCell = (key, field, value) =>
     setDraft(prev => ({ ...prev, [key]: { ...prev[key], [field]: value } }));
+  // While "Auto (live)" is on, the current month's row shows the live
+  // figures read-only — they're what will be saved for it.
+  const isAutoRow = (key) => key === liveKey && autoLive && !!liveCells;
+  const cellValue = (key, field) =>
+    (isAutoRow(key) ? liveCells[field] : (draft[key]?.[field] ?? ''));
   const handleSave = () => {
     const next = { ...table };
     for (const r of rows) {
-      const cells = draft[r.monthKey] || {};
+      const cells = isAutoRow(r.monthKey) ? liveCells : (draft[r.monthKey] || {});
       const out = {};
       let any = false;
       for (const f of QUOTED_FIELDS) {
@@ -2565,7 +2665,9 @@ function QuotedProjectionsEditor({ rows, table, onClose, onSave }) {
         const n = Number(raw);
         if (Number.isFinite(n)) { out[f] = n; any = true; }
       }
-      if (any) next[r.monthKey] = out;
+      // `_auto` keeps the month live — recomputed for display and
+      // overwritten by the auto-capture effect until it rolls over.
+      if (any) next[r.monthKey] = isAutoRow(r.monthKey) ? { ...out, _auto: true } : out;
       else delete next[r.monthKey];
     }
     onSave(next);
@@ -2580,7 +2682,7 @@ function QuotedProjectionsEditor({ rows, table, onClose, onSave }) {
         <div className={styles.modalHead}>
           <div>
             <div className={styles.modalTitle}>Quoted Projections — monthly values</div>
-            <div className={styles.modalSub}>All figures in thousands of dollars ($K). Leave a cell blank to omit it. Saved per month for the Dec→Nov fiscal year.</div>
+            <div className={styles.modalSub}>All figures in thousands of dollars ($K). Leave a cell blank to omit it. Saved per month for the Dec→Nov fiscal year. The in-progress month stays on “Auto (live)” unless you pin it.</div>
           </div>
           <button type="button" className={styles.downloadBtn} onClick={onClose}>Close</button>
         </div>
@@ -2595,14 +2697,28 @@ function QuotedProjectionsEditor({ rows, table, onClose, onSave }) {
             <tbody>
               {rows.map(r => (
                 <tr key={r.monthKey}>
-                  <td className={styles.editMonthCell}>{r.month} {r.year}</td>
+                  <td className={styles.editMonthCell}>
+                    <div>{r.month} {r.year}</div>
+                    {r.monthKey === liveKey && liveCells && (
+                      <label className={styles.editAutoToggle}>
+                        <input
+                          type="checkbox"
+                          checked={autoLive}
+                          onChange={(e) => setAutoLive(e.target.checked)}
+                        />
+                        Auto (live)
+                      </label>
+                    )}
+                  </td>
                   {labels.map(([f]) => (
                     <td key={f}>
                       <input
                         type="number"
                         className={styles.editInput}
-                        value={draft[r.monthKey]?.[f] ?? ''}
+                        value={cellValue(r.monthKey, f)}
                         onChange={(e) => setCell(r.monthKey, f, e.target.value)}
+                        disabled={isAutoRow(r.monthKey)}
+                        title={isAutoRow(r.monthKey) ? 'Auto-updating from Opps + BFO Activity — untick “Auto (live)” to pin a value' : undefined}
                         placeholder="—"
                       />
                     </td>

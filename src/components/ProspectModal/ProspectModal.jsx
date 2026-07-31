@@ -4564,42 +4564,47 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         )}
         <div className={styles.body}>
           {raClientMatches.length > 0 && (
+            /* One horizontal strip: warning, headline, explanation, then the
+               matched clients pushed to the right end. It used to stack those
+               four onto their own lines, which cost three rows of the modal
+               above the fold to say one thing. Wraps rather than squashes when
+               the modal is narrow. */
             <div style={{
               marginBottom: '0.8rem',
-              padding: '0.6rem 0.8rem',
+              padding: '0.4rem 0.8rem',
               background: '#FFFBEB',
               border: '1px solid #FDE68A',
               borderRadius: 6,
               display: 'flex',
-              alignItems: 'flex-start',
-              gap: '0.6rem',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '0.35rem 0.7rem',
             }}>
-              <div style={{ fontSize: '1rem', lineHeight: 1.2 }}>⚠️</div>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                  {raClientMatches.some(m => m.exact) ? 'Matches an RA Client' : 'Possible RA Client match'}
-                </div>
-                <div style={{ fontSize: '0.75rem', color: '#78350F', marginTop: '0.2rem' }}>
-                  This company looks like {raClientMatches.length === 1 ? 'an existing RA Client' : 'existing RA Clients'} on the Lists → RA Clients tab. Double-check before prospecting.
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginTop: '0.4rem' }}>
-                  {raClientMatches.map(m => (
-                    <span
-                      key={m.name}
-                      title={m.cm ? `Client Manager: ${m.cm}` : undefined}
-                      style={{
-                        display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
-                        padding: '0.15rem 0.5rem', background: '#FEF3C7', border: '1px solid #FDE68A',
-                        borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, color: '#92400E',
-                      }}
-                    >
-                      {m.name}
-                      <span style={{ fontWeight: 700, color: '#B45309' }}>{m.exact ? 'exact' : `${Math.round(m.score * 100)}%`}</span>
-                      {m.cm && <span style={{ fontWeight: 400, color: '#A16207' }}>· {m.cm}</span>}
-                    </span>
-                  ))}
-                </div>
-              </div>
+              <span style={{ fontSize: '0.95rem', lineHeight: 1 }}>⚠️</span>
+              <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
+                {raClientMatches.some(m => m.exact) ? 'Matches an RA Client' : 'Possible RA Client match'}
+              </span>
+              <span style={{ fontSize: '0.75rem', color: '#78350F', minWidth: 0 }}>
+                This company looks like {raClientMatches.length === 1 ? 'an existing RA Client' : 'existing RA Clients'} on the Lists → RA Clients tab. Double-check before prospecting.
+              </span>
+              <span style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.35rem', marginLeft: 'auto' }}>
+                {raClientMatches.map(m => (
+                  <span
+                    key={m.name}
+                    title={m.cm ? `Client Manager: ${m.cm}` : undefined}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
+                      padding: '0.15rem 0.5rem', background: '#FEF3C7', border: '1px solid #FDE68A',
+                      borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, color: '#92400E',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {m.name}
+                    <span style={{ fontWeight: 700, color: '#B45309' }}>{m.exact ? 'exact' : `${Math.round(m.score * 100)}%`}</span>
+                    {m.cm && <span style={{ fontWeight: 400, color: '#A16207' }}>· {m.cm}</span>}
+                  </span>
+                ))}
+              </span>
             </div>
           )}
           {indicativeAnalysis && (
@@ -4649,6 +4654,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
           )}
           <div className={styles.grid}>
+            <div className={styles.sectionHead}>Identity</div>
+
             <div>
               <label className={styles.label}>Company</label>
               <CommitOnBlurInput
@@ -4666,106 +4673,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 }}
                 placeholder="Company name"
               />
-            </div>
-
-            <div>
-              <label className={styles.label}>Status</label>
-              <select className={styles.select} value={fields.status} onChange={e => set('status', e.target.value)}>
-                {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
-
-            <div>
-              <label className={styles.label}>Tier</label>
-              <select className={styles.select} value={fields.tier} onChange={e => set('tier', e.target.value)}>
-                <option value="">—</option>
-                {TIERS.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-
-            <div>
-              <label className={styles.label}>Type</label>
-              <select className={styles.select} value={fields.type} onChange={e => set('type', e.target.value)}>
-                <option value="">—</option>
-                {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-
-            {fields.type === 'Private Equity' && (
-              <div>
-                <label className={styles.label}>PE Stage</label>
-                <select className={styles.select} value={fields.peStage || ''} onChange={e => set('peStage', e.target.value)}>
-                  <option value="">—</option>
-                  {PE_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-            )}
-
-            <div>
-              <label className={styles.label}>Geography</label>
-              <select className={styles.select} value={fields.geography} onChange={e => set('geography', e.target.value)}>
-                <option value="">—</option>
-                {GEOGRAPHIES.map(g => <option key={g} value={g}>{g}</option>)}
-              </select>
-            </div>
-
-            <div>
-              <label className={styles.label}>Public / Private</label>
-              <select className={styles.select} value={fields.publicPrivate} onChange={e => set('publicPrivate', e.target.value)}>
-                <option value="">—</option>
-                {PUBLIC_PRIVATE.map(p => <option key={p} value={p}>{p}</option>)}
-              </select>
-            </div>
-
-            <div>
-              <label className={styles.label}>CDM</label>
-              <SearchableSelect
-                options={cdmOptions}
-                value={fields.cdm || ''}
-                onChange={v => set('cdm', v)}
-                placeholder="Select CDM…"
-              />
-            </div>
-
-            <div>
-              <label className={styles.label}>Client Manager</label>
-              <div className={styles.input} style={{ background: clientManager ? '#F0FDF4' : 'var(--color-bg)', color: clientManager ? '#166534' : 'var(--color-text-muted)', fontWeight: clientManager ? 600 : 400, cursor: 'default' }}>
-                {clientManager || '—'}
-              </div>
-            </div>
-
-            <div>
-              <label className={styles.label}>RE AUM (billions)</label>
-              <CommitOnBlurInput className={styles.input} type="number" step="0.01" value={fields.reAum ?? ''} onCommit={v => set('reAum', v)} />
-            </div>
-
-            <div>
-              <label className={styles.label}>PE AUM (billions)</label>
-              <CommitOnBlurInput className={styles.input} type="number" step="0.01" value={fields.peAum ?? ''} onCommit={v => set('peAum', v)} />
-            </div>
-
-            <div>
-              <label className={styles.label}>Number of Sites</label>
-              <CommitOnBlurInput className={styles.input} type="number" value={fields.numberOfSites ?? ''} onCommit={v => set('numberOfSites', v)} />
-            </div>
-
-            <div>
-              <label className={styles.label}>Revenue</label>
-              <CommitOnBlurInput className={styles.input} value={fields.revenue ?? ''} onCommit={v => set('revenue', v)} placeholder="e.g. $1.5B" />
-            </div>
-
-            <div>
-              <label className={styles.label}>Rank</label>
-              <CommitOnBlurInput className={styles.input} value={fields.rank} onCommit={v => set('rank', v)} />
-            </div>
-
-            <div>
-              <label className={styles.label}>HQ Region</label>
-              <select className={styles.input} value={fields.hqRegion} onChange={e => set('hqRegion', e.target.value)}>
-                <option value="">—</option>
-                <option value="North America">North America</option>
-                <option value="Outside of North America">Outside of North America</option>
-              </select>
             </div>
 
             <div>
@@ -4860,42 +4767,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               })()}
             </div>
 
-            <div>
-              <label className={styles.label}>Case Study Created?</label>
-              <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', padding: '0.25rem 0' }}>
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', color: '#1E293B', cursor: 'pointer' }}>
-                  <input
-                    type="radio"
-                    name={`caseStudyCreated-${fields.id || 'new'}`}
-                    checked={fields.caseStudyCreated === true}
-                    onChange={() => set('caseStudyCreated', true)}
-                    style={{ accentColor: '#10B981' }}
-                  />
-                  Yes
-                </label>
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', color: '#1E293B', cursor: 'pointer' }}>
-                  <input
-                    type="radio"
-                    name={`caseStudyCreated-${fields.id || 'new'}`}
-                    checked={fields.caseStudyCreated === 'in-progress'}
-                    onChange={() => set('caseStudyCreated', 'in-progress')}
-                    style={{ accentColor: '#F59E0B' }}
-                  />
-                  In Progress
-                </label>
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', color: '#1E293B', cursor: 'pointer' }}>
-                  <input
-                    type="radio"
-                    name={`caseStudyCreated-${fields.id || 'new'}`}
-                    checked={!fields.caseStudyCreated}
-                    onChange={() => set('caseStudyCreated', false)}
-                    style={{ accentColor: '#94A3B8' }}
-                  />
-                  No
-                </label>
-              </div>
-            </div>
-
             <div className={styles.wideField}>
               <label className={styles.label}>Email Domains</label>
               {(() => {
@@ -4985,28 +4856,165 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               })()}
             </div>
 
+            <div className={styles.sectionHead}>Classification</div>
+
+            <div>
+              <label className={styles.label}>Type</label>
+              <select className={styles.select} value={fields.type} onChange={e => set('type', e.target.value)}>
+                <option value="">—</option>
+                {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+
+            {fields.type === 'Private Equity' && (
+              <div>
+                <label className={styles.label}>PE Stage</label>
+                <select className={styles.select} value={fields.peStage || ''} onChange={e => set('peStage', e.target.value)}>
+                  <option value="">—</option>
+                  {PE_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            )}
+
+            <div>
+              <label className={styles.label}>Tier</label>
+              <select className={styles.select} value={fields.tier} onChange={e => set('tier', e.target.value)}>
+                <option value="">—</option>
+                {TIERS.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className={styles.label}>Status</label>
+              <select className={styles.select} value={fields.status} onChange={e => set('status', e.target.value)}>
+                {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className={styles.label}>Geography</label>
+              <select className={styles.select} value={fields.geography} onChange={e => set('geography', e.target.value)}>
+                <option value="">—</option>
+                {GEOGRAPHIES.map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className={styles.label}>HQ Region</label>
+              <select className={styles.input} value={fields.hqRegion} onChange={e => set('hqRegion', e.target.value)}>
+                <option value="">—</option>
+                <option value="North America">North America</option>
+                <option value="Outside of North America">Outside of North America</option>
+              </select>
+            </div>
+
+            <div>
+              <label className={styles.label}>Public / Private</label>
+              <select className={styles.select} value={fields.publicPrivate} onChange={e => set('publicPrivate', e.target.value)}>
+                <option value="">—</option>
+                {PUBLIC_PRIVATE.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+
+            <div className={styles.sectionHead}>Coverage</div>
+
+            <div>
+              <label className={styles.label}>CDM</label>
+              <SearchableSelect
+                options={cdmOptions}
+                value={fields.cdm || ''}
+                onChange={v => set('cdm', v)}
+                placeholder="Select CDM…"
+              />
+            </div>
+
+            <div>
+              <label className={styles.label}>Client Manager</label>
+              <div className={styles.input} style={{ background: clientManager ? '#F0FDF4' : 'var(--color-bg)', color: clientManager ? '#166534' : 'var(--color-text-muted)', fontWeight: clientManager ? 600 : 400, cursor: 'default' }}>
+                {clientManager || '—'}
+              </div>
+            </div>
+
+            <div>
+              <label className={styles.label}>Case Study Created?</label>
+              <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', padding: '0.25rem 0' }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', color: '#1E293B', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name={`caseStudyCreated-${fields.id || 'new'}`}
+                    checked={fields.caseStudyCreated === true}
+                    onChange={() => set('caseStudyCreated', true)}
+                    style={{ accentColor: '#10B981' }}
+                  />
+                  Yes
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', color: '#1E293B', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name={`caseStudyCreated-${fields.id || 'new'}`}
+                    checked={fields.caseStudyCreated === 'in-progress'}
+                    onChange={() => set('caseStudyCreated', 'in-progress')}
+                    style={{ accentColor: '#F59E0B' }}
+                  />
+                  In Progress
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', color: '#1E293B', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name={`caseStudyCreated-${fields.id || 'new'}`}
+                    checked={!fields.caseStudyCreated}
+                    onChange={() => set('caseStudyCreated', false)}
+                    style={{ accentColor: '#94A3B8' }}
+                  />
+                  No
+                </label>
+              </div>
+            </div>
+
+            <div className={styles.sectionHead}>Scale</div>
+
+            <div>
+              <label className={styles.label}>Revenue</label>
+              <CommitOnBlurInput className={styles.input} value={fields.revenue ?? ''} onCommit={v => set('revenue', v)} placeholder="e.g. $1.5B" />
+            </div>
+
+            <div>
+              <label className={styles.label}>Rank</label>
+              <CommitOnBlurInput className={styles.input} value={fields.rank} onCommit={v => set('rank', v)} />
+            </div>
+
+            <div>
+              <label className={styles.label}>Number of Sites</label>
+              <CommitOnBlurInput className={styles.input} type="number" value={fields.numberOfSites ?? ''} onCommit={v => set('numberOfSites', v)} />
+            </div>
+
+            <div>
+              <label className={styles.label}>RE AUM (billions)</label>
+              <CommitOnBlurInput className={styles.input} type="number" step="0.01" value={fields.reAum ?? ''} onCommit={v => set('reAum', v)} />
+            </div>
+
+            <div>
+              <label className={styles.label}>PE AUM (billions)</label>
+              <CommitOnBlurInput className={styles.input} type="number" step="0.01" value={fields.peAum ?? ''} onCommit={v => set('peAum', v)} />
+            </div>
+
+            <div className={styles.sectionHead}>Profile</div>
+
             <div className={styles.wideField}>
               <label className={styles.label}>Asset Types</label>
               <MultiSelectDropdown options={assetTypeOptions} selected={fields.assetTypes || []} onToggle={(val) => toggleArrayField('assetTypes', val)} />
             </div>
 
-            {/* Competitors — same width as Asset Types (span 2), one
-                short single-line-ish editor. Free text with @[Service]
-                tokens via the shared ScopingNotesEditor; the legacy
-                structured fields.competitors map is kept on the record
-                untouched so historical data still round-trips. */}
-            {!isNew && (
-              <div className={styles.wideField}>
-                <label className={styles.label}>Competitors</label>
-                <ScopingNotesEditor
-                  value={fields.competitorsNotes || ''}
-                  onCommit={v => set('competitorsNotes', v)}
-                  services={SERVICE_CATEGORIES.flatMap(c => c.items)}
-                  placeholder="Who's competing here? Type @ to tag a service — e.g. @strategic sourcing."
-                  style={{ minHeight: '34px', padding: '0.3rem 0.5rem', fontSize: '0.78rem' }}
-                />
-              </div>
-            )}
+            <div className={styles.wideField}>
+              <label className={styles.label}>Strategies</label>
+              <TagMultiSelect
+                options={strategyOptions}
+                selected={fields.strategies || []}
+                onToggle={(val) => toggleArrayField('strategies', val)}
+                onAddNew={(val) => persistCustomStrategy(val, settings, updateSettings)}
+                placeholder="Tag this firm's investment strategies…"
+              />
+            </div>
 
             <div className={styles.wideField}>
               <label className={styles.label}>Frameworks</label>
@@ -5021,16 +5029,26 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               </div>
             </div>
 
-            <div className={styles.wideField}>
-              <label className={styles.label}>Strategies</label>
-              <TagMultiSelect
-                options={strategyOptions}
-                selected={fields.strategies || []}
-                onToggle={(val) => toggleArrayField('strategies', val)}
-                onAddNew={(val) => persistCustomStrategy(val, settings, updateSettings)}
-                placeholder="Tag this firm's investment strategies…"
-              />
-            </div>
+            {/* Competitors — full width like the other Profile fields, one
+                short single-line-ish editor. Free text with @[Service]
+                tokens via the shared ScopingNotesEditor; the legacy
+                structured fields.competitors map is kept on the record
+                untouched so historical data still round-trips. */}
+
+            {!isNew && (
+              <div className={styles.wideField}>
+                <label className={styles.label}>Competitors</label>
+                <ScopingNotesEditor
+                  value={fields.competitorsNotes || ''}
+                  onCommit={v => set('competitorsNotes', v)}
+                  services={SERVICE_CATEGORIES.flatMap(c => c.items)}
+                  placeholder="Who's competing here? Type @ to tag a service — e.g. @strategic sourcing."
+                  style={{ minHeight: '34px', padding: '0.3rem 0.5rem', fontSize: '0.78rem' }}
+                />
+              </div>
+            )}
+
+            <div className={styles.sectionHead}>Notes</div>
 
             <div className={styles.fieldFull}>
               <label className={styles.label}>Company Notes</label>
