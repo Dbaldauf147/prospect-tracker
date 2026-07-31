@@ -47,55 +47,82 @@ export const CITY_ALIASES = {
   newyorkcity: 'New York', nyc: 'New York',
 };
 
-// Which country a state / province / country value names, or null when it
-// can't be told. Used to stop a bare city name matching the wrong country's
-// jurisdiction — Cambridge, Ontario is not Cambridge, Massachusetts.
+// Which country and state a "state" value names, or null when it can't be
+// told. Used to stop a bare city name matching the wrong place — Cambridge,
+// Ontario is not Cambridge, Massachusetts, and Columbus, Mississippi is not
+// Columbus, Ohio.
 //
 // Deliberately excludes US territories (PR, GU, VI …): a two-letter code in a
 // state column is often a mis-mapped field rather than a real territory, and
 // reading "PR" as Puerto Rico would veto correct matches on the strength of
 // junk data. Unresolved values simply don't veto anything.
-const CA_REGIONS = [
-  'canada',
-  'alberta', 'ab', 'britishcolumbia', 'bc', 'manitoba', 'mb', 'newbrunswick', 'nb',
-  'newfoundlandandlabrador', 'newfoundland', 'nl', 'northwestterritories', 'nt',
-  'novascotia', 'ns', 'nunavut', 'nu', 'ontario', 'on', 'princeedwardisland', 'pe',
-  'quebec', 'québec', 'qc', 'saskatchewan', 'sk', 'yukon', 'yt',
+const US_STATES = [
+  ['Alabama', 'AL'], ['Alaska', 'AK'], ['Arizona', 'AZ'], ['Arkansas', 'AR'],
+  ['California', 'CA'], ['Colorado', 'CO'], ['Connecticut', 'CT'], ['Delaware', 'DE'],
+  ['District of Columbia', 'DC'], ['Florida', 'FL'], ['Georgia', 'GA'], ['Hawaii', 'HI'],
+  ['Idaho', 'ID'], ['Illinois', 'IL'], ['Indiana', 'IN'], ['Iowa', 'IA'], ['Kansas', 'KS'],
+  ['Kentucky', 'KY'], ['Louisiana', 'LA'], ['Maine', 'ME'], ['Maryland', 'MD'],
+  ['Massachusetts', 'MA'], ['Michigan', 'MI'], ['Minnesota', 'MN'], ['Mississippi', 'MS'],
+  ['Missouri', 'MO'], ['Montana', 'MT'], ['Nebraska', 'NE'], ['Nevada', 'NV'],
+  ['New Hampshire', 'NH'], ['New Jersey', 'NJ'], ['New Mexico', 'NM'], ['New York', 'NY'],
+  ['North Carolina', 'NC'], ['North Dakota', 'ND'], ['Ohio', 'OH'], ['Oklahoma', 'OK'],
+  ['Oregon', 'OR'], ['Pennsylvania', 'PA'], ['Rhode Island', 'RI'], ['South Carolina', 'SC'],
+  ['South Dakota', 'SD'], ['Tennessee', 'TN'], ['Texas', 'TX'], ['Utah', 'UT'],
+  ['Vermont', 'VT'], ['Virginia', 'VA'], ['Washington', 'WA'], ['West Virginia', 'WV'],
+  ['Wisconsin', 'WI'], ['Wyoming', 'WY'],
 ];
-const US_REGIONS = [
-  'unitedstates', 'unitedstatesofamerica', 'usa', 'us',
-  'alabama', 'al', 'alaska', 'ak', 'arizona', 'az', 'arkansas', 'ar', 'california',
-  'colorado', 'co', 'connecticut', 'ct', 'delaware', 'de', 'districtofcolumbia', 'dc',
-  'florida', 'fl', 'georgia', 'ga', 'hawaii', 'hi', 'idaho', 'id', 'illinois', 'il',
-  'indiana', 'in', 'iowa', 'ia', 'kansas', 'ks', 'kentucky', 'ky', 'louisiana', 'la',
-  'maine', 'me', 'maryland', 'md', 'massachusetts', 'ma', 'michigan', 'mi',
-  'minnesota', 'mn', 'mississippi', 'ms', 'missouri', 'mo', 'montana', 'mt',
-  'nebraska', 'ne', 'nevada', 'nv', 'newhampshire', 'nh', 'newjersey', 'nj',
-  'newmexico', 'nm', 'newyork', 'ny', 'northcarolina', 'nc', 'northdakota', 'nd',
-  'ohio', 'oh', 'oklahoma', 'ok', 'oregon', 'or', 'pennsylvania', 'pa',
-  'rhodeisland', 'ri', 'southcarolina', 'sc', 'southdakota', 'sd', 'tennessee', 'tn',
-  'texas', 'tx', 'utah', 'ut', 'vermont', 'vt', 'virginia', 'va', 'washington', 'wa',
-  'westvirginia', 'wv', 'wisconsin', 'wi', 'wyoming', 'wy',
+const CA_PROVINCES = [
+  ['Alberta', 'AB'], ['British Columbia', 'BC'], ['Manitoba', 'MB'], ['New Brunswick', 'NB'],
+  ['Newfoundland and Labrador', 'NL'], ['Newfoundland', 'NL'], ['Northwest Territories', 'NT'],
+  ['Nova Scotia', 'NS'], ['Nunavut', 'NU'], ['Ontario', 'ON'], ['Prince Edward Island', 'PE'],
+  ['Quebec', 'QC'], ['Québec', 'QC'], ['Saskatchewan', 'SK'], ['Yukon', 'YT'],
 ];
-// "CA" is California, not Canada — the ambiguity is why the country lists are
-// spelled out rather than guessed from a prefix.
-const REGION_COUNTRY = new Map([
-  ...CA_REGIONS.map(r => [normKey(r), 'CA']),
-  ...US_REGIONS.map(r => [normKey(r), 'US']),
-]);
+// Country names carry a country but no state, so they veto across a border
+// without claiming to know which province a site is in.
+const COUNTRY_ONLY = [
+  ['Canada', 'CA'], ['United States', 'US'], ['United States of America', 'US'],
+  ['USA', 'US'], ['US', 'US'],
+];
 
-export function regionCountry(value) {
-  const k = normKey(value);
-  return k ? (REGION_COUNTRY.get(k) || null) : null;
+const REGIONS = new Map();
+for (const [name, code] of US_STATES) {
+  for (const k of [name, code]) REGIONS.set(normKey(k), { country: 'US', state: code });
+}
+for (const [name, code] of CA_PROVINCES) {
+  for (const k of [name, code]) REGIONS.set(normKey(k), { country: 'CA', state: code });
+}
+// Country names last so they can't be shadowed — except "CA", which is
+// California, not Canada, and is already claimed above.
+for (const [name, country] of COUNTRY_ONLY) {
+  if (!REGIONS.has(normKey(name))) REGIONS.set(normKey(name), { country, state: null });
 }
 
-// The country a jurisdiction sits in, read from its state / province name.
-// Not from the Government ID prefix — some Canadian jurisdictions carry a
-// "US-" prefix in the seed data (Ottawa, Montreal), so the prefix can't be
-// trusted while the state name can.
-function govIdCountry(govId, ordinances) {
+// { country, state } for a state / province / country value, or null.
+export function regionOf(value) {
+  const k = normKey(value);
+  return k ? (REGIONS.get(k) || null) : null;
+}
+
+export function regionCountry(value) {
+  return regionOf(value)?.country || null;
+}
+
+// Where a jurisdiction sits, read from its state / province name. Not from
+// the Government ID prefix — some Canadian jurisdictions carry a "US-" prefix
+// in the seed data (Ottawa, Montreal), so the prefix can't be trusted while
+// the state name can.
+function govIdRegion(govId, ordinances) {
   const g = ordIndex(ordinances).get(govId);
-  return g ? regionCountry(g.state) : null;
+  return g ? regionOf(g.state) : null;
+}
+
+// Do a site's stated location and a candidate jurisdiction's contradict each
+// other? Only a positive disagreement counts — anything either side can't
+// resolve leaves the match alone.
+function regionsConflict(site, candidate) {
+  if (!site || !candidate) return false;
+  if (site.country && candidate.country && site.country !== candidate.country) return true;
+  return !!(site.state && candidate.state && site.state !== candidate.state);
 }
 
 // Resolve a city + state to a Government ID. Tries city+state (state may be an
@@ -103,24 +130,22 @@ function govIdCountry(govId, ordinances) {
 // the same via a known alias (e.g. Brooklyn → New York).
 //
 // The city-only step is a guess by nature: a bare "Cambridge" can't tell
-// Cambridge MA from Cambridge ON. So it's rejected when the site's state and
-// the candidate jurisdiction's are both resolvable to a country and those
-// countries differ. A city+state hit is an explicit curated mapping and is
-// always trusted.
+// Cambridge MA from Cambridge ON, and a bare "Columbus" can't tell Columbus MS
+// from Columbus OH. So it's rejected when the site's stated location and the
+// candidate jurisdiction's positively disagree — a different country, or a
+// different state within the same one. A city+state hit is an explicit curated
+// mapping and is always trusted.
 export function lookupGovId(city, state, cityLookup = CITY_LOOKUP, ordinances = MASTER_ORDINANCES) {
   const c = String(city || '').trim();
   const s = String(state || '').trim();
   if (!c) return null;
-  const siteCountry = regionCountry(s);
+  const siteRegion = regionOf(s);
   const tryCity = (name) => {
     const withState = cityLookup[normKey(name + s)];
     if (withState != null) return withState;
     const cityOnly = cityLookup[normKey(name)];
     if (cityOnly == null) return null;
-    if (siteCountry) {
-      const candidateCountry = govIdCountry(cityOnly, ordinances);
-      if (candidateCountry && candidateCountry !== siteCountry) return null;
-    }
+    if (regionsConflict(siteRegion, govIdRegion(cityOnly, ordinances))) return null;
     return cityOnly;
   };
   const direct = tryCity(c);
