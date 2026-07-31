@@ -167,7 +167,7 @@ function ServiceNameCell({ name, url, onSaveUrl }) {
         onClick={startEdit}
         title={url ? 'Edit link' : 'Add link'}
         aria-label={url ? 'Edit link' : 'Add link'}
-      >{url ? '\u270E' : '+ link'}</button>
+      >{url ? '✎' : '+ link'}</button>
       {url && (
         <button
           type="button"
@@ -175,7 +175,7 @@ function ServiceNameCell({ name, url, onSaveUrl }) {
           onClick={() => onSaveUrl(name, '')}
           title="Remove link"
           aria-label="Remove link"
-        >\u00D7</button>
+        >×</button>
       )}
     </div>
   );
