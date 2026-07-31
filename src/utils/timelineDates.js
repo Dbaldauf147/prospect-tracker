@@ -208,12 +208,17 @@ export function timelineBaseMonth(stages) {
   return ords.length ? Math.min(...ords) : null;
 }
 
-// { month, span } for a stage, both 1-based counts of whole months. Explicit
-// startMonth wins; a blank one falls back to the calendar position, and a
-// stage with neither lands in month 1 so it still appears.
-export function getStageMonths(stage, baseMonth) {
-  const explicitStart = Number(stage?.startMonth);
-  const explicitSpan = Number(stage?.months);
+// { month, span } for a stage, both 1-based counts of whole months.
+//
+// `mode` decides what drives the position. 'dates' (the standard) measures the
+// stage's calendar range against the timeline's earliest dated stage, ignoring
+// any month numbers left over from another mode. 'months' takes the typed
+// startMonth / months and only falls back to the dates where they're blank —
+// that's the option for a proposal written before any date is fixed.
+export function getStageMonths(stage, baseMonth, mode = 'months') {
+  const useTyped = mode !== 'dates';
+  const explicitStart = useTyped ? Number(stage?.startMonth) : NaN;
+  const explicitSpan = useTyped ? Number(stage?.months) : NaN;
   let month = Number.isFinite(explicitStart) && explicitStart >= 1 ? Math.floor(explicitStart) : null;
   let span = Number.isFinite(explicitSpan) && explicitSpan >= 1 ? Math.floor(explicitSpan) : null;
 

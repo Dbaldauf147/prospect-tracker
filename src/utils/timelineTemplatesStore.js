@@ -61,6 +61,9 @@ function normalizeStage(stage) {
     phase: String(stage?.phase ?? ''),
     startMonth: stage?.startMonth === '' || stage?.startMonth == null ? '' : Number(stage.startMonth),
     months: stage?.months === '' || stage?.months == null ? '' : Number(stage.months),
+    // Id of an earlier step this one waits on. Stored as an id rather than a
+    // number so reordering the table can't silently repoint it.
+    dependsOn: String(stage?.dependsOn ?? ''),
     description: String(stage?.description ?? ''),
     // 'number' draws the stage position in the marker; anything else selects
     // artwork from STAGE_ICONS in timelineGraphic.
@@ -68,8 +71,20 @@ function normalizeStage(stage) {
   };
 }
 
+// Dates are the standard for placing steps on the implementation chart. A
+// timeline saved before the choice existed keeps whatever it was authored
+// with: if any step carries a typed month, it was written in months, so
+// switching it to dates would move every bar under the user.
+function inferPositionMode(tpl) {
+  if (tpl?.positionMode === 'months' || tpl?.positionMode === 'dates') return tpl.positionMode;
+  const stages = Array.isArray(tpl?.stages) ? tpl.stages : [];
+  const anyTypedMonth = stages.some(s => Number(s?.startMonth) >= 1 || Number(s?.months) >= 1);
+  return anyTypedMonth ? 'months' : 'dates';
+}
+
 function normalizeTemplate(tpl) {
   return {
+    positionMode: inferPositionMode(tpl),
     id: tpl?.id || makeTimelineId('tl'),
     name: String(tpl?.name ?? ''),
     // Which layout the visual and exports render. Timelines saved before the

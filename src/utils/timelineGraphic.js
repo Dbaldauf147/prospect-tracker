@@ -426,7 +426,8 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   if (!stages.length) return null;
 
   const baseMonth = timelineBaseMonth(stages);
-  const placed = stages.map(stage => ({ stage, ...getStageMonths(stage, baseMonth) }));
+  const mode = template?.positionMode === 'months' ? 'months' : 'dates';
+  const placed = stages.map(stage => ({ stage, ...getStageMonths(stage, baseMonth, mode) }));
   const needed = Math.max(...placed.map(p => p.month + p.span - 1), 1);
   const monthCount = Math.max(
     1,
@@ -446,6 +447,16 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   const overflow = placed.filter(p => p.month + p.span - 1 > monthCount);
   const overflowH = overflow.length ? 20 : 0;
   const height = gridTop + gridH + overflowH + PHASED.footH + 8;
+
+  // Declared dependencies, resolved to row indexes. A link pointing at a
+  // missing or self-referencing step is dropped rather than drawn nowhere.
+  const indexById = new Map(stages.map((st, i) => [st.id, i]));
+  const deps = [];
+  stages.forEach((stage, i) => {
+    const from = indexById.get(String(stage.dependsOn || ''));
+    if (from == null || from === i) return;
+    deps.push({ from, to: i, backwards: placed[i].month < placed[from].month });
+  });
 
   const clientName = String(template?.clientName || '').trim() || 'Client';
   const x0 = PHASED.labelW;
@@ -522,6 +533,7 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   if (todayCol) {
     s += `<rect x="${colX(todayCol)}" y="${gridTop}" width="${colW}" height="${gridH}" fill="${SE_GREEN}" opacity="0.09"/>`;
   }
+  const chipGeom = [];
   groups.forEach((group, gi) => {
     const h = bandH[gi];
     s += `<line x1="0" y1="${y + h}" x2="${width}" y2="${y + h}" stroke="#9AA5B1" stroke-width="1"/>`;
@@ -540,6 +552,9 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
       const spanCols = Math.min(pos.span, monthCount - Math.min(pos.month, monthCount) + 1);
       const chipW = Math.max(30, spanCols * colW - 6);
       const color = workstreamColor(step.stage.owner);
+      // Remembered so the dependency links can be drawn over the top once
+      // every chip has a position.
+      chipGeom[step.index] = { x: chipX, y: rowY, w: chipW };
 
       if (step.stage.owner === 'Both') {
         // Split chip: both workstreams own the step.
@@ -571,6 +586,30 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
     });
     y += h;
   });
+
+  // Dependency links, drawn over the chips: an elbow from the end of the step
+  // being waited on to the start of the one waiting. A link that runs
+  // backwards — the dependent starting earlier than its predecessor — is drawn
+  // in red, because that's a plan that can't happen in that order.
+  if (deps.length) {
+    s += `<defs><marker id="depArrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">`
+      + `<path d="M0 0.6L6 3.5L0 6.4z" fill="${SE_SLATE}"/></marker>`
+      + `<marker id="depArrowBad" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">`
+      + `<path d="M0 0.6L6 3.5L0 6.4z" fill="${SE_RED}"/></marker></defs>`;
+    deps.forEach(({ from, to, backwards }) => {
+      const a = chipGeom[from], b = chipGeom[to];
+      if (!a || !b) return;
+      const stroke = backwards ? SE_RED : SE_SLATE;
+      const ay = a.y + 12, by = b.y + 12;
+      const ax = a.x + a.w;
+      const bx = b.x - 5;
+      // Route around the right of the source when the target sits to its left.
+      const midX = bx > ax + 12 ? (ax + bx) / 2 : ax + 10;
+      s += `<path d="M${ax.toFixed(1)} ${ay} H${midX.toFixed(1)} V${by} H${bx.toFixed(1)}"`
+        + ` fill="none" stroke="${stroke}" stroke-width="1.3" stroke-dasharray="4 3"`
+        + ` marker-end="url(#${backwards ? 'depArrowBad' : 'depArrow'})" opacity="0.85"/>`;
+    });
+  }
 
   // Today: one red rule from the month headings down through the grid, placed
   // proportionally inside the month (the 15th of a 30-day month sits at the

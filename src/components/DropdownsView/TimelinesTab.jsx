@@ -99,7 +99,7 @@ function NumberCell({ value, onCommit, min = 1, placeholder, title }) {
 // and in the implementation format it's also the step numbering. Which
 // columns appear follows the timeline's format, so each layout shows only
 // the controls that drive it.
-function StageRow({ index, total, stage, format, onChange, onMove, onRemove }) {
+function StageRow({ index, total, stage, format, mode, priorSteps, onChange, onMove, onRemove }) {
   // Effective calendar range: the explicit dates when set, otherwise whatever
   // the Timing text parses to. `auto` means nothing was typed into the date
   // cells — they're mirroring the label.
@@ -107,7 +107,8 @@ function StageRow({ index, total, stage, format, onChange, onMove, onRemove }) {
   const auto = !!range && range.derivedStart && range.derivedEnd;
   // Placeholder values for the Month / Span cells: what the renderer would
   // work out on its own, so a blank cell shows what it's actually doing.
-  const months = getStageMonths(stage, null);
+  const months = getStageMonths(stage, null, mode);
+  const byDates = mode === 'dates';
   return (
     <tr>
       <td className={styles.stageOrderCell}>{index + 1}</td>
@@ -152,20 +153,64 @@ function StageRow({ index, total, stage, format, onChange, onMove, onRemove }) {
               onCommit={(next) => onChange({ ...stage, phase: next })}
             />
           </td>
-          <td className={styles.monthCell}>
+          <td className={`${styles.stageDatesCell} ${byDates ? '' : styles.inactiveCell}`}>
+            <input
+              type="date"
+              className={styles.dateInput}
+              value={range?.start || ''}
+              onChange={(e) => onChange({ ...stage, start: e.target.value })}
+              title={byDates
+                ? 'Start date — drives where this step sits on the chart'
+                : 'Start date (the chart is positioned by month numbers)'}
+            />
+            <span className={styles.dateSep}>→</span>
+            <input
+              type="date"
+              className={styles.dateInput}
+              value={range?.end || ''}
+              onChange={(e) => onChange({ ...stage, end: e.target.value })}
+              title={byDates
+                ? 'End date — drives how wide the bar is'
+                : 'End date (the chart is positioned by month numbers)'}
+            />
+            {auto && (
+              <span className={styles.autoTag} title="Read from the Timing column. Pick a date to override; clear it to go back to automatic.">auto</span>
+            )}
+            {!range && (
+              <span className={styles.undatedTag} title="Without dates this step falls back to month 1. Give it dates, or position by months.">no date</span>
+            )}
+          </td>
+          <td className={`${styles.monthCell} ${byDates ? styles.inactiveCell : ''}`}>
             <NumberCell
               value={stage.startMonth}
               placeholder={String(months.month)}
-              title="Month from kickoff. Blank uses the stage's dates."
+              title={byDates
+                ? 'Not in use — the chart is positioned by dates'
+                : 'Month from kickoff. Blank uses the stage\'s dates.'}
               onCommit={(next) => onChange({ ...stage, startMonth: next })}
             />
             <span className={styles.dateSep}>×</span>
             <NumberCell
               value={stage.months}
               placeholder={String(months.span)}
-              title="How many months the bar spans"
+              title={byDates
+                ? 'Not in use — the chart is positioned by dates'
+                : 'How many months the bar spans'}
               onCommit={(next) => onChange({ ...stage, months: next })}
             />
+          </td>
+          <td>
+            <select
+              value={stage.dependsOn || ''}
+              onChange={(e) => onChange({ ...stage, dependsOn: e.target.value })}
+              title="The earlier step this one waits on"
+              className={styles.dependsSelect}
+            >
+              <option value="">—</option>
+              {priorSteps.map(p => (
+                <option key={p.id} value={p.id}>{p.number}. {p.name || 'Untitled step'}</option>
+              ))}
+            </select>
           </td>
         </>
       )}
@@ -177,22 +222,6 @@ function StageRow({ index, total, stage, format, onChange, onMove, onRemove }) {
           onCommit={(next) => onChange({ ...stage, timing: next })}
         />
       </td>
-      {format === 'phased' && (
-        <td className={styles.stageDatesCell}>
-          <input
-            type="date"
-            className={styles.dateInput}
-            value={range?.end || ''}
-            onChange={(e) => onChange({ ...stage, end: e.target.value })}
-            title={range?.derivedEnd
-              ? 'Read from Timing — pick a date to override'
-              : 'The date this step finishes'}
-          />
-          {range?.derivedEnd && (
-            <span className={styles.autoTag} title="Read from the Timing column. Pick a date to override; clear it to go back to automatic.">auto</span>
-          )}
-        </td>
-      )}
       {format === 'gantt' && (
       <td className={styles.stageDatesCell}>
         <input
@@ -406,6 +435,7 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
   const { stages } = template;
   const counts = summarizeStageOwners(stages);
   const format = template.format || 'gantt';
+  const mode = template.positionMode === 'months' ? 'months' : 'dates';
 
   function updateStage(idx, next) {
     onChange({ ...template, stages: stages.map((s, i) => (i === idx ? next : s)) });
@@ -489,6 +519,16 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
             className={styles.settingInput}
             onCommit={(next) => onChange({ ...template, clientName: next })}
           />
+          <span className={styles.timelineServicesLabel}>Position by</span>
+          <select
+            value={mode}
+            onChange={(e) => onChange({ ...template, positionMode: e.target.value })}
+            title="Dates place each step on the chart. Months lets you type the month numbers instead — for a proposal written before any date is fixed."
+            className={styles.settingSelect}
+          >
+            <option value="dates">Start / end dates</option>
+            <option value="months">Month numbers</option>
+          </select>
           <span className={styles.timelineServicesLabel}>Months</span>
           <select
             value={template.monthCount === '' || template.monthCount == null ? '' : String(template.monthCount)}
@@ -563,10 +603,11 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
             <col />
             <col style={{ width: 170 }} />
             {format === 'milestone' && <col style={{ width: 118 }} />}
-            {format === 'phased' && <col style={{ width: 190 }} />}
-            {format === 'phased' && <col style={{ width: 118 }} />}
-            <col style={{ width: 160 }} />
-            {format === 'phased' && <col style={{ width: 160 }} />}
+            {format === 'phased' && <col style={{ width: 170 }} />}
+            {format === 'phased' && <col style={{ width: 270 }} />}
+            {format === 'phased' && <col style={{ width: 108 }} />}
+            {format === 'phased' && <col style={{ width: 150 }} />}
+            <col style={{ width: 150 }} />
             {format === 'gantt' && <col style={{ width: 290 }} />}
             <col />
             <col style={{ width: 84 }} />
@@ -578,9 +619,16 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
               <th>{format === 'phased' ? 'Workstream' : 'Owner'}</th>
               {format === 'milestone' && <th>Icon</th>}
               {format === 'phased' && <th>Phase</th>}
-              {format === 'phased' && <th title="Start month from kickoff × how many months it spans">Month × Span</th>}
+              {format === 'phased' && (
+                <th className={mode === 'dates' ? undefined : styles.inactiveHead}
+                    title="Start and end dates. The standard way to place a step.">Start → End</th>
+              )}
+              {format === 'phased' && (
+                <th className={mode === 'dates' ? styles.inactiveHead : undefined}
+                    title="Start month from kickoff × how many months it spans">Month × Span</th>
+              )}
+              {format === 'phased' && <th title="The earlier step this one waits on">Depends on</th>}
               <th>Timing</th>
-              {format === 'phased' && <th title="When this step finishes. Blank reads it from Timing.">End</th>}
               {format === 'gantt' && <th>Dates</th>}
               <th>Description</th>
               <th aria-hidden="true" />
@@ -589,7 +637,7 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
           <tbody>
             {visibleStages.length === 0 ? (
               <tr>
-                <td colSpan={format === 'phased' ? 10 : 8} className={styles.serviceEmpty}>
+                <td colSpan={format === 'phased' ? 11 : 8} className={styles.serviceEmpty}>
                   {stages.length === 0 ? 'No stages yet — add the first one below.' : 'No stages match the search.'}
                 </td>
               </tr>
@@ -601,6 +649,8 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
                   total={stages.length}
                   stage={stage}
                   format={format}
+                  mode={mode}
+                  priorSteps={stages.slice(0, idx).map((st, i) => ({ id: st.id, number: i + 1, name: st.name }))}
                   onChange={(next) => updateStage(idx, next)}
                   onMove={(delta) => moveStage(idx, delta)}
                   onRemove={() => removeStage(idx)}

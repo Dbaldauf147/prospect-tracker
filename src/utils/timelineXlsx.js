@@ -154,7 +154,8 @@ function writeBandHeader(wb, ws, template, meta, ncols, logoCol) {
 function writePhasedSheet(wb, ws, template, meta) {
   const stages = template.stages;
   const baseMonth = timelineBaseMonth(stages);
-  const placed = stages.map(stage => ({ stage, ...getStageMonths(stage, baseMonth) }));
+  const mode = template?.positionMode === 'months' ? 'months' : 'dates';
+  const placed = stages.map(stage => ({ stage, ...getStageMonths(stage, baseMonth, mode) }));
   const needed = Math.max(...placed.map(p => p.month + p.span - 1), 1);
   const monthCount = Math.max(
     1,
@@ -315,7 +316,11 @@ export async function exportTimelineXlsx(template, meta = {}) {
 
   if (phased) {
     writePhasedSheet(wb, ws, { ...template, stages }, meta);
-    writeStagesSheet(wb, rows, { phased, baseMonth: timelineBaseMonth(stages) });
+    writeStagesSheet(wb, rows, {
+      phased,
+      baseMonth: timelineBaseMonth(stages),
+      mode: template?.positionMode === 'months' ? 'months' : 'dates',
+    });
     return downloadWorkbook(wb, template);
   }
 
@@ -482,7 +487,16 @@ export async function exportTimelineXlsx(template, meta = {}) {
 
 // Sheet 2: the flat table. Phased timelines get the Phase / Month / Span
 // columns that drive their layout instead of a raw day count.
-function writeStagesSheet(wb, rows, { phased, baseMonth }) {
+// "3. Budget build" for a declared dependency, blank when there isn't one.
+function dependsLabel(stage, rows) {
+  const id = String(stage?.dependsOn || '');
+  if (!id) return '';
+  const i = rows.findIndex(r => r.stage.id === id);
+  if (i < 0) return '';
+  return `${i + 1}. ${rows[i].stage.name || 'Untitled step'}`;
+}
+
+function writeStagesSheet(wb, rows, { phased, baseMonth, mode }) {
   const ds = wb.addWorksheet('Stages', { views: [{ showGridLines: false }] });
   ds.columns = phased ? [
     { header: '#', key: 'n', width: 5 },
@@ -491,8 +505,10 @@ function writeStagesSheet(wb, rows, { phased, baseMonth }) {
     { header: 'Workstream', key: 'owner', width: 20 },
     { header: 'Month', key: 'month', width: 9 },
     { header: 'Span', key: 'span', width: 9 },
+    { header: 'Start', key: 'start', width: 13 },
     { header: 'End', key: 'end', width: 13 },
-    { header: 'Description', key: 'desc', width: 58 },
+    { header: 'Depends on', key: 'depends', width: 26 },
+    { header: 'Description', key: 'desc', width: 52 },
   ] : [
     { header: '#', key: 'n', width: 5 },
     { header: 'Stage', key: 'stage', width: 30 },
@@ -511,7 +527,7 @@ function writeStagesSheet(wb, rows, { phased, baseMonth }) {
     cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
   });
   rows.forEach(({ stage, range }, i) => {
-    const months = phased ? getStageMonths(stage, baseMonth) : null;
+    const months = phased ? getStageMonths(stage, baseMonth, mode) : null;
     const row = ds.addRow(phased ? {
       n: i + 1,
       phase: stage.phase || '',
@@ -519,7 +535,9 @@ function writeStagesSheet(wb, rows, { phased, baseMonth }) {
       owner: stage.owner || '',
       month: months.month,
       span: months.span,
+      start: range ? excelDate(range.start) : null,
       end: range ? excelDate(range.end) : null,
+      depends: dependsLabel(stage, rows),
       desc: stage.description || '',
     } : {
       n: i + 1,
@@ -545,8 +563,10 @@ function writeStagesSheet(wb, rows, { phased, baseMonth }) {
     if (phased) {
       row.getCell('month').alignment = { vertical: 'middle', horizontal: 'center' };
       row.getCell('span').alignment = { vertical: 'middle', horizontal: 'center' };
+      row.getCell('start').numFmt = 'm/d/yyyy';
       row.getCell('end').numFmt = 'm/d/yyyy';
     } else {
+      row.getCell('start').numFmt = 'm/d/yyyy';
       row.getCell('start').numFmt = 'm/d/yyyy';
       row.getCell('end').numFmt = 'm/d/yyyy';
       row.getCell('days').alignment = { vertical: 'middle', horizontal: 'center' };
