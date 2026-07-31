@@ -26,6 +26,13 @@ export const JURISDICTION_QUESTIONS = [
 // distinguishable from "nobody has looked yet".
 export const SCREENING_ANSWERS = ['Yes', 'No', 'Unknown'];
 
+// The "doing business in California" sales test, from the Franchise Tax
+// Board's annually indexed figure. One number so the criterion label, the
+// regulation descriptions and the thresholds table can't quote different
+// values at each other.
+export const CA_SALES_THRESHOLD_USD = 757_070;
+const CA_SALES_THRESHOLD_LABEL = `$${CA_SALES_THRESHOLD_USD.toLocaleString('en-US')}`;
+
 // The reporting regulations gated by each jurisdiction question, keyed by
 // the same `key` as JURISDICTION_QUESTIONS. `thresholds` are the
 // requirement/metric pairs from the source screening matrix (numbers left
@@ -35,24 +42,24 @@ export const REGULATIONS_BY_JURISDICTION = {
     {
       regulation: 'SB 253',
       timeline: '2026 data (reporting starts 2027)',
-      description: 'Applies to companies with $1 billion+ in annual revenue doing business in California (legally formed or commercially based in California, or California sales exceeding $735,019 in the last two years).',
+      description: `Applies to companies with $1 billion+ in annual revenue doing business in California (legally formed or commercially based in California, or California sales exceeding ${CA_SALES_THRESHOLD_LABEL} in the last two years).`,
       // Machine-readable twin of the "1,000 Revenue (Million USD)" row
       // above — `thresholds` is display text, this is what the Applies?
       // derivation compares against. See deriveRegulationVerdict.
       revenueThresholdUsd: 1_000_000_000,
       thresholds: [
         { value: '1,000', metric: 'Revenue (Million USD)' },
-        { value: '735,019', metric: 'California Sales (USD)' },
+        { value: CA_SALES_THRESHOLD_LABEL.replace('$', ''), metric: 'California Sales (USD)' },
       ],
     },
     {
       regulation: 'SB 261',
       timeline: '2027 data (reporting starts 2028)',
-      description: 'Applies to companies with $500 million+ in annual revenue doing business in California (legally formed or commercially based in California, or California sales exceeding $735,019 in the last two years).',
+      description: `Applies to companies with $500 million+ in annual revenue doing business in California (legally formed or commercially based in California, or California sales exceeding ${CA_SALES_THRESHOLD_LABEL} in the last two years).`,
       revenueThresholdUsd: 500_000_000,
       thresholds: [
         { value: '500', metric: 'Revenue (Million USD)' },
-        { value: '735,019', metric: 'California Sales (USD)' },
+        { value: CA_SALES_THRESHOLD_LABEL.replace('$', ''), metric: 'California Sales (USD)' },
       ],
     },
   ],
@@ -154,6 +161,75 @@ export const REGULATIONS_BY_JURISDICTION = {
   ],
 };
 
+// ---- California screening detail -------------------------------------------
+// SB 253 and SB 261 each turn on two independent tests: a worldwide revenue
+// threshold, AND doing business in California. The second is itself a
+// one-of-three test. Showing them as separate rows under the California
+// question means the user can see which leg is satisfied and which is
+// missing, rather than reading one Yes/No and having to remember why.
+//
+// `source` says where a row's value comes from, which is what the user has
+// to know to trust it:
+//   'research' — derived from the revenue research already on the card
+//   'sites'    — counted from the uploaded site list
+//   'manual'   — nobody can look this up for you; answer it by hand
+export const CALIFORNIA_CRITERIA_GROUPS = [
+  {
+    key: 'revenue',
+    label: 'Revenue thresholds',
+    note: "Company's total worldwide gross receipts/sales, not just what it sells inside California",
+    // Either threshold on its own is enough for the regulation it gates;
+    // they aren't a one-of test between them.
+    anyOf: false,
+    rows: [
+      {
+        key: 'rev-500m',
+        label: '$500 million revenue (SB 261)',
+        source: 'research',
+        revenueThresholdUsd: 500_000_000,
+      },
+      {
+        key: 'rev-1b',
+        label: '$1 billion in revenue (SB 253)',
+        source: 'research',
+        revenueThresholdUsd: 1_000_000_000,
+      },
+    ],
+  },
+  {
+    key: 'doing-business',
+    label: 'Doing business in CA?',
+    note: 'One of these needs to be Yes',
+    anyOf: true,
+    rows: [
+      {
+        key: 'ca-operations',
+        label: 'CA operations',
+        note: 'Number of sites in CA',
+        source: 'sites',
+        fromSiteCount: true,
+      },
+      {
+        key: 'ca-sales',
+        label: `California sales exceeding ${CA_SALES_THRESHOLD_LABEL}`,
+        source: 'manual',
+      },
+      {
+        key: 'ca-domicile',
+        label: 'Commercially domiciled / organized in California',
+        source: 'manual',
+      },
+    ],
+  },
+];
+
+// Persistence key for one California criterion. Same shape as
+// regulationAnswerKey — jurisdiction, double underscore, slug — with a
+// `crit-` prefix so a criterion can never collide with a regulation slug.
+export function californiaCriterionKey(rowKey) {
+  return `california__crit-${rowKey}`;
+}
+
 // ---- Applies? derivation ---------------------------------------------------
 // Some regulations are pure threshold tests we already hold the inputs for:
 // California's SB 253 / SB 261 turn on annual revenue plus "doing business in
@@ -199,14 +275,67 @@ function fmtUsd(n) {
 // required because the revenue test alone doesn't create the obligation; the
 // company also has to do business there.
 export function deriveRegulationVerdict(regulation, {
-  revenueUsd, revenueLabel, jurisdictionAnswer, jurisdictionLabel,
+  revenueUsd, revenueLabel, jurisdictionAnswer, jurisdictionLabel, doingBusiness,
 } = {}) {
   const threshold = regulation?.revenueThresholdUsd;
   if (threshold == null) return null;
-  if (jurisdictionAnswer !== 'Yes') return null;
   if (!Number.isFinite(revenueUsd)) return null;
-  const verdict = revenueUsd >= threshold ? 'Yes' : 'No';
+  // California's detail rows settle "doing business" properly (operations,
+  // sales, domicile — any one of them). When they've been answered, that
+  // beats the jurisdiction question, which only asks whether the company
+  // operates or sells there at all. Otherwise fall back to that question.
+  const business = doingBusiness ?? (jurisdictionAnswer === 'Yes' ? 'Yes' : null);
+  if (business !== 'Yes' && business !== 'No') return null;
+  const overThreshold = revenueUsd >= threshold;
+  const verdict = overThreshold && business === 'Yes' ? 'Yes' : 'No';
   const shown = revenueLabel || fmtUsd(revenueUsd);
-  const basis = `Auto-derived: revenue ${shown} ${verdict === 'Yes' ? '≥' : '<'} the ${fmtUsd(threshold)} threshold, and ${jurisdictionLabel || 'the jurisdiction'} screened Yes. Pick a value to override.`;
+  const revenuePart = `revenue ${shown} ${overThreshold ? '≥' : '<'} the ${fmtUsd(threshold)} threshold`;
+  const businessPart = doingBusiness
+    ? `doing business in California = ${business}`
+    : `${jurisdictionLabel || 'the jurisdiction'} screened ${business === 'Yes' ? 'Yes' : 'No'}`;
+  const basis = `Auto-derived: ${revenuePart}, and ${businessPart}. Both have to hold. Pick a value to override.`;
   return { verdict, basis };
+}
+
+// One California criterion row's derived value, or null when nothing can be
+// worked out and the user has to answer it. Mirrors the shape above:
+// { verdict, basis }.
+//   - revenue rows compare the researched revenue against their threshold
+//   - the CA-operations row reads the uploaded site count
+//   - manual rows always return null
+export function deriveCaliforniaCriterion(row, { revenueUsd, revenueLabel, caSiteCount } = {}) {
+  if (row?.revenueThresholdUsd != null) {
+    if (!Number.isFinite(revenueUsd)) return null;
+    const verdict = revenueUsd >= row.revenueThresholdUsd ? 'Yes' : 'No';
+    const shown = revenueLabel || fmtUsd(revenueUsd);
+    return {
+      verdict,
+      basis: `From revenue research: ${shown} ${verdict === 'Yes' ? '≥' : '<'} ${fmtUsd(row.revenueThresholdUsd)}. Pick a value to override.`,
+    };
+  }
+  if (row?.fromSiteCount) {
+    if (!Number.isFinite(caSiteCount)) return null;
+    const verdict = caSiteCount > 0 ? 'Yes' : 'No';
+    return {
+      verdict,
+      basis: `From the uploaded site list: ${caSiteCount} site${caSiteCount === 1 ? '' : 's'} in California. Pick a value to override.`,
+    };
+  }
+  return null;
+}
+
+// Does the company do business in California? "Yes" as soon as any one of
+// the doing-business rows resolves Yes (hand-entered or derived); "No" only
+// once every row has resolved and none of them said Yes; null while any is
+// still unanswered, so a half-filled group never asserts a negative.
+export function deriveDoingBusinessInCA(answers, context) {
+  const group = CALIFORNIA_CRITERIA_GROUPS.find(g => g.key === 'doing-business');
+  let anyUnresolved = false;
+  for (const row of group.rows) {
+    const saved = answers?.[californiaCriterionKey(row.key)] || '';
+    const value = saved || deriveCaliforniaCriterion(row, context)?.verdict || '';
+    if (value === 'Yes') return 'Yes';
+    if (value !== 'No') anyUnresolved = true;
+  }
+  return anyUnresolved ? null : 'No';
 }
