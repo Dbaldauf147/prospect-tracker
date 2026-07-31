@@ -34,6 +34,15 @@ import { BUILTIN_TIMELINE_TEMPLATES } from '../data/timelineTemplates';
 export const TIMELINE_STAGE_OWNERS = ['Schneider Electric', 'Client', 'Both'];
 export const DEFAULT_STAGE_OWNER = 'Schneider Electric';
 
+// How a stage occupies the timeline. A 'timeline' stage is a duration and
+// draws as a bar across its months; a 'milestone' is a point in time and
+// draws as a marker in its start month, whatever span the dates imply.
+// Stages saved before this existed have no kind and read as durations, so
+// existing timelines render exactly as they did.
+export const TIMELINE_STAGE_KINDS = ['timeline', 'milestone'];
+export const DEFAULT_STAGE_KIND = 'timeline';
+export const STAGE_KIND_LABELS = { timeline: 'Timeline', milestone: 'Milestone' };
+
 // Short id generator on the same pattern as makeCustomListKey — a timestamp
 // in base36 plus a random tail so two stages added in the same millisecond
 // still get distinct keys.
@@ -65,6 +74,7 @@ function normalizeStage(stage) {
     // 'number' draws the stage position in the marker; anything else selects
     // artwork from STAGE_ICONS in timelineGraphic.
     icon: String(stage?.icon || 'number'),
+    kind: TIMELINE_STAGE_KINDS.includes(stage?.kind) ? stage.kind : DEFAULT_STAGE_KIND,
   };
 }
 

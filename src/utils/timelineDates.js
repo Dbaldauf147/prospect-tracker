@@ -226,10 +226,16 @@ export function getStageMonths(stage, baseMonth) {
       if (startOrd != null && endOrd != null && span == null) span = endOrd - startOrd + 1;
     }
   }
+  // A milestone is a point in time: it sits in its start month and never
+  // spans, whatever its dates or months value imply. Collapsing the span
+  // here keeps every surface consistent — the SVG, the Excel grid and the
+  // Stages sheet all read their placement from this one function.
+  const isMilestone = stage?.kind === 'milestone';
   return {
     month: Math.max(1, month ?? 1),
-    span: Math.max(1, span ?? 1),
+    span: isMilestone ? 1 : Math.max(1, span ?? 1),
     explicit: Number.isFinite(explicitStart) && explicitStart >= 1,
+    milestone: isMilestone,
   };
 }
 
