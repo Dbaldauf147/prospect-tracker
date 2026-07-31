@@ -101,6 +101,46 @@ const NFAT_TYPE_LABELS = { check: '✓ Check marks', x: '✗ X marks', any: 'Any
 // cells use so regions stay consistent across views.
 const HQ_REGION_OPTIONS = ['North America', 'Outside of North America'];
 
+// Free-text SME box for one row of the Services tab. Local while typing so
+// a name isn't a settings write per keystroke; commits on blur or Enter,
+// reverts on Escape. Clicks are stopped from reaching the row so typing in
+// the cell can't trigger the row's drilldown.
+function ServiceSMEInput({ value, onSave, label }) {
+  const [draft, setDraft] = useState(value || '');
+  useEffect(() => { setDraft(value || ''); }, [value]);
+  // Escape blurs to leave the field, but blur is what commits — and the
+  // handler still closes over the pre-revert draft, so without this flag
+  // Escape would save the very text it was meant to discard.
+  const abandonRef = useRef(false);
+  const dirty = draft !== (value || '');
+  return (
+    <input
+      type="text"
+      value={draft}
+      placeholder="—"
+      aria-label={`SME for ${label}`}
+      title={value || 'Schneider SME for this service'}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        if (abandonRef.current) { abandonRef.current = false; setDraft(value || ''); return; }
+        if (dirty) onSave(draft);
+      }}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') e.currentTarget.blur();
+        else if (e.key === 'Escape') { abandonRef.current = true; e.currentTarget.blur(); }
+      }}
+      style={{
+        width: '100%', boxSizing: 'border-box', padding: '2px 4px',
+        fontSize: '0.75rem', fontFamily: 'inherit', borderRadius: 3,
+        border: `1px solid ${dirty ? 'var(--color-accent)' : 'transparent'}`,
+        background: dirty ? '#fff' : 'transparent', color: 'var(--color-text)',
+      }}
+    />
+  );
+}
+
 function defaultNfatSchedules() {
   const base = { enabled: false, days: [1, 2, 3, 4, 5], time: '06:00', lastRunAt: 0 };
   return { check: { ...base }, x: { ...base }, any: { ...base } };
@@ -7826,6 +7866,19 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     setData(prev => ({ ...(prev || {}), columnLinks: nextLinks || {} }));
   }, []);
 
+  // Free-text SME (the Schneider contact who owns a service), keyed by the
+  // service scope and persisted in settings so it survives reloads and
+  // syncs across devices. Mirrors saveContactNote: rewrite the whole map,
+  // dropping the key when the box is cleared.
+  const serviceSMEs = settings?.oppsServiceSMEs || {};
+  const saveServiceSME = useCallback((scope, value) => {
+    const cur = settings?.oppsServiceSMEs || {};
+    const next = { ...cur };
+    const v = String(value || '').trim();
+    if (v) next[scope] = v; else delete next[scope];
+    updateSettings({ oppsServiceSMEs: next });
+  }, [settings?.oppsServiceSMEs, updateSettings]);
+
   const toggleHideService = useCallback((scope) => {
     setHiddenServices(prev => {
       const next = new Set(prev);
@@ -8957,6 +9010,25 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   const servicesColumns = useMemo(() => [
     { key: 'scope', label: 'Service (Scope)', defaultWidth: 260 },
     {
+      key: 'sme',
+      label: 'SME',
+      defaultWidth: 160,
+      renderHeader: (label) => (
+        <span title="Schneider subject-matter expert for this service. Free text — saved as you leave the box.">{label}</span>
+      ),
+      // Sort and filter on the saved value rather than the row, which
+      // carries no sme field; also what the Excel export reads.
+      getFilterValue: (row) => serviceSMEs[row.scope] || '',
+      sortValue: (row) => (serviceSMEs[row.scope] || '').toLowerCase(),
+      render: (row) => (
+        <ServiceSMEInput
+          value={serviceSMEs[row.scope] || ''}
+          onSave={(v) => saveServiceSME(row.scope, v)}
+          label={row.scope}
+        />
+      ),
+    },
+    {
       key: 'wins',
       label: 'Wins',
       defaultWidth: 90,
@@ -9024,7 +9096,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         </button>
       ),
     },
-  ], [toggleHideService]);
+  ], [toggleHideService, serviceSMEs, saveServiceSME]);
 
   // Leads grouped by Source for the "By Source" tab, scoped to the
   // tab's own Start Date range. Mirrors serviceBreakdown's shape
