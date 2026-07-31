@@ -1366,7 +1366,11 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     });
   }
 
-  function saveDraft() {
+  // `silent` archives the compose without touching the result banner —
+  // used by the send paths, which have a more specific outcome to report
+  // ("N drafts created in Outlook") and would otherwise have it
+  // immediately overwritten by "Draft saved".
+  function saveDraft({ silent = false } = {}) {
     // Quill wraps empty content in <p><br></p> — check for actual content
     const bodyText = body.replace(/<[^>]*>/g, '').trim();
     if (!subject.trim() && !bodyText) return;
@@ -1381,6 +1385,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     };
     const updated = capUnpinnedDrafts([draft, ...drafts]);
     setDrafts(updated);
+    if (silent) return;
     setResult({ type: 'success', message: 'Draft saved' });
     setTimeout(() => setResult(null), 3000);
   }
@@ -1696,15 +1701,28 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       const res = await apiFetch('/api/outlook-draft', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accessToken, drafts, folderName }),
+        // `track` mirrors the checkbox the .eml path reads: the server
+        // injects the open pixel and rewrites the links into each body
+        // before Graph creates the draft, so the tracking is already in
+        // place when you open the draft and hit Send.
+        body: JSON.stringify({ accessToken, drafts, folderName, track: trackEmails }),
       });
       const data = await res.json();
       if (data.success) {
         const folderNote = data.folder
           ? ` in folder "${data.folder}"`
           : (data.folderError ? ` (couldn't create folder — landed in default Drafts: ${data.folderError})` : '');
-        setResult({ type: 'success', message: `${data.created} draft${data.created !== 1 ? 's' : ''} created in Outlook${folderNote}!` });
-        saveDraft();
+        // Tracking is best-effort per draft — injection or the Firestore
+        // write can fail without failing the draft — so report what
+        // actually carried a pixel instead of assuming the whole batch did.
+        const tracked = (data.results || []).filter(r => r.success && r.tracked).length;
+        const trackNote = !trackEmails
+          ? ''
+          : tracked === data.created
+            ? ' Opens & clicks are tracked.'
+            : ` ${tracked} of ${data.created} carry tracking.`;
+        setResult({ type: 'success', message: `${data.created} draft${data.created !== 1 ? 's' : ''} created in Outlook${folderNote}!${trackNote}` });
+        saveDraft({ silent: true });
       } else if (data.needsAuth) {
         setResult({ type: 'info', message: 'Connect your Outlook account first' });
         setOutlookConnected(false);
@@ -1975,7 +1993,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     });
 
     setResult({ type: 'success', message: `${built.length} .eml file${built.length !== 1 ? 's' : ''} downloading to your Downloads folder — double-click each to open in Outlook.` });
-    saveDraft();
+    saveDraft({ silent: true });
   }
 
   // Duplicate detection for the To section. An address that would actually be
@@ -2371,8 +2389,32 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                 Download first only
               </button>
             )}
-            <button className={styles.secondaryBtn} onClick={saveDraft} disabled={!subject.trim() && !body.trim()}>
+            <button
+              className={styles.secondaryBtn}
+              onClick={createOutlookDrafts}
+              disabled={sending || selectedContacts.length === 0 || !subject.trim()}
+              title={outlookConnected
+                ? 'Create these drafts straight in your Outlook Drafts folder — no .eml files to open one by one'
+                : 'Connect Outlook below first, then the drafts are created straight in your Drafts folder'}
+            >
+              {sending ? 'Creating…' : 'Create in Outlook'}
+            </button>
+            <button className={styles.secondaryBtn} onClick={() => saveDraft()} disabled={!subject.trim() && !body.trim()}>
               Save Draft
+            </button>
+          </div>
+
+          {/* The Graph path writes straight into Outlook's Drafts folder, so
+              it needs a connected account. The token is shared with the
+              meeting picker, so this often already reads as connected. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.55rem', fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: outlookConnected ? '#16A34A' : '#CBD5E1', flexShrink: 0 }} />
+            <span>{outlookConnected ? 'Outlook connected' : 'Outlook not connected — “Create in Outlook” needs it'}</span>
+            <button
+              onClick={outlookConnected ? disconnectOutlook : connectOutlook}
+              style={{ padding: 0, border: 'none', background: 'none', color: '#0078D4', font: 'inherit', fontWeight: 600, cursor: 'pointer' }}
+            >
+              {outlookConnected ? 'Disconnect' : 'Connect'}
             </button>
           </div>
 

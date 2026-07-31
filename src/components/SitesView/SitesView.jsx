@@ -2205,6 +2205,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       siteName: siteNameColumn ? String(r[siteNameColumn] ?? '').trim() : (r.__siteName__ || ''),
       city: String(r.__city__ || (cityOverride ? r[cityOverride] : '') || '').trim(),
       state: String(r.__state__ || (stateColumnOverride ? r[stateColumnOverride] : '') || '').trim(),
+      // Resolved country (mapped column, else zip/utility-derived) — the
+      // Corporate Compliance subtab buckets sites into North America /
+      // Europe / Rest of World off this.
+      country: String(r.__country__ || '').trim(),
       sqft: (typeof r.__propertySizeFt2__ === 'number' && Number.isFinite(r.__propertySizeFt2__)) ? r.__propertySizeFt2__ : null,
       propertyType: r.__propertyType__ || r.__propertyTypeRaw__ || '',
       electricUtility: r.__electric__ || '',

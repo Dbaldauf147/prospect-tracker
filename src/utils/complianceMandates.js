@@ -47,16 +47,81 @@ export const CITY_ALIASES = {
   newyorkcity: 'New York', nyc: 'New York',
 };
 
+// Which country a state / province / country value names, or null when it
+// can't be told. Used to stop a bare city name matching the wrong country's
+// jurisdiction — Cambridge, Ontario is not Cambridge, Massachusetts.
+//
+// Deliberately excludes US territories (PR, GU, VI …): a two-letter code in a
+// state column is often a mis-mapped field rather than a real territory, and
+// reading "PR" as Puerto Rico would veto correct matches on the strength of
+// junk data. Unresolved values simply don't veto anything.
+const CA_REGIONS = [
+  'canada',
+  'alberta', 'ab', 'britishcolumbia', 'bc', 'manitoba', 'mb', 'newbrunswick', 'nb',
+  'newfoundlandandlabrador', 'newfoundland', 'nl', 'northwestterritories', 'nt',
+  'novascotia', 'ns', 'nunavut', 'nu', 'ontario', 'on', 'princeedwardisland', 'pe',
+  'quebec', 'québec', 'qc', 'saskatchewan', 'sk', 'yukon', 'yt',
+];
+const US_REGIONS = [
+  'unitedstates', 'unitedstatesofamerica', 'usa', 'us',
+  'alabama', 'al', 'alaska', 'ak', 'arizona', 'az', 'arkansas', 'ar', 'california',
+  'colorado', 'co', 'connecticut', 'ct', 'delaware', 'de', 'districtofcolumbia', 'dc',
+  'florida', 'fl', 'georgia', 'ga', 'hawaii', 'hi', 'idaho', 'id', 'illinois', 'il',
+  'indiana', 'in', 'iowa', 'ia', 'kansas', 'ks', 'kentucky', 'ky', 'louisiana', 'la',
+  'maine', 'me', 'maryland', 'md', 'massachusetts', 'ma', 'michigan', 'mi',
+  'minnesota', 'mn', 'mississippi', 'ms', 'missouri', 'mo', 'montana', 'mt',
+  'nebraska', 'ne', 'nevada', 'nv', 'newhampshire', 'nh', 'newjersey', 'nj',
+  'newmexico', 'nm', 'newyork', 'ny', 'northcarolina', 'nc', 'northdakota', 'nd',
+  'ohio', 'oh', 'oklahoma', 'ok', 'oregon', 'or', 'pennsylvania', 'pa',
+  'rhodeisland', 'ri', 'southcarolina', 'sc', 'southdakota', 'sd', 'tennessee', 'tn',
+  'texas', 'tx', 'utah', 'ut', 'vermont', 'vt', 'virginia', 'va', 'washington', 'wa',
+  'westvirginia', 'wv', 'wisconsin', 'wi', 'wyoming', 'wy',
+];
+// "CA" is California, not Canada — the ambiguity is why the country lists are
+// spelled out rather than guessed from a prefix.
+const REGION_COUNTRY = new Map([
+  ...CA_REGIONS.map(r => [normKey(r), 'CA']),
+  ...US_REGIONS.map(r => [normKey(r), 'US']),
+]);
+
+export function regionCountry(value) {
+  const k = normKey(value);
+  return k ? (REGION_COUNTRY.get(k) || null) : null;
+}
+
+// The country a jurisdiction sits in, read from its state / province name.
+// Not from the Government ID prefix — some Canadian jurisdictions carry a
+// "US-" prefix in the seed data (Ottawa, Montreal), so the prefix can't be
+// trusted while the state name can.
+function govIdCountry(govId, ordinances) {
+  const g = ordIndex(ordinances).get(govId);
+  return g ? regionCountry(g.state) : null;
+}
+
 // Resolve a city + state to a Government ID. Tries city+state (state may be an
 // abbreviation or full name — the lookup carries both) then city-only, then
 // the same via a known alias (e.g. Brooklyn → New York).
-export function lookupGovId(city, state, cityLookup = CITY_LOOKUP) {
+//
+// The city-only step is a guess by nature: a bare "Cambridge" can't tell
+// Cambridge MA from Cambridge ON. So it's rejected when the site's state and
+// the candidate jurisdiction's are both resolvable to a country and those
+// countries differ. A city+state hit is an explicit curated mapping and is
+// always trusted.
+export function lookupGovId(city, state, cityLookup = CITY_LOOKUP, ordinances = MASTER_ORDINANCES) {
   const c = String(city || '').trim();
   const s = String(state || '').trim();
   if (!c) return null;
+  const siteCountry = regionCountry(s);
   const tryCity = (name) => {
-    for (const k of [normKey(name + s), normKey(name)]) if (cityLookup[k] != null) return cityLookup[k];
-    return null;
+    const withState = cityLookup[normKey(name + s)];
+    if (withState != null) return withState;
+    const cityOnly = cityLookup[normKey(name)];
+    if (cityOnly == null) return null;
+    if (siteCountry) {
+      const candidateCountry = govIdCountry(cityOnly, ordinances);
+      if (candidateCountry && candidateCountry !== siteCountry) return null;
+    }
+    return cityOnly;
   };
   const direct = tryCity(c);
   if (direct != null) return direct;
@@ -134,7 +199,7 @@ function evalCategory(category, mandate, site) {
 // Screen one site end-to-end. `site`: { id, siteName, city, state, sqft,
 // propertyType, electricUtility, gasUtility }. Never throws.
 export function screenSite(site, { ordinances = MASTER_ORDINANCES, cityLookup = CITY_LOOKUP } = {}) {
-  const govId = lookupGovId(site.city, site.state, cityLookup);
+  const govId = lookupGovId(site.city, site.state, cityLookup, ordinances);
   const mandate = getMandates(govId, ordinances);
   if (!mandate) {
     return { ...site, matched: false, govId: govId || null, government: null };

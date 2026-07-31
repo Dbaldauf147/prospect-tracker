@@ -293,6 +293,15 @@ export const EU_CRITERIA_GROUPS = [
   },
 ];
 
+// Jurisdictions whose mandate rows show before the question is answered.
+//
+// A mandate is normally a consequence of a Yes, so it waits for one. The EU is
+// the exception: its criteria rows are already always on, and the CSRD waves
+// screen on the very figures those rows collect — turnover, headcount — so
+// they're worth having in view while somebody fills them in rather than one
+// answer later.
+export const ALWAYS_SHOW_REGULATIONS = new Set(['eu']);
+
 // The criteria detail per jurisdiction. Only these two have one; the rest
 // screen on a single question.
 export const JURISDICTION_CRITERIA_GROUPS = {
@@ -371,6 +380,7 @@ function csrdValues(answers, context) {
     return Number.isFinite(n) ? n : null;
   };
   return {
+    alreadyReported: read('csrd-2025'),
     euIncorporated: read('eu-incorporated'),
     euListed: read('eu-listed'),
     globalTurnover: num('global-turnover'),
@@ -390,7 +400,18 @@ function csrdValues(answers, context) {
 export function deriveCsrdWaveVerdict(regulation, { answers, context } = {}) {
   const build = CSRD_WAVE_RULES[regulation?.regulation];
   if (!build) return null;
-  const conditions = build(csrdValues(answers, context));
+  const values = csrdValues(answers, context);
+  // A company that has already filed a CSRD report is in Wave 1 by
+  // demonstration — it doesn't need the thresholds argued from figures that
+  // may be stale or converted. This beats the conditions rather than joining
+  // them, so it stands even where a figure would otherwise fail the test.
+  if (regulation.regulation === 'CSRD — Wave 1' && values.alreadyReported === 'Yes') {
+    return {
+      verdict: 'Yes',
+      basis: 'Auto-derived: the company already submitted a CSRD report in 2025, so Wave 1 applies. Pick a value to override.',
+    };
+  }
+  const conditions = build(values);
   const failed = conditions.filter(c => c.value === false);
   if (failed.length) {
     return {

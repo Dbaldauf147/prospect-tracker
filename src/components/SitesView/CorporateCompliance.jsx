@@ -11,8 +11,12 @@ import {
   deriveRegulationVerdict, parseRevenueUsd,
   JURISDICTION_CRITERIA_GROUPS, criterionKey,
   deriveCriterion, deriveDoingBusinessInCA, deriveCsrdWaveVerdict, californiaRevenueScreen,
-  companyScreeningKey,
+  companyScreeningKey, ALWAYS_SHOW_REGULATIONS,
 } from '../../data/corporateComplianceScreening';
+import {
+  summarizeSiteRegions, regionCountryLabel,
+  SITE_REGION_ORDER, UNKNOWN_REGION,
+} from '../../utils/siteRegion';
 
 // Firestore path segment for a company's persisted revenue research —
 // same slug shape the prospect modal uses for its research blobs.
@@ -882,7 +886,8 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                       // to stays on screen even when the jurisdiction answer
                       // no longer triggers it — their saved research should
                       // never disappear with the row.
-                      const triggered = val === 'Yes' || val === 'Unknown';
+                      const triggered = val === 'Yes' || val === 'Unknown'
+                        || ALWAYS_SHOW_REGULATIONS.has(q.key);
                       if (!triggered && !(links?.[rKey] || findings?.[rKey])) return null;
                       const rVal = answers?.[rKey] || '';
                       // Pure threshold tests (SB 253 / SB 261) answer
@@ -1055,6 +1060,38 @@ function CardRow({ label, children, first }) {
   );
 }
 
+// North America / Europe / Rest of World split of a site count, rendered
+// as inline "· 180 North America" segments after the total. All three
+// headline buckets always show (a zero reads as "none there", which is
+// itself the answer); Unknown only appears when sites couldn't be placed,
+// so the segments always add back up to the total. Each segment's hover
+// lists the countries behind it.
+function RegionBreakdown({ summary }) {
+  if (!summary || summary.total === 0) return null;
+  const buckets = SITE_REGION_ORDER.filter(
+    region => region !== UNKNOWN_REGION || summary.counts[region] > 0
+  );
+  return (
+    <>
+      {buckets.map((region) => {
+        const count = summary.counts[region] || 0;
+        const title = region === UNKNOWN_REGION
+          ? 'Sites with no country on the upload and no recognizable US state or Canadian province. Map a Country column on the Utility Lookup tab to place them.'
+          : `${region}: ${regionCountryLabel(summary.countries[region])}`;
+        return (
+          <Fragment key={region}>
+            {' · '}
+            <span title={title} style={{ whiteSpace: 'nowrap', opacity: count === 0 ? 0.55 : 1 }}>
+              <strong style={{ color: count === 0 ? 'inherit' : 'var(--color-text)' }}>{count}</strong>
+              {' '}{region}
+            </span>
+          </Fragment>
+        );
+      })}
+    </>
+  );
+}
+
 export default function CorporateCompliance({ sites = [], settings, updateSettingsPath, prospects = [], updateProspect }) {
   // Map each canonical company key to a matching prospect (company) record,
   // so researched revenue can be written onto that company's popup field and
@@ -1078,10 +1115,11 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
       const key = companyKeyOf(rawName);
       const mapKey = key || '__unnamed__';
       if (!byKey.has(mapKey)) {
-        byKey.set(mapKey, { key, total: 0, california: 0, caSites: [], names: new Map() });
+        byKey.set(mapKey, { key, total: 0, california: 0, caSites: [], sites: [], names: new Map() });
       }
       const entry = byKey.get(mapKey);
       entry.total += 1;
+      entry.sites.push(site);
       if (rawName) entry.names.set(rawName, (entry.names.get(rawName) || 0) + 1);
       if (isCalifornia(site.state)) {
         entry.california += 1;
@@ -1100,7 +1138,12 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
           name = n; bestCount = c;
         }
       }
-      return { key: e.key, name, total: e.total, california: e.california, caSites: e.caSites };
+      return {
+        key: e.key, name, total: e.total, california: e.california, caSites: e.caSites,
+        // North America / Europe / Rest of World split of this company's
+        // sites, with the per-country detail behind the hover.
+        regions: summarizeSiteRegions(e.sites),
+      };
     });
     return out.sort(
       (a, b) => b.california - a.california || b.total - a.total || a.name.localeCompare(b.name)
@@ -1108,6 +1151,9 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
   }, [sites]);
 
   const totalCA = companies.reduce((sum, c) => sum + c.california, 0);
+  // Portfolio-wide region split for the summary line above the cards —
+  // computed off every uploaded site, so it matches the sum of the cards.
+  const totalRegions = useMemo(() => summarizeSiteRegions(sites), [sites]);
 
   // Persisted revenue-research blobs keyed by company slug (synced via
   // settings.companyRevenueResearch). Transient loading / error state per
@@ -1474,6 +1520,10 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
         <>
           <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', margin: '1rem 0 0.5rem' }}>
             {companies.length} {companies.length === 1 ? 'company' : 'companies'} ·{' '}
+            <strong style={{ color: 'var(--color-text)' }}>{totalRegions.total}</strong>{' '}
+            {totalRegions.total === 1 ? 'site' : 'sites'}
+            <RegionBreakdown summary={totalRegions} />
+            {' · '}
             <strong style={{ color: '#166534' }}>{totalCA}</strong> California{' '}
             {totalCA === 1 ? 'site' : 'sites'}
             {scanning && <span> · scanning lists…</span>}
@@ -1565,6 +1615,7 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                     <CardRow label="Sites">
                       <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>
                         {c.total} {c.total === 1 ? 'site' : 'sites'}
+                        <RegionBreakdown summary={c.regions} />
                         {c.california > 0 && (
                           <>
                             {' · '}
