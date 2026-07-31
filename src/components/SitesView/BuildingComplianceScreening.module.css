@@ -538,3 +538,148 @@
   align-items: center;
   gap: 6px;
 }
+
+/* --- Site detail popup ------------------------------------------------ */
+
+.siteRowClickable { cursor: pointer; }
+.siteRowClickable:hover { background: var(--color-accent-light, #EBF2FC); }
+.siteRowClickable:focus-visible { outline: 2px solid var(--color-accent, #3B7DDD); outline-offset: -2px; }
+
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 4vh 1rem;
+  overflow-y: auto;
+}
+
+.modal {
+  width: min(820px, 100%);
+  background: var(--color-surface, #fff);
+  border-radius: 10px;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.3);
+  overflow: hidden;
+}
+
+.modalHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  background: #009530;
+  color: #fff;
+}
+
+.modalTitle { font-size: 1rem; font-weight: 800; }
+.modalSub { font-size: 0.72rem; opacity: 0.92; margin-top: 2px; }
+
+.modalClose {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.modalBody { padding: 0.85rem 1rem 1rem; }
+
+.mdFacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.2rem;
+  padding-bottom: 0.7rem;
+  border-bottom: 1px solid var(--color-border-light, #EDF2F7);
+  font-size: 0.75rem;
+  color: var(--color-text-secondary, #5A6B7E);
+}
+
+.mdBlock {
+  margin-top: 0.8rem;
+  border: 1px solid var(--color-border, #E2E8F0);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.mdHead {
+  padding: 0.35rem 0.7rem;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.mdBody { padding: 0.55rem 0.7rem 0.7rem; }
+
+.mdRow {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 0.6rem;
+  padding: 0.18rem 0;
+  font-size: 0.74rem;
+  align-items: baseline;
+}
+
+.mdKey {
+  color: var(--color-text-muted, #64748B);
+  font-size: 0.64rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.mdVal { color: var(--color-text, #1E2A36); overflow-wrap: anywhere; }
+.mdLink { color: var(--color-accent, #3B7DDD); }
+
+.mdSubhead {
+  margin-top: 0.55rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--color-border-light, #EDF2F7);
+  font-size: 0.62rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-muted, #64748B);
+}
+
+/* The headline arithmetic — the reason the popup exists. */
+.mdFine {
+  margin: 0.3rem 0 0.35rem;
+  padding: 0.4rem 0.55rem;
+  background: #FFFBEB;
+  border-left: 3px solid #F59E0B;
+  border-radius: 3px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #92400E;
+}
+
+.mdNote {
+  margin-top: 0.25rem;
+  font-size: 0.68rem;
+  font-style: italic;
+  color: var(--color-text-muted, #94A3B8);
+}
+
+.mdNot {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary, #5A6B7E);
+  font-style: italic;
+}
+
+/* The Gov ID chip sits on the green modal header, so it needs its own
+   colours — the table's version is dark-on-light and vanishes here. */
+.modalGovId {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.68rem;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
