@@ -412,11 +412,13 @@ function needsBudgetTimelineFlag(row) {
 // Budget + one Compliance timeline).
 
 // Read the structured timelines off an opp. Newer records store an array of
-// { type, value, kickoff } rows under `_timelines`, each with its own Kickoff
-// Deadline. Older records only carry the free-text "Timeline?" column — we
-// surface that as a single untyped row so nothing is lost when the popup first
-// opens. Older-still records kept one per-opp kickoff under `_kickoffDeadline`;
-// we surface that on the first row so an existing deadline isn't dropped.
+// { type, value, kickoff, hidden } rows under `_timelines`, each with its own
+// Kickoff Deadline. Older records only carry the free-text "Timeline?" column —
+// we surface that as a single untyped row so nothing is lost when the popup
+// first opens. Older-still records kept one per-opp kickoff under
+// `_kickoffDeadline`; we surface that on the first row so an existing deadline
+// isn't dropped. `hidden` rows are kept verbatim — hiding is a display choice,
+// not a delete, so the row (and anything typed into it) survives round-trips.
 function readTimelines(opp) {
   const stored = Array.isArray(opp?._timelines) ? opp._timelines : null;
   let list;
@@ -426,6 +428,7 @@ function readTimelines(opp) {
       type: String(r?.type ?? ''),
       value: String(r?.value ?? ''),
       kickoff: String(r?.kickoff ?? ''),
+      hidden: r?.hidden === true,
     }));
     // Migrate a pre-per-row single kickoff onto the first row when none of the
     // rows carries its own yet.
@@ -434,17 +437,24 @@ function readTimelines(opp) {
     }
   } else {
     const legacy = String(rowValueByHeader(opp, 'timeline?') ?? '').trim();
-    list = legacy ? [{ type: '', value: legacy, kickoff: legacyKickoff }] : [];
+    list = legacy ? [{ type: '', value: legacy, kickoff: legacyKickoff, hidden: false }] : [];
   }
   return { list };
 }
 
-// The soonest (earliest) Kickoff Deadline across the timeline rows, as an ISO
-// yyyy-mm-dd string ('' when none is set). ISO dates sort lexically, so the
-// min string is the min date. This drives the opp-level `_kickoffDeadline`
+// The timeline rows that count as live: everything the user hasn't hidden.
+// Hidden rows stay in `_timelines` (so unhiding restores whatever was typed)
+// but are invisible to the summary, the kickoff mirror, and the Flags column.
+function activeTimelines(list) {
+  return (Array.isArray(list) ? list : []).filter(r => r?.hidden !== true);
+}
+
+// The soonest (earliest) Kickoff Deadline across the visible timeline rows, as
+// an ISO yyyy-mm-dd string ('' when none is set). ISO dates sort lexically, so
+// the min string is the min date. This drives the opp-level `_kickoffDeadline`
 // mirror so the Flags column warns on whichever kickoff is most urgent.
 function earliestKickoff(list) {
-  const dates = (Array.isArray(list) ? list : [])
+  const dates = activeTimelines(list)
     .map(r => String(r?.kickoff ?? '').trim())
     .filter(Boolean);
   return dates.length ? dates.reduce((a, b) => (a < b ? a : b)) : '';
@@ -452,10 +462,11 @@ function earliestKickoff(list) {
 
 // Collapse the structured timeline rows into the single human-readable string
 // stored in the legacy "Timeline?" column. Keeps table cells and the budget
-// timeline flag working off the same value they always have. Empty rows are
-// dropped; each kept row reads "Type: value" (or just the value when untyped).
+// timeline flag working off the same value they always have. Hidden and empty
+// rows are dropped; each kept row reads "Type: value" (or just the value when
+// untyped).
 function summarizeTimelines(list) {
-  return (Array.isArray(list) ? list : [])
+  return activeTimelines(list)
     .map(r => ({ type: String(r?.type ?? '').trim(), value: String(r?.value ?? '').trim() }))
     .filter(r => r.value)
     .map(r => (r.type ? `${r.type}: ${r.value}` : r.value))
@@ -513,6 +524,10 @@ function timelineDrivenServices(opp, solutionOptions, serviceOverrides) {
 // date/detail. Empty auto rows never reach the Timeline? summary
 // (summarizeTimelines drops value-less rows), so seeding is side-effect
 // free until the user actually logs a date.
+//
+// Hidden rows count as present, which is the whole point of hiding: a
+// service timeline the user doesn't want to track stays out of the way
+// instead of being re-seeded every time the popup opens.
 function withServiceTimelines(list, services) {
   const rows = Array.isArray(list) ? [...list] : [];
   const present = new Set(
@@ -521,7 +536,7 @@ function withServiceTimelines(list, services) {
   for (const name of services) {
     const key = String(name).trim().toLowerCase();
     if (!key || present.has(key)) continue;
-    rows.push({ type: name, value: '' });
+    rows.push({ type: name, value: '', kickoff: '', hidden: false });
     present.add(key);
   }
   return rows;
@@ -5785,12 +5800,29 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onCommi
 // datalist, but any custom type can be typed), logs a date or note, and carries
 // its own Kickoff Deadline in the right-hand column so every timeline gets its
 // own deadline.
+//
+// Rows can be hidden or deleted. Hiding keeps the row (and whatever's typed in
+// it) in `_timelines` while dropping it out of the table, the Timeline? summary
+// and the kickoff flag — that's the right move for the auto-seeded
+// timeline-driven service rows, which a delete would only re-seed on the next
+// open. Delete is still there for rows added by mistake.
 function TimelinesEditor({ list, onChangeList }) {
   const rows = Array.isArray(list) ? list : [];
   const updateRow = (idx, key, value) =>
     onChangeList(rows.map((r, i) => (i === idx ? { ...r, [key]: value } : r)));
-  const addRow = () => onChangeList([...rows, { type: '', value: '', kickoff: '' }]);
+  const addRow = () => onChangeList([...rows, { type: '', value: '', kickoff: '', hidden: false }]);
   const deleteRow = (idx) => onChangeList(rows.filter((_, i) => i !== idx));
+  const setHidden = (idx, hidden) => updateRow(idx, 'hidden', hidden);
+
+  // Hidden rows are folded away behind a "Show hidden" toggle so the table
+  // stays short, while the rows themselves remain one click from coming back.
+  const [showHidden, setShowHidden] = useState(false);
+  const hiddenCount = rows.filter(r => r?.hidden === true).length;
+  // Carry each row's real index so the edit/hide/delete handlers keep working
+  // against the full list while the table renders a filtered view.
+  const visibleRows = rows
+    .map((row, idx) => ({ row, idx }))
+    .filter(({ row }) => showHidden || row?.hidden !== true);
 
   // Dropdown options are the presets plus every custom type the user has
   // typed before. Re-read on the in-tab "added" event and on cross-tab
@@ -5824,6 +5856,10 @@ function TimelinesEditor({ list, onChangeList }) {
     letterSpacing: '0.03em', color: '#64748B', padding: '0 0.4rem 0.3rem 0', whiteSpace: 'nowrap',
   };
   const td = { padding: '0 0.4rem 0.4rem 0', verticalAlign: 'top' };
+  const rowActionButton = {
+    background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+    color: '#64748B', fontSize: '0.7rem', fontWeight: 600, padding: '0 2px', lineHeight: 1,
+  };
 
   // A per-row Kickoff Deadline field for the right-hand column. A live "days
   // until" countdown sits beside it, turning amber inside the warning window
@@ -5867,55 +5903,69 @@ function TimelinesEditor({ list, onChangeList }) {
           </tr>
         </thead>
         <tbody>
-          {rows.length === 0 ? (
+          {visibleRows.length === 0 ? (
             <tr>
               <td style={td} colSpan={4}>
-                <div style={{ fontSize: '0.72rem', color: '#94A3B8', padding: '0.2rem 0' }}>No timelines yet.</div>
+                <div style={{ fontSize: '0.72rem', color: '#94A3B8', padding: '0.2rem 0' }}>
+                  {rows.length === 0 ? 'No timelines yet.' : 'All timelines are hidden.'}
+                </div>
               </td>
             </tr>
           ) : (
-            rows.map((row, idx) => (
-              <tr key={idx}>
-                <td style={td}>
-                  <input
-                    type="text"
-                    list={typeListId}
-                    value={row.type || ''}
-                    onChange={(e) => updateRow(idx, 'type', e.target.value)}
-                    onBlur={(e) => commitType(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') commitType(e.currentTarget.value); }}
-                    placeholder="— Timeline type —"
-                    style={cellInput}
-                  />
-                </td>
-                <td style={td}>
-                  <input
-                    type="text"
-                    value={row.value || ''}
-                    onChange={(e) => updateRow(idx, 'value', e.target.value)}
-                    placeholder="Date or note (e.g. 2026-08-01, Q3)"
-                    style={cellInput}
-                  />
-                </td>
-                <td style={{ ...td, whiteSpace: 'nowrap' }}>{renderKickoff(row, idx)}</td>
-                <td style={{ ...td, textAlign: 'center' }}>
-                  <button
-                    type="button"
-                    onClick={() => deleteRow(idx)}
-                    aria-label="Delete timeline"
-                    title="Delete timeline"
-                    style={{
-                      background: 'transparent', border: 'none', cursor: 'pointer',
-                      color: '#94A3B8', fontSize: '1rem', padding: '0 4px', lineHeight: 1,
-                    }}
-                  >×</button>
-                </td>
-              </tr>
-            ))
+            visibleRows.map(({ row, idx }) => {
+              const hidden = row?.hidden === true;
+              return (
+                <tr key={idx} style={hidden ? { opacity: 0.55 } : undefined}>
+                  <td style={td}>
+                    <input
+                      type="text"
+                      list={typeListId}
+                      value={row.type || ''}
+                      onChange={(e) => updateRow(idx, 'type', e.target.value)}
+                      onBlur={(e) => commitType(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') commitType(e.currentTarget.value); }}
+                      placeholder="— Timeline type —"
+                      style={cellInput}
+                    />
+                  </td>
+                  <td style={td}>
+                    <input
+                      type="text"
+                      value={row.value || ''}
+                      onChange={(e) => updateRow(idx, 'value', e.target.value)}
+                      placeholder="Date or note (e.g. 2026-08-01, Q3)"
+                      style={cellInput}
+                    />
+                  </td>
+                  <td style={{ ...td, whiteSpace: 'nowrap' }}>{renderKickoff(row, idx)}</td>
+                  <td style={{ ...td, whiteSpace: 'nowrap', textAlign: 'right' }}>
+                    <button
+                      type="button"
+                      onClick={() => setHidden(idx, !hidden)}
+                      aria-label={hidden ? 'Unhide timeline' : 'Hide timeline'}
+                      title={hidden
+                        ? 'Unhide — bring this timeline back into the list'
+                        : 'Hide — keep this timeline on the opp but out of the list'}
+                      style={rowActionButton}
+                    >{hidden ? 'Unhide' : 'Hide'}</button>
+                    <button
+                      type="button"
+                      onClick={() => deleteRow(idx)}
+                      aria-label="Delete timeline"
+                      title="Delete timeline permanently"
+                      style={{
+                        background: 'transparent', border: 'none', cursor: 'pointer',
+                        color: '#94A3B8', fontSize: '1rem', padding: '0 4px', lineHeight: 1,
+                      }}
+                    >×</button>
+                  </td>
+                </tr>
+              );
+            })
           )}
         </tbody>
       </table>
-      <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
         <button
           type="button"
           onClick={addRow}
@@ -5925,6 +5975,21 @@ function TimelinesEditor({ list, onChangeList }) {
             cursor: 'pointer', fontFamily: 'inherit',
           }}
         >+ Add timeline</button>
+        {hiddenCount > 0 ? (
+          <button
+            type="button"
+            onClick={() => setShowHidden(v => !v)}
+            style={{
+              background: 'transparent', border: 'none', padding: 0, cursor: 'pointer',
+              fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 600,
+              color: '#64748B', textDecoration: 'underline',
+            }}
+          >
+            {showHidden
+              ? `Hide ${hiddenCount} hidden timeline${hiddenCount === 1 ? '' : 's'}`
+              : `Show ${hiddenCount} hidden timeline${hiddenCount === 1 ? '' : 's'}`}
+          </button>
+        ) : null}
       </div>
     </div>
   );
