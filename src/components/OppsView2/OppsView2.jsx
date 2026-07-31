@@ -17,6 +17,7 @@ import {
   MultiSelectCell,
   LinkColumnsModal,
 } from '../common/columnLinks';
+import { ScopeServicesCell } from './ScopeServicesPicker';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
 import { dbGet } from '../../utils/db';
@@ -4432,6 +4433,12 @@ export function OppInfoModal({
   pricingOptionLinkName,
   onOpenContact,
   onOpenCompany,
+  // Context for the Scope services board: the user's category layout and
+  // the account's other opps, so each service can show the status it
+  // already carries. Optional — without them the board still picks Scope,
+  // just without the status chips.
+  settings,
+  oppRows,
 }) {
   // Globally-hidden detail rows (header fields) + a session toggle to
   // temporarily reveal them. Declared before the early return so the
@@ -4512,6 +4519,25 @@ export function OppInfoModal({
               .filter(g => g.options.length > 0)
               .sort((a, b) => a.label.localeCompare(b.label))
           : undefined;
+        if (h === 'Scope') {
+          return (
+            <ScopeServicesCell
+              value={value}
+              onChange={onChange}
+              options={opts}
+              account={opp['Account']}
+              prospects={prospects}
+              settings={settings}
+              oppRows={oppRows}
+              currentOppId={opp._id}
+              extraGroups={extraGroups}
+              extraGroupsLabel="Add from Pricing Option"
+              extraGroupsPlaceholder="— pick an option —"
+              nowrap
+              placeholder="AEM"
+            />
+          );
+        }
         return (
           <MultiSelectCell
             value={value}
@@ -8187,6 +8213,28 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                     .filter(g => g.options.length > 0)
                     .sort((a, b) => a.label.localeCompare(b.label))
                 : undefined;
+              // Scope picks from the whole services catalog, so it gets the
+              // category board (centred, wide, scrolls in place) instead of
+              // a popover that runs off the edge of the table.
+              if (h === 'Scope') {
+                return (
+                  <ScopeServicesCell
+                    value={row[h]}
+                    onChange={(v) => updateOppField(row._id, h, v)}
+                    options={opts}
+                    account={row['Account']}
+                    prospects={prospects}
+                    settings={settings}
+                    oppRows={records}
+                    currentOppId={row._id}
+                    extraGroups={extraGroups}
+                    extraGroupsLabel="Add from Pricing Option"
+                    extraGroupsPlaceholder="— pick an option —"
+                    nowrap
+                    placeholder="AEM"
+                  />
+                );
+              }
               return (
                 <MultiSelectCell
                   value={row[h]}
@@ -8641,7 +8689,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return massEditOn
       ? [selectCol, oppNumCol, ...withInfo, actions]
       : [oppNumCol, ...withInfo, actions];
-  }, [headers, columnLinks, listRegistry, updateOppField, deleteOppField, deleteOpp, companySuggestions, peOwnerSuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks, massEditOn, oppNumberById, filteredRowIds]);
+    // `records` and `settings` feed the Scope services board (the account's
+    // other opps and the user's category layout). Both belong in the deps so
+    // a status edited elsewhere shows up the next time the board is opened.
+  }, [headers, columnLinks, listRegistry, updateOppField, deleteOppField, deleteOpp, companySuggestions, peOwnerSuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks, massEditOn, oppNumberById, filteredRowIds, records, settings]);
 
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);
 
@@ -9776,6 +9827,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             pricingOptionLinkName={optionLinks[String(opp._id)] || ''}
             onOpenContact={openContactDetails}
             onOpenCompany={openCompanyDetails}
+            settings={settings}
+            oppRows={records}
           />
         );
       })()}
