@@ -1,0 +1,128 @@
+// Column model for the stage table on Dropdowns → Timelines.
+//
+// The table shows a different set of columns per format — a Gantt stage has
+// Dates, an implementation step has Type / Month × Span / Depends on — and the
+// header, the <colgroup> and each row's cells all have to agree on that set.
+// Keeping the list in one place means adding a column can't leave the widths
+// one <col> short of the headers, which is exactly how they drifted apart
+// before.
+//
+// Which columns are showing, and how wide each one is, are workspace
+// preferences rather than timeline data: they're the same question every time
+// you open the tab, and nobody wants a Firestore write per pixel of a drag.
+// So they live in user-scoped localStorage, keyed by format, with a change
+// event so every open timeline card re-reads at once.
+
+import { userLsGet, userLsSet } from './userLs';
+
+const STORAGE_KEY = 'timeline-stage-table-layout';
+// Fired in-tab whenever the layout changes, so other mounted stage tables
+// pick it up without a reload. Cross-tab updates ride the native `storage`
+// event, same as the other small stores.
+export const STAGE_TABLE_LAYOUT_EVENT = 'stage-table-layout-updated';
+
+export const MIN_COLUMN_WIDTH = 44;
+export const MAX_COLUMN_WIDTH = 900;
+
+// Every column the table can show, per format, in display order. `width` is
+// the default; `fixed: true` marks the ones that can't be hidden — the row
+// number and the move/delete buttons, without which a row can't be worked on.
+const COLUMNS = {
+  milestone: [
+    { key: 'n', label: '#', width: 34, fixed: true },
+    { key: 'name', label: 'Stage', width: 220 },
+    { key: 'owner', label: 'Owner', width: 170 },
+    { key: 'icon', label: 'Icon', width: 118 },
+    { key: 'timing', label: 'Timing', width: 150 },
+    { key: 'description', label: 'Description', width: 260 },
+    { key: 'actions', label: '', width: 84, fixed: true },
+  ],
+  gantt: [
+    { key: 'n', label: '#', width: 34, fixed: true },
+    { key: 'name', label: 'Stage', width: 220 },
+    { key: 'owner', label: 'Owner', width: 170 },
+    { key: 'timing', label: 'Timing', width: 150 },
+    { key: 'dates', label: 'Dates', width: 290 },
+    { key: 'description', label: 'Description', width: 260 },
+    { key: 'actions', label: '', width: 84, fixed: true },
+  ],
+  phased: [
+    { key: 'n', label: '#', width: 34, fixed: true },
+    { key: 'name', label: 'Step', width: 220 },
+    { key: 'owner', label: 'Workstream', width: 170 },
+    { key: 'kind', label: 'Type', width: 130 },
+    { key: 'range', label: 'Start → End', width: 270 },
+    { key: 'monthSpan', label: 'Month × Span', width: 130 },
+    { key: 'depends', label: 'Depends on', width: 150 },
+    { key: 'timing', label: 'Timing', width: 150 },
+    { key: 'description', label: 'Description', width: 260 },
+    { key: 'actions', label: '', width: 84, fixed: true },
+  ],
+};
+
+// The columns for a format, defaults only. Unknown formats fall back to the
+// Gantt set, which is what an un-migrated template renders as.
+export function stageTableColumns(format) {
+  return COLUMNS[format] || COLUMNS.gantt;
+}
+
+function readAll() {
+  try {
+    const raw = userLsGet(STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+// The saved overrides for a format: which keys are hidden, and any widths the
+// user has dragged. Anything unrecognised (a column that has since been
+// renamed or dropped) is ignored rather than trusted.
+export function loadStageTableLayout(format) {
+  const cols = stageTableColumns(format);
+  const known = new Set(cols.map(c => c.key));
+  const hideable = new Set(cols.filter(c => !c.fixed).map(c => c.key));
+  const saved = readAll()[format] || {};
+  const hidden = {};
+  const widths = {};
+  for (const key of Array.isArray(saved.hidden) ? saved.hidden : []) {
+    if (hideable.has(key)) hidden[key] = true;
+  }
+  for (const [key, value] of Object.entries(saved.widths || {})) {
+    const n = Number(value);
+    if (!known.has(key) || !Number.isFinite(n)) continue;
+    widths[key] = Math.min(MAX_COLUMN_WIDTH, Math.max(MIN_COLUMN_WIDTH, Math.round(n)));
+  }
+  return { hidden, widths };
+}
+
+// The columns actually rendered: defaults with any dragged width applied, in
+// display order, minus the hidden ones.
+export function resolveStageTableColumns(format, layout) {
+  const { hidden = {}, widths = {} } = layout || {};
+  return stageTableColumns(format)
+    .filter(c => !hidden[c.key])
+    .map(c => ({ ...c, width: widths[c.key] ?? c.width }));
+}
+
+export function saveStageTableLayout(format, { hidden, widths }) {
+  const all = readAll();
+  all[format] = {
+    hidden: Object.keys(hidden || {}).filter(k => hidden[k]),
+    widths: widths || {},
+  };
+  try {
+    userLsSet(STORAGE_KEY, JSON.stringify(all));
+  } catch (err) {
+    console.warn('Saving stage table layout failed', err);
+    return false;
+  }
+  try {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(STAGE_TABLE_LAYOUT_EVENT));
+    }
+  } catch { /* CustomEvent unavailable */ }
+  return true;
+}
