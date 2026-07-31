@@ -13,7 +13,8 @@ import {
 import { buildTimelineSvg, STAGE_ICONS, TIMELINE_FORMATS } from '../../utils/timelineGraphic';
 import {
   getStageRange, getStageMonths, currentMonthAnchor,
-  getTimelineRange, resolveMonthWindow, describeMonthWindow,
+  getTimelineRange, resolveMonthWindow, describeMonthWindow, stagesOutsideWindow,
+  timelineBaseMonth,
 } from '../../utils/timelineDates';
 import { openTimelineReport, downloadTimelineSvg, downloadTimelinePng } from '../../utils/timelineExport';
 import { exportTimelineXlsx } from '../../utils/timelineXlsx';
@@ -540,6 +541,23 @@ function ServiceChips({ services, serviceOptions, onAdd, onRemove }) {
 function TimelineVisual({ template, onChangeFormat }) {
   const [busy, setBusy] = useState('');
   const svg = useMemo(() => buildTimelineSvg(template, { branded: true }), [template]);
+  // Steps the window leaves out are drawn nowhere and exported nowhere, so
+  // this is the only place the user is told about them. Same helper the
+  // renderers filter with, so the warning can't drift from what's missing.
+  const outside = useMemo(() => {
+    const stages = template.stages || [];
+    const mode = template.positionMode === 'months' ? 'months' : 'dates';
+    const window = resolveMonthWindow(template, null);
+    return stagesOutsideWindow(template, {
+      baseMonth: timelineBaseMonth(stages),
+      mode,
+      monthCount: window.monthCount,
+    });
+  }, [template]);
+  const windowLabel = useMemo(() => {
+    const window = resolveMonthWindow(template, null);
+    return describeMonthWindow(window.anchor, window.monthCount);
+  }, [template]);
 
   function handleReport() {
     if (!openTimelineReport(template)) {
@@ -604,6 +622,15 @@ function TimelineVisual({ template, onChangeFormat }) {
           {busy === 'xlsx' ? 'Building…' : 'Excel'}
         </button>
       </div>
+      {outside.length > 0 && (
+        <div className={styles.visualOutsideNote} role="status">
+          <strong>{outside.length} step{outside.length === 1 ? '' : 's'}</strong>
+          {' '}fall{outside.length === 1 ? 's' : ''} outside{windowLabel ? ` ${windowLabel.split(' · ')[0]}` : ' the timeline range'}
+          {' '}and {outside.length === 1 ? 'is' : 'are'} left off the visual and every export:{' '}
+          {outside.map(st => st.name || 'Untitled step').join(', ')}.
+          {' '}Widen the range to include {outside.length === 1 ? 'it' : 'them'}.
+        </div>
+      )}
       <div className={styles.visualScroll}>
         {svg
           ? <div className={styles.visualSvg} dangerouslySetInnerHTML={{ __html: svg }} />
