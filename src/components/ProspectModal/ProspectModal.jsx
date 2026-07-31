@@ -4649,7 +4649,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
           )}
           <div className={styles.grid}>
-            <div style={{ gridColumn: 'span 2' }}>
+            <div>
               <label className={styles.label}>Company</label>
               <CommitOnBlurInput
                 className={styles.input}
@@ -4896,7 +4896,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               </div>
             </div>
 
-            <div style={{ gridColumn: 'span 2' }}>
+            <div className={styles.wideField}>
               <label className={styles.label}>Email Domains</label>
               {(() => {
                 const domains = (fields.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
@@ -4935,7 +4935,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               })()}
             </div>
 
-            <div style={{ gridColumn: 'span 2' }}>
+            <div className={styles.wideField}>
               <label className={styles.label}>Also Known As <span style={{ fontWeight: 400, color: 'var(--color-text-muted)' }}>(former names / rebrands)</span></label>
               {(() => {
                 const aliases = (fields.aliases || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
@@ -4985,7 +4985,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               })()}
             </div>
 
-            <div style={{ gridColumn: 'span 2' }}>
+            <div className={styles.wideField}>
               <label className={styles.label}>Asset Types</label>
               <MultiSelectDropdown options={assetTypeOptions} selected={fields.assetTypes || []} onToggle={(val) => toggleArrayField('assetTypes', val)} />
             </div>
@@ -4996,7 +4996,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 structured fields.competitors map is kept on the record
                 untouched so historical data still round-trips. */}
             {!isNew && (
-              <div style={{ gridColumn: 'span 2' }}>
+              <div className={styles.wideField}>
                 <label className={styles.label}>Competitors</label>
                 <ScopingNotesEditor
                   value={fields.competitorsNotes || ''}
@@ -5008,7 +5008,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               </div>
             )}
 
-            <div style={{ gridColumn: 'span 2' }}>
+            <div className={styles.wideField}>
               <label className={styles.label}>Frameworks</label>
               <MultiSelectDropdown options={FRAMEWORKS} selected={effectiveFrameworks} onToggle={toggleFramework} sourceOf={frameworkSourceOf} />
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', marginTop: 4, fontSize: '0.6rem', color: 'var(--color-text-muted)' }}>
@@ -5021,7 +5021,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               </div>
             </div>
 
-            <div style={{ gridColumn: 'span 2' }}>
+            <div className={styles.wideField}>
               <label className={styles.label}>Strategies</label>
               <TagMultiSelect
                 options={strategyOptions}

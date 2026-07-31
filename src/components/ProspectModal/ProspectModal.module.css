@@ -47,14 +47,67 @@
   padding: 0.75rem 1.5rem 1rem;
 }
 
+/* The company detail block reads as a table: a fixed label column beside its
+   value, three label/value pairs to a row, a hairline under every row. Labels
+   used to sit above their controls in a four-across grid, which at this
+   modal's width left each field floating in its own patch of space with
+   nothing lining up down the page.
+
+   Every direct child of .grid is a row cell. The rich controls — chip
+   editors, multi-selects, note editors — opt out with .wideField and stay
+   stacked full width below the table, since a label column would squeeze
+   them and they're taller than a row. */
 .grid {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr 1fr;
-  gap: 0.4rem 0.75rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  column-gap: 1.5rem;
+  row-gap: 0;
+}
+
+.grid > div {
+  display: grid;
+  /* A fixed label column, so labels and controls line up down the whole
+     block rather than each pair sizing itself. Long labels wrap. */
+  grid-template-columns: 150px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 0.6rem;
+  min-height: 36px;
+  padding: 0.2rem 0;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+/* Inside a cell the label sits beside its control rather than above it. */
+.grid > div > .label {
+  margin-bottom: 0;
+  line-height: 1.25;
 }
 
 .fieldFull {
   grid-column: 1 / -1;
+}
+
+/* Two classes beat `.grid > div`, so these opt back out of the row layout. */
+.grid > .wideField,
+.grid > .fieldFull {
+  display: block;
+  grid-column: 1 / -1;
+  border-bottom: none;
+  min-height: 0;
+  padding: 0.5rem 0 0;
+}
+
+.grid > .wideField > .label,
+.grid > .fieldFull > .label {
+  margin-bottom: 0.15rem;
+}
+
+/* Narrower viewports can't hold three label/value pairs side by side. */
+@media (max-width: 1500px) {
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 900px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 .label {
