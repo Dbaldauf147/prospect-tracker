@@ -494,3 +494,47 @@
 .manualMeta { color: #475569; font-size: 0.72rem; }
 
 .govIdCell { font-size: 0.72rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #475569; }
+
+/* --- Fines surfaced per mandate -------------------------------------- */
+
+/* A site's mandate cell: the Applicable pill with its fine underneath, so
+   the number doesn't need a hover to find. */
+.catCell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.catFine {
+  font-size: 0.66rem;
+  font-weight: 700;
+  color: #92400E;
+  white-space: nowrap;
+}
+
+.catFineNone {
+  font-size: 0.62rem;
+  font-style: italic;
+  color: var(--color-text-muted, #94A3B8);
+  white-space: nowrap;
+}
+
+/* Caption above each bar list inside a mandate card — the cards now carry
+   two lists (sites, then dollars) and need to say which is which. */
+.dashSubhead {
+  padding: 0.5rem 0.75rem 0;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-muted, #64748B);
+}
+
+/* Same bar row, but with room for a dollar amount instead of a count. */
+.hbarRowWide {
+  display: grid;
+  grid-template-columns: 90px 1fr 62px;
+  align-items: center;
+  gap: 6px;
+}
