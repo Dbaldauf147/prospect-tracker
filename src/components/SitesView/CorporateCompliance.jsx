@@ -11,6 +11,7 @@ import {
   deriveRegulationVerdict, parseRevenueUsd,
   JURISDICTION_CRITERIA_GROUPS, criterionKey,
   deriveCriterion, deriveDoingBusinessInCA, deriveCsrdWaveVerdict, californiaRevenueScreen,
+  companyScreeningKey,
 } from '../../data/corporateComplianceScreening';
 
 // Firestore path segment for a company's persisted revenue research —
@@ -35,17 +36,10 @@ const isCalifornia = (state) => {
   return s === 'ca' || s === 'california';
 };
 
-// Canonical key for a company, using the SAME normalization the page uses
-// to match company names from the uploaded Utility Lookup file
-// (companyNorm — lower-cased, corporate suffixes and punctuation stripped).
-// Screening answers are saved under this key so a company keeps its
-// answers regardless of cosmetic name differences ("Acme Inc" vs
-// "ACME, INC."), and name variants collapse onto one company. Hyphenated
-// so it is safe as a Firestore dotted field-path segment (no dots).
-function companyKeyOf(name) {
-  const norm = normalizeCompany(name);
-  return norm ? norm.replace(/\s+/g, '-') : '';
-}
+// Canonical key for a company. Defined alongside the screening data so the
+// Compliance Roadmap can read the same answers back under the same key —
+// see companyScreeningKey.
+const companyKeyOf = companyScreeningKey;
 
 // Same fuzzy scorer the prospect-modal "Matches across Lists" panel uses,
 // so a company reads the same way here as it does there.
