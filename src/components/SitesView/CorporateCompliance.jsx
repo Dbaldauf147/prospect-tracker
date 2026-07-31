@@ -922,10 +922,13 @@ function JurisdictionScreening({ answers, links, onSetLink, sharedLinks, onSetSh
                     })}
                     {!collapsed && regs.map((r) => {
                       const rKey = regulationAnswerKey(q.key, r.regulation);
-                      // A regulation the user has attached a link or findings
-                      // to stays on screen even when the jurisdiction answer
-                      // no longer triggers it — their saved research should
-                      // never disappear with the row.
+                      // A regulation carrying this company's own work — its
+                      // findings, or a per-company link saved before mandate
+                      // links became shared — stays on screen even if the
+                      // jurisdiction answer stops triggering it, so saved
+                      // research never disappears with the row. (Every
+                      // jurisdiction shows its mandates now, so this only
+                      // matters if one is ever taken back out of that set.)
                       const triggered = val === 'Yes' || val === 'Unknown'
                         || ALWAYS_SHOW_REGULATIONS.has(q.key);
                       if (!triggered && !(links?.[rKey] || findings?.[rKey])) return null;
@@ -985,13 +988,22 @@ function JurisdictionScreening({ answers, links, onSetLink, sharedLinks, onSetSh
                             </div>
                           </td>
                           <td style={td}>
+                            {/* A mandate's link points at the regulation —
+                                the statute, the regulator's guidance — which
+                                is the same page whichever company is being
+                                screened, so it's shared like the manual rows'
+                                are. The findings stay this company's: what
+                                that mandate means for them is not generic. An
+                                older per-company link still shows until a
+                                shared one is saved over it. */}
                             <ReferenceCell
-                              url={links?.[rKey] || ''}
+                              url={sharedLinks?.[rKey] || links?.[rKey] || ''}
                               findings={findings?.[rKey] || ''}
-                              onSaveUrl={(v) => onSetLink?.(rKey, v)}
+                              onSaveUrl={(v) => onSetSharedLink?.(rKey, v)}
                               onSaveFindings={(v) => onSetFindings?.(rKey, v)}
                               label={r.regulation}
                               disabled={disabled}
+                              shared
                             />
                           </td>
                         </tr>
