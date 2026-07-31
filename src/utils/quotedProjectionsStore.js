@@ -40,3 +40,17 @@ export function loadQuotedProjections() {
 export function saveQuotedProjections(map) {
   try { userLsSet(KEY, JSON.stringify(map || {})); } catch { /* ignore quota */ }
 }
+
+// June 2026 was filled once with the then-current live totals as a stand-in,
+// before past months could be rebuilt from the Opps data — so it ended up
+// carrying July's numbers. This one-shot flag lets the rebuild replace that
+// value exactly once per user, leaving any later hand correction alone.
+const JUNE_REBUILD_KEY = 'yoy-quoted-june-2026-rebuilt';
+
+export function juneRebuildDone() {
+  return userLsGet(JUNE_REBUILD_KEY) === '1';
+}
+
+export function markJuneRebuildDone() {
+  try { userLsSet(JUNE_REBUILD_KEY, '1'); } catch { /* ignore quota */ }
+}
