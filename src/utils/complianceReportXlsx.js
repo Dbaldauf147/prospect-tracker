@@ -28,6 +28,21 @@ const SLATE = 'FF475569';
 const LINE = 'FFE2E8F0';
 const ZEBRA = 'FFFAFCFB';
 const FONT = 'Nunito Sans';
+// A jurisdiction the revenue screen has ruled out, and the rows it moots.
+// Same red the Corporate Compliance card tints those rows with, so a
+// printed sheet and the screen say the same thing at a glance.
+const RULED_OUT = 'FF991B1B';
+const RULED_OUT_FILL = 'FFFEE2E2';
+
+// The reference link and findings a user typed against a screening row.
+// Their own work, so it travels with the row it explains rather than being
+// dropped on export.
+function refText(row) {
+  return [
+    row?.reference ? `Ref: ${row.reference}` : '',
+    row?.findings ? `Findings: ${row.findings}` : '',
+  ].filter(Boolean).join('  ·  ');
+}
 
 // Full comma-grouped dollars — matches the on-page cards (e.g. $1,845,310)
 // rather than an abbreviated $1.8M.
@@ -825,8 +840,20 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
   // company narrative + sources behind the run. Only rendered for companies
   // that have actually been screened — an unscreened company would just be
   // six blank rows.
-  const screened = (meta.screening || []).filter(
-    c => c.jurisdictions?.some(j => j.answer) || c.summary
+  // A company counts as screened once anything on its card has been filled
+  // in — not just a jurisdiction answer. Researched CSRD figures, a
+  // resolved criterion, an HQ or a reference note are all work worth
+  // carrying, and gating on the answers alone dropped cards that had
+  // plenty on them.
+  const screened = (meta.screening || []).filter(c =>
+    c.jurisdictions?.some(j =>
+      j.answer
+      || j.reference || j.findings
+      || j.criteriaGroups?.some(g => g.rows?.some(r => r.verdict || r.reference || r.findings))
+      || j.regulations?.some(r => r.verdict || r.reference || r.findings)
+    )
+    || c.summary
+    || c.hq?.location
   );
   if (screened.length) {
     ws.mergeCells(rr, 1, rr, NC);
@@ -847,6 +874,9 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
         co.california ? `${co.california} in CA` : '',
         co.revenueLabel ? `Revenue ${co.revenueLabel}${co.revenueFiscalYear ? ` (${co.revenueFiscalYear})` : ''}` : '',
         co.employees ? `${Number(co.employees).toLocaleString()} employees` : '',
+        // HQ earns its place on the banner: it's the first thing that
+        // decides which regimes are even in play.
+        co.hq?.location ? `HQ ${co.hq.location}${co.hq.region ? ` (${co.hq.region})` : ''}` : '',
       ].filter(Boolean).join('  ·  ');
       nameCell.value = `${co.name}    ${bits}`;
       nameCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_LIGHT } };
@@ -855,8 +885,10 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
       ws.getRow(rr).height = 20;
       rr += 1;
 
-      // Column headers mirroring the card's table.
-      const hdrs = ['Jurisdiction', 'Question / Regulation', 'Screening', 'Applies?', 'Thresholds / Basis'];
+      // Column headers mirroring the card's table. The last column doubles
+      // as the card's "Reference & Findings" — a derivation's basis and the
+      // user's own note both belong to the row they explain.
+      const hdrs = ['Jurisdiction', 'Question / Regulation', 'Screening', 'Applies?', 'Thresholds / Basis / Findings'];
       const hrow = ws.getRow(rr);
       hdrs.forEach((label, i) => {
         const c = hrow.getCell(i + 1);
@@ -871,7 +903,7 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
       for (const j of co.jurisdictions || []) {
         const jrow = ws.getRow(rr);
         const jCells = [
-          { v: j.jurisdiction, bold: true },
+          { v: j.jurisdiction, bold: true, red: j.ruledOut },
           { v: j.question },
           {
             v: [
@@ -880,24 +912,94 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
             ].filter(Boolean).join(' — ') || '—',
             wrap: true,
           },
-          { v: j.answer || '—', center: true, green: j.answer === 'Yes' },
-          { v: '' },
+          // A jurisdiction its revenue screen has ruled out reads No — the
+          // same verdict the card's collapsed row shows, rather than the
+          // operate/sell question's own answer, which would headline Yes
+          // over a column of ruled-out mandates. The stored answer isn't
+          // lost: the card keeps it in the tooltip, the sheet keeps it here.
+          {
+            v: j.ruledOut
+              ? (j.answer ? `No (answer on file: ${j.answer})` : 'No')
+              : (j.answer || '—'),
+            center: true,
+            green: !j.ruledOut && j.answer === 'Yes',
+            red: j.ruledOut,
+            wrap: true,
+          },
+          { v: [j.ruledOutWhy, refText(j)].filter(Boolean).join('  ·  '), wrap: true },
         ];
         jCells.forEach((spec, i) => {
           const c = jrow.getCell(i + 1);
           c.value = spec.v === '' ? null : spec.v;
           c.font = {
             name: FONT, size: 9.5, bold: !!spec.bold,
-            color: { argb: spec.green ? CA_GREEN : (spec.bold ? INK : SLATE) },
+            color: { argb: spec.red ? RULED_OUT : (spec.green ? CA_GREEN : (spec.bold ? INK : SLATE)) },
           };
           c.alignment = {
             vertical: 'top', horizontal: spec.center ? 'center' : 'left',
             indent: spec.center ? 0 : 1, wrapText: !!spec.wrap,
           };
+          if (j.ruledOut) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: RULED_OUT_FILL } };
           c.border = { bottom: { style: 'hair', color: { argb: LINE } } };
         });
         jrow.height = j.note ? 30 : 16;
         rr += 1;
+
+        // The workings behind the answer, indented under the jurisdiction:
+        // California's revenue thresholds and doing-business test, the EU's
+        // CSRD screening figures. A group the revenue screen has mooted
+        // renders N/A with the reason, the way the card does.
+        for (const group of j.criteriaGroups || []) {
+          const grow = ws.getRow(rr);
+          const gCells = [
+            { v: group.label, bold: true, indent: 2, red: group.na },
+            { v: group.note || '', wrap: true, span: true },
+          ];
+          const gLabel = grow.getCell(1);
+          gLabel.value = gCells[0].v;
+          gLabel.font = { name: FONT, bold: true, size: 9, color: { argb: group.na ? RULED_OUT : INK } };
+          gLabel.alignment = { vertical: 'top', horizontal: 'left', indent: 2 };
+          ws.mergeCells(rr, 2, rr, NC);
+          const gNote = ws.getCell(rr, 2);
+          gNote.value = group.note || null;
+          gNote.font = { name: FONT, italic: true, size: 9, color: { argb: group.na ? RULED_OUT : SLATE } };
+          gNote.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
+          grow.height = group.note && group.note.length > 90 ? 26 : 15;
+          rr += 1;
+
+          for (const row of group.rows || []) {
+            const crow = ws.getRow(rr);
+            const cCells = [
+              { v: '' },
+              { v: row.label, wrap: true },
+              { v: row.screening || '—', wrap: true },
+              { v: row.verdict || '—', center: true, green: row.verdict === 'Yes', red: row.na },
+              {
+                v: [
+                  row.basis,
+                  row.auto ? '(auto)' : '',
+                  refText(row),
+                ].filter(Boolean).join('  ·  '),
+                wrap: true,
+              },
+            ];
+            cCells.forEach((spec, i) => {
+              const c = crow.getCell(i + 1);
+              c.value = spec.v === '' ? null : spec.v;
+              c.font = {
+                name: FONT, size: 9, italic: i === 4,
+                color: { argb: spec.red ? RULED_OUT : (spec.green ? CA_GREEN : SLATE) },
+              };
+              c.alignment = {
+                vertical: 'top', horizontal: spec.center ? 'center' : 'left',
+                indent: spec.center ? 0 : (i === 1 ? 3 : 1), wrapText: !!spec.wrap,
+              };
+              c.border = { bottom: { style: 'hair', color: { argb: LINE } } };
+            });
+            crow.height = (row.basis || '').length > 90 || (row.label || '').length > 46 ? 26 : 15;
+            rr += 1;
+          }
+        }
 
         // Each regulation this jurisdiction triggers, indented under it.
         for (const reg of j.regulations || []) {
@@ -906,15 +1008,23 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
             { v: '' },
             { v: `${reg.regulation} — ${reg.timeline}`, bold: true },
             { v: '' },
-            { v: reg.verdict || '—', center: true, green: reg.verdict === 'Yes' },
-            { v: [reg.thresholds || reg.description, reg.auto ? '(auto)' : ''].filter(Boolean).join('  '), wrap: true },
+            { v: reg.verdict || '—', center: true, green: reg.verdict === 'Yes', red: reg.ruledOut },
+            {
+              v: [
+                reg.thresholds || reg.description,
+                reg.basis,
+                reg.auto ? '(auto)' : '',
+                refText(reg),
+              ].filter(Boolean).join('  ·  '),
+              wrap: true,
+            },
           ];
           rCells.forEach((spec, i) => {
             const c = rrow.getCell(i + 1);
             c.value = spec.v === '' ? null : spec.v;
             c.font = {
               name: FONT, size: 9, bold: !!spec.bold, italic: i === 4,
-              color: { argb: spec.green ? CA_GREEN : SLATE },
+              color: { argb: spec.red && !spec.green ? RULED_OUT : (spec.green ? CA_GREEN : SLATE) },
             };
             c.alignment = {
               vertical: 'top', horizontal: spec.center ? 'center' : 'left',
@@ -922,13 +1032,28 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
             };
             c.border = { bottom: { style: 'hair', color: { argb: LINE } } };
           });
-          rrow.height = 16;
+          rrow.height = (reg.basis || '').length > 90 ? 26 : 16;
           rr += 1;
         }
       }
 
       // Narrative + sources + CA site list behind the run.
       const trailing = [];
+      if (co.hq?.location) {
+        trailing.push({
+          label: 'HQ',
+          text: [co.hq.location, co.hq.region, co.hq.source ? `via ${co.hq.source}` : '']
+            .filter(Boolean).join('  ·  '),
+        });
+      }
+      // Only worth stating once California has actually been screened —
+      // it's the second leg every California mandate turns on.
+      if (co.doingBusinessInCA) {
+        trailing.push({
+          label: 'Doing business in CA',
+          text: co.caRuledOut ? `${co.doingBusinessInCA} — ${co.caRuledOutWhy}` : co.doingBusinessInCA,
+        });
+      }
       if (co.summary) trailing.push({ label: 'Summary', text: co.summary });
       if (co.sources?.length) {
         trailing.push({
