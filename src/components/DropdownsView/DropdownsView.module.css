@@ -870,3 +870,36 @@
 .thisMonthBtn:hover {
   background: #D1FAE5;
 }
+
+/* The positioning column that isn't currently driving the chart. Still
+   editable — just visibly not in charge. */
+.inactiveCell {
+  opacity: 0.42;
+}
+
+.inactiveCell:hover,
+.inactiveCell:focus-within {
+  opacity: 1;
+}
+
+.inactiveHead {
+  color: var(--color-border) !important;
+}
+
+.dependsSelect {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 0.72rem;
+  font-family: inherit;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.dependsSelect:hover {
+  border-color: var(--color-border-light);
+  color: var(--color-text);
+}
