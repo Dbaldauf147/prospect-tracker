@@ -290,6 +290,100 @@ export function californiaCriterionKey(rowKey) {
   return criterionKey('california', rowKey);
 }
 
+// ---- CSRD wave derivation --------------------------------------------------
+// Each wave is an AND of conditions read straight from the descriptions above,
+// which are the wording this page has always shown. Encoded here so the
+// Applies? cell answers itself from the CSRD rows rather than leaving the
+// arithmetic to the reader. Every comparison is spelled out because the
+// boundaries matter: "more than 1,000 employees" is strict, "EUR 450 million
+// or more" is inclusive, "over EUR 200 million" is strict.
+export const CSRD_TURNOVER_EUR_M = 450;
+export const CSRD_EMPLOYEES = 1000;
+export const CSRD_SUBSIDIARY_EUR_M = 200;
+
+// A condition is { label, value } where value is true / false / null, null
+// meaning the input it needs hasn't been established yet.
+const gt = (n, limit) => (n == null ? null : n > limit);
+const gte = (n, limit) => (n == null ? null : n >= limit);
+const isYes = (v) => (v === 'Yes' ? true : v === 'No' ? false : null);
+const isNo = (v) => (v === 'Yes' ? false : v === 'No' ? true : null);
+
+const CSRD_WAVE_RULES = {
+  'CSRD — Wave 1': (v) => [
+    { label: 'listed on an EU regulated market', value: isYes(v.euListed) },
+    { label: `more than ${CSRD_EMPLOYEES.toLocaleString('en-US')} employees`, value: gt(v.employees, CSRD_EMPLOYEES) },
+    { label: `global net turnover of at least EUR ${CSRD_TURNOVER_EUR_M}M`, value: gte(v.globalTurnover, CSRD_TURNOVER_EUR_M) },
+  ],
+  'CSRD — Wave 2': (v) => [
+    // "Large entities present in the EU" — the jurisdiction question asks
+    // exactly that, and being incorporated there settles it on its own.
+    {
+      label: 'present in the EU',
+      value: v.euIncorporated === 'Yes' ? true : isYes(v.euPresence),
+    },
+    { label: `more than ${CSRD_EMPLOYEES.toLocaleString('en-US')} employees`, value: gt(v.employees, CSRD_EMPLOYEES) },
+    { label: `global net turnover of at least EUR ${CSRD_TURNOVER_EUR_M}M`, value: gte(v.globalTurnover, CSRD_TURNOVER_EUR_M) },
+  ],
+  'CSRD — Wave 3': (v) => [
+    { label: 'a non-EU entity', value: isNo(v.euIncorporated) },
+    { label: `EU net turnover of at least EUR ${CSRD_TURNOVER_EUR_M}M`, value: gte(v.euTurnover, CSRD_TURNOVER_EUR_M) },
+    {
+      label: `an EU subsidiary or branch over EUR ${CSRD_SUBSIDIARY_EUR_M}M net turnover`,
+      value: gt(v.topEuSubsidiaryTurnover, CSRD_SUBSIDIARY_EUR_M),
+    },
+  ],
+};
+
+// The CSRD row values for one company, resolved the way the table resolves
+// them: a hand-entered answer beats the researched one.
+function csrdValues(answers, context) {
+  const rows = EU_CRITERIA_GROUPS[0].rows;
+  const read = (rowKey) => {
+    const row = rows.find(r => r.key === rowKey);
+    const saved = answers?.[criterionKey('eu', rowKey)] || '';
+    return saved || deriveCriterion(row, context)?.verdict || '';
+  };
+  const num = (rowKey) => {
+    const raw = String(read(rowKey)).trim();
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  };
+  return {
+    euIncorporated: read('eu-incorporated'),
+    euListed: read('eu-listed'),
+    globalTurnover: num('global-turnover'),
+    euTurnover: num('eu-turnover'),
+    topEuSubsidiaryTurnover: num('eu-sub-turnover'),
+    employees: num('employees'),
+    euPresence: context?.euAnswer || '',
+  };
+}
+
+// One CSRD wave's Applies? verdict, or null when it can't be called yet.
+//
+// A single failed condition is enough for a No — a company that isn't listed
+// in the EU is out of Wave 1 whatever its turnover — so a decisive No lands
+// without waiting for every figure. A Yes needs all of them, and any missing
+// input leaves the row blank rather than guessing.
+export function deriveCsrdWaveVerdict(regulation, { answers, context } = {}) {
+  const build = CSRD_WAVE_RULES[regulation?.regulation];
+  if (!build) return null;
+  const conditions = build(csrdValues(answers, context));
+  const failed = conditions.filter(c => c.value === false);
+  if (failed.length) {
+    return {
+      verdict: 'No',
+      basis: `Auto-derived from the CSRD rows — not ${failed.map(c => c.label).join(', not ')}. Pick a value to override.`,
+    };
+  }
+  if (conditions.some(c => c.value == null)) return null;
+  return {
+    verdict: 'Yes',
+    basis: `Auto-derived from the CSRD rows — ${conditions.map(c => c.label).join(', ')}. Pick a value to override.`,
+  };
+}
+
 // ---- Applies? derivation ---------------------------------------------------
 // Some regulations are pure threshold tests we already hold the inputs for:
 // California's SB 253 / SB 261 turn on annual revenue plus "doing business in
