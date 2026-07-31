@@ -360,6 +360,7 @@ function csrdValues(answers, context) {
     return Number.isFinite(n) ? n : null;
   };
   return {
+    alreadyReported: read('csrd-2025'),
     euIncorporated: read('eu-incorporated'),
     euListed: read('eu-listed'),
     globalTurnover: num('global-turnover'),
@@ -379,7 +380,18 @@ function csrdValues(answers, context) {
 export function deriveCsrdWaveVerdict(regulation, { answers, context } = {}) {
   const build = CSRD_WAVE_RULES[regulation?.regulation];
   if (!build) return null;
-  const conditions = build(csrdValues(answers, context));
+  const values = csrdValues(answers, context);
+  // A company that has already filed a CSRD report is in Wave 1 by
+  // demonstration — it doesn't need the thresholds argued from figures that
+  // may be stale or converted. This beats the conditions rather than joining
+  // them, so it stands even where a figure would otherwise fail the test.
+  if (regulation.regulation === 'CSRD — Wave 1' && values.alreadyReported === 'Yes') {
+    return {
+      verdict: 'Yes',
+      basis: 'Auto-derived: the company already submitted a CSRD report in 2025, so Wave 1 applies. Pick a value to override.',
+    };
+  }
+  const conditions = build(values);
   const failed = conditions.filter(c => c.value === false);
   if (failed.length) {
     return {
