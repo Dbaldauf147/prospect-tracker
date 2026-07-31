@@ -216,7 +216,7 @@ const GANTT = {
   rowH: 56,
   topY: 150,     // first row baseline area starts here
   minTickW: 96,
-  maxTickW: 150,
+  chartW: 1100,  // the plot width the ticks are always fitted to
 };
 
 const DAY_MS = 86400000;
@@ -319,8 +319,12 @@ export function buildGanttSvg(template, { branded = true } = {}) {
     ? monthWindowBounds(ganttWindow.anchor, ganttWindow.monthCount)
     : null;
   const { domainStart, domainEnd, ticks, byQuarter } = ganttAxis(dated.map(d => d.range), bounds);
-  const tickW = Math.min(GANTT.maxTickW, Math.max(GANTT.minTickW, 1100 / Math.max(1, ticks.length)));
-  const chartW = Math.max(620, ticks.length * tickW);
+  // Ticks are fitted to a fixed plot width, the same way the implementation
+  // format fits its months: a short range spreads out rather than drawing a
+  // small chart adrift in white space. The floor is what lets a long range
+  // grow past the target instead of crushing its ticks together.
+  const tickW = Math.max(GANTT.minTickW, GANTT.chartW / Math.max(1, ticks.length));
+  const chartW = ticks.length * tickW;
   const X0 = GANTT.padX + GANTT.labelW;
   const width = X0 + chartW + GANTT.padX;
   const chartRight = X0 + chartW;
@@ -426,6 +430,7 @@ const PHASED = {
   weeksRowH: 17,    // the week ticks, directly under the months
   labelW: 258,      // phase-name column
   minColW: 62,
+  gridW: 1000,      // the grid width the columns are always fitted to
   rowStep: 30,      // one step line
   phasePad: 18,
   footH: 26,
@@ -465,7 +470,12 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   const monthWindow = resolveMonthWindow(template, needed);
   const monthCount = monthWindow.monthCount;
 
-  const colW = Math.max(PHASED.minColW, Math.min(96, 1000 / monthCount));
+  // Columns are fitted to a fixed grid width rather than given a fixed size,
+  // so narrowing the window widens the months instead of shrinking the whole
+  // graphic — a 4-month timeline fills the same canvas a 12-month one does,
+  // and the week ticks keep a wide month readable. Only the floor bites, on a
+  // window long enough that even 1000px can't hold it.
+  const colW = Math.max(PHASED.minColW, PHASED.gridW / monthCount);
   const gridW = colW * monthCount;
   const width = PHASED.labelW + gridW + 40;
 
