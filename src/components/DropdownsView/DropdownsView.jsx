@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { STAGE_AGE_GUIDANCE } from '../../data/dropdownLists';
 import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
 import {
@@ -28,6 +28,10 @@ const SERVICE_TABLE_COLUMNS = [
   { key: 'timelineDriven',   label: 'Timeline Driven',   width: 120,    editable: true  },
   { key: 'rolloutTime',      label: 'Rollout Time',      width: 160,    editable: true  },
   { key: 'sme',              label: 'SME',               width: 150,    editable: true  },
+  // Row action rather than data. Pinned always-visible (see the table's
+  // alwaysVisible), which also means it needs no reveal migration for users
+  // who already have a saved column set.
+  { key: 'hide',             label: 'Hide',              width: 58,     editable: false },
 ];
 
 // Inline cell editor for the Services subtab. Renders the current
@@ -573,16 +577,38 @@ export function DropdownsView({ settings, updateSettings }) {
     const options = solutionsList?.options || [];
     return options.map(name => ({ name, meta: getEffectiveServiceMetadata(name, serviceOverrides) }));
   }, [solutionsList, serviceOverrides]);
+  // Services the user has retired. The same app-wide set the company card's
+  // Services Explored board and the Opps Scope picker read, so hiding here
+  // takes a service out of circulation everywhere rather than only on this
+  // page — this tab is where the vocabulary is managed, so it's the natural
+  // place to retire one.
+  const hiddenServices = useMemo(
+    () => new Set(settings?.hiddenServices || []),
+    [settings?.hiddenServices],
+  );
+  const hiddenCount = hiddenServices.size;
+  const [showHiddenServices, setShowHiddenServices] = useState(false);
+  const toggleHideService = useCallback((name) => {
+    const current = settings?.hiddenServices || [];
+    const next = current.includes(name)
+      ? current.filter(s => s !== name)
+      : [...current, name];
+    updateSettings?.({ hiddenServices: next });
+  }, [settings?.hiddenServices, updateSettings]);
+
   const filteredServiceRows = useMemo(() => {
     const term = serviceSearch.trim().toLowerCase();
-    if (!term) return serviceRows;
-    return serviceRows.filter(({ name, meta }) => {
+    const visible = showHiddenServices
+      ? serviceRows
+      : serviceRows.filter(({ name }) => !hiddenServices.has(name));
+    if (!term) return visible;
+    return visible.filter(({ name, meta }) => {
       if (name.toLowerCase().includes(term)) return true;
       if (!meta) return false;
       return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.localProjectName, meta.timelineDriven, meta.rolloutTime, meta.sme]
         .some(v => String(v || '').toLowerCase().includes(term));
     });
-  }, [serviceRows, serviceSearch]);
+  }, [serviceRows, serviceSearch, hiddenServices, showHiddenServices]);
 
   // The SME column shipped after the Services table gained saved column
   // prefs, so anyone who has already resized or hidden a column has a stored
@@ -629,7 +655,8 @@ export function DropdownsView({ settings, updateSettings }) {
     sme: meta?.sme || '',
     _url: serviceLinks[name] || '',
     _muted: !!meta?.graveyard,
-  })), [filteredServiceRows, serviceLinks]);
+    _hidden: hiddenServices.has(name),
+  })), [filteredServiceRows, serviceLinks, hiddenServices]);
 
   // Column definitions. The declared width is only the starting point — the
   // table owns width and visibility from here, and Solutions stays pinned
@@ -640,7 +667,19 @@ export function DropdownsView({ settings, updateSettings }) {
     key: col.key,
     label: col.label,
     defaultWidth: col.width,
-    render: col.key === 'name'
+    render: col.key === 'hide'
+      ? (row) => (
+        <button
+          type="button"
+          className={styles.serviceLinkEditBtn}
+          onClick={() => toggleHideService(row.name)}
+          title={row._hidden
+            ? `Show "${row.name}" again — here, on the company card's services board, and in the Opps Scope picker`
+            : `Hide "${row.name}" — takes it out of this list, the company card's services board, and the Opps Scope picker`}
+          aria-label={row._hidden ? `Show ${row.name}` : `Hide ${row.name}`}
+        >{row._hidden ? '↩' : '✕'}</button>
+      )
+      : col.key === 'name'
       ? (row) => (
         <ServiceNameCell name={row.name} url={row._url} onSaveUrl={saveServiceLink} />
       )
@@ -864,8 +903,22 @@ export function DropdownsView({ settings, updateSettings }) {
             <span className={styles.resultCount}>
               {serviceSearch.trim()
                 ? `${filteredServiceRows.length} of ${serviceRows.length} services`
-                : `${serviceRows.length} services`}
+                : `${serviceRows.length - (showHiddenServices ? 0 : hiddenCount)} services`}
+              {hiddenCount > 0 && ` · ${hiddenCount} hidden`}
             </span>
+            {/* Hidden services are only reachable through this toggle, so it
+                stays put whenever there are any — otherwise restoring one
+                would mean knowing it existed. */}
+            {hiddenCount > 0 && (
+              <button
+                type="button"
+                className={styles.showHiddenBtn}
+                onClick={() => setShowHiddenServices(v => !v)}
+                title={showHiddenServices
+                  ? 'Go back to hiding them'
+                  : 'List the hidden services so they can be restored'}
+              >{showHiddenServices ? 'Hide them again' : `Show ${hiddenCount} hidden`}</button>
+            )}
           </div>
 
           {/* The shared table: drag a header edge to resize, use its Columns
@@ -877,8 +930,8 @@ export function DropdownsView({ settings, updateSettings }) {
               tableId={SERVICES_TABLE_ID}
               columns={serviceColumns}
               rows={serviceTableRows}
-              alwaysVisible={['name']}
-              rowClassName={(row) => (row._muted ? styles.serviceRowMuted : undefined)}
+              alwaysVisible={['name', 'hide']}
+              rowClassName={(row) => ((row._muted || row._hidden) ? styles.serviceRowMuted : undefined)}
               exportFileName="Services"
               settings={settings}
               updateSettings={updateSettings}
