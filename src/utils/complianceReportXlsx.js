@@ -18,6 +18,7 @@ import {
   bpsPrioritization,
 } from './complianceMandates.js';
 import { schneiderLogoPngDataUrl, SE_GREEN_DARK } from './schneiderLogo.js';
+import { isCaliforniaSite } from './siteRegion.js';
 
 const argb = (hex) => 'FF' + String(hex).replace('#', '').toUpperCase();
 const SE_DARK = argb(SE_GREEN_DARK);          // FF009530
@@ -694,17 +695,16 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
     { width: 30 }, { width: 34 }, { width: 42 }, { width: 13 }, { width: 60 },
   ];
 
-  const isCA = (s) => {
-    const x = String(s || '').trim().toLowerCase();
-    return x === 'ca' || x === 'california';
-  };
   const byCompany = new Map();
   for (const site of (sites || [])) {
     const name = String(site.company || '').trim() || '(Unnamed company)';
     if (!byCompany.has(name)) byCompany.set(name, { name, total: 0, california: 0, caSites: [] });
     const e = byCompany.get(name);
     e.total += 1;
-    if (isCA(site.state)) {
+    // Shared with the Corporate Compliance page: a California State plus
+    // a US (or absent) country, so a "CA" that's really Canada or Cádiz
+    // doesn't inflate the exported count.
+    if (isCaliforniaSite(site)) {
       e.california += 1;
       const label = [site.siteName, site.city].filter(Boolean).join(' — ');
       if (label) e.caSites.push(label);

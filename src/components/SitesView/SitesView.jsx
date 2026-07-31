@@ -28,6 +28,7 @@ import {
   formatMoney,
   formatRate,
 } from '../../utils/utilityRates';
+import { isCaliforniaSite } from '../../utils/siteRegion';
 import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripState, isIndicativeSavingsExport } from '../../utils/xlsxParse';
 import { UtilityMappingView } from './UtilityMappingView';
 import { BuildingComplianceScreening } from './BuildingComplianceScreening';
@@ -4145,10 +4146,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       return norm ? norm.replace(/\s+/g, '-') : '';
     };
     const revSlug = (name) => String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
-    const isCA = (s) => {
-      const x = String(s || '').trim().toLowerCase();
-      return x === 'ca' || x === 'california';
-    };
 
     const byKey = new Map();
     for (const site of complianceSites) {
@@ -4160,7 +4157,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const e = byKey.get(mapKey);
       e.total += 1;
       e.names.set(rawName, (e.names.get(rawName) || 0) + 1);
-      if (isCA(site.state)) {
+      // Same California test the Corporate Compliance page and the Excel
+      // report use — a CA State backed by a US (or absent) country.
+      if (isCaliforniaSite(site)) {
         e.california += 1;
         const label = [site.siteName, site.city].filter(Boolean).join(' — ');
         if (label) e.caSites.push(label);
