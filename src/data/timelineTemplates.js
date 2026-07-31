@@ -14,6 +14,8 @@ export const BUILTIN_TIMELINE_TEMPLATES = [
     id: 'tl-budget',
     name: 'Budget timeline',
     format: 'gantt',
+    // Placed by each stage's start / end dates, stated rather than inferred.
+    positionMode: 'dates',
     services: ['Budgets'],
     stages: [
       {

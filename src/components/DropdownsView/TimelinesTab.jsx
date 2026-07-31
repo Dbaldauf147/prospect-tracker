@@ -986,7 +986,13 @@ export function TimelinesTab({ settings, updateSettings, serviceOptions = [] }) 
     if (name === null) return;
     saveTemplates([
       ...templates,
-      { id: makeTimelineId('tl'), name: (name || '').trim(), services: [], stages: [] },
+      // Positioning is recorded rather than inferred: a new timeline is
+      // placed by its start / end dates, and stays that way even if someone
+      // later types a value into Month × Span to see what it does.
+      {
+        id: makeTimelineId('tl'), name: (name || '').trim(),
+        services: [], stages: [], positionMode: 'dates',
+      },
     ]);
   }
 
