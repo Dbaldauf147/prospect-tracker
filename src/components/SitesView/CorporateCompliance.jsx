@@ -8,8 +8,8 @@ import { apiFetch } from '../../utils/apiFetch';
 import {
   JURISDICTION_QUESTIONS, SCREENING_ANSWERS, REGULATIONS_BY_JURISDICTION,
   deriveRegulationVerdict, parseRevenueUsd,
-  CALIFORNIA_CRITERIA_GROUPS, californiaCriterionKey,
-  deriveCaliforniaCriterion, deriveDoingBusinessInCA,
+  JURISDICTION_CRITERIA_GROUPS, criterionKey,
+  deriveCriterion, deriveDoingBusinessInCA,
 } from '../../data/corporateComplianceScreening';
 
 // Firestore path segment for a company's persisted revenue research —
@@ -399,6 +399,49 @@ const CRITERION_SOURCE = {
   manual: { label: 'manual', title: 'Nothing on this page settles this one — answer it by hand.' },
 };
 
+// A figure a criterion asks for rather than a Yes/No — turnover in millions,
+// a headcount. Holds a local draft and commits on blur / Enter, so one
+// settings write per edit rather than one per keystroke. Blank clears the
+// saved value, handing the row back to whatever can be derived for it.
+function NumberCriterionInput({ value, derived, title, ariaLabel, onCommit }) {
+  const [draft, setDraft] = useState(value ?? '');
+  // Re-sync in render rather than an effect, matching the number cells
+  // elsewhere in the app.
+  const [last, setLast] = useState(value ?? '');
+  if ((value ?? '') !== last) {
+    setLast(value ?? '');
+    setDraft(value ?? '');
+  }
+  const commit = () => {
+    const raw = String(draft).trim();
+    if (raw === (value ?? '')) return;
+    onCommit(raw);
+  };
+  return (
+    <input
+      type="number"
+      min="0"
+      step="any"
+      value={draft}
+      title={title}
+      aria-label={ariaLabel}
+      placeholder="—"
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+        else if (e.key === 'Escape') { e.preventDefault(); setDraft(value ?? ''); e.currentTarget.blur(); }
+      }}
+      style={{
+        width: 84, boxSizing: 'border-box', fontSize: '0.68rem', fontWeight: 700,
+        fontFamily: 'inherit', padding: '0.15rem 0.35rem', borderRadius: 5,
+        border: `1px ${derived ? 'dashed' : 'solid'} var(--color-border)`,
+        background: 'var(--color-surface)', color: 'var(--color-text)',
+      }}
+    />
+  );
+}
+
 function SourceBadge({ source }) {
   const meta = CRITERION_SOURCE[source];
   if (!meta) return null;
@@ -453,7 +496,7 @@ function answerSelectStyle(val, derived = false) {
 // california__sb-253: 'Yes', … }); `onSet(key, value)` persists one
 // answer. The "Research answers" button asks Claude (web search) to fill
 // the jurisdiction rows; `research` holds that run's rationale + sources.
-function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindings, caSiteCount = 0, revenue = '', onSet, disabled, onResearch, researching, researchError, research }) {
+function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindings, caSiteCount = 0, revenue = '', employees = null, onSet, disabled, onResearch, researching, researchError, research }) {
   // Revenue drives the derived Applies? verdicts (SB 253 / SB 261). Parsed
   // once per render rather than per regulation row.
   const revenueLabel = String(revenue || '').trim();
@@ -462,7 +505,11 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
   // one-of-three doing-business result they add up to. That result is what
   // gates SB 253 / SB 261 — the jurisdiction question alone only asks
   // whether the company operates or sells there.
-  const criterionContext = { revenueUsd, revenueLabel, caSiteCount };
+  const criterionContext = {
+    revenueUsd, revenueLabel, caSiteCount,
+    employees: Number.isFinite(Number(employees)) && employees !== null && employees !== ''
+      ? Number(employees) : null,
+  };
   const doingBusinessInCA = deriveDoingBusinessInCA(answers, criterionContext);
   const th = {
     textAlign: 'left', padding: '0.3rem 0.5rem', fontSize: '0.62rem', fontWeight: 700,
@@ -578,13 +625,24 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                         revenue thresholds, and the one-of-three
                         doing-business check. Both feed the SB 253 / SB 261
                         Applies? rows below. */}
-                    {q.key === 'california' && CALIFORNIA_CRITERIA_GROUPS.map((group) => {
-                      // Always on, unlike the regulation rows below. These
-                      // aren't consequences of the California answer — they're
-                      // how you arrive at it, so hiding them until the question
-                      // is already answered puts the work behind the answer it
-                      // exists to support.
-                      const shownRows = group.rows;
+                    {(JURISDICTION_CRITERIA_GROUPS[q.key] || []).map((group) => {
+                      // California's rows aren't consequences of its answer —
+                      // they're how you arrive at it, so hiding them until the
+                      // question is answered would put the work behind the
+                      // answer it supports. They stay always on. The EU's are
+                      // what CSRD screens on once the company is already in
+                      // scope, so they wait for a Yes (or an Unknown, still
+                      // unresolved) — except any row already answered or
+                      // annotated, which stays put rather than taking the
+                      // user's work with it.
+                      const gated = group.showWhenTriggered;
+                      const triggered = val === 'Yes' || val === 'Unknown';
+                      const shownRows = group.rows.filter((row) => {
+                        if (!gated || triggered) return true;
+                        const k = criterionKey(q.key, row.key);
+                        return answers?.[k] || links?.[k] || findings?.[k];
+                      });
+                      if (shownRows.length === 0) return null;
                       return (
                       <Fragment key={group.key}>
                         <tr>
@@ -598,11 +656,11 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                           </td>
                         </tr>
                         {shownRows.map((row) => {
-                          const cKey = californiaCriterionKey(row.key);
+                          const cKey = criterionKey(q.key, row.key);
                           const saved = answers?.[cKey] || '';
-                          // A hand-picked answer always wins; "—" falls back
-                          // to whatever the card can work out.
-                          const derived = saved ? null : deriveCaliforniaCriterion(row, criterionContext);
+                          // A hand-entered value always wins; clearing it falls
+                          // back to whatever the card can work out.
+                          const derived = saved ? null : deriveCriterion(row, criterionContext);
                           const shown = saved || derived?.verdict || '';
                           return (
                             <tr key={cKey}>
@@ -620,16 +678,26 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                               </td>
                               <td style={td}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', minWidth: 0, flexWrap: 'wrap' }}>
-                                  <select
-                                    value={shown}
-                                    onChange={(e) => onSet(cKey, e.target.value)}
-                                    aria-label={`California criterion: ${row.label}`}
-                                    title={derived ? derived.basis : undefined}
-                                    style={answerSelectStyle(shown, !!derived)}
-                                  >
-                                    <option value="">—</option>
-                                    {SCREENING_ANSWERS.map((a) => <option key={a} value={a}>{a}</option>)}
-                                  </select>
+                                  {row.kind === 'number' ? (
+                                    <NumberCriterionInput
+                                      value={shown}
+                                      derived={!!derived}
+                                      title={derived ? derived.basis : undefined}
+                                      ariaLabel={`${q.jurisdiction}: ${row.label}`}
+                                      onCommit={(v) => onSet(cKey, v)}
+                                    />
+                                  ) : (
+                                    <select
+                                      value={shown}
+                                      onChange={(e) => onSet(cKey, e.target.value)}
+                                      aria-label={`${q.jurisdiction} criterion: ${row.label}`}
+                                      title={derived ? derived.basis : undefined}
+                                      style={answerSelectStyle(shown, !!derived)}
+                                    >
+                                      <option value="">—</option>
+                                      {SCREENING_ANSWERS.map((a) => <option key={a} value={a}>{a}</option>)}
+                                    </select>
+                                  )}
                                   <SourceBadge source={row.source} />
                                 </div>
                               </td>
@@ -1247,6 +1315,8 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                         onSetFindings={(fieldKey, text) => setComplianceFinding(c.key, fieldKey, text)}
                         onSetLink={(fieldKey, url) => setComplianceLink(c.key, fieldKey, url)}
                         caSiteCount={c.california}
+                        // Prefills the CSRD Employee Count row.
+                        employees={revenueResearch[revenueSlug(c.name)]?.employees ?? null}
                         // Feeds the derived SB 253 / SB 261 verdicts. Prefer
                         // the researched figure shown in the Revenue row,
                         // falling back to whatever the matched company
