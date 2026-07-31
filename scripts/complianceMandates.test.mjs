@@ -19,6 +19,43 @@ eq(lookupGovId('Queens', 'NY'), 'US--New Yo-01', 'Queens,NY -> NYC govId (boroug
 eq(lookupGovId('Nowhere', 'ZZ'), null, 'unknown city -> null');
 ok(getMandates('US-WA-Seattl-01')?.government === 'Seattle', 'getMandates(Seattle)');
 
+// A bare city name must not cross a border: the city-only fallback is
+// rejected when the site's state and the candidate jurisdiction resolve to
+// different countries.
+eq(lookupGovId('Cambridge', 'Canada'), null, 'Cambridge,Canada -> not Cambridge MA');
+eq(lookupGovId('Cambridge', 'ON'), null, 'Cambridge,ON -> not Cambridge MA');
+eq(lookupGovId('Cambridge', 'MA'), 'US-MA-Cambri-01', 'Cambridge,MA still resolves');
+eq(lookupGovId('Cambridge', ''), 'US-MA-Cambri-01', 'Cambridge with no state unchanged');
+eq(lookupGovId('Calgary', 'Canada'), 'CAN-AB-Calgar-01', 'Calgary,Canada resolves');
+// Ottawa and Montreal sit in Canada behind a "US-" Government ID prefix, so
+// the country test has to read the state name, not the prefix.
+eq(lookupGovId('Ottawa', 'Canada'), 'US-ON-Ottawa-01', 'Ottawa,Canada resolves despite US- prefix');
+eq(lookupGovId('Montreal', 'Canada'), 'US-QC-Montre-01', 'Montreal,Canada resolves despite US- prefix');
+// "PR" in a state column is usually a mis-mapped field, not Puerto Rico, so
+// it must not veto anything.
+eq(lookupGovId('Montreal', 'PR'), 'US-QC-Montre-01', 'Montreal with a junk PR state resolves');
+eq(lookupGovId('Brooklyn', 'Canada'), null, 'Brooklyn,Canada -> not NYC (guard applies to aliases)');
+
+// --- jurisdictions split across several rows -------------------------------
+// Portland, Oregon is two rows in the source workbook: one carries the BPS
+// mandate, the other the benchmarking ordinance. Both Government IDs have to
+// give the whole jurisdiction, or a Portland site silently misses a mandate.
+{
+  const a = getMandates('US-OR-Portla-01');
+  const b = getMandates('US-OR-Portla-02');
+  ok(a.bbs.active === true && b.bbs.active === true, 'Portland OR: BBS active from either Government ID');
+  ok(a.bps.active === true && b.bps.active === true, 'Portland OR: BPS active from either Government ID');
+  eq(a.govIds, ['US-OR-Portla-01', 'US-OR-Portla-02'], 'Portland OR names both source rows');
+  eq(a.raws.length, 2, 'Portland OR keeps both raw rows for the export');
+  const site = screenSite({ id: 9, city: 'Portland', state: 'OR', sqft: 50000, propertyType: 'Office' });
+  ok(site.bbs.active === true && site.bps.active === true, 'Portland OR site screens against both mandates');
+  ok(site.bbs.eligible === true, 'Portland OR 50k office: BBS eligible');
+  // Same-name jurisdictions elsewhere stay separate.
+  const me = getMandates(lookupGovId('Portland', 'Maine'));
+  ok(me.govId === 'US-ME-Portla-01' && me.bps.active === false, 'Portland ME is not merged with Portland OR');
+  ok(getMandates(lookupGovId('South Portland', 'ME')).govId === 'US-ME-South -01', 'South Portland ME separate');
+}
+
 // --- property-type classification -----------------------------------------
 eq(classifyPropertyType('Multifamily Housing'), 'multifamily', 'classify multifamily');
 eq(classifyPropertyType('K-12 School'), 'public', 'classify public');

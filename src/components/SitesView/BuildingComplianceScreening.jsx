@@ -133,14 +133,18 @@ export function BuildingComplianceScreening({ sites = [], companyName = '' }) {
     });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(siteRows), 'Site Screening');
-    // Matched-jurisdiction raw rows (one per Government ID).
+    // Matched-jurisdiction raw rows. A jurisdiction split across several
+    // Government IDs in the source workbook (Portland OR) contributes all of
+    // them, so the reference behind a merged match is complete.
     const seen = new Set();
     const ordRows = [];
     for (const r of rowsToExport) {
       if (!r.matched || seen.has(r.govId)) continue;
       seen.add(r.govId);
       const g = getMandates(r.govId);
-      if (g?.raw) ordRows.push(g.raw);
+      for (const raw of (g?.raws?.length ? g.raws : [g?.raw])) {
+        if (raw) ordRows.push(raw);
+      }
     }
     if (ordRows.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ordRows), 'Matched Ordinances');
     XLSX.writeFile(wb, filename);
