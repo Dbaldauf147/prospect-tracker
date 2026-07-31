@@ -46,6 +46,31 @@ for (const d of CORPORATE_MANDATE_DEADLINES) {
       ok(has, `${jk} / ${r.regulation}: has at least one dated milestone`);
     }
   }
+
+  // Regression guard on the three rows whose `timeline` text had gone stale
+  // against the regulators. A general text-vs-data rule doesn't work here —
+  // the strings legitimately vary between "yearly, on the company's cycle" and
+  // a named year — so these pin the specific facts that were wrong.
+  const timelineOf = (jk, reg) => REGULATIONS_BY_JURISDICTION[jk].find(r => r.regulation === reg).timeline;
+  {
+    // Said "2026 data (reporting starts 2027)". CARB's first cycle covers
+    // FY2025 and scope 1 & 2 landed on 10 Nov 2026.
+    const sb253 = timelineOf('california', 'SB 253');
+    ok(sb253.includes('2025') && sb253.includes('10 Nov 2026'), `SB 253 timeline names the FY2025 cycle and its date (says "${sb253}")`);
+    ok(!sb253.includes('reporting starts 2027'), 'SB 253 timeline no longer claims reporting starts in 2027');
+
+    // Said "2027 data (reporting starts 2028)". The first report was the
+    // FY2025 one due 1 Jan 2026, now stayed — so the text must not assert a
+    // live deadline.
+    const sb261 = timelineOf('california', 'SB 261');
+    ok(sb261.includes('2025') && /stayed/i.test(sb261), `SB 261 timeline names the FY2025 cycle and the stay (says "${sb261}")`);
+
+    // Said "2026 data (reporting starts 2027)" — that mandatory phase was
+    // withdrawn by CVM Resolution 244; comply-or-explain runs from 2027.
+    const cvm = timelineOf('brazil', 'Brazil — CVM');
+    ok(cvm.includes('2027') && /comply-or-explain/i.test(cvm), `CVM timeline describes comply-or-explain from 2027 (says "${cvm}")`);
+    ok(!/^2026 data/.test(cvm), 'CVM timeline no longer claims a mandatory 2026 phase');
+  }
 }
 
 // --- every status is drawable and labelled ---------------------------------
