@@ -17,6 +17,8 @@
 
 import MASTER_ORDINANCES from '../data/masterOrdinances.js';
 import CITY_LOOKUP from '../data/complianceCityLookup.js';
+import { normalizeState } from './utilityRates.js';
+import { normalizeProvince } from '../data/naMarkets.js';
 
 export const CATEGORIES = ['bbs', 'audits', 'bps'];
 export const CATEGORY_LABEL = { bbs: 'BBS', audits: 'Energy Audits', bps: 'BPS' };
@@ -47,55 +49,60 @@ export const CITY_ALIASES = {
   newyorkcity: 'New York', nyc: 'New York',
 };
 
-// Which country a state / province / country value names, or null when it
-// can't be told. Used to stop a bare city name matching the wrong country's
-// jurisdiction — Cambridge, Ontario is not Cambridge, Massachusetts.
+// Which country and state a "state" value names, or null when it can't be
+// told. Used to stop a bare city name matching the wrong place — Cambridge,
+// Ontario is not Cambridge, Massachusetts, and Columbus, Mississippi is not
+// Columbus, Ohio.
 //
-// Deliberately excludes US territories (PR, GU, VI …): a two-letter code in a
-// state column is often a mis-mapped field rather than a real territory, and
-// reading "PR" as Puerto Rico would veto correct matches on the strength of
-// junk data. Unresolved values simply don't veto anything.
-const CA_REGIONS = [
-  'canada',
-  'alberta', 'ab', 'britishcolumbia', 'bc', 'manitoba', 'mb', 'newbrunswick', 'nb',
-  'newfoundlandandlabrador', 'newfoundland', 'nl', 'northwestterritories', 'nt',
-  'novascotia', 'ns', 'nunavut', 'nu', 'ontario', 'on', 'princeedwardisland', 'pe',
-  'quebec', 'québec', 'qc', 'saskatchewan', 'sk', 'yukon', 'yt',
-];
-const US_REGIONS = [
-  'unitedstates', 'unitedstatesofamerica', 'usa', 'us',
-  'alabama', 'al', 'alaska', 'ak', 'arizona', 'az', 'arkansas', 'ar', 'california',
-  'colorado', 'co', 'connecticut', 'ct', 'delaware', 'de', 'districtofcolumbia', 'dc',
-  'florida', 'fl', 'georgia', 'ga', 'hawaii', 'hi', 'idaho', 'id', 'illinois', 'il',
-  'indiana', 'in', 'iowa', 'ia', 'kansas', 'ks', 'kentucky', 'ky', 'louisiana', 'la',
-  'maine', 'me', 'maryland', 'md', 'massachusetts', 'ma', 'michigan', 'mi',
-  'minnesota', 'mn', 'mississippi', 'ms', 'missouri', 'mo', 'montana', 'mt',
-  'nebraska', 'ne', 'nevada', 'nv', 'newhampshire', 'nh', 'newjersey', 'nj',
-  'newmexico', 'nm', 'newyork', 'ny', 'northcarolina', 'nc', 'northdakota', 'nd',
-  'ohio', 'oh', 'oklahoma', 'ok', 'oregon', 'or', 'pennsylvania', 'pa',
-  'rhodeisland', 'ri', 'southcarolina', 'sc', 'southdakota', 'sd', 'tennessee', 'tn',
-  'texas', 'tx', 'utah', 'ut', 'vermont', 'vt', 'virginia', 'va', 'washington', 'wa',
-  'westvirginia', 'wv', 'wisconsin', 'wi', 'wyoming', 'wy',
-];
-// "CA" is California, not Canada — the ambiguity is why the country lists are
-// spelled out rather than guessed from a prefix.
-const REGION_COUNTRY = new Map([
-  ...CA_REGIONS.map(r => [normKey(r), 'CA']),
-  ...US_REGIONS.map(r => [normKey(r), 'US']),
+// The state and province tables already exist for the rate lookups, so this
+// reads through them rather than keeping a third copy that could drift.
+// normalizeState answers for the 50 states plus DC and normalizeProvince for
+// the provinces, both from either a code or a full name.
+//
+// Note what stays unresolved, on purpose:
+//   - US territories (PR, GU, VI). A two-letter code in a state column is
+//     often a mis-mapped field rather than a real territory, and reading "PR"
+//     as Puerto Rico would veto correct matches on the strength of junk data.
+//   - Anything neither table recognizes ("Multiple", "Nuevo Leon", "").
+// An unresolved value vetoes nothing.
+const COUNTRY_ONLY = new Map([
+  ['canada', 'CA'], ['unitedstates', 'US'], ['unitedstatesofamerica', 'US'],
+  ['usa', 'US'], ['us', 'US'],
 ]);
 
-export function regionCountry(value) {
-  const k = normKey(value);
-  return k ? (REGION_COUNTRY.get(k) || null) : null;
+// { country, state } for a state / province / country value, or null.
+export function regionOf(value) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return null;
+  // States first: "CA" is California, not Canada.
+  const st = normalizeState(raw);
+  if (st) return { country: 'US', state: st };
+  const prov = normalizeProvince(raw);
+  if (prov) return { country: 'CA', state: prov };
+  const country = COUNTRY_ONLY.get(normKey(raw));
+  return country ? { country, state: null } : null;
 }
 
-// The country a jurisdiction sits in, read from its state / province name.
-// Not from the Government ID prefix — some Canadian jurisdictions carry a
-// "US-" prefix in the seed data (Ottawa, Montreal), so the prefix can't be
-// trusted while the state name can.
-function govIdCountry(govId, ordinances) {
+export function regionCountry(value) {
+  return regionOf(value)?.country || null;
+}
+
+// Where a jurisdiction sits, read from its state / province name. Not from
+// the Government ID prefix — some Canadian jurisdictions carry a "US-" prefix
+// in the seed data (Ottawa, Montreal), so the prefix can't be trusted while
+// the state name can.
+function govIdRegion(govId, ordinances) {
   const g = ordIndex(ordinances).get(govId);
-  return g ? regionCountry(g.state) : null;
+  return g ? regionOf(g.state) : null;
+}
+
+// Do a site's stated location and a candidate jurisdiction's contradict each
+// other? Only a positive disagreement counts — anything either side can't
+// resolve leaves the match alone.
+function regionsConflict(site, candidate) {
+  if (!site || !candidate) return false;
+  if (site.country && candidate.country && site.country !== candidate.country) return true;
+  return !!(site.state && candidate.state && site.state !== candidate.state);
 }
 
 // Resolve a city + state to a Government ID. Tries city+state (state may be an
@@ -103,24 +110,22 @@ function govIdCountry(govId, ordinances) {
 // the same via a known alias (e.g. Brooklyn → New York).
 //
 // The city-only step is a guess by nature: a bare "Cambridge" can't tell
-// Cambridge MA from Cambridge ON. So it's rejected when the site's state and
-// the candidate jurisdiction's are both resolvable to a country and those
-// countries differ. A city+state hit is an explicit curated mapping and is
-// always trusted.
+// Cambridge MA from Cambridge ON, and a bare "Columbus" can't tell Columbus MS
+// from Columbus OH. So it's rejected when the site's stated location and the
+// candidate jurisdiction's positively disagree — a different country, or a
+// different state within the same one. A city+state hit is an explicit curated
+// mapping and is always trusted.
 export function lookupGovId(city, state, cityLookup = CITY_LOOKUP, ordinances = MASTER_ORDINANCES) {
   const c = String(city || '').trim();
   const s = String(state || '').trim();
   if (!c) return null;
-  const siteCountry = regionCountry(s);
+  const siteRegion = regionOf(s);
   const tryCity = (name) => {
     const withState = cityLookup[normKey(name + s)];
     if (withState != null) return withState;
     const cityOnly = cityLookup[normKey(name)];
     if (cityOnly == null) return null;
-    if (siteCountry) {
-      const candidateCountry = govIdCountry(cityOnly, ordinances);
-      if (candidateCountry && candidateCountry !== siteCountry) return null;
-    }
+    if (regionsConflict(siteRegion, govIdRegion(cityOnly, ordinances))) return null;
     return cityOnly;
   };
   const direct = tryCity(c);

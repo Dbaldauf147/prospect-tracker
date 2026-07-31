@@ -35,6 +35,17 @@ eq(lookupGovId('Montreal', 'Canada'), 'US-QC-Montre-01', 'Montreal,Canada resolv
 // it must not veto anything.
 eq(lookupGovId('Montreal', 'PR'), 'US-QC-Montre-01', 'Montreal with a junk PR state resolves');
 eq(lookupGovId('Brooklyn', 'Canada'), null, 'Brooklyn,Canada -> not NYC (guard applies to aliases)');
+// Same country, different state: Columbus MS was screening as Columbus OH,
+// which carries a $1.8M/yr benchmarking penalty.
+eq(lookupGovId('Columbus', 'MS'), null, 'Columbus,MS -> not Columbus OH');
+eq(lookupGovId('Columbus', 'Mississippi'), null, 'Columbus,Mississippi -> not Columbus OH');
+eq(lookupGovId('Columbus', 'OH'), 'US-OH-Columb-01', 'Columbus,OH still resolves');
+eq(lookupGovId('Columbus', 'Ohio'), 'US-OH-Columb-01', 'Columbus,Ohio still resolves');
+eq(lookupGovId('Columbus', ''), 'US-OH-Columb-01', 'Columbus with no state unchanged');
+// The guard is a positive-disagreement test, so an unknown state never vetoes.
+eq(lookupGovId('Columbus', 'Multiple'), 'US-OH-Columb-01', 'unresolvable state does not veto');
+// Washington DC is not Washington state.
+eq(lookupGovId('Seattle', 'DC'), null, 'Seattle,DC -> not Seattle WA');
 
 // --- jurisdictions split across several rows -------------------------------
 // Portland, Oregon is two rows in the source workbook: one carries the BPS
