@@ -25,6 +25,7 @@ const STORES = [
   { name: 'daily-success-goals', keyPath: null },
   { name: 'pipeline-dashboard',  keyPath: null },
   { name: 'bfo-activity',        keyPath: null },
+  { name: 'quoted-month-rows',   keyPath: null },
 ];
 
 let dbPromise = null;
