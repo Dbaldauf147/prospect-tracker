@@ -273,6 +273,24 @@ export function todayMonthIndex(anchor, monthCount) {
   return index >= 1 && index <= monthCount ? index : null;
 }
 
+// Where today falls in the anchored window, measured in months from the start
+// of month 1 — 0 is the 1st of month 1, 1.5 is the midpoint of month 2. The
+// fractional part is the position within the current month (day 1 at the
+// column's left edge, the last day just short of its right edge), so a marker
+// drawn from this tracks the date instead of jumping a whole column at each
+// month end. Null when today sits outside the window, since a marker clamped
+// to an edge would read as "the timeline starts (or ends) today".
+export function todayMonthOffset(anchor, monthCount) {
+  const base = parseMonthAnchor(anchor);
+  if (!base) return null;
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth() + 1;
+  const whole = (y * 12 + (m - 1)) - (base.y * 12 + (base.m - 1));
+  const offset = whole + (now.getDate() - 1) / daysInMonth(y, m);
+  return offset >= 0 && offset < monthCount ? offset : null;
+}
+
 // Month label for an axis tick: "Aug 2026", or just "Aug" when the year is
 // already established by an earlier tick.
 export function monthLabel(y, m, withYear) {

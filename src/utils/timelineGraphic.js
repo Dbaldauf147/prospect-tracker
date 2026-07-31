@@ -15,7 +15,7 @@ import { SE_GREEN, SE_GREEN_DARK, schneiderLogoSvg } from './schneiderLogo';
 import { TIMELINE_STAGE_OWNERS, DEFAULT_STAGE_OWNER } from './timelineTemplatesStore';
 import {
   getStageRange, formatRangeLabel, isoToMs, msToIso, daysInMonth, monthLabel,
-  timelineBaseMonth, getStageMonths, anchorPlus, todayMonthIndex,
+  timelineBaseMonth, getStageMonths, anchorPlus, todayMonthIndex, todayMonthOffset,
 } from './timelineDates';
 
 const SE_INK = '#0F172A';
@@ -23,6 +23,7 @@ const SE_SLATE = '#475569';
 const SE_MUTE = '#94A3B8';
 const SE_LINE = '#D8DEE6';
 const SE_GREY = '#5F5F5F'; // the grey of the SE email signature — client-owned
+const SE_RED = '#E4002B';  // today marker — the one warm colour on the deck
 
 export const OWNER_COLOR = {
   'Schneider Electric': SE_GREEN_DARK,
@@ -455,6 +456,11 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   const calendar = template?.monthMode === 'calendar';
   const anchor = String(template?.anchorMonth || '').trim();
   const todayCol = calendar ? todayMonthIndex(anchor, monthCount) : null;
+  // Today's exact position, in fractional months — half way through the month
+  // puts the line half way across its column. Drawn last so it stays visible
+  // over the step chips.
+  const todayOffset = calendar ? todayMonthOffset(anchor, monthCount) : null;
+  const todayX = todayOffset == null ? null : x0 + todayOffset * colW;
 
   let s = `<rect x="0" y="0" width="${width}" height="${height}" fill="#FFFFFF"/>`;
   // Green header band, carrying the title and the month numbers.
@@ -511,9 +517,10 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   for (let m = 1; m <= monthCount + 1; m += 1) {
     s += `<line x1="${colX(m)}" y1="${gridTop}" x2="${colX(m)}" y2="${gridTop + gridH}" stroke="${SE_LINE}" stroke-width="1"/>`;
   }
+  // The current month keeps its tint; the red line below is what pins the
+  // actual day, so the column no longer needs an edge rule of its own.
   if (todayCol) {
     s += `<rect x="${colX(todayCol)}" y="${gridTop}" width="${colW}" height="${gridH}" fill="${SE_GREEN}" opacity="0.09"/>`;
-    s += `<line x1="${colX(todayCol)}" y1="${gridTop}" x2="${colX(todayCol)}" y2="${gridTop + gridH}" stroke="${SE_GREEN_DARK}" stroke-width="1.8"/>`;
   }
   groups.forEach((group, gi) => {
     const h = bandH[gi];
@@ -564,6 +571,14 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
     });
     y += h;
   });
+
+  // Today: one red rule from the month headings down through the grid, placed
+  // proportionally inside the month (the 15th of a 30-day month sits at the
+  // column's midpoint). Last in the draw order so no step chip covers it.
+  if (todayX != null) {
+    s += `<line x1="${todayX.toFixed(1)}" y1="${PHASED.headH + 2}" x2="${todayX.toFixed(1)}" y2="${gridTop + gridH}" stroke="${SE_RED}" stroke-width="2"/>`;
+    s += `<circle cx="${todayX.toFixed(1)}" cy="${gridTop + gridH}" r="3.5" fill="${SE_RED}"/>`;
+  }
 
   if (overflow.length) {
     const names = overflow.map(p => p.stage.name || 'Untitled step').join(', ');
