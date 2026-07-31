@@ -239,19 +239,35 @@ export const EU_CRITERIA_GROUPS = [
     // rows, these aren't how you answer the jurisdiction question, they're
     // what CSRD screens on after it's answered Yes.
     showWhenTriggered: true,
+    // Everything but the "already reported?" question comes from the compliance
+    // research run — `fromResearch` names the field on its `csrd` payload. The
+    // one exception is genuinely unknowable from the outside: whether the
+    // company has filed already is a fact the account team holds, not one a
+    // web search settles.
     rows: [
       { key: 'csrd-2025', label: 'Has the company already submitted a CSRD report in 2025?', source: 'manual' },
-      { key: 'eu-incorporated', label: 'Is the company incorporated in the EU?', source: 'manual' },
-      { key: 'eu-listed', label: 'Is the company listed on an EU regulated market?', source: 'manual' },
-      { key: 'global-turnover', label: 'Global Net Turnover (Million EUR)', kind: 'number', source: 'manual' },
-      { key: 'eu-turnover', label: 'EU Net Turnover (Million EUR)', kind: 'number', source: 'manual' },
+      { key: 'eu-incorporated', label: 'Is the company incorporated in the EU?', source: 'research', fromResearch: 'euIncorporated' },
+      { key: 'eu-listed', label: 'Is the company listed on an EU regulated market?', source: 'research', fromResearch: 'euListed' },
+      {
+        key: 'global-turnover',
+        label: 'Global Net Turnover (Million EUR)',
+        kind: 'number', source: 'research', fromResearch: 'globalTurnoverEurM',
+      },
+      {
+        key: 'eu-turnover',
+        label: 'EU Net Turnover (Million EUR)',
+        kind: 'number', source: 'research', fromResearch: 'euTurnoverEurM',
+      },
       {
         key: 'eu-sub-turnover',
         label: 'Highest Net Turnover Among EU Subsidiaries or Branches (Million EUR)',
-        kind: 'number',
-        source: 'manual',
+        kind: 'number', source: 'research', fromResearch: 'topEuSubsidiaryTurnoverEurM',
       },
-      { key: 'employees', label: 'Employee Count', kind: 'number', source: 'research', fromEmployeeCount: true },
+      {
+        key: 'employees',
+        label: 'Employee Count',
+        kind: 'number', source: 'research', fromResearch: 'employees', fromEmployeeCount: true,
+      },
     ],
   },
 ];
@@ -349,7 +365,30 @@ export function deriveRegulationVerdict(regulation, {
 //   - manual rows always return null
 // For a numeric row `verdict` is the figure as a string, which is what the
 // input renders and what gets persisted if the user leaves it alone.
-export function deriveCriterion(row, { revenueUsd, revenueLabel, caSiteCount, employees } = {}) {
+export function deriveCriterion(row, {
+  revenueUsd, revenueLabel, caSiteCount, employees, csrd, csrdNotes,
+} = {}) {
+  // The compliance research run is the first source for a row that names a
+  // field on its payload. A researched "Unknown" is treated as nothing found,
+  // so the row stays open rather than parroting a non-answer.
+  if (row?.fromResearch) {
+    const value = csrd?.[row.fromResearch];
+    const note = String(csrdNotes?.[row.fromResearch] || '').trim();
+    const ok = row.kind === 'number'
+      ? Number.isFinite(Number(value)) && value !== null && value !== ''
+      : value === 'Yes' || value === 'No';
+    if (ok) {
+      const shown = row.kind === 'number' ? String(value) : value;
+      const how = row.kind === 'number' ? 'Type over it' : 'Pick a value';
+      return {
+        verdict: shown,
+        basis: `From compliance research${note ? `: ${note}` : '.'} ${how} to override.`,
+      };
+    }
+  }
+  // Headcount has a second source — the revenue research already on the card
+  // reports it too, so a company researched for revenue but not yet for
+  // compliance still fills this in.
   if (row?.fromEmployeeCount) {
     if (!Number.isFinite(employees)) return null;
     return {

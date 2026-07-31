@@ -516,6 +516,10 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
     revenueUsd, revenueLabel, caSiteCount,
     employees: Number.isFinite(Number(employees)) && employees !== null && employees !== ''
       ? Number(employees) : null,
+    // The CSRD figures the compliance research run turned up, plus its
+    // per-field rationale for the tooltips.
+    csrd: research?.csrd || null,
+    csrdNotes: research?.csrdNotes || null,
   };
   const doingBusinessInCA = deriveDoingBusinessInCA(answers, criterionContext);
   const th = {
@@ -1083,10 +1087,16 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
         }
       }
       // Keep the rationale + sources alongside so the card can explain itself.
+      // `csrd` holds the researched CSRD inputs, which the EU criteria rows
+      // derive from — stored rather than written straight into the answers so
+      // a hand-entered value still wins and re-running research doesn't
+      // overwrite it.
       updates[`companyComplianceResearch.${key}`] = {
         notes: data.notes || {},
         summary: String(data.summary || ''),
         sources: Array.isArray(data.sources) ? data.sources : [],
+        csrd: data.csrd && typeof data.csrd === 'object' ? data.csrd : null,
+        csrdNotes: data.csrdNotes && typeof data.csrdNotes === 'object' ? data.csrdNotes : null,
         savedAt: Date.now(),
       };
       setScreenState(s => ({ ...s, [key]: { loading: false, error: null } }));
