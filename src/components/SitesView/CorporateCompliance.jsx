@@ -14,7 +14,7 @@ import {
   companyScreeningKey, ALWAYS_SHOW_REGULATIONS,
 } from '../../data/corporateComplianceScreening';
 import {
-  summarizeSiteRegions, regionCountryLabel,
+  summarizeSiteRegions, regionCountryLabel, nonUsCountries,
   SITE_REGION_ORDER, UNKNOWN_REGION,
 } from '../../utils/siteRegion';
 
@@ -1066,21 +1066,28 @@ function CardRow({ label, children, first }) {
 // itself the answer); Unknown only appears when sites couldn't be placed,
 // so the segments always add back up to the total. Each segment's hover
 // lists the countries behind it.
-function RegionBreakdown({ summary }) {
+//
+// `compact` drops the empty buckets — used for the California split,
+// which rides on an already-long line and where a healthy portfolio is
+// entirely North America. There the zeros are the expected case rather
+// than a finding, so they'd be pure noise.
+function RegionBreakdown({ summary, compact, lead }) {
   if (!summary || summary.total === 0) return null;
-  const buckets = SITE_REGION_ORDER.filter(
-    region => region !== UNKNOWN_REGION || summary.counts[region] > 0
-  );
+  const buckets = SITE_REGION_ORDER.filter(region => (
+    compact ? summary.counts[region] > 0 : (region !== UNKNOWN_REGION || summary.counts[region] > 0)
+  ));
   return (
     <>
-      {buckets.map((region) => {
+      {buckets.map((region, i) => {
         const count = summary.counts[region] || 0;
         const title = region === UNKNOWN_REGION
           ? 'Sites with no country on the upload and no recognizable US state or Canadian province. Map a Country column on the Utility Lookup tab to place them.'
           : `${region}: ${regionCountryLabel(summary.countries[region])}`;
         return (
           <Fragment key={region}>
-            {' · '}
+            {/* `lead` means the caller already opened the segment list
+                (a parenthesis), so the first one needs no separator. */}
+            {lead && i === 0 ? null : ' · '}
             <span title={title} style={{ whiteSpace: 'nowrap', opacity: count === 0 ? 0.55 : 1 }}>
               <strong style={{ color: count === 0 ? 'inherit' : 'var(--color-text)' }}>{count}</strong>
               {' '}{region}
@@ -1089,6 +1096,25 @@ function RegionBreakdown({ summary }) {
         );
       })}
     </>
+  );
+}
+
+// Warning marker for a California site count whose rows don't all resolve
+// to a US country. California is matched on the State value alone, so a
+// non-US row carrying "CA" lands in the count; Canadian / Mexican rows
+// hide inside the North America bucket where the region split alone
+// wouldn't reveal them. Renders nothing when every CA site is US-based.
+function CaRegionFlag({ summary }) {
+  const foreign = nonUsCountries(summary);
+  if (foreign.length === 0) return null;
+  const n = foreign.reduce((sum, c) => sum + c.count, 0);
+  return (
+    <span
+      title={`${n} site${n === 1 ? '' : 's'} counted as California ${n === 1 ? 'resolves' : 'resolve'} to a non-US country (${regionCountryLabel(foreign)}). California is matched on the State value alone, so a "CA" in a non-US State column is read as a California site — check the State / Country column mapping on the Utility Lookup tab.`}
+      style={{ marginLeft: '0.3rem', color: '#B45309', fontWeight: 700, cursor: 'help' }}
+    >
+      ⚠
+    </span>
   );
 }
 
@@ -1115,7 +1141,7 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
       const key = companyKeyOf(rawName);
       const mapKey = key || '__unnamed__';
       if (!byKey.has(mapKey)) {
-        byKey.set(mapKey, { key, total: 0, california: 0, caSites: [], sites: [], names: new Map() });
+        byKey.set(mapKey, { key, total: 0, california: 0, caSites: [], caSiteRows: [], sites: [], names: new Map() });
       }
       const entry = byKey.get(mapKey);
       entry.total += 1;
@@ -1123,6 +1149,7 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
       if (rawName) entry.names.set(rawName, (entry.names.get(rawName) || 0) + 1);
       if (isCalifornia(site.state)) {
         entry.california += 1;
+        entry.caSiteRows.push(site);
         if (site.siteName || site.city) {
           entry.caSites.push([site.siteName, site.city].filter(Boolean).join(' — '));
         }
@@ -1141,8 +1168,11 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
       return {
         key: e.key, name, total: e.total, california: e.california, caSites: e.caSites,
         // North America / Europe / Rest of World split of this company's
-        // sites, with the per-country detail behind the hover.
+        // sites, with the per-country detail behind the hover. The same
+        // split over just the California sites doubles as a check on the
+        // CA match, which keys on the State value alone.
         regions: summarizeSiteRegions(e.sites),
+        caRegions: summarizeSiteRegions(e.caSiteRows),
       };
     });
     return out.sort(
@@ -1154,6 +1184,10 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
   // Portfolio-wide region split for the summary line above the cards —
   // computed off every uploaded site, so it matches the sum of the cards.
   const totalRegions = useMemo(() => summarizeSiteRegions(sites), [sites]);
+  const totalCaRegions = useMemo(
+    () => summarizeSiteRegions(sites.filter(s => isCalifornia(s.state))),
+    [sites]
+  );
 
   // Persisted revenue-research blobs keyed by company slug (synced via
   // settings.companyRevenueResearch). Transient loading / error state per
@@ -1526,6 +1560,16 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
             {' · '}
             <strong style={{ color: '#166534' }}>{totalCA}</strong> California{' '}
             {totalCA === 1 ? 'site' : 'sites'}
+            {/* Parenthesized on this single dense line so its region names
+                can't read as a continuation of the portfolio split above. */}
+            {totalCA > 0 && (
+              <>
+                {' ('}
+                <RegionBreakdown summary={totalCaRegions} compact lead />
+                <CaRegionFlag summary={totalCaRegions} />
+                {')'}
+              </>
+            )}
             {scanning && <span> · scanning lists…</span>}
           </div>
           {/* One company per row — each card spans the full page width. */}
@@ -1613,16 +1657,23 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                     </CardRow>
 
                     <CardRow label="Sites">
-                      <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>
-                        {c.total} {c.total === 1 ? 'site' : 'sites'}
-                        <RegionBreakdown summary={c.regions} />
+                      {/* Two lines: the whole portfolio, then the California
+                          subset. Both carry a region split, so running them
+                          together would leave it unclear which count the
+                          second set of region names belongs to. */}
+                      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                        <span>
+                          {c.total} {c.total === 1 ? 'site' : 'sites'}
+                          <RegionBreakdown summary={c.regions} />
+                        </span>
                         {c.california > 0 && (
-                          <>
-                            {' · '}
+                          <span>
                             <strong style={{ color: '#166534' }}>{c.california} in CA</strong>
-                          </>
+                            <RegionBreakdown summary={c.caRegions} compact />
+                            <CaRegionFlag summary={c.caRegions} />
+                          </span>
                         )}
-                      </span>
+                      </div>
                     </CardRow>
 
                     {/* Headquarters — where the company is based, and the

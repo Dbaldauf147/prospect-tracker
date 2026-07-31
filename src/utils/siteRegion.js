@@ -89,6 +89,26 @@ export function summarizeSiteRegions(sites) {
   return { total, counts, countries };
 }
 
+/**
+ * Countries in a summary that aren't the United States, most-sites-first.
+ * The Corporate Compliance page runs this over the sites it counted as
+ * California ones: California is matched on the State value alone, and an
+ * unresolved State column falls through as its raw upload text — so a
+ * non-US row carrying "CA" (a country code, Cádiz, …) is counted as a
+ * California site. Anything this returns is a row worth a second look.
+ * Note it catches Canadian / Mexican rows too, which sit in the same
+ * North America bucket and so wouldn't stand out in the region split.
+ */
+export function nonUsCountries(summary) {
+  const out = [];
+  for (const region of SITE_REGION_ORDER) {
+    for (const c of (summary?.countries?.[region] || [])) {
+      if (c.name !== 'United States') out.push({ ...c });
+    }
+  }
+  return out.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+
 /** "United States 180 · Canada 5" — the hover detail for one bucket. */
 export function regionCountryLabel(countries) {
   if (!countries || countries.length === 0) return 'No sites';
