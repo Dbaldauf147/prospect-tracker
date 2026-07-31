@@ -16,7 +16,7 @@ import { TIMELINE_STAGE_OWNERS, DEFAULT_STAGE_OWNER } from './timelineTemplatesS
 import {
   getStageRange, formatRangeLabel, isoToMs, msToIso, daysInMonth, monthLabel,
   timelineBaseMonth, getStageMonths, anchorPlus, todayMonthIndex, todayMonthOffset,
-  stageMonthFraction,
+  stageMonthFraction, resolveMonthWindow, monthWindowBounds,
 } from './timelineDates';
 
 const SE_INK = '#0F172A';
@@ -224,9 +224,14 @@ const DAY_MS = 86400000;
 // Whole-month domain covering every dated stage, plus the tick series to draw
 // across it. Falls back to quarter ticks once a monthly axis would be too
 // dense to label.
-function ganttAxis(ranges) {
-  const startMs = Math.min(...ranges.map(r => isoToMs(r.start)));
-  const endMs = Math.max(...ranges.map(r => isoToMs(r.end)));
+//
+// `bounds` is the timeline's declared date range. When present it replaces the
+// stage-derived extent, so the axis covers exactly the months the user asked
+// for — including empty ones at either end — rather than shrink-wrapping the
+// work. Stages outside it are clamped by the caller, not dropped.
+function ganttAxis(ranges, bounds) {
+  const startMs = bounds ? bounds.startMs : Math.min(...ranges.map(r => isoToMs(r.start)));
+  const endMs = bounds ? bounds.endMs - DAY_MS : Math.max(...ranges.map(r => isoToMs(r.end)));
   const s = new Date(startMs), e = new Date(endMs);
   const y0 = s.getUTCFullYear(), m0 = s.getUTCMonth() + 1;
   const y1 = e.getUTCFullYear(), m1 = e.getUTCMonth() + 1;
@@ -251,7 +256,7 @@ function ganttAxis(ranges) {
   return { domainStart, domainEnd, ticks, byQuarter };
 }
 
-function ganttRow(stage, range, index, y, px, chartRight) {
+function ganttRow(stage, range, index, y, px, chartRight, chartLeft) {
   const color = ownerColor(stage.owner);
   const label = stage.timing?.trim() || formatRangeLabel(range);
   let out = '';
@@ -263,10 +268,14 @@ function ganttRow(stage, range, index, y, px, chartRight) {
   out += `<text x="${GANTT.padX}" y="${y}" font-size="14.5" font-weight="800" fill="${SE_INK}">${esc(nameLines[0] || '')}</text>`;
   out += `<text x="${GANTT.padX}" y="${y + 17}" font-size="10.5" font-weight="800" letter-spacing="0.7" fill="${color}">${esc(String(stage.owner || '').toUpperCase())}</text>`;
 
-  const x0 = px(isoToMs(range.start));
+  // Clamped to the chart: with a declared range a stage can sit outside the
+  // window, and an unclamped bar would be drawn over the stage-name column or
+  // off the canvas entirely. The out-of-range note names them.
+  const clamp = (x) => Math.max(chartLeft, Math.min(chartRight, x));
+  const x0 = clamp(px(isoToMs(range.start)));
   // Bars run to the END of their last day, so a one-week task reads as seven
   // days wide rather than six.
-  const x1 = px(isoToMs(range.end) + DAY_MS);
+  const x1 = clamp(px(isoToMs(range.end) + DAY_MS));
   const isMilestone = x1 - x0 < 14;
 
   let labelX, anchor;
@@ -303,7 +312,13 @@ export function buildGanttSvg(template, { branded = true } = {}) {
   });
   if (!dated.length) return null;
 
-  const { domainStart, domainEnd, ticks, byQuarter } = ganttAxis(dated.map(d => d.range));
+  // A declared date range fixes the axis; without one it shrink-wraps the
+  // dated stages, exactly as before.
+  const ganttWindow = resolveMonthWindow(template, null);
+  const bounds = ganttWindow.fromRange
+    ? monthWindowBounds(ganttWindow.anchor, ganttWindow.monthCount)
+    : null;
+  const { domainStart, domainEnd, ticks, byQuarter } = ganttAxis(dated.map(d => d.range), bounds);
   const tickW = Math.min(GANTT.maxTickW, Math.max(GANTT.minTickW, 1100 / Math.max(1, ticks.length)));
   const chartW = Math.max(620, ticks.length * tickW);
   const X0 = GANTT.padX + GANTT.labelW;
@@ -317,7 +332,9 @@ export function buildGanttSvg(template, { branded = true } = {}) {
   const rowsTop = branded ? GANTT.topY : 76;
   const gridBottom = rowsTop + dated.length * GANTT.rowH - 12;
   const noteY = gridBottom + 40;
-  const height = noteY + (undated.length ? 40 : 16);
+  // Room for the "not shown" / "outside the range" notes under the legend.
+  const noteLines = (undated.length ? 1 : 0) + 1;
+  const height = noteY + 16 + noteLines * 16;
 
   let body = '';
   // Axis ticks first, so the bars sit on top of the gridlines.
@@ -333,7 +350,7 @@ export function buildGanttSvg(template, { branded = true } = {}) {
   body += `<line x1="${GANTT.padX}" y1="${rowsTop - 30}" x2="${chartRight}" y2="${rowsTop - 30}" stroke="${SE_LINE}" stroke-width="1"/>`;
 
   dated.forEach(({ stage, range }, i) => {
-    body += ganttRow(stage, range, i, rowsTop + i * GANTT.rowH, px, chartRight);
+    body += ganttRow(stage, range, i, rowsTop + i * GANTT.rowH, px, chartRight, X0);
   });
 
   // "Today" only when it lands inside the charted window — a marker pinned to
@@ -356,11 +373,23 @@ export function buildGanttSvg(template, { branded = true } = {}) {
   legendSvg += `<text x="${width - GANTT.padX}" y="${noteY}" text-anchor="end" font-size="11" fill="${SE_MUTE}">Bars show duration · diamonds are point-in-time milestones</text>`;
   body += legendSvg;
 
-  // Never drop a stage silently: anything the parser couldn't place is named.
+  // Never drop a stage silently: anything the parser couldn't place is named,
+  // and so is anything the declared range cuts off — its bar is clamped to the
+  // edge, which would otherwise read as work that happens at the boundary.
+  const notes = [];
   if (undated.length) {
-    const names = undated.map(s => s.name || 'Untitled stage').join(', ');
-    body += `<text x="${GANTT.padX}" y="${noteY + 26}" font-size="11.5" fill="${SE_MUTE}">Not shown — no readable dates: ${esc(names)}</text>`;
+    notes.push(`Not shown — no readable dates: ${undated.map(s => s.name || 'Untitled stage').join(', ')}`);
   }
+  if (bounds) {
+    const outside = dated.filter(({ range }) =>
+      isoToMs(range.end) < bounds.startMs || isoToMs(range.start) >= bounds.endMs);
+    if (outside.length) {
+      notes.push(`Outside the timeline range, clamped to the edge: ${outside.map(d => d.stage.name || 'Untitled stage').join(', ')}`);
+    }
+  }
+  notes.forEach((line, i) => {
+    body += `<text x="${GANTT.padX}" y="${noteY + 26 + i * 16}" font-size="11.5" fill="${SE_MUTE}">${esc(line)}</text>`;
+  });
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="${esc(template?.name || 'Timeline')}" font-family="'Nunito Sans','Segoe UI',Arial,Helvetica,sans-serif">`
     + `<rect x="0" y="0" width="${width}" height="${height}" fill="#FFFFFF"/>`
@@ -430,10 +459,10 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   const mode = template?.positionMode === 'months' ? 'months' : 'dates';
   const placed = stages.map(stage => ({ stage, ...getStageMonths(stage, baseMonth, mode) }));
   const needed = Math.max(...placed.map(p => p.month + p.span - 1), 1);
-  const monthCount = Math.max(
-    1,
-    Math.min(36, Number(template?.monthCount) > 0 ? Math.floor(template.monthCount) : Math.max(12, needed)),
-  );
+  // The window the whole chart is drawn against: the timeline's declared date
+  // range when it has one, otherwise its anchor-month / month-count settings.
+  const monthWindow = resolveMonthWindow(template, needed);
+  const monthCount = monthWindow.monthCount;
 
   const colW = Math.max(PHASED.minColW, Math.min(96, 1000 / monthCount));
   const gridW = colW * monthCount;
@@ -464,9 +493,11 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   const colX = (m) => x0 + (m - 1) * colW;
 
   // Anchored mode swaps the 1…12 headings for real calendar months and marks
-  // the one we're in. Unanchored, the timeline stays relative to kickoff.
-  const calendar = template?.monthMode === 'calendar';
-  const anchor = String(template?.anchorMonth || '').trim();
+  // the one we're in. Unanchored, the timeline stays relative to kickoff. A
+  // declared date range is always anchored — picking dates is what asks for
+  // calendar headings.
+  const calendar = monthWindow.calendar;
+  const anchor = monthWindow.anchor;
   const todayCol = calendar ? todayMonthIndex(anchor, monthCount) : null;
   // Today's exact position, in fractional months — half way through the month
   // puts the line half way across its column. Drawn last so it stays visible

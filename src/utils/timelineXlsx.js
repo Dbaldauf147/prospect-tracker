@@ -17,6 +17,7 @@ import { ownerColor, WORKSTREAM_COLOR } from './timelineGraphic.js';
 import {
   getStageRange, isoToMs, daysInMonth, monthLabel,
   timelineBaseMonth, getStageMonths, anchorPlus, todayMonthIndex, stageMonthFraction,
+  resolveMonthWindow, monthWindowBounds,
 } from './timelineDates.js';
 
 const argb = (hex) => 'FF' + String(hex).replace('#', '').toUpperCase();
@@ -78,9 +79,12 @@ const fileSlug = (template) => {
 // Build the time axis: the column series covering every dated stage, at a
 // granularity that keeps the sheet readable — weeks for a short engagement,
 // months for a normal one, quarters for a multi-year programme.
-function buildColumns(ranges) {
-  const startMs = Math.min(...ranges.map(r => isoToMs(r.start)));
-  const endMs = Math.max(...ranges.map(r => isoToMs(r.end)));
+// `bounds` is the timeline's declared date range. Given one, the columns
+// cover exactly those months instead of shrink-wrapping the dated stages, so
+// the sheet lines up with the visual column for column.
+function buildColumns(ranges, bounds) {
+  const startMs = bounds ? bounds.startMs : Math.min(...ranges.map(r => isoToMs(r.start)));
+  const endMs = bounds ? bounds.endMs - DAY_MS : Math.max(...ranges.map(r => isoToMs(r.end)));
   const spanDays = (endMs - startMs) / DAY_MS;
 
   const cols = [];
@@ -185,12 +189,12 @@ function writePhasedSheet(wb, ws, template, meta) {
   const mode = template?.positionMode === 'months' ? 'months' : 'dates';
   const placed = stages.map(stage => ({ stage, ...getStageMonths(stage, baseMonth, mode) }));
   const needed = Math.max(...placed.map(p => p.month + p.span - 1), 1);
-  const monthCount = Math.max(
-    1,
-    Math.min(36, Number(template?.monthCount) > 0 ? Math.floor(template.monthCount) : Math.max(12, needed)),
-  );
-  const calendar = template?.monthMode === 'calendar';
-  const anchor = String(template?.anchorMonth || '').trim();
+  // Same resolver the on-screen visual uses, so the sheet's columns are the
+  // visual's columns — a declared date range drives both.
+  const monthWindow = resolveMonthWindow(template, needed);
+  const monthCount = monthWindow.monthCount;
+  const calendar = monthWindow.calendar;
+  const anchor = monthWindow.anchor;
   const todayCol = calendar ? todayMonthIndex(anchor, monthCount) : null;
 
   const LEAD = 3;                      // Stages | Step | Workstream
@@ -387,8 +391,12 @@ export async function exportTimelineXlsx(template, meta = {}) {
   }
 
   const LEAD = 3; // Stage | Owner | Timing
-  const { cols, unit } = dated.length
-    ? buildColumns(dated.map(r => r.range))
+  const ganttWindow = resolveMonthWindow(template, null);
+  const bounds = ganttWindow.fromRange
+    ? monthWindowBounds(ganttWindow.anchor, ganttWindow.monthCount)
+    : null;
+  const { cols, unit } = dated.length || bounds
+    ? buildColumns(dated.map(r => r.range), bounds)
     : { cols: [], unit: 'month' };
   // Narrow rotated headers once there are too many columns to label flat.
   const rotate = cols.length > 14;

@@ -11,7 +11,10 @@ import {
   shortOwnerLabel,
 } from '../../utils/timelineTemplatesStore';
 import { buildTimelineSvg, STAGE_ICONS, TIMELINE_FORMATS } from '../../utils/timelineGraphic';
-import { getStageRange, getStageMonths, currentMonthAnchor } from '../../utils/timelineDates';
+import {
+  getStageRange, getStageMonths, currentMonthAnchor,
+  getTimelineRange, resolveMonthWindow, describeMonthWindow,
+} from '../../utils/timelineDates';
 import { openTimelineReport, downloadTimelineSvg, downloadTimelinePng } from '../../utils/timelineExport';
 import { exportTimelineXlsx } from '../../utils/timelineXlsx';
 import styles from './DropdownsView.module.css';
@@ -485,6 +488,14 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
     onRemove();
   }
 
+  // The declared date range, and the months it resolves to. Both ends have to
+  // be set before it takes effect, so the hint can say which state we're in.
+  const hasRange = !!getTimelineRange(template);
+  const rangeWindow = hasRange ? resolveMonthWindow(template, null) : null;
+  const rangeSummary = rangeWindow
+    ? describeMonthWindow(rangeWindow.anchor, rangeWindow.monthCount)
+    : '';
+
   // Filter narrows the visible stages but edits still address the real
   // index, so a filtered view stays safe to edit.
   const term = filter.trim().toLowerCase();
@@ -526,6 +537,52 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
         onRemove={removeService}
       />
 
+      {/* The window the whole timeline is drawn against. Set both ends and
+          every surface — the grid on this page, the .xlsx, the .svg / .png —
+          covers exactly those months, including empty ones, instead of
+          shrink-wrapping whichever stages happen to be dated. The milestone
+          format spaces its markers evenly and has no axis to align, so the
+          control only shows on the two date-scaled formats. */}
+      {(format === 'gantt' || format === 'phased') && (
+        <div className={styles.phasedSettings}>
+          <span className={styles.timelineServicesLabel}>Timeline range</span>
+          <input
+            type="date"
+            value={template.rangeStart || ''}
+            max={template.rangeEnd || undefined}
+            onChange={(e) => onChange({ ...template, rangeStart: e.target.value })}
+            title="First date the timeline covers — the chart starts at this month"
+            className={styles.settingInput}
+          />
+          <span className={styles.timelineServicesLabel}>to</span>
+          <input
+            type="date"
+            value={template.rangeEnd || ''}
+            min={template.rangeStart || undefined}
+            onChange={(e) => onChange({ ...template, rangeEnd: e.target.value })}
+            title="Last date the timeline covers — the chart ends at this month"
+            className={styles.settingInput}
+          />
+          {hasRange ? (
+            <>
+              <span className={styles.settingHint}>{rangeSummary}</span>
+              <button
+                type="button"
+                className={styles.thisMonthBtn}
+                onClick={() => onChange({ ...template, rangeStart: '', rangeEnd: '' })}
+                title="Drop the fixed range and go back to fitting the dated stages"
+              >Clear range</button>
+            </>
+          ) : (
+            <span className={styles.settingHint}>
+              {template.rangeStart || template.rangeEnd
+                ? 'Set both ends to fix the range'
+                : 'Unset — fits the dated stages'}
+            </span>
+          )}
+        </div>
+      )}
+
       {format === 'phased' && (
         <div className={styles.phasedSettings}>
           <span className={styles.timelineServicesLabel}>Client workstream</span>
@@ -548,12 +605,15 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
           </select>
           <span className={styles.timelineServicesLabel}>Months</span>
           <select
-            value={template.monthCount === '' || template.monthCount == null ? '' : String(template.monthCount)}
+            value={hasRange ? '' : (template.monthCount === '' || template.monthCount == null ? '' : String(template.monthCount))}
+            disabled={hasRange}
             onChange={(e) => onChange({
               ...template,
               monthCount: e.target.value === '' ? '' : Number(e.target.value),
             })}
-            title="How many month columns to show — applies to the visual and every export"
+            title={hasRange
+              ? `The timeline range sets this: ${rangeSummary}. Clear the range to pick a month count instead.`
+              : 'How many month columns to show — applies to the visual and every export'}
             className={styles.settingSelect}
           >
             <option value="">Auto (fit the steps)</option>
@@ -565,7 +625,8 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
             )}
           </select>
           <select
-            value={template.monthMode === 'calendar' ? 'calendar' : 'numbers'}
+            value={hasRange || template.monthMode === 'calendar' ? 'calendar' : 'numbers'}
+            disabled={hasRange}
             onChange={(e) => {
               const mode = e.target.value;
               // Switching to calendar with no anchor yet starts at this month,
@@ -578,13 +639,15 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
                   : template.anchorMonth,
               });
             }}
-            title="Number the months from kickoff, or pin them to the calendar"
+            title={hasRange
+              ? 'A timeline range always reads as calendar months. Clear the range to number them from kickoff.'
+              : 'Number the months from kickoff, or pin them to the calendar'}
             className={styles.settingSelect}
           >
             <option value="numbers">Numbered 1…N</option>
             <option value="calendar">Calendar months</option>
           </select>
-          {template.monthMode === 'calendar' && (
+          {template.monthMode === 'calendar' && !hasRange && (
             <>
               <span className={styles.timelineServicesLabel}>Month 1 =</span>
               <input
