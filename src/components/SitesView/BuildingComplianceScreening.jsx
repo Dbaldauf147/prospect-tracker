@@ -4,7 +4,7 @@ import MASTER_ORDINANCES from '../../data/masterOrdinances.js';
 import {
   screenSites, lookupGovId, getMandates, classifyPropertyType,
   CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
-  totalEligible, eligibilityByOrdinance, totalPenalty, sitesCompanyLabel,
+  totalEligible, eligibilityByOrdinance, totalPenalty, penaltyByOrdinance, sitesCompanyLabel,
   bpsPrioritization,
 } from '../../utils/complianceMandates';
 import { buildComplianceReportHtml } from '../../utils/complianceReportHtml';
@@ -18,13 +18,13 @@ const mdY = (iso) => { if (!iso) return '—'; const [y, m, d] = String(iso).spl
 
 // Compact horizontal-bar list used for the on-page eligibility/penalty
 // summaries. items: [{ label, value }].
-function HBars({ items, color, fmt = String }) {
-  if (!items.length) return <div className={styles.miniEmpty}>No eligible sites</div>;
+function HBars({ items, color, fmt = String, wide = false, empty = 'No eligible sites' }) {
+  if (!items.length) return <div className={styles.miniEmpty}>{empty}</div>;
   const max = Math.max(1, ...items.map(i => i.value));
   return (
     <div className={styles.hbars}>
       {items.map((it) => (
-        <div key={it.label} className={styles.hbarRow}>
+        <div key={it.label} className={wide ? styles.hbarRowWide : styles.hbarRow}>
           <span className={styles.hbarLabel} title={it.label}>{it.label}</span>
           <span className={styles.hbarTrack}>
             <span className={styles.hbarFill} style={{ width: `${Math.max(2, (it.value / max) * 100)}%`, background: color }} />
@@ -37,7 +37,9 @@ function HBars({ items, color, fmt = String }) {
 }
 
 // One BBS / Audits / BPS cell for a screened site: eligible ✓ / not / unknown,
-// with the deadline + penalty in a tooltip.
+// with the deadline + penalty in a tooltip. The fine is also printed under the
+// pill — it's the number the conversation turns on, and it shouldn't need a
+// hover to find.
 function CatCell({ res }) {
   if (!res || !res.active) return <span className={styles.dash}>—</span>;
   // Applicability follows the active ordinance; the ft² threshold is shown as
@@ -53,7 +55,18 @@ function CatCell({ res }) {
     thr,
     res.penalty != null ? `Max penalty ${usd(res.penalty)}/yr` : null,
   ].filter(Boolean).join(' · ');
-  return <span className={styles.pillEligible} title={tip}>Applicable</span>;
+  return (
+    <span className={styles.catCell}>
+      <span className={styles.pillEligible} title={tip}>Applicable</span>
+      {res.penalty != null ? (
+        <span className={styles.catFine} title="Estimated maximum yearly penalty for this mandate at this site">
+          {usd(res.penalty)}/yr
+        </span>
+      ) : (
+        <span className={styles.catFineNone} title="This ordinance publishes no maximum penalty">no fine on file</span>
+      )}
+    </span>
+  );
 }
 
 // Screens the Utility Lookup site list against the two-tab compliance
@@ -255,7 +268,18 @@ export function BuildingComplianceScreening({ sites = [], companyName = '' }) {
                     <div><div className={styles.kpiNum} style={{ color: CATEGORY_COLOR[c] }}>{totalEligible(results, c)}</div><div className={styles.kpiLbl}>applicable sites</div></div>
                     <div><div className={styles.kpiNum} style={{ color: CATEGORY_COLOR[c] }}>{usd(totalPenalty(results, c))}</div><div className={styles.kpiLbl}>max yearly penalty</div></div>
                   </div>
+                  <div className={styles.dashSubhead}>Applicable sites by jurisdiction</div>
                   <HBars items={eligibilityByOrdinance(results, c).slice(0, 8).map(x => ({ label: x.government, value: x.count }))} color={CATEGORY_COLOR[c]} />
+                  {/* The same jurisdictions in dollars — what the mandate is
+                      actually worth, which the site counts alone don't say. */}
+                  <div className={styles.dashSubhead}>Max yearly fines by jurisdiction</div>
+                  <HBars
+                    items={penaltyByOrdinance(results, c).slice(0, 8).map(x => ({ label: x.government, value: x.penalty }))}
+                    color={CATEGORY_COLOR[c]}
+                    fmt={usd}
+                    wide
+                    empty="No fines on file"
+                  />
                 </div>
               ))}
             </div>
