@@ -92,7 +92,7 @@ function withGreenKeys(data, series) {
   });
 }
 
-function ProgressChart({ title, data, series, isPct, defaultView = 'line', secondarySeries, onHide, onRename, onViewChange, pins = [], onTogglePin, onClearPins, onDownload, onDownloadPoint }) {
+function ProgressChart({ title, data, series, isPct, defaultView = 'line', secondarySeries, onHide, onRename, onViewChange, pins = [], onTogglePin, onClearPins, onDownload, onDownloadPoint, onDownloadPins }) {
   const [viewType, setViewType] = useState(defaultView);
   // Persist the picked view so it becomes this chart's default next visit.
   const changeView = (v) => { setViewType(v); if (onViewChange) onViewChange(v); };
@@ -269,13 +269,23 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
         <div style={{ marginTop: '0.6rem', borderTop: '1px dashed var(--color-border)', paddingTop: '0.5rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
             <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>📌 Pinned points</span>
-            {onClearPins && (
-              <button
-                type="button"
-                onClick={onClearPins}
-                style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: 5, color: 'var(--color-text-secondary)', cursor: 'pointer', padding: '0.1rem 0.4rem', fontSize: '0.65rem', fontFamily: 'inherit' }}
-              >Clear all</button>
-            )}
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+              {onDownloadPins && (
+                <button
+                  type="button"
+                  onClick={onDownloadPins}
+                  title="Download every pinned point on this chart (Excel) — the plotted values plus the accounts behind them"
+                  style={{ background: 'none', border: '1px solid #6EE7B7', borderRadius: 5, color: '#059669', cursor: 'pointer', padding: '0.1rem 0.4rem', fontSize: '0.65rem', fontWeight: 700, fontFamily: 'inherit' }}
+                >⬇ Excel</button>
+              )}
+              {onClearPins && (
+                <button
+                  type="button"
+                  onClick={onClearPins}
+                  style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: 5, color: 'var(--color-text-secondary)', cursor: 'pointer', padding: '0.1rem 0.4rem', fontSize: '0.65rem', fontFamily: 'inherit' }}
+                >Clear all</button>
+              )}
+            </span>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
             {pinnedRows.map(row => (
@@ -318,7 +328,7 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
       ) : (
         onTogglePin && (
           <div style={{ marginTop: '0.4rem', fontSize: '0.65rem', color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>
-            Tip: click a point on the chart to pin it.
+            Tip: click a point on the chart to pin it — pinned points download to Excel with the accounts behind them.
           </div>
         )
       )}
@@ -458,6 +468,22 @@ function pointDetailRows(chartId, details) {
       return null; // tierTotals, noOppsActivity — no per-account detail stored
   }
 }
+// Excel sheet names can't carry \ / ? * [ ] : , cap at 31 chars, and must be
+// unique within a workbook. Returns a namer that remembers what it has handed
+// out so every sheet in one workbook lands on a distinct, legal name.
+function makeSheetNamer() {
+  const usedNames = new Set();
+  return (desired, fallback) => {
+    const cleaned = String(desired || fallback || 'Sheet').replace(/[\\/?*[\]:]/g, ' ').replace(/\s+/g, ' ').trim();
+    const base = (cleaned || fallback || 'Sheet').slice(0, 28);
+    let name = base;
+    let n = 2;
+    while (usedNames.has(name.toLowerCase())) { name = `${base.slice(0, 25)} ${n++}`; }
+    usedNames.add(name.toLowerCase());
+    return name;
+  };
+}
+
 function loadHiddenCharts() {
   try {
     const raw = localStorage.getItem(HIDDEN_CHARTS_KEY);
@@ -1059,16 +1085,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
     const XLSX = await import('xlsx');
     const wb = XLSX.utils.book_new();
 
-    const usedNames = new Set();
-    const uniqueSheetName = (desired, fallback) => {
-      const cleaned = String(desired || fallback || 'Sheet').replace(/[\\/?*[\]:]/g, ' ').replace(/\s+/g, ' ').trim();
-      let base = (cleaned || fallback || 'Sheet').slice(0, 28);
-      let name = base;
-      let n = 2;
-      while (usedNames.has(name.toLowerCase())) { name = `${base.slice(0, 25)} ${n++}`; }
-      usedNames.add(name.toLowerCase());
-      return name;
-    };
+    const uniqueSheetName = makeSheetNamer();
     const appendChartSheet = (def, headerNames) => {
       const cols = [...def.series, ...(def.secondarySeries || [])];
       const aoa = [['Week', 'Week Start', ...cols.map((s, i) => (headerNames ? headerNames[i] : s.name))]];
@@ -1106,6 +1123,72 @@ export function ProgressView({ prospects, settings, cdmName }) {
       ? `${titleFor(onlyDef.id, onlyDef.label).replace(/[\\/?*[\]:]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)} - data`
       : 'Weekly Progress Charts';
     XLSX.writeFile(wb, `${fileBase} - ${stamp}.xlsx`);
+  }
+
+  // The pinned weeks of a chart, resolved to the data rows still present and
+  // left in chronological order — same rule the callout under each chart uses.
+  function pinnedRowsFor(def) {
+    const set = new Set(chartPins[def.id] || []);
+    return chartData.filter(d => set.has(d.week));
+  }
+
+  // Export every pinned point at once: one chart's pins when passed a chart
+  // def, otherwise every pin across every chart. The workbook leads with a
+  // long-format "Pinned Points" sheet (one row per chart × week × series, with
+  // the value left numeric so it can be summed), then gives each chart that
+  // stores per-account drill-down a sheet with the accounts behind its pinned
+  // weeks. Charts that only persist aggregates get a line on "Notes" saying so.
+  async function downloadPinnedData(onlyDef) {
+    const defs = (onlyDef ? [onlyDef] : PROGRESS_CHART_DEFS).filter(d => pinnedRowsFor(d).length);
+    if (!defs.length) return;
+    const XLSX = await import('xlsx');
+    const wb = XLSX.utils.book_new();
+    const uniqueSheetName = makeSheetNamer();
+
+    const summary = [['Chart', 'Week', 'Week Start', 'Series', 'Value', 'Unit']];
+    for (const def of defs) {
+      const title = titleFor(def.id, def.label);
+      for (const row of pinnedRowsFor(def)) {
+        for (const s of [...def.series, ...(def.secondarySeries || [])]) {
+          const v = row[s.key];
+          const pct = def.isPct && def.series.includes(s);
+          summary.push([title, row.weekLabel, row.week, s.name, v == null ? '' : v, pct ? '%' : 'count']);
+        }
+      }
+    }
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), uniqueSheetName('Pinned Points'));
+
+    // One sheet per chart holding the account rows behind each pinned week.
+    const noDetail = [];
+    for (const def of defs) {
+      const title = titleFor(def.id, def.label);
+      let columns = null;
+      const rows = [];
+      for (const row of pinnedRowsFor(def)) {
+        const detail = pointDetailRows(def.id, row.details);
+        if (!detail || !detail.rows.length) continue;
+        columns = detail.columns;
+        for (const r of detail.rows) rows.push([row.weekLabel, row.week, ...r]);
+      }
+      if (columns && rows.length) {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Week', 'Week Start', ...columns], ...rows]), uniqueSheetName(title, def.id));
+      } else {
+        noDetail.push(title);
+      }
+    }
+    if (noDetail.length) {
+      const notes = [['Chart', 'Note']];
+      for (const title of noDetail) {
+        notes.push([title, 'Only weekly totals are stored for this chart, so there is no account-level breakdown behind the pinned point. Its plotted values are on the Pinned Points sheet.']);
+      }
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(notes), uniqueSheetName('Notes'));
+    }
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    const scope = onlyDef
+      ? titleFor(onlyDef.id, onlyDef.label).replace(/[\\/?*[\]:]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 45)
+      : 'Weekly Progress';
+    XLSX.writeFile(wb, `${scope} - pinned points - ${stamp}.xlsx`);
   }
 
   // Export the raw data feeding a single PINNED data point: one specific
@@ -1248,6 +1331,16 @@ export function ProgressView({ prospects, settings, cdmName }) {
             >
               ⬇ Excel (raw data)
             </button>
+            {PROGRESS_CHART_DEFS.some(c => pinnedRowsFor(c).length > 0) && (
+              <button
+                type="button"
+                onClick={() => downloadPinnedData()}
+                title="Download every pinned point across all charts — their plotted values plus the accounts behind them"
+                style={{ padding: '0.3rem 0.8rem', border: '1px solid #6366F1', borderRadius: 6, background: '#EEF2FF', color: '#3730A3', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+              >
+                ⬇ 📌 Pinned points
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setShowChartsMenu(v => !v)}
@@ -1288,6 +1381,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
                 onClearPins={() => clearChartPins(c.id)}
                 onDownload={() => downloadChartsData(c)}
                 onDownloadPoint={(wk) => downloadPointData(c, wk)}
+                onDownloadPins={() => downloadPinnedData(c)}
               />
             ))}
           </div>
