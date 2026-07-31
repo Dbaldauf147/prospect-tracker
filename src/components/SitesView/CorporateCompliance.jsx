@@ -578,8 +578,18 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                         revenue thresholds, and the one-of-three
                         doing-business check. Both feed the SB 253 / SB 261
                         Applies? rows below. */}
-                    {q.key === 'california' && (val === 'Yes' || val === 'Unknown')
-                      && CALIFORNIA_CRITERIA_GROUPS.map((group) => (
+                    {q.key === 'california' && CALIFORNIA_CRITERIA_GROUPS.map((group) => {
+                      // Same rule the regulation rows follow: a criterion the
+                      // user has answered or attached research to stays on
+                      // screen even when California no longer triggers the
+                      // group, so their work never disappears with the row.
+                      const triggered = val === 'Yes' || val === 'Unknown';
+                      const shownRows = group.rows.filter((row) => {
+                        const k = californiaCriterionKey(row.key);
+                        return triggered || answers?.[k] || links?.[k] || findings?.[k];
+                      });
+                      if (shownRows.length === 0) return null;
+                      return (
                       <Fragment key={group.key}>
                         <tr>
                           <td style={{ ...td, paddingLeft: '1.4rem', fontWeight: 700 }}>
@@ -591,7 +601,7 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                             </span>
                           </td>
                         </tr>
-                        {group.rows.map((row) => {
+                        {shownRows.map((row) => {
                           const cKey = californiaCriterionKey(row.key);
                           const saved = answers?.[cKey] || '';
                           // A hand-picked answer always wins; "—" falls back
@@ -641,9 +651,16 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                           );
                         })}
                       </Fragment>
-                    ))}
-                    {(val === 'Yes' || val === 'Unknown') && regs.map((r) => {
+                      );
+                    })}
+                    {regs.map((r) => {
                       const rKey = regulationAnswerKey(q.key, r.regulation);
+                      // A regulation the user has attached a link or findings
+                      // to stays on screen even when the jurisdiction answer
+                      // no longer triggers it — their saved research should
+                      // never disappear with the row.
+                      const triggered = val === 'Yes' || val === 'Unknown';
+                      if (!triggered && !(links?.[rKey] || findings?.[rKey])) return null;
                       const rVal = answers?.[rKey] || '';
                       // Pure threshold tests (SB 253 / SB 261) answer
                       // themselves from the revenue already on this card.
@@ -985,8 +1002,14 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
       // clears, so a malformed verdict can't stick.
       for (const q of JURISDICTION_QUESTIONS) {
         const a = answers[q.key];
-        updates[`corporateComplianceScreening.${key}.${q.key}`] =
-          SCREENING_ANSWERS.includes(a) ? a : null;
+        // Only write a verdict we recognise. An unrecognised one used to
+        // clear the cell, which quietly destroyed an answer the user had
+        // set by hand — and with it the jurisdiction's regulation rows and
+        // every reference link attached to them. A malformed verdict still
+        // can't stick; it just no longer takes the old answer down with it.
+        if (SCREENING_ANSWERS.includes(a)) {
+          updates[`corporateComplianceScreening.${key}.${q.key}`] = a;
+        }
       }
       // Keep the rationale + sources alongside so the card can explain itself.
       updates[`companyComplianceResearch.${key}`] = {
