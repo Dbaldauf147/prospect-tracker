@@ -223,11 +223,55 @@ export const CALIFORNIA_CRITERIA_GROUPS = [
   },
 ];
 
-// Persistence key for one California criterion. Same shape as
-// regulationAnswerKey — jurisdiction, double underscore, slug — with a
-// `crit-` prefix so a criterion can never collide with a regulation slug.
+// ---- EU screening detail ---------------------------------------------------
+// The CSRD waves turn on where the group sits relative to the EU (incorporated
+// there, listed on a regulated market) and on four figures: global turnover,
+// EU turnover, the largest EU subsidiary's turnover, and headcount. None of
+// that is derivable from what the card already holds — turnover is in euros and
+// we don't guess conversions — so these are capture fields, giving the numbers
+// a home next to the waves they feed instead of living in a side spreadsheet.
+export const EU_CRITERIA_GROUPS = [
+  {
+    key: 'csrd-inputs',
+    label: 'CSRD screening',
+    note: 'Where the group sits in the EU, and the figures the waves below screen on',
+    // Only asked once the company is actually in the EU — unlike California's
+    // rows, these aren't how you answer the jurisdiction question, they're
+    // what CSRD screens on after it's answered Yes.
+    showWhenTriggered: true,
+    rows: [
+      { key: 'csrd-2025', label: 'Has the company already submitted a CSRD report in 2025?', source: 'manual' },
+      { key: 'eu-incorporated', label: 'Is the company incorporated in the EU?', source: 'manual' },
+      { key: 'eu-listed', label: 'Is the company listed on an EU regulated market?', source: 'manual' },
+      { key: 'global-turnover', label: 'Global Net Turnover (Million EUR)', kind: 'number', source: 'manual' },
+      { key: 'eu-turnover', label: 'EU Net Turnover (Million EUR)', kind: 'number', source: 'manual' },
+      {
+        key: 'eu-sub-turnover',
+        label: 'Highest Net Turnover Among EU Subsidiaries or Branches (Million EUR)',
+        kind: 'number',
+        source: 'manual',
+      },
+      { key: 'employees', label: 'Employee Count', kind: 'number', source: 'research', fromEmployeeCount: true },
+    ],
+  },
+];
+
+// The criteria detail per jurisdiction. Only these two have one; the rest
+// screen on a single question.
+export const JURISDICTION_CRITERIA_GROUPS = {
+  california: CALIFORNIA_CRITERIA_GROUPS,
+  eu: EU_CRITERIA_GROUPS,
+};
+
+// Persistence key for one criterion. Same shape as regulationAnswerKey —
+// jurisdiction, double underscore, slug — with a `crit-` prefix so a criterion
+// can never collide with a regulation slug.
+export function criterionKey(jurisdictionKey, rowKey) {
+  return `${jurisdictionKey}__crit-${rowKey}`;
+}
+
 export function californiaCriterionKey(rowKey) {
-  return `california__crit-${rowKey}`;
+  return criterionKey('california', rowKey);
 }
 
 // ---- Applies? derivation ---------------------------------------------------
@@ -297,12 +341,25 @@ export function deriveRegulationVerdict(regulation, {
   return { verdict, basis };
 }
 
-// One California criterion row's derived value, or null when nothing can be
-// worked out and the user has to answer it. Mirrors the shape above:
-// { verdict, basis }.
+// One criterion row's derived value, or null when nothing can be worked out
+// and the user has to answer it. Mirrors the shape above: { verdict, basis }.
 //   - revenue rows compare the researched revenue against their threshold
 //   - the CA-operations row reads the uploaded site count
+//   - the employee-count row reads the researched headcount
 //   - manual rows always return null
+// For a numeric row `verdict` is the figure as a string, which is what the
+// input renders and what gets persisted if the user leaves it alone.
+export function deriveCriterion(row, { revenueUsd, revenueLabel, caSiteCount, employees } = {}) {
+  if (row?.fromEmployeeCount) {
+    if (!Number.isFinite(employees)) return null;
+    return {
+      verdict: String(employees),
+      basis: `From revenue research: ${employees.toLocaleString('en-US')} employees reported. Type over it to override.`,
+    };
+  }
+  return deriveCaliforniaCriterion(row, { revenueUsd, revenueLabel, caSiteCount });
+}
+
 export function deriveCaliforniaCriterion(row, { revenueUsd, revenueLabel, caSiteCount } = {}) {
   if (row?.revenueThresholdUsd != null) {
     if (!Number.isFinite(revenueUsd)) return null;
