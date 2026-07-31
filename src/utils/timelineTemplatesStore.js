@@ -109,6 +109,11 @@ function normalizeTemplate(tpl) {
     // to anchorMonth ('YYYY-MM') and marks the month we're currently in.
     monthMode: tpl?.monthMode === 'calendar' ? 'calendar' : 'numbers',
     anchorMonth: String(tpl?.anchorMonth ?? ''),
+    // The overall window the timeline is drawn against, as ISO dates. Set
+    // both and they replace anchorMonth / monthCount on every surface; left
+    // blank, the chart fits whichever stages carry dates.
+    rangeStart: String(tpl?.rangeStart ?? ''),
+    rangeEnd: String(tpl?.rangeEnd ?? ''),
     services: Array.isArray(tpl?.services)
       ? tpl.services.map(s => String(s ?? '').trim()).filter(Boolean)
       : [],

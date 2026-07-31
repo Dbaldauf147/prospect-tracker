@@ -320,6 +320,90 @@ export function todayMonthOffset(anchor, monthCount) {
   return offset >= 0 && offset < monthCount ? offset : null;
 }
 
+// --- The timeline's own date range --------------------------------------
+// A timeline can declare the window it covers — a start and an end date it is
+// drawn against — instead of letting whichever stages happen to be dated
+// decide where the chart begins and ends. One declared range drives every
+// surface (the visual, the .xlsx, the .svg / .png), which is the point: the
+// table and its export line up on the same months.
+
+// { start, end } as ISO dates, ordered, or null when either end is unset or
+// unreadable. A half-filled range is no range — a chart anchored to one end
+// and derived at the other would be a confusing hybrid.
+export function getTimelineRange(template) {
+  const start = String(template?.rangeStart || '').trim();
+  const end = String(template?.rangeEnd || '').trim();
+  const a = isoToMs(start);
+  const b = isoToMs(end);
+  if (a == null || b == null) return null;
+  return a <= b ? { start, end } : { start: end, end: start };
+}
+
+// The month grid to draw: which real month is column 1, how many columns, and
+// whether the columns carry calendar labels.
+//
+// A declared range wins and always reads as calendar months — that's what
+// picking dates asks for. Without one this falls back to the anchor-month and
+// month-count settings, so a timeline that never sets a range behaves exactly
+// as it did before. `needed` is how many months the stages themselves occupy,
+// used only by the "Auto (fit the steps)" fallback.
+//
+// The range snaps out to whole months at both ends. Part-months would leave
+// the Gantt's first tick hanging off the left of its own chart, and the
+// implementation grid can't draw half a column at all — snapping is what lets
+// all three surfaces agree on one set of columns.
+export function resolveMonthWindow(template, needed) {
+  const range = getTimelineRange(template);
+  if (range) {
+    const s = /^(\d{4})-(\d{2})-\d{2}$/.exec(range.start);
+    const e = /^(\d{4})-(\d{2})-\d{2}$/.exec(range.end);
+    const startOrd = Number(s[1]) * 12 + (Number(s[2]) - 1);
+    const endOrd = Number(e[1]) * 12 + (Number(e[2]) - 1);
+    return {
+      anchor: `${s[1]}-${s[2]}`,
+      // Capped well above any real engagement, purely so a typo'd year can't
+      // ask for ten thousand columns.
+      monthCount: Math.max(1, Math.min(120, endOrd - startOrd + 1)),
+      calendar: true,
+      fromRange: true,
+    };
+  }
+  return {
+    anchor: String(template?.anchorMonth || '').trim(),
+    monthCount: Math.max(
+      1,
+      Math.min(36, Number(template?.monthCount) > 0
+        ? Math.floor(template.monthCount)
+        : Math.max(12, Number(needed) > 0 ? Number(needed) : 12)),
+    ),
+    calendar: template?.monthMode === 'calendar',
+    fromRange: false,
+  };
+}
+
+// The window as milliseconds, for the date-scaled Gantt: first day of month 1
+// through the last day of the final month (end exclusive, so a bar drawn to
+// the end of the last day reaches the right edge). Null without an anchor.
+export function monthWindowBounds(anchor, monthCount) {
+  const base = parseMonthAnchor(anchor);
+  if (!base) return null;
+  const last = anchorPlus(anchor, Math.max(1, monthCount) - 1);
+  return {
+    startMs: Date.UTC(base.y, base.m - 1, 1),
+    endMs: Date.UTC(last.y, last.m - 1, daysInMonth(last.y, last.m)) + 86400000,
+  };
+}
+
+// Human summary of a resolved window — "Jul 2026 – Jun 2027 · 12 months" —
+// for the hint under the date pickers.
+export function describeMonthWindow(anchor, monthCount) {
+  const base = parseMonthAnchor(anchor);
+  if (!base) return '';
+  const last = anchorPlus(anchor, Math.max(1, monthCount) - 1);
+  return `${monthLabel(base.y, base.m, true)} – ${monthLabel(last.y, last.m, true)}`
+    + ` · ${monthCount} month${monthCount === 1 ? '' : 's'}`;
+}
+
 // --- Week ticks under the month axis ------------------------------------
 // The implementation format positions steps by whole months, but a month
 // column is a coarse thing to read a date against, so the axis carries a

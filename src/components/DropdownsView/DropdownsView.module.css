@@ -670,6 +670,21 @@
   min-width: 220px;
 }
 
+/* Reads back what a setting resolved to — e.g. the months a date range
+   covers — so the effect of a control is visible without exporting. */
+.settingHint {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.phasedSettings select:disabled,
+.phasedSettings input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .settingInput:focus {
   outline: none;
   border-color: var(--color-accent);
