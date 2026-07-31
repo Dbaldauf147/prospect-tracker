@@ -1,11 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import MASTER_ORDINANCES from '../../data/masterOrdinances.js';
 import {
   screenSites, lookupGovId, getMandates, classifyPropertyType,
   CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
   totalEligible, eligibilityByOrdinance, totalPenalty, penaltyByOrdinance, sitesCompanyLabel,
-  bpsPrioritization,
+  bpsPrioritization, penaltyBasis,
 } from '../../utils/complianceMandates';
 import { buildComplianceReportHtml } from '../../utils/complianceReportHtml';
 import { exportComplianceReportXlsx } from '../../utils/complianceReportXlsx';
@@ -62,10 +62,138 @@ function CatCell({ res }) {
         <span className={styles.catFine} title="Estimated maximum yearly penalty for this mandate at this site">
           {usd(res.penalty)}/yr
         </span>
+      ) : res.penaltyUnsized ? (
+        <span
+          className={styles.catFineNone}
+          title={`${usd(res.penaltyRate)} per ft²/yr — this site has no square footage, so the yearly figure can't be worked out`}
+        >{usd(res.penaltyRate)}/ft²/yr · needs sq ft</span>
       ) : (
         <span className={styles.catFineNone} title="This ordinance publishes no maximum penalty">no fine on file</span>
       )}
     </span>
+  );
+}
+
+// One mandate inside the site detail popup: whether it applies, the policy
+// behind it, and the arithmetic that produced the fine on the row.
+function MandateDetail({ res, mandate, sqft }) {
+  const cat = res?.category;
+  const basis = mandate ? penaltyBasis(mandate, cat) : null;
+  const m = mandate?.[cat] || {};
+  if (!res?.active) {
+    return (
+      <div className={styles.mdBlock}>
+        <div className={styles.mdHead} style={{ background: '#94A3B8' }}>{CATEGORY_LABEL[cat]}</div>
+        <div className={styles.mdBody}>
+          <div className={styles.mdNot}>
+            Not applicable{m.status ? ` — the ordinance on file is "${m.status}"` : ' — no active ordinance for this jurisdiction'}.
+          </div>
+        </div>
+      </div>
+    );
+  }
+  // How the number on the row was reached. Three shapes: a flat annual
+  // maximum, a per-ft² rate multiplied by the building, or a per-ft² rate
+  // with no square footage to multiply.
+  const fineLine = res.penalty != null && res.penaltyPerSqft
+    ? `${usd(res.penaltyRate)} per ft²/yr × ${sqft.toLocaleString('en-US')} ft² = ${usd(res.penalty)}/yr`
+    : res.penaltyUnsized
+      ? `${usd(res.penaltyRate)} per ft²/yr — add this site's square footage to size it`
+      : res.penalty != null
+        ? `${usd(res.penalty)}/yr, as published`
+        : 'This ordinance publishes no maximum penalty.';
+  const row = (label, value) => value == null || value === '' ? null : (
+    <div key={label} className={styles.mdRow}><span className={styles.mdKey}>{label}</span><span className={styles.mdVal}>{value}</span></div>
+  );
+  return (
+    <div className={styles.mdBlock}>
+      <div className={styles.mdHead} style={{ background: CATEGORY_COLOR[cat] }}>{CATEGORY_LABEL[cat]} — Applicable</div>
+      <div className={styles.mdBody}>
+        {row('Policy', res.policyName || '—')}
+        {row('Status', res.status || '—')}
+        {row('Deadline', res.deadline ? mdY(res.deadline) : (res.deadlineRaw || '—'))}
+        {row('Compliance cycle', m.complianceCycle)}
+        {row('Size requirement', res.threshold != null
+          ? `${res.threshold.toLocaleString('en-US')} ft² (${res.ptClass})`
+            + (res.meetsThreshold === true ? ' — this building meets it'
+              : res.meetsThreshold === false ? ' — this building is below it'
+              : ' — square footage unknown')
+          : 'None published')}
+        {res.threshold != null && (
+          <div className={styles.mdNote}>
+            The size requirement is listed for reference. Applicability follows the active
+            ordinance, so a building below the threshold is still screened as applicable.
+          </div>
+        )}
+
+        <div className={styles.mdSubhead}>How this fine was calculated</div>
+        <div className={styles.mdFine}>{fineLine}</div>
+        {basis && (
+          <>
+            {row('Published figure', basis.amount == null ? null
+              : `${basis.amount}${basis.unit ? ` ${basis.unit}` : ''}`)}
+            {row('Figure is', basis.basis)}
+            {basis.rows.map(r => row(r.label, r.value))}
+          </>
+        )}
+        {m.url || m.link ? (
+          <div className={styles.mdRow}>
+            <span className={styles.mdKey}>Source</span>
+            <span className={styles.mdVal}>
+              <a href={m.url || m.link} target="_blank" rel="noreferrer" className={styles.mdLink}>{m.url || m.link}</a>
+            </span>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+// Full screening detail for one site: what it matched, and every mandate with
+// its fine worked through. Opened by clicking a row in the site table.
+function SiteDetailModal({ site, onClose }) {
+  const mandate = site?.govId ? getMandates(site.govId) : null;
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  if (!site) return null;
+  const total = CATEGORIES.reduce((n, c) => n + (site[c]?.penalty || 0), 0);
+  const anyUnsized = CATEGORIES.some(c => site[c]?.penaltyUnsized);
+  return (
+    <div className={styles.modalBackdrop} onClick={onClose} role="presentation">
+      <div className={styles.modal} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={`Compliance detail for ${site.siteName || 'site'}`}>
+        <div className={styles.modalHead}>
+          <div>
+            <div className={styles.modalTitle}>{site.siteName || 'Untitled site'}</div>
+            <div className={styles.modalSub}>
+              {[site.city, site.state].filter(Boolean).join(', ') || 'No location'}
+              {site.matched ? <> · <strong>{site.government}</strong> <span className={styles.modalGovId}>{site.govId}</span></> : ' · no jurisdiction matched'}
+            </div>
+          </div>
+          <button type="button" className={styles.modalClose} onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <div className={styles.modalBody}>
+          <div className={styles.mdFacts}>
+            <span><strong>{site.sqft != null ? site.sqft.toLocaleString('en-US') : '—'}</strong> ft²</span>
+            <span><strong>{site.propertyType || '—'}</strong></span>
+            <span>Est. exposure <strong>{usd(total)}</strong>/yr{anyUnsized ? ' + unsized' : ''}</span>
+          </div>
+          {!site.matched ? (
+            <div className={styles.mdNot}>
+              This site's city and state didn't resolve to a jurisdiction in the Master Ordinances,
+              so no mandates were screened. Check the spelling, or confirm the jurisdiction has an
+              ordinance on file.
+            </div>
+          ) : (
+            CATEGORIES.map(c => (
+              <MandateDetail key={c} res={site[c]} mandate={mandate} sqft={site.sqft} />
+            ))
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -79,6 +207,8 @@ export function BuildingComplianceScreening({ sites = [], companyName = '' }) {
   const [state, setState] = useState('');
   const [siteSearch, setSiteSearch] = useState('');
   const [onlyEligible, setOnlyEligible] = useState(false);
+  // The screened site whose detail popup is open, if any.
+  const [detailSite, setDetailSite] = useState(null);
 
   const companyLabel = useMemo(() => sitesCompanyLabel(sites), [sites]);
   const results = useMemo(() => screenSites(sites), [sites]);
@@ -341,7 +471,15 @@ export function BuildingComplianceScreening({ sites = [], companyName = '' }) {
                 </thead>
                 <tbody>
                   {filtered.map(r => (
-                    <tr key={r.id}>
+                    <tr
+                      key={r.id}
+                      className={styles.siteRowClickable}
+                      onClick={() => setDetailSite(r)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetailSite(r); } }}
+                      tabIndex={0}
+                      role="button"
+                      title="Open the mandate detail for this site"
+                    >
                       <td className={styles.siteCell}>{r.siteName || <span className={styles.dash}>—</span>}</td>
                       <td>{r.city || <span className={styles.dash}>—</span>}</td>
                       <td>{r.state || <span className={styles.dash}>—</span>}</td>
@@ -359,6 +497,7 @@ export function BuildingComplianceScreening({ sites = [], companyName = '' }) {
                 </tbody>
               </table>
             </div>
+            {detailSite && <SiteDetailModal site={detailSite} onClose={() => setDetailSite(null)} />}
           </>
         )
       ) : (

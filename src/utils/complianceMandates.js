@@ -226,6 +226,15 @@ function evalCategory(category, mandate, site) {
   // reported as a requirement but does not gate applicability. `meetsThreshold`
   // is kept purely as informational context (true/false/null-unknown).
   const meetsThreshold = (sqft == null || threshold == null) ? null : sqft >= threshold;
+  // BPS penalties can be quoted per square foot per year (Denver: $10/ft²/yr),
+  // which is a very different number from a flat annual fee — $10 against
+  // $600,000 for a 60,000 ft² building. bpsNonReportingPenalty already
+  // respected the unit for the BPS prioritization table; the per-site figure
+  // now does too, instead of printing the rate as if it were the total.
+  const perSqft = category === 'bps' && isPerSqftUom(cat.penaltyUom);
+  const penalty = category === 'bps'
+    ? bpsNonReportingPenalty(cat, sqft)
+    : (cat.maxPenalty ?? null);
   return {
     category,
     applicable: true,
@@ -236,7 +245,14 @@ function evalCategory(category, mandate, site) {
     ptClass,
     deadline: cat.deadline || null,
     deadlineRaw: cat.deadlineRaw || null,
-    penalty: cat.maxPenalty ?? null,
+    penalty,
+    // The published rate and its unit, kept even when `penalty` can't be
+    // worked out — a per-ft² fine with no square footage is "unsized", which
+    // is a different thing from an ordinance that publishes no fine at all.
+    penaltyRate: cat.maxPenalty ?? null,
+    penaltyUom: cat.penaltyUom || null,
+    penaltyPerSqft: perSqft,
+    penaltyUnsized: perSqft && cat.maxPenalty != null && !Number.isFinite(sqft),
     policyName: cat.policyName || cat.ordinanceName || '',
     status: cat.status || '',
   };
@@ -351,12 +367,73 @@ function bpsExceedFineLabel(mandate) {
 // penalty UOM: a "$ per SqFt/Year" penalty scales by building size; anything
 // else is a flat annual amount. Returns null when it can't be computed (no
 // penalty defined, or a size-based penalty with unknown square footage).
+// Where each category's fine comes from in the source workbook, so a site can
+// show its working rather than just a number. `amount` / `unit` / `basis` name
+// the columns the figure itself is read from; `rows` are the supporting
+// enforcement text — the violation schedule behind a BBS maximum, the
+// exceeding-limits fine that sits alongside a BPS non-reporting penalty.
+const PENALTY_SOURCES = {
+  bbs: {
+    amount: 'BBS - Maximun Yearly penalty',
+    basis: 'BBS - Penalty Estimation',
+    rows: [
+      ['First violation', 'BBS - 1st Violation'],
+      ['Second violation', 'BBS - 2nd Violation'],
+    ],
+  },
+  audits: {
+    amount: 'Audits - Max Yearly Penalty',
+    basis: 'Audits - Max Yearly Penalty Estimation',
+    rows: [['Enforcement', 'Audits - Enforcement']],
+  },
+  bps: {
+    amount: 'BPS - Enforcement Cost (No Reporting)',
+    unit: 'BPS - Enforcement UOM (No Reporting)',
+    basis: 'BPS - Enforcement Estimated/Actual (Non-reporting)',
+    rows: [
+      ['Fine for exceeding limits', 'BPS - Enforcement Cost (Exceed limits)'],
+      ['Exceeding-limits unit', 'BPS - Enforcement UOM (Exceed Limits)'],
+      ['Exceeding-limits basis', 'BPS - Enforcement Estimated/Actual (Exceed Limits)'],
+      ['Enforcement', 'BPS - Enforcement'],
+    ],
+  },
+};
+
+const blankish = (v) => {
+  const s = String(v == null ? '' : v).trim();
+  return s === '' || /^(n\/?a|none|not\s*specified|tbd|-)$/i.test(s);
+};
+
+// The published figures behind one category's fine, straight from the source
+// row: { amount, unit, basis, rows: [{ label, value }] }. Any field the
+// workbook leaves blank is dropped rather than shown as an empty line.
+// Returns null for a jurisdiction with no row on file.
+export function penaltyBasis(mandate, category) {
+  const src = PENALTY_SOURCES[category];
+  // A merged jurisdiction carries every underlying row; the fine belongs to
+  // whichever row actually published this category's amount.
+  const candidates = mandate?.raws?.length ? mandate.raws : [mandate?.raw];
+  const raw = candidates.find(r => r && !blankish(r[src?.amount])) || candidates[0];
+  if (!src || !raw) return null;
+  const val = (key) => (key && !blankish(raw[key]) ? String(raw[key]).trim() : null);
+  return {
+    amount: val(src.amount),
+    unit: val(src.unit),
+    basis: val(src.basis),
+    rows: src.rows
+      .map(([label, key]) => ({ label, value: val(key) }))
+      .filter(r => r.value),
+  };
+}
+
+export function isPerSqftUom(uom) {
+  return /sq\s*\.?\s*ft|sqft|\/\s*sf\b/.test(String(uom || '').toLowerCase());
+}
+
 export function bpsNonReportingPenalty(bpsMandate, sqft) {
   const cost = bpsMandate?.maxPenalty;
   if (cost == null) return null;
-  const uom = String(bpsMandate?.penaltyUom || '').toLowerCase();
-  const perSqft = /sq\s*\.?\s*ft|sqft|\/\s*sf\b/.test(uom);
-  if (perSqft) return Number.isFinite(sqft) ? cost * sqft : null;
+  if (isPerSqftUom(bpsMandate?.penaltyUom)) return Number.isFinite(sqft) ? cost * sqft : null;
   return cost;
 }
 
