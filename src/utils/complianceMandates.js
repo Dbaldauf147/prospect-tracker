@@ -17,6 +17,8 @@
 
 import MASTER_ORDINANCES from '../data/masterOrdinances.js';
 import CITY_LOOKUP from '../data/complianceCityLookup.js';
+import { normalizeState } from './utilityRates.js';
+import { normalizeProvince } from '../data/naMarkets.js';
 
 export const CATEGORIES = ['bbs', 'audits', 'bps'];
 export const CATEGORY_LABEL = { bbs: 'BBS', audits: 'Energy Audits', bps: 'BPS' };
@@ -52,55 +54,33 @@ export const CITY_ALIASES = {
 // Ontario is not Cambridge, Massachusetts, and Columbus, Mississippi is not
 // Columbus, Ohio.
 //
-// Deliberately excludes US territories (PR, GU, VI …): a two-letter code in a
-// state column is often a mis-mapped field rather than a real territory, and
-// reading "PR" as Puerto Rico would veto correct matches on the strength of
-// junk data. Unresolved values simply don't veto anything.
-const US_STATES = [
-  ['Alabama', 'AL'], ['Alaska', 'AK'], ['Arizona', 'AZ'], ['Arkansas', 'AR'],
-  ['California', 'CA'], ['Colorado', 'CO'], ['Connecticut', 'CT'], ['Delaware', 'DE'],
-  ['District of Columbia', 'DC'], ['Florida', 'FL'], ['Georgia', 'GA'], ['Hawaii', 'HI'],
-  ['Idaho', 'ID'], ['Illinois', 'IL'], ['Indiana', 'IN'], ['Iowa', 'IA'], ['Kansas', 'KS'],
-  ['Kentucky', 'KY'], ['Louisiana', 'LA'], ['Maine', 'ME'], ['Maryland', 'MD'],
-  ['Massachusetts', 'MA'], ['Michigan', 'MI'], ['Minnesota', 'MN'], ['Mississippi', 'MS'],
-  ['Missouri', 'MO'], ['Montana', 'MT'], ['Nebraska', 'NE'], ['Nevada', 'NV'],
-  ['New Hampshire', 'NH'], ['New Jersey', 'NJ'], ['New Mexico', 'NM'], ['New York', 'NY'],
-  ['North Carolina', 'NC'], ['North Dakota', 'ND'], ['Ohio', 'OH'], ['Oklahoma', 'OK'],
-  ['Oregon', 'OR'], ['Pennsylvania', 'PA'], ['Rhode Island', 'RI'], ['South Carolina', 'SC'],
-  ['South Dakota', 'SD'], ['Tennessee', 'TN'], ['Texas', 'TX'], ['Utah', 'UT'],
-  ['Vermont', 'VT'], ['Virginia', 'VA'], ['Washington', 'WA'], ['West Virginia', 'WV'],
-  ['Wisconsin', 'WI'], ['Wyoming', 'WY'],
-];
-const CA_PROVINCES = [
-  ['Alberta', 'AB'], ['British Columbia', 'BC'], ['Manitoba', 'MB'], ['New Brunswick', 'NB'],
-  ['Newfoundland and Labrador', 'NL'], ['Newfoundland', 'NL'], ['Northwest Territories', 'NT'],
-  ['Nova Scotia', 'NS'], ['Nunavut', 'NU'], ['Ontario', 'ON'], ['Prince Edward Island', 'PE'],
-  ['Quebec', 'QC'], ['Québec', 'QC'], ['Saskatchewan', 'SK'], ['Yukon', 'YT'],
-];
-// Country names carry a country but no state, so they veto across a border
-// without claiming to know which province a site is in.
-const COUNTRY_ONLY = [
-  ['Canada', 'CA'], ['United States', 'US'], ['United States of America', 'US'],
-  ['USA', 'US'], ['US', 'US'],
-];
-
-const REGIONS = new Map();
-for (const [name, code] of US_STATES) {
-  for (const k of [name, code]) REGIONS.set(normKey(k), { country: 'US', state: code });
-}
-for (const [name, code] of CA_PROVINCES) {
-  for (const k of [name, code]) REGIONS.set(normKey(k), { country: 'CA', state: code });
-}
-// Country names last so they can't be shadowed — except "CA", which is
-// California, not Canada, and is already claimed above.
-for (const [name, country] of COUNTRY_ONLY) {
-  if (!REGIONS.has(normKey(name))) REGIONS.set(normKey(name), { country, state: null });
-}
+// The state and province tables already exist for the rate lookups, so this
+// reads through them rather than keeping a third copy that could drift.
+// normalizeState answers for the 50 states plus DC and normalizeProvince for
+// the provinces, both from either a code or a full name.
+//
+// Note what stays unresolved, on purpose:
+//   - US territories (PR, GU, VI). A two-letter code in a state column is
+//     often a mis-mapped field rather than a real territory, and reading "PR"
+//     as Puerto Rico would veto correct matches on the strength of junk data.
+//   - Anything neither table recognizes ("Multiple", "Nuevo Leon", "").
+// An unresolved value vetoes nothing.
+const COUNTRY_ONLY = new Map([
+  ['canada', 'CA'], ['unitedstates', 'US'], ['unitedstatesofamerica', 'US'],
+  ['usa', 'US'], ['us', 'US'],
+]);
 
 // { country, state } for a state / province / country value, or null.
 export function regionOf(value) {
-  const k = normKey(value);
-  return k ? (REGIONS.get(k) || null) : null;
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return null;
+  // States first: "CA" is California, not Canada.
+  const st = normalizeState(raw);
+  if (st) return { country: 'US', state: st };
+  const prov = normalizeProvince(raw);
+  if (prov) return { country: 'CA', state: prov };
+  const country = COUNTRY_ONLY.get(normKey(raw));
+  return country ? { country, state: null } : null;
 }
 
 export function regionCountry(value) {
