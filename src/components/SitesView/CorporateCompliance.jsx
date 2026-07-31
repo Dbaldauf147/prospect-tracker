@@ -654,15 +654,34 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                             : null}
                       </td>
                       <td style={td}>
-                        <select
-                          value={val}
-                          onChange={(e) => onSet(q.key, e.target.value)}
-                          aria-label={`${q.jurisdiction}: ${q.question}`}
-                          style={answerSelectStyle(val)}
-                        >
-                          <option value="">—</option>
-                          {SCREENING_ANSWERS.map((a) => <option key={a} value={a}>{a}</option>)}
-                        </select>
+                        {/* Ruled out and collapsed, this row is the verdict
+                            line for the whole jurisdiction, so Applies? says
+                            No rather than showing the operate/sell question's
+                            own dash. The stored answer isn't touched — it's
+                            named in the tooltip, and the select comes back the
+                            moment the workings are expanded, which is when
+                            somebody is actually editing them. */}
+                        {ruledOut && collapsed ? (
+                          <span
+                            title={`No California mandate applies. ${caRuledOutWhy}`
+                              + (val ? ` Screening answer on file: ${val}.` : '')
+                              + ' Expand the rows to edit it.'}
+                            style={{
+                              fontWeight: 700, fontSize: '0.68rem', color: '#991B1B',
+                              cursor: 'help', letterSpacing: '0.04em',
+                            }}
+                          >No</span>
+                        ) : (
+                          <select
+                            value={val}
+                            onChange={(e) => onSet(q.key, e.target.value)}
+                            aria-label={`${q.jurisdiction}: ${q.question}`}
+                            style={answerSelectStyle(val)}
+                          >
+                            <option value="">—</option>
+                            {SCREENING_ANSWERS.map((a) => <option key={a} value={a}>{a}</option>)}
+                          </select>
+                        )}
                       </td>
                       <td style={td}>
                         <ReferenceCell
