@@ -57,11 +57,20 @@ const CA_SALES_THRESHOLD_LABEL = `$${CA_SALES_THRESHOLD_USD.toLocaleString('en-U
 // the same `key` as JURISDICTION_QUESTIONS. `thresholds` are the
 // requirement/metric pairs from the source screening matrix (numbers left
 // as strings so ranges like ">0 <50,000" survive intact).
+//
+// `timeline` is the one-line "which year, filed when" summary this page and
+// the exports print. The dated version — exact submission deadlines, how firm
+// each one is, and a source per date — lives in
+// data/corporateComplianceDeadlines.js, which the Compliance Roadmap charts.
+// When a regulator moves a date, fix it in both; the deadline tests assert the
+// two agree on the first reporting year.
 export const REGULATIONS_BY_JURISDICTION = {
   california: [
     {
       regulation: 'SB 253',
-      timeline: '2026 data (reporting starts 2027)',
+      // First cycle covers FY2025. CARB set scope 1 & 2 at 10 Aug 2026, then
+      // moved it to 10 Nov 2026 on 24 Jun 2026; scope 3 joins from 2027.
+      timeline: '2025 data (scope 1 & 2 due 10 Nov 2026; scope 3 from 2027)',
       description: `Applies to companies with $1 billion+ in annual revenue doing business in California (legally formed or commercially based in California, or California sales exceeding ${CA_SALES_THRESHOLD_LABEL} in the last two years).`,
       // Machine-readable twin of the "1,000 Revenue (Million USD)" row
       // above — `thresholds` is display text, this is what the Applies?
@@ -74,7 +83,11 @@ export const REGULATIONS_BY_JURISDICTION = {
     },
     {
       regulation: 'SB 261',
-      timeline: '2027 data (reporting starts 2028)',
+      // Statutory first report was due 1 Jan 2026, biennially after that. The
+      // Ninth Circuit enjoined enforcement on 18 Nov 2025 and CARB's 1 Dec
+      // 2025 advisory says it will set a replacement date once the appeal is
+      // decided — so this row deliberately does not name a live deadline.
+      timeline: '2025 data (was due 1 Jan 2026 — enforcement stayed; biennial thereafter)',
       description: `Applies to companies with $500 million+ in annual revenue doing business in California (legally formed or commercially based in California, or California sales exceeding ${CA_SALES_THRESHOLD_LABEL} in the last two years).`,
       revenueThresholdUsd: 500_000_000,
       thresholds: [
@@ -174,7 +187,10 @@ export const REGULATIONS_BY_JURISDICTION = {
   brazil: [
     {
       regulation: 'Brazil — CVM',
-      timeline: '2026 data (reporting starts 2027)',
+      // CVM Resolution 244 (published 1 Jun 2026) withdrew the mandatory phase
+      // that would have applied to years beginning on/after 1 Jan 2026;
+      // comply-or-explain runs from 1 Jan 2027 instead.
+      timeline: '2027 data (comply-or-explain from 1 Jan 2027; the mandatory 2026 phase was withdrawn)',
       description: 'Publicly traded companies.',
       thresholds: [],
     },
