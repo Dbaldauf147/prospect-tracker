@@ -177,6 +177,22 @@ function StageRow({ index, total, stage, format, onChange, onMove, onRemove }) {
           onCommit={(next) => onChange({ ...stage, timing: next })}
         />
       </td>
+      {format === 'phased' && (
+        <td className={styles.stageDatesCell}>
+          <input
+            type="date"
+            className={styles.dateInput}
+            value={range?.end || ''}
+            onChange={(e) => onChange({ ...stage, end: e.target.value })}
+            title={range?.derivedEnd
+              ? 'Read from Timing — pick a date to override'
+              : 'The date this step finishes'}
+          />
+          {range?.derivedEnd && (
+            <span className={styles.autoTag} title="Read from the Timing column. Pick a date to override; clear it to go back to automatic.">auto</span>
+          )}
+        </td>
+      )}
       {format === 'gantt' && (
       <td className={styles.stageDatesCell}>
         <input
@@ -550,6 +566,7 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
             {format === 'phased' && <col style={{ width: 190 }} />}
             {format === 'phased' && <col style={{ width: 118 }} />}
             <col style={{ width: 160 }} />
+            {format === 'phased' && <col style={{ width: 160 }} />}
             {format === 'gantt' && <col style={{ width: 290 }} />}
             <col />
             <col style={{ width: 84 }} />
@@ -563,6 +580,7 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
               {format === 'phased' && <th>Phase</th>}
               {format === 'phased' && <th title="Start month from kickoff × how many months it spans">Month × Span</th>}
               <th>Timing</th>
+              {format === 'phased' && <th title="When this step finishes. Blank reads it from Timing.">End</th>}
               {format === 'gantt' && <th>Dates</th>}
               <th>Description</th>
               <th aria-hidden="true" />
@@ -571,7 +589,7 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
           <tbody>
             {visibleStages.length === 0 ? (
               <tr>
-                <td colSpan={format === 'phased' ? 9 : 8} className={styles.serviceEmpty}>
+                <td colSpan={format === 'phased' ? 10 : 8} className={styles.serviceEmpty}>
                   {stages.length === 0 ? 'No stages yet — add the first one below.' : 'No stages match the search.'}
                 </td>
               </tr>
