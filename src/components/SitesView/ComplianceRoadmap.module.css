@@ -47,6 +47,27 @@
 .quietRow td { color: #94A3B8; }
 .dash { color: var(--color-text-muted, #CBD5E1); }
 
+/* Divider between the site-driven roadmap and the corporate mandate section —
+   they answer different questions off different inputs, so the page says so. */
+.sectionRule { display: flex; align-items: center; gap: 0.6rem; margin: 1.4rem 0 0.6rem; }
+.sectionRule::after { content: ''; flex: 1; height: 1px; background: var(--color-border, #E2E8F0); }
+.sectionRuleText {
+  font-size: 0.7rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em;
+  color: #009530; white-space: nowrap;
+}
+
+.toggle {
+  display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.74rem; font-weight: 600;
+  color: var(--color-text-primary, #334155); cursor: pointer; white-space: nowrap;
+}
+.toggle input { cursor: pointer; }
+
+.wrapCell { white-space: normal; min-width: 26ch; max-width: 52ch; }
+.noteLine { color: var(--color-text-muted, #64748B); font-size: 0.7rem; margin-top: 0.2rem; }
+.statusPill { display: inline-block; width: 9px; height: 9px; border-radius: 999px; margin-right: 6px; }
+.srcLink { color: #0F766E; text-decoration: underline; }
+.footnote { font-size: 0.7rem; color: var(--color-text-muted, #64748B); margin-top: 0.5rem; font-style: italic; }
+
 @media (max-width: 900px) {
   .kpis { grid-template-columns: repeat(2, 1fr); }
   .chartGrid { grid-template-columns: 1fr; }

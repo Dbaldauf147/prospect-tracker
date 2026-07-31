@@ -1,6 +1,26 @@
 // Corporate Compliance screening — the jurisdiction gating questions and
 // the regulation thresholds behind them.
 //
+// Extension spelled out so the plain-Node test scripts can import this file.
+import { normalizeCompany } from '../utils/companyNorm.js';
+
+// Canonical key for a company, using the SAME normalization the Corporate
+// Compliance page uses to match company names from the uploaded Utility
+// Lookup file (companyNorm — lower-cased, corporate suffixes and punctuation
+// stripped). Screening answers are saved under this key so a company keeps
+// its answers regardless of cosmetic name differences ("Acme Inc" vs
+// "ACME, INC."), and name variants collapse onto one company. Hyphenated so
+// it is safe as a Firestore dotted field-path segment (no dots).
+//
+// Lives here rather than on the page because the Compliance Roadmap reads the
+// same answers back to work out which mandates are in scope — one definition,
+// or the two views disagree about which company they're looking at.
+export function companyScreeningKey(name) {
+  const norm = normalizeCompany(name);
+  return norm ? norm.replace(/\s+/g, '-') : '';
+}
+
+//
 // The six questions are answered Yes/No per company on the Corporate
 // Compliance page and persisted under settings.corporateComplianceScreening
 // keyed by company slug, then jurisdiction `key`. When a company answers

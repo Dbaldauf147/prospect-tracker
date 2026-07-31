@@ -12033,7 +12033,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       {mainTab === 'corporate' ? (
         <CorporateCompliance sites={complianceSites} settings={settings} updateSettingsPath={updateSettingsPath} prospects={prospects} updateProspect={updateProspect} />
       ) : mainTab === 'roadmap' ? (
-        <ComplianceRoadmap sites={complianceSites} />
+        <ComplianceRoadmap sites={complianceSites} settings={settings} />
       ) : mainTab === 'compliance' ? (
         <BuildingComplianceScreening sites={complianceSites} companyName={deriveExportCompanyName(null)} />
       ) : mainTab === 'mapping' ? (
