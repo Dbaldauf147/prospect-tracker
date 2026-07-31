@@ -197,7 +197,7 @@ export function getEffectiveServiceMetadata(name, overrides) {
     return {
       name, bfoTag: '', region: '', years: '',
       productLine: '', serviceType: '', localProjectName: '',
-      timelineDriven: '', rolloutTime: '',
+      timelineDriven: '', rolloutTime: '', sme: '',
     };
   }
   return {
@@ -210,6 +210,9 @@ export function getEffectiveServiceMetadata(name, overrides) {
     localProjectName: override?.localProjectName ?? seed?.localProjectName ?? '',
     timelineDriven:   override?.timelineDriven   ?? seed?.timelineDriven   ?? '',
     rolloutTime:      override?.rolloutTime      ?? seed?.rolloutTime      ?? '',
+    // Free text: the Schneider subject-matter expert for this service. No
+    // seed value — it's whoever the user names on the Services tab.
+    sme:              override?.sme              ?? seed?.sme              ?? '',
     graveyard: seed?.graveyard || false,
   };
 }
