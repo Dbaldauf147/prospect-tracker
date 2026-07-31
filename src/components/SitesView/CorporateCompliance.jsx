@@ -9,7 +9,7 @@ import {
   JURISDICTION_QUESTIONS, SCREENING_ANSWERS, REGULATIONS_BY_JURISDICTION,
   deriveRegulationVerdict, parseRevenueUsd,
   JURISDICTION_CRITERIA_GROUPS, criterionKey,
-  deriveCriterion, deriveDoingBusinessInCA,
+  deriveCriterion, deriveDoingBusinessInCA, californiaRevenueScreen,
 } from '../../data/corporateComplianceScreening';
 
 // Firestore path segment for a company's persisted revenue research —
@@ -522,6 +522,15 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
     csrdNotes: research?.csrdNotes || null,
   };
   const doingBusinessInCA = deriveDoingBusinessInCA(answers, criterionContext);
+  // Under the lowest California threshold, no mandate can bite and the
+  // doing-business questions stop mattering — the rows go N/A and the
+  // mandates read as ruled out rather than merely unanswered.
+  const caScreen = californiaRevenueScreen(answers, criterionContext);
+  const caRuledOut = caScreen.screenedOut;
+  const caRuledOutWhy = `Revenue is under ${caScreen.floorLabel}, the lowest California threshold, so no California mandate can apply and this test can't change that.`;
+  // Ruled-out rows carry the tint; the red left rule keeps them legible for
+  // anyone who can't pick the fill out of a dense table.
+  const ruledOutRow = { background: '#FEE2E2', boxShadow: 'inset 3px 0 0 #DC2626' };
   const th = {
     textAlign: 'left', padding: '0.3rem 0.5rem', fontSize: '0.62rem', fontWeight: 700,
     textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)',
@@ -581,12 +590,18 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                 const val = answers?.[q.key] || '';
                 const regs = REGULATIONS_BY_JURISDICTION[q.key] || [];
                 const note = research?.notes?.[q.key] || '';
+                const ruledOut = q.key === 'california' && caRuledOut;
                 return (
                   <Fragment key={q.key}>
-                    <tr>
+                    <tr style={ruledOut ? ruledOutRow : undefined} title={ruledOut ? caRuledOutWhy : undefined}>
                       <td style={td}>
                         <div style={{ fontWeight: 700 }}>{q.jurisdiction}</div>
                         <div style={{ color: 'var(--color-text-muted)', fontSize: '0.68rem' }}>{q.question}</div>
+                        {ruledOut && (
+                          <div style={{ marginTop: '0.15rem', color: '#991B1B', fontWeight: 700, fontSize: '0.62rem' }}>
+                            Ruled out — under {caScreen.floorLabel}
+                          </div>
+                        )}
                       </td>
                       <td style={td}>
                         {/* The screening signal for this jurisdiction: the
@@ -654,6 +669,12 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                         return answers?.[k] || links?.[k] || findings?.[k];
                       });
                       if (shownRows.length === 0) return null;
+                      // The doing-business leg is moot once the revenue leg
+                      // has failed: its answers can't change any verdict, so
+                      // they read N/A rather than sitting there unanswered.
+                      // The revenue rows themselves stay live — they're the
+                      // evidence, and editing one is how you undo this.
+                      const groupNA = ruledOut && group.key === 'doing-business';
                       return (
                       <Fragment key={group.key}>
                         <tr>
@@ -662,7 +683,7 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                           </td>
                           <td style={td} colSpan={3}>
                             <span style={{ color: 'var(--color-text-muted)', fontSize: '0.68rem' }}>
-                              {group.note}
+                              {groupNA ? caRuledOutWhy : group.note}
                             </span>
                           </td>
                         </tr>
@@ -688,6 +709,15 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                                 )}
                               </td>
                               <td style={td}>
+                                {groupNA ? (
+                                  <span
+                                    title={caRuledOutWhy}
+                                    style={{
+                                      fontWeight: 700, fontSize: '0.68rem', color: '#991B1B',
+                                      cursor: 'help', letterSpacing: '0.04em',
+                                    }}
+                                  >N/A</span>
+                                ) : (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', minWidth: 0, flexWrap: 'wrap' }}>
                                   {row.kind === 'number' ? (
                                     <NumberCriterionInput
@@ -711,6 +741,7 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                                   )}
                                   <SourceBadge source={row.source} />
                                 </div>
+                                )}
                               </td>
                               <td style={td}>
                                 <ReferenceCell
@@ -749,10 +780,14 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                         doingBusiness: q.key === 'california' ? doingBusinessInCA : undefined,
                       });
                       const shownVal = rVal || auto?.verdict || '';
+                      // A mandate its jurisdiction has ruled out on revenue
+                      // is tinted, so a card scanned at a glance says which
+                      // regimes are off the table rather than just showing a
+                      // column of Nos.
                       return (
-                        <tr key={rKey}>
+                        <tr key={rKey} style={ruledOut ? ruledOutRow : undefined} title={ruledOut ? caRuledOutWhy : undefined}>
                           <td style={{ ...td, paddingLeft: '1.4rem' }}>
-                            <div style={{ fontWeight: 700 }}>{r.regulation}</div>
+                            <div style={{ fontWeight: 700, color: ruledOut ? '#991B1B' : undefined }}>{r.regulation}</div>
                             <div style={{ color: 'var(--color-text-muted)', fontSize: '0.68rem' }}>{r.timeline}</div>
                           </td>
                           <td style={td} title={r.description}>

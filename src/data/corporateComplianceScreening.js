@@ -345,11 +345,20 @@ export function deriveRegulationVerdict(regulation, {
   // beats the jurisdiction question, which only asks whether the company
   // operates or sells there at all. Otherwise fall back to that question.
   const business = doingBusiness ?? (jurisdictionAnswer === 'Yes' ? 'Yes' : null);
-  if (business !== 'Yes' && business !== 'No') return null;
   const overThreshold = revenueUsd >= threshold;
-  const verdict = overThreshold && business === 'Yes' ? 'Yes' : 'No';
   const shown = revenueLabel || fmtUsd(revenueUsd);
-  const revenuePart = `revenue ${shown} ${overThreshold ? '≥' : '<'} the ${fmtUsd(threshold)} threshold`;
+  // Both legs have to hold, so a revenue figure under the threshold settles
+  // it on its own — no point waiting on the doing-business tests to answer a
+  // question their outcome can't change.
+  if (!overThreshold) {
+    return {
+      verdict: 'No',
+      basis: `Auto-derived: revenue ${shown} < the ${fmtUsd(threshold)} threshold, so this can't apply however the doing-business tests land. Pick a value to override.`,
+    };
+  }
+  if (business !== 'Yes' && business !== 'No') return null;
+  const verdict = business === 'Yes' ? 'Yes' : 'No';
+  const revenuePart = `revenue ${shown} ≥ the ${fmtUsd(threshold)} threshold`;
   const businessPart = doingBusiness
     ? `doing business in California = ${business}`
     : `${jurisdictionLabel || 'the jurisdiction'} screened ${business === 'Yes' ? 'Yes' : 'No'}`;
@@ -418,6 +427,32 @@ export function deriveCaliforniaCriterion(row, { revenueUsd, revenueLabel, caSit
     };
   }
   return null;
+}
+
+// Is California ruled out on revenue alone?
+//
+// Every California mandate turns on two legs — a worldwide revenue threshold
+// AND doing business in the state — so failing either settles it. The lowest
+// threshold on the books is SB 261's $500M, so a company under that can't be
+// caught by any of them, and the doing-business questions stop mattering: no
+// answer to them changes the outcome. Returns the resolved revenue rows and
+// the floor they were measured against, so the UI can say why.
+//
+// `screenedOut` needs every revenue row resolved to No — a hand-entered Yes on
+// either one, or a revenue figure nobody has researched yet, leaves the
+// question open rather than asserting a negative.
+export function californiaRevenueScreen(answers, context) {
+  const group = CALIFORNIA_CRITERIA_GROUPS.find(g => g.key === 'revenue');
+  const rows = group.rows.map((row) => {
+    const saved = answers?.[californiaCriterionKey(row.key)] || '';
+    return saved || deriveCaliforniaCriterion(row, context)?.verdict || '';
+  });
+  const floor = Math.min(...group.rows.map(r => r.revenueThresholdUsd));
+  return {
+    screenedOut: rows.length > 0 && rows.every(v => v === 'No'),
+    floor,
+    floorLabel: fmtUsd(floor),
+  };
 }
 
 // Does the company do business in California? "Yes" as soon as any one of
