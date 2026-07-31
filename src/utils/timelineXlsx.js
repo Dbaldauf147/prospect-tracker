@@ -193,12 +193,17 @@ function writePhasedSheet(wb, ws, template, meta) {
   const anchor = String(template?.anchorMonth || '').trim();
   const todayCol = calendar ? todayMonthIndex(anchor, monthCount) : null;
 
-  const LEAD = 3;                      // Stages | Step | Workstream
+  // With no phases set, every band borrows its own step's name — so a Step
+  // column would just repeat column A down the sheet. Drop it and let Stages
+  // carry the names. Once phases exist the two say different things (the band
+  // vs the step inside it) and both are worth the width.
+  const anyPhase = stages.some(st => String(st?.phase || '').trim());
+  const LEAD = anyPhase ? 3 : 2;       // Stages [| Step] | Workstream
   const DESC = LEAD + monthCount + 1;  // Description, past the right of the grid
   const NCOLS = DESC;
-  ws.getColumn(1).width = 32;
-  ws.getColumn(2).width = 46;
-  ws.getColumn(3).width = 20;
+  ws.getColumn(1).width = anyPhase ? 32 : 46;
+  ws.getColumn(2).width = anyPhase ? 46 : 20;
+  if (anyPhase) ws.getColumn(3).width = 20;
   for (let i = 0; i < monthCount; i += 1) ws.getColumn(LEAD + 1 + i).width = calendar ? 11 : 6;
   ws.getColumn(DESC).width = 64;
 
@@ -206,7 +211,7 @@ function writePhasedSheet(wb, ws, template, meta) {
 
   // Axis header — row 3, straight under the title band and its spacer.
   const headRow = 3;
-  ['Stages', 'Step', 'Workstream'].forEach((label, i) => {
+  (anyPhase ? ['Stages', 'Step', 'Workstream'] : ['Stages', 'Workstream']).forEach((label, i) => {
     const cell = ws.getCell(headRow, i + 1);
     cell.value = label;
     cell.font = { name: FONT, bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
@@ -257,13 +262,15 @@ function writePhasedSheet(wb, ws, template, meta) {
       ws.getCell(r, 1).value = bandLabel;
     }
 
-    const stepCell = ws.getCell(r, 2);
-    stepCell.value = stage.name || 'Untitled stage';
-    stepCell.font = { name: FONT, size: 10, color: { argb: SLATE } };
-    stepCell.alignment = { vertical: 'middle', indent: 1 };
+    if (anyPhase) {
+      const stepCell = ws.getCell(r, 2);
+      stepCell.value = stage.name || 'Untitled stage';
+      stepCell.font = { name: FONT, size: 10, color: { argb: SLATE } };
+      stepCell.alignment = { vertical: 'middle', indent: 1 };
+    }
 
     const color = argb(WORKSTREAM_COLOR[stage.owner] || WORKSTREAM_COLOR['Schneider Electric']);
-    const wsCell = ws.getCell(r, 3);
+    const wsCell = ws.getCell(r, LEAD);
     wsCell.value = stage.owner || '';
     wsCell.font = { name: FONT, bold: true, size: 9.5, color: { argb: color } };
     wsCell.alignment = { vertical: 'middle', indent: 1 };
@@ -567,10 +574,13 @@ function dependsLabel(stage, rows) {
 
 function writeStagesSheet(wb, rows, { phased, baseMonth, mode }) {
   const ds = wb.addWorksheet('Stages', { views: [{ showGridLines: false }] });
+  // Same rule as the Timeline sheet: a Phase column nobody filled in is a
+  // column of blanks, so it only appears once a phase exists.
+  const anyPhase = rows.some(({ stage }) => String(stage?.phase || '').trim());
   ds.columns = phased ? [
     { header: '#', key: 'n', width: 5 },
-    { header: 'Phase', key: 'phase', width: 30 },
-    { header: 'Step', key: 'stage', width: 42 },
+    ...(anyPhase ? [{ header: 'Phase', key: 'phase', width: 30 }] : []),
+    { header: anyPhase ? 'Step' : 'Stage', key: 'stage', width: 42 },
     { header: 'Workstream', key: 'owner', width: 20 },
     { header: 'Type', key: 'kind', width: 11 },
     { header: 'Month', key: 'month', width: 9 },
@@ -600,7 +610,7 @@ function writeStagesSheet(wb, rows, { phased, baseMonth, mode }) {
     const months = phased ? getStageMonths(stage, baseMonth, mode) : null;
     const row = ds.addRow(phased ? {
       n: i + 1,
-      phase: stage.phase || '',
+      ...(anyPhase ? { phase: stage.phase || '' } : {}),
       stage: stage.name || 'Untitled stage',
       owner: stage.owner || '',
       month: months.month,
