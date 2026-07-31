@@ -5,6 +5,7 @@ import { UPLOADED_LISTS } from '../../utils/uploadedListsRegistry';
 import { LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { userLsGet } from '../../utils/userLs';
 import { apiFetch } from '../../utils/apiFetch';
+import { classifyHqRegion, normalizeHqRegion, NORTH_AMERICA, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
 import {
   JURISDICTION_QUESTIONS, SCREENING_ANSWERS, REGULATIONS_BY_JURISDICTION,
   deriveRegulationVerdict, parseRevenueUsd,
@@ -203,6 +204,80 @@ function RevenueSection({ data, loading, error, disabled, onResearch }) {
       {error && (
         <span style={{ color: '#B91C1C', fontSize: '0.65rem' }}>{error}</span>
       )}
+    </div>
+  );
+}
+
+// Where the company is headquartered, and whether that puts it in North
+// America. Both halves matter on this page: the location itself is the
+// jurisdiction context for the screening questions below, and the
+// North America / Outside of North America call is the exact value the
+// company popup's HQ Region dropdown takes — so a card that knows it can
+// fill that field when it's blank.
+//
+// The location comes from whichever source has it: this row's own curated
+// lookup, the revenue-research run, or the HQ Location the My Accounts page
+// already stored. The region is whatever was researched, else derived from
+// the location, else whatever the company record already says.
+function HqSection({ location, region, source, loading, error, disabled, notFound, onLookup, onSetRegion, canApply, onApply }) {
+  const btn = (label, onClick, disabledNow) => (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabledNow}
+      style={{
+        fontSize: '0.65rem', fontWeight: 700, fontFamily: 'inherit',
+        padding: '0.2rem 0.55rem', borderRadius: 999, cursor: disabledNow ? 'default' : 'pointer',
+        border: '1px solid var(--color-accent)', background: 'var(--color-surface)',
+        color: 'var(--color-accent)', opacity: disabledNow ? 0.5 : 1, whiteSpace: 'nowrap',
+      }}
+    >{label}</button>
+  );
+
+  const inNA = region === NORTH_AMERICA;
+
+  return (
+    <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+      {location ? (
+        <span title={source ? `from ${source}` : undefined} style={{ fontWeight: 700, color: 'var(--color-text)', fontSize: 'var(--font-size-sm)' }}>
+          {location}
+        </span>
+      ) : (
+        <span style={{ fontStyle: 'italic' }}>
+          {loading ? 'Looking up HQ…' : notFound ? 'No HQ on file — try "Research everything"' : 'HQ: pending lookup'}
+        </span>
+      )}
+
+      {/* The two-value call the company popup stores. It's the same choice
+          that popup's dropdown offers, rendered as a select rather than a
+          static chip so a missing (or wrong) region can be fixed here —
+          colour-coded the way the list chips elsewhere on the card are. */}
+      <select
+        value={region || ''}
+        onChange={(e) => onSetRegion(e.target.value)}
+        disabled={disabled}
+        aria-label="HQ region"
+        title={region ? undefined : 'Not known — set it here, or look up the HQ.'}
+        style={{
+          fontSize: '0.62rem', fontWeight: 700, fontFamily: 'inherit',
+          padding: '0.1rem 0.25rem', borderRadius: 4,
+          border: `1px solid ${region ? 'transparent' : 'var(--color-border)'}`,
+          background: region ? (inNA ? '#DCFCE7' : '#E0E7FF') : 'var(--color-surface)',
+          color: region ? (inNA ? '#166534' : '#3730A3') : 'var(--color-text-muted)',
+        }}
+      >
+        <option value="">Region unknown</option>
+        <option value={NORTH_AMERICA}>{NORTH_AMERICA}</option>
+        <option value={OUTSIDE_NORTH_AMERICA}>{OUTSIDE_NORTH_AMERICA}</option>
+      </select>
+
+      {btn(loading ? 'Looking up…' : location ? 'Re-run lookup' : 'Look up HQ', onLookup, loading || disabled)}
+
+      {/* Only offered when the company record's HQ Region is actually blank —
+          this never overwrites a region already set on the popup. */}
+      {canApply && btn('Fill company field', onApply, false)}
+
+      {error && <span style={{ color: '#B91C1C', fontSize: '0.65rem' }}>{error}</span>}
     </div>
   );
 }
@@ -1053,7 +1128,9 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
   // settings.companyRevenueResearch). Transient loading / error state per
   // company lives in local state; the resolved data is read back from
   // settings so it survives reloads and syncs across devices.
-  const revenueResearch = settings?.companyRevenueResearch || {};
+  // Memoized so the `|| {}` fallback isn't a new object every render — the
+  // HQ callbacks below take it as a dependency.
+  const revenueResearch = useMemo(() => settings?.companyRevenueResearch || {}, [settings?.companyRevenueResearch]);
   const [revState, setRevState] = useState({});
 
   // Per-company jurisdiction screening answers, keyed by company slug then
@@ -1097,6 +1174,115 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
     updateSettingsPath({ utilityLookupCompanyName: v || null });
   }, [updateSettingsPath]);
 
+  // Headquarters, keyed by company slug (settings.companyHqResearch). Its own
+  // map rather than a field on the revenue blob, because the curated
+  // /api/hq-lookup can fill it without a research run — and because the HQ
+  // Location the My Accounts page already stores lives outside that blob too.
+  const hqResearch = useMemo(() => settings?.companyHqResearch || {}, [settings?.companyHqResearch]);
+  // HQ Locations the My Accounts page auto-detected, keyed by prospect id.
+  // Read as a fallback so a company already looked up over there doesn't have
+  // to be looked up again here.
+  const hqRegionMap = useMemo(() => settings?.hqRegionMap || {}, [settings?.hqRegionMap]);
+  const [hqState, setHqState] = useState({});
+
+  // Everything this card knows about one company's HQ, resolved from the
+  // three sources in priority order: this row's own lookup, the revenue
+  // research run, then the My Accounts HQ Location column. The region is
+  // whatever was explicitly set or researched, else derived from the
+  // location, else the value already on the company record.
+  const hqInfoFor = useCallback((name) => {
+    const slug = revenueSlug(name);
+    const saved = hqResearch[slug] || null;
+    const rev = revenueResearch[slug] || null;
+    const prospect = prospectByKey.get(companyKeyOf(name)) || null;
+    const fromAccounts = prospect?.id ? String(hqRegionMap[prospect.id] || '').trim() : '';
+
+    const location = String(saved?.location || '').trim()
+      || String(rev?.headquarters || '').trim()
+      || fromAccounts;
+    const source = saved?.location ? 'HQ lookup'
+      : rev?.headquarters ? 'revenue research'
+      : fromAccounts ? 'My Accounts HQ Location' : '';
+
+    const region = normalizeHqRegion(saved?.region)
+      || normalizeHqRegion(rev?.hqRegion)
+      || classifyHqRegion(location)
+      || normalizeHqRegion(prospect?.hqRegion);
+
+    return { slug, location, source, region, prospect };
+  }, [hqResearch, revenueResearch, hqRegionMap, prospectByKey]);
+
+  // Push a known HQ onto the matching company record — the reason this row
+  // exists. Only fills blanks: an HQ Region already chosen on the popup, or
+  // an HQ Location already set in My Accounts, is left exactly as it is.
+  const applyHqToProspect = useCallback((name, location, region) => {
+    const prospect = prospectByKey.get(companyKeyOf(name));
+    if (!prospect?.id) return;
+    const normRegion = normalizeHqRegion(region);
+    if (normRegion && updateProspect && !normalizeHqRegion(prospect.hqRegion)) {
+      updateProspect(prospect.id, { hqRegion: normRegion });
+    }
+    // The location goes to the same map the My Accounts HQ Location column
+    // reads, keyed by prospect id. Guarded because that id becomes a
+    // Firestore dotted field-path segment: an id carrying a dot or one of
+    // the reserved characters would address the wrong (or no) field.
+    const loc = String(location || '').trim();
+    const idSafe = prospect.id && !/[.~*/[\]]/.test(prospect.id);
+    if (loc && idSafe && updateSettingsPath && !String(hqRegionMap[prospect.id] || '').trim()) {
+      updateSettingsPath({ [`hqRegionMap.${prospect.id}`]: loc });
+    }
+  }, [prospectByKey, updateProspect, updateSettingsPath, hqRegionMap]);
+
+  // Curated HQ lookup — the same endpoint the My Accounts "Auto-detect HQ
+  // Location" button uses. Instant and free where it hits; where it misses,
+  // the revenue research run (which now reports headquarters too) fills it.
+  const lookupHq = useCallback(async (name) => {
+    const company = String(name || '').trim();
+    if (!company || company === UNNAMED) return;
+    const slug = revenueSlug(company);
+    setHqState(s => ({ ...s, [company]: { loading: true, error: null, notFound: false } }));
+    try {
+      const r = await apiFetch('/api/hq-lookup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companies: [company] }),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        let msg = `HTTP ${r.status}`;
+        try { msg = JSON.parse(txt).error || msg; } catch { msg = txt.slice(0, 200) || msg; }
+        setHqState(s => ({ ...s, [company]: { loading: false, error: msg, notFound: false } }));
+        return;
+      }
+      const json = await r.json();
+      const location = String(json?.results?.[company]?.location || '').trim();
+      if (!location) {
+        setHqState(s => ({ ...s, [company]: { loading: false, error: null, notFound: true } }));
+        return;
+      }
+      const region = classifyHqRegion(location);
+      setHqState(s => ({ ...s, [company]: { loading: false, error: null, notFound: false } }));
+      if (updateSettingsPath && slug) {
+        updateSettingsPath({ [`companyHqResearch.${slug}`]: { location, region, savedAt: Date.now() } });
+      }
+      applyHqToProspect(company, location, region);
+    } catch (err) {
+      setHqState(s => ({ ...s, [company]: { loading: false, error: err?.message || 'Request failed', notFound: false } }));
+    }
+  }, [updateSettingsPath, applyHqToProspect]);
+
+  // Hand-set region. Saved as an override on this card's own map (so it wins
+  // over anything researched) and pushed to the company record when that
+  // field is still blank.
+  const setHqRegion = useCallback((name, value) => {
+    const company = String(name || '').trim();
+    const slug = revenueSlug(company);
+    if (!slug || !updateSettingsPath) return;
+    const region = normalizeHqRegion(value);
+    updateSettingsPath({ [`companyHqResearch.${slug}.region`]: region || null });
+    if (region) applyHqToProspect(company, '', region);
+  }, [updateSettingsPath, applyHqToProspect]);
+
   const researchRevenue = useCallback(async (name) => {
     const company = String(name || '').trim();
     if (!company || company === UNNAMED) return;
@@ -1132,10 +1318,18 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
           updateProspect(match.id, { revenue });
         }
       }
+      // Same for the headquarters this run reported — it fills the popup's
+      // HQ Region field and the My Accounts HQ Location column when either
+      // is still blank.
+      applyHqToProspect(
+        company,
+        data.headquarters,
+        normalizeHqRegion(data.hqRegion) || classifyHqRegion(data.headquarters),
+      );
     } catch (err) {
       setRevState(s => ({ ...s, [company]: { loading: false, error: err?.message || 'Request failed' } }));
     }
-  }, [updateSettingsPath, updateProspect, prospectByKey]);
+  }, [updateSettingsPath, updateProspect, prospectByKey, applyHqToProspect]);
 
   // Persisted compliance-research blobs (per-question verdicts + rationale
   // + sources), keyed by the canonical company key so they line up with the
@@ -1306,6 +1500,9 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
               // True while either the revenue or the jurisdiction research
               // for this company is in flight — drives the combined button.
               const anyResearching = !!revState[c.name]?.loading || !!screenState[c.key]?.loading;
+              // Resolved HQ for this company (location + North America call),
+              // drawn from whichever source has it.
+              const hq = hqInfoFor(c.name);
               return (
                 <div key={c.key || c.name} style={{
                   border: '1px solid var(--color-border)', borderRadius: 8,
@@ -1390,6 +1587,29 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                           </>
                         )}
                       </span>
+                    </CardRow>
+
+                    {/* Headquarters — where the company is based, and the
+                        North America / Outside of North America call the
+                        company popup stores. Sits above Revenue because the
+                        jurisdiction questions below read in that order. */}
+                    <CardRow label="HQ">
+                      <HqSection
+                        location={hq.location}
+                        region={hq.region}
+                        source={hq.source}
+                        loading={!!hqState[c.name]?.loading}
+                        error={hqState[c.name]?.error || null}
+                        notFound={!!hqState[c.name]?.notFound}
+                        disabled={c.name === UNNAMED}
+                        onLookup={() => lookupHq(c.name)}
+                        onSetRegion={(value) => setHqRegion(c.name, value)}
+                        canApply={
+                          !!hq.region && !!hq.prospect?.id
+                          && !normalizeHqRegion(hq.prospect.hqRegion)
+                        }
+                        onApply={() => applyHqToProspect(c.name, hq.location, hq.region)}
+                      />
                     </CardRow>
 
                     <CardRow label="Revenue">

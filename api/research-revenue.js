@@ -1,11 +1,14 @@
 // Research a company's annual revenue using Claude with web search.
 // Returns a structured JSON object with the headline revenue figure, the
-// fiscal year it covers, ownership/ticker, employee count, and citation
-// links. Powers the "Research revenue" button on the Corporate
-// Compliance page.
+// fiscal year it covers, ownership/ticker, employee count, headquarters
+// (and whether it sits in North America), and citation links. Powers the
+// "Research revenue" button on the Corporate Compliance page.
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
 import { researchBudgetMs } from './_lib/researchBudget.js';
+
+// The company popup stores HQ Region as one of exactly these two values.
+const HQ_REGIONS = new Set(['North America', 'Outside of North America']);
 
 async function handler(req, res, auth) {
   if (req.method !== 'POST') {
@@ -38,6 +41,8 @@ Return ONLY a single JSON object (no prose, no markdown fences) with these field
 - ownership: string — "Public" or "Private" (or "Subsidiary" / "Division" when that's the clearest description). Empty string if unclear.
 - ticker: string — stock exchange and ticker if publicly traded (e.g. "NYSE: CNR"). Empty string otherwise.
 - employees: number | null — approximate employee count if reported. Null if unknown.
+- headquarters: string — the company's global headquarters as "City, State/Province, Country" (e.g. "Toronto, Ontario, Canada", "Zug, Switzerland"). Always name the country. Empty string if you cannot find it.
+- hqRegion: string — exactly "North America" when that headquarters is in the United States, Canada or Mexico, otherwise exactly "Outside of North America". Empty string if the headquarters is unknown.
 - summary: string — 1-2 sentence plain-language note on the figure: how recent it is, whether it's an estimate, and any caveat (e.g. private company estimates, revenue reported by a parent). Note explicitly when the figure is uncertain or public data is sparse.
 - sources: array of { title: string, url: string } — citation list of pages you used, most authoritative first. Up to 6 entries.
 
@@ -108,6 +113,12 @@ Prefer official filings and the company's own investor relations pages over thir
       ownership: String(parsed.ownership || '').trim(),
       ticker: String(parsed.ticker || '').trim(),
       employees: asNumOrNull(parsed.employees),
+      headquarters: String(parsed.headquarters || '').trim(),
+      // Only the two values the company popup's HQ Region dropdown offers —
+      // anything else is dropped so the client never persists a value that
+      // can't render in that select.
+      hqRegion: HQ_REGIONS.has(String(parsed.hqRegion || '').trim())
+        ? String(parsed.hqRegion).trim() : '',
       summary: String(parsed.summary || '').trim(),
       sources: asLinkArray(parsed.sources),
     });
