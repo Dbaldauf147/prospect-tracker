@@ -129,9 +129,55 @@ export function lookupGovId(city, state, cityLookup = CITY_LOOKUP, ordinances = 
   return alias ? tryCity(alias) : null;
 }
 
+// A jurisdiction can arrive as more than one row in the source workbook.
+// Portland, Oregon is split across US-OR-Portla-01, which carries the BPS
+// mandate (House Bill 3409), and US-OR-Portla-02, which carries the
+// benchmarking ordinance — each row showing the other category as inactive.
+// The City Lookup can only point at one Government ID, so a Portland site was
+// screened against whichever row came first and silently missed the mandate
+// on the other.
+//
+// Rows naming the same government + state are therefore one jurisdiction: a
+// category is active if any of its rows says so, and the detail comes from
+// the row carrying that active ordinance. `raws` keeps every underlying row
+// so the export still shows the full reference behind a merged match.
+function mergeOrdinances(list) {
+  const primary = list[0];
+  const out = { ...primary, govIds: list.map(g => g.govId), raws: list.map(g => g.raw).filter(Boolean) };
+  for (const c of CATEGORIES) {
+    const active = list.find(g => g[c]?.active);
+    out[c] = active ? active[c] : (list.find(g => g[c]) || primary)[c];
+  }
+  return out;
+}
+
+// govId → the merged jurisdiction it belongs to. Every Government ID in a
+// group maps to the same merged record, so the lookup pointing at either row
+// gives the whole picture.
+const _mergedCache = new WeakMap();
+function mergedIndex(ordinances) {
+  let m = _mergedCache.get(ordinances);
+  if (m) return m;
+  const groups = new Map();
+  for (const g of ordinances) {
+    const k = `${normKey(g.government)}::${normKey(g.state)}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(g);
+  }
+  m = new Map();
+  for (const list of groups.values()) {
+    const merged = list.length === 1
+      ? { ...list[0], govIds: [list[0].govId], raws: list[0].raw ? [list[0].raw] : [] }
+      : mergeOrdinances(list);
+    for (const g of list) m.set(g.govId, merged);
+  }
+  _mergedCache.set(ordinances, m);
+  return m;
+}
+
 export function getMandates(govId, ordinances = MASTER_ORDINANCES) {
   if (!govId) return null;
-  return ordIndex(ordinances).get(govId) || null;
+  return mergedIndex(ordinances).get(govId) || null;
 }
 
 // Classify a property type into the threshold bucket the ordinances use.
