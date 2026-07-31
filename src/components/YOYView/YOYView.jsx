@@ -17,6 +17,10 @@ import { asNumber, dealYear } from '../../utils/dealsFormat';
 import {
   loadQuotedProjections, saveQuotedProjections, QUOTED_FIELDS, QUOTED_HISTORICAL_SEED,
 } from '../../utils/quotedProjectionsStore';
+import {
+  saveQuotedMonthRows, loadQuotedMonthRows, loadAllQuotedMonthRows,
+  capturedValuesMatch, QUOTED_ROW_FIELDS,
+} from '../../utils/quotedMonthRows';
 import { loadYoyOverrides, saveYoyOverrides } from '../../utils/yoyOverridesStore';
 import { loadHiddenCharts, saveHiddenCharts } from '../../utils/yoyHiddenChartsStore';
 import styles from './YOYView.module.css';
@@ -1479,6 +1483,37 @@ export function YOYView() {
     };
   }, [records, currentYear, topAccountsData, deals, commissions]);
 
+  // Capture the opp rows behind the live month alongside its values. Until
+  // now only the five figures were kept, so once a month rolled over its
+  // export had to rebuild the pipeline out of today's Opps — carrying today's
+  // Chance? and Stage, which is why the Totals check on a past month shows a
+  // gap. Storing the rows as the month is captured means a month captured
+  // from here on exports the pipeline as it actually stood. Past months
+  // already recorded have no rows and still fall back to the rebuild.
+  // Declared after `contributingRecords` since it reads the same rows.
+  useEffect(() => {
+    if (!liveCurrentMonth || records.length === 0) return undefined;
+    const monthKey = currentMonthKey();
+    const values = {};
+    for (const f of QUOTED_FIELDS) {
+      const val = liveCurrentMonth[f];
+      if (val != null && Number.isFinite(val)) values[f] = Math.round(val);
+    }
+    const rows = contributingRecords.quotedSource;
+    let cancelled = false;
+    (async () => {
+      const existing = await loadQuotedMonthRows(monthKey);
+      if (cancelled) return;
+      // Nothing moved since the last capture — skip the rewrite.
+      if (existing
+        && existing.rows.length === rows.length
+        && capturedValuesMatch(existing, values, QUOTED_FIELDS)) return;
+      await saveQuotedMonthRows(monthKey, values, rows, bfoActivityRows());
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveCurrentMonth, contributingRecords, bfo]);
+
   // Download just the opportunity rows behind one pinned chart point, so a
   // pinned bar/line can be deep-dived in Excel. Each chart's contributing
   // set already carries the point's key (Open Year / Closed Year / Quoted
@@ -1552,10 +1587,11 @@ export function YOYView() {
   // Every month held in the store — including months outside the charted
   // Dec→Nov window — so the export carries the whole raw table the chart
   // reads, not just the twelve points currently drawn.
-  function quotedStoredRows() {
+  function quotedStoredRows(capturedMap) {
     const charted = new Set(quotedData.map(r => r.monthKey));
     return Object.keys(quotedTable || {}).sort().map((key) => {
       const v = quotedTable[key] || {};
+      const captured = capturedMap ? capturedMap[key] : null;
       return {
         'Month Key': key,
         'Quoted Weak ($K)': v.weak ?? '',
@@ -1565,6 +1601,11 @@ export function YOYView() {
         'BFO Pipe Total ($K)': v.bfoPipe ?? '',
         Source: quotedStoredSource(key, v),
         'On the current chart': charted.has(key) ? 'Yes' : 'No',
+        // Whether this month's export can show the pipeline as it stood, or
+        // has to rebuild it from today's Opps.
+        'Opp rows captured': !captured ? 'No — export rebuilds from today'
+          : capturedValuesMatch(captured, v) ? `Yes — ${captured.rows.length} rows`
+          : `Captured, but the values were edited since — export rebuilds from today`,
       };
     });
   }
@@ -1676,18 +1717,31 @@ export function YOYView() {
   // mixes a live compute with recorded snapshots, so "which rows made this
   // number" has a different answer per month. `row` narrows the note to the
   // pinned month when the export is for one.
-  function quotedNotesRows(row) {
+  function quotedNotesRows(row, capture) {
     const live = row ? !!row._live : null;
-    const oppSheet = row ? (live ? 'Opps (live pipeline)' : 'Opps (as of month end)') : 'Live Opps (source rows)';
+    const captured = capture?.entry || null;
+    const useCaptured = !!capture?.useCaptured;
+    const oppSheet = row
+      ? (live ? 'Opps (live pipeline)' : useCaptured ? 'Opps (captured at month end)' : 'Opps (rebuilt from today)')
+      : 'Live Opps (source rows)';
     const notes = [
       { Series: 'Quoted Weak / OK / Expected', 'Where the number comes from': 'Sum of Quoted Amount on open (non-Sold/Not Sold/Closed/Lost) opps, split by the Chance? column. Divided by 1,000 for the $K axis.', 'Raw rows in this file': oppSheet },
       { Series: 'Agreements Sent', 'Where the number comes from': 'Sum of Quoted Amount on open opps whose Stage is "Agreement Sent" — the same $ also sits in its Chance bucket.', 'Raw rows in this file': oppSheet },
-      { Series: 'BFO Pipe Total', 'Where the number comes from': 'Sum of the Amount column across every row pasted into BFO Activity. Plotted on the right-hand axis.', 'Raw rows in this file': live === false ? 'Not available — BFO Activity is only cached for now' : 'BFO Activity' },
+      { Series: 'BFO Pipe Total', 'Where the number comes from': 'Sum of the Amount column across every row pasted into BFO Activity. Plotted on the right-hand axis.', 'Raw rows in this file': live === false ? (capture?.useCapturedBfo ? 'BFO Activity (captured at month end)' : 'Not available — BFO Activity was not captured for this month') : 'BFO Activity' },
     ];
-    if (live === false) {
+    if (live === false && useCaptured) {
       notes.push({
         Series: 'How this month\'s opp rows were built',
-        'Where the number comes from': 'This month is a recorded month-end snapshot; the opp rows behind it were never stored. The attached rows are rebuilt from today\'s Opps data — quoted by that month end, not yet closed — and carry today\'s Chance? and Stage. Opps edited, re-graded or deleted since won\'t tie back exactly; the Totals check sheet shows the gap.',
+        'Where the number comes from': `These are the actual opp rows captured with the month-end snapshot on ${String(captured.capturedAt || '').slice(0, 10)} — the pipeline as it stood, with the Chance? and Stage each opp carried at the time. The Totals check ties out to within rounding — the plotted figures are stored in whole $K.`,
+        'Raw rows in this file': oppSheet,
+      });
+    }
+    if (live === false && !useCaptured) {
+      notes.push({
+        Series: 'How this month\'s opp rows were built',
+        'Where the number comes from': captured
+          ? 'Opp rows WERE captured for this month, but the plotted figures have been edited since (via "Edit values") and no longer match them. The attached rows are rebuilt from today\'s Opps data instead — quoted by that month end, not yet closed — and carry today\'s Chance? and Stage. The Totals check sheet shows the gap.'
+          : 'This month is a recorded month-end snapshot from before the opp rows were kept, so the rows behind it were never stored. The attached rows are rebuilt from today\'s Opps data — quoted by that month end, not yet closed — and carry today\'s Chance? and Stage. Opps edited, re-graded or deleted since won\'t tie back exactly; the Totals check sheet shows the gap. Months captured from now on carry their own rows and tie exactly.',
         'Raw rows in this file': 'Totals check',
       });
     }
@@ -1696,10 +1750,11 @@ export function YOYView() {
     }
     return notes;
   }
-  function downloadQuoted() {
+  async function downloadQuoted() {
+    const capturedMap = await loadAllQuotedMonthRows();
     const wb = XLSX.utils.book_new();
     appendSheet(wb, `Quoted Projections ${currentYear}`, quotedData.map(quotedSummaryRow));
-    appendSheet(wb, 'Recorded Months (store)', quotedStoredRows());
+    appendSheet(wb, 'Recorded Months (store)', quotedStoredRows(capturedMap));
     appendSheet(wb, 'Live Opps (source rows)', contributingRecords.quotedSource);
     appendSheet(wb, 'Live BFO Activity', bfoActivityRows());
     appendSheet(wb, 'Notes', quotedNotesRows());
@@ -1709,15 +1764,25 @@ export function YOYView() {
   // behind them — today's pipeline for the live month, the pipeline rebuilt
   // as it stood at month end for a past one — plus a totals check tying the
   // rows back to the plotted figures.
-  function exportQuotedMonth(row) {
+  async function exportQuotedMonth(row) {
     if (!row || !row.monthKey) return;
-    const opps = quotedMonthOpps(row.monthKey, row._live);
+    // A past month prefers the opp rows captured with its snapshot; they only
+    // stand in for the plotted figures while those figures still match what
+    // was captured, so a hand-edit since falls back to the rebuild.
+    const entry = row._live ? null : await loadQuotedMonthRows(row.monthKey);
+    const useCaptured = !!entry && capturedValuesMatch(entry, row, QUOTED_ROW_FIELDS);
+    const useCapturedBfo = !!entry && entry.bfoRows?.length > 0 && capturedValuesMatch(entry, row, ['bfoPipe']);
+    const opps = useCaptured ? entry.rows : quotedMonthOpps(row.monthKey, row._live);
+    const oppSheet = row._live ? 'Opps (live pipeline)'
+      : useCaptured ? 'Opps (captured at month end)'
+      : 'Opps (rebuilt from today)';
     const wb = XLSX.utils.book_new();
     appendSheet(wb, `${row.month} ${row.year}`, [quotedSummaryRow(row)]);
-    appendSheet(wb, row._live ? 'Opps (live pipeline)' : 'Opps (as of month end)', opps);
+    appendSheet(wb, oppSheet, opps);
     appendSheet(wb, 'Totals check', quotedTotalsCheck(row, opps));
     if (row._live) appendSheet(wb, 'BFO Activity', bfoActivityRows());
-    appendSheet(wb, 'Notes', quotedNotesRows(row));
+    else if (useCapturedBfo) appendSheet(wb, 'BFO Activity (captured)', entry.bfoRows);
+    appendSheet(wb, 'Notes', quotedNotesRows(row, { entry, useCaptured, useCapturedBfo }));
     XLSX.writeFile(wb, `yoy-quoted-projections-${row.monthKey}-${todayStamp()}.xlsx`);
   }
   function downloadCloseRate() {
