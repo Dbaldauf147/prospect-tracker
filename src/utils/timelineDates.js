@@ -244,6 +244,24 @@ export function getStageMonths(stage, baseMonth, mode = 'months') {
   };
 }
 
+// Where in its month a date falls, as 0…1 — the 1st lands near 0, the last
+// day near 1. Lets a milestone sit at the point of the month it actually
+// happens rather than in the middle of the column.
+export function monthDayFraction(isoDate) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || '').trim());
+  if (!m) return null;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  if (mo < 1 || mo > 12) return null;
+  return (d - 0.5) / daysInMonth(y, mo);
+}
+
+// The same, for a stage: read off its start date, or null when it has no
+// date to place it by (a timeline written purely in month numbers).
+export function stageMonthFraction(stage) {
+  const range = getStageRange(stage);
+  return range ? monthDayFraction(range.start) : null;
+}
+
 // --- Calendar anchoring for the implementation format -------------------
 // A relative timeline ("month 1, month 2…") can be pinned to the calendar by
 // declaring which real month is month 1. Anchors are 'YYYY-MM' strings, the
