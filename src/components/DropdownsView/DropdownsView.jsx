@@ -8,10 +8,17 @@ import {
 import { QuestionsTab } from './QuestionsTab';
 import { TimelinesTab } from './TimelinesTab';
 import { getTimelineTemplates } from '../../utils/timelineTemplatesStore';
+import { DataTable } from '../common/DataTable';
 import styles from './DropdownsView.module.css';
 
+// Key the Services table's column prefs (widths, visibility, order) are
+// stored under, in settings.tablePrefs and localStorage alike.
+const SERVICES_TABLE_ID = 'dropdowns-services';
+
+// Widths are the starting point only — the table persists whatever the user
+// drags them to, per column, under settings.tablePrefs (see SERVICES_TABLE_ID).
 const SERVICE_TABLE_COLUMNS = [
-  { key: 'name',             label: 'Solutions',         width: 'auto', editable: false },
+  { key: 'name',             label: 'Solutions',         width: 280,    editable: false },
   { key: 'bfoTag',           label: 'BFO Tag',           width: 110,    editable: true  },
   { key: 'region',           label: 'Region',            width: 90,     editable: true  },
   { key: 'years',            label: 'Years',             width: 90,     editable: true  },
@@ -107,11 +114,10 @@ function ServiceYesNoCell({ value, onCommit }) {
   );
 }
 
-// Single row in the Services subtab. The Solutions cell renders as a
-// hyperlink when the user has saved a URL for that service; clicking
-// the pencil opens a tiny inline editor so per-service URLs can be
-// added, updated, or cleared.
-function ServiceRow({ name, meta, url, onSaveUrl, onSaveField }) {
+// The Solutions cell of the Services table. Renders as a hyperlink when the
+// user has saved a URL for that service; the pencil opens a tiny inline
+// editor so per-service URLs can be added, updated, or cleared.
+function ServiceNameCell({ name, url, onSaveUrl }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const inputRef = useRef(null);
@@ -127,72 +133,51 @@ function ServiceRow({ name, meta, url, onSaveUrl, onSaveField }) {
     if ((next || '') === (url || '')) return;
     onSaveUrl(name, next);
   }
-  function cancel() {
-    setEditing(false);
-  }
 
-  const muted = meta?.graveyard;
+  if (editing) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <input
+          ref={inputRef}
+          type="url"
+          value={draft}
+          placeholder="https://example.com"
+          onChange={e => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            else if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+          }}
+          style={{ flex: 1, minWidth: 0, padding: '3px 6px', border: '1px solid var(--color-accent)', borderRadius: 4, fontSize: '0.75rem', fontFamily: 'inherit' }}
+        />
+        <span style={{ fontSize: '0.62rem', color: 'var(--color-text-muted)' }}>{name}</span>
+      </div>
+    );
+  }
   return (
-    <tr className={muted ? styles.serviceRowMuted : undefined}>
-      <td className={styles.serviceNameCell}>
-        {editing ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <input
-              ref={inputRef}
-              type="url"
-              value={draft}
-              placeholder="https://example.com"
-              onChange={e => setDraft(e.target.value)}
-              onBlur={commit}
-              onKeyDown={e => {
-                if (e.key === 'Enter') { e.preventDefault(); commit(); }
-                else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
-              }}
-              style={{ flex: 1, minWidth: 0, padding: '3px 6px', border: '1px solid var(--color-accent)', borderRadius: 4, fontSize: '0.75rem', fontFamily: 'inherit' }}
-            />
-            <span style={{ fontSize: '0.62rem', color: 'var(--color-text-muted)' }}>{name}</span>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            {url ? (
-              <a
-                href={url}
-                target="_blank"
-                rel="noreferrer"
-                className={styles.serviceLink}
-                title={url}
-              >{name}</a>
-            ) : (
-              <span style={{ color: 'var(--color-text)' }}>{name}</span>
-            )}
-            <button
-              type="button"
-              className={styles.serviceLinkEditBtn}
-              onClick={startEdit}
-              title={url ? 'Edit link' : 'Add link'}
-              aria-label={url ? 'Edit link' : 'Add link'}
-            >{url ? '✎' : '+ link'}</button>
-            {url && (
-              <button
-                type="button"
-                className={styles.serviceLinkEditBtn}
-                onClick={() => onSaveUrl(name, '')}
-                title="Remove link"
-                aria-label="Remove link"
-              >×</button>
-            )}
-          </div>
-        )}
-      </td>
-      <td><ServiceCell value={meta?.bfoTag || ''}           onCommit={(v) => onSaveField(name, 'bfoTag', v)} /></td>
-      <td><ServiceCell value={meta?.region || ''}           onCommit={(v) => onSaveField(name, 'region', v)} /></td>
-      <td><ServiceCell value={meta?.years || ''}            onCommit={(v) => onSaveField(name, 'years', v)} /></td>
-      <td><ServiceCell value={meta?.productLine || ''}      onCommit={(v) => onSaveField(name, 'productLine', v)} /></td>
-      <td><ServiceCell value={meta?.serviceType || ''}      onCommit={(v) => onSaveField(name, 'serviceType', v)} /></td>
-      <td><ServiceCell value={meta?.localProjectName || ''} onCommit={(v) => onSaveField(name, 'localProjectName', v)} /></td>
-      <td><ServiceYesNoCell value={meta?.timelineDriven || ''} onCommit={(v) => onSaveField(name, 'timelineDriven', v)} /></td>
-      <td><ServiceCell value={meta?.rolloutTime || ''}      onCommit={(v) => onSaveField(name, 'rolloutTime', v)} /></td>
-    </tr>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+      {url ? (
+        <a href={url} target="_blank" rel="noreferrer" className={styles.serviceLink} title={url}>{name}</a>
+      ) : (
+        <span style={{ color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+      )}
+      <button
+        type="button"
+        className={styles.serviceLinkEditBtn}
+        onClick={startEdit}
+        title={url ? 'Edit link' : 'Add link'}
+        aria-label={url ? 'Edit link' : 'Add link'}
+      >{url ? '\u270E' : '+ link'}</button>
+      {url && (
+        <button
+          type="button"
+          className={styles.serviceLinkEditBtn}
+          onClick={() => onSaveUrl(name, '')}
+          title="Remove link"
+          aria-label="Remove link"
+        >\u00D7</button>
+      )}
+    </div>
   );
 }
 
@@ -525,7 +510,13 @@ export function DropdownsView({ settings, updateSettings }) {
 
   // Per-service URLs the user can paste in for hyperlinking. Stored
   // alongside the other dropdown settings so they sync across devices.
-  const serviceLinks = (settings?.serviceLinks && typeof settings.serviceLinks === 'object') ? settings.serviceLinks : {};
+  // Memoized (rather than a bare expression) because the Services table's
+  // column definitions depend on it — a fresh {} each render would rebuild
+  // them, and the table with them, on every keystroke elsewhere on the page.
+  const serviceLinks = useMemo(
+    () => ((settings?.serviceLinks && typeof settings.serviceLinks === 'object') ? settings.serviceLinks : {}),
+    [settings?.serviceLinks],
+  );
   function saveServiceLink(name, url) {
     const next = { ...serviceLinks };
     const trimmed = (url || '').trim();
@@ -591,6 +582,52 @@ export function DropdownsView({ settings, updateSettings }) {
         .some(v => String(v || '').toLowerCase().includes(term));
     });
   }, [serviceRows, serviceSearch]);
+
+  // Flat rows for the table: one field per column so sorting, the search
+  // box and the Excel export all read straight off the row, with the
+  // pieces the cells need to render (link, muted state) alongside.
+  const serviceTableRows = useMemo(() => filteredServiceRows.map(({ name, meta }) => ({
+    id: name,
+    name,
+    bfoTag: meta?.bfoTag || '',
+    region: meta?.region || '',
+    years: meta?.years || '',
+    productLine: meta?.productLine || '',
+    serviceType: meta?.serviceType || '',
+    localProjectName: meta?.localProjectName || '',
+    timelineDriven: meta?.timelineDriven || '',
+    rolloutTime: meta?.rolloutTime || '',
+    _url: serviceLinks[name] || '',
+    _muted: !!meta?.graveyard,
+  })), [filteredServiceRows, serviceLinks]);
+
+  // Column definitions. The declared width is only the starting point — the
+  // table owns width and visibility from here, and Solutions stays pinned
+  // since a row with no service name can't be identified. Rebuilt each
+  // render rather than memoized: nine objects cost nothing, and memoizing
+  // would mean stabilising the two save helpers for no real gain.
+  const serviceColumns = SERVICE_TABLE_COLUMNS.map(col => ({
+    key: col.key,
+    label: col.label,
+    defaultWidth: col.width,
+    render: col.key === 'name'
+      ? (row) => (
+        <ServiceNameCell name={row.name} url={row._url} onSaveUrl={saveServiceLink} />
+      )
+      : col.key === 'timelineDriven'
+        ? (row) => (
+          <ServiceYesNoCell
+            value={row.timelineDriven}
+            onCommit={(v) => saveServiceField(row.name, 'timelineDriven', v)}
+          />
+        )
+        : (row) => (
+          <ServiceCell
+            value={row[col.key]}
+            onCommit={(v) => saveServiceField(row.name, col.key, v)}
+          />
+        ),
+  }));
 
   // Save a list's full options array back to settings. We always
   // store the override even if the user happened to type the
@@ -801,45 +838,24 @@ export function DropdownsView({ settings, updateSettings }) {
             </span>
           </div>
 
-          <div className={styles.scroll}>
-            <div className={styles.section}>
-              <table className={styles.serviceTable}>
-                <colgroup>
-                  {SERVICE_TABLE_COLUMNS.map(c => (
-                    <col key={c.key} style={c.width === 'auto' ? undefined : { width: c.width }} />
-                  ))}
-                </colgroup>
-                <thead>
-                  <tr>
-                    {SERVICE_TABLE_COLUMNS.map(c => (
-                      <th key={c.key}>{c.label}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredServiceRows.length === 0 ? (
-                    <tr>
-                      <td colSpan={SERVICE_TABLE_COLUMNS.length} className={styles.serviceEmpty}>
-                        {serviceRows.length === 0
-                          ? 'The Solutions dropdown list is empty. Add services on the Lists tab.'
-                          : `No services match "${serviceSearch}".`}
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredServiceRows.map(({ name, meta }) => (
-                      <ServiceRow
-                        key={name}
-                        name={name}
-                        meta={meta}
-                        url={serviceLinks[name] || ''}
-                        onSaveUrl={saveServiceLink}
-                        onSaveField={saveServiceField}
-                      />
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+          {/* The shared table: drag a header edge to resize, use its Columns
+              menu to hide what you don't need. Both persist per user under
+              settings.tablePrefs[SERVICES_TABLE_ID], the same way Opps 2
+              remembers its layout. */}
+          <div className={styles.serviceTableWrap}>
+            <DataTable
+              tableId={SERVICES_TABLE_ID}
+              columns={serviceColumns}
+              rows={serviceTableRows}
+              alwaysVisible={['name']}
+              rowClassName={(row) => (row._muted ? styles.serviceRowMuted : undefined)}
+              exportFileName="Services"
+              settings={settings}
+              updateSettings={updateSettings}
+              emptyMessage={serviceRows.length === 0
+                ? 'The Solutions dropdown list is empty. Add services on the Lists tab.'
+                : `No services match "${serviceSearch}".`}
+            />
           </div>
         </>
       ) : activeTab === 'timelines' ? (
