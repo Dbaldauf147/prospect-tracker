@@ -19,6 +19,7 @@ import { ownerColor, WORKSTREAM_COLOR } from './timelineGraphic.js';
 import {
   getStageRange, isoToMs, daysInMonth, monthLabel,
   timelineBaseMonth, getStageMonths, anchorPlus, todayMonthIndex, stageMonthFraction,
+  timelineWeekTicks, flattenWeekTicks,
 } from './timelineDates.js';
 
 const argb = (hex) => 'FF' + String(hex).replace('#', '').toUpperCase();
@@ -78,6 +79,9 @@ const EMU_PER_PX = 9525;
 // Excel's column width is in characters of the default font; this is the
 // standard conversion to pixels at 96 DPI (7px per character plus padding).
 const colWidthPx = (chars) => Math.round(chars * 7 + 5);
+// Width of one week column on the Implementation grid, shared by the column
+// setup and the milestone placement so the two can't drift apart.
+const WEEK_COL_CHARS = 3.4;
 // Row heights are points.
 const rowHeightPx = (points) => Math.round((points * 4) / 3);
 
@@ -123,10 +127,14 @@ function milestoneDiamondPng({ size, owner, label, scale = 4 }) {
   return canvas.toDataURL('image/png');
 }
 
-// Drop a milestone diamond into a cell, `frac` of the way across it (0 = the
-// 1st of the month, 1 = the last day; null centres it). Placement mirrors the
-// chart: a 3px inset each side, and the diamond kept fully inside the column
-// so an end-of-month milestone doesn't bleed into the next one.
+// Drop a milestone diamond `frac` of the way across a run of columns (0 = the
+// 1st of the month, 1 = the last day; null centres it). `cols` is the columns
+// the month covers — one wide month column on the Gantt sheet, four week
+// columns on the Implementation sheet — so the diamond lands on the day
+// itself rather than snapping to whichever column happens to contain it.
+// Placement mirrors the chart: a 3px inset each side, and the diamond kept
+// fully inside the month so an end-of-month milestone doesn't bleed into the
+// next one.
 //
 // The offsets go in as raw EMU rather than through ExcelJS's fractional
 // `col` / `row` setters — those scale by `width * 10000`, which is not the
@@ -134,22 +142,31 @@ function milestoneDiamondPng({ size, owner, label, scale = 4 }) {
 //
 // Returns false when the canvas isn't available, so the caller can fall back
 // to a text glyph rather than exporting a milestone-shaped hole.
-function addMilestoneImage(wb, ws, { col, row, colChars, rowPoints, frac, owner, label }) {
-  const colPx = colWidthPx(colChars);
+function addMilestoneImage(wb, ws, { cols, row, rowPoints, frac, owner, label }) {
+  const widths = cols.map(c => colWidthPx(c.chars));
+  const total = widths.reduce((a, b) => a + b, 0);
   const rowPx = rowHeightPx(rowPoints);
-  const size = Math.max(12, Math.min(26, colPx - 6, rowPx - 4));
-  const pad = 3;
-  const usable = Math.max(size, colPx - pad * 2);
+  const size = Math.max(12, Math.min(26, total - 2, rowPx - 4));
+  const pad = Math.min(3, Math.max(0, (total - size) / 2));
+  const usable = Math.max(size, total - pad * 2);
   const centerX = pad + (frac == null
     ? usable / 2
     : Math.min(Math.max(frac * usable, size / 2), usable - size / 2));
+  // An anchor offset has to be measured from a real column, so walk the run to
+  // find which one the picture's left edge lands in and what's left over.
+  let left = Math.max(0, centerX - size / 2);
+  let idx = 0;
+  while (idx < widths.length - 1 && left >= widths[idx]) {
+    left -= widths[idx];
+    idx += 1;
+  }
   try {
     const dataUrl = milestoneDiamondPng({ size, owner, label });
     const id = wb.addImage({ base64: dataUrl, extension: 'png' });
     ws.addImage(id, {
       tl: {
-        nativeCol: col - 1,
-        nativeColOff: Math.round(Math.max(0, centerX - size / 2) * EMU_PER_PX),
+        nativeCol: cols[idx].col - 1,
+        nativeColOff: Math.round(left * EMU_PER_PX),
         nativeRow: row - 1,
         nativeRowOff: Math.round(Math.max(0, (rowPx - size) / 2) * EMU_PER_PX),
       },
@@ -279,20 +296,66 @@ function writePhasedSheet(wb, ws, template) {
   const anchor = String(template?.anchorMonth || '').trim();
   const todayCol = calendar ? todayMonthIndex(anchor, monthCount) : null;
 
-  const LEAD = 3;                      // Stages | Step | Workstream
-  const DESC = LEAD + monthCount + 1;  // Description, past the right of the grid
+  // Each month is split into its week columns, so the grid carries a month
+  // band over a week row — the same two-level axis the graphic draws. Steps
+  // are still placed by month, so a bar fills every week column of the months
+  // it spans.
+  const weekTicks = timelineWeekTicks(anchor, monthCount, calendar);
+  const weekCols = flattenWeekTicks(weekTicks);
+  const NW = weekCols.length;
+  const monthFirst = new Map();
+  const monthLast = new Map();
+  weekCols.forEach((c, i) => {
+    if (!monthFirst.has(c.month)) monthFirst.set(c.month, i + 1);
+    monthLast.set(c.month, i + 1);
+  });
+  // Which week column of a month a 0–1 position across that month lands in —
+  // the last week that has started by then. Used for the today marker and for
+  // placing a milestone on its day.
+  const weekColumnFor = (month, frac) => {
+    const first = monthFirst.get(month) ?? 1;
+    const weeks = weekTicks[month - 1]?.weeks || [];
+    if (frac == null || !weeks.length) return first;
+    let idx = 0;
+    weeks.forEach((w, i) => { if (frac >= w.from) idx = i; });
+    return first + idx;
+  };
+  // The week the current day sits in, on a calendar timeline.
+  let todayWeekCol = null;
+  if (todayCol) {
+    const cal = anchorPlus(anchor, todayCol - 1);
+    const now = new Date();
+    todayWeekCol = weekColumnFor(
+      todayCol,
+      cal ? (now.getDate() - 1) / daysInMonth(cal.y, cal.m) : null,
+    );
+  }
+
+  // With no phases set, every band borrows its own step's name — so a Step
+  // column would just repeat column A down the sheet. Drop it and let Stages
+  // carry the names. Once phases exist the two say different things (the band
+  // vs the step inside it) and both are worth the width.
+  const anyPhase = stages.some(st => String(st?.phase || '').trim());
+  const LEAD = anyPhase ? 3 : 2;  // Stages [| Step] | Workstream
+  const DESC = LEAD + NW + 1;     // Description, past the right of the grid
   const NCOLS = DESC;
-  ws.getColumn(1).width = 32;
-  ws.getColumn(2).width = 46;
-  ws.getColumn(3).width = 20;
-  for (let i = 0; i < monthCount; i += 1) ws.getColumn(LEAD + 1 + i).width = calendar ? 11 : 6;
+  ws.getColumn(1).width = anyPhase ? 32 : 46;
+  ws.getColumn(2).width = anyPhase ? 46 : 20;
+  if (anyPhase) ws.getColumn(3).width = 20;
+  for (let i = 0; i < NW; i += 1) ws.getColumn(LEAD + 1 + i).width = WEEK_COL_CHARS;
   ws.getColumn(DESC).width = 64;
 
-  writeBandHeader(wb, ws, template, NCOLS, Math.max(3.2, NCOLS - (calendar ? 5 : 9)));
+  writeBandHeader(wb, ws, template, NCOLS, Math.max(3.2, NCOLS - 16));
 
-  // Axis header — row 3, straight under the title band and its spacer.
+  // Axis header — row 3, straight under the title band and its spacer: the
+  // month band, with the week ticks on the row below it.
   const headRow = 3;
-  ['Stages', 'Step', 'Workstream'].forEach((label, i) => {
+  const weekRow = headRow + 1;
+  (anyPhase ? ['Stages', 'Step', 'Workstream'] : ['Stages', 'Workstream']).forEach((label, i) => {
+    // The lead columns span both header rows, except the last one — the
+    // Workstream column keeps its second row free for the caption that names
+    // the week numbers.
+    if (i + 1 < LEAD) ws.mergeCells(headRow, i + 1, weekRow, i + 1);
     const cell = ws.getCell(headRow, i + 1);
     cell.value = label;
     cell.font = { name: FONT, bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
@@ -300,22 +363,41 @@ function writePhasedSheet(wb, ws, template) {
     cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
   });
   for (let m = 1; m <= monthCount; m += 1) {
-    const cell = ws.getCell(headRow, LEAD + m);
+    const c0 = LEAD + monthFirst.get(m);
+    const c1 = LEAD + monthLast.get(m);
+    if (c1 > c0) ws.mergeCells(headRow, c0, headRow, c1);
+    const cell = ws.getCell(headRow, c0);
     const cal = calendar ? anchorPlus(anchor, m - 1) : null;
     cell.value = cal ? monthLabel(cal.y, cal.m, m === 1 || cal.m === 1) : m;
     cell.font = { name: FONT, bold: true, size: calendar ? 9 : 11, color: { argb: 'FFFFFFFF' } };
     cell.fill = fill(m === todayCol ? argb('#0E7C36') : argb(SE_GREEN));
     cell.alignment = { vertical: 'middle', horizontal: 'center' };
   }
+  weekCols.forEach((wcol, i) => {
+    const cell = ws.getCell(weekRow, LEAD + 1 + i);
+    cell.value = Number(wcol.label);
+    cell.font = { name: FONT, bold: true, size: 7.5, color: { argb: 'FFFFFFFF' } };
+    cell.fill = fill(LEAD + 1 + i === LEAD + todayWeekCol ? argb('#0E7C36') : argb(SE_GREEN));
+    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+  });
+  // Names the week row, so a reader knows whether the numbers are days of the
+  // month or weeks counted from kickoff.
+  const weekCaption = ws.getCell(weekRow, LEAD);
+  weekCaption.value = calendar ? 'Week of' : 'Weeks';
+  weekCaption.font = { name: FONT, bold: true, size: 8, color: { argb: 'FFFFFFFF' } };
+  weekCaption.fill = fill(argb(SE_GREEN));
+  weekCaption.alignment = { vertical: 'middle', horizontal: 'right' };
   const descHead = ws.getCell(headRow, DESC);
   descHead.value = 'Description';
   descHead.font = { name: FONT, bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
   descHead.fill = fill(argb(SE_GREEN));
   descHead.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  ws.mergeCells(headRow, DESC, weekRow, DESC);
   ws.getRow(headRow).height = 22;
+  ws.getRow(weekRow).height = 14;
 
   // One row per step; phase names merge down column A over their band.
-  let r = headRow + 1;
+  let r = weekRow + 1;
   const bandStart = r;
   let runPhase = null, runFrom = r;
   const closeBand = (toRow) => {
@@ -343,47 +425,63 @@ function writePhasedSheet(wb, ws, template) {
       ws.getCell(r, 1).value = bandLabel;
     }
 
-    const stepCell = ws.getCell(r, 2);
-    stepCell.value = stage.name || 'Untitled stage';
-    stepCell.font = { name: FONT, size: 10, color: { argb: SLATE } };
-    stepCell.alignment = { vertical: 'middle', indent: 1 };
+    if (anyPhase) {
+      const stepCell = ws.getCell(r, 2);
+      stepCell.value = stage.name || 'Untitled stage';
+      stepCell.font = { name: FONT, size: 10, color: { argb: SLATE } };
+      stepCell.alignment = { vertical: 'middle', indent: 1 };
+    }
 
     const color = argb(WORKSTREAM_COLOR[stage.owner] || WORKSTREAM_COLOR['Schneider Electric']);
-    const wsCell = ws.getCell(r, 3);
+    const wsCell = ws.getCell(r, LEAD);
     wsCell.value = stage.owner || '';
     wsCell.font = { name: FONT, bold: true, size: 9.5, color: { argb: color } };
     wsCell.alignment = { vertical: 'middle', indent: 1 };
 
     const from = Math.min(pos.month, monthCount);
     const to = Math.min(pos.month + pos.span - 1, monthCount);
-    // A milestone is a moment: a diamond sitting on its day within the month,
-    // exactly as the chart draws it, rather than a filled block.
-    const monthChars = calendar ? 11 : 6;
+    const barFrom = monthFirst.get(from) ?? 1;
+    const barTo = monthLast.get(to) ?? NW;
+    // A milestone is a moment: a diamond sitting on its day, exactly as the
+    // chart draws it, rather than a filled block. It goes in as a floating
+    // picture spanning its month's week columns, so it lands on the day
+    // itself rather than snapping to a week boundary — and can be dragged.
     const frac = pos.milestone ? stageMonthFraction(stage) : null;
+    let milestoneDrawn = false;
+    if (pos.milestone) {
+      const first = monthFirst.get(from) ?? 1;
+      const last = monthLast.get(from) ?? first;
+      const spanCols = [];
+      for (let g = first; g <= last; g += 1) spanCols.push({ col: LEAD + g, chars: WEEK_COL_CHARS });
+      milestoneDrawn = addMilestoneImage(wb, ws, {
+        cols: spanCols, row: r, rowPoints: 20, frac, owner: stage.owner, label: i + 1,
+      });
+    }
+    // Without a canvas there's no picture, so fall back to the glyph in the
+    // week column the date falls in.
+    const milestoneCol = pos.milestone && !milestoneDrawn
+      ? weekColumnFor(from, frac)
+      : null;
 
-    for (let m = 1; m <= monthCount; m += 1) {
-      const cell = ws.getCell(r, LEAD + m);
-      if (m === todayCol) cell.fill = fill('FFEAF7EE');
-      if (m < from || m > to) continue;
+    weekCols.forEach((wcol, wi) => {
+      const gridCol = wi + 1;
+      const cell = ws.getCell(r, LEAD + gridCol);
+      if (wcol.month === todayCol) cell.fill = fill('FFEAF7EE');
+      if (gridCol < barFrom || gridCol > barTo) return;
       if (pos.milestone) {
-        const drawn = addMilestoneImage(wb, ws, {
-          col: LEAD + m, row: r, colChars: monthChars, rowPoints: 20,
-          frac, owner: stage.owner, label: i + 1,
-        });
-        if (!drawn) {
-          cell.value = `◆${i + 1}`;
-          cell.font = { name: FONT, bold: true, size: 11, color: { argb: color } };
-          cell.alignment = { vertical: 'middle', horizontal: 'center' };
-        }
-        continue;
+        if (gridCol !== milestoneCol) return;
+        cell.value = `◆${i + 1}`;
+        cell.font = { name: FONT, bold: true, size: 10, color: { argb: color } };
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        return;
       }
       cell.fill = fill(color);
-      if (m === from) {
+      if (gridCol === barFrom) {
         cell.value = i + 1;
-        cell.font = { name: FONT, bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
+        cell.font = { name: FONT, bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
         cell.alignment = { vertical: 'middle', horizontal: 'center' };
       }
-    }
+    });
     const descCell = ws.getCell(r, DESC);
     descCell.value = stage.description || '';
     descCell.font = { name: FONT, size: 10, color: { argb: SLATE } };
@@ -398,7 +496,7 @@ function writePhasedSheet(wb, ws, template) {
   applyGridBorders(ws, headRow, 1, lastStageRow, NCOLS);
   closeBand(lastStageRow);
 
-  ws.views = [{ state: 'frozen', xSplit: LEAD, ySplit: headRow, showGridLines: false }];
+  ws.views = [{ state: 'frozen', xSplit: LEAD, ySplit: weekRow, showGridLines: false }];
 
   // Legend, naming the client workstream the way the graphic does. The two
   // swatches stack down column A — one per row, the width of the Stages
@@ -575,8 +673,8 @@ export async function exportTimelineXlsx(template) {
         const span = col.endMs - col.startMs;
         const frac = span > 0 ? Math.min(1, Math.max(0, (rs - col.startMs) / span)) : null;
         const drawn = addMilestoneImage(wb, ws, {
-          col: LEAD + 1 + ci, row: r, colChars: timeWidth, rowPoints: 20,
-          frac, owner: stage.owner, label: i + 1,
+          cols: [{ col: LEAD + 1 + ci, chars: timeWidth }],
+          row: r, rowPoints: 20, frac, owner: stage.owner, label: i + 1,
         });
         if (!drawn) {
           cell.value = '◆';
@@ -645,14 +743,18 @@ function dependsLabel(stage, rows) {
 
 function writeStagesSheet(wb, rows, { phased, baseMonth, mode }) {
   const ds = wb.addWorksheet('Stages', { views: [{ showGridLines: false }] });
+  // Same rule as the Timeline sheet: a Phase column nobody filled in is a
+  // column of blanks, so it only appears once a phase exists.
+  const anyPhase = rows.some(({ stage }) => String(stage?.phase || '').trim());
   ds.columns = phased ? [
     { header: '#', key: 'n', width: 5 },
-    { header: 'Phase', key: 'phase', width: 30 },
-    { header: 'Step', key: 'stage', width: 42 },
+    ...(anyPhase ? [{ header: 'Phase', key: 'phase', width: 30 }] : []),
+    { header: anyPhase ? 'Step' : 'Stage', key: 'stage', width: 42 },
     { header: 'Workstream', key: 'owner', width: 20 },
     { header: 'Type', key: 'kind', width: 11 },
     { header: 'Month', key: 'month', width: 9 },
     { header: 'Span', key: 'span', width: 9 },
+    { header: 'Weeks', key: 'weeks', width: 8 },
     { header: 'Start', key: 'start', width: 13 },
     { header: 'End', key: 'end', width: 13 },
     { header: 'Depends on', key: 'depends', width: 26 },
@@ -678,12 +780,17 @@ function writeStagesSheet(wb, rows, { phased, baseMonth, mode }) {
     const months = phased ? getStageMonths(stage, baseMonth, mode) : null;
     const row = ds.addRow(phased ? {
       n: i + 1,
-      phase: stage.phase || '',
+      ...(anyPhase ? { phase: stage.phase || '' } : {}),
       stage: stage.name || 'Untitled stage',
       owner: stage.owner || '',
       month: months.month,
       kind: stage.kind === 'milestone' ? 'Milestone' : 'Timeline',
       span: months.span,
+      // Whole weeks the dates cover, rounded up — the grid is drawn in
+      // months, so this is the finer duration the week row is read against.
+      weeks: range
+        ? Math.max(1, Math.ceil(((isoToMs(range.end) - isoToMs(range.start)) / DAY_MS + 1) / 7))
+        : null,
       start: range ? excelDate(range.start) : null,
       end: range ? excelDate(range.end) : null,
       depends: dependsLabel(stage, rows),
@@ -712,6 +819,7 @@ function writeStagesSheet(wb, rows, { phased, baseMonth, mode }) {
     if (phased) {
       row.getCell('month').alignment = { vertical: 'middle', horizontal: 'center' };
       row.getCell('span').alignment = { vertical: 'middle', horizontal: 'center' };
+      row.getCell('weeks').alignment = { vertical: 'middle', horizontal: 'center' };
       row.getCell('start').numFmt = 'm/d/yyyy';
       row.getCell('end').numFmt = 'm/d/yyyy';
     } else {
