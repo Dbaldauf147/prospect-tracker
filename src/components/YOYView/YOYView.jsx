@@ -2645,7 +2645,9 @@ function QuotedProjectionsCard({ data, quotedTable, live, onSaveTable, onDownloa
             <Line yAxisId="dollars" dataKey="expected" name="Quoted Expected" stroke="#3b82f6" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls hide={hidden.expected}>
               <LabelList dataKey="expected" position="top" style={{ fontSize: 10, fill: '#1d4ed8' }} formatter={fmtKLabel} />
             </Line>
-            <Line yAxisId="dollars" dataKey="agreements" name="Agreements Sent" stroke="#ef4444" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls hide={hidden.agreements} />
+            <Line yAxisId="dollars" dataKey="agreements" name="Agreements Sent" stroke="#ef4444" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls hide={hidden.agreements}>
+              <LabelList dataKey="agreements" position="bottom" style={{ fontSize: 10, fill: '#b91c1c' }} formatter={fmtKLabel} />
+            </Line>
             <Line
               yAxisId="pipe"
               dataKey="bfoPipe"
