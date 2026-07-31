@@ -16,7 +16,7 @@ import { TIMELINE_STAGE_OWNERS, DEFAULT_STAGE_OWNER } from './timelineTemplatesS
 import {
   getStageRange, formatRangeLabel, isoToMs, msToIso, daysInMonth, monthLabel,
   timelineBaseMonth, getStageMonths, anchorPlus, todayMonthIndex, todayMonthOffset,
-  stageMonthFraction,
+  stageMonthFraction, timelineWeekTicks,
 } from './timelineDates';
 
 const SE_INK = '#0F172A';
@@ -394,6 +394,7 @@ function workstreamColor(owner) {
 const PHASED = {
   headH: 152,       // green band: note box, title, legend
   monthsRowH: 34,   // the "1 2 3 …" row, still inside the band
+  weeksRowH: 17,    // the week ticks, directly under the months
   labelW: 258,      // phase-name column
   minColW: 62,
   rowStep: 30,      // one step line
@@ -441,7 +442,8 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
 
   const groups = groupPhases(stages);
   const bandH = groups.map(g => Math.max(62, g.steps.length * PHASED.rowStep + PHASED.phasePad));
-  const gridTop = PHASED.headH + PHASED.monthsRowH;
+  const monthsBottom = PHASED.headH + PHASED.monthsRowH;
+  const gridTop = monthsBottom + PHASED.weeksRowH;
   const gridH = bandH.reduce((a, b) => a + b, 0);
   // Steps running past a hand-picked month count are clamped to the last
   // column; say so rather than let them pile up there unannounced.
@@ -506,7 +508,7 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   s += `<text x="40" y="${PHASED.headH - 26}" font-size="27" fill="#FFFFFF">${esc(title)}</text>`;
 
   // "Stages" / "Months" captions and the month numbers, all on the band.
-  s += `<text x="40" y="${gridTop - 9}" font-size="17" font-weight="700" fill="#FFFFFF">Stages</text>`;
+  s += `<text x="40" y="${monthsBottom - 9}" font-size="17" font-weight="700" fill="#FFFFFF">Stages</text>`;
   s += `<text x="${x0 + 8}" y="${PHASED.headH - 4}" font-size="15" font-weight="700" fill="#FFFFFF">${calendar ? 'Timeline' : 'Months'}</text>`;
   // The today column gets a deeper green header and a line down the grid, so
   // an anchored timeline shows where it currently stands.
@@ -521,14 +523,48 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
       label = cal ? monthLabel(cal.y, cal.m, m === 1 || cal.m === 1) : String(m);
     }
     const size = calendar ? (colW < 74 ? 10.5 : 12.5) : 15;
-    s += `<text x="${colX(m) + 7}" y="${gridTop - 9}" font-size="${size}" font-weight="700" fill="#FFFFFF">${esc(label)}</text>`;
+    s += `<text x="${colX(m) + 7}" y="${monthsBottom - 9}" font-size="${size}" font-weight="700" fill="#FFFFFF">${esc(label)}</text>`;
   }
+
+  // Week row, directly under the months: a tick at each week start with its
+  // label — the day the week begins on a calendar timeline, the running week
+  // number on a relative one. Steps are still placed by month, so this is a
+  // scale to read against rather than a finer grid to snap to.
+  const weekTicks = timelineWeekTicks(anchor, monthCount, calendar);
+  const weekX = (m, frac) => colX(m) + frac * colW;
+  s += `<line x1="${x0}" y1="${monthsBottom}" x2="${x0 + gridW}" y2="${monthsBottom}" stroke="#FFFFFF" stroke-width="1" opacity="0.55"/>`;
+  s += `<text x="${x0 - 10}" y="${gridTop - 5}" text-anchor="end" font-size="10.5" font-weight="700" fill="#FFFFFF" opacity="0.9">${calendar ? 'Week of' : 'Weeks'}</text>`;
+  weekTicks.forEach(({ month, weeks }) => {
+    weeks.forEach((week, i) => {
+      const wx = weekX(month, week.from);
+      const wWidth = (week.to - week.from) * colW;
+      // The month's own rule already sits at its first week's edge.
+      if (i > 0) {
+        s += `<line x1="${wx.toFixed(1)}" y1="${monthsBottom}" x2="${wx.toFixed(1)}" y2="${gridTop}" stroke="#FFFFFF" stroke-width="1" opacity="0.4"/>`;
+      }
+      // Below ~11px a two-digit label collides with its neighbour, so the
+      // tick stays and the number drops rather than printing over itself.
+      if (wWidth >= 11) {
+        s += `<text x="${(wx + wWidth / 2).toFixed(1)}" y="${gridTop - 5}" text-anchor="middle" font-size="9" font-weight="700" fill="#FFFFFF" opacity="0.92">${esc(week.label)}</text>`;
+      }
+    });
+  });
 
   // Grid: column rules the full height, then a rule under each phase band.
   let y = gridTop;
   for (let m = 1; m <= monthCount + 1; m += 1) {
     s += `<line x1="${colX(m)}" y1="${gridTop}" x2="${colX(m)}" y2="${gridTop + gridH}" stroke="${SE_LINE}" stroke-width="1"/>`;
   }
+  // Week rules inside the grid, lighter than the month rules so the months
+  // still read as the primary columns. Dropped when they'd be too tight to
+  // tell apart from the month edges.
+  weekTicks.forEach(({ month, weeks }) => {
+    weeks.forEach((week, i) => {
+      if (i === 0 || (week.to - week.from) * colW < 9) return;
+      const wx = weekX(month, week.from);
+      s += `<line x1="${wx.toFixed(1)}" y1="${gridTop}" x2="${wx.toFixed(1)}" y2="${gridTop + gridH}" stroke="#EDF1F5" stroke-width="1"/>`;
+    });
+  });
   // The current month keeps its tint; the red line below is what pins the
   // actual day, so the column no longer needs an edge rule of its own.
   if (todayCol) {

@@ -320,6 +320,69 @@ export function todayMonthOffset(anchor, monthCount) {
   return offset >= 0 && offset < monthCount ? offset : null;
 }
 
+// --- Week ticks under the month axis ------------------------------------
+// The implementation format positions steps by whole months, but a month
+// column is a coarse thing to read a date against, so the axis carries a
+// second row of week ticks beneath the months.
+//
+// A calendar-anchored month is split on its real week starts (Mondays) and
+// each segment is labelled with that Monday's day, positioned by the day it
+// falls on — so the ticks line up with the today marker rather than sitting
+// on even quarters. The days before the first Monday are the tail of the
+// previous month's week; they get their own leading segment so the row still
+// covers the whole month.
+//
+// A relative month ("month 1, month 2…") has no calendar to split on, so it
+// takes four even weeks numbered straight through the timeline: week 6 of a
+// 12-month plan reads off the axis without counting.
+export const WEEKS_PER_RELATIVE_MONTH = 4;
+
+export function timelineWeekTicks(anchor, monthCount, calendar) {
+  const out = [];
+  const count = Math.max(1, Math.floor(monthCount) || 1);
+  for (let m = 1; m <= count; m += 1) {
+    const cal = calendar ? anchorPlus(anchor, m - 1) : null;
+    if (!cal) {
+      const weeks = [];
+      for (let i = 0; i < WEEKS_PER_RELATIVE_MONTH; i += 1) {
+        weeks.push({
+          label: String((m - 1) * WEEKS_PER_RELATIVE_MONTH + i + 1),
+          from: i / WEEKS_PER_RELATIVE_MONTH,
+          to: (i + 1) / WEEKS_PER_RELATIVE_MONTH,
+        });
+      }
+      out.push({ month: m, weeks });
+      continue;
+    }
+    const dim = daysInMonth(cal.y, cal.m);
+    const dow = new Date(Date.UTC(cal.y, cal.m - 1, 1)).getUTCDay(); // 0 = Sunday
+    const firstMonday = 1 + ((8 - (dow || 7)) % 7);
+    const starts = firstMonday === 1 ? [] : [1];
+    for (let d = firstMonday; d <= dim; d += 7) starts.push(d);
+    out.push({
+      month: m,
+      weeks: starts.map((d, i) => ({
+        label: String(d),
+        from: (d - 1) / dim,
+        to: (i + 1 < starts.length ? starts[i + 1] - 1 : dim) / dim,
+      })),
+    });
+  }
+  return out;
+}
+
+// The same ticks flattened into one column series, for the surfaces that
+// think in columns (the Excel grid) rather than in fractions of a month.
+export function flattenWeekTicks(ticks) {
+  const cols = [];
+  ticks.forEach(({ month, weeks }) => {
+    weeks.forEach((week, i) => {
+      cols.push({ month, label: week.label, first: i === 0, last: i === weeks.length - 1 });
+    });
+  });
+  return cols;
+}
+
 // Month label for an axis tick: "Aug 2026", or just "Aug" when the year is
 // already established by an earlier tick.
 export function monthLabel(y, m, withYear) {
