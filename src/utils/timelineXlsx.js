@@ -2,10 +2,12 @@
 //
 // Two sheets:
 //   Timeline — the Gantt rebuilt out of native cells: one row per stage, one
-//              column per week / month / quarter, bars drawn as filled cells
-//              and milestones as a diamond glyph. Native rather than a pasted
-//              picture, so the user can widen it, recolour it, or paste the
-//              block straight into another workbook.
+//              column per week / month / quarter, and bars drawn as filled
+//              cells. Native rather than a pasted picture, so the user can
+//              widen it, recolour it, or paste the block straight into another
+//              workbook. Milestones are the one exception: they're floating
+//              diamond images, because only a picture can sit at the day
+//              inside a month column — and can then be dragged.
 //   Stages   — the flat table behind it, with real date cells and an
 //              autofilter, for sorting and formulas.
 //
@@ -64,6 +66,121 @@ function frameBlock(ws, r1, c1, r2, c2) {
     right.border = { ...(right.border || {}), right: edge };
   }
 }
+// --- Milestone diamonds as floating pictures ----------------------------
+// A milestone happens on a day, but a column is a whole month, so a cell can
+// only ever put the mark at the left, middle or right of it — text indent is
+// measured in characters and starts the glyph rather than centring it, which
+// is what pushed the old diamonds right of where the chart drew them. A
+// picture can be anchored at an exact offset inside the cell, so it lands on
+// the same day the website does. It's also an ordinary Excel shape, so it can
+// be dragged somewhere else.
+
+const EMU_PER_PX = 9525;
+// Excel's column width is in characters of the default font; this is the
+// standard conversion to pixels at 96 DPI (7px per character plus padding).
+const colWidthPx = (chars) => Math.round(chars * 7 + 5);
+// Width of one week column on the Implementation grid, shared by the column
+// setup and the milestone placement so the two can't drift apart.
+const WEEK_COL_CHARS = 3.4;
+// Row heights are points.
+const rowHeightPx = (points) => Math.round((points * 4) / 3);
+
+// The diamond itself, rasterized on a canvas — ExcelJS only takes raster
+// formats. Matches the chart's marker: workstream colour, white step number,
+// and a "Both" diamond split down the middle. Browser-only, like the logo.
+function milestoneDiamondPng({ size, owner, label, scale = 4 }) {
+  const canvas = document.createElement('canvas');
+  canvas.width = size * scale;
+  canvas.height = size * scale;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  const mid = size / 2;
+  const outline = () => {
+    ctx.beginPath();
+    ctx.moveTo(mid, 0.5);
+    ctx.lineTo(size - 0.5, mid);
+    ctx.lineTo(mid, size - 0.5);
+    ctx.lineTo(0.5, mid);
+    ctx.closePath();
+  };
+  if (owner === 'Both') {
+    ctx.save();
+    outline();
+    ctx.clip();
+    ctx.fillStyle = WORKSTREAM_COLOR['Client'];
+    ctx.fillRect(0, 0, mid, size);
+    ctx.fillStyle = WORKSTREAM_COLOR['Schneider Electric'];
+    ctx.fillRect(mid, 0, mid, size);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = WORKSTREAM_COLOR[owner] || WORKSTREAM_COLOR['Schneider Electric'];
+    outline();
+    ctx.fill();
+  }
+  if (label != null && label !== '') {
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = `800 ${Math.round(size * 0.44)}px "Nunito Sans", "Segoe UI", Arial, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(label), mid, mid + 0.5);
+  }
+  return canvas.toDataURL('image/png');
+}
+
+// Drop a milestone diamond `frac` of the way across a run of columns (0 = the
+// 1st of the month, 1 = the last day; null centres it). `cols` is the columns
+// the month covers — one wide month column on the Gantt sheet, four week
+// columns on the Implementation sheet — so the diamond lands on the day
+// itself rather than snapping to whichever column happens to contain it.
+// Placement mirrors the chart: a 3px inset each side, and the diamond kept
+// fully inside the month so an end-of-month milestone doesn't bleed into the
+// next one.
+//
+// The offsets go in as raw EMU rather than through ExcelJS's fractional
+// `col` / `row` setters — those scale by `width * 10000`, which is not the
+// column's real width, and would land the picture in the wrong place.
+//
+// Returns false when the canvas isn't available, so the caller can fall back
+// to a text glyph rather than exporting a milestone-shaped hole.
+function addMilestoneImage(wb, ws, { cols, row, rowPoints, frac, owner, label }) {
+  const widths = cols.map(c => colWidthPx(c.chars));
+  const total = widths.reduce((a, b) => a + b, 0);
+  const rowPx = rowHeightPx(rowPoints);
+  const size = Math.max(12, Math.min(26, total - 2, rowPx - 4));
+  const pad = Math.min(3, Math.max(0, (total - size) / 2));
+  const usable = Math.max(size, total - pad * 2);
+  const centerX = pad + (frac == null
+    ? usable / 2
+    : Math.min(Math.max(frac * usable, size / 2), usable - size / 2));
+  // An anchor offset has to be measured from a real column, so walk the run to
+  // find which one the picture's left edge lands in and what's left over.
+  let left = Math.max(0, centerX - size / 2);
+  let idx = 0;
+  while (idx < widths.length - 1 && left >= widths[idx]) {
+    left -= widths[idx];
+    idx += 1;
+  }
+  try {
+    const dataUrl = milestoneDiamondPng({ size, owner, label });
+    const id = wb.addImage({ base64: dataUrl, extension: 'png' });
+    ws.addImage(id, {
+      tl: {
+        nativeCol: cols[idx].col - 1,
+        nativeColOff: Math.round(left * EMU_PER_PX),
+        nativeRow: row - 1,
+        nativeRowOff: Math.round(Math.max(0, (rowPx - size) / 2) * EMU_PER_PX),
+      },
+      ext: { width: size, height: size },
+      // Moves with its cell when rows/columns shift, keeps its size, and stays
+      // draggable.
+      editAs: 'oneCell',
+    });
+    return true;
+  } catch {
+    return false; // canvas unavailable — caller falls back to the glyph
+  }
+}
+
 // Excel reads a JS Date in local time; anchoring at UTC noon keeps a date from
 // sliding to the previous day west of Greenwich.
 const excelDate = (isoStr) => {
@@ -144,11 +261,8 @@ function buildColumns(ranges) {
 }
 
 // Shared brand band across the top of the Timeline sheet: the title on green,
-// then a blank spacer row before the table starts on row 3. The engagement /
-// generated-at provenance that used to sit under the title now runs as a
-// footnote below the legend (writeProvenance), keeping the top of the sheet to
-// the title band alone.
-function writeBandHeader(wb, ws, template, meta, ncols, logoCol) {
+// then a blank spacer row before the table starts on row 3.
+function writeBandHeader(wb, ws, template, ncols, logoCol) {
   ws.mergeCells(1, 1, 1, Math.max(ncols, 6));
   const title = ws.getCell(1, 1);
   title.value = template?.name?.trim() || 'Timeline';
@@ -165,22 +279,10 @@ function writeBandHeader(wb, ws, template, meta, ncols, logoCol) {
   ws.getRow(2).height = 14;
 }
 
-// The engagement / services / generated-at line, as a footnote at the bottom
-// of the sheet. Nothing here is load-bearing for reading the timeline, so it
-// stays out of the header where it competed with the title.
-function writeProvenance(ws, row, template, meta) {
-  const services = (template?.services || []).filter(Boolean).join(' · ');
-  const note = String(template?.note || '').trim();
-  const cell = ws.getCell(row, 1);
-  cell.value = `${note || 'Engagement timeline'}${services ? ` — ${services}` : ''}`
-    + `${meta.generatedAt ? `   ·   Generated ${meta.generatedAt}` : ''}`;
-  cell.font = { name: FONT, italic: true, size: 9, color: { argb: MUTE } };
-}
-
 // Implementation layout in cells: phase names merged down column A, one row
 // per step, and the month grid to the right. Chips become filled cells
 // carrying the step number, so the numbering still lines up with the deck.
-function writePhasedSheet(wb, ws, template, meta) {
+function writePhasedSheet(wb, ws, template) {
   const stages = template.stages;
   const baseMonth = timelineBaseMonth(stages);
   const mode = template?.positionMode === 'months' ? 'months' : 'dates';
@@ -240,10 +342,10 @@ function writePhasedSheet(wb, ws, template, meta) {
   ws.getColumn(1).width = anyPhase ? 32 : 46;
   ws.getColumn(2).width = anyPhase ? 46 : 20;
   if (anyPhase) ws.getColumn(3).width = 20;
-  for (let i = 0; i < NW; i += 1) ws.getColumn(LEAD + 1 + i).width = 3.4;
+  for (let i = 0; i < NW; i += 1) ws.getColumn(LEAD + 1 + i).width = WEEK_COL_CHARS;
   ws.getColumn(DESC).width = 64;
 
-  writeBandHeader(wb, ws, template, meta, NCOLS, Math.max(3.2, NCOLS - 16));
+  writeBandHeader(wb, ws, template, NCOLS, Math.max(3.2, NCOLS - 16));
 
   // Axis header — row 3, straight under the title band and its spacer: the
   // month band, with the week ticks on the row below it.
@@ -340,12 +442,25 @@ function writePhasedSheet(wb, ws, template, meta) {
     const to = Math.min(pos.month + pos.span - 1, monthCount);
     const barFrom = monthFirst.get(from) ?? 1;
     const barTo = monthLast.get(to) ?? NW;
-    // A milestone is a moment: a diamond in the week it falls in rather than
-    // a filled block, matching the chart. The week columns give it a slot of
-    // its own, so the day-of-month fraction now picks the column instead of
-    // indenting the glyph across a wide month cell.
-    const milestoneCol = pos.milestone
-      ? weekColumnFor(from, stageMonthFraction(stage))
+    // A milestone is a moment: a diamond sitting on its day, exactly as the
+    // chart draws it, rather than a filled block. It goes in as a floating
+    // picture spanning its month's week columns, so it lands on the day
+    // itself rather than snapping to a week boundary — and can be dragged.
+    const frac = pos.milestone ? stageMonthFraction(stage) : null;
+    let milestoneDrawn = false;
+    if (pos.milestone) {
+      const first = monthFirst.get(from) ?? 1;
+      const last = monthLast.get(from) ?? first;
+      const spanCols = [];
+      for (let g = first; g <= last; g += 1) spanCols.push({ col: LEAD + g, chars: WEEK_COL_CHARS });
+      milestoneDrawn = addMilestoneImage(wb, ws, {
+        cols: spanCols, row: r, rowPoints: 20, frac, owner: stage.owner, label: i + 1,
+      });
+    }
+    // Without a canvas there's no picture, so fall back to the glyph in the
+    // week column the date falls in.
+    const milestoneCol = pos.milestone && !milestoneDrawn
+      ? weekColumnFor(from, frac)
       : null;
 
     weekCols.forEach((wcol, wi) => {
@@ -403,30 +518,20 @@ function writePhasedSheet(wb, ws, template, meta) {
   r += 1;
   const lastFramedRow = r;
 
-  // Everything below the frame is footnotes: how to read the numbering, the
-  // clamp warning, and the provenance line moved down out of the header.
-  r += 2;
-  ws.getCell(r, 1).value = (calendar
-    ? 'Numbers match the step order · the week row gives the day each week starts on, and the highlighted column is the current week'
-    : 'Numbers match the step order · columns are months from kickoff, each split into four weeks')
-    + ' · ◆ marks a milestone, sitting in the week it falls';
-  ws.getCell(r, 1).font = { name: FONT, italic: true, size: 9, color: { argb: MUTE } };
-
-  // Same warning the graphic carries when the month count cuts steps short.
+  // Below the frame, only the warning that data didn't fit. The sheet carries
+  // no explanatory footnotes — the grid is meant to be read as-is.
   const overflow = placed.filter(p => p.month + p.span - 1 > monthCount);
   if (overflow.length) {
-    r += 1;
+    r += 2;
     ws.getCell(r, 1).value = `Runs past month ${monthCount}, shown clamped to the last column: `
       + overflow.map(p => p.stage.name || 'Untitled step').join(', ');
     ws.getCell(r, 1).font = { name: FONT, italic: true, size: 9, color: { argb: 'FF92400E' } };
   }
-  r += 1;
-  writeProvenance(ws, r, template, meta);
 
   frameBlock(ws, 1, 1, lastFramedRow, NCOLS);
 }
 
-export async function exportTimelineXlsx(template, meta = {}) {
+export async function exportTimelineXlsx(template) {
   const stages = Array.isArray(template?.stages) ? template.stages : [];
   if (!stages.length) return false;
 
@@ -444,7 +549,7 @@ export async function exportTimelineXlsx(template, meta = {}) {
   });
 
   if (phased) {
-    writePhasedSheet(wb, ws, { ...template, stages }, meta);
+    writePhasedSheet(wb, ws, { ...template, stages });
     writeStagesSheet(wb, rows, {
       phased,
       baseMonth: timelineBaseMonth(stages),
@@ -469,7 +574,7 @@ export async function exportTimelineXlsx(template, meta = {}) {
   cols.forEach((_, i) => { ws.getColumn(LEAD + 1 + i).width = timeWidth; });
   ws.getColumn(DESC_COL).width = 64;
 
-  writeBandHeader(wb, ws, template, meta, NCOLS, Math.max(3.2, NCOLS - (unit === 'week' ? 9 : 5)));
+  writeBandHeader(wb, ws, template, NCOLS, Math.max(3.2, NCOLS - (unit === 'week' ? 9 : 5)));
   let r = 3;
 
   // --- axis header: group band over unit labels ---
@@ -563,9 +668,19 @@ export async function exportTimelineXlsx(template, meta = {}) {
       const rs = isoToMs(range.start), re = isoToMs(range.end);
       if (re < col.startMs || rs > col.endMs) return;
       if (range.milestone) {
-        cell.value = '◆';
-        cell.font = { name: FONT, size: 12, bold: true, color: { argb: color } };
-        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        // Where in this column's span the date falls, so the diamond lands on
+        // the day rather than in the middle of a month / quarter.
+        const span = col.endMs - col.startMs;
+        const frac = span > 0 ? Math.min(1, Math.max(0, (rs - col.startMs) / span)) : null;
+        const drawn = addMilestoneImage(wb, ws, {
+          cols: [{ col: LEAD + 1 + ci, chars: timeWidth }],
+          row: r, rowPoints: 20, frac, owner: stage.owner, label: i + 1,
+        });
+        if (!drawn) {
+          cell.value = '◆';
+          cell.font = { name: FONT, size: 12, bold: true, color: { argb: color } };
+          cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        }
       } else {
         cell.fill = fill(color);
       }
@@ -601,20 +716,14 @@ export async function exportTimelineXlsx(template, meta = {}) {
   r += 2;
   const lastFramedRow = r;
 
-  r += 2;
-  ws.getCell(r, 1).value = 'Filled cells show duration · ◆ marks a point-in-time milestone'
-    + (todayCol ? ' · the green line marks today' : '');
-  ws.getCell(r, 1).font = { name: FONT, italic: true, size: 9, color: { argb: MUTE } };
-  r += 1;
-
-  // Never let a stage vanish because its dates couldn't be read.
+  // Never let a stage vanish because its dates couldn't be read. That warning
+  // is the only thing below the frame — no explanatory footnotes.
   const undated = rows.filter(x => !x.range).map(x => x.stage.name || 'Untitled stage');
   if (undated.length) {
+    r += 2;
     ws.getCell(r, 1).value = `No readable dates, so not plotted: ${undated.join(', ')}`;
     ws.getCell(r, 1).font = { name: FONT, italic: true, size: 9, color: { argb: 'FF92400E' } };
-    r += 1;
   }
-  writeProvenance(ws, r, template, meta);
   frameBlock(ws, 1, 1, lastFramedRow, DESC_COL);
 
   writeStagesSheet(wb, rows, { phased: false });
