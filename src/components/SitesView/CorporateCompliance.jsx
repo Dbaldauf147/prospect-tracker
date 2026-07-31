@@ -531,6 +531,12 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
   // Ruled-out rows carry the tint; the red left rule keeps them legible for
   // anyone who can't pick the fill out of a dense table.
   const ruledOutRow = { background: '#FEE2E2', boxShadow: 'inset 3px 0 0 #DC2626' };
+
+  // A ruled-out jurisdiction collapses its workings by default: none of those
+  // rows can change the verdict, so they're noise on a card being scanned.
+  // Keyed by jurisdiction so expanding one doesn't expand the rest, and held
+  // in component state rather than saved — it's a viewing choice, not data.
+  const [expandedRuledOut, setExpandedRuledOut] = useState({});
   const th = {
     textAlign: 'left', padding: '0.3rem 0.5rem', fontSize: '0.62rem', fontWeight: 700,
     textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)',
@@ -591,6 +597,16 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                 const regs = REGULATIONS_BY_JURISDICTION[q.key] || [];
                 const note = research?.notes?.[q.key] || '';
                 const ruledOut = q.key === 'california' && caRuledOut;
+                const collapsed = ruledOut && !expandedRuledOut[q.key];
+                // What collapsing hides, and how much of it the user has
+                // already annotated — a count of their own work is the one
+                // thing that shouldn't disappear without saying so.
+                const criteriaRows = (JURISDICTION_CRITERIA_GROUPS[q.key] || [])
+                  .flatMap((g) => g.rows.map((row) => criterionKey(q.key, row.key)));
+                const regKeys = regs.map((r) => regulationAnswerKey(q.key, r.regulation));
+                const hiddenCount = criteriaRows.length + regKeys.length;
+                const hiddenAnnotated = [...criteriaRows, ...regKeys]
+                  .filter((k) => links?.[k] || findings?.[k]).length;
                 return (
                   <Fragment key={q.key}>
                     <tr style={ruledOut ? ruledOutRow : undefined} title={ruledOut ? caRuledOutWhy : undefined}>
@@ -598,8 +614,27 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                         <div style={{ fontWeight: 700 }}>{q.jurisdiction}</div>
                         <div style={{ color: 'var(--color-text-muted)', fontSize: '0.68rem' }}>{q.question}</div>
                         {ruledOut && (
-                          <div style={{ marginTop: '0.15rem', color: '#991B1B', fontWeight: 700, fontSize: '0.62rem' }}>
-                            Ruled out — under {caScreen.floorLabel}
+                          <div style={{ marginTop: '0.15rem', display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                            <span style={{ color: '#991B1B', fontWeight: 700, fontSize: '0.62rem' }}>
+                              Ruled out — under {caScreen.floorLabel}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedRuledOut((m) => ({ ...m, [q.key]: !m[q.key] }))}
+                              title={collapsed
+                                ? 'Show the rows behind this verdict — editing one is how you undo it'
+                                : 'Hide the rows behind this verdict'}
+                              style={{
+                                fontSize: '0.58rem', fontWeight: 700, fontFamily: 'inherit',
+                                padding: '0.05rem 0.35rem', borderRadius: 4, cursor: 'pointer',
+                                border: '1px solid #FCA5A5', background: '#FFF1F2', color: '#991B1B',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {collapsed
+                                ? `show ${hiddenCount} row${hiddenCount === 1 ? '' : 's'}${hiddenAnnotated ? ` · ${hiddenAnnotated} with notes` : ''}`
+                                : 'hide rows'}
+                            </button>
                           </div>
                         )}
                       </td>
@@ -651,7 +686,7 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                         revenue thresholds, and the one-of-three
                         doing-business check. Both feed the SB 253 / SB 261
                         Applies? rows below. */}
-                    {(JURISDICTION_CRITERIA_GROUPS[q.key] || []).map((group) => {
+                    {!collapsed && (JURISDICTION_CRITERIA_GROUPS[q.key] || []).map((group) => {
                       // California's rows aren't consequences of its answer —
                       // they're how you arrive at it, so hiding them until the
                       // question is answered would put the work behind the
@@ -759,7 +794,7 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                       </Fragment>
                       );
                     })}
-                    {regs.map((r) => {
+                    {!collapsed && regs.map((r) => {
                       const rKey = regulationAnswerKey(q.key, r.regulation);
                       // A regulation the user has attached a link or findings
                       // to stays on screen even when the jurisdiction answer
