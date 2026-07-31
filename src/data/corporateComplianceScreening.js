@@ -273,6 +273,15 @@ export const EU_CRITERIA_GROUPS = [
   },
 ];
 
+// Jurisdictions whose mandate rows show before the question is answered.
+//
+// A mandate is normally a consequence of a Yes, so it waits for one. The EU is
+// the exception: its criteria rows are already always on, and the CSRD waves
+// screen on the very figures those rows collect — turnover, headcount — so
+// they're worth having in view while somebody fills them in rather than one
+// answer later.
+export const ALWAYS_SHOW_REGULATIONS = new Set(['eu']);
+
 // The criteria detail per jurisdiction. Only these two have one; the rest
 // screen on a single question.
 export const JURISDICTION_CRITERIA_GROUPS = {
