@@ -295,12 +295,17 @@ export const EU_CRITERIA_GROUPS = [
 
 // Jurisdictions whose mandate rows show before the question is answered.
 //
-// A mandate is normally a consequence of a Yes, so it waits for one. The EU is
-// the exception: its criteria rows are already always on, and the CSRD waves
-// screen on the very figures those rows collect — turnover, headcount — so
-// they're worth having in view while somebody fills them in rather than one
-// answer later.
-export const ALWAYS_SHOW_REGULATIONS = new Set(['eu']);
+// Everywhere but California, seeing what a Yes would pull in is part of
+// answering the question: the EU's waves screen on the very turnover and
+// headcount figures its criteria rows collect, and the rest are one or two
+// rows each — cheap to show, and they say what the jurisdiction is actually
+// asking about rather than leaving the row a bare question.
+//
+// California is the exception, and stays gated: its mandates sit under two
+// groups of workings that are always on, and it already collapses the lot
+// when revenue rules it out. Adding SB 253 / SB 261 to every unscreened card
+// would only lengthen the one jurisdiction that's already the longest.
+export const ALWAYS_SHOW_REGULATIONS = new Set(['eu', 'uk', 'australia', 'mexico', 'brazil']);
 
 // The criteria detail per jurisdiction. Only these two have one; the rest
 // screen on a single question.
