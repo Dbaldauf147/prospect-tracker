@@ -4564,42 +4564,47 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         )}
         <div className={styles.body}>
           {raClientMatches.length > 0 && (
+            /* One horizontal strip: warning, headline, explanation, then the
+               matched clients pushed to the right end. It used to stack those
+               four onto their own lines, which cost three rows of the modal
+               above the fold to say one thing. Wraps rather than squashes when
+               the modal is narrow. */
             <div style={{
               marginBottom: '0.8rem',
-              padding: '0.6rem 0.8rem',
+              padding: '0.4rem 0.8rem',
               background: '#FFFBEB',
               border: '1px solid #FDE68A',
               borderRadius: 6,
               display: 'flex',
-              alignItems: 'flex-start',
-              gap: '0.6rem',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '0.35rem 0.7rem',
             }}>
-              <div style={{ fontSize: '1rem', lineHeight: 1.2 }}>⚠️</div>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                  {raClientMatches.some(m => m.exact) ? 'Matches an RA Client' : 'Possible RA Client match'}
-                </div>
-                <div style={{ fontSize: '0.75rem', color: '#78350F', marginTop: '0.2rem' }}>
-                  This company looks like {raClientMatches.length === 1 ? 'an existing RA Client' : 'existing RA Clients'} on the Lists → RA Clients tab. Double-check before prospecting.
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginTop: '0.4rem' }}>
-                  {raClientMatches.map(m => (
-                    <span
-                      key={m.name}
-                      title={m.cm ? `Client Manager: ${m.cm}` : undefined}
-                      style={{
-                        display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
-                        padding: '0.15rem 0.5rem', background: '#FEF3C7', border: '1px solid #FDE68A',
-                        borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, color: '#92400E',
-                      }}
-                    >
-                      {m.name}
-                      <span style={{ fontWeight: 700, color: '#B45309' }}>{m.exact ? 'exact' : `${Math.round(m.score * 100)}%`}</span>
-                      {m.cm && <span style={{ fontWeight: 400, color: '#A16207' }}>· {m.cm}</span>}
-                    </span>
-                  ))}
-                </div>
-              </div>
+              <span style={{ fontSize: '0.95rem', lineHeight: 1 }}>⚠️</span>
+              <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
+                {raClientMatches.some(m => m.exact) ? 'Matches an RA Client' : 'Possible RA Client match'}
+              </span>
+              <span style={{ fontSize: '0.75rem', color: '#78350F', minWidth: 0 }}>
+                This company looks like {raClientMatches.length === 1 ? 'an existing RA Client' : 'existing RA Clients'} on the Lists → RA Clients tab. Double-check before prospecting.
+              </span>
+              <span style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.35rem', marginLeft: 'auto' }}>
+                {raClientMatches.map(m => (
+                  <span
+                    key={m.name}
+                    title={m.cm ? `Client Manager: ${m.cm}` : undefined}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
+                      padding: '0.15rem 0.5rem', background: '#FEF3C7', border: '1px solid #FDE68A',
+                      borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, color: '#92400E',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {m.name}
+                    <span style={{ fontWeight: 700, color: '#B45309' }}>{m.exact ? 'exact' : `${Math.round(m.score * 100)}%`}</span>
+                    {m.cm && <span style={{ fontWeight: 400, color: '#A16207' }}>· {m.cm}</span>}
+                  </span>
+                ))}
+              </span>
             </div>
           )}
           {indicativeAnalysis && (
@@ -4683,6 +4688,83 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div>
               <label className={styles.label}>Contracting Entity</label>
               <CommitOnBlurInput className={styles.input} value={fields.contractingEntity ?? ''} onCommit={v => set('contractingEntity', v)} placeholder="Legal entity on the contract" />
+            </div>
+
+            <div>
+              <label className={styles.label}>PE Owner <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(if portfolio co)</span></label>
+              {(() => {
+                const setPeOpen = setPeOwnerPickerOpen;
+                const peOpen = peOwnerPickerOpen;
+                // Pull candidates from the full Table View / prospects list, not just Type=PE.
+                const allCompanies = (prospects || [])
+                  .filter(p => p.company && p.company !== fields.company);
+                // The field holds one or more comma-separated owners.
+                // Filter on the segment after the last separator so a
+                // second owner can be picked without losing the first —
+                // "Blue Owl Capital, KK" searches "kk"; picking replaces
+                // just that trailing segment.
+                const rawPeOwner = fields.peOwner || '';
+                const segCut = Math.max(rawPeOwner.lastIndexOf(','), rawPeOwner.lastIndexOf(';'));
+                const committedOwners = segCut >= 0 ? rawPeOwner.slice(0, segCut + 1).trim() : '';
+                const q = (segCut >= 0 ? rawPeOwner.slice(segCut + 1) : rawPeOwner).toLowerCase().trim();
+                const pickOwner = (name) => set('peOwner', committedOwners ? `${committedOwners} ${name}` : name);
+                const ownerSet = new Set(splitPeOwners(rawPeOwner).map(o => o.toLowerCase()));
+                // When user is typing, show matches anywhere. Prefer Private Equity type matches first.
+                function score(p) {
+                  const name = (p.company || '').toLowerCase();
+                  if (!q) return p.type === 'Private Equity' ? 0 : 1;
+                  if (name.startsWith(q)) return p.type === 'Private Equity' ? 0 : 2;
+                  if (name.includes(q)) return p.type === 'Private Equity' ? 1 : 3;
+                  return 99;
+                }
+                const filtered = allCompanies
+                  .filter(p => !q || (p.company || '').toLowerCase().includes(q))
+                  .sort((a, b) => {
+                    const sa = score(a), sb = score(b);
+                    if (sa !== sb) return sa - sb;
+                    return (a.company || '').localeCompare(b.company || '');
+                  })
+                  .slice(0, 50);
+                return (
+                  <div style={{ position: 'relative' }} data-pe-picker>
+                    <input
+                      className={styles.input}
+                      value={fields.peOwner || ''}
+                      onChange={e => { set('peOwner', e.target.value); setPeOpen(true); }}
+                      onFocus={() => setPeOpen(true)}
+                      placeholder="Type a company name — comma-separate multiple owners…"
+                    />
+                    {peOpen && allCompanies.length > 0 && (
+                      <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 2, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', maxHeight: 260, overflowY: 'auto', zIndex: 100 }}>
+                        {filtered.length === 0 ? (
+                          <div style={{ padding: '0.5rem 0.75rem', fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic' }}>No companies match &quot;{q}&quot;</div>
+                        ) : filtered.map(p => {
+                          const isPE = p.type === 'Private Equity';
+                          const isPicked = ownerSet.has((p.company || '').toLowerCase());
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onMouseDown={e => { e.preventDefault(); pickOwner(p.company); setPeOpen(false); }}
+                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', width: '100%', padding: '0.4rem 0.75rem', border: 'none', background: isPicked ? '#EFF6FF' : '#fff', textAlign: 'left', cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit', color: '#1E293B' }}
+                              onMouseEnter={e => { if (!isPicked) e.currentTarget.style.background = '#F8FAFC'; }}
+                              onMouseLeave={e => { e.currentTarget.style.background = isPicked ? '#EFF6FF' : '#fff'; }}
+                            >
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.company}</span>
+                              {isPE && <span style={{ flexShrink: 0, fontSize: '0.6rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: '#F3E8FF', color: '#7C3AED' }}>PE</span>}
+                            </button>
+                          );
+                        })}
+                        {!q && allCompanies.length > 50 && (
+                          <div style={{ padding: '0.35rem 0.75rem', fontSize: '0.65rem', color: '#94A3B8', fontStyle: 'italic', borderTop: '1px solid #F1F5F9' }}>
+                            Showing first 50 of {allCompanies.length}. Type to narrow.
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             <div className={styles.wideField}>
@@ -4834,83 +4916,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               </select>
             </div>
 
-            <div>
-              <label className={styles.label}>PE Owner <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(if portfolio co)</span></label>
-              {(() => {
-                const setPeOpen = setPeOwnerPickerOpen;
-                const peOpen = peOwnerPickerOpen;
-                // Pull candidates from the full Table View / prospects list, not just Type=PE.
-                const allCompanies = (prospects || [])
-                  .filter(p => p.company && p.company !== fields.company);
-                // The field holds one or more comma-separated owners.
-                // Filter on the segment after the last separator so a
-                // second owner can be picked without losing the first —
-                // "Blue Owl Capital, KK" searches "kk"; picking replaces
-                // just that trailing segment.
-                const rawPeOwner = fields.peOwner || '';
-                const segCut = Math.max(rawPeOwner.lastIndexOf(','), rawPeOwner.lastIndexOf(';'));
-                const committedOwners = segCut >= 0 ? rawPeOwner.slice(0, segCut + 1).trim() : '';
-                const q = (segCut >= 0 ? rawPeOwner.slice(segCut + 1) : rawPeOwner).toLowerCase().trim();
-                const pickOwner = (name) => set('peOwner', committedOwners ? `${committedOwners} ${name}` : name);
-                const ownerSet = new Set(splitPeOwners(rawPeOwner).map(o => o.toLowerCase()));
-                // When user is typing, show matches anywhere. Prefer Private Equity type matches first.
-                function score(p) {
-                  const name = (p.company || '').toLowerCase();
-                  if (!q) return p.type === 'Private Equity' ? 0 : 1;
-                  if (name.startsWith(q)) return p.type === 'Private Equity' ? 0 : 2;
-                  if (name.includes(q)) return p.type === 'Private Equity' ? 1 : 3;
-                  return 99;
-                }
-                const filtered = allCompanies
-                  .filter(p => !q || (p.company || '').toLowerCase().includes(q))
-                  .sort((a, b) => {
-                    const sa = score(a), sb = score(b);
-                    if (sa !== sb) return sa - sb;
-                    return (a.company || '').localeCompare(b.company || '');
-                  })
-                  .slice(0, 50);
-                return (
-                  <div style={{ position: 'relative' }} data-pe-picker>
-                    <input
-                      className={styles.input}
-                      value={fields.peOwner || ''}
-                      onChange={e => { set('peOwner', e.target.value); setPeOpen(true); }}
-                      onFocus={() => setPeOpen(true)}
-                      placeholder="Type a company name — comma-separate multiple owners…"
-                    />
-                    {peOpen && allCompanies.length > 0 && (
-                      <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 2, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', maxHeight: 260, overflowY: 'auto', zIndex: 100 }}>
-                        {filtered.length === 0 ? (
-                          <div style={{ padding: '0.5rem 0.75rem', fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic' }}>No companies match &quot;{q}&quot;</div>
-                        ) : filtered.map(p => {
-                          const isPE = p.type === 'Private Equity';
-                          const isPicked = ownerSet.has((p.company || '').toLowerCase());
-                          return (
-                            <button
-                              key={p.id}
-                              type="button"
-                              onMouseDown={e => { e.preventDefault(); pickOwner(p.company); setPeOpen(false); }}
-                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', width: '100%', padding: '0.4rem 0.75rem', border: 'none', background: isPicked ? '#EFF6FF' : '#fff', textAlign: 'left', cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit', color: '#1E293B' }}
-                              onMouseEnter={e => { if (!isPicked) e.currentTarget.style.background = '#F8FAFC'; }}
-                              onMouseLeave={e => { e.currentTarget.style.background = isPicked ? '#EFF6FF' : '#fff'; }}
-                            >
-                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.company}</span>
-                              {isPE && <span style={{ flexShrink: 0, fontSize: '0.6rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: '#F3E8FF', color: '#7C3AED' }}>PE</span>}
-                            </button>
-                          );
-                        })}
-                        {!q && allCompanies.length > 50 && (
-                          <div style={{ padding: '0.35rem 0.75rem', fontSize: '0.65rem', color: '#94A3B8', fontStyle: 'italic', borderTop: '1px solid #F1F5F9' }}>
-                            Showing first 50 of {allCompanies.length}. Type to narrow.
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
-
             <div className={styles.sectionHead}>Coverage</div>
 
             <div>
@@ -5029,6 +5034,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 tokens via the shared ScopingNotesEditor; the legacy
                 structured fields.competitors map is kept on the record
                 untouched so historical data still round-trips. */}
+
             {!isNew && (
               <div className={styles.wideField}>
                 <label className={styles.label}>Competitors</label>
