@@ -89,24 +89,58 @@ export function summarizeSiteRegions(sites) {
   return { total, counts, countries };
 }
 
+// ---- California ----
+// The Corporate Compliance screening hangs off "how many sites does this
+// company have in California" (SB 253 / SB 261), so the test lives here
+// rather than being re-spelled at each call site — the page, the Excel
+// report and the screening aggregate all have to agree on the number.
+//
+// A State of "CA" alone isn't enough: an unresolved State column falls
+// through as the raw upload text, so "CA" also arrives as a country code
+// for Canada and as a Spanish province (Cádiz). The country has to back
+// it up. A BLANK country still counts — uploads with no Country column
+// at all are the common case for US portfolios, and rejecting those
+// would zero out the screening for most companies.
+
+const CALIFORNIA_STATES = new Set(['ca', 'california']);
+
+/** Does this site's State read as California, ignoring the country? */
+export function hasCaliforniaState(site) {
+  return CALIFORNIA_STATES.has(String(site?.state || '').trim().toLowerCase());
+}
+
 /**
- * Countries in a summary that aren't the United States, most-sites-first.
- * The Corporate Compliance page runs this over the sites it counted as
- * California ones: California is matched on the State value alone, and an
- * unresolved State column falls through as its raw upload text — so a
- * non-US row carrying "CA" (a country code, Cádiz, …) is counted as a
- * California site. Anything this returns is a row worth a second look.
- * Note it catches Canadian / Mexican rows too, which sit in the same
- * North America bucket and so wouldn't stand out in the region split.
+ * Is this site in California? Requires a California State AND a country
+ * that is either absent or the United States. A country the reference
+ * table can't place (a stray region code, a typo) is treated as non-US
+ * and excluded — `excludedCaliforniaCountries` reports exactly what was
+ * dropped, so a mis-mapped column shows up as a visible number rather
+ * than quietly inflating the count.
  */
-export function nonUsCountries(summary) {
-  const out = [];
-  for (const region of SITE_REGION_ORDER) {
-    for (const c of (summary?.countries?.[region] || [])) {
-      if (c.name !== 'United States') out.push({ ...c });
-    }
+export function isCaliforniaSite(site) {
+  if (!hasCaliforniaState(site)) return false;
+  const raw = String(site?.country || '').trim();
+  if (!raw) return true;
+  return normalizeCountryRateName(raw) === 'United States';
+}
+
+/**
+ * Rows with a California State that the country test rejected, as
+ * [{ name, count }] most-first — the countries behind them, using the raw
+ * upload spelling when the reference table can't place it. Empty when
+ * every "CA" row checks out.
+ */
+export function excludedCaliforniaCountries(sites) {
+  const counts = new Map();
+  for (const site of (sites || [])) {
+    if (!hasCaliforniaState(site) || isCaliforniaSite(site)) continue;
+    const raw = String(site?.country || '').trim();
+    const label = normalizeCountryRateName(raw) || raw || '(no country)';
+    counts.set(label, (counts.get(label) || 0) + 1);
   }
-  return out.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  return [...counts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
 
 /** "United States 180 · Canada 5" — the hover detail for one bucket. */
