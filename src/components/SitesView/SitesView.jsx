@@ -38,7 +38,11 @@ import { screenSites, CATEGORIES, totalPenalty, bpsPrioritization } from '../../
 import {
   JURISDICTION_QUESTIONS, REGULATIONS_BY_JURISDICTION,
   deriveRegulationVerdict, parseRevenueUsd,
+  JURISDICTION_CRITERIA_GROUPS, criterionKey, deriveCriterion,
+  deriveDoingBusinessInCA, deriveCsrdWaveVerdict, californiaRevenueScreen,
+  ALWAYS_SHOW_REGULATIONS,
 } from '../../data/corporateComplianceScreening';
+import { classifyHqRegion, normalizeHqRegion } from '../../utils/hqRegion';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { exportComplianceReportXlsx, buildCorporateComplianceSheet, buildComplianceMethodologySheet } from '../../utils/complianceReportXlsx';
 import { saveIndicativeAnalysis, deleteIndicativeAnalysis, getIndicativeAnalysisMeta, loadIndicativeAnalysis } from '../../utils/firestoreSync';
@@ -4141,6 +4145,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     const screening = settings?.corporateComplianceScreening || {};
     const revenueResearch = settings?.companyRevenueResearch || {};
     const complianceResearch = settings?.companyComplianceResearch || {};
+    // The reference link and findings the user typed against each row —
+    // their own work, and the part of the card a static export was
+    // previously dropping entirely.
+    const links = settings?.companyComplianceLinks || {};
+    const findings = settings?.companyComplianceFindings || {};
+    // HQ sources, in the same priority order the card's HQ row uses.
+    const hqResearch = settings?.companyHqResearch || {};
+    const hqRegionMap = settings?.hqRegionMap || {};
     const keyOf = (name) => {
       const norm = normalizeCompany(name);
       return norm ? norm.replace(/\s+/g, '-') : '';
@@ -4184,10 +4196,56 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // Revenue: the researched figure, else the matched prospect record —
       // the same fallback order the page's cards use.
       const revData = revenueResearch[revSlug(name)] || null;
-      const fromProspect = (prospects || []).find(p => keyOf(p?.company) === e.key)?.revenue;
+      const prospect = (prospects || []).find(p => keyOf(p?.company) === e.key) || null;
+      const fromProspect = prospect?.revenue;
       const revenueLabel = String(revData?.revenue || fromProspect || '').trim();
       const revenueUsd = parseRevenueUsd(revenueLabel);
       const research = complianceResearch[e.key] || null;
+      const employees = Number.isFinite(Number(revData?.employees)) && Number(revData.employees) > 0
+        ? Number(revData.employees)
+        : null;
+
+      // Headquarters, resolved the way the card's HQ row resolves it: this
+      // company's own lookup, then the revenue-research run, then the HQ
+      // Location the My Accounts page stores against the prospect record.
+      const hqSlug = revSlug(name);
+      const hqSaved = hqResearch[hqSlug] || null;
+      const hqLocation = String(hqSaved?.location || '').trim()
+        || String(revData?.headquarters || '').trim()
+        || (prospect?.id ? String(hqRegionMap[prospect.id] || '').trim() : '');
+      const hq = {
+        location: hqLocation,
+        source: hqSaved?.location ? 'HQ lookup'
+          : revData?.headquarters ? 'revenue research'
+          : hqLocation ? 'My Accounts HQ Location' : '',
+        region: normalizeHqRegion(hqSaved?.region)
+          || normalizeHqRegion(revData?.hqRegion)
+          || classifyHqRegion(hqLocation)
+          || normalizeHqRegion(prospect?.hqRegion)
+          || '',
+      };
+
+      // The same context the card's JurisdictionScreening builds, so every
+      // derived verdict in the workbook is the one the card is showing —
+      // including the CSRD figures the compliance research run turned up and
+      // the EU answer Wave 2 reads.
+      const criterionContext = {
+        revenueUsd,
+        revenueLabel,
+        caSiteCount: e.california,
+        employees,
+        csrd: research?.csrd || null,
+        csrdNotes: research?.csrdNotes || null,
+        euAnswer: answers.eu || '',
+      };
+      // California turns on revenue AND doing business there. Under the
+      // lowest threshold nothing can bite, so the card rules the whole
+      // jurisdiction out and reads its doing-business rows N/A; the sheet
+      // carries both facts rather than a bare column of Nos.
+      const doingBusinessInCA = deriveDoingBusinessInCA(answers, criterionContext);
+      const caScreen = californiaRevenueScreen(answers, criterionContext);
+      const caRuledOut = caScreen.screenedOut;
+      const caRuledOutWhy = `Revenue is under ${caScreen.floorLabel}, the lowest California threshold, so no California mandate can apply and this test can't change that.`;
 
       // Per-jurisdiction detail mirroring the card's table, including each
       // regulation's Applies? verdict. A hand-picked answer (stored under
@@ -4196,15 +4254,69 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const regulations = [];
       const jurisdictions = JURISDICTION_QUESTIONS.map((q) => {
         const answer = answers[q.key] || '';
-        // Regulations surface for Yes and Unknown, matching the card: an
-        // unresolved jurisdiction still needs its regimes visible.
-        const showRegs = answer === 'Yes' || answer === 'Unknown';
-        const regs = (showRegs ? (REGULATIONS_BY_JURISDICTION[q.key] || []) : []).map((reg) => {
+        const ruledOut = q.key === 'california' && caRuledOut;
+
+        // The workings the card spells out above each jurisdiction's
+        // mandates — California's revenue thresholds and one-of-three
+        // doing-business test, the EU's CSRD screening figures. Always on,
+        // exactly as on the card: they're how the jurisdiction's answer is
+        // arrived at, so they don't wait for it.
+        const criteriaGroups = (JURISDICTION_CRITERIA_GROUPS[q.key] || []).map((group) => {
+          // Once revenue has ruled California out, the doing-business leg
+          // can't change any verdict — those rows read N/A rather than
+          // sitting there unanswered. The revenue rows stay live: they're
+          // the evidence, and editing one is how the rule-out gets undone.
+          const groupNA = ruledOut && group.key === 'doing-business';
+          return {
+            label: group.label,
+            note: groupNA ? caRuledOutWhy : (group.note || ''),
+            na: groupNA,
+            rows: group.rows.map((row) => {
+              const cKey = criterionKey(q.key, row.key);
+              const saved = answers[cKey] || '';
+              // A hand-entered value always wins; without one the card
+              // works the row out from revenue, the site list, or research.
+              const derived = saved ? null : deriveCriterion(row, criterionContext);
+              return {
+                label: row.label,
+                screening: row.fromSiteCount
+                  ? `${e.california} ${e.california === 1 ? 'site' : 'sites'} in CA`
+                  : (row.note || ''),
+                verdict: groupNA ? 'N/A' : (saved || derived?.verdict || ''),
+                auto: !groupNA && !saved && !!derived,
+                basis: groupNA ? caRuledOutWhy : (derived?.basis || ''),
+                na: groupNA,
+                reference: links[cKey] || '',
+                findings: findings[cKey] || '',
+              };
+            }),
+          };
+        });
+
+        // Mandates surface for Yes and Unknown, and unconditionally for the
+        // jurisdictions where seeing the regimes is part of answering the
+        // question — the same ALWAYS_SHOW_REGULATIONS set the card uses.
+        // Anything the user has already annotated stays visible regardless.
+        const showRegs = answer === 'Yes' || answer === 'Unknown' || ALWAYS_SHOW_REGULATIONS.has(q.key);
+        const regs = (REGULATIONS_BY_JURISDICTION[q.key] || []).map((reg) => {
           const regKey = `${q.key}__${String(reg.regulation || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
           const picked = answers[regKey] || '';
-          const auto = picked ? null : deriveRegulationVerdict(reg, {
-            revenueUsd, revenueLabel, jurisdictionAnswer: answer, jurisdictionLabel: q.jurisdiction,
-          });
+          const reference = links[regKey] || '';
+          const regFindings = findings[regKey] || '';
+          if (!showRegs && !reference && !regFindings) return null;
+          // California's mandates turn on revenue plus the doing-business
+          // result above; the EU's waves derive from the CSRD rows instead
+          // of a revenue threshold. Everything else is a plain threshold
+          // test, or not derivable at all.
+          const auto = picked ? null : (q.key === 'eu'
+            ? deriveCsrdWaveVerdict(reg, { answers, context: criterionContext })
+            : deriveRegulationVerdict(reg, {
+              revenueUsd,
+              revenueLabel,
+              jurisdictionAnswer: answer,
+              jurisdictionLabel: q.jurisdiction,
+              doingBusiness: q.key === 'california' ? doingBusinessInCA : undefined,
+            }));
           const verdict = picked || auto?.verdict || '';
           if (verdict === 'Yes') regulations.push({ regulation: reg.regulation, timeline: reg.timeline });
           return {
@@ -4214,14 +4326,24 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             description: reg.description || '',
             verdict,
             auto: !!auto,
+            basis: auto?.basis || '',
+            ruledOut,
+            reference,
+            findings: regFindings,
           };
-        });
+        }).filter(Boolean);
+
         return {
           jurisdiction: q.jurisdiction,
           question: q.question,
           answer,
           note: research?.notes?.[q.key] || '',
+          ruledOut,
+          ruledOutWhy: ruledOut ? caRuledOutWhy : '',
+          criteriaGroups,
           regulations: regs,
+          reference: links[q.key] || '',
+          findings: findings[q.key] || '',
         };
       });
 
@@ -4230,9 +4352,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         yesJurisdictions, regulations, revenueLabel,
         revenueFiscalYear: revData?.fiscalYear || '',
         revenueSummary: revData?.summary || '',
-        employees: Number.isFinite(Number(revData?.employees)) && Number(revData.employees) > 0
-          ? Number(revData.employees)
-          : null,
+        employees,
+        hq,
+        // Card-level screening state the jurisdiction rows are read against.
+        doingBusinessInCA: doingBusinessInCA || '',
+        caRuledOut,
+        caRuledOutWhy: caRuledOut ? caRuledOutWhy : '',
         summary: research?.summary || '',
         sources: Array.isArray(research?.sources) ? research.sources : [],
         answeredAt: research?.savedAt || null,
