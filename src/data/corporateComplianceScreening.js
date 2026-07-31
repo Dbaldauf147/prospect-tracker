@@ -235,10 +235,11 @@ export const EU_CRITERIA_GROUPS = [
     key: 'csrd-inputs',
     label: 'CSRD screening',
     note: 'Where the group sits in the EU, and the figures the waves below screen on',
-    // Only asked once the company is actually in the EU — unlike California's
-    // rows, these aren't how you answer the jurisdiction question, they're
-    // what CSRD screens on after it's answered Yes.
-    showWhenTriggered: true,
+    // Always on, the way California's rows are. These are what CSRD screens
+    // on rather than how the EU question itself gets answered, so they used
+    // to wait for a Yes — but that hid the figures somebody needs in front of
+    // them to answer it, and left the group looking empty for anyone who
+    // hadn't realised the question above was the gate.
     // Everything but the "already reported?" question comes from the compliance
     // research run — `fromResearch` names the field on its `csrd` payload. The
     // one exception is genuinely unknowable from the outside: whether the
