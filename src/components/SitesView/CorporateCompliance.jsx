@@ -9,7 +9,7 @@ import {
   JURISDICTION_QUESTIONS, SCREENING_ANSWERS, REGULATIONS_BY_JURISDICTION,
   deriveRegulationVerdict, parseRevenueUsd,
   JURISDICTION_CRITERIA_GROUPS, criterionKey,
-  deriveCriterion, deriveDoingBusinessInCA, californiaRevenueScreen,
+  deriveCriterion, deriveDoingBusinessInCA, deriveCsrdWaveVerdict, californiaRevenueScreen,
 } from '../../data/corporateComplianceScreening';
 
 // Firestore path segment for a company's persisted revenue research —
@@ -520,6 +520,9 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
     // per-field rationale for the tooltips.
     csrd: research?.csrd || null,
     csrdNotes: research?.csrdNotes || null,
+    // "Present in the EU" for Wave 2 — the jurisdiction question asks exactly
+    // that, so the wave rules read it rather than a second copy of it.
+    euAnswer: answers?.eu || '',
   };
   const doingBusinessInCA = deriveDoingBusinessInCA(answers, criterionContext);
   // Under the lowest California threshold, no mandate can bite and the
@@ -826,13 +829,17 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                       // themselves from the revenue already on this card.
                       // A hand-picked answer always wins; choosing "—"
                       // falls back to the derived value.
-                      const auto = rVal ? null : deriveRegulationVerdict(r, {
-                        revenueUsd,
-                        revenueLabel,
-                        jurisdictionAnswer: val,
-                        jurisdictionLabel: q.jurisdiction,
-                        doingBusiness: q.key === 'california' ? doingBusinessInCA : undefined,
-                      });
+                      // California's two turn on revenue plus doing business
+                      // there; the CSRD waves turn on the EU rows above.
+                      const auto = rVal ? null : (q.key === 'eu'
+                        ? deriveCsrdWaveVerdict(r, { answers, context: criterionContext })
+                        : deriveRegulationVerdict(r, {
+                          revenueUsd,
+                          revenueLabel,
+                          jurisdictionAnswer: val,
+                          jurisdictionLabel: q.jurisdiction,
+                          doingBusiness: q.key === 'california' ? doingBusinessInCA : undefined,
+                        }));
                       const shownVal = rVal || auto?.verdict || '';
                       // A mandate its jurisdiction has ruled out on revenue
                       // is tinted, so a card scanned at a glance says which
