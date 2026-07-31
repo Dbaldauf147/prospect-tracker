@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect, useLayoutEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
 import { createPortal } from 'react-dom';
 import { doc, getDoc } from 'firebase/firestore';
@@ -1015,6 +1015,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   const [hqLookupRunning, setHqLookupRunning] = useState(false);
   const [dedupeRunning, setDedupeRunning] = useState(false);
   const [tierSyncRunning, setTierSyncRunning] = useState(false);
+  // Rows the table is currently showing, after its in-table column filters.
+  // Fed by DataTable so the Zoom Export button matches Export Excel.
+  const [tableVisibleRows, setTableVisibleRows] = useState(null);
+  const handleTableFilteredRows = useCallback(rows => setTableVisibleRows(rows), []);
   const [tier3BulkRunning, setTier3BulkRunning] = useState(false);
   // Mass edit: checkbox selection + a field/value applied to all selected rows.
   const [selectedIds, setSelectedIds] = useState(() => new Set());
@@ -2715,7 +2719,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
 
   // Same CSV, cut to the accounts still being worked by inside sales.
   function downloadZoomExport() {
-    const insideSales = filteredAccounts.filter(a => a.status === 'Inside Sales');
+    // Sits beside Export Excel, so it exports the same rows that button
+    // would — the table's own filtered set, not just the page filters.
+    const source = tableVisibleRows || filteredAccounts;
+    const insideSales = source.filter(a => a.status === 'Inside Sales');
     if (insideSales.length === 0) {
       alert('No accounts in the current view have a status of Inside Sales.');
       return;
@@ -3285,11 +3292,6 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-accent)', whiteSpace: 'nowrap' }}
         >⇩ Accounts w/o contacts</button>
         <button
-          onClick={downloadZoomExport}
-          title="Download a CSV of the accounts in the current view whose status is Inside Sales, with their Zoom / website data from Table View"
-          style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-accent)', whiteSpace: 'nowrap' }}
-        >⇩ Zoom Export</button>
-        <button
           onClick={applyAllTierFlags}
           disabled={tierSyncRunning || tierFlagged.length === 0}
           title="Set every flagged account's Tier to the tier its Target Accounts row specifies — applies all the ⚠ tier-mismatch flags in the Tier column at once."
@@ -3560,6 +3562,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         <DataTable
           tableId="my-accounts"
           exportFileName="My Accounts export"
+          onFilteredRowsChange={handleTableFilteredRows}
+          toolbarActions={[{
+            key: 'zoom-export',
+            label: 'Zoom Export',
+            title: 'Download a CSV of the rows shown here whose status is Inside Sales — Company, Zoom Company ID, Zoom Company Name, Zoom Website',
+            onClick: downloadZoomExport,
+          }]}
           columns={columnsWithSelect}
           rows={filteredAccounts}
           alwaysVisible={['__select__', 'company']}

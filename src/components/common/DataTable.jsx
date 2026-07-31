@@ -603,6 +603,11 @@ export function DataTable({
   // formatting, etc.) while reusing the table's sort / visibility /
   // rename state.
   onExport,
+  // Extra buttons rendered beside Export Excel, as
+  // [{ key, label, title, onClick, disabled }]. Kept as data rather than
+  // nodes so they pick up the toolbar's own button styling and a consumer
+  // can't drift from it.
+  toolbarActions,
   // Column keys that should always land in the default Excel export even
   // when the user has hidden them on screen. Included in their natural
   // column order; ignored when a custom onExport is supplied.
@@ -1179,6 +1184,19 @@ export function DataTable({
         }}>
           Export Excel
         </button>
+        {(toolbarActions || []).map(action => (
+          <button
+            key={action.key || action.label}
+            className={styles.exportBtn}
+            // .exportBtn carries margin-left:auto so Export Excel floats
+            // right of the column controls. Extra actions sit flush against
+            // it instead of each claiming the free space again.
+            style={{ marginLeft: 0 }}
+            title={action.title}
+            disabled={action.disabled}
+            onClick={action.onClick}
+          >{action.label}</button>
+        ))}
         {/* Defensive row-count indicator: surfaces what the table
             actually sees right next to the export controls. If the
             parent says 'showing 42' but this badge shows '0 rows',
