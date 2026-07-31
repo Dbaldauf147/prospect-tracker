@@ -556,14 +556,39 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
       // every chip has a position.
       chipGeom[step.index] = { x: chipX, y: rowY, w: chipW };
 
-      if (step.stage.owner === 'Both') {
+      // A milestone is a moment, not a duration: draw it as a diamond
+      // centred in its month rather than a bar across months, so the two
+      // read apart at a glance. getStageMonths already pinned its span to
+      // one month, so chipW is a single column here.
+      if (pos.milestone) {
+        const cx = chipX + chipW / 2;
+        const cy = rowY + 12;
+        const rx = Math.min(15, chipW / 2);
+        const diamond = (fillColor, clipHalf) => {
+          const pts = `${cx},${cy - 13} ${cx + rx},${cy} ${cx},${cy + 13} ${cx - rx},${cy}`;
+          if (!clipHalf) return `<polygon points="${pts}" fill="${fillColor}"/>`;
+          // 'Both' splits the diamond down the middle, matching the bar.
+          const x = clipHalf === 'left' ? cx - rx : cx;
+          return `<g><clipPath id="mcl${step.index}${clipHalf}">`
+            + `<rect x="${x}" y="${cy - 14}" width="${rx}" height="28"/></clipPath>`
+            + `<polygon points="${pts}" fill="${fillColor}" clip-path="url(#mcl${step.index}${clipHalf})"/></g>`;
+        };
+        if (step.stage.owner === 'Both') {
+          s += diamond(workstreamColor('Client'), 'left');
+          s += diamond(workstreamColor('Schneider Electric'), 'right');
+        } else {
+          s += diamond(color);
+        }
+        s += `<text x="${cx}" y="${cy + 4.5}" text-anchor="middle" font-size="12" font-weight="800" fill="#FFFFFF">${step.index + 1}</text>`;
+      } else if (step.stage.owner === 'Both') {
         // Split chip: both workstreams own the step.
         s += `<rect x="${chipX}" y="${rowY}" width="${chipW / 2}" height="24" fill="${workstreamColor('Client')}"/>`;
         s += `<rect x="${chipX + chipW / 2}" y="${rowY}" width="${chipW / 2}" height="24" fill="${workstreamColor('Schneider Electric')}"/>`;
+        s += `<text x="${chipX + (chipW > 60 ? 10 : chipW / 2)}" y="${rowY + 17}" text-anchor="${chipW > 60 ? 'start' : 'middle'}" font-size="13.5" font-weight="800" fill="#FFFFFF">${step.index + 1}</text>`;
       } else {
         s += `<rect x="${chipX}" y="${rowY}" width="${chipW}" height="24" fill="${color}"/>`;
+        s += `<text x="${chipX + (chipW > 60 ? 10 : chipW / 2)}" y="${rowY + 17}" text-anchor="${chipW > 60 ? 'start' : 'middle'}" font-size="13.5" font-weight="800" fill="#FFFFFF">${step.index + 1}</text>`;
       }
-      s += `<text x="${chipX + (chipW > 60 ? 10 : chipW / 2)}" y="${rowY + 17}" text-anchor="${chipW > 60 ? 'start' : 'middle'}" font-size="13.5" font-weight="800" fill="#FFFFFF">${step.index + 1}</text>`;
 
       // Label placement, in order of preference: beside the chip, inside it
       // when it's a wide bar with no room to the right, and failing that to

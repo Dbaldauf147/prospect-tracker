@@ -2,6 +2,9 @@ import { useMemo, useState, useEffect, useId } from 'react';
 import {
   TIMELINE_STAGE_OWNERS,
   DEFAULT_STAGE_OWNER,
+  TIMELINE_STAGE_KINDS,
+  DEFAULT_STAGE_KIND,
+  STAGE_KIND_LABELS,
   getTimelineTemplates,
   makeTimelineId,
   summarizeStageOwners,
@@ -144,6 +147,20 @@ function StageRow({ index, total, stage, format, mode, priorSteps, onChange, onM
       )}
       {format === 'phased' && (
         <>
+          <td>
+            {/* Timeline (a duration, drawn as a bar) vs Milestone (a moment,
+                drawn as a diamond in its start month). */}
+            <select
+              value={stage.kind || DEFAULT_STAGE_KIND}
+              onChange={(e) => onChange({ ...stage, kind: e.target.value })}
+              title="Timeline spans its months as a bar; Milestone marks a single month with a diamond"
+              className={styles.ownerSelect}
+            >
+              {TIMELINE_STAGE_KINDS.map(k => (
+                <option key={k} value={k}>{STAGE_KIND_LABELS[k]}</option>
+              ))}
+            </select>
+          </td>
           <td>
             <DraftInput
               value={stage.phase}
@@ -453,7 +470,7 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
   function addStage() {
     onChange({
       ...template,
-      stages: [...stages, { id: makeTimelineId('st'), name: '', owner: DEFAULT_STAGE_OWNER, timing: '', description: '', icon: 'number' }],
+      stages: [...stages, { id: makeTimelineId('st'), name: '', owner: DEFAULT_STAGE_OWNER, timing: '', description: '', icon: 'number', kind: DEFAULT_STAGE_KIND }],
     });
   }
   function addService(name) {
@@ -618,6 +635,7 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
               <th>{format === 'phased' ? 'Step' : 'Stage'}</th>
               <th>{format === 'phased' ? 'Workstream' : 'Owner'}</th>
               {format === 'milestone' && <th>Icon</th>}
+              {format === 'phased' && <th>Type</th>}
               {format === 'phased' && <th>Phase</th>}
               {format === 'phased' && (
                 <th className={mode === 'dates' ? undefined : styles.inactiveHead}
