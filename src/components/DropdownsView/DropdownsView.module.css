@@ -918,3 +918,121 @@
   border-color: var(--color-border-light);
   color: var(--color-text);
 }
+
+/* --- Stage table: column picker and drag-to-resize ------------------ */
+
+.stageTableTools {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.3rem 0.6rem 0;
+}
+
+.columnPicker {
+  position: relative;
+}
+
+.columnPickerBtn {
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 0.68rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.columnPickerBtn:hover {
+  border-color: var(--color-border-strong, var(--color-border));
+  color: var(--color-text);
+}
+
+.columnPickerMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  min-width: 170px;
+  padding: 0.35rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface, var(--color-bg));
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.16);
+}
+
+.columnPickerRow {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.18rem 0.3rem;
+  font-size: 0.74rem;
+  color: var(--color-text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.columnPickerRow:hover {
+  background: var(--color-bg-hover, rgba(148, 163, 184, 0.12));
+  border-radius: 4px;
+}
+
+.columnPickerReset {
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.25rem;
+  border: none;
+  border-top: 1px solid var(--color-border-light);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 0.68rem;
+  cursor: pointer;
+}
+
+.columnPickerReset:hover {
+  color: var(--color-text);
+}
+
+/* The header cell has to position the drag handle, and its label has to clip
+   rather than force the column wider than the width that was set. */
+.stageHeadCell {
+  position: relative;
+}
+
+.stageHeadLabel {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.colResizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  /* Sits above the neighbouring header so the grab area stays clickable. */
+  z-index: 1;
+  touch-action: none;
+}
+
+.colResizer:hover::after,
+.colResizer:active::after {
+  content: '';
+  position: absolute;
+  top: 15%;
+  left: 3px;
+  width: 2px;
+  height: 70%;
+  background: var(--color-accent, #3DCD58);
+  border-radius: 1px;
+}
+
+/* Fixed layout means a narrowed column no longer grows to fit its contents,
+   so cells clip instead of spilling into their neighbour. */
+.stageTable td {
+  overflow: hidden;
+}

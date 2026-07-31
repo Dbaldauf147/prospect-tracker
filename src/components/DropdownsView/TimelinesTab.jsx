@@ -17,6 +17,11 @@ import {
 } from '../../utils/timelineDates';
 import { openTimelineReport, downloadTimelineSvg, downloadTimelinePng } from '../../utils/timelineExport';
 import { exportTimelineXlsx } from '../../utils/timelineXlsx';
+import {
+  stageTableColumns, resolveStageTableColumns,
+  loadStageTableLayout, saveStageTableLayout,
+  STAGE_TABLE_LAYOUT_EVENT, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH,
+} from '../../utils/stageTableColumns';
 import styles from './DropdownsView.module.css';
 
 // Which pill style each owner gets. Keeps the owner readable at a glance
@@ -24,6 +29,21 @@ import styles from './DropdownsView.module.css';
 // Month-count choices for the implementation format. "Auto" (blank) fits the
 // steps, with a floor of 12 so a short timeline still reads as a year.
 const MONTH_COUNT_OPTIONS = [3, 6, 9, 12, 18, 24, 36];
+
+// Header tooltips, by column key — the explanations that used to sit inline
+// on the <th>s.
+const COLUMN_TITLES = {
+  range: 'Start and end dates. The standard way to place a step.',
+  monthSpan: 'Start month from kickoff × how many months it spans',
+  depends: 'The earlier step this one waits on',
+};
+
+// Columns the implementation format greys out because the other positioning
+// mode is in charge — dates when positioning by months, and vice versa.
+const INACTIVE_COLUMN = {
+  range: (mode) => mode !== 'dates',
+  monthSpan: (mode) => mode === 'dates',
+};
 
 const OWNER_PILL_CLASS = {
   'Schneider Electric': styles.ownerPillSe,
@@ -105,7 +125,7 @@ function NumberCell({ value, onCommit, min = 1, placeholder, title }) {
 // and in the implementation format it's also the step numbering. Which
 // columns appear follows the timeline's format, so each layout shows only
 // the controls that drive it.
-function StageRow({ index, total, stage, format, mode, priorSteps, onChange, onMove, onRemove }) {
+function StageRow({ index, total, stage, mode, columns, priorSteps, onChange, onMove, onRemove }) {
   // Effective calendar range: the explicit dates when set, otherwise whatever
   // the Timing text parses to. `auto` means nothing was typed into the date
   // cells — they're mirroring the label.
@@ -115,10 +135,13 @@ function StageRow({ index, total, stage, format, mode, priorSteps, onChange, onM
   // work out on its own, so a blank cell shows what it's actually doing.
   const months = getStageMonths(stage, null, mode);
   const byDates = mode === 'dates';
-  return (
-    <tr>
-      <td className={styles.stageOrderCell}>{index + 1}</td>
-      <td>
+  // One entry per column key. The header, the <colgroup> and this map are all
+  // driven by the same column list, so a hidden column drops out of every one
+  // of them at once and they can't fall out of step.
+  const cells = {};
+  cells.n = <td key="n" className={styles.stageOrderCell}>{index + 1}</td>;
+  cells.name = (
+      <td key="name">
         <DraftInput
           value={stage.name}
           placeholder="Stage name"
@@ -126,7 +149,9 @@ function StageRow({ index, total, stage, format, mode, priorSteps, onChange, onM
           onCommit={(next) => onChange({ ...stage, name: next })}
         />
       </td>
-      <td>
+  );
+  cells.owner = (
+      <td key="owner">
         <select
           value={stage.owner}
           onChange={(e) => onChange({ ...stage, owner: e.target.value })}
@@ -136,8 +161,9 @@ function StageRow({ index, total, stage, format, mode, priorSteps, onChange, onM
           {TIMELINE_STAGE_OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
         </select>
       </td>
-      {format === 'milestone' && (
-        <td>
+  );
+  cells.icon = (
+        <td key="icon">
           <select
             value={stage.icon || 'number'}
             onChange={(e) => onChange({ ...stage, icon: e.target.value })}
@@ -147,10 +173,9 @@ function StageRow({ index, total, stage, format, mode, priorSteps, onChange, onM
             {STAGE_ICONS.map(i => <option key={i.key} value={i.key}>{i.label}</option>)}
           </select>
         </td>
-      )}
-      {format === 'phased' && (
-        <>
-          <td>
+  );
+  cells.kind = (
+          <td key="kind">
             {/* Timeline (a duration, drawn as a bar) vs Milestone (a moment,
                 drawn as a diamond in its start month). */}
             <select
@@ -164,7 +189,9 @@ function StageRow({ index, total, stage, format, mode, priorSteps, onChange, onM
               ))}
             </select>
           </td>
-          <td className={`${styles.stageDatesCell} ${byDates ? '' : styles.inactiveCell}`}>
+  );
+  cells.range = (
+          <td key="range" className={`${styles.stageDatesCell} ${byDates ? '' : styles.inactiveCell}`}>
             <input
               type="date"
               className={styles.dateInput}
@@ -191,7 +218,9 @@ function StageRow({ index, total, stage, format, mode, priorSteps, onChange, onM
               <span className={styles.undatedTag} title="Without dates this step falls back to month 1. Give it dates, or position by months.">no date</span>
             )}
           </td>
-          <td className={`${styles.monthCell} ${byDates ? styles.inactiveCell : ''}`}>
+  );
+  cells.monthSpan = (
+          <td key="monthSpan" className={`${styles.monthCell} ${byDates ? styles.inactiveCell : ''}`}>
             <NumberCell
               value={stage.startMonth}
               placeholder={String(months.month)}
@@ -210,7 +239,9 @@ function StageRow({ index, total, stage, format, mode, priorSteps, onChange, onM
               onCommit={(next) => onChange({ ...stage, months: next })}
             />
           </td>
-          <td>
+  );
+  cells.depends = (
+          <td key="depends">
             <select
               value={stage.dependsOn || ''}
               onChange={(e) => onChange({ ...stage, dependsOn: e.target.value })}
@@ -223,9 +254,9 @@ function StageRow({ index, total, stage, format, mode, priorSteps, onChange, onM
               ))}
             </select>
           </td>
-        </>
-      )}
-      <td>
+  );
+  cells.timing = (
+      <td key="timing">
         <DraftInput
           value={stage.timing}
           placeholder="7/31/2026 · Aug–Sep 2026 · Q3 2026"
@@ -233,8 +264,9 @@ function StageRow({ index, total, stage, format, mode, priorSteps, onChange, onM
           onCommit={(next) => onChange({ ...stage, timing: next })}
         />
       </td>
-      {format === 'gantt' && (
-      <td className={styles.stageDatesCell}>
+  );
+  cells.dates = (
+      <td key="dates" className={styles.stageDatesCell}>
         <input
           type="date"
           className={styles.dateInput}
@@ -257,8 +289,9 @@ function StageRow({ index, total, stage, format, mode, priorSteps, onChange, onM
           <span className={styles.undatedTag} title="This stage can't be placed on the Gantt until it has dates.">no date</span>
         )}
       </td>
-      )}
-      <td>
+  );
+  cells.description = (
+      <td key="description">
         <DraftInput
           value={stage.description}
           placeholder="What happens at this stage"
@@ -267,7 +300,9 @@ function StageRow({ index, total, stage, format, mode, priorSteps, onChange, onM
           onCommit={(next) => onChange({ ...stage, description: next })}
         />
       </td>
-      <td className={styles.stageActionsCell}>
+  );
+  cells.actions = (
+      <td key="actions" className={styles.stageActionsCell}>
         <button
           type="button"
           className={styles.stageMoveBtn}
@@ -292,7 +327,146 @@ function StageRow({ index, total, stage, format, mode, priorSteps, onChange, onM
           aria-label="Remove this stage"
         >×</button>
       </td>
-    </tr>
+  );
+  return <tr>{columns.map(col => cells[col.key]).filter(Boolean)}</tr>;
+}
+
+// Which stage-table columns are showing and how wide each one is, kept in
+// localStorage per format. Re-reads on the in-tab change event and on
+// cross-tab storage writes, so every open timeline card agrees.
+function useStageTableLayout(format) {
+  const [layout, setLayout] = useState(() => loadStageTableLayout(format));
+  // Re-read when the format changes during render rather than in an effect —
+  // the same render-phase resync the number cells use, and it avoids a wasted
+  // pass showing the previous format's columns.
+  const [lastFormat, setLastFormat] = useState(format);
+  if (format !== lastFormat) {
+    setLastFormat(format);
+    setLayout(loadStageTableLayout(format));
+  }
+  useEffect(() => {
+    const refresh = () => setLayout(loadStageTableLayout(format));
+    window.addEventListener(STAGE_TABLE_LAYOUT_EVENT, refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener(STAGE_TABLE_LAYOUT_EVENT, refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, [format]);
+
+  // Persist and update in one step. The event handler above re-reads for the
+  // other cards; setting it here too keeps this one instant.
+  const commit = (next) => {
+    setLayout(next);
+    saveStageTableLayout(format, next);
+  };
+  return [layout, commit];
+}
+
+// Header cell with a drag handle on its right edge. The drag reports every
+// move so the column resizes live, and only writes to storage on release —
+// one save per drag rather than one per pixel.
+function StageHeadCell({ column, label, title, className, onResize, onResizeEnd }) {
+  const start = (e) => {
+    // Ignore anything but a primary press, so a right-click doesn't latch.
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startWidth = column.width;
+    const handle = e.currentTarget;
+    handle.setPointerCapture?.(e.pointerId);
+    const width = (ev) => Math.min(
+      MAX_COLUMN_WIDTH,
+      Math.max(MIN_COLUMN_WIDTH, Math.round(startWidth + (ev.clientX - startX))),
+    );
+    const move = (ev) => onResize(column.key, width(ev));
+    const up = (ev) => {
+      handle.releasePointerCapture?.(e.pointerId);
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
+      onResizeEnd(column.key, width(ev));
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+    handle.addEventListener('pointercancel', up);
+  };
+  return (
+    <th className={`${styles.stageHeadCell} ${className || ''}`} title={title}>
+      <span className={styles.stageHeadLabel}>{label}</span>
+      <span
+        className={styles.colResizer}
+        onPointerDown={start}
+        onDoubleClick={() => onResizeEnd(column.key, null)}
+        title="Drag to resize this column · double-click to reset it"
+        role="presentation"
+      />
+    </th>
+  );
+}
+
+// "Columns" menu: a checkbox per hideable column. Closes on Escape or a click
+// outside, like the other popovers on this page.
+function ColumnPicker({ format, layout, onChange }) {
+  const [open, setOpen] = useState(false);
+  const all = stageTableColumns(format);
+  const hideable = all.filter(c => !c.fixed);
+  const hiddenCount = hideable.filter(c => layout.hidden[c.key]).length;
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    const onClick = (e) => {
+      if (!e.target.closest?.(`.${styles.columnPicker}`)) setOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    // Deferred so the click that opened the menu doesn't immediately close it.
+    const id = setTimeout(() => window.addEventListener('click', onClick), 0);
+    return () => {
+      clearTimeout(id);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('click', onClick);
+    };
+  }, [open]);
+
+  const toggle = (key) => {
+    const hidden = { ...layout.hidden };
+    if (hidden[key]) delete hidden[key];
+    else hidden[key] = true;
+    onChange({ ...layout, hidden });
+  };
+
+  return (
+    <div className={styles.columnPicker}>
+      <button
+        type="button"
+        className={styles.columnPickerBtn}
+        onClick={() => setOpen(v => !v)}
+        title="Choose which columns the stage table shows"
+      >
+        Columns{hiddenCount ? ` · ${hideable.length - hiddenCount}/${hideable.length}` : ''}
+      </button>
+      {open && (
+        <div className={styles.columnPickerMenu}>
+          {hideable.map(col => (
+            <label key={col.key} className={styles.columnPickerRow}>
+              <input
+                type="checkbox"
+                checked={!layout.hidden[col.key]}
+                onChange={() => toggle(col.key)}
+              />
+              {col.label}
+            </label>
+          ))}
+          <button
+            type="button"
+            className={styles.columnPickerReset}
+            onClick={() => onChange({ hidden: {}, widths: {} })}
+          >Reset columns and widths</button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -495,6 +669,29 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
     .filter(({ stage }) => !term || [stage.name, stage.owner, stage.timing, stage.description]
       .some(v => String(v || '').toLowerCase().includes(term)));
 
+  // Stage-table columns: which are showing and how wide, per format.
+  const [layout, setLayout] = useStageTableLayout(format);
+  // A width being dragged right now. Kept out of the saved layout so the
+  // table tracks the pointer without a storage write per frame.
+  const [dragWidth, setDragWidth] = useState(null);
+  const columns = useMemo(() => {
+    const resolved = resolveStageTableColumns(format, layout);
+    if (!dragWidth) return resolved;
+    return resolved.map(c => (c.key === dragWidth.key ? { ...c, width: dragWidth.width } : c));
+  }, [format, layout, dragWidth]);
+  const totalColumnWidth = columns.reduce((sum, c) => sum + c.width, 0);
+
+  const resizeColumn = (key, width) => setDragWidth({ key, width });
+  // Release: persist, or clear the override back to the default when the
+  // handle was double-clicked (width === null).
+  const commitColumnWidth = (key, width) => {
+    setDragWidth(null);
+    const widths = { ...layout.widths };
+    if (width == null) delete widths[key];
+    else widths[key] = width;
+    setLayout({ ...layout, widths });
+  };
+
   return (
     <div className={styles.card}>
       <div className={styles.cardHeader}>
@@ -667,47 +864,41 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
         </div>
       )}
 
+      <div className={styles.stageTableTools}>
+        <ColumnPicker format={format} layout={layout} onChange={setLayout} />
+      </div>
+
       <div className={styles.timelineTableWrap}>
-        <table className={styles.stageTable}>
+        {/* Fixed layout and an explicit total width: the columns then hold the
+            widths they were dragged to instead of the browser redistributing
+            the slack, and the wrapper scrolls when they add up to more than
+            the card. */}
+        <table
+          className={styles.stageTable}
+          style={{ tableLayout: 'fixed', width: totalColumnWidth }}
+        >
           <colgroup>
-            <col style={{ width: 34 }} />
-            <col />
-            <col style={{ width: 170 }} />
-            {format === 'milestone' && <col style={{ width: 118 }} />}
-            {format === 'phased' && <col style={{ width: 270 }} />}
-            {format === 'phased' && <col style={{ width: 108 }} />}
-            {format === 'phased' && <col style={{ width: 150 }} />}
-            <col style={{ width: 150 }} />
-            {format === 'gantt' && <col style={{ width: 290 }} />}
-            <col />
-            <col style={{ width: 84 }} />
+            {columns.map(col => <col key={col.key} style={{ width: col.width }} />)}
           </colgroup>
           <thead>
             <tr>
-              <th>#</th>
-              <th>{format === 'phased' ? 'Step' : 'Stage'}</th>
-              <th>{format === 'phased' ? 'Workstream' : 'Owner'}</th>
-              {format === 'milestone' && <th>Icon</th>}
-              {format === 'phased' && <th>Type</th>}
-              {format === 'phased' && (
-                <th className={mode === 'dates' ? undefined : styles.inactiveHead}
-                    title="Start and end dates. The standard way to place a step.">Start → End</th>
-              )}
-              {format === 'phased' && (
-                <th className={mode === 'dates' ? styles.inactiveHead : undefined}
-                    title="Start month from kickoff × how many months it spans">Month × Span</th>
-              )}
-              {format === 'phased' && <th title="The earlier step this one waits on">Depends on</th>}
-              <th>Timing</th>
-              {format === 'gantt' && <th>Dates</th>}
-              <th>Description</th>
-              <th aria-hidden="true" />
+              {columns.map(col => (
+                <StageHeadCell
+                  key={col.key}
+                  column={col}
+                  label={col.key === 'actions' ? '' : col.label}
+                  title={COLUMN_TITLES[col.key]}
+                  className={INACTIVE_COLUMN[col.key]?.(mode) ? styles.inactiveHead : undefined}
+                  onResize={resizeColumn}
+                  onResizeEnd={commitColumnWidth}
+                />
+              ))}
             </tr>
           </thead>
           <tbody>
             {visibleStages.length === 0 ? (
               <tr>
-                <td colSpan={format === 'phased' ? 10 : 8} className={styles.serviceEmpty}>
+                <td colSpan={columns.length} className={styles.serviceEmpty}>
                   {stages.length === 0 ? 'No stages yet — add the first one below.' : 'No stages match the search.'}
                 </td>
               </tr>
@@ -718,8 +909,8 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
                   index={idx}
                   total={stages.length}
                   stage={stage}
-                  format={format}
                   mode={mode}
+                  columns={columns}
                   priorSteps={stages.slice(0, idx).map((st, i) => ({ id: st.id, number: i + 1, name: st.name }))}
                   onChange={(next) => updateStage(idx, next)}
                   onMove={(delta) => moveStage(idx, delta)}
