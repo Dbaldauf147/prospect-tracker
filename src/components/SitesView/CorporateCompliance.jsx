@@ -543,8 +543,14 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                         unanswered, which would expand every jurisdiction on
                         a fresh company. Each carries its own Applies?
                         answer, keyed jurisdiction__regulation-slug. */}
-                    {(val === 'Yes' || val === 'Unknown') && regs.map((r) => {
+                    {regs.map((r) => {
                       const rKey = regulationAnswerKey(q.key, r.regulation);
+                      // A regulation the user has attached a link or findings
+                      // to stays on screen even when the jurisdiction answer
+                      // no longer triggers it — their saved research should
+                      // never disappear with the row.
+                      const triggered = val === 'Yes' || val === 'Unknown';
+                      if (!triggered && !(links?.[rKey] || findings?.[rKey])) return null;
                       const rVal = answers?.[rKey] || '';
                       // Pure threshold tests (SB 253 / SB 261) answer
                       // themselves from the revenue already on this card.
@@ -885,8 +891,14 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
       // clears, so a malformed verdict can't stick.
       for (const q of JURISDICTION_QUESTIONS) {
         const a = answers[q.key];
-        updates[`corporateComplianceScreening.${key}.${q.key}`] =
-          SCREENING_ANSWERS.includes(a) ? a : null;
+        // Only write a verdict we recognise. An unrecognised one used to
+        // clear the cell, which quietly destroyed an answer the user had
+        // set by hand — and with it the jurisdiction's regulation rows and
+        // every reference link attached to them. A malformed verdict still
+        // can't stick; it just no longer takes the old answer down with it.
+        if (SCREENING_ANSWERS.includes(a)) {
+          updates[`corporateComplianceScreening.${key}.${q.key}`] = a;
+        }
       }
       // Keep the rationale + sources alongside so the card can explain itself.
       updates[`companyComplianceResearch.${key}`] = {
