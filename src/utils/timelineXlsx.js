@@ -16,7 +16,7 @@ import { schneiderLogoPngDataUrl, SE_GREEN_DARK, SE_GREEN } from './schneiderLog
 import { ownerColor, WORKSTREAM_COLOR } from './timelineGraphic.js';
 import {
   getStageRange, isoToMs, daysInMonth, monthLabel,
-  timelineBaseMonth, getStageMonths, anchorPlus, todayMonthIndex,
+  timelineBaseMonth, getStageMonths, anchorPlus, todayMonthIndex, stageMonthFraction,
 } from './timelineDates.js';
 
 const argb = (hex) => 'FF' + String(hex).replace('#', '').toUpperCase();
@@ -270,10 +270,29 @@ function writePhasedSheet(wb, ws, template, meta) {
 
     const from = Math.min(pos.month, monthCount);
     const to = Math.min(pos.month + pos.span - 1, monthCount);
+    // A milestone is a moment: a diamond in its month rather than a filled
+    // block, matching the chart. Excel can't place a mark part-way across a
+    // cell, but it can indent the text — so the glyph is pushed right in
+    // proportion to the day of the month, which gives roughly per-week
+    // resolution in a calendar column and still reads left-to-right.
+    const monthChars = calendar ? 11 : 6;
+    const frac = pos.milestone ? stageMonthFraction(stage) : null;
+    const indent = frac == null
+      ? 0
+      : Math.max(0, Math.min(monthChars - 2, Math.round(frac * (monthChars - 2))));
+
     for (let m = 1; m <= monthCount; m += 1) {
       const cell = ws.getCell(r, LEAD + m);
       if (m === todayCol) cell.fill = fill('FFEAF7EE');
       if (m < from || m > to) continue;
+      if (pos.milestone) {
+        cell.value = `◆${i + 1}`;
+        cell.font = { name: FONT, bold: true, size: 11, color: { argb: color } };
+        cell.alignment = frac == null
+          ? { vertical: 'middle', horizontal: 'center' }
+          : { vertical: 'middle', horizontal: 'left', indent };
+        continue;
+      }
       cell.fill = fill(color);
       if (m === from) {
         cell.value = i + 1;
@@ -320,9 +339,10 @@ function writePhasedSheet(wb, ws, template, meta) {
   // Everything below the frame is footnotes: how to read the numbering, the
   // clamp warning, and the provenance line moved down out of the header.
   r += 2;
-  ws.getCell(r, 1).value = calendar
+  ws.getCell(r, 1).value = (calendar
     ? 'Numbers match the step order · the highlighted column is the current month'
-    : 'Numbers match the step order · columns are months from kickoff';
+    : 'Numbers match the step order · columns are months from kickoff')
+    + ' · ◆ marks a milestone, sitting where in the month it falls';
   ws.getCell(r, 1).font = { name: FONT, italic: true, size: 9, color: { argb: MUTE } };
 
   // Same warning the graphic carries when the month count cuts steps short.

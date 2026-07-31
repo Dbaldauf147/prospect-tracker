@@ -16,6 +16,7 @@ import { TIMELINE_STAGE_OWNERS, DEFAULT_STAGE_OWNER } from './timelineTemplatesS
 import {
   getStageRange, formatRangeLabel, isoToMs, msToIso, daysInMonth, monthLabel,
   timelineBaseMonth, getStageMonths, anchorPlus, todayMonthIndex, todayMonthOffset,
+  stageMonthFraction,
 } from './timelineDates';
 
 const SE_INK = '#0F172A';
@@ -561,9 +562,16 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
       // read apart at a glance. getStageMonths already pinned its span to
       // one month, so chipW is a single column here.
       if (pos.milestone) {
-        const cx = chipX + chipW / 2;
         const cy = rowY + 12;
         const rx = Math.min(15, chipW / 2);
+        // Sit at the point of the month the date actually falls on — the 31st
+        // hugs the right edge of its column, the 1st the left — so a
+        // month-wide column still reads to the day. Without a date (a
+        // timeline written in month numbers) it stays centred.
+        const frac = stageMonthFraction(step.stage);
+        const cx = frac == null
+          ? chipX + chipW / 2
+          : chipX + Math.min(Math.max(frac * chipW, rx), chipW - rx);
         const diamond = (fillColor, clipHalf) => {
           const pts = `${cx},${cy - 13} ${cx + rx},${cy} ${cx},${cy + 13} ${cx - rx},${cy}`;
           if (!clipHalf) return `<polygon points="${pts}" fill="${fillColor}"/>`;
