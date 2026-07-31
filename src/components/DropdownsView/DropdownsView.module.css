@@ -765,7 +765,10 @@
 .visualSvg > svg {
   display: block;
   height: auto;
-  max-width: 100%;
+  /* Fill the card rather than sit at its natural size: a short timeline
+     otherwise drew a small graphic marooned in white space. The viewBox
+     scales it either way, up or down. */
+  width: 100%;
 }
 
 .timelineEmptyState {
