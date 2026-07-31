@@ -16,6 +16,7 @@ import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
 import { asNumber, dealYear } from '../../utils/dealsFormat';
 import {
   loadQuotedProjections, saveQuotedProjections, QUOTED_FIELDS, QUOTED_HISTORICAL_SEED,
+  juneRebuildDone, markJuneRebuildDone,
 } from '../../utils/quotedProjectionsStore';
 import { loadYoyOverrides, saveYoyOverrides } from '../../utils/yoyOverridesStore';
 import { loadHiddenCharts, saveHiddenCharts } from '../../utils/yoyHiddenChartsStore';
@@ -295,6 +296,7 @@ function parseDateYear(v) {
 function quotedStoredSource(key, saved) {
   if (!saved) return 'No values recorded';
   if (saved._auto) return 'Auto-captured month-end snapshot (Opps + BFO Activity)';
+  if (saved._rebuilt) return 'Rebuilt from Opps as the pipeline stood at month end';
   const seed = QUOTED_HISTORICAL_SEED[key];
   if (seed && QUOTED_FIELDS.every(f => Number(seed[f]) === Number(saved[f]))) {
     return 'Seeded history (supplied figures)';
@@ -313,8 +315,9 @@ function quotedValueSource(row, quotedTable) {
 
 const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-// June 2026 was never captured before the month-end auto-persist existed,
-// leaving a gap on the chart. It's backfilled once with today's live values.
+// June 2026 was never captured before the month-end auto-persist existed. Its
+// first fill was a stand-in copy of the then-live totals; it's rebuilt once
+// from the Opps data as the pipeline stood at that month end.
 const JUNE_2026_KEY = '2026-06';
 
 // Quoted Projections runs on a Dec-to-Nov fiscal year, starting in
@@ -615,10 +618,10 @@ export function YOYView() {
   }, [quotedTable, quotedYear, liveCurrentMonth]);
 
   // Persist the live current-month snapshot so it survives the calendar
-  // roll-over, and one-time backfill the June 2026 gap. Previously the
-  // in-progress month was only ever computed live and never written, so on
+  // roll-over, and rebuild any past month that was never captured. Previously
+  // the in-progress month was only ever computed live and never written, so on
   // the 1st of the next month it reverted to a gap — that's how June's
-  // figures vanished once July began. Both writes are batched into a single
+  // figures vanished once July began. The writes are batched into a single
   // update to avoid one clobbering the other.
   useEffect(() => {
     if (!liveCurrentMonth) return;
@@ -646,15 +649,27 @@ export function YOYView() {
         QUOTED_FIELDS.every(f => (curExisting[f] ?? null) === (snap[f] ?? null));
       if (snap && !unchanged) patch[curKey] = { ...snap, _auto: true };
     }
-    // 2) One-time backfill: June 2026 predates the auto-persist above, so
-    //    its point is a gap and its real month-end values are unrecoverable.
-    //    Fill it with today's live values (a deliberate stand-in) as a fixed
-    //    recorded entry the user can correct via "Edit values". Scoped to the
-    //    2026 fiscal year — the only time June 2026 is on the chart — and
-    //    self-limiting: once written it persists and won't be re-filled.
-    if (quotedYear === 2026 && !quotedTable[JUNE_2026_KEY]) {
-      const snap = liveSnap();
-      if (snap) patch[JUNE_2026_KEY] = snap; // no `_auto` → fixed, editable
+    // 2) Any already-finished month on the chart with nothing recorded gets
+    //    rebuilt from the Opps data as the pipeline stood at that month end
+    //    (the same reconstruction the per-month Excel export attaches), not
+    //    from today's totals. A month only gets filled once — the write makes
+    //    it a recorded entry that "Edit values" can correct.
+    for (const m of fiscalMonths(quotedYear)) {
+      const key = `${m.year}-${String(m.monthIdx + 1).padStart(2, '0')}`;
+      if (key >= curKey || quotedTable[key]) continue; // in progress / future / already recorded
+      const snap = quotedMonthSnapshot(key);
+      if (snap) patch[key] = snap;
+    }
+    // 3) June 2026 was filled once with today's live totals as a stand-in
+    //    before the reconstruction above existed, so it's carrying July's
+    //    numbers rather than its own month end. Replace it with the rebuild,
+    //    once per user — a manual correction after that stands.
+    if (quotedYear === 2026 && !juneRebuildDone()) {
+      const snap = quotedMonthSnapshot(JUNE_2026_KEY);
+      if (snap) {
+        patch[JUNE_2026_KEY] = snap;
+        markJuneRebuildDone();
+      }
     }
     if (Object.keys(patch).length === 0) return;
     updateQuotedTable({ ...quotedTable, ...patch });
@@ -1664,6 +1679,35 @@ export function YOYView() {
     });
     return out;
   }
+  // A finished month's figures rebuilt from the Opps data, by summing the same
+  // rows the per-month export attaches — the opps that were quoted by that
+  // month end and hadn't closed yet. Values in whole $K, matching the store.
+  //
+  // It reads today's Chance? / Stage on those opps, so a bucket an opp has
+  // since moved between lands where it sits now; that's the same caveat the
+  // export's "Totals check" sheet already spells out. `bfoPipe` is left out
+  // entirely — BFO Activity is a pasted current snapshot with no history, so
+  // there's nothing to reconstruct it from and a blank beats today's total
+  // wearing a past month's label.
+  function quotedMonthSnapshot(monthKey) {
+    const opps = quotedMonthOpps(monthKey, false);
+    if (opps.length === 0) return null;
+    const totals = { weak: 0, ok: 0, expected: 0, agreements: 0 };
+    const BUCKET = { 'Quoted Weak': 'weak', 'Quoted OK': 'ok', 'Quoted Expected': 'expected' };
+    for (const o of opps) {
+      const amt = Number(o['Quoted Amount ($)']) || 0;
+      if (!amt) continue;
+      const bucket = BUCKET[o['Chart Series']];
+      if (bucket) totals[bucket] += amt;
+      if (o['Feeds Agreements Sent'] === 'Yes') totals.agreements += amt;
+    }
+    const snap = {};
+    let any = false;
+    for (const f of ['weak', 'ok', 'expected', 'agreements']) {
+      if (totals[f] > 0) { snap[f] = Math.round(totals[f] / 1000); any = true; }
+    }
+    return any ? { ...snap, _rebuilt: true } : null;
+  }
   // What the attached opp rows add up to, against what the chart plots. On the
   // live month the two agree; on a past month the gap is what has changed in
   // the Opps data since the snapshot was recorded.
@@ -1705,7 +1749,7 @@ export function YOYView() {
       });
     }
     if (!row) {
-      notes.push({ Series: 'Past months', 'Where the number comes from': 'Month-end snapshots — the figures captured at the time (auto-captured, seeded, or typed via "Edit values"). Pin a month on the chart and use its ⬇ Excel button for the opp rows behind that month.', 'Raw rows in this file': 'Recorded Months (store)' });
+      notes.push({ Series: 'Past months', 'Where the number comes from': 'Month-end snapshots — the figures captured at the time (auto-captured, seeded, typed via "Edit values", or rebuilt from the Opps data for a month that was never captured). Pin a month on the chart and use its ⬇ Excel button for the opp rows behind that month.', 'Raw rows in this file': 'Recorded Months (store)' });
     }
     return notes;
   }
