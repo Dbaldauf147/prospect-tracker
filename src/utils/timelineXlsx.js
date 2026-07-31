@@ -17,6 +17,7 @@ import { ownerColor, WORKSTREAM_COLOR } from './timelineGraphic.js';
 import {
   getStageRange, isoToMs, daysInMonth, monthLabel,
   timelineBaseMonth, getStageMonths, anchorPlus, todayMonthIndex, stageMonthFraction,
+  timelineWeekTicks, flattenWeekTicks,
 } from './timelineDates.js';
 
 const argb = (hex) => 'FF' + String(hex).replace('#', '').toUpperCase();
@@ -193,25 +194,66 @@ function writePhasedSheet(wb, ws, template, meta) {
   const anchor = String(template?.anchorMonth || '').trim();
   const todayCol = calendar ? todayMonthIndex(anchor, monthCount) : null;
 
+  // Each month is split into its week columns, so the grid carries a month
+  // band over a week row — the same two-level axis the graphic draws. Steps
+  // are still placed by month, so a bar fills every week column of the months
+  // it spans.
+  const weekTicks = timelineWeekTicks(anchor, monthCount, calendar);
+  const weekCols = flattenWeekTicks(weekTicks);
+  const NW = weekCols.length;
+  const monthFirst = new Map();
+  const monthLast = new Map();
+  weekCols.forEach((c, i) => {
+    if (!monthFirst.has(c.month)) monthFirst.set(c.month, i + 1);
+    monthLast.set(c.month, i + 1);
+  });
+  // Which week column of a month a 0–1 position across that month lands in —
+  // the last week that has started by then. Used for the today marker and for
+  // placing a milestone on its day.
+  const weekColumnFor = (month, frac) => {
+    const first = monthFirst.get(month) ?? 1;
+    const weeks = weekTicks[month - 1]?.weeks || [];
+    if (frac == null || !weeks.length) return first;
+    let idx = 0;
+    weeks.forEach((w, i) => { if (frac >= w.from) idx = i; });
+    return first + idx;
+  };
+  // The week the current day sits in, on a calendar timeline.
+  let todayWeekCol = null;
+  if (todayCol) {
+    const cal = anchorPlus(anchor, todayCol - 1);
+    const now = new Date();
+    todayWeekCol = weekColumnFor(
+      todayCol,
+      cal ? (now.getDate() - 1) / daysInMonth(cal.y, cal.m) : null,
+    );
+  }
+
   // With no phases set, every band borrows its own step's name — so a Step
   // column would just repeat column A down the sheet. Drop it and let Stages
   // carry the names. Once phases exist the two say different things (the band
   // vs the step inside it) and both are worth the width.
   const anyPhase = stages.some(st => String(st?.phase || '').trim());
-  const LEAD = anyPhase ? 3 : 2;       // Stages [| Step] | Workstream
-  const DESC = LEAD + monthCount + 1;  // Description, past the right of the grid
+  const LEAD = anyPhase ? 3 : 2;  // Stages [| Step] | Workstream
+  const DESC = LEAD + NW + 1;     // Description, past the right of the grid
   const NCOLS = DESC;
   ws.getColumn(1).width = anyPhase ? 32 : 46;
   ws.getColumn(2).width = anyPhase ? 46 : 20;
   if (anyPhase) ws.getColumn(3).width = 20;
-  for (let i = 0; i < monthCount; i += 1) ws.getColumn(LEAD + 1 + i).width = calendar ? 11 : 6;
+  for (let i = 0; i < NW; i += 1) ws.getColumn(LEAD + 1 + i).width = 3.4;
   ws.getColumn(DESC).width = 64;
 
-  writeBandHeader(wb, ws, template, meta, NCOLS, Math.max(3.2, NCOLS - (calendar ? 5 : 9)));
+  writeBandHeader(wb, ws, template, meta, NCOLS, Math.max(3.2, NCOLS - 16));
 
-  // Axis header — row 3, straight under the title band and its spacer.
+  // Axis header — row 3, straight under the title band and its spacer: the
+  // month band, with the week ticks on the row below it.
   const headRow = 3;
+  const weekRow = headRow + 1;
   (anyPhase ? ['Stages', 'Step', 'Workstream'] : ['Stages', 'Workstream']).forEach((label, i) => {
+    // The lead columns span both header rows, except the last one — the
+    // Workstream column keeps its second row free for the caption that names
+    // the week numbers.
+    if (i + 1 < LEAD) ws.mergeCells(headRow, i + 1, weekRow, i + 1);
     const cell = ws.getCell(headRow, i + 1);
     cell.value = label;
     cell.font = { name: FONT, bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
@@ -219,22 +261,41 @@ function writePhasedSheet(wb, ws, template, meta) {
     cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
   });
   for (let m = 1; m <= monthCount; m += 1) {
-    const cell = ws.getCell(headRow, LEAD + m);
+    const c0 = LEAD + monthFirst.get(m);
+    const c1 = LEAD + monthLast.get(m);
+    if (c1 > c0) ws.mergeCells(headRow, c0, headRow, c1);
+    const cell = ws.getCell(headRow, c0);
     const cal = calendar ? anchorPlus(anchor, m - 1) : null;
     cell.value = cal ? monthLabel(cal.y, cal.m, m === 1 || cal.m === 1) : m;
     cell.font = { name: FONT, bold: true, size: calendar ? 9 : 11, color: { argb: 'FFFFFFFF' } };
     cell.fill = fill(m === todayCol ? argb('#0E7C36') : argb(SE_GREEN));
     cell.alignment = { vertical: 'middle', horizontal: 'center' };
   }
+  weekCols.forEach((wcol, i) => {
+    const cell = ws.getCell(weekRow, LEAD + 1 + i);
+    cell.value = Number(wcol.label);
+    cell.font = { name: FONT, bold: true, size: 7.5, color: { argb: 'FFFFFFFF' } };
+    cell.fill = fill(LEAD + 1 + i === LEAD + todayWeekCol ? argb('#0E7C36') : argb(SE_GREEN));
+    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+  });
+  // Names the week row, so a reader knows whether the numbers are days of the
+  // month or weeks counted from kickoff.
+  const weekCaption = ws.getCell(weekRow, LEAD);
+  weekCaption.value = calendar ? 'Week of' : 'Weeks';
+  weekCaption.font = { name: FONT, bold: true, size: 8, color: { argb: 'FFFFFFFF' } };
+  weekCaption.fill = fill(argb(SE_GREEN));
+  weekCaption.alignment = { vertical: 'middle', horizontal: 'right' };
   const descHead = ws.getCell(headRow, DESC);
   descHead.value = 'Description';
   descHead.font = { name: FONT, bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
   descHead.fill = fill(argb(SE_GREEN));
   descHead.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  ws.mergeCells(headRow, DESC, weekRow, DESC);
   ws.getRow(headRow).height = 22;
+  ws.getRow(weekRow).height = 14;
 
   // One row per step; phase names merge down column A over their band.
-  let r = headRow + 1;
+  let r = weekRow + 1;
   const bandStart = r;
   let runPhase = null, runFrom = r;
   const closeBand = (toRow) => {
@@ -277,36 +338,35 @@ function writePhasedSheet(wb, ws, template, meta) {
 
     const from = Math.min(pos.month, monthCount);
     const to = Math.min(pos.month + pos.span - 1, monthCount);
-    // A milestone is a moment: a diamond in its month rather than a filled
-    // block, matching the chart. Excel can't place a mark part-way across a
-    // cell, but it can indent the text — so the glyph is pushed right in
-    // proportion to the day of the month, which gives roughly per-week
-    // resolution in a calendar column and still reads left-to-right.
-    const monthChars = calendar ? 11 : 6;
-    const frac = pos.milestone ? stageMonthFraction(stage) : null;
-    const indent = frac == null
-      ? 0
-      : Math.max(0, Math.min(monthChars - 2, Math.round(frac * (monthChars - 2))));
+    const barFrom = monthFirst.get(from) ?? 1;
+    const barTo = monthLast.get(to) ?? NW;
+    // A milestone is a moment: a diamond in the week it falls in rather than
+    // a filled block, matching the chart. The week columns give it a slot of
+    // its own, so the day-of-month fraction now picks the column instead of
+    // indenting the glyph across a wide month cell.
+    const milestoneCol = pos.milestone
+      ? weekColumnFor(from, stageMonthFraction(stage))
+      : null;
 
-    for (let m = 1; m <= monthCount; m += 1) {
-      const cell = ws.getCell(r, LEAD + m);
-      if (m === todayCol) cell.fill = fill('FFEAF7EE');
-      if (m < from || m > to) continue;
+    weekCols.forEach((wcol, wi) => {
+      const gridCol = wi + 1;
+      const cell = ws.getCell(r, LEAD + gridCol);
+      if (wcol.month === todayCol) cell.fill = fill('FFEAF7EE');
+      if (gridCol < barFrom || gridCol > barTo) return;
       if (pos.milestone) {
+        if (gridCol !== milestoneCol) return;
         cell.value = `◆${i + 1}`;
-        cell.font = { name: FONT, bold: true, size: 11, color: { argb: color } };
-        cell.alignment = frac == null
-          ? { vertical: 'middle', horizontal: 'center' }
-          : { vertical: 'middle', horizontal: 'left', indent };
-        continue;
+        cell.font = { name: FONT, bold: true, size: 10, color: { argb: color } };
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        return;
       }
       cell.fill = fill(color);
-      if (m === from) {
+      if (gridCol === barFrom) {
         cell.value = i + 1;
-        cell.font = { name: FONT, bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
+        cell.font = { name: FONT, bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
         cell.alignment = { vertical: 'middle', horizontal: 'center' };
       }
-    }
+    });
     const descCell = ws.getCell(r, DESC);
     descCell.value = stage.description || '';
     descCell.font = { name: FONT, size: 10, color: { argb: SLATE } };
@@ -321,7 +381,7 @@ function writePhasedSheet(wb, ws, template, meta) {
   applyGridBorders(ws, headRow, 1, lastStageRow, NCOLS);
   closeBand(lastStageRow);
 
-  ws.views = [{ state: 'frozen', xSplit: LEAD, ySplit: headRow, showGridLines: false }];
+  ws.views = [{ state: 'frozen', xSplit: LEAD, ySplit: weekRow, showGridLines: false }];
 
   // Legend, naming the client workstream the way the graphic does. The two
   // swatches stack down column A — one per row, the width of the Stages
@@ -347,9 +407,9 @@ function writePhasedSheet(wb, ws, template, meta) {
   // clamp warning, and the provenance line moved down out of the header.
   r += 2;
   ws.getCell(r, 1).value = (calendar
-    ? 'Numbers match the step order · the highlighted column is the current month'
-    : 'Numbers match the step order · columns are months from kickoff')
-    + ' · ◆ marks a milestone, sitting where in the month it falls';
+    ? 'Numbers match the step order · the week row gives the day each week starts on, and the highlighted column is the current week'
+    : 'Numbers match the step order · columns are months from kickoff, each split into four weeks')
+    + ' · ◆ marks a milestone, sitting in the week it falls';
   ws.getCell(r, 1).font = { name: FONT, italic: true, size: 9, color: { argb: MUTE } };
 
   // Same warning the graphic carries when the month count cuts steps short.
@@ -585,6 +645,7 @@ function writeStagesSheet(wb, rows, { phased, baseMonth, mode }) {
     { header: 'Type', key: 'kind', width: 11 },
     { header: 'Month', key: 'month', width: 9 },
     { header: 'Span', key: 'span', width: 9 },
+    { header: 'Weeks', key: 'weeks', width: 8 },
     { header: 'Start', key: 'start', width: 13 },
     { header: 'End', key: 'end', width: 13 },
     { header: 'Depends on', key: 'depends', width: 26 },
@@ -616,6 +677,11 @@ function writeStagesSheet(wb, rows, { phased, baseMonth, mode }) {
       month: months.month,
       kind: stage.kind === 'milestone' ? 'Milestone' : 'Timeline',
       span: months.span,
+      // Whole weeks the dates cover, rounded up — the grid is drawn in
+      // months, so this is the finer duration the week row is read against.
+      weeks: range
+        ? Math.max(1, Math.ceil(((isoToMs(range.end) - isoToMs(range.start)) / DAY_MS + 1) / 7))
+        : null,
       start: range ? excelDate(range.start) : null,
       end: range ? excelDate(range.end) : null,
       depends: dependsLabel(stage, rows),
@@ -644,6 +710,7 @@ function writeStagesSheet(wb, rows, { phased, baseMonth, mode }) {
     if (phased) {
       row.getCell('month').alignment = { vertical: 'middle', horizontal: 'center' };
       row.getCell('span').alignment = { vertical: 'middle', horizontal: 'center' };
+      row.getCell('weeks').alignment = { vertical: 'middle', horizontal: 'center' };
       row.getCell('start').numFmt = 'm/d/yyyy';
       row.getCell('end').numFmt = 'm/d/yyyy';
     } else {
