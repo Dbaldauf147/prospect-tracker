@@ -579,16 +579,12 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                         doing-business check. Both feed the SB 253 / SB 261
                         Applies? rows below. */}
                     {q.key === 'california' && CALIFORNIA_CRITERIA_GROUPS.map((group) => {
-                      // Same rule the regulation rows follow: a criterion the
-                      // user has answered or attached research to stays on
-                      // screen even when California no longer triggers the
-                      // group, so their work never disappears with the row.
-                      const triggered = val === 'Yes' || val === 'Unknown';
-                      const shownRows = group.rows.filter((row) => {
-                        const k = californiaCriterionKey(row.key);
-                        return triggered || answers?.[k] || links?.[k] || findings?.[k];
-                      });
-                      if (shownRows.length === 0) return null;
+                      // Always on, unlike the regulation rows below. These
+                      // aren't consequences of the California answer — they're
+                      // how you arrive at it, so hiding them until the question
+                      // is already answered puts the work behind the answer it
+                      // exists to support.
+                      const shownRows = group.rows;
                       return (
                       <Fragment key={group.key}>
                         <tr>
