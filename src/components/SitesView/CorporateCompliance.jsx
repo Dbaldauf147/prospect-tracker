@@ -8,6 +8,8 @@ import { apiFetch } from '../../utils/apiFetch';
 import {
   JURISDICTION_QUESTIONS, SCREENING_ANSWERS, REGULATIONS_BY_JURISDICTION,
   deriveRegulationVerdict, parseRevenueUsd,
+  CALIFORNIA_CRITERIA_GROUPS, californiaCriterionKey,
+  deriveCaliforniaCriterion, deriveDoingBusinessInCA,
 } from '../../data/corporateComplianceScreening';
 
 // Firestore path segment for a company's persisted revenue research —
@@ -388,6 +390,29 @@ function thresholdText(thresholds) {
   return (thresholds || []).map(t => `${t.value} ${t.metric}`).join(' · ');
 }
 
+// "How is this populated?" — the badge beside a California criterion's
+// value. Says where the number came from so a derived Yes isn't mistaken
+// for one somebody checked.
+const CRITERION_SOURCE = {
+  research: { label: 'from research', title: 'Derived from the revenue research on this card. Pick a value to override.' },
+  sites: { label: 'from sites', title: 'Counted from the uploaded site list — the California sites matched to this company. Pick a value to override.' },
+  manual: { label: 'manual', title: 'Nothing on this page settles this one — answer it by hand.' },
+};
+
+function SourceBadge({ source }) {
+  const meta = CRITERION_SOURCE[source];
+  if (!meta) return null;
+  return (
+    <span
+      title={meta.title}
+      style={{
+        fontSize: '0.55rem', fontWeight: 700, letterSpacing: '0.04em',
+        color: 'var(--color-text-muted)', textTransform: 'uppercase', cursor: 'help', whiteSpace: 'nowrap',
+      }}
+    >{meta.label}</span>
+  );
+}
+
 // Persistence key for one regulation's Applies? answer, e.g.
 // "california__sb-253". Stored in the same per-company screening map as
 // the jurisdiction answers, so it needs the same Firestore-safe shape:
@@ -433,6 +458,12 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
   // once per render rather than per regulation row.
   const revenueLabel = String(revenue || '').trim();
   const revenueUsd = parseRevenueUsd(revenueLabel);
+  // Inputs the California criteria derive themselves from, and the
+  // one-of-three doing-business result they add up to. That result is what
+  // gates SB 253 / SB 261 — the jurisdiction question alone only asks
+  // whether the company operates or sells there.
+  const criterionContext = { revenueUsd, revenueLabel, caSiteCount };
+  const doingBusinessInCA = deriveDoingBusinessInCA(answers, criterionContext);
   const th = {
     textAlign: 'left', padding: '0.3rem 0.5rem', fontSize: '0.62rem', fontWeight: 700,
     textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)',
@@ -543,6 +574,85 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                         unanswered, which would expand every jurisdiction on
                         a fresh company. Each carries its own Applies?
                         answer, keyed jurisdiction__regulation-slug. */}
+                    {/* California's two tests spelled out: the worldwide
+                        revenue thresholds, and the one-of-three
+                        doing-business check. Both feed the SB 253 / SB 261
+                        Applies? rows below. */}
+                    {q.key === 'california' && CALIFORNIA_CRITERIA_GROUPS.map((group) => {
+                      // Same rule the regulation rows follow: a criterion the
+                      // user has answered or attached research to stays on
+                      // screen even when California no longer triggers the
+                      // group, so their work never disappears with the row.
+                      const triggered = val === 'Yes' || val === 'Unknown';
+                      const shownRows = group.rows.filter((row) => {
+                        const k = californiaCriterionKey(row.key);
+                        return triggered || answers?.[k] || links?.[k] || findings?.[k];
+                      });
+                      if (shownRows.length === 0) return null;
+                      return (
+                      <Fragment key={group.key}>
+                        <tr>
+                          <td style={{ ...td, paddingLeft: '1.4rem', fontWeight: 700 }}>
+                            {group.label}
+                          </td>
+                          <td style={td} colSpan={3}>
+                            <span style={{ color: 'var(--color-text-muted)', fontSize: '0.68rem' }}>
+                              {group.note}
+                            </span>
+                          </td>
+                        </tr>
+                        {shownRows.map((row) => {
+                          const cKey = californiaCriterionKey(row.key);
+                          const saved = answers?.[cKey] || '';
+                          // A hand-picked answer always wins; "—" falls back
+                          // to whatever the card can work out.
+                          const derived = saved ? null : deriveCaliforniaCriterion(row, criterionContext);
+                          const shown = saved || derived?.verdict || '';
+                          return (
+                            <tr key={cKey}>
+                              <td style={{ ...td, paddingLeft: '2.4rem' }}>{row.label}</td>
+                              <td style={td}>
+                                {row.fromSiteCount ? (
+                                  <span style={{ fontWeight: 700, color: caSiteCount > 0 ? '#166534' : 'var(--color-text-muted)' }}>
+                                    {caSiteCount} {caSiteCount === 1 ? 'site' : 'sites'} in CA
+                                  </span>
+                                ) : row.note ? (
+                                  <span style={{ color: 'var(--color-text-muted)', fontSize: '0.68rem' }}>{row.note}</span>
+                                ) : (
+                                  <span style={{ color: 'var(--color-text-muted)' }}>—</span>
+                                )}
+                              </td>
+                              <td style={td}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', minWidth: 0, flexWrap: 'wrap' }}>
+                                  <select
+                                    value={shown}
+                                    onChange={(e) => onSet(cKey, e.target.value)}
+                                    aria-label={`California criterion: ${row.label}`}
+                                    title={derived ? derived.basis : undefined}
+                                    style={answerSelectStyle(shown, !!derived)}
+                                  >
+                                    <option value="">—</option>
+                                    {SCREENING_ANSWERS.map((a) => <option key={a} value={a}>{a}</option>)}
+                                  </select>
+                                  <SourceBadge source={row.source} />
+                                </div>
+                              </td>
+                              <td style={td}>
+                                <ReferenceCell
+                                  url={links?.[cKey] || ''}
+                                  findings={findings?.[cKey] || ''}
+                                  onSaveUrl={(v) => onSetLink?.(cKey, v)}
+                                  onSaveFindings={(v) => onSetFindings?.(cKey, v)}
+                                  label={row.label}
+                                  disabled={disabled}
+                                />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </Fragment>
+                      );
+                    })}
                     {regs.map((r) => {
                       const rKey = regulationAnswerKey(q.key, r.regulation);
                       // A regulation the user has attached a link or findings
@@ -561,6 +671,7 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                         revenueLabel,
                         jurisdictionAnswer: val,
                         jurisdictionLabel: q.jurisdiction,
+                        doingBusiness: q.key === 'california' ? doingBusinessInCA : undefined,
                       });
                       const shownVal = rVal || auto?.verdict || '';
                       return (
