@@ -55,6 +55,14 @@ Return ONLY a single JSON object (no prose, no markdown fences) with these field
 - notes: object mapping each question key to a one-sentence rationale (plain language; cite the specific fact, e.g. "Incorporated in Delaware; no UK entity found" or "Shares listed on B3 (Brazil) under TICKER"). Keep each under ~200 characters.
 - summary: string — 1-2 sentence overview of the company's footprint relevant to these regimes. Empty string if unclear.
 - sources: array of { title: string, url: string } — citation list, most authoritative first (official filings / investor relations / exchange listings preferred). Up to 6 entries.
+- csrd: object with the specific inputs the EU CSRD waves screen on. Fill what the public record supports; use null for any figure you cannot establish — do NOT estimate or interpolate. Fields:
+  - euIncorporated: "Yes" | "No" | "Unknown" — is the company itself legally incorporated in an EU member state?
+  - euListed: "Yes" | "No" | "Unknown" — are its securities listed on an EU regulated market? (An EU regulated market means an official exchange in an EU member state, e.g. Euronext, Deutsche Börse Regulated Market, Borsa Italiana. Do not count UK, Swiss, US or other non-EU venues.)
+  - globalTurnoverEurM: number | null — consolidated worldwide net turnover in MILLIONS OF EUR. Convert from the reporting currency at a recent rate and say so in the note.
+  - euTurnoverEurM: number | null — net turnover generated in the EU, in MILLIONS OF EUR. Many companies do not break this out; return null rather than guessing from a broader "Europe" or "EMEA" segment, and if you use such a segment as a proxy, say so explicitly in the note.
+  - topEuSubsidiaryTurnoverEurM: number | null — the highest net turnover of any single EU subsidiary or branch, in MILLIONS OF EUR. This is rarely public; null is the expected answer unless you find subsidiary accounts.
+  - employees: number | null — total employee headcount (group-wide).
+- csrdNotes: object mapping each csrd field name to a one-sentence rationale naming the source, the period, and any conversion or proxy you applied. Keep each under ~200 characters. Use an empty string for a field you returned as null with nothing to say.
 
 Every question key must appear in both answers and notes.`;
 
@@ -122,11 +130,36 @@ Every question key must appear in both answers and notes.`;
       .filter(o => o.url)
       .slice(0, 6) : [];
 
+    // CSRD inputs. A figure has to arrive as a finite non-negative number to
+    // be kept — a string, a range or a negative is a model that didn't follow
+    // the shape, and null ("couldn't establish it") is a legitimate answer the
+    // card renders as an empty cell for the user to fill in.
+    const num = (v) => {
+      const n = typeof v === 'number' ? v : Number(String(v ?? '').replace(/[^0-9.-]/g, ''));
+      return Number.isFinite(n) && n >= 0 ? n : null;
+    };
+    const rawCsrd = parsed.csrd && typeof parsed.csrd === 'object' ? parsed.csrd : {};
+    const csrd = {
+      euIncorporated: normVerdict(rawCsrd.euIncorporated),
+      euListed: normVerdict(rawCsrd.euListed),
+      globalTurnoverEurM: num(rawCsrd.globalTurnoverEurM),
+      euTurnoverEurM: num(rawCsrd.euTurnoverEurM),
+      topEuSubsidiaryTurnoverEurM: num(rawCsrd.topEuSubsidiaryTurnoverEurM),
+      employees: num(rawCsrd.employees),
+    };
+    const rawCsrdNotes = parsed.csrdNotes && typeof parsed.csrdNotes === 'object' ? parsed.csrdNotes : {};
+    const csrdNotes = {};
+    for (const field of Object.keys(csrd)) {
+      csrdNotes[field] = String(rawCsrdNotes[field] || '').trim().slice(0, 300);
+    }
+
     return res.status(200).json({
       answers,
       notes,
       summary: String(parsed.summary || '').trim(),
       sources,
+      csrd,
+      csrdNotes,
     });
   } catch (err) {
     if (err?.name === 'AbortError') {
