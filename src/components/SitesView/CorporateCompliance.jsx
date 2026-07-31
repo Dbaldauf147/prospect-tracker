@@ -626,12 +626,15 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                         doing-business check. Both feed the SB 253 / SB 261
                         Applies? rows below. */}
                     {(JURISDICTION_CRITERIA_GROUPS[q.key] || []).map((group) => {
-                      // California's rows are how you arrive at the answer, so
-                      // they're always on. The EU's are what CSRD screens on
-                      // once the company is actually in scope, so they wait for
-                      // a Yes (or an Unknown, which still needs resolving) —
-                      // except any row already answered or annotated, which
-                      // stays put rather than taking the user's work with it.
+                      // California's rows aren't consequences of its answer —
+                      // they're how you arrive at it, so hiding them until the
+                      // question is answered would put the work behind the
+                      // answer it supports. They stay always on. The EU's are
+                      // what CSRD screens on once the company is already in
+                      // scope, so they wait for a Yes (or an Unknown, still
+                      // unresolved) — except any row already answered or
+                      // annotated, which stays put rather than taking the
+                      // user's work with it.
                       const gated = group.showWhenTriggered;
                       const triggered = val === 'Yes' || val === 'Unknown';
                       const shownRows = group.rows.filter((row) => {
