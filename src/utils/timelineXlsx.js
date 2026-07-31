@@ -491,6 +491,7 @@ function writeStagesSheet(wb, rows, { phased, baseMonth }) {
     { header: 'Workstream', key: 'owner', width: 20 },
     { header: 'Month', key: 'month', width: 9 },
     { header: 'Span', key: 'span', width: 9 },
+    { header: 'End', key: 'end', width: 13 },
     { header: 'Description', key: 'desc', width: 58 },
   ] : [
     { header: '#', key: 'n', width: 5 },
@@ -518,6 +519,7 @@ function writeStagesSheet(wb, rows, { phased, baseMonth }) {
       owner: stage.owner || '',
       month: months.month,
       span: months.span,
+      end: range ? excelDate(range.end) : null,
       desc: stage.description || '',
     } : {
       n: i + 1,
@@ -543,6 +545,7 @@ function writeStagesSheet(wb, rows, { phased, baseMonth }) {
     if (phased) {
       row.getCell('month').alignment = { vertical: 'middle', horizontal: 'center' };
       row.getCell('span').alignment = { vertical: 'middle', horizontal: 'center' };
+      row.getCell('end').numFmt = 'm/d/yyyy';
     } else {
       row.getCell('start').numFmt = 'm/d/yyyy';
       row.getCell('end').numFmt = 'm/d/yyyy';
