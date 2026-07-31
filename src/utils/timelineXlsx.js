@@ -44,6 +44,25 @@ function applyGridBorders(ws, r1, c1, r2, c2) {
     }
   }
 }
+
+// Green rule around the outside of the whole export block — title band down
+// through the legend — so the sheet reads as one framed deliverable rather
+// than a table that happens to sit near a heading.
+function frameBlock(ws, r1, c1, r2, c2) {
+  const edge = { style: 'medium', color: { argb: argb(SE_GREEN) } };
+  for (let c = c1; c <= c2; c += 1) {
+    const top = ws.getCell(r1, c);
+    top.border = { ...(top.border || {}), top: edge };
+    const bottom = ws.getCell(r2, c);
+    bottom.border = { ...(bottom.border || {}), bottom: edge };
+  }
+  for (let r = r1; r <= r2; r += 1) {
+    const left = ws.getCell(r, c1);
+    left.border = { ...(left.border || {}), left: edge };
+    const right = ws.getCell(r, c2);
+    right.border = { ...(right.border || {}), right: edge };
+  }
+}
 // Excel reads a JS Date in local time; anchoring at UTC noon keeps a date from
 // sliding to the previous day west of Greenwich.
 const excelDate = (isoStr) => {
@@ -123,7 +142,11 @@ function buildColumns(ranges) {
   return { cols, unit: 'quarter' };
 }
 
-// Shared brand band across the top of the Timeline sheet.
+// Shared brand band across the top of the Timeline sheet: the title on green,
+// then a blank spacer row before the table starts on row 3. The engagement /
+// generated-at provenance that used to sit under the title now runs as a
+// footnote below the legend (writeProvenance), keeping the top of the sheet to
+// the title band alone.
 function writeBandHeader(wb, ws, template, meta, ncols, logoCol) {
   ws.mergeCells(1, 1, 1, Math.max(ncols, 6));
   const title = ws.getCell(1, 1);
@@ -138,14 +161,19 @@ function writeBandHeader(wb, ws, template, meta, ncols, logoCol) {
     ws.addImage(id, { tl: { col: logoCol, row: 0.14 }, ext: { width: logo.width, height: logo.height } });
   } catch { /* canvas unavailable — skip the logo */ }
 
-  ws.mergeCells(2, 1, 2, Math.max(ncols, 6));
-  const sub = ws.getCell(2, 1);
+  ws.getRow(2).height = 14;
+}
+
+// The engagement / services / generated-at line, as a footnote at the bottom
+// of the sheet. Nothing here is load-bearing for reading the timeline, so it
+// stays out of the header where it competed with the title.
+function writeProvenance(ws, row, template, meta) {
   const services = (template?.services || []).filter(Boolean).join(' · ');
   const note = String(template?.note || '').trim();
-  sub.value = `${note || 'Engagement timeline'}${services ? ` — ${services}` : ''}${meta.generatedAt ? `   ·   Generated ${meta.generatedAt}` : ''}`;
-  sub.font = { name: FONT, italic: true, size: 10, color: { argb: SLATE } };
-  sub.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-  ws.getRow(2).height = 18;
+  const cell = ws.getCell(row, 1);
+  cell.value = `${note || 'Engagement timeline'}${services ? ` — ${services}` : ''}`
+    + `${meta.generatedAt ? `   ·   Generated ${meta.generatedAt}` : ''}`;
+  cell.font = { name: FONT, italic: true, size: 9, color: { argb: MUTE } };
 }
 
 // Implementation layout in cells: phase names merged down column A, one row
@@ -176,8 +204,8 @@ function writePhasedSheet(wb, ws, template, meta) {
 
   writeBandHeader(wb, ws, template, meta, NCOLS, Math.max(3.2, NCOLS - (calendar ? 5 : 9)));
 
-  // Axis header.
-  const headRow = 4;
+  // Axis header — row 3, straight under the title band and its spacer.
+  const headRow = 3;
   ['Stages', 'Step', 'Workstream'].forEach((label, i) => {
     const cell = ws.getCell(headRow, i + 1);
     cell.value = label;
@@ -269,19 +297,29 @@ function writePhasedSheet(wb, ws, template, meta) {
 
   ws.views = [{ state: 'frozen', xSplit: LEAD, ySplit: headRow, showGridLines: false }];
 
-  // Legend, naming the client workstream the way the graphic does.
+  // Legend, naming the client workstream the way the graphic does. The two
+  // swatches stack down column A — one per row, the width of the Stages
+  // column — rather than running across the sheet, so the key stays under
+  // the labels it explains instead of drifting over the month grid.
   r += 1;
   const clientName = String(template?.clientName || '').trim() || 'Client';
   ws.getCell(r, 1).value = 'Legend';
   ws.getCell(r, 1).font = { name: FONT, bold: true, size: 9, color: { argb: SLATE } };
+  r += 1;
   [[`${clientName.toUpperCase()} WORKSTREAM`, 'Client'], ['SE WORKSTREAM', 'Schneider Electric']].forEach(([label, owner], i) => {
-    const cell = ws.getCell(r, 2 + i);
+    const cell = ws.getCell(r + i, 1);
     cell.value = label;
     cell.font = { name: FONT, bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
     cell.fill = fill(argb(WORKSTREAM_COLOR[owner]));
     cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    ws.getRow(r + i).height = 16;
   });
   r += 1;
+  const lastFramedRow = r;
+
+  // Everything below the frame is footnotes: how to read the numbering, the
+  // clamp warning, and the provenance line moved down out of the header.
+  r += 2;
   ws.getCell(r, 1).value = calendar
     ? 'Numbers match the step order · the highlighted column is the current month'
     : 'Numbers match the step order · columns are months from kickoff';
@@ -295,6 +333,10 @@ function writePhasedSheet(wb, ws, template, meta) {
       + overflow.map(p => p.stage.name || 'Untitled step').join(', ');
     ws.getCell(r, 1).font = { name: FONT, italic: true, size: 9, color: { argb: 'FF92400E' } };
   }
+  r += 1;
+  writeProvenance(ws, r, template, meta);
+
+  frameBlock(ws, 1, 1, lastFramedRow, NCOLS);
 }
 
 export async function exportTimelineXlsx(template, meta = {}) {
@@ -341,7 +383,7 @@ export async function exportTimelineXlsx(template, meta = {}) {
   ws.getColumn(DESC_COL).width = 64;
 
   writeBandHeader(wb, ws, template, meta, NCOLS, Math.max(3.2, NCOLS - (unit === 'week' ? 9 : 5)));
-  let r = 4;
+  let r = 3;
 
   // --- axis header: group band over unit labels ---
   const groupRow = r, labelRow = r + 1;
@@ -456,19 +498,23 @@ export async function exportTimelineXlsx(template, meta = {}) {
   }];
 
   // --- legend + notes ---
+  // Swatches stack down column A, one owner per row, matching the phased sheet.
   r += 1;
-  const legendRow = r;
   ws.getCell(r, 1).value = 'Legend';
   ws.getCell(r, 1).font = { name: FONT, bold: true, size: 9, color: { argb: SLATE } };
+  r += 1;
   ['Schneider Electric', 'Client', 'Both'].forEach((owner, i) => {
-    const c = 2 + i;
-    const cell = ws.getCell(legendRow, c);
+    const cell = ws.getCell(r + i, 1);
     cell.value = owner;
     cell.font = { name: FONT, bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
     cell.fill = fill(argb(ownerColor(owner)));
     cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    ws.getRow(r + i).height = 16;
   });
-  r += 1;
+  r += 2;
+  const lastFramedRow = r;
+
+  r += 2;
   ws.getCell(r, 1).value = 'Filled cells show duration · ◆ marks a point-in-time milestone'
     + (todayCol ? ' · the green line marks today' : '');
   ws.getCell(r, 1).font = { name: FONT, italic: true, size: 9, color: { argb: MUTE } };
@@ -479,7 +525,10 @@ export async function exportTimelineXlsx(template, meta = {}) {
   if (undated.length) {
     ws.getCell(r, 1).value = `No readable dates, so not plotted: ${undated.join(', ')}`;
     ws.getCell(r, 1).font = { name: FONT, italic: true, size: 9, color: { argb: 'FF92400E' } };
+    r += 1;
   }
+  writeProvenance(ws, r, template, meta);
+  frameBlock(ws, 1, 1, lastFramedRow, DESC_COL);
 
   writeStagesSheet(wb, rows, { phased: false });
   return downloadWorkbook(wb, template);
