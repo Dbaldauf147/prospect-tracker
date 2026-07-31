@@ -11,6 +11,7 @@ import {
   deriveRegulationVerdict, parseRevenueUsd,
   JURISDICTION_CRITERIA_GROUPS, criterionKey,
   deriveCriterion, deriveDoingBusinessInCA, deriveCsrdWaveVerdict, californiaRevenueScreen,
+  ALWAYS_SHOW_REGULATIONS,
 } from '../../data/corporateComplianceScreening';
 
 // Firestore path segment for a company's persisted revenue research —
@@ -888,7 +889,8 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                       // to stays on screen even when the jurisdiction answer
                       // no longer triggers it — their saved research should
                       // never disappear with the row.
-                      const triggered = val === 'Yes' || val === 'Unknown';
+                      const triggered = val === 'Yes' || val === 'Unknown'
+                        || ALWAYS_SHOW_REGULATIONS.has(q.key);
                       if (!triggered && !(links?.[rKey] || findings?.[rKey])) return null;
                       const rVal = answers?.[rKey] || '';
                       // Pure threshold tests (SB 253 / SB 261) answer
