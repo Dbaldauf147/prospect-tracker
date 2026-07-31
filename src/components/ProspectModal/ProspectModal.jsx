@@ -4649,6 +4649,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
           )}
           <div className={styles.grid}>
+            <div className={styles.sectionHead}>Identity</div>
+
             <div>
               <label className={styles.label}>Company</label>
               <CommitOnBlurInput
@@ -4669,106 +4671,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
 
             <div>
-              <label className={styles.label}>Status</label>
-              <select className={styles.select} value={fields.status} onChange={e => set('status', e.target.value)}>
-                {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
-
-            <div>
-              <label className={styles.label}>Tier</label>
-              <select className={styles.select} value={fields.tier} onChange={e => set('tier', e.target.value)}>
-                <option value="">—</option>
-                {TIERS.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-
-            <div>
-              <label className={styles.label}>Type</label>
-              <select className={styles.select} value={fields.type} onChange={e => set('type', e.target.value)}>
-                <option value="">—</option>
-                {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-
-            {fields.type === 'Private Equity' && (
-              <div>
-                <label className={styles.label}>PE Stage</label>
-                <select className={styles.select} value={fields.peStage || ''} onChange={e => set('peStage', e.target.value)}>
-                  <option value="">—</option>
-                  {PE_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-            )}
-
-            <div>
-              <label className={styles.label}>Geography</label>
-              <select className={styles.select} value={fields.geography} onChange={e => set('geography', e.target.value)}>
-                <option value="">—</option>
-                {GEOGRAPHIES.map(g => <option key={g} value={g}>{g}</option>)}
-              </select>
-            </div>
-
-            <div>
-              <label className={styles.label}>Public / Private</label>
-              <select className={styles.select} value={fields.publicPrivate} onChange={e => set('publicPrivate', e.target.value)}>
-                <option value="">—</option>
-                {PUBLIC_PRIVATE.map(p => <option key={p} value={p}>{p}</option>)}
-              </select>
-            </div>
-
-            <div>
-              <label className={styles.label}>CDM</label>
-              <SearchableSelect
-                options={cdmOptions}
-                value={fields.cdm || ''}
-                onChange={v => set('cdm', v)}
-                placeholder="Select CDM…"
-              />
-            </div>
-
-            <div>
-              <label className={styles.label}>Client Manager</label>
-              <div className={styles.input} style={{ background: clientManager ? '#F0FDF4' : 'var(--color-bg)', color: clientManager ? '#166534' : 'var(--color-text-muted)', fontWeight: clientManager ? 600 : 400, cursor: 'default' }}>
-                {clientManager || '—'}
-              </div>
-            </div>
-
-            <div>
-              <label className={styles.label}>RE AUM (billions)</label>
-              <CommitOnBlurInput className={styles.input} type="number" step="0.01" value={fields.reAum ?? ''} onCommit={v => set('reAum', v)} />
-            </div>
-
-            <div>
-              <label className={styles.label}>PE AUM (billions)</label>
-              <CommitOnBlurInput className={styles.input} type="number" step="0.01" value={fields.peAum ?? ''} onCommit={v => set('peAum', v)} />
-            </div>
-
-            <div>
-              <label className={styles.label}>Number of Sites</label>
-              <CommitOnBlurInput className={styles.input} type="number" value={fields.numberOfSites ?? ''} onCommit={v => set('numberOfSites', v)} />
-            </div>
-
-            <div>
-              <label className={styles.label}>Revenue</label>
-              <CommitOnBlurInput className={styles.input} value={fields.revenue ?? ''} onCommit={v => set('revenue', v)} placeholder="e.g. $1.5B" />
-            </div>
-
-            <div>
-              <label className={styles.label}>Rank</label>
-              <CommitOnBlurInput className={styles.input} value={fields.rank} onCommit={v => set('rank', v)} />
-            </div>
-
-            <div>
-              <label className={styles.label}>HQ Region</label>
-              <select className={styles.input} value={fields.hqRegion} onChange={e => set('hqRegion', e.target.value)}>
-                <option value="">—</option>
-                <option value="North America">North America</option>
-                <option value="Outside of North America">Outside of North America</option>
-              </select>
-            </div>
-
-            <div>
               <label className={styles.label}>Website</label>
               <CommitOnBlurInput className={styles.input} value={fields.website} onCommit={v => set('website', v)} placeholder="www.example.com" />
             </div>
@@ -4781,119 +4683,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div>
               <label className={styles.label}>Contracting Entity</label>
               <CommitOnBlurInput className={styles.input} value={fields.contractingEntity ?? ''} onCommit={v => set('contractingEntity', v)} placeholder="Legal entity on the contract" />
-            </div>
-
-            <div>
-              <label className={styles.label}>PE Owner <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(if portfolio co)</span></label>
-              {(() => {
-                const setPeOpen = setPeOwnerPickerOpen;
-                const peOpen = peOwnerPickerOpen;
-                // Pull candidates from the full Table View / prospects list, not just Type=PE.
-                const allCompanies = (prospects || [])
-                  .filter(p => p.company && p.company !== fields.company);
-                // The field holds one or more comma-separated owners.
-                // Filter on the segment after the last separator so a
-                // second owner can be picked without losing the first —
-                // "Blue Owl Capital, KK" searches "kk"; picking replaces
-                // just that trailing segment.
-                const rawPeOwner = fields.peOwner || '';
-                const segCut = Math.max(rawPeOwner.lastIndexOf(','), rawPeOwner.lastIndexOf(';'));
-                const committedOwners = segCut >= 0 ? rawPeOwner.slice(0, segCut + 1).trim() : '';
-                const q = (segCut >= 0 ? rawPeOwner.slice(segCut + 1) : rawPeOwner).toLowerCase().trim();
-                const pickOwner = (name) => set('peOwner', committedOwners ? `${committedOwners} ${name}` : name);
-                const ownerSet = new Set(splitPeOwners(rawPeOwner).map(o => o.toLowerCase()));
-                // When user is typing, show matches anywhere. Prefer Private Equity type matches first.
-                function score(p) {
-                  const name = (p.company || '').toLowerCase();
-                  if (!q) return p.type === 'Private Equity' ? 0 : 1;
-                  if (name.startsWith(q)) return p.type === 'Private Equity' ? 0 : 2;
-                  if (name.includes(q)) return p.type === 'Private Equity' ? 1 : 3;
-                  return 99;
-                }
-                const filtered = allCompanies
-                  .filter(p => !q || (p.company || '').toLowerCase().includes(q))
-                  .sort((a, b) => {
-                    const sa = score(a), sb = score(b);
-                    if (sa !== sb) return sa - sb;
-                    return (a.company || '').localeCompare(b.company || '');
-                  })
-                  .slice(0, 50);
-                return (
-                  <div style={{ position: 'relative' }} data-pe-picker>
-                    <input
-                      className={styles.input}
-                      value={fields.peOwner || ''}
-                      onChange={e => { set('peOwner', e.target.value); setPeOpen(true); }}
-                      onFocus={() => setPeOpen(true)}
-                      placeholder="Type a company name — comma-separate multiple owners…"
-                    />
-                    {peOpen && allCompanies.length > 0 && (
-                      <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 2, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', maxHeight: 260, overflowY: 'auto', zIndex: 100 }}>
-                        {filtered.length === 0 ? (
-                          <div style={{ padding: '0.5rem 0.75rem', fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic' }}>No companies match &quot;{q}&quot;</div>
-                        ) : filtered.map(p => {
-                          const isPE = p.type === 'Private Equity';
-                          const isPicked = ownerSet.has((p.company || '').toLowerCase());
-                          return (
-                            <button
-                              key={p.id}
-                              type="button"
-                              onMouseDown={e => { e.preventDefault(); pickOwner(p.company); setPeOpen(false); }}
-                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', width: '100%', padding: '0.4rem 0.75rem', border: 'none', background: isPicked ? '#EFF6FF' : '#fff', textAlign: 'left', cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit', color: '#1E293B' }}
-                              onMouseEnter={e => { if (!isPicked) e.currentTarget.style.background = '#F8FAFC'; }}
-                              onMouseLeave={e => { e.currentTarget.style.background = isPicked ? '#EFF6FF' : '#fff'; }}
-                            >
-                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.company}</span>
-                              {isPE && <span style={{ flexShrink: 0, fontSize: '0.6rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: '#F3E8FF', color: '#7C3AED' }}>PE</span>}
-                            </button>
-                          );
-                        })}
-                        {!q && allCompanies.length > 50 && (
-                          <div style={{ padding: '0.35rem 0.75rem', fontSize: '0.65rem', color: '#94A3B8', fontStyle: 'italic', borderTop: '1px solid #F1F5F9' }}>
-                            Showing first 50 of {allCompanies.length}. Type to narrow.
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
-
-            <div>
-              <label className={styles.label}>Case Study Created?</label>
-              <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', padding: '0.25rem 0' }}>
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', color: '#1E293B', cursor: 'pointer' }}>
-                  <input
-                    type="radio"
-                    name={`caseStudyCreated-${fields.id || 'new'}`}
-                    checked={fields.caseStudyCreated === true}
-                    onChange={() => set('caseStudyCreated', true)}
-                    style={{ accentColor: '#10B981' }}
-                  />
-                  Yes
-                </label>
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', color: '#1E293B', cursor: 'pointer' }}>
-                  <input
-                    type="radio"
-                    name={`caseStudyCreated-${fields.id || 'new'}`}
-                    checked={fields.caseStudyCreated === 'in-progress'}
-                    onChange={() => set('caseStudyCreated', 'in-progress')}
-                    style={{ accentColor: '#F59E0B' }}
-                  />
-                  In Progress
-                </label>
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', color: '#1E293B', cursor: 'pointer' }}>
-                  <input
-                    type="radio"
-                    name={`caseStudyCreated-${fields.id || 'new'}`}
-                    checked={!fields.caseStudyCreated}
-                    onChange={() => set('caseStudyCreated', false)}
-                    style={{ accentColor: '#94A3B8' }}
-                  />
-                  No
-                </label>
-              </div>
             </div>
 
             <div className={styles.wideField}>
@@ -4985,12 +4774,257 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               })()}
             </div>
 
+            <div className={styles.sectionHead}>Classification</div>
+
+            <div>
+              <label className={styles.label}>Type</label>
+              <select className={styles.select} value={fields.type} onChange={e => set('type', e.target.value)}>
+                <option value="">—</option>
+                {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+
+            {fields.type === 'Private Equity' && (
+              <div>
+                <label className={styles.label}>PE Stage</label>
+                <select className={styles.select} value={fields.peStage || ''} onChange={e => set('peStage', e.target.value)}>
+                  <option value="">—</option>
+                  {PE_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            )}
+
+            <div>
+              <label className={styles.label}>Tier</label>
+              <select className={styles.select} value={fields.tier} onChange={e => set('tier', e.target.value)}>
+                <option value="">—</option>
+                {TIERS.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className={styles.label}>Status</label>
+              <select className={styles.select} value={fields.status} onChange={e => set('status', e.target.value)}>
+                {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className={styles.label}>Geography</label>
+              <select className={styles.select} value={fields.geography} onChange={e => set('geography', e.target.value)}>
+                <option value="">—</option>
+                {GEOGRAPHIES.map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className={styles.label}>HQ Region</label>
+              <select className={styles.input} value={fields.hqRegion} onChange={e => set('hqRegion', e.target.value)}>
+                <option value="">—</option>
+                <option value="North America">North America</option>
+                <option value="Outside of North America">Outside of North America</option>
+              </select>
+            </div>
+
+            <div>
+              <label className={styles.label}>Public / Private</label>
+              <select className={styles.select} value={fields.publicPrivate} onChange={e => set('publicPrivate', e.target.value)}>
+                <option value="">—</option>
+                {PUBLIC_PRIVATE.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className={styles.label}>PE Owner <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(if portfolio co)</span></label>
+              {(() => {
+                const setPeOpen = setPeOwnerPickerOpen;
+                const peOpen = peOwnerPickerOpen;
+                // Pull candidates from the full Table View / prospects list, not just Type=PE.
+                const allCompanies = (prospects || [])
+                  .filter(p => p.company && p.company !== fields.company);
+                // The field holds one or more comma-separated owners.
+                // Filter on the segment after the last separator so a
+                // second owner can be picked without losing the first —
+                // "Blue Owl Capital, KK" searches "kk"; picking replaces
+                // just that trailing segment.
+                const rawPeOwner = fields.peOwner || '';
+                const segCut = Math.max(rawPeOwner.lastIndexOf(','), rawPeOwner.lastIndexOf(';'));
+                const committedOwners = segCut >= 0 ? rawPeOwner.slice(0, segCut + 1).trim() : '';
+                const q = (segCut >= 0 ? rawPeOwner.slice(segCut + 1) : rawPeOwner).toLowerCase().trim();
+                const pickOwner = (name) => set('peOwner', committedOwners ? `${committedOwners} ${name}` : name);
+                const ownerSet = new Set(splitPeOwners(rawPeOwner).map(o => o.toLowerCase()));
+                // When user is typing, show matches anywhere. Prefer Private Equity type matches first.
+                function score(p) {
+                  const name = (p.company || '').toLowerCase();
+                  if (!q) return p.type === 'Private Equity' ? 0 : 1;
+                  if (name.startsWith(q)) return p.type === 'Private Equity' ? 0 : 2;
+                  if (name.includes(q)) return p.type === 'Private Equity' ? 1 : 3;
+                  return 99;
+                }
+                const filtered = allCompanies
+                  .filter(p => !q || (p.company || '').toLowerCase().includes(q))
+                  .sort((a, b) => {
+                    const sa = score(a), sb = score(b);
+                    if (sa !== sb) return sa - sb;
+                    return (a.company || '').localeCompare(b.company || '');
+                  })
+                  .slice(0, 50);
+                return (
+                  <div style={{ position: 'relative' }} data-pe-picker>
+                    <input
+                      className={styles.input}
+                      value={fields.peOwner || ''}
+                      onChange={e => { set('peOwner', e.target.value); setPeOpen(true); }}
+                      onFocus={() => setPeOpen(true)}
+                      placeholder="Type a company name — comma-separate multiple owners…"
+                    />
+                    {peOpen && allCompanies.length > 0 && (
+                      <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 2, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', maxHeight: 260, overflowY: 'auto', zIndex: 100 }}>
+                        {filtered.length === 0 ? (
+                          <div style={{ padding: '0.5rem 0.75rem', fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic' }}>No companies match &quot;{q}&quot;</div>
+                        ) : filtered.map(p => {
+                          const isPE = p.type === 'Private Equity';
+                          const isPicked = ownerSet.has((p.company || '').toLowerCase());
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onMouseDown={e => { e.preventDefault(); pickOwner(p.company); setPeOpen(false); }}
+                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', width: '100%', padding: '0.4rem 0.75rem', border: 'none', background: isPicked ? '#EFF6FF' : '#fff', textAlign: 'left', cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit', color: '#1E293B' }}
+                              onMouseEnter={e => { if (!isPicked) e.currentTarget.style.background = '#F8FAFC'; }}
+                              onMouseLeave={e => { e.currentTarget.style.background = isPicked ? '#EFF6FF' : '#fff'; }}
+                            >
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.company}</span>
+                              {isPE && <span style={{ flexShrink: 0, fontSize: '0.6rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: '#F3E8FF', color: '#7C3AED' }}>PE</span>}
+                            </button>
+                          );
+                        })}
+                        {!q && allCompanies.length > 50 && (
+                          <div style={{ padding: '0.35rem 0.75rem', fontSize: '0.65rem', color: '#94A3B8', fontStyle: 'italic', borderTop: '1px solid #F1F5F9' }}>
+                            Showing first 50 of {allCompanies.length}. Type to narrow.
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div className={styles.sectionHead}>Coverage</div>
+
+            <div>
+              <label className={styles.label}>CDM</label>
+              <SearchableSelect
+                options={cdmOptions}
+                value={fields.cdm || ''}
+                onChange={v => set('cdm', v)}
+                placeholder="Select CDM…"
+              />
+            </div>
+
+            <div>
+              <label className={styles.label}>Client Manager</label>
+              <div className={styles.input} style={{ background: clientManager ? '#F0FDF4' : 'var(--color-bg)', color: clientManager ? '#166534' : 'var(--color-text-muted)', fontWeight: clientManager ? 600 : 400, cursor: 'default' }}>
+                {clientManager || '—'}
+              </div>
+            </div>
+
+            <div>
+              <label className={styles.label}>Case Study Created?</label>
+              <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', padding: '0.25rem 0' }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', color: '#1E293B', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name={`caseStudyCreated-${fields.id || 'new'}`}
+                    checked={fields.caseStudyCreated === true}
+                    onChange={() => set('caseStudyCreated', true)}
+                    style={{ accentColor: '#10B981' }}
+                  />
+                  Yes
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', color: '#1E293B', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name={`caseStudyCreated-${fields.id || 'new'}`}
+                    checked={fields.caseStudyCreated === 'in-progress'}
+                    onChange={() => set('caseStudyCreated', 'in-progress')}
+                    style={{ accentColor: '#F59E0B' }}
+                  />
+                  In Progress
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', color: '#1E293B', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name={`caseStudyCreated-${fields.id || 'new'}`}
+                    checked={!fields.caseStudyCreated}
+                    onChange={() => set('caseStudyCreated', false)}
+                    style={{ accentColor: '#94A3B8' }}
+                  />
+                  No
+                </label>
+              </div>
+            </div>
+
+            <div className={styles.sectionHead}>Scale</div>
+
+            <div>
+              <label className={styles.label}>Revenue</label>
+              <CommitOnBlurInput className={styles.input} value={fields.revenue ?? ''} onCommit={v => set('revenue', v)} placeholder="e.g. $1.5B" />
+            </div>
+
+            <div>
+              <label className={styles.label}>Rank</label>
+              <CommitOnBlurInput className={styles.input} value={fields.rank} onCommit={v => set('rank', v)} />
+            </div>
+
+            <div>
+              <label className={styles.label}>Number of Sites</label>
+              <CommitOnBlurInput className={styles.input} type="number" value={fields.numberOfSites ?? ''} onCommit={v => set('numberOfSites', v)} />
+            </div>
+
+            <div>
+              <label className={styles.label}>RE AUM (billions)</label>
+              <CommitOnBlurInput className={styles.input} type="number" step="0.01" value={fields.reAum ?? ''} onCommit={v => set('reAum', v)} />
+            </div>
+
+            <div>
+              <label className={styles.label}>PE AUM (billions)</label>
+              <CommitOnBlurInput className={styles.input} type="number" step="0.01" value={fields.peAum ?? ''} onCommit={v => set('peAum', v)} />
+            </div>
+
+            <div className={styles.sectionHead}>Profile</div>
+
             <div className={styles.wideField}>
               <label className={styles.label}>Asset Types</label>
               <MultiSelectDropdown options={assetTypeOptions} selected={fields.assetTypes || []} onToggle={(val) => toggleArrayField('assetTypes', val)} />
             </div>
 
-            {/* Competitors — same width as Asset Types (span 2), one
+            <div className={styles.wideField}>
+              <label className={styles.label}>Strategies</label>
+              <TagMultiSelect
+                options={strategyOptions}
+                selected={fields.strategies || []}
+                onToggle={(val) => toggleArrayField('strategies', val)}
+                onAddNew={(val) => persistCustomStrategy(val, settings, updateSettings)}
+                placeholder="Tag this firm's investment strategies…"
+              />
+            </div>
+
+            <div className={styles.wideField}>
+              <label className={styles.label}>Frameworks</label>
+              <MultiSelectDropdown options={FRAMEWORKS} selected={effectiveFrameworks} onToggle={toggleFramework} sourceOf={frameworkSourceOf} />
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', marginTop: 4, fontSize: '0.6rem', color: 'var(--color-text-muted)' }}>
+                {Object.entries(FRAMEWORK_SOURCE_BADGES).map(([k, b]) => (
+                  <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }} title={b.title}>
+                    <span style={{ display: 'inline-block', padding: '0 5px', borderRadius: 999, fontSize: '0.56rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', background: b.bg, color: b.text }}>{b.label}</span>
+                    <span>{k === 'auto' ? 'from Lists mapping' : k === 'claude' ? 'from Claude research' : 'added here'}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Competitors — full width like the other Profile fields, one
                 short single-line-ish editor. Free text with @[Service]
                 tokens via the shared ScopingNotesEditor; the legacy
                 structured fields.competitors map is kept on the record
@@ -5008,29 +5042,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               </div>
             )}
 
-            <div className={styles.wideField}>
-              <label className={styles.label}>Frameworks</label>
-              <MultiSelectDropdown options={FRAMEWORKS} selected={effectiveFrameworks} onToggle={toggleFramework} sourceOf={frameworkSourceOf} />
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', marginTop: 4, fontSize: '0.6rem', color: 'var(--color-text-muted)' }}>
-                {Object.entries(FRAMEWORK_SOURCE_BADGES).map(([k, b]) => (
-                  <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }} title={b.title}>
-                    <span style={{ display: 'inline-block', padding: '0 5px', borderRadius: 999, fontSize: '0.56rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', background: b.bg, color: b.text }}>{b.label}</span>
-                    <span>{k === 'auto' ? 'from Lists mapping' : k === 'claude' ? 'from Claude research' : 'added here'}</span>
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div className={styles.wideField}>
-              <label className={styles.label}>Strategies</label>
-              <TagMultiSelect
-                options={strategyOptions}
-                selected={fields.strategies || []}
-                onToggle={(val) => toggleArrayField('strategies', val)}
-                onAddNew={(val) => persistCustomStrategy(val, settings, updateSettings)}
-                placeholder="Tag this firm's investment strategies…"
-              />
-            </div>
+            <div className={styles.sectionHead}>Notes</div>
 
             <div className={styles.fieldFull}>
               <label className={styles.label}>Company Notes</label>
