@@ -1,15 +1,12 @@
 // Schneider-Electric-formatted Excel export for a timeline.
 //
-// Two sheets:
-//   Timeline — the Gantt rebuilt out of native cells: one row per stage, one
-//              column per week / month / quarter, and bars drawn as filled
-//              cells. Native rather than a pasted picture, so the user can
-//              widen it, recolour it, or paste the block straight into another
-//              workbook. Milestones are the one exception: they're floating
-//              diamond images, because only a picture can sit at the day
-//              inside a month column — and can then be dragged.
-//   Stages   — the flat table behind it, with real date cells and an
-//              autofilter, for sorting and formulas.
+// One sheet, "Timeline": the chart rebuilt out of native cells — one row per
+// stage, one column per week / month / quarter, and bars drawn as filled
+// cells. Native rather than a pasted picture, so the user can widen it,
+// recolour it, or paste the block straight into another workbook. Milestones
+// are the one exception: they're floating diamond images, because only a
+// picture can sit at the day inside a month column — and can then be dragged.
+// The workbook carries the chart and nothing else: no flat stage table.
 //
 // Browser-only: ExcelJS plus <canvas> for the logo, the same pairing the
 // compliance export already uses.
@@ -181,13 +178,6 @@ function addMilestoneImage(wb, ws, { cols, row, rowPoints, frac, owner, label })
   }
 }
 
-// Excel reads a JS Date in local time; anchoring at UTC noon keeps a date from
-// sliding to the previous day west of Greenwich.
-const excelDate = (isoStr) => {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoStr || ''));
-  if (!m) return null;
-  return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12));
-};
 const fileSlug = (template) => {
   const base = String(template?.name || 'timeline').trim() || 'timeline';
   return base.replace(/[^\w\s-]/g, '').replace(/\s+/g, '-').slice(0, 60);
@@ -553,11 +543,6 @@ export async function exportTimelineXlsx(template) {
 
   if (phased) {
     writePhasedSheet(wb, ws, { ...template, stages });
-    writeStagesSheet(wb, rows, {
-      phased,
-      baseMonth: timelineBaseMonth(stages),
-      mode: template?.positionMode === 'months' ? 'months' : 'dates',
-    });
     return downloadWorkbook(wb, template);
   }
 
@@ -733,111 +718,7 @@ export async function exportTimelineXlsx(template) {
   }
   frameBlock(ws, 1, 1, lastFramedRow, DESC_COL);
 
-  writeStagesSheet(wb, rows, { phased: false });
   return downloadWorkbook(wb, template);
-}
-
-// Sheet 2: the flat table. Phased timelines get the Phase / Month / Span
-// columns that drive their layout instead of a raw day count.
-// "3. Budget build" for a declared dependency, blank when there isn't one.
-function dependsLabel(stage, rows) {
-  const id = String(stage?.dependsOn || '');
-  if (!id) return '';
-  const i = rows.findIndex(r => r.stage.id === id);
-  if (i < 0) return '';
-  return `${i + 1}. ${rows[i].stage.name || 'Untitled step'}`;
-}
-
-function writeStagesSheet(wb, rows, { phased, baseMonth, mode }) {
-  const ds = wb.addWorksheet('Stages', { views: [{ showGridLines: false }] });
-  // Same rule as the Timeline sheet: a Phase column nobody filled in is a
-  // column of blanks, so it only appears once a phase exists.
-  const anyPhase = rows.some(({ stage }) => String(stage?.phase || '').trim());
-  ds.columns = phased ? [
-    { header: '#', key: 'n', width: 5 },
-    ...(anyPhase ? [{ header: 'Phase', key: 'phase', width: 30 }] : []),
-    { header: anyPhase ? 'Step' : 'Stage', key: 'stage', width: 42 },
-    { header: 'Workstream', key: 'owner', width: 20 },
-    { header: 'Type', key: 'kind', width: 11 },
-    { header: 'Month', key: 'month', width: 9 },
-    { header: 'Span', key: 'span', width: 9 },
-    { header: 'Weeks', key: 'weeks', width: 8 },
-    { header: 'Start', key: 'start', width: 13 },
-    { header: 'End', key: 'end', width: 13 },
-    { header: 'Depends on', key: 'depends', width: 26 },
-    { header: 'Description', key: 'desc', width: 52 },
-  ] : [
-    { header: '#', key: 'n', width: 5 },
-    { header: 'Stage', key: 'stage', width: 30 },
-    { header: 'Owner', key: 'owner', width: 20 },
-    { header: 'Timing', key: 'timing', width: 18 },
-    { header: 'Start', key: 'start', width: 13 },
-    { header: 'End', key: 'end', width: 13 },
-    { header: 'Days', key: 'days', width: 8 },
-    { header: 'Description', key: 'desc', width: 62 },
-  ];
-  const head = ds.getRow(1);
-  head.height = 22;
-  head.eachCell(cell => {
-    cell.font = { name: FONT, bold: true, size: 9.5, color: { argb: 'FFFFFFFF' } };
-    cell.fill = fill(SE_DARK);
-    cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-  });
-  rows.forEach(({ stage, range }, i) => {
-    const months = phased ? getStageMonths(stage, baseMonth, mode) : null;
-    const row = ds.addRow(phased ? {
-      n: i + 1,
-      ...(anyPhase ? { phase: stage.phase || '' } : {}),
-      stage: stage.name || 'Untitled stage',
-      owner: stage.owner || '',
-      month: months.month,
-      kind: stage.kind === 'milestone' ? 'Milestone' : 'Timeline',
-      span: months.span,
-      // Whole weeks the dates cover, rounded up — the grid is drawn in
-      // months, so this is the finer duration the week row is read against.
-      weeks: range
-        ? Math.max(1, Math.ceil(((isoToMs(range.end) - isoToMs(range.start)) / DAY_MS + 1) / 7))
-        : null,
-      start: range ? excelDate(range.start) : null,
-      end: range ? excelDate(range.end) : null,
-      depends: dependsLabel(stage, rows),
-      desc: stage.description || '',
-    } : {
-      n: i + 1,
-      stage: stage.name || 'Untitled stage',
-      owner: stage.owner || '',
-      timing: stage.timing || '',
-      start: range ? excelDate(range.start) : null,
-      end: range ? excelDate(range.end) : null,
-      days: range ? Math.round((isoToMs(range.end) - isoToMs(range.start)) / DAY_MS) + 1 : null,
-      desc: stage.description || '',
-    });
-    row.height = 18;
-    row.eachCell({ includeEmpty: true }, cell => {
-      cell.font = { name: FONT, size: 10, color: { argb: INK } };
-      cell.alignment = { vertical: 'middle', indent: 1, wrapText: false };
-      cell.border = { bottom: { style: 'hair', color: { argb: LINE } } };
-      if (i % 2 === 1) cell.fill = fill(ZEBRA);
-    });
-    const ownerArgb = argb(phased
-      ? (WORKSTREAM_COLOR[stage.owner] || WORKSTREAM_COLOR['Schneider Electric'])
-      : ownerColor(stage.owner));
-    row.getCell('owner').font = { name: FONT, bold: true, size: 10, color: { argb: ownerArgb } };
-    if (phased) {
-      row.getCell('month').alignment = { vertical: 'middle', horizontal: 'center' };
-      row.getCell('span').alignment = { vertical: 'middle', horizontal: 'center' };
-      row.getCell('weeks').alignment = { vertical: 'middle', horizontal: 'center' };
-      row.getCell('start').numFmt = 'm/d/yyyy';
-      row.getCell('end').numFmt = 'm/d/yyyy';
-    } else {
-      row.getCell('start').numFmt = 'm/d/yyyy';
-      row.getCell('start').numFmt = 'm/d/yyyy';
-      row.getCell('end').numFmt = 'm/d/yyyy';
-      row.getCell('days').alignment = { vertical: 'middle', horizontal: 'center' };
-    }
-  });
-  ds.autoFilter = { from: { row: 1, column: 1 }, to: { row: rows.length + 1, column: ds.columns.length } };
-  ds.views = [{ state: 'frozen', ySplit: 1, showGridLines: false }];
 }
 
 async function downloadWorkbook(wb, template) {
