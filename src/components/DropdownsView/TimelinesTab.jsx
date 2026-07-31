@@ -392,7 +392,7 @@ function TimelineVisual({ template, onChangeFormat }) {
   async function handleExcel() {
     setBusy('xlsx');
     try {
-      await exportTimelineXlsx(template, { generatedAt: new Date().toLocaleString() });
+      await exportTimelineXlsx(template);
     } catch (err) {
       console.error('Timeline Excel export failed', err);
       window.alert('Could not build the workbook: ' + (err?.message || 'unknown error'));
