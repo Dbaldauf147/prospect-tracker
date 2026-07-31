@@ -27,6 +27,13 @@ export const MAX_COLUMN_WIDTH = 900;
 // Every column the table can show, per format, in display order. `width` is
 // the default; `fixed: true` marks the ones that can't be hidden — the row
 // number and the move/delete buttons, without which a row can't be worked on.
+//
+// `defaultHidden: true` starts a column off, still listed in the Columns menu.
+// Timing is that on the two date-placed formats: the dates decide where a
+// stage sits, so the field is only a custom label for the bar, and the label
+// reads fine from the dates when it's blank. The milestone format keeps it
+// showing — it has no date cells of its own, so Timing is the only way to say
+// when a marker happens.
 const COLUMNS = {
   milestone: [
     { key: 'n', label: '#', width: 34, fixed: true },
@@ -41,7 +48,7 @@ const COLUMNS = {
     { key: 'n', label: '#', width: 34, fixed: true },
     { key: 'name', label: 'Stage', width: 220 },
     { key: 'owner', label: 'Owner', width: 170 },
-    { key: 'timing', label: 'Timing', width: 150 },
+    { key: 'timing', label: 'Timing', width: 150, defaultHidden: true },
     { key: 'dates', label: 'Dates', width: 290 },
     { key: 'description', label: 'Description', width: 260 },
     { key: 'actions', label: '', width: 84, fixed: true },
@@ -54,7 +61,7 @@ const COLUMNS = {
     { key: 'range', label: 'Start → End', width: 270 },
     { key: 'monthSpan', label: 'Month × Span', width: 130 },
     { key: 'depends', label: 'Depends on', width: 150 },
-    { key: 'timing', label: 'Timing', width: 150 },
+    { key: 'timing', label: 'Timing', width: 150, defaultHidden: true },
     { key: 'description', label: 'Description', width: 260 },
     { key: 'actions', label: '', width: 84, fixed: true },
   ],
@@ -87,6 +94,13 @@ export function loadStageTableLayout(format) {
   const saved = readAll()[format] || {};
   const hidden = {};
   const widths = {};
+  // A defaultHidden column stays hidden until the user turns it on, which is
+  // recorded positively in `shown`. Without that record the default would
+  // re-hide it on the next load and the Columns menu would look broken.
+  const shown = new Set(Array.isArray(saved.shown) ? saved.shown : []);
+  for (const col of cols) {
+    if (col.defaultHidden && !col.fixed && !shown.has(col.key)) hidden[col.key] = true;
+  }
   for (const key of Array.isArray(saved.hidden) ? saved.hidden : []) {
     if (hideable.has(key)) hidden[key] = true;
   }
@@ -111,6 +125,9 @@ export function saveStageTableLayout(format, { hidden, widths }) {
   const all = readAll();
   all[format] = {
     hidden: Object.keys(hidden || {}).filter(k => hidden[k]),
+    shown: stageTableColumns(format)
+      .filter(c => c.defaultHidden && !hidden?.[c.key])
+      .map(c => c.key),
     widths: widths || {},
   };
   try {
