@@ -95,7 +95,15 @@ async function handler(req, res, auth) {
               trackingId: tracking.trackingId,
               uid: auth?.uid,
               ownerEmail: auth?.email,
-              to: draft.to,
+              // draft.to can carry the contact's folded-in "To Also"
+              // extras as "a@x;b@y" — Graph needs all of them, but the
+              // tracking doc records the primary recipient only. The
+              // Email Campaign report keys its join on this exact value
+              // (trackingByRecipient -> normalizeTrackedEmail), so a
+              // joined string would never match a contact and the row
+              // would silently show no opens. The .eml path already
+              // stores the single address; match it.
+              to: String(draft.to || '').split(';')[0].trim() || draft.to,
               name: draft.name,
               subject: draft.subject,
               links: tracking.links,
