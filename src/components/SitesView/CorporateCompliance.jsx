@@ -784,23 +784,14 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
                         doing-business check. Both feed the SB 253 / SB 261
                         Applies? rows below. */}
                     {!collapsed && (JURISDICTION_CRITERIA_GROUPS[q.key] || []).map((group) => {
-                      // California's rows aren't consequences of its answer —
-                      // they're how you arrive at it, so hiding them until the
-                      // question is answered would put the work behind the
-                      // answer it supports. They stay always on. The EU's are
-                      // what CSRD screens on once the company is already in
-                      // scope, so they wait for a Yes (or an Unknown, still
-                      // unresolved) — except any row already answered or
-                      // annotated, which stays put rather than taking the
-                      // user's work with it.
-                      const gated = group.showWhenTriggered;
-                      const triggered = val === 'Yes' || val === 'Unknown';
-                      const shownRows = group.rows.filter((row) => {
-                        if (!gated || triggered) return true;
-                        const k = criterionKey(q.key, row.key);
-                        return answers?.[k] || links?.[k] || findings?.[k];
-                      });
-                      if (shownRows.length === 0) return null;
+                      // Criteria rows are always on, for California and the
+                      // EU alike: they're how you arrive at the jurisdiction's
+                      // answer (or, for CSRD, the figures you need in front of
+                      // you to give it), so hiding them behind that answer
+                      // would put the work behind the conclusion it supports.
+                      // The mandate rows below are the consequences, and those
+                      // still wait for a Yes.
+                      const shownRows = group.rows;
                       // The doing-business leg is moot once the revenue leg
                       // has failed: its answers can't change any verdict, so
                       // they read N/A rather than sitting there unanswered.
