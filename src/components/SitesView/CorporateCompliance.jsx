@@ -282,7 +282,7 @@ function FindingsBox({ value, onSave, ariaLabel, disabled }) {
         else if (e.key === 'Escape') { setDraft(value || ''); }
       }}
       style={{
-        width: '100%', boxSizing: 'border-box', marginTop: '0.25rem', resize: 'vertical',
+        width: '100%', boxSizing: 'border-box', marginTop: '0.2rem', resize: 'vertical',
         padding: '0.2rem 0.3rem', fontSize: '0.63rem', fontFamily: 'inherit', lineHeight: 1.35,
         color: 'var(--color-text)', background: 'var(--color-surface)',
         // A subtle outline while unsaved, so it's clear blur will commit.
@@ -297,19 +297,26 @@ function FindingsBox({ value, onSave, ariaLabel, disabled }) {
 // link stacked over the findings they recorded from it.
 function ReferenceCell({ url, findings, onSaveUrl, onSaveFindings, label, disabled }) {
   return (
-    <div>
-      <ReferenceLink
-        url={url}
-        onSave={onSaveUrl}
-        ariaLabel={`Reference URL for ${label}`}
-        disabled={disabled}
-      />
-      <FindingsBox
-        value={findings}
-        onSave={onSaveFindings}
-        ariaLabel={`Findings for ${label}`}
-        disabled={disabled}
-      />
+    // Side by side: the link is a short fixed-width control, the notes box
+    // takes the rest. Stacked, the two doubled every row's height for no
+    // gain once the table had the width to hold both.
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.4rem' }}>
+      <div style={{ flex: '0 0 auto', maxWidth: '48%', minWidth: 0 }}>
+        <ReferenceLink
+          url={url}
+          onSave={onSaveUrl}
+          ariaLabel={`Reference URL for ${label}`}
+          disabled={disabled}
+        />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <FindingsBox
+          value={findings}
+          onSave={onSaveFindings}
+          ariaLabel={`Findings for ${label}`}
+          disabled={disabled}
+        />
+      </div>
     </div>
   );
 }
@@ -525,7 +532,7 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
   return (
     // Capped so each Yes/No select stays beside its question instead of
     // drifting to the far edge of a full-width card.
-    <div style={{ maxWidth: READABLE_MAX }}>
+    <div>
       {!disabled && (
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.35rem' }}>
           <button
@@ -553,13 +560,13 @@ function JurisdictionScreening({ answers, links, onSetLink, findings, onSetFindi
           <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
             <thead>
               <tr>
-                <th style={{ ...th, width: '24%' }}>Jurisdiction</th>
-                <th style={{ ...th, width: '29%' }}>Screening</th>
+                <th style={{ ...th, width: '20%' }}>Jurisdiction</th>
+                <th style={{ ...th, width: '26%' }}>Screening</th>
                 {/* Wide enough for the select plus the "auto" badge beside
                     it — any narrower and the badge overflows into the
                     Reference column. */}
-                <th style={{ ...th, width: '19%' }}>Applies?</th>
-                <th style={{ ...th, width: '28%' }}>
+                <th style={{ ...th, width: '14%' }}>Applies?</th>
+                <th style={{ ...th, width: '40%' }}>
                   Reference &amp; Findings
                   <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}> — your link + notes</span>
                 </th>
