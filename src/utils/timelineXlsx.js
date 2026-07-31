@@ -15,8 +15,9 @@ import { schneiderLogoPngDataUrl, SE_GREEN_DARK, SE_GREEN } from './schneiderLog
 import { ownerColor, WORKSTREAM_COLOR } from './timelineGraphic.js';
 import {
   getStageRange, isoToMs, daysInMonth, monthLabel,
-  timelineBaseMonth, getStageMonths, anchorPlus, todayMonthIndex, stageMonthFraction,
+  getStageMonths, anchorPlus, todayMonthIndex, stageMonthFraction,
   timelineWeekTicks, flattenWeekTicks, resolveMonthWindow, monthWindowBounds,
+  stagesOutsideWindow, placementBaseMonth,
 } from './timelineDates.js';
 
 const argb = (hex) => 'FF' + String(hex).replace('#', '').toUpperCase();
@@ -277,7 +278,7 @@ function writeBandHeader(wb, ws, template, ncols, logoCol) {
 // carrying the step number, so the numbering still lines up with the deck.
 function writePhasedSheet(wb, ws, template) {
   const stages = template.stages;
-  const baseMonth = timelineBaseMonth(stages);
+  const baseMonth = placementBaseMonth(template, stages);
   const mode = template?.positionMode === 'months' ? 'months' : 'dates';
   const placed = stages.map(stage => ({ stage, ...getStageMonths(stage, baseMonth, mode) }));
   const needed = Math.max(...placed.map(p => p.month + p.span - 1), 1);
@@ -404,7 +405,13 @@ function writePhasedSheet(wb, ws, template) {
     }
   };
 
+  // Steps the window leaves out aren't written at all — the same rule the
+  // chart follows, so the sheet and the graphic show the same work. The
+  // Timelines page is where the user is told what was left out.
+  const hidden = new Set(stagesOutsideWindow(template, { baseMonth, mode, monthCount }));
+
   stages.forEach((stage, i) => {
+    if (hidden.has(stage)) return;
     const pos = placed[i];
     const phase = String(stage.phase || '').trim();
     // Same grouping rule as the graphic: a step with no phase stands alone
@@ -511,16 +518,6 @@ function writePhasedSheet(wb, ws, template) {
   r += 1;
   const lastFramedRow = r;
 
-  // Below the frame, only the warning that data didn't fit. The sheet carries
-  // no explanatory footnotes — the grid is meant to be read as-is.
-  const overflow = placed.filter(p => p.month + p.span - 1 > monthCount);
-  if (overflow.length) {
-    r += 2;
-    ws.getCell(r, 1).value = `Runs past month ${monthCount}, shown clamped to the last column: `
-      + overflow.map(p => p.stage.name || 'Untitled step').join(', ');
-    ws.getCell(r, 1).font = { name: FONT, italic: true, size: 9, color: { argb: 'FF92400E' } };
-  }
-
   frameBlock(ws, 1, 1, lastFramedRow, NCOLS);
 }
 
@@ -533,7 +530,12 @@ export async function exportTimelineXlsx(template) {
   wb.creator = 'Prospect Tracker';
 
   const phased = template?.format === 'phased';
-  const rows = stages.map(stage => ({ stage, range: getStageRange(stage) }));
+  // A step the window excludes doesn't get a row at all, in either format —
+  // the sheet shows exactly the work the chart does.
+  const outside = new Set(stagesOutsideWindow(template));
+  const rows = stages
+    .filter(stage => !outside.has(stage))
+    .map(stage => ({ stage, range: getStageRange(stage) }));
   const dated = rows.filter(r => r.range);
 
   const ws = wb.addWorksheet('Timeline', {

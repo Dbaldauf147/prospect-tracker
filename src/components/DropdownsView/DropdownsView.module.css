@@ -1014,3 +1014,17 @@
 .stageTable td {
   overflow: hidden;
 }
+
+/* Steps the timeline's window excludes are drawn nowhere and exported
+   nowhere, so the page has to say so — an amber strip above the visual,
+   naming them. */
+.visualOutsideNote {
+  margin: 0 0.6rem 0.35rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #FCD34D;
+  border-radius: var(--radius-md);
+  background: #FFFBEB;
+  color: #92400E;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}

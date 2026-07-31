@@ -15,8 +15,9 @@ import { SE_GREEN, SE_GREEN_DARK, schneiderLogoSvg } from './schneiderLogo';
 import { TIMELINE_STAGE_OWNERS, DEFAULT_STAGE_OWNER } from './timelineTemplatesStore';
 import {
   getStageRange, formatRangeLabel, isoToMs, msToIso, daysInMonth, monthLabel,
-  timelineBaseMonth, getStageMonths, anchorPlus, todayMonthIndex, todayMonthOffset,
+  getStageMonths, anchorPlus, todayMonthIndex, todayMonthOffset,
   stageMonthFraction, timelineWeekTicks, resolveMonthWindow, monthWindowBounds,
+  stagesOutsideWindow, placementBaseMonth,
 } from './timelineDates';
 
 const SE_INK = '#0F172A';
@@ -303,9 +304,14 @@ export function buildGanttSvg(template, { branded = true } = {}) {
   const stages = Array.isArray(template?.stages) ? template.stages : [];
   if (!stages.length) return null;
 
+  // Anything the declared range excludes is dropped rather than clamped to an
+  // edge — the page carries the warning instead. Same rule the implementation
+  // format uses, from the same helper.
+  const hidden = new Set(stagesOutsideWindow(template));
   const dated = [];
   const undated = [];
   stages.forEach(stage => {
+    if (hidden.has(stage)) return;
     const range = getStageRange(stage);
     if (range) dated.push({ stage, range });
     else undated.push(stage);
@@ -377,19 +383,11 @@ export function buildGanttSvg(template, { branded = true } = {}) {
   legendSvg += `<text x="${width - GANTT.padX}" y="${noteY}" text-anchor="end" font-size="11" fill="${SE_MUTE}">Bars show duration · diamonds are point-in-time milestones</text>`;
   body += legendSvg;
 
-  // Never drop a stage silently: anything the parser couldn't place is named,
-  // and so is anything the declared range cuts off — its bar is clamped to the
-  // edge, which would otherwise read as work that happens at the boundary.
+  // A stage the parser couldn't place is still named here: it isn't the
+  // window's doing, so the page's out-of-range warning wouldn't cover it.
   const notes = [];
   if (undated.length) {
     notes.push(`Not shown — no readable dates: ${undated.map(s => s.name || 'Untitled stage').join(', ')}`);
-  }
-  if (bounds) {
-    const outside = dated.filter(({ range }) =>
-      isoToMs(range.end) < bounds.startMs || isoToMs(range.start) >= bounds.endMs);
-    if (outside.length) {
-      notes.push(`Outside the timeline range, clamped to the edge: ${outside.map(d => d.stage.name || 'Untitled stage').join(', ')}`);
-    }
   }
   notes.forEach((line, i) => {
     body += `<text x="${GANTT.padX}" y="${noteY + 26 + i * 16}" font-size="11.5" fill="${SE_MUTE}">${esc(line)}</text>`;
@@ -461,7 +459,7 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   const stages = Array.isArray(template?.stages) ? template.stages : [];
   if (!stages.length) return null;
 
-  const baseMonth = timelineBaseMonth(stages);
+  const baseMonth = placementBaseMonth(template, stages);
   const mode = template?.positionMode === 'months' ? 'months' : 'dates';
   const placed = stages.map(stage => ({ stage, ...getStageMonths(stage, baseMonth, mode) }));
   const needed = Math.max(...placed.map(p => p.month + p.span - 1), 1);
@@ -479,16 +477,19 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   const gridW = colW * monthCount;
   const width = PHASED.labelW + gridW + 40;
 
-  const groups = groupPhases(stages);
+  // Steps the window leaves out are dropped, not clamped to the last column:
+  // a bar pinned to the edge reads as work happening there. The Timelines page
+  // warns about what it left out; the graphic just doesn't carry it. A band
+  // whose every step is out goes with them.
+  const hidden = new Set(stagesOutsideWindow(template, { baseMonth, mode, monthCount }));
+  const groups = groupPhases(stages)
+    .map(g => ({ ...g, steps: g.steps.filter(s => !hidden.has(s.stage)) }))
+    .filter(g => g.steps.length > 0);
   const bandH = groups.map(g => Math.max(62, g.steps.length * PHASED.rowStep + PHASED.phasePad));
   const monthsBottom = PHASED.headH + PHASED.monthsRowH;
   const gridTop = monthsBottom + PHASED.weeksRowH;
   const gridH = bandH.reduce((a, b) => a + b, 0);
-  // Steps running past a hand-picked month count are clamped to the last
-  // column; say so rather than let them pile up there unannounced.
-  const overflow = placed.filter(p => p.month + p.span - 1 > monthCount);
-  const overflowH = overflow.length ? 20 : 0;
-  const height = gridTop + gridH + overflowH + PHASED.footH + 8;
+  const height = gridTop + gridH + PHASED.footH + 8;
 
   // Declared dependencies, resolved to row indexes. A link pointing at a
   // missing or self-referencing step is dropped rather than drawn nowhere.
@@ -497,6 +498,8 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   stages.forEach((stage, i) => {
     const from = indexById.get(String(stage.dependsOn || ''));
     if (from == null || from === i) return;
+    // A link to or from a step the window dropped has nothing to point at.
+    if (hidden.has(stage) || hidden.has(stages[from])) return;
     deps.push({ from, to: i, backwards: placed[i].month < placed[from].month });
   });
 
@@ -729,14 +732,8 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
     s += `<circle cx="${todayX.toFixed(1)}" cy="${gridTop + gridH}" r="3.5" fill="${SE_RED}"/>`;
   }
 
-  if (overflow.length) {
-    const names = overflow.map(p => p.stage.name || 'Untitled step').join(', ');
-    const line = wrapText(`Runs past month ${monthCount}, shown clamped to the last column: ${names}`, width - 80, 11.5, 1);
-    s += `<text x="20" y="${gridTop + gridH + 15}" font-size="11.5" fill="#92400E">${esc(line[0] || '')}</text>`;
-  }
-
   // Footer band.
-  const footY = gridTop + gridH + 8 + overflowH;
+  const footY = gridTop + gridH + 8;
   s += `<rect x="0" y="${footY}" width="${width}" height="${PHASED.footH}" fill="${SE_GREEN}"/>`;
   s += `<text x="20" y="${footY + 17}" font-size="10.5" font-weight="700" fill="#FFFFFF">Confidential Property of Schneider Electric</text>`;
   if (branded) {

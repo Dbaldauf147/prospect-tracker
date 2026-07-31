@@ -255,6 +255,57 @@ export function monthDayFraction(isoDate) {
   return (d - 0.5) / daysInMonth(y, mo);
 }
 
+// The month a timeline's columns are counted from.
+//
+// With a declared range that's the range's own first month, so a step lands in
+// the column whose label matches its date. Measuring from the earliest dated
+// stage instead — which is all there was before ranges existed — shifts every
+// step whenever a stage starts before the range does, and a step the window
+// drops would still push the rest sideways. Without a range there are no
+// calendar labels to line up with, so the earliest stage remains the origin.
+export function placementBaseMonth(template, stages) {
+  const window = resolveMonthWindow(template, null);
+  if (window.fromRange) {
+    const base = parseMonthAnchor(window.anchor);
+    if (base) return base.y * 12 + (base.m - 1);
+  }
+  return timelineBaseMonth(stages);
+}
+
+// Steps the timeline's window leaves out.
+//
+// A step that falls outside the window isn't drawn at all — clamping its bar
+// to the edge reads as work happening at the boundary, which is worse than
+// not showing it. The Timelines page warns about what it left out; the
+// graphic and the exports just don't carry it. One rule, so the page and
+// every renderer always agree on what's missing.
+//
+// With a declared date range the test is the dates: a step is out when its
+// whole range sits before the first day or on/after the last. Without one,
+// the window is a month count and the test is placement — a step positioned
+// past the last column. Undated steps in a dated window stay in: they're
+// placed by month number, not by a date the range could exclude.
+export function stagesOutsideWindow(template, { baseMonth, mode, monthCount } = {}) {
+  const stages = Array.isArray(template?.stages) ? template.stages : [];
+  if (!stages.length) return [];
+  const range = getTimelineRange(template);
+  if (range) {
+    const window = resolveMonthWindow(template, null);
+    const bounds = monthWindowBounds(window.anchor, window.monthCount);
+    if (!bounds) return [];
+    return stages.filter(stage => {
+      const r = getStageRange(stage);
+      if (!r) return false;
+      return isoToMs(r.end) < bounds.startMs || isoToMs(r.start) >= bounds.endMs;
+    });
+  }
+  if (!(Number(monthCount) > 0)) return [];
+  return stages.filter(stage => {
+    const pos = getStageMonths(stage, baseMonth, mode);
+    return pos.month > monthCount;
+  });
+}
+
 // The same, for a stage: read off its start date, or null when it has no
 // date to place it by (a timeline written purely in month numbers).
 export function stageMonthFraction(stage) {
