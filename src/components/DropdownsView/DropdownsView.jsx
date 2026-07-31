@@ -27,6 +27,7 @@ const SERVICE_TABLE_COLUMNS = [
   { key: 'localProjectName', label: 'Local Project Name', width: 200,   editable: true  },
   { key: 'timelineDriven',   label: 'Timeline Driven',   width: 120,    editable: true  },
   { key: 'rolloutTime',      label: 'Rollout Time',      width: 160,    editable: true  },
+  { key: 'sme',              label: 'SME',               width: 150,    editable: true  },
 ];
 
 // Inline cell editor for the Services subtab. Renders the current
@@ -578,10 +579,38 @@ export function DropdownsView({ settings, updateSettings }) {
     return serviceRows.filter(({ name, meta }) => {
       if (name.toLowerCase().includes(term)) return true;
       if (!meta) return false;
-      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.localProjectName, meta.timelineDriven, meta.rolloutTime]
+      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.localProjectName, meta.timelineDriven, meta.rolloutTime, meta.sme]
         .some(v => String(v || '').toLowerCase().includes(term));
     });
   }, [serviceRows, serviceSearch]);
+
+  // The SME column shipped after the Services table gained saved column
+  // prefs, so anyone who has already resized or hidden a column has a stored
+  // visible-set that omits it — DataTable would keep it hidden forever.
+  // Reveal it once, then record that we did so we never re-fight a user who
+  // later chooses to hide it. Gated on settings._lastWriteAt so we only act
+  // once synced settings have actually loaded. Mirrors the same one-time
+  // reveal Opps 2 used when it added its PE Owner column.
+  useEffect(() => {
+    if (!settings || !settings._lastWriteAt) return;
+    if (settings.servicesSmeColumnRevealed) return;
+    const updates = { servicesSmeColumnRevealed: true };
+    const remote = settings?.tablePrefs?.[SERVICES_TABLE_ID]?.visible;
+    if (Array.isArray(remote) && remote.length > 0 && !remote.includes('sme')) {
+      updates.tablePrefs = {
+        ...(settings.tablePrefs || {}),
+        [SERVICES_TABLE_ID]: { ...(settings.tablePrefs[SERVICES_TABLE_ID] || {}), visible: [...remote, 'sme'] },
+      };
+    }
+    try {
+      const LS_KEY = `prospect-col-visible-${SERVICES_TABLE_ID}`;
+      const saved = JSON.parse(localStorage.getItem(LS_KEY));
+      if (Array.isArray(saved) && saved.length > 0 && !saved.includes('sme')) {
+        localStorage.setItem(LS_KEY, JSON.stringify([...saved, 'sme']));
+      }
+    } catch { /* ignore */ }
+    updateSettings?.(updates);
+  }, [settings, updateSettings]);
 
   // Flat rows for the table: one field per column so sorting, the search
   // box and the Excel export all read straight off the row, with the
@@ -597,6 +626,7 @@ export function DropdownsView({ settings, updateSettings }) {
     localProjectName: meta?.localProjectName || '',
     timelineDriven: meta?.timelineDriven || '',
     rolloutTime: meta?.rolloutTime || '',
+    sme: meta?.sme || '',
     _url: serviceLinks[name] || '',
     _muted: !!meta?.graveyard,
   })), [filteredServiceRows, serviceLinks]);
