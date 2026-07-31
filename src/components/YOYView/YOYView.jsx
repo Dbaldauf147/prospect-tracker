@@ -14,7 +14,9 @@ import { loadCommissions } from '../../utils/commissionsStore';
 import { loadDealsList } from '../../utils/dealsStore';
 import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
 import { asNumber, dealYear } from '../../utils/dealsFormat';
-import { loadQuotedProjections, saveQuotedProjections, QUOTED_FIELDS } from '../../utils/quotedProjectionsStore';
+import {
+  loadQuotedProjections, saveQuotedProjections, QUOTED_FIELDS, QUOTED_HISTORICAL_SEED,
+} from '../../utils/quotedProjectionsStore';
 import { loadYoyOverrides, saveYoyOverrides } from '../../utils/yoyOverridesStore';
 import { loadHiddenCharts, saveHiddenCharts } from '../../utils/yoyHiddenChartsStore';
 import styles from './YOYView.module.css';
@@ -274,6 +276,29 @@ function parseDateYear(v) {
   const d = new Date(ts);
   const y = /^\d{4}-\d{2}/.test(s) ? d.getUTCFullYear() : d.getFullYear();
   return Number.isFinite(y) && y >= 1900 && y <= 2100 ? y : null;
+}
+
+// Where a stored Quoted Projections month came from, so the export can say
+// whether a figure was hand-entered, auto-captured at month end, or part of
+// the supplied Dec–May seed history (the seed merges into the same table,
+// so it's identified by its values still matching).
+function quotedStoredSource(key, saved) {
+  if (!saved) return 'No values recorded';
+  if (saved._auto) return 'Auto-captured month-end snapshot (Opps + BFO Activity)';
+  const seed = QUOTED_HISTORICAL_SEED[key];
+  if (seed && QUOTED_FIELDS.every(f => Number(seed[f]) === Number(saved[f]))) {
+    return 'Seeded history (supplied figures)';
+  }
+  return 'Manual entry (“Edit values”)';
+}
+
+// Same, for a plotted row — the in-progress month is computed live rather
+// than read from the store.
+function quotedValueSource(row, quotedTable) {
+  if (row._live) return 'Live — computed now from Opps + BFO Activity';
+  const saved = quotedTable?.[row.monthKey];
+  if (!saved) return row._hasData ? 'Recorded' : 'No values recorded';
+  return quotedStoredSource(row.monthKey, saved);
 }
 
 const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -1216,10 +1241,8 @@ export function YOYView() {
   // the matching useMemo above so the downloaded Excel rows tie back to
   // the chart values.
   const contributingRecords = useMemo(() => {
-    const quotedMonths = fiscalMonths(currentYear);
-    const quotedKeyToLabel = new Map(quotedMonths.map(m => [m.key, m.label]));
     const leads = [];
-    const quoted = [];
+    const quotedSource = [];
     const closeRate = [];
     const leadSources = [];
     const quotedByYear = [];
@@ -1315,32 +1338,35 @@ export function YOYView() {
           'Quoted Amount': quotedAmt ?? '',
         });
       }
-      if (closeDate && quotedAmt && quotedAmt > 0) {
-        const ts = Date.parse(closeDate);
-        if (!Number.isNaN(ts)) {
-          const d = new Date(ts);
-          const monthLabel = quotedKeyToLabel.get(`${d.getFullYear()}-${d.getMonth()}`);
-          if (monthLabel) {
-            const lowerChance = chance.toLowerCase();
-            const series =
-              lowerChance === 'weak' ? 'Quoted Weak'
-              : lowerChance === 'ok' ? 'Quoted OK'
-              : lowerChance === 'expected' ? 'Quoted Expected'
-              : '';
-            quoted.push({
-              Account: account,
-              'Close Date': closeDate,
-              Month: monthLabel,
-              'Chance?': chance,
-              Status: status,
-              Stage: stage,
-              'Quoted Amount': quotedAmt,
-              'Chart Series': series,
-              'Counts Toward BFO Pipe Total': series ? 'Yes' : 'No',
-              'Agreements Sent Line': status === 'Agreement Sent' ? 'Yes' : 'No',
-            });
-          }
-        }
+      // Quoted Projections source rows — the raw opps the live (current
+      // month) point is summed from. Mirrors `liveCurrentMonth` exactly:
+      // open stages only (closed opps leave the pipeline) carrying a
+      // Quoted Amount, bucketed by the Chance? column, with the same $
+      // counting toward Agreements Sent when the Stage is "Agreement Sent".
+      // Rows with no Chance value are kept and flagged — they're in the
+      // scanned population but feed no bucket, which is usually why a
+      // month's lines don't add up to the pipeline total.
+      if (!CLOSED_STAGES.has(stage) && quotedAmt && quotedAmt > 0) {
+        const lowerChance = chance.toLowerCase();
+        const series =
+          lowerChance === 'weak' ? 'Quoted Weak'
+          : lowerChance === 'ok' ? 'Quoted OK'
+          : lowerChance === 'expected' ? 'Quoted Expected'
+          : '';
+        quotedSource.push({
+          Account: account,
+          Stage: stage,
+          Status: status,
+          'Chance?': chance,
+          'Quoted Amount ($)': quotedAmt,
+          'Quoted Amount ($K)': Math.round(quotedAmt / 100) / 10,
+          'Chart Series': series || '(no Chance — feeds no bucket)',
+          'Feeds Agreements Sent': stage === 'Agreement Sent' ? 'Yes' : 'No',
+          'Open Year': oy ?? '',
+          'Quoted On': quotedOn,
+          'Close Date': closeDate,
+          Scope: scope,
+        });
       }
     }
     leads.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
@@ -1351,13 +1377,15 @@ export function YOYView() {
       a['Lead Source'].localeCompare(b['Lead Source'])
       || a['Open Year'] - b['Open Year']
       || a.Account.localeCompare(b.Account));
-    quoted.sort((a, b) => {
-      const ta = Date.parse(a['Close Date']);
-      const tb = Date.parse(b['Close Date']);
-      if (Number.isNaN(ta) && Number.isNaN(tb)) return 0;
-      if (Number.isNaN(ta)) return 1;
-      if (Number.isNaN(tb)) return -1;
-      return ta - tb;
+    // Group the Quoted Projections source rows by the line they feed, then
+    // biggest $ first, so the export reads like the chart's legend.
+    const SERIES_ORDER = ['Quoted Weak', 'Quoted OK', 'Quoted Expected'];
+    quotedSource.sort((a, b) => {
+      const ia = SERIES_ORDER.indexOf(a['Chart Series']);
+      const ib = SERIES_ORDER.indexOf(b['Chart Series']);
+      return (ia < 0 ? SERIES_ORDER.length : ia) - (ib < 0 ? SERIES_ORDER.length : ib)
+        || b['Quoted Amount ($)'] - a['Quoted Amount ($)']
+        || a.Account.localeCompare(b.Account);
     });
     // Row-3 chart contributors. Built from the same `records` loop in
     // a second pass so we don't disrupt the existing classifications.
@@ -1445,7 +1473,7 @@ export function YOYView() {
     }
     commissionsRecs.sort((a, b) => a.Year - b.Year || a['Client Name'].localeCompare(b['Client Name']));
     return {
-      leads, quoted, closeRate, leadSources, quotedByYear, notSolds,
+      leads, quotedSource, closeRate, leadSources, quotedByYear, notSolds,
       topAccounts: topAccountsRecs, dealSize: dealSizeRecs,
       commissions: commissionsRecs,
     };
@@ -1507,19 +1535,84 @@ export function YOYView() {
     appendSheet(wb, 'Contributing Opps', contributingRecords.leads);
     XLSX.writeFile(wb, `yoy-leads-${todayStamp()}.xlsx`);
   }
-  function downloadQuoted() {
-    const summary = quotedData.map(r => ({
+  // One plotted month, as an export row.
+  function quotedSummaryRow(r) {
+    return {
       Month: r.month,
       Year: r.year,
+      'Month Key': r.monthKey,
       'Quoted Weak ($K)': r.weak ?? '',
       'Quoted OK ($K)': r.ok ?? '',
       'Quoted Expected ($K)': r.expected ?? '',
       'Agreements Sent ($K)': r.agreements ?? '',
       'BFO Pipe Total ($K)': r.bfoPipe ?? '',
-    }));
+      Source: quotedValueSource(r, quotedTable),
+    };
+  }
+  // Every month held in the store — including months outside the charted
+  // Dec→Nov window — so the export carries the whole raw table the chart
+  // reads, not just the twelve points currently drawn.
+  function quotedStoredRows() {
+    const charted = new Set(quotedData.map(r => r.monthKey));
+    return Object.keys(quotedTable || {}).sort().map((key) => {
+      const v = quotedTable[key] || {};
+      return {
+        'Month Key': key,
+        'Quoted Weak ($K)': v.weak ?? '',
+        'Quoted OK ($K)': v.ok ?? '',
+        'Quoted Expected ($K)': v.expected ?? '',
+        'Agreements Sent ($K)': v.agreements ?? '',
+        'BFO Pipe Total ($K)': v.bfoPipe ?? '',
+        Source: quotedStoredSource(key, v),
+        'On the current chart': charted.has(key) ? 'Yes' : 'No',
+      };
+    });
+  }
+  // Rows behind the "BFO Pipe Total" line for the live month — every
+  // pasted BFO Activity row, with its Amount parsed to a number so the
+  // sheet sums to the plotted total.
+  function bfoActivityRows() {
+    if (!bfo || !Array.isArray(bfo.rows) || !Array.isArray(bfo.headers)) return [];
+    const amountCol = bfo.headers.find(h => /^amount$/i.test(h));
+    return bfo.rows.map((r) => {
+      const out = {};
+      for (const h of bfo.headers) out[h] = r[h] ?? '';
+      out['Amount ($ parsed)'] = amountCol ? (parseMoney(r[amountCol]) ?? '') : '';
+      return out;
+    });
+  }
+  // Where each series comes from, spelled out in the workbook — the chart
+  // mixes a live compute with recorded snapshots, so "which rows made this
+  // number" has a different answer per month.
+  function quotedNotesRows() {
+    return [
+      { Series: 'Quoted Weak / OK / Expected', 'Where the number comes from': 'Sum of Quoted Amount on open (non-Sold/Not Sold/Closed/Lost) opps, split by the Chance? column. Divided by 1,000 for the $K axis.', 'Raw rows in this file': 'Live Opps (source rows)' },
+      { Series: 'Agreements Sent', 'Where the number comes from': 'Sum of Quoted Amount on open opps whose Stage is "Agreement Sent" — the same $ also sits in its Chance bucket.', 'Raw rows in this file': 'Live Opps (source rows)' },
+      { Series: 'BFO Pipe Total', 'Where the number comes from': 'Sum of the Amount column across every row pasted into BFO Activity. Plotted on the right-hand axis.', 'Raw rows in this file': 'Live BFO Activity' },
+      { Series: 'Past months', 'Where the number comes from': 'Month-end snapshots — the figures captured at the time (auto-captured, seeded, or typed via "Edit values"). The per-opp rows behind a closed month are not retained, so only the recorded values are available.', 'Raw rows in this file': 'Recorded Months (store)' },
+    ];
+  }
+  function downloadQuoted() {
     const wb = XLSX.utils.book_new();
-    appendSheet(wb, `Quoted Projections ${currentYear}`, summary);
+    appendSheet(wb, `Quoted Projections ${currentYear}`, quotedData.map(quotedSummaryRow));
+    appendSheet(wb, 'Recorded Months (store)', quotedStoredRows());
+    appendSheet(wb, 'Live Opps (source rows)', contributingRecords.quotedSource);
+    appendSheet(wb, 'Live BFO Activity', bfoActivityRows());
+    appendSheet(wb, 'Notes', quotedNotesRows());
     XLSX.writeFile(wb, `yoy-quoted-projections-${currentYear}-${todayStamp()}.xlsx`);
+  }
+  // Excel for a single pinned month: its plotted values, plus the raw opp
+  // and BFO rows it's summed from when that month is the live one.
+  function exportQuotedMonth(row) {
+    if (!row || !row.monthKey) return;
+    const wb = XLSX.utils.book_new();
+    appendSheet(wb, `${row.month} ${row.year}`, [quotedSummaryRow(row)]);
+    if (row._live) {
+      appendSheet(wb, 'Live Opps (source rows)', contributingRecords.quotedSource);
+      appendSheet(wb, 'Live BFO Activity', bfoActivityRows());
+    }
+    appendSheet(wb, 'Notes', quotedNotesRows());
+    XLSX.writeFile(wb, `yoy-quoted-projections-${row.monthKey}-${todayStamp()}.xlsx`);
   }
   function downloadCloseRate() {
     const summary = closeRateData.map(r => ({
@@ -1748,7 +1841,7 @@ export function YOYView() {
         {(() => {
           const charts = [
             { id: 'leads', node: <LeadsCard key="leads" data={leadsData} hasOpps={hasOpps} onDownload={downloadLeads} onExportPoint={(row) => exportPinnedOpps('leads', row)} /> },
-            { id: 'quotedProjections', node: <QuotedProjectionsCard key="quotedProjections" data={quotedData} quotedTable={quotedTable} onSaveTable={updateQuotedTable} onDownload={downloadQuoted} /> },
+            { id: 'quotedProjections', node: <QuotedProjectionsCard key="quotedProjections" data={quotedData} quotedTable={quotedTable} onSaveTable={updateQuotedTable} onDownload={downloadQuoted} onExportPoint={exportQuotedMonth} /> },
             { id: 'closeRate', node: <CloseRateCard key="closeRate" data={closeRateData} hasOpps={hasOpps} onDownload={downloadCloseRate} onExportPoint={(row) => exportPinnedOpps('closeRate', row)} /> },
             { id: 'leadSources', node: <LeadSourcesCard key="leadSources" data={leadSourcesData} hasOpps={hasOpps} onDownload={downloadLeadSources} onExportPoint={(row) => exportPinnedOpps('leadSources', row)} /> },
             { id: 'quotedByYear', node: <QuotedByYearCard key="quotedByYear" data={quotedByYearData} hasOpps={hasOpps} onDownload={downloadQuotedByYear} onExportPoint={(row) => exportPinnedOpps('quotedByYear', row)} /> },
@@ -2219,8 +2312,10 @@ function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload, onE
                     { label: 'BFO Pipe Total', value: row.bfoPipe == null ? '—' : fmtKLabel(row.bfoPipe) },
                   ],
                   note: row._live
-                    ? 'Live — computed now from Opps (quoted $ by Chance / Agreements Sent) + BFO Activity (Pipe Total). Use “Edit values” to record a fixed month-end snapshot.'
-                    : (row._hasData ? null : 'No values recorded for this month yet.'),
+                    ? 'Live — computed now from Opps (quoted $ by Chance / Agreements Sent) + BFO Activity (Pipe Total). Pin this point and hit ⬇ Excel for the opp-level rows behind it. Use “Edit values” to record a fixed month-end snapshot.'
+                    : (row._hasData
+                        ? 'Recorded month-end snapshot — “Download .xlsx” carries the stored values plus the current live source rows.'
+                        : 'No values recorded for this month yet.'),
                 })}
               />
             } />
