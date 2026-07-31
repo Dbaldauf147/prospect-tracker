@@ -164,15 +164,6 @@ function StageRow({ index, total, stage, format, mode, priorSteps, onChange, onM
               ))}
             </select>
           </td>
-          <td>
-            <DraftInput
-              value={stage.phase}
-              placeholder="Phase / stage band"
-              title="Steps sharing a phase name are grouped into one band"
-              className={styles.stageInput}
-              onCommit={(next) => onChange({ ...stage, phase: next })}
-            />
-          </td>
           <td className={`${styles.stageDatesCell} ${byDates ? '' : styles.inactiveCell}`}>
             <input
               type="date"
@@ -683,7 +674,6 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
             <col />
             <col style={{ width: 170 }} />
             {format === 'milestone' && <col style={{ width: 118 }} />}
-            {format === 'phased' && <col style={{ width: 170 }} />}
             {format === 'phased' && <col style={{ width: 270 }} />}
             {format === 'phased' && <col style={{ width: 108 }} />}
             {format === 'phased' && <col style={{ width: 150 }} />}
@@ -699,7 +689,6 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
               <th>{format === 'phased' ? 'Workstream' : 'Owner'}</th>
               {format === 'milestone' && <th>Icon</th>}
               {format === 'phased' && <th>Type</th>}
-              {format === 'phased' && <th>Phase</th>}
               {format === 'phased' && (
                 <th className={mode === 'dates' ? undefined : styles.inactiveHead}
                     title="Start and end dates. The standard way to place a step.">Start → End</th>
@@ -718,7 +707,7 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
           <tbody>
             {visibleStages.length === 0 ? (
               <tr>
-                <td colSpan={format === 'phased' ? 11 : 8} className={styles.serviceEmpty}>
+                <td colSpan={format === 'phased' ? 10 : 8} className={styles.serviceEmpty}>
                   {stages.length === 0 ? 'No stages yet — add the first one below.' : 'No stages match the search.'}
                 </td>
               </tr>
