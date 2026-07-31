@@ -4542,6 +4542,7 @@ export function OppInfoModal({
               options={opts}
               account={opp['Account']}
               prospects={prospects}
+              updateProspect={updateProspect}
               settings={settings}
               oppRows={oppRows}
               currentOppId={opp._id}
@@ -8289,6 +8290,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                     options={opts}
                     account={row['Account']}
                     prospects={prospects}
+                    updateProspect={updateProspect}
                     settings={settings}
                     oppRows={records}
                     currentOppId={row._id}

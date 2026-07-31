@@ -17,7 +17,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { SERVICE_CATEGORIES } from '../../data/enums';
+import { SERVICE_CATEGORIES, SERVICE_STATUSES } from '../../data/enums';
 import { companiesMatch } from '../../utils/listFlags';
 import { parseMulti } from '../common/columnLinks';
 
@@ -63,21 +63,13 @@ function tokenMatchesItem(token, item) {
   return i === t || i.includes(t) || t.includes(i);
 }
 
-// The status each service already carries for this account:
-//   1. the manual status set on the company card (servicesExplored), else
-//   2. the best stage among the account's other opps that name it.
-// `auto` marks the second kind so the chip can read as derived, not typed.
-function buildAccountStatuses({ account, prospects, oppRows, items, currentOppId }) {
+// The automatic status per service: the best stage among the account's opps
+// that name it. This is the fallback the company card shows when no manual
+// status has been set, so the two agree on what "auto" means.
+function buildAutoStatuses({ account, oppRows, items, currentOppId }) {
   const out = new Map();
   const name = String(account || '').trim();
   if (!name) return out;
-
-  const prospect = (prospects || []).find(p => companiesMatch(p?.company, name));
-  const manual = prospect?.servicesExplored || {};
-  for (const item of items) {
-    const v = String(manual[item] ?? '').trim();
-    if (v && v !== '-') out.set(item, { status: v, auto: false });
-  }
 
   for (const row of oppRows || []) {
     // The opp being edited is excluded: its own Scope is what this board is
@@ -91,10 +83,9 @@ function buildAccountStatuses({ account, prospects, oppRows, items, currentOppId
       for (const item of items) {
         if (!tokenMatchesItem(token, item)) continue;
         const existing = out.get(item);
-        if (existing && !existing.auto) continue; // a manual status always wins
         const pri = STAGE_PRIORITY[stage] ?? 1;
-        const existingPri = existing ? (STAGE_PRIORITY[existing.status] ?? 1) : -1;
-        if (pri > existingPri) out.set(item, { status: stage, auto: true });
+        const existingPri = existing ? (STAGE_PRIORITY[existing] ?? 1) : -1;
+        if (pri > existingPri) out.set(item, stage);
       }
     }
   }
@@ -121,26 +112,53 @@ function buildCategories(settings, options) {
   return cats;
 }
 
-function StatusChip({ entry }) {
-  if (!entry) return null;
-  const colors = STATUS_COLORS[entry.status] || { bg: '#F1F5F9', color: '#475569' };
+// The status control, mirroring the company card's: the select shows the
+// effective status, "— (auto)" clears the manual override back to whatever
+// the account's opps imply, and an accent border marks a row that carries an
+// override rather than a derived value.
+//
+// Without a company record to write to there's nothing to save against, so
+// the control goes read-only and says why instead of silently dropping edits.
+function StatusSelect({ item, manual, auto, onSet, disabled, disabledReason }) {
+  const effective = manual || auto || '-';
+  const colors = STATUS_COLORS[effective] || {};
+  const title = disabled
+    ? disabledReason
+    : manual
+      ? `Manual override: ${manual}.${auto ? ` Automatic status from another opp: ${auto}.` : ' No matching opp, so the automatic status is blank.'} Pick "— (auto)" to revert.`
+      : auto
+        ? `Automatic status from another opp on this account: ${auto}. Pick a status to set a manual override.`
+        : 'No status yet. Pick one to set it on the company card.';
+
   return (
-    <span
-      title={entry.auto ? `${entry.status} — from another opp on this account` : `${entry.status} — set on the company card`}
+    <select
+      value={effective}
+      disabled={disabled}
+      title={title}
+      onChange={(e) => onSet(item, e.target.value)}
+      // The row's label wraps only the checkbox and name, but stop the click
+      // here regardless so opening the menu can never toggle the tick.
+      onClick={(e) => e.stopPropagation()}
       style={{
-        flex: '0 0 auto', fontSize: '0.58rem', fontWeight: 700,
-        padding: '0.05rem 0.3rem', borderRadius: 3,
-        background: colors.bg, color: colors.color,
-        fontStyle: entry.auto ? 'italic' : 'normal',
-        whiteSpace: 'nowrap',
+        flex: '0 0 auto', maxWidth: 78, fontSize: '0.58rem', fontWeight: 700,
+        padding: '0 1px', borderRadius: 3, cursor: disabled ? 'default' : 'pointer',
+        fontFamily: 'inherit', opacity: disabled ? 0.55 : 1,
+        border: `1px solid ${manual ? 'var(--color-accent)' : 'var(--color-border)'}`,
+        background: colors.bg || 'var(--color-surface)',
+        color: colors.color || 'var(--color-text-muted)',
+        fontStyle: !manual && auto ? 'italic' : 'normal',
       }}
-    >{entry.status}</span>
+    >
+      {SERVICE_STATUSES.map(s => (
+        <option key={s} value={s}>{s === '-' ? '— (auto)' : s}</option>
+      ))}
+    </select>
   );
 }
 
 export function ScopeServicesModal({
-  value, onChange, onClose, options = [], account, prospects, settings,
-  oppRows, currentOppId, extraGroups, extraGroupsLabel, extraGroupsPlaceholder,
+  value, onChange, onClose, options = [], account, prospects, updateProspect,
+  settings, oppRows, currentOppId, extraGroups, extraGroupsLabel, extraGroupsPlaceholder,
 }) {
   const [query, setQuery] = useState('');
   const [quickPick, setQuickPick] = useState('');
@@ -153,14 +171,41 @@ export function ScopeServicesModal({
   const renames = settings?.serviceRenames || {};
   const displayName = (item) => renames[item] || item;
 
-  const statuses = useMemo(
-    () => buildAccountStatuses({ account, prospects, oppRows, items: allItems, currentOppId }),
-    [account, prospects, oppRows, allItems, currentOppId],
-  );
-  const smes = useMemo(() => {
-    const p = (prospects || []).find(x => companiesMatch(x?.company, String(account || '').trim()));
-    return p?.serviceSMEs || {};
+  // The company record behind this opp's account — the same record the
+  // company card edits, so a status set here lands in exactly the place the
+  // card reads it back from.
+  const prospect = useMemo(() => {
+    const name = String(account || '').trim();
+    if (!name) return null;
+    return (prospects || []).find(p => companiesMatch(p?.company, name)) || null;
   }, [prospects, account]);
+  const manualStatuses = prospect?.servicesExplored || {};
+  const smes = prospect?.serviceSMEs || {};
+
+  const autoStatuses = useMemo(
+    () => buildAutoStatuses({ account, oppRows, items: allItems, currentOppId }),
+    [account, oppRows, allItems, currentOppId],
+  );
+
+  // Statuses live on the company record, so editing needs one to exist. An
+  // account with no matching company (or a caller that didn't pass an
+  // updater) still sees its statuses — it just can't change them here.
+  const canEditStatus = !!prospect?.id && typeof updateProspect === 'function';
+  const cannotEditReason = !account
+    ? 'This opp has no Account, so there is no company record to save a status against.'
+    : !prospect
+      ? `No company record matches “${account}” — add the company on the Table view to set statuses here.`
+      : 'Status editing is unavailable on this screen.';
+
+  const setStatus = (item, next) => {
+    if (!canEditStatus) return;
+    const current = { ...(prospect.servicesExplored || {}) };
+    // "— (auto)" removes the override rather than storing a dash, matching
+    // how the company card stores it.
+    if (!next || next === '-') delete current[item];
+    else current[item] = next;
+    updateProspect(prospect.id, { servicesExplored: current });
+  };
 
   const groups = useMemo(
     () => (Array.isArray(extraGroups) ? extraGroups.filter(g => g && g.label && Array.isArray(g.options) && g.options.length > 0) : []),
@@ -308,7 +353,7 @@ export function ScopeServicesModal({
           ) : (
             <div style={{
               display: 'grid', gap: '0.4rem',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
               alignItems: 'start',
             }}>
               {visible.map(cat => (
@@ -325,37 +370,58 @@ export function ScopeServicesModal({
                     {cat.items.map(item => {
                       const checked = selectedSet.has(item.toLowerCase());
                       const sme = String(smes[item] || '').trim();
+                      const manual = String(manualStatuses[item] ?? '').trim();
                       return (
-                        <label
+                        <div
                           key={item}
-                          title={sme ? `SME: ${sme}` : displayName(item)}
                           style={{
-                            display: 'flex', alignItems: 'center', gap: '0.3rem',
-                            padding: '0.12rem 0.35rem', cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', gap: '0.25rem',
+                            padding: '0.12rem 0.35rem',
                             background: checked ? '#DCFCE7' : 'transparent',
                           }}
                         >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => toggle(item)}
-                            style={{ margin: 0, flex: '0 0 auto' }}
-                          />
-                          <span style={{
-                            flex: 1, minWidth: 0, fontSize: '0.68rem',
-                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                            fontWeight: checked ? 700 : 500,
-                            color: checked ? '#166534' : 'var(--color-text)',
-                          }}>{displayName(item)}</span>
-                          {sme && (
+                          {/* The label covers only the tick and the name —
+                              the status select sits outside it so opening
+                              the menu can't flip the Scope selection. */}
+                          <label
+                            title={sme ? `SME: ${sme}` : displayName(item)}
+                            style={{
+                              flex: 1, minWidth: 0, display: 'flex', alignItems: 'center',
+                              gap: '0.3rem', cursor: 'pointer',
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggle(item)}
+                              style={{ margin: 0, flex: '0 0 auto' }}
+                            />
                             <span style={{
-                              flex: '0 0 auto', fontSize: '0.52rem', fontWeight: 700,
-                              padding: '0.05rem 0.25rem', borderRadius: 3,
-                              background: '#F1F5F9', color: '#64748B', whiteSpace: 'nowrap',
-                            }}>SME</span>
+                              flex: 1, minWidth: 0, fontSize: '0.68rem',
+                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                              fontWeight: checked ? 700 : 500,
+                              color: checked ? '#166534' : 'var(--color-text)',
+                            }}>{displayName(item)}</span>
+                          </label>
+                          {sme && (
+                            <span
+                              title={`SME: ${sme}`}
+                              style={{
+                                flex: '0 0 auto', fontSize: '0.52rem', fontWeight: 700,
+                                padding: '0.05rem 0.25rem', borderRadius: 3,
+                                background: '#F1F5F9', color: '#64748B', whiteSpace: 'nowrap',
+                              }}
+                            >SME</span>
                           )}
-                          <StatusChip entry={statuses.get(item)} />
-                        </label>
+                          <StatusSelect
+                            item={item}
+                            manual={manual && manual !== '-' ? manual : ''}
+                            auto={autoStatuses.get(item) || ''}
+                            onSet={setStatus}
+                            disabled={!canEditStatus}
+                            disabledReason={cannotEditReason}
+                          />
+                        </div>
                       );
                     })}
                   </div>
@@ -395,7 +461,9 @@ export function ScopeServicesModal({
           padding: '0.35rem 0.8rem', borderTop: '1px solid var(--color-border)',
           background: 'var(--color-bg)', fontSize: '0.65rem', color: 'var(--color-text-muted)',
         }}>
-          Status chips show what this account already has — plain from the company card, italic when derived from another opp.
+          {canEditStatus
+            ? 'Tick a service to put it in Scope. The status dropdown saves to the company card — italic means it is derived from another opp, “— (auto)” reverts to that.'
+            : `${cannotEditReason} Ticking a service still sets Scope.`}
         </div>
       </div>
     </div>,
@@ -407,8 +475,9 @@ export function ScopeServicesModal({
 // it replaces (same placeholder / truncation behaviour), but opens the board
 // above instead of an anchored popover.
 export function ScopeServicesCell({
-  value, onChange, options, account, prospects, settings, oppRows, currentOppId,
-  extraGroups, extraGroupsLabel, extraGroupsPlaceholder, nowrap, placeholder,
+  value, onChange, options, account, prospects, updateProspect, settings,
+  oppRows, currentOppId, extraGroups, extraGroupsLabel, extraGroupsPlaceholder,
+  nowrap, placeholder,
 }) {
   const [open, setOpen] = useState(false);
   const selected = useMemo(() => parseMulti(value), [value]);
@@ -441,6 +510,7 @@ export function ScopeServicesCell({
           options={options}
           account={account}
           prospects={prospects}
+          updateProspect={updateProspect}
           settings={settings}
           oppRows={oppRows}
           currentOppId={currentOppId}
