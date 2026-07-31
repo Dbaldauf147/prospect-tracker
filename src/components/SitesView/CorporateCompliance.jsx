@@ -536,6 +536,26 @@ function SourceBadge({ source }) {
   );
 }
 
+
+// Everything on this page that's filed under a company's canonical key. A
+// company is identified by its normalized name, so renaming it — retyping the
+// portfolio company, or mapping a different Company Name column — files new
+// work under a new key and leaves the old work stranded under the old one.
+// COMPLIANCE_MAPS is what the recovery panel looks through and moves.
+const COMPLIANCE_MAPS = [
+  { setting: 'companyComplianceLinks', noun: 'link' },
+  { setting: 'companyComplianceFindings', noun: 'finding' },
+  { setting: 'corporateComplianceScreening', noun: 'answer' },
+  { setting: 'companyComplianceResearch', noun: 'research run', whole: true },
+];
+
+// "3 links · 2 answers" for one stranded company.
+function describeStranded(parts) {
+  return parts
+    .map(p => `${p.count} ${p.noun}${p.count === 1 ? '' : 's'}`)
+    .join(' · ');
+}
+
 // Persistence key for one regulation's Applies? answer, e.g.
 // "california__sb-253". Stored in the same per-company screening map as
 // the jurisdiction answers, so it needs the same Firestore-safe shape:
@@ -1118,6 +1138,82 @@ function CaRegionFlag({ summary }) {
   );
 }
 
+
+// Compliance work left behind by a rename, and a way to put it back.
+//
+// A company is keyed by its normalized name, so retyping the portfolio
+// company (or mapping a different Company Name column) files everything
+// afterwards under a new key — the links, findings and answers recorded under
+// the old one are still saved but nothing reads them, which looks exactly like
+// the page having discarded them. This names what's stranded and moves it onto
+// whichever company on the page it belongs to.
+function StrandedResearchPanel({ stranded, companies, onReattach }) {
+  const [picks, setPicks] = useState({});
+  if (companies.length === 0) return null;
+  const only = companies.length === 1 ? companies[0].key : '';
+  return (
+    <div style={{
+      margin: '0 0 0.75rem', padding: '0.5rem 0.7rem',
+      border: '1px solid #FCD34D', borderRadius: 8, background: '#FFFBEB',
+      fontSize: 'var(--font-size-xs)', color: '#92400E',
+    }}>
+      <div style={{ fontWeight: 700, marginBottom: '0.3rem' }}>
+        Saved compliance research not attached to any company here
+      </div>
+      <div style={{ marginBottom: '0.4rem', lineHeight: 1.4 }}>
+        This was filed under a company name that no longer matches anything on
+        the page — renaming the portfolio company, or mapping a different
+        Company Name column, files later work under the new name and leaves the
+        earlier work behind. Nothing was deleted; move it back below.
+      </div>
+      {stranded.map((row) => {
+        const target = picks[row.key] || only;
+        return (
+          <div key={row.key} style={{
+            display: 'flex', alignItems: 'center', gap: '0.4rem',
+            flexWrap: 'wrap', padding: '0.2rem 0',
+          }}>
+            <strong style={{ color: 'var(--color-text)' }}>{row.key}</strong>
+            <span>— {describeStranded(row.parts)}</span>
+            <span>→</span>
+            <select
+              value={target}
+              onChange={(e) => setPicks(m => ({ ...m, [row.key]: e.target.value }))}
+              aria-label={`Move ${row.key} research to`}
+              style={{
+                fontSize: '0.68rem', fontFamily: 'inherit', padding: '0.1rem 0.25rem',
+                border: '1px solid var(--color-border)', borderRadius: 4,
+              }}
+            >
+              <option value="">Choose a company…</option>
+              {companies.map(c => <option key={c.key} value={c.key}>{c.name}</option>)}
+            </select>
+            <button
+              type="button"
+              disabled={!target}
+              onClick={() => {
+                const to = companies.find(c => c.key === target);
+                if (!to) return;
+                // Naming both ends: the move clears the old key, so picking
+                // the wrong company here isn't a click away from undoing.
+                if (!window.confirm(`Move the research saved under "${row.key}" (${describeStranded(row.parts)}) onto ${to.name}?\n\nAnything already recorded against ${to.name} is kept — this only fills in what's missing.`)) return;
+                onReattach(row.key, target);
+              }}
+              style={{
+                fontSize: '0.62rem', fontWeight: 700, fontFamily: 'inherit',
+                padding: '0.1rem 0.45rem', borderRadius: 4,
+                cursor: target ? 'pointer' : 'default',
+                border: '1px solid #FCA5A5', background: '#FFF1F2', color: '#991B1B',
+                opacity: target ? 1 : 0.5,
+              }}
+            >Move it here</button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function CorporateCompliance({ sites = [], settings, updateSettingsPath, prospects = [], updateProspect }) {
   // Map each canonical company key to a matching prospect (company) record,
   // so researched revenue can be written onto that company's popup field and
@@ -1400,6 +1496,51 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
   // + sources), keyed by the canonical company key so they line up with the
   // screening answers. Transient loading / error lives in local state.
   const complianceResearch = settings?.companyComplianceResearch || {};
+
+  // Compliance work filed under a company key that no company on this page
+  // carries any more — what a rename leaves behind. The links, findings and
+  // answers are all still in settings; nothing on screen reads them, which is
+  // what makes a rename look like the page threw the work away.
+  const strandedResearch = useMemo(() => {
+    const live = new Set(companies.map(c => c.key).filter(Boolean));
+    const byKey = new Map();
+    for (const m of COMPLIANCE_MAPS) {
+      const map = settings?.[m.setting] || {};
+      for (const [key, value] of Object.entries(map)) {
+        if (!key || live.has(key) || !value || typeof value !== 'object') continue;
+        const count = m.whole ? 1 : Object.keys(value).length;
+        if (!count) continue;
+        if (!byKey.has(key)) byKey.set(key, { key, parts: [] });
+        byKey.get(key).parts.push({ noun: m.noun, count });
+      }
+    }
+    return [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key));
+  }, [settings, companies]);
+
+  // Move one stranded key's work onto a company that's on the page. Anything
+  // already recorded under the target wins — the point is to recover work,
+  // never to overwrite newer work with older. The old key is cleared once
+  // its contents have been folded in, so the panel empties as it's used.
+  const reattachResearch = useCallback((fromKey, toKey) => {
+    if (!updateSettingsPath || !fromKey || !toKey || fromKey === toKey) return;
+    const updates = {};
+    for (const m of COMPLIANCE_MAPS) {
+      const map = settings?.[m.setting] || {};
+      const from = map[fromKey];
+      if (!from || typeof from !== 'object') continue;
+      const to = map[toKey];
+      if (m.whole) {
+        // One blob per company (the research run) — keep the target's, since
+        // a rerun under the new name is the fresher of the two.
+        if (!to) updates[`${m.setting}.${toKey}`] = from;
+      } else {
+        updates[`${m.setting}.${toKey}`] = { ...from, ...(to || {}) };
+      }
+      updates[`${m.setting}.${fromKey}`] = null;
+    }
+    if (Object.keys(updates).length > 0) updateSettingsPath(updates);
+  }, [settings, updateSettingsPath]);
+
   const [screenState, setScreenState] = useState({});
 
   // Ask Claude (web search) to answer all six gating questions, then fill
@@ -1572,6 +1713,13 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
             )}
             {scanning && <span> · scanning lists…</span>}
           </div>
+          {strandedResearch.length > 0 && (
+            <StrandedResearchPanel
+              stranded={strandedResearch}
+              companies={companies.filter(c => c.key)}
+              onReattach={reattachResearch}
+            />
+          )}
           {/* One company per row — each card spans the full page width. */}
           <div style={{ display: 'grid', gap: '0.75rem', gridTemplateColumns: '1fr' }}>
             {companies.map((c) => {
