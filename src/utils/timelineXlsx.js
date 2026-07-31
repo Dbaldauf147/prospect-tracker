@@ -229,12 +229,17 @@ function writePhasedSheet(wb, ws, template, meta) {
     );
   }
 
-  const LEAD = 3;              // Stages | Step | Workstream
-  const DESC = LEAD + NW + 1;  // Description, past the right of the grid
+  // With no phases set, every band borrows its own step's name — so a Step
+  // column would just repeat column A down the sheet. Drop it and let Stages
+  // carry the names. Once phases exist the two say different things (the band
+  // vs the step inside it) and both are worth the width.
+  const anyPhase = stages.some(st => String(st?.phase || '').trim());
+  const LEAD = anyPhase ? 3 : 2;  // Stages [| Step] | Workstream
+  const DESC = LEAD + NW + 1;     // Description, past the right of the grid
   const NCOLS = DESC;
-  ws.getColumn(1).width = 32;
-  ws.getColumn(2).width = 46;
-  ws.getColumn(3).width = 20;
+  ws.getColumn(1).width = anyPhase ? 32 : 46;
+  ws.getColumn(2).width = anyPhase ? 46 : 20;
+  if (anyPhase) ws.getColumn(3).width = 20;
   for (let i = 0; i < NW; i += 1) ws.getColumn(LEAD + 1 + i).width = 3.4;
   ws.getColumn(DESC).width = 64;
 
@@ -244,10 +249,11 @@ function writePhasedSheet(wb, ws, template, meta) {
   // month band, with the week ticks on the row below it.
   const headRow = 3;
   const weekRow = headRow + 1;
-  ['Stages', 'Step', 'Workstream'].forEach((label, i) => {
-    // Stages / Step span both header rows; the Workstream column keeps its
-    // second row free for the caption that names the week numbers.
-    if (i < 2) ws.mergeCells(headRow, i + 1, weekRow, i + 1);
+  (anyPhase ? ['Stages', 'Step', 'Workstream'] : ['Stages', 'Workstream']).forEach((label, i) => {
+    // The lead columns span both header rows, except the last one — the
+    // Workstream column keeps its second row free for the caption that names
+    // the week numbers.
+    if (i + 1 < LEAD) ws.mergeCells(headRow, i + 1, weekRow, i + 1);
     const cell = ws.getCell(headRow, i + 1);
     cell.value = label;
     cell.font = { name: FONT, bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
@@ -274,7 +280,7 @@ function writePhasedSheet(wb, ws, template, meta) {
   });
   // Names the week row, so a reader knows whether the numbers are days of the
   // month or weeks counted from kickoff.
-  const weekCaption = ws.getCell(weekRow, 3);
+  const weekCaption = ws.getCell(weekRow, LEAD);
   weekCaption.value = calendar ? 'Week of' : 'Weeks';
   weekCaption.font = { name: FONT, bold: true, size: 8, color: { argb: 'FFFFFFFF' } };
   weekCaption.fill = fill(argb(SE_GREEN));
@@ -317,13 +323,15 @@ function writePhasedSheet(wb, ws, template, meta) {
       ws.getCell(r, 1).value = bandLabel;
     }
 
-    const stepCell = ws.getCell(r, 2);
-    stepCell.value = stage.name || 'Untitled stage';
-    stepCell.font = { name: FONT, size: 10, color: { argb: SLATE } };
-    stepCell.alignment = { vertical: 'middle', indent: 1 };
+    if (anyPhase) {
+      const stepCell = ws.getCell(r, 2);
+      stepCell.value = stage.name || 'Untitled stage';
+      stepCell.font = { name: FONT, size: 10, color: { argb: SLATE } };
+      stepCell.alignment = { vertical: 'middle', indent: 1 };
+    }
 
     const color = argb(WORKSTREAM_COLOR[stage.owner] || WORKSTREAM_COLOR['Schneider Electric']);
-    const wsCell = ws.getCell(r, 3);
+    const wsCell = ws.getCell(r, LEAD);
     wsCell.value = stage.owner || '';
     wsCell.font = { name: FONT, bold: true, size: 9.5, color: { argb: color } };
     wsCell.alignment = { vertical: 'middle', indent: 1 };
@@ -626,10 +634,13 @@ function dependsLabel(stage, rows) {
 
 function writeStagesSheet(wb, rows, { phased, baseMonth, mode }) {
   const ds = wb.addWorksheet('Stages', { views: [{ showGridLines: false }] });
+  // Same rule as the Timeline sheet: a Phase column nobody filled in is a
+  // column of blanks, so it only appears once a phase exists.
+  const anyPhase = rows.some(({ stage }) => String(stage?.phase || '').trim());
   ds.columns = phased ? [
     { header: '#', key: 'n', width: 5 },
-    { header: 'Phase', key: 'phase', width: 30 },
-    { header: 'Step', key: 'stage', width: 42 },
+    ...(anyPhase ? [{ header: 'Phase', key: 'phase', width: 30 }] : []),
+    { header: anyPhase ? 'Step' : 'Stage', key: 'stage', width: 42 },
     { header: 'Workstream', key: 'owner', width: 20 },
     { header: 'Type', key: 'kind', width: 11 },
     { header: 'Month', key: 'month', width: 9 },
@@ -660,7 +671,7 @@ function writeStagesSheet(wb, rows, { phased, baseMonth, mode }) {
     const months = phased ? getStageMonths(stage, baseMonth, mode) : null;
     const row = ds.addRow(phased ? {
       n: i + 1,
-      phase: stage.phase || '',
+      ...(anyPhase ? { phase: stage.phase || '' } : {}),
       stage: stage.name || 'Untitled stage',
       owner: stage.owner || '',
       month: months.month,
