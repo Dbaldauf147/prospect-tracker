@@ -428,6 +428,7 @@ const EMPTY = {
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', tier: 'Tier 3',
   hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [],
   peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', contractingEntity: '', strategies: [], revenue: '',
+  salesPartner: '',
 };
 
 // Company-name normalizer shared with the list tabs so fuzzy matching
@@ -3267,6 +3268,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       .map(r => ({ scope: (r.Scope || '').trim(), stage: (r.Stage || '').trim() }));
   }, [fields.company, isNew, oppsCache]);
 
+  // Sales Partner suggestions: every partner name already used on an Opps 2
+  // row, so a repeat partner is one click and spellings don't fragment. The
+  // picker still takes free text, since a partner who has no opp yet won't
+  // appear here.
+  const salesPartnerOptions = useMemo(() => {
+    const seen = new Map();
+    for (const r of (oppsCache || [])) {
+      const name = String(r?.['Sales Partner'] || '').trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (!seen.has(key)) seen.set(key, name);
+    }
+    return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
+  }, [oppsCache]);
+
   // Map service items to their opp stage (priority: Sold > active stages > Not Sold)
   const scopeMatchedServices = useMemo(() => {
     const stagePriority = { 'Sold': 4, 'Verbal': 3, 'Quoted': 3, 'Quoting': 2, 'Qualifying': 2, 'Lead': 1, 'Not Started': 1, 'Not Sold': 0 };
@@ -5133,6 +5149,26 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               <label className={styles.label}>Client Manager</label>
               <div className={styles.input} style={{ background: clientManager ? '#F0FDF4' : 'var(--color-bg)', color: clientManager ? '#166534' : 'var(--color-text-muted)', fontWeight: clientManager ? 600 : 400, cursor: 'default' }}>
                 {clientManager || '—'}
+              </div>
+            </div>
+
+            <div>
+              <label
+                className={styles.label}
+                title="Who partners with you on this company's opportunities. Suggestions are the Sales Partners already named on Opps 2 rows; type any other name to add one."
+              >Sales Partner</label>
+              {/* Control + hint share the value column — a third child of the
+                  row grid would drop the hint under the label instead. */}
+              <div>
+                <SearchableSelect
+                  options={salesPartnerOptions}
+                  value={fields.salesPartner || ''}
+                  onChange={v => set('salesPartner', v)}
+                  placeholder="Add a sales partner…"
+                />
+                <div style={{ fontSize: '0.6rem', color: 'var(--color-text-muted)', marginTop: 2, lineHeight: 1.3 }}>
+                  Partners with you on this company&apos;s opps.
+                </div>
               </div>
             </div>
 
