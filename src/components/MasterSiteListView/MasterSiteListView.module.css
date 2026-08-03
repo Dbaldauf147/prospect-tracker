@@ -77,6 +77,99 @@
   max-width: 220px;
 }
 
+/* Predictive company filter in the toolbar. The wrapper anchors the
+   suggestion list; the toolbar wraps but doesn't clip, so a plain absolute
+   drop works (no portal needed). */
+.comboWrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.comboInput,
+.comboInputOn {
+  width: 220px;
+  padding: 0.38rem 1.4rem 0.38rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 0.74rem;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+.comboInput:focus,
+.comboInputOn:focus { outline: none; border-color: var(--color-accent); }
+
+/* A filter is applied — match the "active toggle" look of the toolbar. */
+.comboInputOn {
+  border-color: var(--color-accent);
+  background: var(--color-accent-light);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.comboClear {
+  position: absolute;
+  right: 0.3rem;
+  border: none;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 0.1rem 0.2rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+.comboClear:hover { color: var(--color-danger); }
+
+.comboList {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 40;
+  width: 280px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
+  padding: 0.15rem 0;
+}
+
+.comboOption,
+.comboOptionOn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.74rem;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.comboOptionOn { background: var(--color-accent-light); }
+
+.comboOptionName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.comboOptionCount {
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  flex: none;
+}
+
+.comboEmpty {
+  padding: 0.35rem 0.55rem;
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+}
+
 .count {
   font-size: 0.74rem;
   color: var(--color-text-muted);
