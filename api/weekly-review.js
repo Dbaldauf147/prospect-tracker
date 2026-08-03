@@ -68,6 +68,73 @@ const REVIEW_SCHEMA = {
   additionalProperties: false,
 };
 
+// Give up a little before the platform would kill the function (vercel.json
+// puts api/*.js at 300s), so an overrun comes back as a readable message
+// instead of an opaque gateway 504.
+const DEADLINE_MS = 240 * 1000;
+const KEEPALIVE_MS = 10 * 1000;
+
+// Commit the response as a 200 and start trickling bytes so nothing in the
+// path treats a multi-minute generation as a dead connection.
+//
+// The padding is spaces, which is legal leading whitespace in JSON — the
+// caller's resp.json() parses the final object exactly as it did when this
+// endpoint buffered. Returns the writer that ends the response; after calling
+// openKeepAlive every exit path must go through it, since the status line is
+// already on the wire and errors have to travel in the body.
+function openKeepAlive(res) {
+  res.statusCode = 200;
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+  res.write(' ');
+
+  const timer = setInterval(() => {
+    try { res.write(' '); } catch { /* client hung up; the end below is a no-op */ }
+  }, KEEPALIVE_MS);
+  if (timer.unref) timer.unref();
+
+  return function send(payload) {
+    clearInterval(timer);
+    res.end(JSON.stringify(payload));
+    return undefined;
+  };
+}
+
+// Anthropic's SSE stream as parsed event objects. Events are separated by a
+// blank line; we only care about the `data:` payloads, and `[DONE]`-style
+// sentinels aren't JSON so they're skipped.
+async function* sseEvents(body) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let split;
+      while ((split = buffer.indexOf('\n\n')) >= 0) {
+        const chunk = buffer.slice(0, split);
+        buffer = buffer.slice(split + 2);
+        for (const line of chunk.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          const raw = line.slice(5).trim();
+          if (!raw || raw === '[DONE]') continue;
+          try { yield JSON.parse(raw); } catch { /* partial or non-JSON frame */ }
+        }
+      }
+    }
+  } finally {
+    // Bailing out early (an `error` frame) leaves the upstream socket open
+    // otherwise, and the function can outlive the response.
+    await reader.cancel().catch(() => {});
+  }
+}
+
 async function handler(req, res, auth) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -139,9 +206,19 @@ ${String(stats).trim()}
 
 Identify what is holding this person back from hitting their target.`;
 
+  // High-effort review on a big stats block runs for minutes. A buffered
+  // request that long dies twice over: the model call can outlive Anthropic's
+  // non-streaming ceiling, and a connection that sends nothing for minutes gets
+  // dropped by whatever sits between the browser and the function — which is
+  // what surfaced as HTTP 504. So: stream from Claude, and stream to the
+  // caller (see keepAlive below).
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), DEADLINE_MS);
+
   try {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
+      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': apiKey,
@@ -150,6 +227,7 @@ Identify what is holding this person back from hitting their target.`;
       body: JSON.stringify({
         model: 'claude-opus-5',
         max_tokens: 16000,
+        stream: true,
         system: systemPrompt,
         output_config: {
           effort: 'high',
@@ -159,40 +237,73 @@ Identify what is holding this person back from hitting their target.`;
       }),
     });
 
+    // Streaming means the status arrives before any generation happens, so a
+    // rejected request still gets a real status code — nothing is written to
+    // the caller until we know Claude accepted it.
     if (!resp.ok) {
-      const errText = await resp.text();
+      const errText = await resp.text().catch(() => '');
+      clearTimeout(deadline);
       return res.status(resp.status).json({ error: `Claude API error: ${errText}` });
     }
 
-    const data = await resp.json();
+    // From here the response is committed as 200 and errors travel in the
+    // body, because keepAlive has already started writing.
+    const send = openKeepAlive(res);
 
-    // A safety refusal comes back as a normal 200 with empty/partial content —
-    // check the stop reason before reading the blocks.
-    if (data.stop_reason === 'refusal') {
-      return res.status(502).json({ error: 'Claude declined to write this review.' });
-    }
-    if (data.stop_reason === 'max_tokens') {
-      return res.status(502).json({ error: 'Review was cut off before it finished — try again.' });
+    let text = '';
+    let stopReason = null;
+    try {
+      for await (const event of sseEvents(resp.body)) {
+        if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+          text += event.delta.text || '';
+        } else if (event.type === 'message_delta' && event.delta?.stop_reason) {
+          stopReason = event.delta.stop_reason;
+        } else if (event.type === 'error') {
+          return send({ error: `Claude API error: ${event.error?.message || 'stream failed'}` });
+        }
+      }
+    } catch (err) {
+      return send({
+        error: controller.signal.aborted
+          ? 'The review took too long to generate — try again.'
+          : `Claude stream failed: ${err?.message || err}`,
+      });
     }
 
-    const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
-    if (!text) {
-      return res.status(502).json({ error: 'Claude returned an empty review' });
+    // A safety refusal comes back as a normal stream with empty/partial
+    // content — check the stop reason before reading the text.
+    if (stopReason === 'refusal') {
+      return send({ error: 'Claude declined to write this review.' });
     }
+    if (stopReason === 'max_tokens') {
+      return send({ error: 'Review was cut off before it finished — try again.' });
+    }
+
+    text = text.trim();
+    if (!text) return send({ error: 'Claude returned an empty review' });
 
     let review;
     try {
       review = JSON.parse(text);
     } catch {
-      return res.status(502).json({ error: 'Claude returned a malformed review' });
+      return send({ error: 'Claude returned a malformed review' });
     }
     if (!review || !Array.isArray(review.blockers)) {
-      return res.status(502).json({ error: 'Review was missing its blockers' });
+      return send({ error: 'Review was missing its blockers' });
     }
 
-    return res.status(200).json({ review });
+    return send({ review });
   } catch (err) {
-    return res.status(500).json({ error: err?.message || 'Unknown error' });
+    const message = controller.signal.aborted
+      ? 'The review took too long to generate — try again.'
+      : (err?.message || 'Unknown error');
+    if (res.headersSent) {
+      res.end(JSON.stringify({ error: message }));
+      return undefined;
+    }
+    return res.status(500).json({ error: message });
+  } finally {
+    clearTimeout(deadline);
   }
 }
 
