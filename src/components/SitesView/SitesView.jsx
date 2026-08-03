@@ -4001,10 +4001,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // Stamp a lightweight marker on the prospect record so the Company
       // Look Up widget can show "analysis saved" without fetching the
       // (chunked) analysis subcollection for every company it lists.
+      // The analysis is also the best count of the company's sites we
+      // have, so roll it onto Number of Sites — that's the figure the
+      // company popup (and the accounts tables) show.
+      const siteCount = cleanSitesData.length;
       if (updateProspect) {
         try {
           updateProspect(prospect.id, {
             indicativeAnalysisMeta: { fileName, sizeBytes: buffer.byteLength, savedAt: new Date().toISOString() },
+            ...(siteCount > 0 ? { numberOfSites: siteCount } : {}),
           });
         } catch (e) { console.warn('Could not stamp analysis marker on prospect:', e); }
       }
@@ -4013,7 +4018,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // save instead of staying empty until someone re-uploads the same
       // rows from the company popup.
       const siteListNote = saveSitesAsCompanySiteList(prospect.company);
-      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteListNote}` });
+      const siteCountNote = siteCount > 0
+        ? ` Number of Sites set to ${siteCount.toLocaleString()}.`
+        : '';
+      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteCountNote}${siteListNote}` });
       setSavePickerSearch(null);
       setTimeout(() => setSaveStatus({ state: 'idle', message: '' }), 4000);
     } catch (err) {
