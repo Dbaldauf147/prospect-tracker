@@ -1,0 +1,329 @@
+// Horizontal pipeline funnel — the Pipeline Metrics table drawn as a
+// funnel so the volume of deals by stage reads at a glance.
+//
+// The band's half-height is proportional to the stage's actual value
+// (deal count by default, pipeline $ on the toggle). Where a stage is
+// short of its goal, the goal is drawn as a red dotted line with the
+// shortfall shaded between it and the actual edge — so a "gap" is
+// literally the distance between where the funnel is and where it
+// should be.
+//
+// Every number here comes from the same values the metrics table shows
+// (live BFO actuals when the BFO tab is loaded, manual cells otherwise);
+// the table underneath doubles as this chart's data table.
+
+import { useMemo, useRef, useState } from 'react';
+import styles from './PipelineFunnel.module.css';
+
+// Ordinal blue ramp, earliest stage darkest → latest lightest. Single
+// hue, monotone lightness, and the light end clears the surface at
+// 2.4:1 (validated as an ordinal ramp against a light chart surface).
+const STAGE_FILL = {
+  3: '#104281',
+  4: '#1c5cab',
+  5: '#2a78d6',
+  6: '#6da7ec',
+};
+
+// BFO's own stage names, so the callouts read as more than a number.
+const STAGE_NAME = {
+  3: 'Qualify Opportunity',
+  4: 'Influence & Develop',
+  5: 'Prepare & Bid',
+  6: 'Negotiate to Win',
+};
+
+// Status "critical" — reserved for the goal/gap cue, never a stage color.
+// Always paired with a written "short of goal" label, never color alone.
+const GAP_RED = '#d03b3b';
+const GAP_SHADE = 'rgba(208, 59, 59, 0.14)';
+
+const INK = '#0b0b0b';
+const INK_MUTED = '#898781';
+const CHROME = '#c3c2b7';
+
+// Canvas. Rendered responsively via viewBox, so these are layout units.
+const W = 1200;
+const H = 480;
+const CY = 236;          // funnel centerline
+const MAX_HALF = 104;    // half-height of the tallest band
+const MIN_HALF = 5;      // so a 1-deal stage still draws something
+const X0 = 190;          // funnel left edge (abuts the entry bar)
+const X1 = 950;          // funnel right edge (left of the exit arrow)
+const SEG_GAP = 2;       // surface gap between segments
+
+const fmtInt = (n) => (Number.isFinite(n) ? Math.round(n).toLocaleString('en-US') : '—');
+
+// Compact money for chart labels — $1.7M / $236K / $850.
+function fmtCompactMoney(n) {
+  if (!Number.isFinite(n)) return '—';
+  const a = Math.abs(n);
+  if (a >= 1e6) return `$${(n / 1e6).toFixed(a >= 1e7 ? 0 : 1)}M`;
+  if (a >= 1e3) return `$${Math.round(n / 1e3).toLocaleString('en-US')}K`;
+  return `$${Math.round(n).toLocaleString('en-US')}`;
+}
+
+const METRICS = {
+  deals: {
+    key: 'deals',
+    label: 'Deals',
+    heading: 'Active opportunities',
+    actual: (s) => s.countActual,
+    goal: (s) => s.countGoal,
+    fmt: fmtInt,
+    unit: (v) => (Math.abs(v) === 1 ? 'opp' : 'opps'),
+  },
+  amount: {
+    key: 'amount',
+    label: 'Pipeline $',
+    heading: 'Pipeline value',
+    actual: (s) => s.amtActual,
+    goal: (s) => s.amtGoal,
+    fmt: fmtCompactMoney,
+    unit: () => '',
+  },
+};
+
+// Value + unit, e.g. "7 opps" or "$1.7M".
+function withUnit(metric, v) {
+  const u = metric.unit(v);
+  return u ? `${metric.fmt(v)} ${u}` : metric.fmt(v);
+}
+
+export function PipelineFunnel({ stages = [], outcome = null }) {
+  const [metricKey, setMetricKey] = useState('deals');
+  const [hover, setHover] = useState(null); // { i, x, y, w } — px inside .plot
+  const plotRef = useRef(null);
+  const metric = METRICS[metricKey];
+
+  // Earliest stage first (3 → 6) so the funnel reads left to right, the
+  // opposite of the metrics table's 6 → 3 ordering.
+  const rows = useMemo(() => {
+    const list = stages
+      .map((s) => ({
+        ...s,
+        actual: Number(metric.actual(s)) || 0,
+        goal: Number(metric.goal(s)) || 0,
+      }))
+      .filter((s) => Number.isFinite(s.stageNum));
+    return list.sort((a, b) => a.stageNum - b.stageNum);
+  }, [stages, metric]);
+
+  const geom = useMemo(() => {
+    if (!rows.length) return null;
+    // Scale on the larger of actual/goal so a goal line taller than the
+    // band it marks still fits inside the canvas.
+    const max = Math.max(...rows.map((r) => Math.max(r.actual, r.goal)), 0);
+    if (max <= 0) return null;
+    const half = (v) => (v > 0 ? Math.max(MIN_HALF, (v / max) * MAX_HALF) : 0);
+    const segW = (X1 - X0) / rows.length;
+    return rows.map((r, i) => {
+      const x0 = X0 + i * segW;
+      const x1 = x0 + segW - SEG_GAP;
+      const leftH = half(r.actual);
+      // Taper toward the next stage; the final segment stays square,
+      // and the exit arrow carries the eye out of the funnel.
+      const nextH = i < rows.length - 1 ? half(rows[i + 1].actual) : leftH;
+      const rightH = leftH + (nextH - leftH) * ((segW - SEG_GAP) / segW);
+      const goalH = half(r.goal);
+      const gap = r.goal - r.actual;
+      return {
+        ...r, i, x0, x1, cx: (x0 + x1) / 2,
+        leftH, rightH, goalH,
+        midH: (leftH + rightH) / 2,
+        gap: gap > 0 ? gap : 0,
+        above: i % 2 === 0,
+      };
+    });
+  }, [rows]);
+
+  if (!geom) {
+    return (
+      <div className={styles.empty}>
+        No stage volume to chart yet — paste BFO Activity data, or fill in the
+        Active Opportunities / Pipeline cells below.
+      </div>
+    );
+  }
+
+  const gapCount = geom.filter((g) => g.gap > 0).length;
+  const hovered = hover ? geom[hover.i] : null;
+
+  return (
+    <div className={styles.wrap}>
+      <div className={styles.toolbar}>
+        <div className={styles.caption}>
+          Band height = <strong>{metric.heading}</strong> by stage, earliest to latest.
+        </div>
+        <div className={styles.toggle} role="group" aria-label="Funnel metric">
+          {Object.values(METRICS).map((m) => (
+            <button
+              key={m.key}
+              type="button"
+              className={m.key === metricKey ? styles.toggleOn : styles.toggleOff}
+              aria-pressed={m.key === metricKey}
+              onClick={() => setMetricKey(m.key)}
+            >{m.label}</button>
+          ))}
+        </div>
+      </div>
+
+      <div className={styles.plot} ref={plotRef}>
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          className={styles.svg}
+          role="img"
+          aria-label={`Pipeline funnel — ${metric.heading} by stage. ${gapCount} of ${geom.length} stages are short of goal.`}
+        >
+          {/* Entry gate + exit arrow — chrome that frames the funnel. */}
+          <rect x={X0 - 14} y={CY - MAX_HALF - 22} width={12} height={(MAX_HALF + 22) * 2} rx={2} fill="#94a3b8" />
+          <path
+            d={`M ${X1 + 8} ${CY - 24} L ${X1 + 52} ${CY - 24} L ${X1 + 52} ${CY - 40} L ${X1 + 96} ${CY} L ${X1 + 52} ${CY + 40} L ${X1 + 52} ${CY + 24} L ${X1 + 8} ${CY + 24} Z`}
+            fill="#dfe3e8"
+          />
+          {outcome && (
+            <>
+              <text x={X1 + 108} y={CY - 4} fontSize={13} fontWeight={700} fill={INK}>{outcome.label}</text>
+              <text x={X1 + 108} y={CY + 15} fontSize={13} fill={INK_MUTED}>{outcome.value}</text>
+            </>
+          )}
+
+          {geom.map((g) => {
+            const fill = STAGE_FILL[g.stageNum] || '#2a78d6';
+            const band = `M ${g.x0} ${CY - g.leftH} L ${g.x1} ${CY - g.rightH} L ${g.x1} ${CY + g.rightH} L ${g.x0} ${CY + g.leftH} Z`;
+            const dim = hover && hover.i !== g.i;
+            return (
+              <g
+                key={g.key || g.stageNum}
+                onMouseMove={(e) => {
+                  // Measure against the plot box (not the svg, which is
+                  // centered inside it on wide screens) so the tooltip's
+                  // absolute offsets line up with the cursor.
+                  const box = plotRef.current?.getBoundingClientRect();
+                  if (!box) return;
+                  setHover({ i: g.i, x: e.clientX - box.left, y: e.clientY - box.top, w: box.width });
+                }}
+                onMouseLeave={() => setHover((h) => (h && h.i === g.i ? null : h))}
+                style={{ cursor: 'default' }}
+              >
+                <path d={band} fill={fill} opacity={dim ? 0.72 : 1} />
+                {/* Shortfall: shade from the actual edge out to the goal
+                    line, top and bottom, then the red dotted goal itself. */}
+                {g.gap > 0 && (
+                  <>
+                    <path
+                      d={`M ${g.x0} ${CY - g.goalH} L ${g.x1} ${CY - g.goalH} L ${g.x1} ${CY - g.rightH} L ${g.x0} ${CY - g.leftH} Z`}
+                      fill={GAP_SHADE}
+                    />
+                    <path
+                      d={`M ${g.x0} ${CY + g.goalH} L ${g.x1} ${CY + g.goalH} L ${g.x1} ${CY + g.rightH} L ${g.x0} ${CY + g.leftH} Z`}
+                      fill={GAP_SHADE}
+                    />
+                    <line x1={g.x0} y1={CY - g.goalH} x2={g.x1} y2={CY - g.goalH} stroke={GAP_RED} strokeWidth={2} strokeDasharray="6 5" strokeLinecap="round" />
+                    <line x1={g.x0} y1={CY + g.goalH} x2={g.x1} y2={CY + g.goalH} stroke={GAP_RED} strokeWidth={2} strokeDasharray="6 5" strokeLinecap="round" />
+                  </>
+                )}
+                {/* Stage number, mirroring the funnel reference. A band too
+                    thin to hold the circle gets the number in stage color
+                    just outside it instead, so no segment goes unlabeled. */}
+                {g.midH >= 26 ? (
+                  <>
+                    <circle cx={g.cx} cy={CY} r={21} fill="none" stroke="#fff" strokeWidth={2} />
+                    <text x={g.cx} y={CY + 7} fontSize={20} fontWeight={600} fill="#fff" textAnchor="middle">{g.stageNum}</text>
+                  </>
+                ) : (
+                  <text
+                    x={g.cx}
+                    // On the opposite side from this stage's callout, so the
+                    // elbow connector doesn't run through the digit — and
+                    // clear of the goal line when this stage has a gap.
+                    y={g.above
+                      ? CY + Math.max(g.midH, g.gap > 0 ? g.goalH : 0) + 22
+                      : CY - Math.max(g.midH, g.gap > 0 ? g.goalH : 0) - 10}
+                    fontSize={18} fontWeight={700} fill={fill} textAnchor="middle"
+                  >{g.stageNum}</text>
+                )}
+                <title>{`Stage ${g.stageNum} — ${STAGE_NAME[g.stageNum] || ''}\n${metric.heading}: ${withUnit(metric, g.actual)}\nGoal: ${withUnit(metric, g.goal)}${g.gap > 0 ? `\nShort by ${withUnit(metric, g.gap)}` : ''}`}</title>
+                {/* Invisible hit area so thin bands are still hoverable. */}
+                <rect x={g.x0} y={CY - MAX_HALF - 10} width={g.x1 - g.x0} height={(MAX_HALF + 10) * 2} fill="transparent" />
+              </g>
+            );
+          })}
+
+          {/* Callouts — alternating above / below with an elbow connector. */}
+          {geom.map((g) => {
+            const fill = STAGE_FILL[g.stageNum] || '#2a78d6';
+            const elbowY = g.above ? 122 : 350;
+            const edgeY = g.above ? CY - g.midH - 6 : CY + g.midH + 6;
+            const tx = Math.min(g.x0 + 6, W - 268);
+            const titleY = g.above ? 60 : 380;
+            const valueY = g.above ? 80 : 400;
+            const gapY = g.above ? 100 : 420;
+            return (
+              <g key={`c-${g.key || g.stageNum}`}>
+                <polyline
+                  points={`${tx + 4},${elbowY} ${g.cx},${elbowY} ${g.cx},${edgeY}`}
+                  fill="none" stroke={CHROME} strokeWidth={1}
+                />
+                <circle cx={tx + 4} cy={elbowY} r={3} fill={CHROME} />
+                <text x={tx} y={titleY} fontSize={14} fontWeight={700} fill={fill}>
+                  Stage {g.stageNum} — {STAGE_NAME[g.stageNum] || ''}
+                </text>
+                <text x={tx} y={valueY} fontSize={13} fill={INK}>
+                  {withUnit(metric, g.actual)}
+                  <tspan fill={INK_MUTED}>{`  ·  goal ${withUnit(metric, g.goal)}`}</tspan>
+                </text>
+                {g.gap > 0 ? (
+                  <text x={tx} y={gapY} fontSize={12.5} fontWeight={700} fill={GAP_RED}>
+                    ▼ Gap — {withUnit(metric, g.gap)} short of goal
+                  </text>
+                ) : (
+                  <text x={tx} y={gapY} fontSize={12.5} fill={INK_MUTED}>✓ At or above goal</text>
+                )}
+              </g>
+            );
+          })}
+        </svg>
+
+        {hovered && (
+          <div
+            className={styles.tip}
+            style={{
+              left: `${hover.x}px`,
+              top: `${hover.y}px`,
+              // Flip to the left of the cursor past the halfway mark so the
+              // panel never runs off the right edge of the chart.
+              transform: hover.x > (hover.w || 0) * 0.55 ? 'translate(calc(-100% - 14px), -50%)' : 'translate(14px, -50%)',
+            }}
+          >
+            <div className={styles.tipTitle}>
+              <span className={styles.tipDot} style={{ background: STAGE_FILL[hovered.stageNum] }} />
+              Stage {hovered.stageNum} — {STAGE_NAME[hovered.stageNum] || ''}
+            </div>
+            <div className={styles.tipRow}><span>{metric.heading}</span><strong>{withUnit(metric, hovered.actual)}</strong></div>
+            <div className={styles.tipRow}><span>Goal</span><strong>{withUnit(metric, hovered.goal)}</strong></div>
+            {hovered.gap > 0
+              ? <div className={styles.tipGap}>▼ {withUnit(metric, hovered.gap)} short of goal</div>
+              : <div className={styles.tipOk}>✓ At or above goal</div>}
+            {hovered.isLive && <div className={styles.tipNote}>Live from BFO Activity</div>}
+          </div>
+        )}
+      </div>
+
+      <div className={styles.legend}>
+        <span className={styles.legendItem}>
+          <svg width="26" height="10" aria-hidden="true"><line x1="1" y1="5" x2="25" y2="5" stroke={GAP_RED} strokeWidth="2" strokeDasharray="6 5" strokeLinecap="round" /></svg>
+          Goal, drawn only where the stage is short — shaded band is the gap
+        </span>
+        <span className={styles.legendItem}>
+          {gapCount === 0
+            ? 'Every stage is at or above goal.'
+            : `${gapCount} of ${geom.length} stages below goal.`}
+        </span>
+        <span className={styles.legendItem}>Full numbers in the Pipeline Metrics table below.</span>
+      </div>
+    </div>
+  );
+}
+
+export default PipelineFunnel;
