@@ -32,7 +32,7 @@ import {
   mergeOpps2Datasets,
 } from '../../utils/opps2Store';
 import { pushOpps2Backup } from '../../utils/opps2Backup';
-import { loadOptionLinks, setOppOptionLink, OPTION_LINKS_EVENT } from '../../utils/pricingOptionLinks';
+import { loadOptionLinks, setOppOptionLink, optionLinkName, OPTION_LINKS_EVENT } from '../../utils/pricingOptionLinks';
 import { OPPS_PRICING_SNAPSHOT_EVENT } from '../../utils/oppsPricingSnapshot';
 import { loadOppSourceFile } from '../../utils/oppPricingSourceFile';
 import { fmtMoneyWhole, toNum, unitCountOrOne, rowYearRevenue } from '../../utils/pricingOptionCalc';
@@ -8303,7 +8303,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             // Read-only column populated from the Pricing → Options tab.
             // The cell shows the linked option name (or em-dash). A
             // small × button clears the link in place.
-            const linked = optionLinks[String(row._id)] || '';
+            const linked = optionLinkName(optionLinks[String(row._id)]);
             return (
               <PricingOptionCell
                 value={linked}
@@ -8322,7 +8322,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             // per-Option map (keyed by sheetName, which equals the saved
             // snapshot's name / the opp's Pricing Option link). Used as a
             // fallback for snapshots saved before services were frozen in.
-            const optName = String(row._pricingOption?.name || optionLinks[String(row._id)] || '').trim();
+            const optName = String(row._pricingOption?.name || optionLinkName(optionLinks[String(row._id)]) || '').trim();
             const cellServices = (optName && pricingOptionServices) ? (pricingOptionServices[optName] || []) : [];
             return (
               <QuotedAmountCell
@@ -9801,7 +9801,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             opp={opp}
             columnLinks={columnLinks}
             listRegistry={listRegistry}
-            pricingOptionName={optionLinks[String(opp._id)] || ''}
+            pricingOptionName={optionLinkName(optionLinks[String(opp._id)])}
             onSave={({ usd, marginReviewDate, chance, multiInvoices, verbal, entity, coa }) => {
               // Only push fields whose value actually changed so the
               // undo stack stays uncluttered with no-op snapshots.
@@ -9978,7 +9978,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             updateProspect={updateProspect}
             hubspotContacts={hubspotContacts}
             pricingOptionServices={pricingOptionServices}
-            pricingOptionLinkName={optionLinks[String(opp._id)] || ''}
+            pricingOptionLinkName={optionLinkName(optionLinks[String(opp._id)])}
             onOpenContact={openContactDetails}
             onOpenCompany={openCompanyDetails}
             settings={settings}
