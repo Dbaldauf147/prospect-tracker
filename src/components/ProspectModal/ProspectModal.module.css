@@ -229,3 +229,134 @@
 .saveBtn:hover {
   background: var(--color-accent-hover);
 }
+
+/* ── Divisions org chart ─────────────────────────────────────────────
+   Two connector shapes, matching how the hierarchy reads: the top level
+   fans out horizontally under the parent (a bus with a drop line per
+   branch), and everything below stacks vertically off a spine with an
+   elbow into each box — so a wide portfolio stays legible instead of
+   growing sideways forever. Lines are drawn with pseudo-elements so the
+   boxes stay plain divs. */
+.divChart {
+  --div-line: #B7BEC8;
+  overflow-x: auto;
+  padding: 0.5rem 0.25rem 0.75rem;
+}
+
+.divChartInner {
+  display: inline-block;
+  min-width: 100%;
+}
+
+.divBox {
+  border: 1px solid var(--div-line);
+  border-radius: 4px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 0.72rem;
+  line-height: 1.25;
+  padding: 0.4rem 0.6rem;
+  text-align: center;
+  min-height: 2.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Root sits centred over the fan-out. */
+.divRootRow {
+  display: flex;
+  justify-content: center;
+}
+.divRoot {
+  font-weight: 700;
+  max-width: 26rem;
+}
+
+/* Drop line from the root down to the bus. */
+.divStem {
+  width: 1px;
+  height: 18px;
+  margin: 0 auto;
+  background: var(--div-line);
+}
+
+/* Level 1: a horizontal bus with one drop per branch. */
+.divRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+.divCol {
+  position: relative;
+  padding: 18px 0.5rem 0;
+  min-width: 9.5rem;
+  max-width: 15rem;
+  flex: 0 0 auto;
+}
+/* Bus segment: half-width on the outermost columns so the line starts
+   and ends under a box rather than hanging in space. */
+.divCol::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--div-line);
+}
+.divCol:first-child::after { left: 50%; }
+.divCol:last-child::after { right: 50%; }
+.divCol:only-child::after { left: 50%; right: 50%; }
+/* Drop from the bus into this branch's box. */
+.divCol::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 1px;
+  height: 18px;
+  background: var(--div-line);
+}
+
+/* Level 2+: vertical spine, elbow into each box. Padding (not margin)
+   carries the gap so the spine runs unbroken between siblings. The elbow
+   hangs off the box wrapper rather than the whole item, so it meets the
+   box at its true middle whether the name wraps to one line or three. */
+.divSub {
+  margin-left: 1.1rem;
+}
+.divSubItem {
+  position: relative;
+  padding: 10px 0 0 22px;
+  border-left: 1px solid var(--div-line);
+}
+.divBoxWrap {
+  position: relative;
+}
+.divSubItem > .divBoxWrap::before {
+  content: '';
+  position: absolute;
+  left: -22px;
+  top: 50%;
+  width: 22px;
+  height: 1px;
+  background: var(--div-line);
+}
+/* The spine stops at the last box's elbow instead of running past it:
+   drop the item's border and redraw it down to that box's midpoint. */
+.divSubItem:last-child { border-left-color: transparent; }
+.divSubItem:last-child > .divBoxWrap::after {
+  content: '';
+  position: absolute;
+  left: -23px;
+  top: -10px;
+  width: 1px;
+  height: calc(50% + 10px);
+  background: var(--div-line);
+}
+
+.divBoxMissing {
+  border-style: dashed;
+  color: var(--color-text-muted);
+}

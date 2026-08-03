@@ -29,6 +29,7 @@ import {
   divisionsFor,
   divisionRulesFor,
   companiesMatchingKeyword,
+  buildDivisionTree,
   addDivisionPatch,
   addDivisionsPatch,
   removeDivisionPatch,
@@ -2195,6 +2196,72 @@ function smeInitials(name) {
 // operating brands, regional entities) of this one. The same mapping the
 // My Accounts "Divisions" column edits, so rolled-up counts there pick up
 // anything mapped here; both write through utils/divisions.js.
+// One box plus, below it, its own divisions stacked off a vertical spine.
+// Used from level 2 down; level 1 fans out horizontally instead (see
+// DivisionsChart), which is what gives the chart its shape: a wide row of
+// divisions, each growing a tidy column of sub-divisions.
+function DivisionNode({ node, onRemove }) {
+  return (
+    <>
+      {/* The wrapper is what the connector elbow anchors to — see
+          .divBoxWrap in the stylesheet. */}
+      <div className={styles.divBoxWrap}>
+        <div
+          className={`${styles.divBox}${node.missing ? ` ${styles.divBoxMissing}` : ''}`}
+          title={node.missing ? `${node.company} — no longer in the tracker` : node.company}
+        >
+          {node.company || '—'}
+        </div>
+        {onRemove && (
+          <button
+            type="button"
+            onClick={() => onRemove(node.id)}
+            aria-label={`Remove ${node.company}`}
+            title={`Unmap ${node.company} from this company`}
+            style={{
+              position: 'absolute', top: 1, right: 2, border: 'none', background: 'transparent',
+              color: '#94A3B8', cursor: 'pointer', fontSize: '0.8rem', lineHeight: 1,
+              padding: '0 0.15rem', fontFamily: 'inherit',
+            }}
+          >&times;</button>
+        )}
+      </div>
+      {node.children.length > 0 && (
+        <div className={styles.divSub}>
+          {node.children.map(child => (
+            <div key={child.id} className={styles.divSubItem}>
+              <DivisionNode node={child} />
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+// Only this company's direct divisions carry an unmap button — a
+// sub-division is mapped under ITS parent, so it's unmapped from that
+// company's popup rather than silently re-parented from here.
+function DivisionsChart({ tree, onRemove }) {
+  return (
+    <div className={styles.divChart}>
+      <div className={styles.divChartInner}>
+        <div className={styles.divRootRow}>
+          <div className={`${styles.divBox} ${styles.divRoot}`}>{tree.company || '—'}</div>
+        </div>
+        <div className={styles.divStem} />
+        <div className={styles.divRow}>
+          {tree.children.map(child => (
+            <div key={child.id} className={styles.divCol}>
+              <DivisionNode node={child} onRemove={onRemove} />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DivisionsSection({ parentId, parentCompany, prospects, settings, updateSettings }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -2210,8 +2277,24 @@ function DivisionsSection({ parentId, parentCompany, prospects, settings, update
     .map(p => ({ id: p.id, company: p.company, status: p.status }))
     .sort((a, b) => a.company.localeCompare(b.company)), [prospects, parentId]);
 
-  const byId = useMemo(() => new Map(companies.map(c => [c.id, c])), [companies]);
   const divisionIds = useMemo(() => new Set(divisions.map(d => d.id)), [divisions]);
+
+  // Live name per company id, so the chart labels every box with the
+  // company's current name rather than the one stored when it was mapped.
+  const nameById = useMemo(() => {
+    const m = new Map();
+    for (const p of (prospects || [])) {
+      if (p?.id && String(p.company || '').trim()) m.set(p.id, p.company);
+    }
+    return m;
+  }, [prospects]);
+
+  // Sub-divisions come along for free: a division's own divisions nest
+  // under it, so the chart shows the whole structure, not just one level.
+  const tree = useMemo(
+    () => buildDivisionTree(settings, parentId, parentCompany, nameById),
+    [settings, parentId, parentCompany, nameById],
+  );
 
   // Prefix matches ahead of substring matches, same ranking as the other
   // company pickers in the app.
@@ -2233,14 +2316,9 @@ function DivisionsSection({ parentId, parentCompany, prospects, settings, update
   const addRule = (word) => updateSettings(addDivisionRulePatch(settings, parentId, word, companies));
   const removeRule = (i) => updateSettings(removeDivisionRulePatch(settings, parentId, i));
 
-  const chipStyle = {
-    display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
-    background: '#F0FDF4', border: '1px solid #BBF7D0', color: '#166534',
-    borderRadius: 999, padding: '0.15rem 0.3rem 0.15rem 0.6rem',
-    fontSize: '0.72rem', fontWeight: 600,
-  };
+  // Shared by the keyword-rule chips below the map.
   const xStyle = {
-    border: 'none', background: 'transparent', color: '#166534',
+    border: 'none', background: 'transparent',
     cursor: 'pointer', fontSize: '0.85rem', lineHeight: 1, padding: '0 0.2rem', fontFamily: 'inherit',
   };
 
@@ -2266,22 +2344,9 @@ function DivisionsSection({ parentId, parentCompany, prospects, settings, update
             operating brands, regional entities. My Accounts rolls their sites up under the parent.
           </p>
 
-          {divisions.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.6rem' }}>
-              {divisions.map(d => {
-                // Show the company's current name — the mapping stores a
-                // snapshot, so a rename would otherwise show the old one.
-                const live = byId.get(d.id);
-                const name = live?.company || d.company;
-                return (
-                  <span key={d.id} style={chipStyle} title={live ? name : `${name} — no longer in the tracker`}>
-                    {name}{!live && <span style={{ color: '#94A3B8', fontWeight: 500 }}>· removed</span>}
-                    <button type="button" style={xStyle} onClick={() => remove(d.id)} aria-label={`Remove ${name}`}>&times;</button>
-                  </span>
-                );
-              })}
-            </div>
-          )}
+          {/* The map itself. Doubles as the editor for this company's own
+              divisions — each top-level box carries an unmap ×. */}
+          {divisions.length > 0 && <DivisionsChart tree={tree} onRemove={remove} />}
 
           <input
             type="text"
