@@ -2202,13 +2202,25 @@ function smeInitials(name) {
 // behave identically.
 function DivisionInlineInput({ value, placeholder, onCommit, onCancel }) {
   const [text, setText] = useState(value || '');
+  const ref = useRef(null);
+  // Focus and select explicitly rather than relying on autoFocus: the
+  // modal has document-level mousedown handlers, and selecting the old
+  // name means a rename is just "type the new one".
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    el.select();
+  }, []);
   return (
     <input
+      ref={ref}
       type="text"
-      autoFocus
       value={text}
       placeholder={placeholder}
       onChange={e => setText(e.target.value)}
+      onMouseDown={e => e.stopPropagation()}
+      onClick={e => e.stopPropagation()}
       onKeyDown={e => {
         e.stopPropagation();
         if (e.key === 'Enter') { e.preventDefault(); onCommit(text); }
@@ -2216,9 +2228,11 @@ function DivisionInlineInput({ value, placeholder, onCommit, onCancel }) {
       }}
       onBlur={() => onCommit(text)}
       style={{
-        width: '100%', boxSizing: 'border-box', padding: '0.3rem 0.4rem',
-        border: '1px solid var(--color-accent)', borderRadius: 4,
+        width: '100%', boxSizing: 'border-box', padding: '0.4rem 0.4rem',
+        border: '2px solid var(--color-accent)', borderRadius: 4,
+        background: '#F8FBFF', color: 'var(--color-text)',
         fontSize: '0.72rem', fontFamily: 'inherit', textAlign: 'center',
+        minHeight: '2.4rem',
       }}
     />
   );
@@ -2253,6 +2267,7 @@ function DivisionNode({ node, ownerId, editing, adding, actions }) {
               className={`${styles.divBox}${node.missing ? ` ${styles.divBoxMissing}` : ''}`}
               style={{ cursor: 'text' }}
               onClick={() => actions.startEdit(node.id)}
+              onDoubleClick={() => actions.startEdit(node.id)}
               title={node.missing
                 ? `${node.company} — no longer in the tracker. Click to rename.`
                 : `${node.company} — click to rename`}
@@ -2266,6 +2281,15 @@ function DivisionNode({ node, ownerId, editing, adding, actions }) {
               title={`Add a division under ${node.company}`}
               style={{ ...btn, position: 'absolute', top: 1, left: 2 }}
             >+</button>
+            {/* Clicking the label works too, but a visible control means
+                nobody has to discover that. */}
+            <button
+              type="button"
+              onClick={() => actions.startEdit(node.id)}
+              aria-label={`Rename ${node.company}`}
+              title={`Rename ${node.company}`}
+              style={{ ...btn, position: 'absolute', bottom: 1, right: 2, fontSize: '0.68rem' }}
+            >&#9998;</button>
             <button
               type="button"
               onClick={() => actions.remove(ownerId, node.id)}
@@ -2316,7 +2340,10 @@ function DivisionsChart({ tree, editing, adding, actions }) {
       <div className={styles.divChartInner}>
         <div className={styles.divRootRow}>
           <div className={styles.divBoxWrap}>
-            <div className={`${styles.divBox} ${styles.divRoot}`}>{tree.company || '—'}</div>
+            <div
+              className={`${styles.divBox} ${styles.divRoot}`}
+              title={`${tree.company} is this company — rename it in the Company field above, not here.`}
+            >{tree.company || '—'}</div>
             <button
               type="button"
               onClick={() => actions.startAdd(tree.id)}
@@ -2461,7 +2488,13 @@ function DivisionsSection({ parentId, parentCompany, prospects, settings, update
           {/* The map is the editor: click a box to rename it, + to add one
               under it, × to remove it. */}
           {(divisions.length > 0 || adding) && (
-            <DivisionsChart tree={tree} editing={editing} adding={adding} actions={actions} />
+            <>
+              <DivisionsChart tree={tree} editing={editing} adding={adding} actions={actions} />
+              <p style={{ fontSize: '0.66rem', color: '#94A3B8', margin: '0 0 0.5rem', textAlign: 'center' }}>
+                Click a box or ✎ to rename it · + adds a division beneath it · × removes it ·
+                Enter saves, Esc cancels
+              </p>
+            </>
           )}
 
           <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
