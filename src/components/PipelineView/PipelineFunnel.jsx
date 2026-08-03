@@ -1,8 +1,8 @@
 // Horizontal pipeline funnel — the Pipeline Metrics table drawn as a
 // funnel so the volume of deals by stage reads at a glance.
 //
-// Two dimensions carry data. The band's height above the baseline is
-// proportional to the stage's actual value (pipeline $ by default, deal
+// Two dimensions carry data. Each stage is a flat-topped box whose
+// height above the baseline is proportional to the stage's actual value (pipeline $ by default, deal
 // count on the toggle) — the left axis reads 0 at that baseline, so a
 // band's top edge lands on its own value — and the segment's LENGTH is
 // proportional to the stage's Avg
@@ -61,7 +61,7 @@ const X0 = 150;          // funnel left edge (abuts the axis bar)
 const X1 = 890;          // funnel right edge (left of the exit arrow)
 const AXIS_X = X0 - 14;  // left edge of the grey axis bar
 const OUT_X = X1 + 92;   // outcome block, right of the exit arrow
-const SEG_GAP = 2;       // surface gap between segments
+const SEG_GAP = 4;       // surface gap between the stage boxes
 const MIN_SEG_W = 72;    // shortest a stage can be drawn, whatever its life
 const CALLOUT_W = 248;   // callout text block, for anti-collision spacing
 
@@ -182,19 +182,17 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
       const w = widths[i];
       const x0 = starts[i];
       const x1 = x0 + w - SEG_GAP;
-      const leftH = half(r.actual);
-      // Taper toward the next stage; the final segment stays square,
-      // and the exit arrow carries the eye out of the funnel.
-      const nextH = i < rows.length - 1 ? half(rows[i + 1].actual) : leftH;
-      const rightH = leftH + (nextH - leftH) * ((w - SEG_GAP) / w);
+      // Each stage is a flat-topped box at its own value — the step down
+      // to the next stage happens in the gap between boxes, not as a
+      // diagonal across this one.
+      const h = half(r.actual);
       const goalH = half(r.goal);
       const gap = r.goal - r.actual;
       const life = lives[i];
       const lifeGoal = Number(r.lifeGoal) || 0;
       return {
         ...r, i, x0, x1, w, cx: (x0 + x1) / 2,
-        leftH, rightH, goalH,
-        midH: (leftH + rightH) / 2,
+        h, goalH,
         gap: gap > 0 ? gap : 0,
         over: gap < 0 ? -gap : 0,
         // A zero/blank goal has no meaningful line to draw.
@@ -293,7 +291,7 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
               never slide into the callouts below the baseline. */}
           {(() => {
             const last = geom.segs[geom.segs.length - 1];
-            const outY = Math.min(Math.max(BASE_Y - Math.max(last.rightH, 56) / 2, 150), 300);
+            const outY = Math.min(Math.max(BASE_Y - Math.max(last.h, 56) / 2, 150), 300);
             const sold = metric.sold(outcome);
             const proj = geom.projected;
             const total = sold != null && proj != null ? sold + proj : null;
@@ -342,7 +340,7 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
 
           {geom.segs.map((g) => {
             const fill = STAGE_FILL[g.stageNum] || '#2a78d6';
-            const band = `M ${g.x0} ${BASE_Y - g.leftH} L ${g.x1} ${BASE_Y - g.rightH} L ${g.x1} ${BASE_Y} L ${g.x0} ${BASE_Y} Z`;
+            const band = `M ${g.x0} ${BASE_Y - g.h} L ${g.x1} ${BASE_Y - g.h} L ${g.x1} ${BASE_Y} L ${g.x0} ${BASE_Y} Z`;
             const dim = hover && hover.i !== g.i;
             return (
               <g
@@ -364,7 +362,7 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
                 {g.gap > 0 && (
                   <>
                     <path
-                      d={`M ${g.x0} ${BASE_Y - g.goalH} L ${g.x1} ${BASE_Y - g.goalH} L ${g.x1} ${BASE_Y - g.rightH} L ${g.x0} ${BASE_Y - g.leftH} Z`}
+                      d={`M ${g.x0} ${BASE_Y - g.goalH} L ${g.x1} ${BASE_Y - g.goalH} L ${g.x1} ${BASE_Y - g.h} L ${g.x0} ${BASE_Y - g.h} Z`}
                       fill={GAP_SHADE}
                     />
                     <line x1={g.x0} y1={BASE_Y - g.goalH} x2={g.x1} y2={BASE_Y - g.goalH} stroke={GAP_RED} strokeWidth={2} strokeDasharray="6 5" strokeLinecap="round" />
@@ -384,17 +382,20 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
                 {/* Stage number, mirroring the funnel reference. A band too
                     thin to hold the circle gets the number in stage color
                     just outside it instead, so no segment goes unlabeled. */}
-                {g.midH >= 52 && g.w >= 58 ? (
+                {g.h >= 52 && g.w >= 58 ? (
                   <>
-                    <circle cx={g.cx} cy={BASE_Y - g.midH / 2} r={21} fill="none" stroke="#fff" strokeWidth={2} />
-                    <text x={g.cx} y={BASE_Y - g.midH / 2 + 7} fontSize={20} fontWeight={600} fill="#fff" textAnchor="middle">{g.stageNum}</text>
+                    {/* Filled in the band's own colour, so a goal line
+                        crossing mid-box passes behind the badge instead of
+                        through the digit. */}
+                    <circle cx={g.cx} cy={BASE_Y - g.h / 2} r={21} fill={fill} stroke="#fff" strokeWidth={2} />
+                    <text x={g.cx} y={BASE_Y - g.h / 2 + 7} fontSize={20} fontWeight={600} fill="#fff" textAnchor="middle">{g.stageNum}</text>
                   </>
                 ) : (
                   <text
                     x={g.cx}
                     // Above the band — and above the goal line too when this
                     // stage has a gap, so the digit never sits on the dashes.
-                    y={BASE_Y - Math.max(g.midH, g.gap > 0 ? g.goalH : 0) - 10}
+                    y={BASE_Y - Math.max(g.h, g.gap > 0 ? g.goalH : 0) - 10}
                     fontSize={18} fontWeight={700} fill={fill} textAnchor="middle"
                   >{g.stageNum}</text>
                 )}
@@ -410,7 +411,7 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
             const fill = STAGE_FILL[g.stageNum] || '#2a78d6';
             const elbowY = g.above ? 122 : BASE_Y + 18;
             const edgeY = g.above
-              ? BASE_Y - Math.max(g.midH, g.gap > 0 ? g.goalH : 0) - 6
+              ? BASE_Y - Math.max(g.h, g.gap > 0 ? g.goalH : 0) - 6
               : BASE_Y + 4;
             const tx = g.tx;
             const titleY = g.above ? 46 : BASE_Y + 44;
