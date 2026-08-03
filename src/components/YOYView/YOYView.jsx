@@ -9,6 +9,9 @@ import {
   Tooltip, Legend, ResponsiveContainer, LabelList, Cell,
 } from 'recharts';
 import { dbGet } from '../../utils/db';
+import {
+  parseMoney, parseYear, parseDateYear, isQuotedPlus, yearElapsedFraction,
+} from '../../utils/oppsMetrics';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { loadCommissions } from '../../utils/commissionsStore';
 import { loadDealsList } from '../../utils/dealsStore';
@@ -259,13 +262,6 @@ function changedSinceMonthEnd(record, monthEndMs) {
   return { label: hits.length ? hits.join(', ') : 'No', latest };
 }
 
-function parseMoney(v) {
-  if (v === null || v === undefined) return null;
-  const s = String(v).replace(/[^0-9.-]/g, '');
-  if (!s) return null;
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
-}
 
 // Total pipeline $ from the BFO Activity table — sum of its "Amount"
 // column across every pasted row. Returns null when no BFO data is
@@ -298,34 +294,6 @@ function currentMonthKey(nowMs = Date.now()) {
 function quotedFiscalYear(nowMs = Date.now()) {
   const d = new Date(nowMs);
   return d.getMonth() === 11 ? d.getFullYear() + 1 : d.getFullYear();
-}
-
-function parseYear(v) {
-  // Pull the first standalone 4-digit year out of the value. This keeps
-  // plain "2026" working while still recognising date-formatted Open Year
-  // cells like "2026-06-01" or "6/1/2026" — stripping every non-digit
-  // first would turn those into 20260601 / 612026 and lose the year.
-  const m = String(v ?? '').match(/(?:19|20)\d{2}/);
-  if (!m) return null;
-  const n = Number(m[0]);
-  return n >= 1900 && n <= 2100 ? n : null;
-}
-
-// Calendar year of a Close Date string (e.g. "6/1/2026" or "2026-06-01").
-// Returns null when the value is empty or unparseable. A bare ISO date
-// (YYYY-MM-DD) is read by Date.parse as UTC midnight, which lands on the
-// previous day — and so can roll back to the previous year — in a
-// negative-offset timezone. Pull the UTC parts back for ISO strings so a
-// 2026-01-01 close stays in 2026; slash/locale strings parse as local
-// and are already correct. Mirrors OppsView2's parseCloseDate.
-function parseDateYear(v) {
-  const s = String(v ?? '').trim();
-  if (!s) return null;
-  const ts = Date.parse(s);
-  if (Number.isNaN(ts)) return null;
-  const d = new Date(ts);
-  const y = /^\d{4}-\d{2}/.test(s) ? d.getUTCFullYear() : d.getFullYear();
-  return Number.isFinite(y) && y >= 1900 && y <= 2100 ? y : null;
 }
 
 // Where a stored Quoted Projections month came from, so the export can say
@@ -376,31 +344,6 @@ function fiscalMonths(currentYear) {
     });
   }
   return months;
-}
-
-// Status values that mean the opp got priced. Used as the Quoted+
-// filter for Quoted C/R denominator.
-const QUOTED_PLUS_STATUSES = new Set([
-  'Quoted', 'Contracting', 'Agreement Sent', 'Sold', 'Not Sold',
-]);
-
-function isQuotedPlus(record) {
-  const status = String(record.Status || '').trim();
-  if (QUOTED_PLUS_STATUSES.has(status)) return true;
-  const amt = parseMoney(record['Quoted Amount']);
-  return typeof amt === 'number' && amt > 0;
-}
-
-// Annualization factor for "Projected" lead bar — scale YTD count up
-// to a full year based on fraction of the year elapsed.
-function yearElapsedFraction(year) {
-  const now = new Date();
-  if (year !== now.getFullYear()) return 1;
-  const start = new Date(year, 0, 1).getTime();
-  const elapsedMs = now.getTime() - start;
-  const yearMs = (new Date(year + 1, 0, 1).getTime() - start);
-  const frac = elapsedMs / yearMs;
-  return Math.max(1 / 366, Math.min(1, frac));
 }
 
 function fmtMoneyShort(n) {
