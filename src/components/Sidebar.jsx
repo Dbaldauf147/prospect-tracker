@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import styles from './Sidebar.module.css';
+import { AGENTS_RUN_INTERVAL_DAYS } from '../utils/agentsRunReminder';
 
 // Predictive company + contact search shown in the sidebar header (replaces
 // the old "Sales Pipeline" subtitle). Type a company name, or a contact's
@@ -231,7 +232,7 @@ function CompanySearch({ prospects = [], contacts = [], onSelectProspect, onSele
   );
 }
 
-export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, onOpenCdmName, onOpenDailyLog, isAdmin = false, dailyLogEnabled = true, whatToDoTodayEnabled = true, onToggleDailyLog, onToggleWhatToDoToday, issuesCount = 0, prospects = [], contacts = [], onSelectProspect, onSelectContact, onCreateCompany }) {
+export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, onOpenCdmName, onOpenDailyLog, isAdmin = false, dailyLogEnabled = true, whatToDoTodayEnabled = true, onToggleDailyLog, onToggleWhatToDoToday, issuesCount = 0, agentsRunDue = false, prospects = [], contacts = [], onSelectProspect, onSelectContact, onCreateCompany }) {
   const initials = user?.displayName
     ? user.displayName.split(' ').map(n => n[0]).join('').toUpperCase()
     : user?.email?.[0]?.toUpperCase() || '?';
@@ -357,9 +358,18 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
         <button
           className={view === 'agents' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('agents')}
+          title={agentsRunDue
+            ? `The agent prompts haven't been run in ${AGENTS_RUN_INTERVAL_DAYS}+ days — open Agents, run them, then hit "Agents Ran".`
+            : undefined}
         >
           <span className={styles.navIcon}>&#129302;</span>
           Agents
+          {agentsRunDue && (
+            <span
+              className={styles.navAlert}
+              aria-label="Agent prompts are due to be run"
+            >!</span>
+          )}
         </button>
         <button
           className={view === 'pe' ? styles.navItemActive : styles.navItem}

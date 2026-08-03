@@ -573,6 +573,81 @@
   cursor: default;
 }
 
+/* --- "Run the prompts" reminder ---------------------------------------
+   Red banner while a run is due (matching the Sidebar's Agents dot), and a
+   quiet one-liner once it's been marked. Both carry the "Agents Ran" button
+   so the clock can be restarted at any time. */
+.runAlert {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: var(--radius-sm);
+  background: #FEE2E2;
+  border: 1px solid #DC2626;
+  color: #7F1D1D;
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.runAlertIcon {
+  flex-shrink: 0;
+  width: 1.35rem;
+  height: 1.35rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #DC2626;
+  color: #fff;
+  font-weight: 800;
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
+.runAlertText {
+  flex: 1;
+  min-width: 0;
+}
+
+.runAlertBtn {
+  flex-shrink: 0;
+  padding: 0.35rem 0.8rem;
+  border: 1px solid #DC2626;
+  border-radius: var(--radius-sm);
+  background: #DC2626;
+  color: #fff;
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.runAlertBtn:hover:not(:disabled) { background: #B91C1C; }
+.runAlertBtn:disabled { opacity: 0.6; cursor: default; }
+
+.runStatus {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: var(--font-size-xs);
+  color: #64748B;
+}
+
+.runStatusBtn {
+  padding: 0.2rem 0.6rem;
+  border: 1px solid #CBD5E1;
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: #475569;
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.runStatusBtn:hover:not(:disabled) { background: #F1F5F9; }
+.runStatusBtn:disabled { opacity: 0.6; cursor: default; }
+
 /* --- Agents page sub-tab nav (Automations / Prompt Library) --- */
 .subTabs {
   display: flex;

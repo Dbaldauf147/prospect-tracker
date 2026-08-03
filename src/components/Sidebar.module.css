@@ -200,6 +200,37 @@
   line-height: 1;
 }
 
+/* Attention dot on a nav item (Agents, when the prompts are due to be run).
+   Same red as .navBadge but a fixed circle — it carries a "!" rather than a
+   count, and pulses briefly so it reads as an alert rather than a tally. */
+.navAlert {
+  margin-left: auto;
+  width: 1.25rem;
+  height: 1.25rem;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #DC2626;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.6);
+  animation: navAlertPulse 2.4s ease-out infinite;
+}
+
+@keyframes navAlertPulse {
+  0%   { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.55); }
+  70%  { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .navAlert { animation: none; }
+}
+
 .userSection {
   padding: 0.75rem;
   border-top: 1px solid rgba(255,255,255,0.08);
