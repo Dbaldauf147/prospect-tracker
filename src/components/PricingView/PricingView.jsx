@@ -1613,6 +1613,11 @@ export function PricingView({ settings } = {}) {
   const [activeOption, setActiveOption] = useState(null); // optionNumber or null
   const [colWidths, setColWidths] = useState({}); // { [colKey]: pixelWidth }
   const [altFees, setAltFees] = useState({}); // { [optionNumber]: [{ altItem, type, fee, unit, unitCount, startMonth }] }
+  // Which of the two fee-name columns the analysis runs off. 'below'
+  // maps each cost to a row of the fee schedule underneath (the Fee Name
+  // Below pick, falling back to the tag); 'automated' groups costs by
+  // their Automated Fee Name to build a fee structure from scratch.
+  const [feeMapBy, setFeeMapBy] = useState('below');
   const [linkedToDefaults, setLinkedToDefaults] = useState({}); // { [`${lineItem}::${type}`]: 'value' }
   const [linkedToUnitDefaults, setLinkedToUnitDefaults] = useState({}); // { [`${lineItem}::${type}`]: 'Per Site' | 'Per Account' | 'Fixed' | 'Per Meter' }
   const [linkedToStartMonthDefaults, setLinkedToStartMonthDefaults] = useState({}); // { [`${lineItem}::${type}`]: number } — overrides the CTS row's startMonth for the auto-derive that feeds alt-fee rows
@@ -1735,6 +1740,7 @@ export function PricingView({ settings } = {}) {
         if (typeof saved.activeOption === 'number') setActiveOption(saved.activeOption);
         if (saved.colWidths) setColWidths(saved.colWidths);
         if (saved.altFees) setAltFees(saved.altFees);
+        if (saved.feeMapBy === 'automated' || saved.feeMapBy === 'below') setFeeMapBy(saved.feeMapBy);
         if (!savedDefaults && saved.linkedToDefaults) setLinkedToDefaults(saved.linkedToDefaults);
         if (!savedUnitDefaults && saved.linkedToUnitDefaults) setLinkedToUnitDefaults(saved.linkedToUnitDefaults);
         if (!savedStartMonthDefaults && saved.linkedToStartMonthDefaults) setLinkedToStartMonthDefaults(saved.linkedToStartMonthDefaults);
@@ -1784,9 +1790,9 @@ export function PricingView({ settings } = {}) {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, feeMapBy, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, feeMapBy, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
 
   // Mirror Linked-To defaults under their dedicated key so they
   // outlive the main cache (parser-version bumps, Clear button,
@@ -2026,7 +2032,7 @@ export function PricingView({ settings } = {}) {
     let totalMarkup = 0;
     for (const sec of opt.sections) {
       for (const item of sec.items) {
-        if (resolvedSiaFee(item).trim().toLowerCase() !== target) continue;
+        if (mappingNameFor(item).trim().toLowerCase() !== target) continue;
         const { price } = priceFor(item);
         if (typeof price !== 'number' || !Number.isFinite(price)) continue;
         const t = effectiveType(item);
@@ -2070,7 +2076,7 @@ export function PricingView({ settings } = {}) {
     let bestAny = null;
     for (const sec of opt.sections) {
       for (const item of sec.items) {
-        if (resolvedSiaFee(item).trim().toLowerCase() !== target) continue;
+        if (mappingNameFor(item).trim().toLowerCase() !== target) continue;
         const sm = effectiveItemStartMonth(item);
         if (!Number.isFinite(sm) || sm <= 0) continue;
         if (bestAny == null || sm < bestAny) bestAny = sm;
@@ -2137,7 +2143,7 @@ export function PricingView({ settings } = {}) {
     const linked = [];
     for (const sec of opt.sections) {
       for (const item of sec.items) {
-        if (resolvedSiaFee(item).trim().toLowerCase() === target) linked.push(item);
+        if (mappingNameFor(item).trim().toLowerCase() === target) linked.push(item);
       }
     }
 
@@ -2735,6 +2741,16 @@ export function PricingView({ settings } = {}) {
     const ov = overrides[item.id]?.siaFee;
     if (ov !== undefined) return ov;
     return resolvedLinkedTo(item);
+  }
+
+  // The fee name every calculation on this page matches costs by. Which
+  // column that is, is the user's choice: Fee Name Below ties each cost
+  // to a row of the schedule underneath, Automated Fee Name groups costs
+  // by the typical fee name so a structure can be built from them. Every
+  // total, margin, auto-fee and warning reads this, never a column
+  // directly, so the whole page moves together when the choice changes.
+  function mappingNameFor(item) {
+    return feeMapBy === 'automated' ? resolvedLinkedTo(item) : resolvedSiaFee(item);
   }
 
   // Set / clear a row's SIA Fee pick. `null` drops the override so the row
@@ -3634,7 +3650,10 @@ export function PricingView({ settings } = {}) {
           state={compareTabData}
           setState={setCompareTabData}
           workbook={workbook}
-          resolvedLinkedTo={resolvedLinkedTo}
+          /* Fee Bucket groups by whichever column the Pricing tab is
+             mapping with, so the comparison and the option totals can't
+             bucket a cost two different ways. */
+          resolvedLinkedTo={mappingNameFor}
           effectiveType={effectiveType}
           techDeprPct={techDeprPct}
         />
@@ -3781,6 +3800,25 @@ export function PricingView({ settings } = {}) {
                         title={`Save "${opt.sheetName}" to an Opps row.`}
                       >Save to Opp…</button>
                     )}
+                    {/* Which fee-name column every number on this page is
+                        calculated from. */}
+                    <div className={styles.mapBy} role="group" aria-label="Map costs to fees by">
+                      <span className={styles.mapByLabel}>Map by</span>
+                      <button
+                        type="button"
+                        className={feeMapBy === 'automated' ? styles.mapByOn : styles.mapByOff}
+                        aria-pressed={feeMapBy === 'automated'}
+                        onClick={() => setFeeMapBy('automated')}
+                        title="Group costs by their Automated Fee Name to build a fee structure from them. Fees with no typed amount are derived from the costs that carry the same name."
+                      >Automated Fee Name</button>
+                      <button
+                        type="button"
+                        className={feeMapBy === 'below' ? styles.mapByOn : styles.mapByOff}
+                        aria-pressed={feeMapBy === 'below'}
+                        onClick={() => setFeeMapBy('below')}
+                        title="Map each cost to the row of the fee schedule below that its Fee Name Below points at. Rows with no pick follow their Automated Fee Name."
+                      >Fee Name Below</button>
+                    </div>
                     <ColumnsMenu
                       open={colMenuOpen}
                       onToggle={() => setColMenuOpen(o => !o)}
@@ -3987,6 +4025,13 @@ export function PricingView({ settings } = {}) {
                               >
                                 <span className={styles.thInner}>
                                   <span className={styles.thLabel}>{col.label}</span>
+                                  {((col.key === 'linkedTo' && feeMapBy === 'automated')
+                                    || (col.key === 'siaFee' && feeMapBy === 'below')) && (
+                                    <span
+                                      className={styles.inUseDot}
+                                      title="In use — every total, margin and auto-fee on this page is calculated from this column. Switch with the Map by control above."
+                                    />
+                                  )}
                                   {col.key === 'linkedTo' && (
                                     <button
                                       type="button"
@@ -4403,7 +4448,7 @@ export function PricingView({ settings } = {}) {
                           if (!seen.has(k)) seen.set(k, trimmed);
                         };
                         for (const sec of opt.sections) {
-                          for (const it of sec.items) add(resolvedLinkedTo(it));
+                          for (const it of sec.items) add(mappingNameFor(it));
                         }
                         for (const r of (altFees[opt.optionNumber] || [])) add(r.altItem);
                         const altItemSuggestions = [...seen.values()].sort((a, b) => a.localeCompare(b));
@@ -4450,7 +4495,7 @@ export function PricingView({ settings } = {}) {
                         // the year / startMonth / escalator logic stays
                         // in one place.
                         function ctsItemPassThroughRevenue(it, yearIndex) {
-                          const tag = resolvedLinkedTo(it).trim().toLowerCase();
+                          const tag = mappingNameFor(it).trim().toLowerCase();
                           const altRow = tag ? altRowByTag.get(tag) : null;
                           const uc = altRow ? Number(altRow.unitCount) : NaN;
                           if (!altRow || !Number.isFinite(uc) || uc <= 0) {
@@ -4464,7 +4509,7 @@ export function PricingView({ settings } = {}) {
                           let sum = 0;
                           for (const sec of opt.sections) {
                             for (const it of sec.items) {
-                              const tag = resolvedLinkedTo(it).trim().toLowerCase();
+                              const tag = mappingNameFor(it).trim().toLowerCase();
                               if (!tag || !altTagSet.has(tag)) continue;
                               const c = ctsItemYearCost(it, yi + 1);
                               sum += c;
@@ -4488,7 +4533,7 @@ export function PricingView({ settings } = {}) {
                           for (const it of sec.items) {
                             const cost = ctsItemEffectiveCost(it);
                             if (!(cost > 0)) continue;
-                            const tag = resolvedLinkedTo(it).trim();
+                            const tag = mappingNameFor(it).trim();
                             if (tag && altTagSet.has(tag.toLowerCase())) continue;
                             const type = effectiveType(it);
                             const desc = String(it.description || '').trim() || '(unnamed line item)';
@@ -4508,7 +4553,8 @@ export function PricingView({ settings } = {}) {
                               <strong>
                                 ⚠ {unlinkedCostItems.length} cost line item{unlinkedCostItems.length === 1 ? '' : 's'} not linked to any fee in this section
                               </strong>
-                              {' '}— their cost isn&apos;t captured in the Deal margin / Linked CTS totals. Set each row&apos;s Fee Name Below to a fee from the schedule.
+                              {' '}— their cost isn&apos;t captured in the Deal margin / Linked CTS totals. Set each row&apos;s{' '}
+                              {feeMapBy === 'automated' ? 'Automated Fee Name' : 'Fee Name Below'} to a fee from the schedule.
                               <ul>
                                 {unlinkedCostItems.map((u, i) => (
                                   <li key={`unlinked-${i}`}>
@@ -4564,7 +4610,7 @@ export function PricingView({ settings } = {}) {
                         };
                         for (const r of (altFees[opt.optionNumber] || [])) add(r.altItem);
                         for (const sec of opt.sections) {
-                          for (const it of sec.items) add(resolvedLinkedTo(it));
+                          for (const it of sec.items) add(mappingNameFor(it));
                         }
                         const tagOptions = [...seen.values()].sort((a, b) => a.localeCompare(b));
                         const tag = chartTag && seen.has(chartTag.toLowerCase())
@@ -4574,7 +4620,7 @@ export function PricingView({ settings } = {}) {
                         const years = Array.from({ length: numYears }, (_, i) => i + 1);
                         const target = (tag || '').trim().toLowerCase();
                         const linkedItems = target
-                          ? opt.sections.flatMap(s => s.items).filter(i => resolvedLinkedTo(i).trim().toLowerCase() === target)
+                          ? opt.sections.flatMap(s => s.items).filter(i => mappingNameFor(i).trim().toLowerCase() === target)
                           : [];
                         const matchingAltRows = target
                           ? (altFees[opt.optionNumber] || []).filter(r => (r.altItem || '').trim().toLowerCase() === target)

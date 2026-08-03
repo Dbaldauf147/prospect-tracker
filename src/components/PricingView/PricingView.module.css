@@ -1151,3 +1151,53 @@ select.altCellInput::-ms-expand {
 .mappedCell {
   background: #d1fae5;
 }
+
+/* "Map by" — picks which fee-name column the whole page calculates from. */
+.mapBy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.mapByLabel {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.mapByOff,
+.mapByOn {
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  line-height: 1.5;
+}
+
+.mapByOff {
+  border: 1px solid var(--color-border);
+  background: #fff;
+  color: var(--color-text-muted);
+}
+
+.mapByOff:hover {
+  background: #f1f5f9;
+}
+
+.mapByOn {
+  border: 1px solid #047857;
+  background: #047857;
+  color: #fff;
+}
+
+/* Marks the column the page is currently calculating from. A dot, not a
+   label — the header already carries its name and the ± button. */
+.inUseDot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-left: 5px;
+  border-radius: 50%;
+  background: #047857;
+}
