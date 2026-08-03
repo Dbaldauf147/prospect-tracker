@@ -15,8 +15,14 @@ import { asDate, fmtDate } from '../../utils/dealsFormat';
 import { loadDealClientMap } from '../../utils/dealClientMap';
 import { loadClientManagerMap, loadClientUntrackedMap, loadClientStatusMap } from '../../utils/clientManagerStore';
 import { computeExpiringClients, normClientName } from '../../utils/clientIssues';
-import { matchesCdm } from '../../utils/cdmMatch';
-import { SERVICE_CATEGORIES } from '../../data/enums';
+import {
+  buildOppStagesByClient,
+  buildServiceCatalog,
+  computeServiceCoverage,
+  coverageClientsOf,
+  serviceLabelMap,
+} from '../../utils/serviceCoverage';
+import { notifyPipelineDashboardChanged } from '../../utils/pipelineDashboardStore';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { downloadPipelineWorkbook } from '../../utils/pipelineWorkbook';
 import { loadList as loadUploadedList } from '../../utils/uploadedListStore';
@@ -887,167 +893,6 @@ function useCalc() {
   return { ctx, popover, pinned, unpin: () => setPinned(null) };
 }
 
-// Loose company-name match for joining opp Account values to a prospect's
-// company. This is a verbatim copy of ProspectModal's companiesMatch so the
-// coverage table joins opps to clients EXACTLY as each company page does —
-// any looser or stricter and the two views could disagree on which opps
-// belong to a client (e.g. "Blackstone" vs "The Blackstone Group L.P.").
-function coverageCompaniesMatch(a, b) {
-  const na = (a || '').toLowerCase().trim();
-  const nb = (b || '').toLowerCase().trim();
-  if (!na || !nb) return false;
-  if (na === nb) return true;
-  const flatten = (s) => String(s || '')
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim()
-    .replace(/\s+/g, ' ');
-  const fa = flatten(na);
-  const fb = flatten(nb);
-  if (fa && fb && fa === fb) return true;
-  const squish = (s) => s.replace(/\s+/g, ' ').trim();
-  if (squish(na) === squish(nb)) return true;
-  const longer = na.length >= nb.length ? na : nb;
-  const shorter = na.length >= nb.length ? nb : na;
-  if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
-  const strip = s => s.replace(/\b(inc|llc|ltd|corp|co|lp)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').trim();
-  const sa = strip(na);
-  const sb = strip(nb);
-  if (sa === sb) return true;
-  const sLonger = sa.length >= sb.length ? sa : sb;
-  const sShorter = sa.length >= sb.length ? sb : sa;
-  if (sShorter.length >= 4 && sShorter.length >= sLonger.length * 0.6 && sLonger.includes(sShorter)) return true;
-  const tokensOf = (s) => s.replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
-  const sTokens = tokensOf(shorter);
-  if (sTokens.length === 1 && sTokens[0].length >= 3) {
-    if (tokensOf(longer).includes(sTokens[0])) return true;
-  }
-  return false;
-}
-
-// Priority order when an account has several opps naming the same service —
-// keep the strongest signal. Mirrors ProspectModal's scopeMatchedServices so
-// the coverage table and the company page settle on the same status.
-const OPP_STAGE_PRIORITY = { 'Sold': 4, 'Verbal': 3, 'Quoted': 3, 'Quoting': 2, 'Qualifying': 2, 'Lead': 1, 'Not Started': 1, 'Not Sold': 0 };
-
-// For each client, the service statuses implied by that client's opportunities
-// (open OR closed) — an opp whose Scope names a service makes that service
-// "explored", exactly as the company page's Services Explored section treats
-// it. Returns Map<prospect, Map<serviceKey, stage>>. Scope text is split on
-// ; , / and each part is fuzzily matched against the canonical service list,
-// mirroring ProspectModal so the two views can't disagree.
-function buildOppStagesByClient(clients, oppsRecords) {
-  const result = new Map();
-  if (!Array.isArray(oppsRecords) || oppsRecords.length === 0) return result;
-  const opps = [];
-  for (const r of oppsRecords) {
-    const scope = String(r?.Scope || '').trim();
-    if (!scope) continue;
-    opps.push({ account: String(r?.Account || ''), scope, stage: String(r?.Stage || '').trim() });
-  }
-  if (opps.length === 0) return result;
-  for (const p of clients) {
-    const matched = new Map();
-    for (const o of opps) {
-      if (!coverageCompaniesMatch(o.account, p.company)) continue;
-      const parts = o.scope.split(/[;,/]+/).map(s => s.trim()).filter(Boolean);
-      for (const part of parts) {
-        const lower = part.toLowerCase();
-        for (const cat of SERVICE_CATEGORIES) {
-          for (const item of cat.items) {
-            const il = item.toLowerCase();
-            if (il === lower || il.includes(lower) || lower.includes(il)) {
-              const existing = matched.get(item);
-              const existingPri = existing ? (OPP_STAGE_PRIORITY[existing] ?? 1) : -1;
-              const newPri = OPP_STAGE_PRIORITY[o.stage] ?? 1;
-              if (newPri > existingPri) matched.set(item, o.stage);
-            }
-          }
-        }
-      }
-    }
-    if (matched.size) result.set(p, matched);
-  }
-  return result;
-}
-
-// The status a client's company page would show for one service: a real
-// manual value in servicesExplored wins (it's an explicit override), otherwise
-// fall back to the status implied by the client's opportunities. Returns '' when
-// neither applies — i.e. the service is genuinely unexplored. Mirrors the
-// company page's effective-status logic (manual override > opp-derived).
-function effectiveServiceStatus(prospect, serviceKey, oppStagesByClient) {
-  const manual = (prospect?.servicesExplored || {})[serviceKey];
-  if (manual && manual !== '-') return manual;
-  const oppStage = oppStagesByClient?.get(prospect)?.get(serviceKey);
-  return oppStage || '';
-}
-
-// Service catalogue for the coverage picker/table — the user's custom
-// categories when set, otherwise the code defaults; hidden services dropped,
-// renames applied for display. Options stay keyed by the canonical service
-// name so lookups into each prospect's servicesExplored map line up. Shared by
-// the on-screen section and the Excel export so both agree on names + which
-// services are eligible.
-function buildServiceCatalog(settings = {}) {
-  const hidden = new Set(settings.hiddenServices || []);
-  const renames = settings.serviceRenames || {};
-  const cats = Array.isArray(settings.customServiceCategories) && settings.customServiceCategories.length
-    ? settings.customServiceCategories
-    : SERVICE_CATEGORIES;
-  return cats
-    .map(cat => ({
-      name: cat.name,
-      items: (cat.items || [])
-        .filter(it => !hidden.has(it))
-        .map(it => ({ key: it, label: renames[it] || it })),
-    }))
-    .filter(cat => cat.items.length > 0);
-}
-
-// Canonical service key -> display label (honoring renames), from a catalogue.
-function serviceLabelMap(catalog) {
-  const m = new Map();
-  for (const cat of catalog) for (const it of cat.items) m.set(it.key, it.label);
-  return m;
-}
-
-// Active clients for coverage: Status = Client and matching the configured CDM
-// (or every client when no CDM is set). Mirrors the renewals table's client set.
-function coverageClientsOf(prospects, cdmName) {
-  return prospects.filter(p => {
-    if (String(p?.status || '').trim().toLowerCase() !== 'client') return false;
-    return cdmName ? matchesCdm(p.cdm, cdmName) : true;
-  });
-}
-
-// Coverage of one service across a client list: who's explored it (with each
-// client's status) and who hasn't, plus the rolled-up count / percentage. A
-// client counts as "explored" when its company page would show a status for
-// the service — a manual servicesExplored value OR an opportunity naming the
-// service in its Scope (In Progress / Sold / etc.). `oppStagesByClient` carries
-// the opp-derived statuses; pass it so this matches each company page.
-function computeServiceCoverage(clients, serviceKey, oppStagesByClient) {
-  const explored = [];
-  const notExplored = [];
-  for (const p of clients) {
-    const status = serviceKey ? effectiveServiceStatus(p, serviceKey, oppStagesByClient) : '';
-    if (status) {
-      explored.push({ p, status });
-    } else {
-      notExplored.push({ p });
-    }
-  }
-  const byName = (a, b) => String(a.p.company || '').localeCompare(String(b.p.company || ''));
-  explored.sort(byName);
-  notExplored.sort(byName);
-  const total = clients.length;
-  const pct = total ? Math.round((explored.length / total) * 100) : 0;
-  return { explored, notExplored, total, pct };
-}
-
 // "Service Exploration Coverage" — a table of services (one row each) showing
 // what share of your active clients have explored each, per their company
 // page's Services Explored section. Add services with the picker below the
@@ -1829,7 +1674,11 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
 
   useEffect(() => {
     if (!hydrated) return;
-    dbPut(STORE, state, KEY).catch(err => console.warn('Pipeline save failed', err));
+    dbPut(STORE, state, KEY)
+      // Tell the Issues tab (and the sidebar badge) the dashboard moved —
+      // it reads coverageServices from this record.
+      .then(notifyPipelineDashboardChanged)
+      .catch(err => console.warn('Pipeline save failed', err));
   }, [state, hydrated]);
 
   function setStage(idx, patch) {

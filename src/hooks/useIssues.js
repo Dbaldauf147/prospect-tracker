@@ -7,11 +7,19 @@ import { loadMyAccountsFlags, MY_ACCOUNTS_FLAGS_EVENT, MY_ACCOUNTS_FLAGS_KEY } f
 import { dbGet } from '../utils/db';
 import { loadOppsFromCache } from '../utils/oppsCache';
 import { computeIssues } from '../utils/clientIssues';
+import { loadPipelineDashboard, coverageServicesOf, PIPELINE_DASHBOARD_EVENT } from '../utils/pipelineDashboardStore';
 
 // BFO Activity rows are pasted on the BFO Activity tab and persisted in this
 // IndexedDB store; the Opps cache backs the "not tagged to an opp" check.
 const BFO_ACTIVITY_STORE = 'bfo-activity';
 const BFO_ACTIVITY_KEY = 'current';
+
+// The Pipeline dashboard is re-read on every window focus, and a fresh array
+// of the same services would re-run the whole issue computation each time —
+// so keep the previous array when nothing actually changed.
+function keepIfSame(prev, next) {
+  return (prev.length === next.length && prev.every((s, i) => s === next[i])) ? prev : next;
+}
 
 // Single source of truth for the Issues tab, shared by IssuesView (which
 // renders the rows) and the Sidebar badge (which counts them). Reads the
@@ -30,7 +38,7 @@ const BFO_ACTIVITY_KEY = 'current';
 //
 // Each returned issue carries a `snoozed` flag. `openCount` is the number
 // of issues that are NOT snoozed — that's the number shown on the sidebar.
-export function useIssues({ prospects = [], cdmName, user, marketingLeads = [], serviceOverrides = {} }) {
+export function useIssues({ prospects = [], cdmName, user, marketingLeads = [], serviceOverrides = {}, settings = {} }) {
   const [dealsList, setDealsList] = useState(() => loadDealsList().data);
   const [clientMap, setClientMap] = useState(() => loadDealClientMap());
   const [untrackedMap, setUntrackedMap] = useState(() => loadClientUntrackedMap());
@@ -41,6 +49,18 @@ export function useIssues({ prospects = [], cdmName, user, marketingLeads = [], 
   // Opportunity Name not tagged to an opp" issue. Loaded async below.
   const [bfoActivity, setBfoActivity] = useState(null);
   const [oppsCache, setOppsCache] = useState(null);
+  // Services tracked in the Pipeline page's "Service Exploration Coverage"
+  // table (persisted with the rest of the Pipeline dashboard), so a row
+  // under 100% can be surfaced here.
+  const [coverageServices, setCoverageServices] = useState([]);
+
+  // The Settings fields the service catalogue is built from, held as one
+  // memoized object so computeIssues' memo doesn't re-run every render.
+  const serviceCatalogSettings = useMemo(() => ({
+    hiddenServices: settings?.hiddenServices,
+    serviceRenames: settings?.serviceRenames,
+    customServiceCategories: settings?.customServiceCategories,
+  }), [settings?.hiddenServices, settings?.serviceRenames, settings?.customServiceCategories]);
 
   // Re-read once the per-user localStorage scope is established (and on any
   // later account switch), since the initial reads above may have run
@@ -54,6 +74,7 @@ export function useIssues({ prospects = [], cdmName, user, marketingLeads = [], 
     setMyAccountsFlags(loadMyAccountsFlags());
     dbGet(BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY).then(d => setBfoActivity(d || null)).catch(() => {});
     loadOppsFromCache().then(o => setOppsCache(o)).catch(() => {});
+    loadPipelineDashboard().then(p => setCoverageServices(prev => keepIfSame(prev, coverageServicesOf(p)))).catch(() => {});
   }, [user?.uid]);
 
   useEffect(() => {
@@ -76,10 +97,16 @@ export function useIssues({ prospects = [], cdmName, user, marketingLeads = [], 
     // event, mirroring how the BFO Activity / Agents pages reload them.
     function refreshBfo() { dbGet(BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY).then(d => setBfoActivity(d || null)).catch(() => {}); }
     function refreshOpps() { loadOppsFromCache().then(o => setOppsCache(o)).catch(() => {}); }
+    // Pipeline dashboard (IndexedDB): the tracked coverage services. Refreshed
+    // on the Pipeline page's own save event and on focus, same as the above.
+    function refreshPipeline() { loadPipelineDashboard().then(p => setCoverageServices(prev => keepIfSame(prev, coverageServicesOf(p)))).catch(() => {}); }
     refreshBfo();
     refreshOpps();
+    refreshPipeline();
     window.addEventListener('focus', refreshBfo);
     window.addEventListener('focus', refreshOpps);
+    window.addEventListener('focus', refreshPipeline);
+    window.addEventListener(PIPELINE_DASHBOARD_EVENT, refreshPipeline);
     window.addEventListener('opps2-cache-updated', refreshOpps);
     window.addEventListener('storage', onStorage);
     window.addEventListener(DEALS_LIST_EVENT, onDealsList);
@@ -91,6 +118,8 @@ export function useIssues({ prospects = [], cdmName, user, marketingLeads = [], 
     return () => {
       window.removeEventListener('focus', refreshBfo);
       window.removeEventListener('focus', refreshOpps);
+      window.removeEventListener('focus', refreshPipeline);
+      window.removeEventListener(PIPELINE_DASHBOARD_EVENT, refreshPipeline);
       window.removeEventListener('opps2-cache-updated', refreshOpps);
       window.removeEventListener('storage', onStorage);
       window.removeEventListener(DEALS_LIST_EVENT, onDealsList);
@@ -103,9 +132,9 @@ export function useIssues({ prospects = [], cdmName, user, marketingLeads = [], 
   }, []);
 
   const issues = useMemo(() => {
-    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides });
+    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, coverageServices, serviceCatalogSettings });
     return rows.map((r) => ({ ...r, snoozed: !!snoozedMap[r.id] }));
-  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides]);
+  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, coverageServices, serviceCatalogSettings]);
 
   const openCount = useMemo(() => issues.reduce((n, r) => n + (r.snoozed ? 0 : 1), 0), [issues]);
 

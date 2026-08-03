@@ -8,6 +8,13 @@
 import { asDate, fmtDate } from './dealsFormat';
 import { matchesCdm } from './cdmMatch';
 import { computeNewBfoOpps, computeNewBfoMissingData, normalizeBfoCompany } from './newBfoOpps';
+import {
+  buildOppStagesByClient,
+  buildServiceCatalog,
+  computeServiceCoverage,
+  coverageClientsOf,
+  serviceLabelMap,
+} from './serviceCoverage';
 
 const MS_PER_DAY = 86400000;
 
@@ -459,6 +466,49 @@ function detectNewBfoMissingData({ prospects = [], oppsCache = null, serviceOver
   }));
 }
 
+// ---- Service Exploration Coverage below 100% ----
+// Mirrors the Pipeline page's "Service Exploration Coverage" table: each
+// tracked service is a row showing what share of your active clients have
+// explored it. Any row under 100% has clients still to talk to, so it
+// becomes an issue — one row per service (matching the table), listing the
+// clients that haven't explored it yet.
+//
+// `coverageServices` is the tracked-service list persisted with the
+// Pipeline dashboard; with none tracked there's nothing to check. The
+// client set, the opp-derived statuses and the percentage all come from
+// utils/serviceCoverage, so this can't disagree with the table it mirrors.
+// Suppressed while there are no matching clients (pre-load, or no clients
+// for the CDM) — that's the table's own "No active clients found" state,
+// where every row would otherwise read 0%.
+const COVERAGE_DETAIL_NAMES = 6;
+function detectServiceCoverageGaps({ prospects = [], cdmName, coverageServices = [], oppsCache = null, serviceCatalogSettings = {} }) {
+  if (!Array.isArray(coverageServices) || coverageServices.length === 0) return [];
+  const clients = coverageClientsOf(prospects, cdmName);
+  if (clients.length === 0) return [];
+  const oppStagesByClient = buildOppStagesByClient(clients, oppsCache?.records || []);
+  const labels = serviceLabelMap(buildServiceCatalog(serviceCatalogSettings));
+  const issues = [];
+  for (const key of coverageServices) {
+    const cov = computeServiceCoverage(clients, key, oppStagesByClient);
+    if (cov.pct >= 100 && cov.notExplored.length === 0) continue;
+    const label = labels.get(key) || key;
+    const names = cov.notExplored.map(({ p }) => p.company || '—');
+    const shown = names.slice(0, COVERAGE_DETAIL_NAMES).join(', ');
+    const extra = names.length - COVERAGE_DETAIL_NAMES;
+    issues.push({
+      id: `svc-coverage:${key}`,
+      source: 'Pipeline',
+      type: 'Service coverage below 100%',
+      company: label,
+      prospectId: null,
+      daysUntil: null,
+      expirationDate: null,
+      detail: `${cov.explored.length} of ${cov.total} client${cov.total === 1 ? '' : 's'} (${cov.pct}%) have explored ${label} — not yet explored: ${shown}${extra > 0 ? ` +${extra} more` : ''}`,
+    });
+  }
+  return issues;
+}
+
 // Active clients whose soonest contract End Date falls within `withinDays`
 // days (default 270 — the Clients-tab renewal-warning threshold). Mirrors
 // the Clients-tab row build: CDM match + Status = Client, untracked clients
@@ -498,7 +548,7 @@ export function computeExpiringClients({ prospects = [], cdmName, dealsList = []
 
 // Build the full list of outstanding issues. Each detector contributes
 // rows; add more detectors here as new issue classes are mapped.
-export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {} }) {
+export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {}, coverageServices = [], serviceCatalogSettings = {} }) {
   const dealsByClient = groupDealsByClient(dealsList, clientMap);
   const issues = [];
   issues.push(...detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedMap }));
@@ -509,5 +559,6 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   issues.push(...detectUntaggedBfoOppNames({ bfoActivity, oppsCache }));
   issues.push(...detectOppBfoNameNotInActivity({ bfoActivity, oppsCache, prospects }));
   issues.push(...detectNewBfoMissingData({ prospects, oppsCache, serviceOverrides }));
+  issues.push(...detectServiceCoverageGaps({ prospects, cdmName, coverageServices, oppsCache, serviceCatalogSettings }));
   return issues;
 }
