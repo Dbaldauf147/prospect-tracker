@@ -161,6 +161,7 @@ function detectSitesMapping(headers) {
     country: detectColumn(headers, [/^country$/i, /\bcountry\b/i, /\bnation\b/i]) || '',
     propertyType: detectColumn(headers, [/property\s*type/i, /building\s*type/i, /property\s*class/i, /asset\s*type/i, /^use$/i, /\buse\s*type\b/i, /\bsegment\b/i]) || '',
     segment: detectColumn(headers, [/customer\s*class/i, /rate\s*class/i, /\bc\s*&\s*i\b/i, /commercial\s*\/?\s*industrial/i, /industrial\s*\/?\s*commercial/i, /comm.*ind|ind.*comm/i]) || '',
+    ownership: detectColumn(headers, [/^ownership$/i, /^owned\s*\/?\s*leased?$/i, /^leased?\s*\/?\s*owned?$/i, /^own\s*\/?\s*lease$/i, /ownership\s*(status|type)/i, /\bownership\b/i, /^tenure$/i, /occupancy\s*(status|type)/i, /(own|lease)\w*\s*status/i]) || '',
     siteDescription: detectColumn(headers, [/^site\s*description$/i, /^description$/i, /\bdescription\b/i]) || '',
     propertySize: detectColumn(headers, [/sq\s*\.?\s*ft/i, /square\s*(feet|foot)/i, /\bft\s*2\b/i, /\bft\^?2\b/i, /\bsf\b/i, /size.*ft/i, /building.*size/i, /gross.*area/i, /^size$/i, /rsf|gsf/i]) || '',
     electric: detectColumn(headers, [/electric.*kwh|kwh.*electric/i, /annual.*electric.*kwh/i, /annual.*kwh/i, /^kwh$/i, /electric.*usage/i, /electric.*consumption/i, /annual.*electric/i, /^electric$/i]) || '',
@@ -182,6 +183,26 @@ function detectSitesMapping(headers) {
     gasContractName: detectColumn(headers, [/gas.*contract.*name/i, /gas.*deal\s*name/i]) || '',
     gasProductType: detectColumn(headers, [/gas.*product/i, /gas.*structure/i]) || '',
   };
+}
+
+// Ownership status of the building — Owned vs Leased. Source sheets
+// spell it a dozen ways ("Own", "Owner-Occupied", "Tenant", "Leasehold",
+// bare "O"/"L"), so fold the common variants onto the two canonical
+// labels. Anything we can't place comes back null and the raw string is
+// surfaced as-is, same treatment as an unrecognized property type.
+function normalizeOwnership(raw) {
+  const v = String(raw ?? '').trim().toLowerCase();
+  if (!v) return null;
+  // Single-letter codes first — too short for the word test below.
+  if (v === 'o') return 'Owned';
+  if (v === 'l') return 'Leased';
+  const saysOwned = /\bown(s|ed|er|ers|ership)?\b|\bfreehold\b|\bpurchased?\b/.test(v);
+  const saysLeased = /\bleas(e|es|ed|ing|ehold)\b|\blessee\b|\btenant\b|\brent(s|ed|ing|al)?\b/.test(v);
+  // "Owned/Leased" and friends name both — genuinely ambiguous for a
+  // single site, so leave it unresolved rather than guessing.
+  if (saysOwned && !saysLeased) return 'Owned';
+  if (saysLeased && !saysOwned) return 'Leased';
+  return null;
 }
 
 // classifyUtility (Regulated vs Deregulated) now lives in
@@ -963,6 +984,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // classification onto each site, overriding the property-type-derived
   // segment that drives commercial-vs-industrial rate selection.
   const [segmentOverride, setSegmentOverride] = useState(null);
+  // Optional column carrying each building's Owned / Leased status.
+  const [ownershipOverride, setOwnershipOverride] = useState(null);
   const [siteDescriptionOverride, setSiteDescriptionOverride] = useState(null);
   const [propertySizeOverride, setPropertySizeOverride] = useState(null);
   const [electricContractPriceOverride, setElectricContractPriceOverride] = useState(null);
@@ -1070,6 +1093,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         setStateColumnOverride(m.state || null);
         setPropertyTypeOverride(m.propertyType || null);
         setSegmentOverride(m.segment || null);
+        setOwnershipOverride(m.ownership || null);
         setSiteDescriptionOverride(m.siteDescription || null);
         setPropertySizeOverride(m.propertySize || null);
         setElectricContractPriceOverride(m.electricContractPrice || null);
@@ -1231,6 +1255,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       country:               safe(noneToEmpty(countryOverride)),
       propertyType:          safe(noneToEmpty(propertyTypeOverride)),
       segment:               safe(noneToEmpty(segmentOverride)),
+      ownership:             safe(noneToEmpty(ownershipOverride)),
       siteDescription:       safe(noneToEmpty(siteDescriptionOverride)),
       propertySize:          safe(noneToEmpty(propertySizeOverride)),
       electric:              safe(noneToEmpty(electricColOverride)),
@@ -1313,7 +1338,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // table even though the user only wanted these specific fields.
       const TARGET_KEYS = [
         'siteName', 'companyName', 'address', 'city', 'state', 'zip', 'country',
-        'propertyType', 'segment', 'siteDescription', 'propertySize',
+        'propertyType', 'segment', 'ownership', 'siteDescription', 'propertySize',
         'electric', 'electricUom', 'gas', 'gasUom',
         'electricCost', 'gasCost',
         'electricSupplier', 'gasSupplier',
@@ -1368,6 +1393,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       setStateColumnOverride(mapping.state || null);
       setPropertyTypeOverride(mapping.propertyType || null);
       setSegmentOverride(mapping.segment || null);
+      setOwnershipOverride(mapping.ownership || null);
       setSiteDescriptionOverride(mapping.siteDescription || null);
       setPropertySizeOverride(mapping.propertySize || null);
       setElectricContractPriceOverride(mapping.electricContractPrice || null);
@@ -1916,6 +1942,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         : null;
       const inputCompanyName = companyNameOverride ? String(r[companyNameOverride] || '').trim() : '';
       const inputSiteDescription = siteDescriptionOverride ? String(r[siteDescriptionOverride] || '').trim() : '';
+      const inputOwnership = ownershipOverride ? String(r[ownershipOverride] || '').trim() : '';
+      const canonicalOwnership = normalizeOwnership(inputOwnership);
       // Loose numeric parse for the optional Size_ft2 column — strips
       // commas, "sf"/"sqft" suffixes, etc.
       const parseSize = (v) => {
@@ -2103,6 +2131,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         __propertyType__: canonicalPropertyType,
         __segment__: segment,
         __segmentSource__: segmentSource,
+        __ownershipRaw__: inputOwnership || null,
+        __ownership__: canonicalOwnership,
         __siteDescription__: inputSiteDescription || null,
         __propertySizeFt2__: inputPropertySize,
         __kwhFromEstimate__: elecValueFromEstimate,
@@ -2138,7 +2168,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         __matched__: !!match || electricUtilityTokens.length > 0 || gasUtilityTokens.length > 0,
       };
     });
-  }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, companyNameOverride, portfolioCompanyName, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, propertyTypeMap, segmentOverride, siteDescriptionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
+  }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, companyNameOverride, portfolioCompanyName, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, propertyTypeMap, segmentOverride, ownershipOverride, siteDescriptionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
 
   // Distinct Property Type strings from the upload that still have no
   // canonical match — the rows the mapping modal exists to resolve.
@@ -2513,6 +2543,41 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       },
       exportValue: (row) => row.__segment__ === 'industrial' ? 'Industrial' : (row.__segment__ ? 'Commercial' : ''),
     };
+    // Owned vs Leased, from the mapped Ownership column. Canonicalized
+    // to the two labels so mixed spellings ("Own", "Tenant", "L") read
+    // consistently; a value we couldn't place shows the raw string in
+    // muted red the way an unrecognized property type does.
+    const ownershipCol = {
+      key: 'ownership',
+      label: 'Ownership',
+      defaultWidth: 120,
+      render: (row) => {
+        const canonical = row.__ownership__;
+        const raw = row.__ownershipRaw__;
+        if (!canonical && !raw) {
+          return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
+        }
+        if (!canonical) {
+          return (
+            <span
+              title={`Unrecognized ownership status: "${raw}". Expected Owned or Leased.`}
+              style={{ fontSize: '0.72rem', color: '#B91C1C', fontStyle: 'italic' }}
+            >{raw}</span>
+          );
+        }
+        const isOwned = canonical === 'Owned';
+        const palette = isOwned
+          ? { bg: '#DCFCE7', border: '#86EFAC', text: '#166534' }
+          : { bg: '#E0E7FF', border: '#A5B4FC', text: '#3730A3' };
+        return (
+          <span
+            title={`${canonical}${raw && raw.toLowerCase() !== canonical.toLowerCase() ? ` — from "${raw}"` : ''}`}
+            style={{ display: 'inline-block', fontSize: '0.68rem', fontWeight: 600, padding: '0.1rem 0.4rem', borderRadius: 4, background: palette.bg, border: `1px solid ${palette.border}`, color: palette.text }}
+          >{canonical}</span>
+        );
+      },
+      exportValue: (row) => row.__ownership__ || row.__ownershipRaw__ || '',
+    };
     // Free-text site annotation that lives next to Property Type. No
     // canonicalization or estimates — purely a passthrough column for
     // the user's notes / descriptions of each site.
@@ -2869,6 +2934,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       makeLocationCol('country', 'Lookup Country'),
       propertyTypeCol,
       segmentCol,
+      ownershipCol,
       siteDescriptionCol,
       propertySizeCol,
       // Property-type-based estimates — always show the reference
@@ -2953,6 +3019,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       columns[0].key,
       'propertyType',
       'segment',
+      'ownership',
       'siteDescription',
       'propertySize',
       'electric', 'electric_market', 'electric_rate', 'electricCost',
@@ -3722,6 +3789,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // Gas accepts MWh too — used in some European markets where gas is
     // priced on its energy-content equivalent.
     const GAS_PRICE_UOM_OPTIONS = ['therm', 'Dth', 'MMBtu', 'Mcf', 'Ccf', 'MWh'];
+    const OWNERSHIP_OPTIONS = ['Owned', 'Leased'];
     const COUNTRY_OPTIONS = ['United States', 'Canada', 'Mexico', 'United Kingdom', 'Germany', 'France', 'Spain', 'Italy', 'Netherlands', 'Australia'];
     const CURRENCY_OPTIONS = ['USD', 'CAD', 'MXN', 'GBP', 'EUR', 'AUD'];
     const ELECTRIC_PRODUCT_OPTIONS = ['Fixed', 'Index', 'Block & Index', 'Heat Rate', 'Hybrid', 'Pass-through', 'Utility Default'];
@@ -3737,6 +3805,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       { label: 'Country', greenHeader: true, hint: 'Country of the site. Pick from the dropdown on the Electric Power tab — the Gas tab pulls from there via formula. Falls back to the utility-rates file when blank.', validation: { type: 'list', options: COUNTRY_OPTIONS } },
       { label: 'Currency', greenHeader: true, hint: 'Currency the site reports costs in. Pick from the dropdown on the Electric Power tab — the Gas tab pulls from there via formula.', validation: { type: 'list', options: CURRENCY_OPTIONS } },
       { label: 'Property Type', greenHeader: true, hint: 'Building / use type. Drives the per-property-type consumption + account-count estimates surfaced on the page and on the Indicative Savings export. Pick from the dropdown on the Electric Power tab — the Gas tab pulls from there via formula.', validation: { type: 'list', options: PROPERTY_TYPE_OPTIONS } },
+      { label: 'Ownership', greenHeader: true, hint: 'Whether the building is Owned or Leased. Pick from the dropdown on the Electric Power tab — the Gas tab pulls from there via formula. Variants like "Own", "Owner-Occupied", "Tenant", or "Leasehold" are recognized on upload too.', validation: { type: 'list', options: OWNERSHIP_OPTIONS } },
       { label: 'Site Description', greenHeader: true, hint: 'Free-text annotation for the site — building name, internal code, notes, anything that helps identify the row. Passthrough only; shown next to Property Type on the Utility Lookup page. Enter on the Electric Power tab — the Gas tab pulls from there via formula.' },
       { label: 'Size (ft²)', greenHeader: true, hint: 'Square footage of the site. Scales the property-type reference consumption linearly. Optional — when blank the reference size for the property type is used as-is. Enter on the Electric Power tab — the Gas tab pulls from there via formula.' },
     ];
@@ -12765,6 +12834,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             { key: 'country', label: 'Country', required: false, hint: 'Country of the site. Falls back to the utility-rates file when blank.' },
             { key: 'propertyType', label: 'Property Type', required: false, hint: 'Building / use type (Office, Hospital, Warehouse, etc.) — drives the per-property-type consumption + account-count estimates surfaced on the page and on the Indicative Savings export.' },
             { key: 'segment', label: 'Segment (Commercial / Industrial)', required: false, hint: 'Customer class for rate selection. Values like "Commercial"/"Industrial" (or C / I) override the segment otherwise inferred from Property Type. Industrial sites use the state industrial indicative rate; everything else uses commercial.' },
+            { key: 'ownership', label: 'Ownership (Owned / Leased)', required: false, hint: 'Whether the building is owned or leased. Values like "Owned"/"Leased" — plus common variants ("Own", "Owner-Occupied", "Tenant", "Leasehold", "O"/"L") — are folded onto the two labels; anything else is shown as-is so nothing is lost.' },
             { key: 'siteDescription', label: 'Site Description', required: false, hint: 'Free-text annotation for the site (building name, internal code, notes). Passthrough only; surfaced next to Property Type on the Utility Lookup page.' },
             { key: 'propertySize', label: 'Size (ft²)', required: false, hint: 'Square footage of the site. Scales the property-type reference consumption linearly. Optional — when blank the reference size for the property type is used as-is.' },
             { key: 'electric', label: 'Annual Electric Consumption', required: false, hint: 'Annual electric usage. Pair with Electric UoM to control how the value is converted to kWh for cost estimates.' },
