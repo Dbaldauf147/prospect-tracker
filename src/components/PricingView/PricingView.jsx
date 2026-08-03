@@ -1491,8 +1491,8 @@ const COLS = [
   { key: 'gm',          label: 'GM%',               defaultWidth: 90 },
   { key: 'price',       label: 'Marked-up Price',   defaultWidth: 140 },
   { key: 'passThrough', label: 'Pass-through',      defaultWidth: 100 },
-  { key: 'linkedTo',    label: 'Linked To',         defaultWidth: 200 },
-  { key: 'siaFee',      label: 'SIA Fee',           defaultWidth: 190 },
+  { key: 'linkedTo',    label: 'Automated Fee Name', defaultWidth: 200 },
+  { key: 'siaFee',      label: 'Fee Name Below',     defaultWidth: 190 },
 ];
 
 const SUMMARY_COLS = [
@@ -3991,7 +3991,7 @@ export function PricingView({ settings } = {}) {
                                     <button
                                       type="button"
                                       onClick={() => setLinkedToOptionsModal({ autoTags: linkedToAutoTags })}
-                                      title="Add or remove options in the Linked To dropdown"
+                                      title="Add or remove options in the Automated Fee Name dropdown"
                                       style={{ marginLeft: 4, padding: '0 5px', border: '1px solid var(--color-border)', borderRadius: 3, background: '#fff', fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text-muted)', cursor: 'pointer', lineHeight: 1.4, fontFamily: 'inherit' }}
                                     >±</button>
                                   )}
@@ -4082,8 +4082,14 @@ export function PricingView({ settings } = {}) {
                                     </label>
                                   </td>
                                 )}
-                                {!colHidden('linkedTo') && (
-                                  <td>
+                                {!colHidden('linkedTo') && (() => {
+                                  const tagName = resolvedLinkedTo(item).trim();
+                                  const tagMapped = !!feeScheduleNames.find(n => n.toLowerCase() === tagName.toLowerCase());
+                                  return (
+                                  <td
+                                    className={tagMapped ? styles.mappedCell : undefined}
+                                    title={tagMapped ? `Mapped to "${tagName}" in the fee schedule below.` : undefined}
+                                  >
                                     {(() => {
                                       const effType = effectiveType(item);
                                       const key = linkedToDefaultKey(item.description, effType);
@@ -4121,9 +4127,16 @@ export function PricingView({ settings } = {}) {
                                       );
                                     })()}
                                   </td>
-                                )}
-                                {!colHidden('siaFee') && (
-                                  <td>
+                                  );
+                                })()}
+                                {!colHidden('siaFee') && (() => {
+                                  const resolved = resolvedSiaFee(item).trim();
+                                  const feeMapped = !!feeScheduleNames.find(n => n.toLowerCase() === resolved.toLowerCase());
+                                  return (
+                                  <td
+                                    className={feeMapped ? styles.mappedCell : undefined}
+                                    title={feeMapped ? `Mapped to "${resolved}" in the fee schedule below.` : undefined}
+                                  >
                                     {(() => {
                                       const picked = overrides[item.id]?.siaFee;
                                       const tag = resolvedLinkedTo(item).trim();
@@ -4150,7 +4163,7 @@ export function PricingView({ settings } = {}) {
                                             feeScheduleNames.length === 0
                                               ? 'No fee rows in the Alternative Fee schedule below yet — add one and it shows up here.'
                                               : inherited
-                                              ? `Following the Linked To tag "${tag}". Pick a fee row to pin this cost to it instead.`
+                                              ? `Following the Automated Fee Name "${tag}". Pick a fee row to pin this cost to it instead.`
                                               : stale
                                               ? `"${current}" is not a row in the fee schedule below — this cost isn't tied to any fee.`
                                               : 'Which row of the Alternative Fee schedule below this cost is tied to.'
@@ -4160,13 +4173,14 @@ export function PricingView({ settings } = {}) {
                                           {feeScheduleNames.map(n => <option key={n} value={n}>{n}</option>)}
                                           {stale && <option value="__stale__">{current} (not in schedule)</option>}
                                           {picked !== undefined && tag && (
-                                            <option value="__auto__">↺ Follow Linked To ({tag})</option>
+                                            <option value="__auto__">↺ Follow Automated Fee Name ({tag})</option>
                                           )}
                                         </select>
                                       );
                                     })()}
                                   </td>
-                                )}
+                                  );
+                                })()}
                               </tr>
                             );
                           })}
@@ -4494,7 +4508,7 @@ export function PricingView({ settings } = {}) {
                               <strong>
                                 ⚠ {unlinkedCostItems.length} cost line item{unlinkedCostItems.length === 1 ? '' : 's'} not linked to any fee in this section
                               </strong>
-                              {' '}— their cost isn&apos;t captured in the Deal margin / Linked CTS totals. Set each row&apos;s Linked To to a fee tag.
+                              {' '}— their cost isn&apos;t captured in the Deal margin / Linked CTS totals. Set each row&apos;s Fee Name Below to a fee from the schedule.
                               <ul>
                                 {unlinkedCostItems.map((u, i) => (
                                   <li key={`unlinked-${i}`}>
@@ -4502,7 +4516,7 @@ export function PricingView({ settings } = {}) {
                                     {u.type ? ` · ${u.type}` : ''}
                                     {' '}
                                     <span className={styles.unlinkedNote}>
-                                      ({u.tag ? <>Linked To &ldquo;<span className={styles.unlinkedTag}>{u.tag}</span>&rdquo; — no matching fee</> : 'no Linked To'}
+                                      ({u.tag ? <>mapped to &ldquo;<span className={styles.unlinkedTag}>{u.tag}</span>&rdquo; — no matching fee</> : 'no fee name set'}
                                       {`, cost ${fmtMoney(u.cost)}`})
                                     </span>
                                   </li>

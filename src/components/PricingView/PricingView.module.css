@@ -1144,3 +1144,10 @@ select.altCellInput::-ms-expand {
   flex-direction: column;
   gap: 0.1rem;
 }
+
+/* Automated Fee Name cell whose tag lands on a fee in the table below —
+   the cost is wired to a fee, so the column reads as a checklist of
+   what's mapped and what still dangles. */
+.mappedCell {
+  background: #d1fae5;
+}
