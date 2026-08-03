@@ -20,6 +20,8 @@ import {
   loadOptionLinks,
   setOppOptionLink,
   dropOptionFromLinks,
+  dropLinksForWorkbook,
+  findLinkedOppId,
   OPTION_LINKS_EVENT,
 } from '../../utils/pricingOptionLinks';
 
@@ -1558,6 +1560,13 @@ const WORKBOOK_SOURCE_KEY = 'workbookSourceBlob';
 // parses are silently discarded on hydration so the user re-uploads
 // against the current parser.
 const PARSER_VERSION = 10;
+// Every uploaded SIA gets its own id. "Saved to: <opp>" links are
+// stored against it, so a new upload — or a Clear — can never leave an
+// opp mapped to whatever file replaced it, even when the new file has
+// sheets named exactly like the old one ("Option 1", …).
+function newWorkbookId() {
+  return `wb_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
 // Sheet inside Pricing-page exports carrying a JSON snapshot of
 // the full page state. Presence of this sheet on a dropped file
 // switches the import path from fee-workbook parsing to state
@@ -1711,7 +1720,15 @@ export function PricingView({ settings } = {}) {
           hydratedRef.current = true;
           return;
         }
-        if (saved.workbook) setWorkbook(saved.workbook);
+        if (saved.workbook) {
+          // Caches written before workbooks carried an id get one now.
+          // `legacyLinks` marks it as the workbook any untagged (name-
+          // only) link was made against, so its "Saved to:" chips keep
+          // working until the file is cleared or replaced.
+          setWorkbook(saved.workbook.id
+            ? saved.workbook
+            : { ...saved.workbook, id: newWorkbookId(), legacyLinks: true });
+        }
         if (typeof saved.globalGmPct === 'number') setGlobalGmPct(saved.globalGmPct);
         if (saved.overrides) setOverrides(saved.overrides);
         if (typeof saved.activeOption === 'number') setActiveOption(saved.activeOption);
@@ -2263,7 +2280,14 @@ export function PricingView({ settings } = {}) {
   }
 
   function restorePricingState(s) {
-    if (s.workbook) setWorkbook(s.workbook);
+    if (s.workbook) {
+      // Restoring a state export swaps the workbook out too, so the
+      // outgoing file's Opp links go with it. The restored workbook is
+      // treated as a fresh upload for linking purposes — a snapshot
+      // built on another device can't own links in this device's map.
+      clearLoadedWorkbookOptionLinks(workbook);
+      setWorkbook({ ...s.workbook, id: newWorkbookId(), legacyLinks: false });
+    }
     if (typeof s.globalGmPct === 'number') setGlobalGmPct(s.globalGmPct);
     setOverrides(s.overrides || {});
     if (typeof s.activeOption === 'number') setActiveOption(s.activeOption);
@@ -2333,9 +2357,12 @@ export function PricingView({ settings } = {}) {
         console.warn('Failed to cache workbook source blob:', err);
       });
       // A new SIA replaces the one on screen, so unlink any Opp the
-      // outgoing workbook was "Saved to" before we swap it out.
-      clearLoadedWorkbookOptionLinks(workbook);
+      // outgoing workbook was "Saved to" before we swap it out. The
+      // incoming file gets its own id, so it starts with no links of
+      // its own even if its sheet names match the outgoing ones.
+      await clearLoadedWorkbookOptionLinks(workbook);
       setWorkbook({
+        id: newWorkbookId(),
         fileName: file.name,
         options: parsed.options,
         sheetNames: parsed.sheetNames,
@@ -2455,16 +2482,18 @@ export function PricingView({ settings } = {}) {
   // Drop any "Saved to:" Opp links that point at the workbook currently
   // loaded in the Pricing tab. Called when the SIA is cleared or replaced
   // so the chip (and the Opps 2 "Pricing Option" column it feeds) doesn't
-  // dangle against a workbook that's no longer on screen.
+  // dangle against a workbook that's no longer on screen. One atomic
+  // write covers every option — dropping them one at a time raced, and
+  // a workbook with two linked options could keep one of the links.
   function clearLoadedWorkbookOptionLinks(wb) {
-    const labels = new Set(
-      (wb?.options || [])
-        .map(o => (o.sheetName || '').trim())
-        .filter(Boolean)
-    );
-    for (const label of labels) {
-      dropOptionFromLinks(label).catch(() => {});
-    }
+    if (!wb) return Promise.resolve();
+    // Untagged legacy links are matched by sheet name, but only for a
+    // workbook that predates link tagging — never for one whose links
+    // all carry its id.
+    const legacyNames = wb.legacyLinks
+      ? (wb.options || []).map(o => (o.sheetName || '').trim()).filter(Boolean)
+      : [];
+    return dropLinksForWorkbook(wb.id, legacyNames).catch(() => {});
   }
 
   function clearAll() {
@@ -2547,6 +2576,15 @@ export function PricingView({ settings } = {}) {
     const target = workbook.options.find(o => o.optionNumber === optionNumber);
     if (!target || !target.isClone) return;
     if (!window.confirm(`Delete the cloned option "${target.sheetName}"? Any markup overrides and alt-fee rows on this clone will be removed.`)) return;
+
+    // The clone is going away, so any Opp it was "Saved to" gets
+    // unlinked with it rather than dangling on a name that no longer
+    // exists in this workbook.
+    dropOptionFromLinks((target.sheetName || '').trim(), {
+      source: 'pricing',
+      workbookId: workbook.id,
+      allowLegacy: !!workbook.legacyLinks,
+    }).catch(() => {});
 
     const remaining = workbook.options.filter(o => o.optionNumber !== optionNumber);
     setWorkbook(prev => prev ? { ...prev, options: remaining } : prev);
@@ -3601,12 +3639,17 @@ export function PricingView({ settings } = {}) {
           // Sheet name doubles as the link label so the Pricing-subtab
           // chip matches what Opps 2 displays under "Pricing Option".
           const optionLabel = (opt.sheetName || '').trim();
-          let linkedOppId = null;
-          if (optionLabel) {
-            for (const [id, v] of Object.entries(optionLinks)) {
-              if (v === optionLabel) { linkedOppId = id; break; }
-            }
-          }
+          // Only links saved from *this* workbook count — a link left
+          // over from a file that also had an "Option 1" must not chip
+          // itself onto the one loaded now.
+          const linkedOppId = optionLabel
+            ? findLinkedOppId(optionLinks, {
+              name: optionLabel,
+              source: 'pricing',
+              workbookId: workbook.id,
+              allowLegacy: !!workbook.legacyLinks,
+            })
+            : null;
           const linkedOpp = linkedOppId
             ? opps2Records.find(r => String(r._id) === String(linkedOppId)) || null
             : null;
@@ -4642,7 +4685,10 @@ export function PricingView({ settings } = {}) {
                 // Firestore has the snapshot — otherwise Opps 2's next
                 // hydration can overwrite our IDB write with a pre-write
                 // Firestore copy and the user sees only the link.
-                await setOppOptionLink(oppId, label);
+                await setOppOptionLink(oppId, label, {
+                  source: 'pricing',
+                  workbookId: workbook?.id,
+                });
                 await setOppPricingSnapshot(user?.uid, oppId, snapshot);
                 if (sourceBlob) {
                   // Best-effort source-file copy. Failure here doesn't

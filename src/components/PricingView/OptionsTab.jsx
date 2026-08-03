@@ -6,6 +6,7 @@ import {
   setOppOptionLink,
   renameOptionInLinks,
   dropOptionFromLinks,
+  findLinkedOppId,
   OPTION_LINKS_EVENT,
 } from '../../utils/pricingOptionLinks';
 import { buildPricingOptionSnapshot } from '../../utils/pricingOptionCalc';
@@ -521,10 +522,10 @@ export function OptionsTab({ options, setOptions }) {
   const linkedOppId = useMemo(() => {
     const name = (opt?.name || '').trim();
     if (!name) return null;
-    for (const [id, v] of Object.entries(optionLinks)) {
-      if (v === name) return id;
-    }
-    return null;
+    // Scoped to this subtab's links: a "Option 1" saved from the SIA
+    // workbook subtab belongs to that file, not to this hand-built
+    // option that happens to share the name.
+    return findLinkedOppId(optionLinks, { name, source: 'options', allowLegacy: true });
   }, [opt?.name, optionLinks]);
   const linkedOpp = useMemo(() => {
     if (!linkedOppId) return null;
@@ -549,7 +550,7 @@ export function OptionsTab({ options, setOptions }) {
     const prevName = (opt?.name || '').trim();
     const nextName = (next?.name || '').trim();
     if (prevName && nextName && prevName !== nextName) {
-      renameOptionInLinks(prevName, nextName).catch(() => {});
+      renameOptionInLinks(prevName, nextName, { source: 'options' }).catch(() => {});
     }
   };
 
@@ -561,7 +562,7 @@ export function OptionsTab({ options, setOptions }) {
 
   const removeOption = (idx) => {
     const removed = list[idx];
-    if (removed?.name) dropOptionFromLinks(removed.name).catch(() => {});
+    if (removed?.name) dropOptionFromLinks(removed.name, { source: 'options' }).catch(() => {});
     if (list.length <= 1) {
       setOptions([emptyOption(0)]);
       setActiveIdx(0);
@@ -603,7 +604,7 @@ export function OptionsTab({ options, setOptions }) {
     const name = (opt?.name || '').trim();
     setSaving(true);
     try {
-      await setOppOptionLink(oppId, name);
+      await setOppOptionLink(oppId, name, { source: 'options' });
       // Freeze a self-contained copy of this option onto the opp so it
       // survives a Pricing-tab Clear. Also auto-fills Quoted Amount with
       // Year 1 total — the user can write over it later. Await both so
