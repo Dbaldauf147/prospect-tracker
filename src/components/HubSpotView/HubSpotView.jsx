@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
 import { createPortal } from 'react-dom';
-import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
@@ -1620,7 +1619,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
     return 'Other';
   }
 
-  function downloadFailedExcel(errors) {
+  async function downloadFailedExcel(errors) {
     const standardCols = { category: 'Error Category', firstname: 'First Name', lastname: 'Last Name', email: 'Email', phone: 'Phone', company: 'Company', jobtitle: 'Job Title', hs_linkedin_url: 'LinkedIn URL', city: 'City', state: 'State', country: 'Country', reason: 'Error Reason' };
     // Collect all unique keys from error objects
     const allKeys = new Set();
@@ -1637,6 +1636,9 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
       }
       return row;
     });
+    // Pulled in on use — the spreadsheet library is ~140 KB gzipped and
+    // this page only needs it to export.
+    const XLSX = await import('xlsx');
     const ws = XLSX.utils.json_to_sheet(data);
     // Auto-size columns
     const colWidths = Object.keys(data[0] || {}).map(key => ({

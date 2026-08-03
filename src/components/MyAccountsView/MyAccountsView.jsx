@@ -26,7 +26,6 @@ import {
   addDivisionRulePatch,
   removeDivisionRulePatch,
 } from '../../utils/divisions';
-import * as XLSX from 'xlsx';
 import styles from './MyAccountsView.module.css';
 
 function InlineCell({ row, field, value, onUpdate, type, options, displayValue }) {
@@ -969,8 +968,11 @@ function OppsHoverPopup({ row }) {
 function parseXlsx(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
+        // Pulled in on use: the spreadsheet library is ~140 KB gzipped and
+        // this page only needs it when a file is actually imported.
+        const XLSX = await import('xlsx');
         const wb = XLSX.read(e.target.result, { type: 'array' });
         const ws = wb.Sheets[wb.SheetNames[0]];
         resolve(XLSX.utils.sheet_to_json(ws));
@@ -1105,13 +1107,14 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
 
   // Download the popped-up company's sites as an .xlsx, using the Master Site
   // List's own canonical headers.
-  function exportSitesExcel(company, rows) {
+  async function exportSitesExcel(company, rows) {
     const data = (rows || []).map(r => {
       const o = {};
       MASTER_FIELDS.forEach((f, i) => { o[CANONICAL_HEADERS[i]] = r[f.key] || ''; });
       return o;
     });
     if (!data.length) { alert('No sites to export.'); return; }
+    const XLSX = await import('xlsx');
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Sites');

@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import * as XLSX from 'xlsx';
 import { saveList, loadList, clearList } from '../../utils/uploadedListStore';
 import { loadUtilityRates } from '../../utils/utilityRatesStore';
 import { parseBestSheet } from '../../utils/xlsxParse';
@@ -812,7 +811,7 @@ export function MasterSiteListView({ prospects = [] }) {
     }
   }
 
-  function exportExcel() {
+  async function exportExcel() {
     const scopeRows = companyFilter === ALL ? rows : rows.filter(r => String(r.company || '').trim() === companyFilter);
     const data = scopeRows.filter(r => !isRowEmpty(r)).map(r => {
       const o = {};
@@ -827,6 +826,9 @@ export function MasterSiteListView({ prospects = [] }) {
       return o;
     });
     if (!data.length) { alert('No rows to export.'); return; }
+    // Pulled in on use — the spreadsheet library is ~140 KB gzipped and
+    // this page only needs it to export.
+    const XLSX = await import('xlsx');
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Master Site List');

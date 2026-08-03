@@ -1,5 +1,4 @@
 import { useState, useMemo, useRef } from 'react';
-import * as XLSX from 'xlsx';
 import { matchesCdm } from '../../utils/cdmMatch';
 import styles from './TargetAccountsView.module.css';
 
@@ -34,7 +33,10 @@ function normalizeName(name) {
     .trim();
 }
 
-function parseWorkbook(buffer) {
+async function parseWorkbook(buffer) {
+  // Pulled in on use — the spreadsheet library is ~140 KB gzipped and this
+  // tab only needs it once a workbook is actually uploaded.
+  const XLSX = await import('xlsx');
   const wb = XLSX.read(buffer, { type: 'array' });
   const sheets = {};
   for (const sheetName of wb.SheetNames) {
@@ -140,9 +142,9 @@ export function CompareTab({ currentData, cdmName }) {
     setLoading(true);
     setError(null);
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
-        const sheets = parseWorkbook(e.target.result);
+        const sheets = await parseWorkbook(e.target.result);
         if (Object.keys(sheets).length === 0) {
           setError('No data rows found in the uploaded file.');
           setLoading(false);

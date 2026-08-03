@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import { dbGet, dbPut } from '../../utils/db';
 import { userLsGet } from '../../utils/userLs';
@@ -416,7 +415,7 @@ export function OppsView({ settings, updateSettings } = {}) {
             className={styles.syncBtn}
             disabled={!filtered?.length}
             title={filtered?.length ? 'Download every visible row with every Google-Sheet column' : 'No rows to export'}
-            onClick={() => {
+            onClick={async () => {
               // Build the export from the Google Sheet's raw headers +
               // the currently-filtered rows. Skips internal bookkeeping
               // fields (_id) that aren't in the sheet's header set.
@@ -426,6 +425,9 @@ export function OppsView({ settings, updateSettings } = {}) {
                 for (const h of exportHeaders) obj[h] = row[h] ?? '';
                 return obj;
               });
+              // Pulled in on use — the spreadsheet library is ~140 KB
+              // gzipped and this page only needs it to export.
+              const XLSX = await import('xlsx');
               const ws = XLSX.utils.json_to_sheet(data, { header: exportHeaders });
               ws['!cols'] = exportHeaders.map(h => ({ wch: Math.max(String(h).length + 2, 14) }));
               const wb = XLSX.utils.book_new();

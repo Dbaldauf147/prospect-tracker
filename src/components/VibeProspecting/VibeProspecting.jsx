@@ -1,6 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
-import * as XLSX from 'xlsx';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import styles from './VibeProspecting.module.css';
@@ -296,7 +295,7 @@ export function VibeProspecting({ prospects = [], onUpdate, cdmName }) {
     if (!file || !onUpdate) return;
     setError('');
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
       try {
         let rows;
         if (file.name.endsWith('.csv')) {
@@ -311,6 +310,10 @@ export function VibeProspecting({ prospects = [], onUpdate, cdmName }) {
             rows.push(obj);
           }
         } else {
+          // Pulled in on use — the spreadsheet library is ~140 KB gzipped
+          // and this page only needs it for a real .xlsx upload (the CSV
+          // branch above parses without it).
+          const XLSX = await import('xlsx');
           const wb = XLSX.read(evt.target.result, { type: 'array' });
           const ws = wb.Sheets[wb.SheetNames[0]];
           rows = XLSX.utils.sheet_to_json(ws);
@@ -365,7 +368,7 @@ export function VibeProspecting({ prospects = [], onUpdate, cdmName }) {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
       try {
         // Handle both CSV and XLSX
         let rows;
@@ -381,6 +384,10 @@ export function VibeProspecting({ prospects = [], onUpdate, cdmName }) {
             rows.push(obj);
           }
         } else {
+          // Pulled in on use — the spreadsheet library is ~140 KB gzipped
+          // and this page only needs it for a real .xlsx upload (the CSV
+          // branch above parses without it).
+          const XLSX = await import('xlsx');
           const wb = XLSX.read(evt.target.result, { type: 'array' });
           const ws = wb.Sheets[wb.SheetNames[0]];
           rows = XLSX.utils.sheet_to_json(ws);

@@ -1,5 +1,4 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
-import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import { loadEffectiveRaClients, saveRaClientsOverride, clearRaClientsOverride, raClientName } from '../../utils/raClientsStore';
 import styles from './RAClientsView.module.css';
@@ -93,6 +92,9 @@ export function RAClientsView({ settings, updateSettings } = {}) {
     setUploadError(null);
     try {
       const buf = await file.arrayBuffer();
+      // Pulled in on use — the spreadsheet library is ~140 KB gzipped
+      // and this page only needs it for import / export.
+      const XLSX = await import('xlsx');
       const wb = XLSX.read(buf);
       const sheet = wb.Sheets[wb.SheetNames[0]];
       if (!sheet) throw new Error('Workbook has no sheets');

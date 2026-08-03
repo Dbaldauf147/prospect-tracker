@@ -1,6 +1,5 @@
 import { useMemo, useState, useCallback, useRef, useEffect, Fragment } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
-import * as XLSX from 'xlsx';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotContacts, updateHubspotCache } from '../../utils/hubspotContactsCache';
@@ -1128,6 +1127,9 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
       (async () => {
         try {
           const buf = await sheetFile.arrayBuffer();
+          // Pulled in on use — the spreadsheet library is ~140 KB gzipped
+          // and this page only needs it to read an uploaded sheet.
+          const XLSX = await import('xlsx');
           const wb = XLSX.read(buf);
           const sheet = wb.Sheets[wb.SheetNames[0]];
           const raw = XLSX.utils.sheet_to_json(sheet, { defval: '' });
