@@ -1,9 +1,11 @@
 // Horizontal pipeline funnel — the Pipeline Metrics table drawn as a
 // funnel so the volume of deals by stage reads at a glance.
 //
-// Two dimensions carry data. The band's half-height is proportional to
-// the stage's actual value (pipeline $ by default, deal count on the
-// toggle), and the segment's LENGTH is proportional to the stage's Avg
+// Two dimensions carry data. The band's height above the baseline is
+// proportional to the stage's actual value (pipeline $ by default, deal
+// count on the toggle) — the left axis reads 0 at that baseline, so a
+// band's top edge lands on its own value — and the segment's LENGTH is
+// proportional to the stage's Avg
 // Opp Life — so a stage deals sit in twice as long is drawn twice as
 // long, and the funnel's shape shows both volume and time. Where a stage is
 // short of its goal, the goal is drawn as a red dotted line with the
@@ -52,9 +54,9 @@ const CHROME = '#c3c2b7';
 // Canvas. Rendered responsively via viewBox, so these are layout units.
 const W = 1200;
 const H = 480;
-const CY = 236;          // funnel centerline
-const MAX_HALF = 104;    // half-height of the tallest band
-const MIN_HALF = 5;      // so a 1-deal stage still draws something
+const BASE_Y = 348;      // the zero line the funnel sits on
+const MAX_H = 208;       // height of the tallest band, above the baseline
+const MIN_H = 6;         // so a 1-deal stage still draws something
 const X0 = 150;          // funnel left edge (abuts the axis bar)
 const X1 = 890;          // funnel right edge (left of the exit arrow)
 const AXIS_X = X0 - 14;  // left edge of the grey axis bar
@@ -153,9 +155,10 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
     const max = Math.max(...rows.map((r) => Math.max(r.actual, r.goal)), 0);
     if (max <= 0) return null;
     // Bands get a floor so a near-zero stage still draws; the axis maps
-    // straight through, so its ticks stay true to the scale.
-    const scale = (v) => (v / max) * MAX_HALF;
-    const half = (v) => (v > 0 ? Math.max(MIN_HALF, scale(v)) : 0);
+    // straight through, so its ticks stay true to the scale. Heights are
+    // measured up from the baseline, which is where the axis reads 0.
+    const scale = (v) => (v / max) * MAX_H;
+    const half = (v) => (v > 0 ? Math.max(MIN_H, scale(v)) : 0);
 
     // Segment LENGTH carries Avg Opp Life — a stage deals sit in twice as
     // long is drawn twice as long. Only when every stage has a life to
@@ -269,29 +272,28 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
           role="img"
           aria-label={`Pipeline funnel — ${metric.heading} by stage, segment length by average opportunity life. ${gapCount} of ${geom.segs.length} stages are short of goal.`}
         >
-          {/* Left axis — the entry bar, now scaled. A tick sits where a band
-              of that value would reach, so any band can be read off it. The
-              funnel is symmetric about the centerline, so ticks are labelled
-              on the upper half and mirrored unlabelled below. */}
-          <rect x={AXIS_X} y={CY - MAX_HALF - 22} width={12} height={(MAX_HALF + 22) * 2} rx={2} fill="#94a3b8" />
-          <line x1={AXIS_X - 8} y1={CY} x2={AXIS_X} y2={CY} stroke={CHROME} strokeWidth={1} />
-          <text x={AXIS_X - 12} y={CY + 4} fontSize={11} fill={INK_MUTED} textAnchor="end">0</text>
+          {/* Left axis — the entry bar, scaled, reading 0 at the baseline
+              the funnel sits on and climbing to the tallest stage. A band's
+              top edge lands on its own value. */}
+          <rect x={AXIS_X} y={BASE_Y - MAX_H - 24} width={12} height={MAX_H + 26} rx={2} fill="#94a3b8" />
+          <line x1={X0} y1={BASE_Y} x2={X1} y2={BASE_Y} stroke={CHROME} strokeWidth={1} />
+          <line x1={AXIS_X - 8} y1={BASE_Y} x2={AXIS_X} y2={BASE_Y} stroke={CHROME} strokeWidth={1} />
+          <text x={AXIS_X - 12} y={BASE_Y + 4} fontSize={11} fill={INK_MUTED} textAnchor="end">0</text>
           {geom.ticks.map((v) => (
             <g key={`tick-${v}`}>
-              <line x1={AXIS_X - 8} y1={CY - geom.scale(v)} x2={AXIS_X} y2={CY - geom.scale(v)} stroke={CHROME} strokeWidth={1} />
-              <line x1={AXIS_X - 5} y1={CY + geom.scale(v)} x2={AXIS_X} y2={CY + geom.scale(v)} stroke={CHROME} strokeWidth={1} opacity={0.6} />
-              <text x={AXIS_X - 12} y={CY - geom.scale(v) + 4} fontSize={11} fill={INK_MUTED} textAnchor="end">
+              <line x1={AXIS_X - 8} y1={BASE_Y - geom.scale(v)} x2={AXIS_X} y2={BASE_Y - geom.scale(v)} stroke={CHROME} strokeWidth={1} />
+              <text x={AXIS_X - 12} y={BASE_Y - geom.scale(v) + 4} fontSize={11} fill={INK_MUTED} textAnchor="end">
                 {metric.fmtAxis(v)}
               </text>
             </g>
           ))}
 
-          {/* Exit arrow, then what the funnel is worth on the way out. */}
-          <path
-            d={`M ${X1 + 8} ${CY - 24} L ${X1 + 44} ${CY - 24} L ${X1 + 44} ${CY - 40} L ${X1 + 84} ${CY} L ${X1 + 44} ${CY + 40} L ${X1 + 44} ${CY + 24} L ${X1 + 8} ${CY + 24} Z`}
-            fill="#dfe3e8"
-          />
+          {/* Exit arrow, then what the funnel is worth on the way out. It
+              tracks the last stage's exit height, clamped so the block can
+              never slide into the callouts below the baseline. */}
           {(() => {
+            const last = geom.segs[geom.segs.length - 1];
+            const outY = Math.min(Math.max(BASE_Y - Math.max(last.rightH, 56) / 2, 150), 300);
             const sold = metric.sold(outcome);
             const proj = geom.projected;
             const total = sold != null && proj != null ? sold + proj : null;
@@ -307,14 +309,18 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
                 <title>
                   {`Projected = each stage's ${metric.heading.toLowerCase()} × that stage's close rate, summed across the funnel, added to what has already closed.`}
                 </title>
+                <path
+                  d={`M ${X1 + 8} ${outY - 24} L ${X1 + 44} ${outY - 24} L ${X1 + 44} ${outY - 40} L ${X1 + 84} ${outY} L ${X1 + 44} ${outY + 40} L ${X1 + 44} ${outY + 24} L ${X1 + 8} ${outY + 24} Z`}
+                  fill="#dfe3e8"
+                />
                 {sold != null ? (
                   <>
-                    {row(CY - 26, outcome?.soldLabel || 'Closed YTD', metric.fmtOut(sold), { strong: true })}
-                    {row(CY - 6, '+ weighted pipeline', proj == null ? '—' : metric.fmtProj(proj))}
-                    <line x1={OUT_X} y1={CY + 4} x2={rx} y2={CY + 4} stroke={CHROME} strokeWidth={1} />
-                    {row(CY + 22, '= projected total', total == null ? '—' : metric.fmtProj(total), { strong: true, big: true })}
+                    {row(outY - 26, outcome?.soldLabel || 'Closed YTD', metric.fmtOut(sold), { strong: true })}
+                    {row(outY - 6, '+ weighted pipeline', proj == null ? '—' : metric.fmtProj(proj))}
+                    <line x1={OUT_X} y1={outY + 4} x2={rx} y2={outY + 4} stroke={CHROME} strokeWidth={1} />
+                    {row(outY + 22, '= projected total', total == null ? '—' : metric.fmtProj(total), { strong: true, big: true })}
                     {metricKey === 'amount' && outcome?.target > 0 && total != null && (
-                      <text x={rx} y={CY + 40} fontSize={11} fill={INK_MUTED} textAnchor="end">
+                      <text x={rx} y={outY + 40} fontSize={11} fill={INK_MUTED} textAnchor="end">
                         {`${Math.round((total / outcome.target) * 100)}% of ${fmtCompactMoney(outcome.target)} target`}
                       </text>
                     )}
@@ -323,12 +329,12 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
                   /* Nothing closed to add to — show the funnel's own weight
                      and say what's missing rather than a hollow total. */
                   <>
-                    {row(CY - 10, 'weighted pipeline', proj == null ? '—' : metric.fmtProj(proj), { strong: true, big: true })}
-                    <text x={OUT_X} y={CY + 12} fontSize={10.5} fill={INK_MUTED}>closed count needs the Opps tab</text>
+                    {row(outY - 10, 'weighted pipeline', proj == null ? '—' : metric.fmtProj(proj), { strong: true, big: true })}
+                    <text x={OUT_X} y={outY + 12} fontSize={10.5} fill={INK_MUTED}>closed count needs the Opps tab</text>
                   </>
                 )}
                 {proj == null && (
-                  <text x={OUT_X} y={CY + 40} fontSize={10.5} fill={INK_MUTED}>no close rates yet</text>
+                  <text x={OUT_X} y={outY + 40} fontSize={10.5} fill={INK_MUTED}>no close rates yet</text>
                 )}
               </g>
             );
@@ -336,7 +342,7 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
 
           {geom.segs.map((g) => {
             const fill = STAGE_FILL[g.stageNum] || '#2a78d6';
-            const band = `M ${g.x0} ${CY - g.leftH} L ${g.x1} ${CY - g.rightH} L ${g.x1} ${CY + g.rightH} L ${g.x0} ${CY + g.leftH} Z`;
+            const band = `M ${g.x0} ${BASE_Y - g.leftH} L ${g.x1} ${BASE_Y - g.rightH} L ${g.x1} ${BASE_Y} L ${g.x0} ${BASE_Y} Z`;
             const dim = hover && hover.i !== g.i;
             return (
               <g
@@ -353,20 +359,15 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
                 style={{ cursor: 'default' }}
               >
                 <path d={band} fill={fill} opacity={dim ? 0.72 : 1} />
-                {/* Shortfall: shade from the actual edge out to the goal
-                    line, top and bottom, then the red dotted goal itself. */}
+                {/* Shortfall: shade from the band's top edge up to the goal
+                    line, then the red dotted goal itself. */}
                 {g.gap > 0 && (
                   <>
                     <path
-                      d={`M ${g.x0} ${CY - g.goalH} L ${g.x1} ${CY - g.goalH} L ${g.x1} ${CY - g.rightH} L ${g.x0} ${CY - g.leftH} Z`}
+                      d={`M ${g.x0} ${BASE_Y - g.goalH} L ${g.x1} ${BASE_Y - g.goalH} L ${g.x1} ${BASE_Y - g.rightH} L ${g.x0} ${BASE_Y - g.leftH} Z`}
                       fill={GAP_SHADE}
                     />
-                    <path
-                      d={`M ${g.x0} ${CY + g.goalH} L ${g.x1} ${CY + g.goalH} L ${g.x1} ${CY + g.rightH} L ${g.x0} ${CY + g.leftH} Z`}
-                      fill={GAP_SHADE}
-                    />
-                    <line x1={g.x0} y1={CY - g.goalH} x2={g.x1} y2={CY - g.goalH} stroke={GAP_RED} strokeWidth={2} strokeDasharray="6 5" strokeLinecap="round" />
-                    <line x1={g.x0} y1={CY + g.goalH} x2={g.x1} y2={CY + g.goalH} stroke={GAP_RED} strokeWidth={2} strokeDasharray="6 5" strokeLinecap="round" />
+                    <line x1={g.x0} y1={BASE_Y - g.goalH} x2={g.x1} y2={BASE_Y - g.goalH} stroke={GAP_RED} strokeWidth={2} strokeDasharray="6 5" strokeLinecap="round" />
                   </>
                 )}
                 {/* Goal met: the same dotted marker in green. The line falls
@@ -374,35 +375,32 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
                     surplus — no shading needed to read it. Each dash gets a
                     white casing, since green-on-stage-blue is too close in
                     lightness to separate on its own. */}
-                {g.gap === 0 && g.hasGoal && [CY - g.goalH, CY + g.goalH].map((y, k) => (
-                  <g key={`goal-${k}`}>
-                    <line x1={g.x0} y1={y} x2={g.x1} y2={y} stroke="#fff" strokeWidth={5} strokeDasharray="6 5" strokeLinecap="round" opacity={0.9} />
-                    <line x1={g.x0} y1={y} x2={g.x1} y2={y} stroke={MET_GREEN} strokeWidth={2} strokeDasharray="6 5" strokeLinecap="round" />
-                  </g>
-                ))}
+                {g.gap === 0 && g.hasGoal && (
+                  <>
+                    <line x1={g.x0} y1={BASE_Y - g.goalH} x2={g.x1} y2={BASE_Y - g.goalH} stroke="#fff" strokeWidth={5} strokeDasharray="6 5" strokeLinecap="round" opacity={0.9} />
+                    <line x1={g.x0} y1={BASE_Y - g.goalH} x2={g.x1} y2={BASE_Y - g.goalH} stroke={MET_GREEN} strokeWidth={2} strokeDasharray="6 5" strokeLinecap="round" />
+                  </>
+                )}
                 {/* Stage number, mirroring the funnel reference. A band too
                     thin to hold the circle gets the number in stage color
                     just outside it instead, so no segment goes unlabeled. */}
-                {g.midH >= 26 && g.w >= 58 ? (
+                {g.midH >= 52 && g.w >= 58 ? (
                   <>
-                    <circle cx={g.cx} cy={CY} r={21} fill="none" stroke="#fff" strokeWidth={2} />
-                    <text x={g.cx} y={CY + 7} fontSize={20} fontWeight={600} fill="#fff" textAnchor="middle">{g.stageNum}</text>
+                    <circle cx={g.cx} cy={BASE_Y - g.midH / 2} r={21} fill="none" stroke="#fff" strokeWidth={2} />
+                    <text x={g.cx} y={BASE_Y - g.midH / 2 + 7} fontSize={20} fontWeight={600} fill="#fff" textAnchor="middle">{g.stageNum}</text>
                   </>
                 ) : (
                   <text
                     x={g.cx}
-                    // On the opposite side from this stage's callout, so the
-                    // elbow connector doesn't run through the digit — and
-                    // clear of the goal line when this stage has a gap.
-                    y={g.above
-                      ? CY + Math.max(g.midH, g.gap > 0 ? g.goalH : 0) + 22
-                      : CY - Math.max(g.midH, g.gap > 0 ? g.goalH : 0) - 10}
+                    // Above the band — and above the goal line too when this
+                    // stage has a gap, so the digit never sits on the dashes.
+                    y={BASE_Y - Math.max(g.midH, g.gap > 0 ? g.goalH : 0) - 10}
                     fontSize={18} fontWeight={700} fill={fill} textAnchor="middle"
                   >{g.stageNum}</text>
                 )}
                 <title>{`Stage ${g.stageNum} — ${STAGE_NAME[g.stageNum] || ''}\n${metric.heading}: ${withUnit(metric, g.actual)}\nGoal: ${withUnit(metric, g.goal)}${g.gap > 0 ? `\nShort by ${withUnit(metric, g.gap)}` : g.over > 0 ? `\nAbove goal by ${withUnit(metric, g.over)}` : ''}\nAvg opp life: ${fmtDays(g.life)}`}</title>
                 {/* Invisible hit area so thin bands are still hoverable. */}
-                <rect x={g.x0} y={CY - MAX_HALF - 10} width={g.x1 - g.x0} height={(MAX_HALF + 10) * 2} fill="transparent" />
+                <rect x={g.x0} y={BASE_Y - MAX_H - 24} width={g.x1 - g.x0} height={MAX_H + 30} fill="transparent" />
               </g>
             );
           })}
@@ -410,13 +408,15 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
           {/* Callouts — alternating above / below with an elbow connector. */}
           {geom.segs.map((g) => {
             const fill = STAGE_FILL[g.stageNum] || '#2a78d6';
-            const elbowY = g.above ? 122 : 350;
-            const edgeY = g.above ? CY - g.midH - 6 : CY + g.midH + 6;
+            const elbowY = g.above ? 122 : BASE_Y + 18;
+            const edgeY = g.above
+              ? BASE_Y - Math.max(g.midH, g.gap > 0 ? g.goalH : 0) - 6
+              : BASE_Y + 4;
             const tx = g.tx;
-            const titleY = g.above ? 46 : 372;
-            const valueY = g.above ? 66 : 392;
-            const gapY = g.above ? 86 : 412;
-            const lifeY = g.above ? 106 : 432;
+            const titleY = g.above ? 46 : BASE_Y + 44;
+            const valueY = g.above ? 66 : BASE_Y + 64;
+            const gapY = g.above ? 86 : BASE_Y + 84;
+            const lifeY = g.above ? 106 : BASE_Y + 104;
             return (
               <g key={`c-${g.key || g.stageNum}`}>
                 <polyline
@@ -502,7 +502,6 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
             ? 'Every stage is at or above goal.'
             : `${gapCount} of ${geom.segs.length} stages below goal.`}
         </span>
-        <span className={styles.legendItem}>Left axis measures from the centre line.</span>
         <span className={styles.legendItem}>Projected = each stage × its own close rate.</span>
         <span className={styles.legendItem}>Full numbers in the Pipeline Metrics table below.</span>
       </div>
