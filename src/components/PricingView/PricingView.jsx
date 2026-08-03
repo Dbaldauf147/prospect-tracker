@@ -1492,6 +1492,7 @@ const COLS = [
   { key: 'price',       label: 'Marked-up Price',   defaultWidth: 140 },
   { key: 'passThrough', label: 'Pass-through',      defaultWidth: 100 },
   { key: 'linkedTo',    label: 'Linked To',         defaultWidth: 200 },
+  { key: 'siaFee',      label: 'SIA Fee',           defaultWidth: 190 },
 ];
 
 const SUMMARY_COLS = [
@@ -2025,7 +2026,7 @@ export function PricingView({ settings } = {}) {
     let totalMarkup = 0;
     for (const sec of opt.sections) {
       for (const item of sec.items) {
-        if (resolvedLinkedTo(item).trim().toLowerCase() !== target) continue;
+        if (resolvedSiaFee(item).trim().toLowerCase() !== target) continue;
         const { price } = priceFor(item);
         if (typeof price !== 'number' || !Number.isFinite(price)) continue;
         const t = effectiveType(item);
@@ -2069,7 +2070,7 @@ export function PricingView({ settings } = {}) {
     let bestAny = null;
     for (const sec of opt.sections) {
       for (const item of sec.items) {
-        if (resolvedLinkedTo(item).trim().toLowerCase() !== target) continue;
+        if (resolvedSiaFee(item).trim().toLowerCase() !== target) continue;
         const sm = effectiveItemStartMonth(item);
         if (!Number.isFinite(sm) || sm <= 0) continue;
         if (bestAny == null || sm < bestAny) bestAny = sm;
@@ -2136,7 +2137,7 @@ export function PricingView({ settings } = {}) {
     const linked = [];
     for (const sec of opt.sections) {
       for (const item of sec.items) {
-        if (resolvedLinkedTo(item).trim().toLowerCase() === target) linked.push(item);
+        if (resolvedSiaFee(item).trim().toLowerCase() === target) linked.push(item);
       }
     }
 
@@ -2718,6 +2719,38 @@ export function PricingView({ settings } = {}) {
         }
       } else {
         next[itemId] = { ...next[itemId], linkedTo: trimmed };
+      }
+      return next;
+    });
+  }
+
+  // The fee-schedule row this cost line is tied to. Linked To carries the
+  // typical (cross-SIA) fee name; when this workbook's own fee schedule uses
+  // different wording, the SIA Fee column pins the row to a specific schedule
+  // row instead. An explicit pick wins; '' means "deliberately unmapped";
+  // with no pick at all we fall back to the Linked To tag, which is what the
+  // schedule matched on before this column existed — so untouched rows price
+  // exactly as they did.
+  function resolvedSiaFee(item) {
+    const ov = overrides[item.id]?.siaFee;
+    if (ov !== undefined) return ov;
+    return resolvedLinkedTo(item);
+  }
+
+  // Set / clear a row's SIA Fee pick. `null` drops the override so the row
+  // goes back to following its Linked To tag.
+  function setItemSiaFee(item, value) {
+    const itemId = item.id;
+    setOverrides(prev => {
+      const next = { ...prev };
+      if (value === null) {
+        if (next[itemId]) {
+          const { siaFee: _drop, ...rest } = next[itemId];
+          if (Object.keys(rest).length === 0) delete next[itemId];
+          else next[itemId] = rest;
+        }
+      } else {
+        next[itemId] = { ...next[itemId], siaFee: String(value) };
       }
       return next;
     });
@@ -3866,6 +3899,23 @@ export function PricingView({ settings } = {}) {
                     }
                     return [...seen.values()].sort((a, b) => a.localeCompare(b));
                   })();
+                  // The fee rows this option's schedule actually carries —
+                  // the only values the SIA Fee column offers, so a row can
+                  // never point at a fee that isn't in the table below.
+                  // Deduped case-insensitively, kept in schedule order.
+                  const feeScheduleNames = (() => {
+                    const seen = new Set();
+                    const out = [];
+                    for (const r of (altFees[opt.optionNumber] || [])) {
+                      const name = String(r.altItem || '').trim();
+                      if (!name) continue;
+                      const k = name.toLowerCase();
+                      if (seen.has(k)) continue;
+                      seen.add(k);
+                      out.push(name);
+                    }
+                    return out;
+                  })();
                   const totalCost = flatItems.reduce((s, i) => s + (typeof i.cts === 'number' ? i.cts : 0), 0);
                   const totalPrice = flatItems.reduce((s, i) => {
                     const { price } = priceFor(i);
@@ -4068,6 +4118,51 @@ export function PricingView({ settings } = {}) {
                                             {matchesDefault ? '★' : '☆'}
                                           </button>
                                         </div>
+                                      );
+                                    })()}
+                                  </td>
+                                )}
+                                {!colHidden('siaFee') && (
+                                  <td>
+                                    {(() => {
+                                      const picked = overrides[item.id]?.siaFee;
+                                      const tag = resolvedLinkedTo(item).trim();
+                                      const current = picked !== undefined ? picked.trim() : tag;
+                                      const lower = current.toLowerCase();
+                                      // Match the schedule's own casing so the
+                                      // <select> value lines up with an option.
+                                      const match = current
+                                        ? feeScheduleNames.find(n => n.toLowerCase() === lower)
+                                        : '';
+                                      const inherited = picked === undefined && !!match;
+                                      const stale = !!current && !match;
+                                      return (
+                                        <select
+                                          className={styles.typeSelect}
+                                          style={inherited ? { fontStyle: 'italic', color: 'var(--color-text-muted)' } : undefined}
+                                          value={match || (stale ? '__stale__' : '')}
+                                          onChange={(e) => {
+                                            const v = e.target.value;
+                                            if (v === '__auto__') setItemSiaFee(item, null);
+                                            else if (v !== '__stale__') setItemSiaFee(item, v);
+                                          }}
+                                          title={
+                                            feeScheduleNames.length === 0
+                                              ? 'No fee rows in the Alternative Fee schedule below yet — add one and it shows up here.'
+                                              : inherited
+                                              ? `Following the Linked To tag "${tag}". Pick a fee row to pin this cost to it instead.`
+                                              : stale
+                                              ? `"${current}" is not a row in the fee schedule below — this cost isn't tied to any fee.`
+                                              : 'Which row of the Alternative Fee schedule below this cost is tied to.'
+                                          }
+                                        >
+                                          <option value="">—</option>
+                                          {feeScheduleNames.map(n => <option key={n} value={n}>{n}</option>)}
+                                          {stale && <option value="__stale__">{current} (not in schedule)</option>}
+                                          {picked !== undefined && tag && (
+                                            <option value="__auto__">↺ Follow Linked To ({tag})</option>
+                                          )}
+                                        </select>
                                       );
                                     })()}
                                   </td>
