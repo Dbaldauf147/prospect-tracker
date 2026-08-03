@@ -76,7 +76,6 @@ import {
   NA_CATEGORIES,
   US_MARKETS,
   CA_MARKETS,
-  naCategoryFor,
   normalizeProvince,
 } from '../../data/naMarkets';
 import {
@@ -2554,13 +2553,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       label,
       defaultWidth: 120,
       render: (row) => {
-        const providerName = row[`__${utilityKey}__`];
-        const providerClass = (utility?.zipMap && row.__matched__) ? classifyUtility(providerName) : null;
-        // Fall back to the state deregulation map when there's no
-        // recognized provider (e.g. no utility file loaded, US site
-        // resolved only by State column).
-        const fromState = !providerClass;
-        const classification = providerClass || classifyMarketByState(row.__state__, utilityKey);
+        const classification = classifyMarket(row, utilityKey);
         if (!classification) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
         const isRegulated = classification === 'Regulated';
         // Deregulated = green (opportunity), Regulated = orange.
@@ -2568,16 +2561,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           ? { bg: '#FFEDD5', border: '#FDBA74', text: '#9A3412' }
           : { bg: '#DCFCE7', border: '#86EFAC', text: '#166534' };
         const ruleHint = isRegulated
-          ? 'Municipal, public power, or cooperative — single-utility market.'
+          ? 'Single-utility market — no supplier choice, so no sourcing motion.'
           : 'Competitive retail market — customers can choose a supplier.';
-        const basis = fromState
-          ? `Based on ${row.__state__ || 'state'} (no utility provider matched).`
-          : `Provider: ${providerName}`;
         return (
           <span
-            title={`${label}: ${classification}. ${ruleHint} ${basis}`}
+            title={`${label}: ${classification}. ${ruleHint} ${marketBasis(row, utilityKey)}`}
             style={{ background: color.bg, border: `1px solid ${color.border}`, color: color.text, padding: '1px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 700, whiteSpace: 'nowrap' }}
-          >{classification}{fromState ? '*' : ''}</span>
+          >{classification}</span>
         );
       },
       exportValue: (row) => classifyMarket(row, utilityKey) || '',
@@ -3240,34 +3230,95 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     WY: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
   };
 
-  // Market structure from the state alone, used as a fallback when no
-  // utility provider is available to classify. A US/CA state that
-  // appears in the deregulation map for the commodity is Deregulated;
-  // a recognized US state that isn't is Regulated; anything else
-  // (non-US/CA, or an unrecognized code) is left Unknown. Declared as a
-  // hoisted function so both the Market column closure and the
-  // marketSummary memo below can share it. References the dereg maps
-  // above — only ever called after they're initialized.
-  function classifyMarketByState(rawState, commodity) {
-    const code = String(rawState || '').trim().toUpperCase();
-    if (!/^[A-Z]{2}$/.test(code)) return null;
-    const map = commodity === 'electric' ? ELECTRIC_DEREGULATION : GAS_DEREGULATION;
-    if (map[code]) return 'Deregulated';
-    if (stateRate(code, commodity) != null) return 'Regulated';
-    return null;
+  // ST / Prov only applies to US and Canada sites. International uploads
+  // sometimes carry a US-state-like code in the state column (e.g. a
+  // France site tagged "GA"); that value is meaningless abroad, so we
+  // ignore it and let those sites classify (and bucket) by country
+  // instead. Returns the cleaned state code for US/CA sites, '' otherwise.
+  function effectiveStateCode(r) {
+    const rawCountry = String(r.__country__ || '').trim();
+    const isUS = /^(united states|usa|us)$/i.test(rawCountry);
+    const isCA = /^(canada|ca)$/i.test(rawCountry);
+    if (!isUS && !isCA) return '';
+    return String(r.__state__ || '').trim();
   }
-  // Single market classifier shared by the column and the summary card:
-  // a recognized utility provider wins; otherwise fall back to the
-  // site's state. Returns 'Deregulated' | 'Regulated' | null.
+
+  // THE market classifier. Every surface that says whether a site sits in
+  // a competitive market — the Market column and summary card on this
+  // page, the Indicative Savings by State sheets, the Site Detail sheet,
+  // the Electric / Gas Overview sheets — runs through this one function,
+  // so the page and the exports can't report different deregulated-site
+  // counts for the same portfolio.
+  //
+  // The rule, in order:
+  //   * US / Canada — the curated ELECTRIC_DEREGULATION /
+  //     GAS_DEREGULATION maps decide whether the STATE is a competitive
+  //     market. Only inside such a state does the per-utility classifier
+  //     decide which SITES count, dropping municipals / coops on a
+  //     regulated tariff (CPS Energy, Austin Energy); a supplier on file
+  //     also counts, since you can't hold a retail contract without a
+  //     competitive market. A state absent from the maps is regulated and
+  //     none of its sites count — the name-based classifier defaults an
+  //     unrecognized utility (e.g. "Duke Energy Florida") to Deregulated,
+  //     which would otherwise surface a regulated state as an opportunity.
+  //   * International — the country reference decides, since the
+  //     utility-name heuristics are keyed off US naming patterns.
+  //   * Neither a US/CA state nor a recognized country — null (Unknown).
+  //     These are exactly the rows the by-state export skips.
+  //
+  // Declared as a hoisted function so the Market column closure defined
+  // above, the marketSummary memo below, and the export builders can all
+  // share it. References the dereg maps above — only ever called during
+  // render / export, well after they're initialized.
   function classifyMarket(row, commodity) {
-    const providerName = commodity === 'electric' ? row.__electric__ : row.__gas__;
-    const providerClass = (utility?.zipMap && row.__matched__) ? classifyUtility(providerName) : null;
-    return providerClass || classifyMarketByState(row.__state__, commodity);
+    const state = effectiveStateCode(row);
+    if (!state) {
+      const country = normalizeCountryName(row.__country__ || '');
+      if (!country) return null;
+      const entry = commodity === 'electric'
+        ? countryElectricSavings(country)
+        : countryGasSavings(country);
+      const status = entry?.status || 'No opportunity';
+      return (status === 'Deregulated' || status === 'Some deregulation')
+        ? 'Deregulated'
+        : 'Regulated';
+    }
+    const map = commodity === 'electric' ? ELECTRIC_DEREGULATION : GAS_DEREGULATION;
+    if (!map[state]) return 'Regulated';
+    const provider = commodity === 'electric' ? row.__electric__ : row.__gas__;
+    const supplier = commodity === 'electric' ? row.__electricSupplier__ : row.__gasSupplier__;
+    if (supplier || classifyUtility(provider) === 'Deregulated') return 'Deregulated';
+    // Competitive state, but nothing on file to say which side of it this
+    // site sits on: no utility and no supplier. Unknown rather than
+    // Regulated — the state says there's an opportunity here, we just
+    // can't confirm it per site until a utility file is loaded.
+    if (!provider) return null;
+    return 'Regulated';
+  }
+
+  // Plain-English account of which clause above decided the row, for the
+  // Market cell's tooltip. Kept next to the classifier so the two can't
+  // drift into explaining different rules.
+  function marketBasis(row, commodity) {
+    const state = effectiveStateCode(row);
+    if (!state) {
+      const country = normalizeCountryName(row.__country__ || '');
+      if (!country) return 'No US/CA state and no recognized country — market unknown.';
+      return `Based on the country reference for ${country}.`;
+    }
+    const map = commodity === 'electric' ? ELECTRIC_DEREGULATION : GAS_DEREGULATION;
+    if (!map[state]) return `${state} is a regulated market for this commodity.`;
+    const provider = commodity === 'electric' ? row.__electric__ : row.__gas__;
+    const supplier = commodity === 'electric' ? row.__electricSupplier__ : row.__gasSupplier__;
+    if (supplier) return `${state} is a competitive market · supplier on file: ${supplier}`;
+    if (provider) return `${state} is a competitive market · utility: ${provider}`;
+    return `${state} is a competitive market, but this site has no utility or supplier on file to confirm it.`;
   }
 
   // Regulated / deregulated split for the on-page summary card. Lives
-  // in its own memo (after the dereg maps) so it can use the state
-  // fallback above. Three buckets per commodity always sum to total.
+  // in its own memo (after the dereg maps) so it can use the classifier
+  // above. Three buckets per commodity always sum to total, and the
+  // deregulated bucket matches the exports' Deregulated Sites totals.
   const marketSummary = useMemo(() => {
     if (!rows.length) return null;
     const bucket = () => ({ deregulated: 0, regulated: 0, unknown: 0 });
@@ -3304,7 +3355,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     }
 
     function buildFor(commodity) {
-      const providerKey = `__${commodity}__`;
       const consumptionKey = commodity === 'electric' ? '__kwh__' : '__therms__';
       const costKey = `__${commodity}Cost__`;
       const groups = new Map();
@@ -3326,13 +3376,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           groups.set(key, g);
         }
         g.totalSites++;
-        const stateIsDeregulated = commodity === 'electric'
-          ? !!ELECTRIC_DEREGULATION[state]
-          : true; // no curated list for gas — rely on provider-level only
-        if (!stateIsDeregulated) continue;
-        const provider = r[providerKey];
-        const classification = classifyUtility(provider);
-        if (classification !== 'Deregulated') continue;
+        // Same classifier as the page's Market card and the Indicative
+        // Savings by State sheets — this tab used to gate electric on the
+        // state map but let gas through on the provider alone, so its
+        // Deregulated Sites column disagreed with both.
+        if (classifyMarket(r, commodity) !== 'Deregulated') continue;
         g.deregulatedSites++;
         const consumption = r[consumptionKey];
         if (typeof consumption === 'number' && Number.isFinite(consumption)) {
@@ -4425,19 +4473,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       if (isCFE(utility)) return '★ Potential Mexico sourcing opportunity (CFE, > 6,000,000 kWh/yr)';
       return '';
     };
-    // ST / Prov only applies to US and Canada sites. International
-    // uploads sometimes carry a US-state-like code in the state column
-    // (e.g. a France site tagged "GA"); that value is meaningless
-    // abroad, so we ignore it and let those sites bucket / label by
-    // country instead. Returns the cleaned state code for US/CA sites,
-    // '' otherwise.
-    const effectiveStateCode = (r) => {
-      const rawCountry = String(r.__country__ || '').trim();
-      const isUS = /^(united states|usa|us)$/i.test(rawCountry);
-      const isCA = /^(canada|ca)$/i.test(rawCountry);
-      if (!isUS && !isCA) return '';
-      return String(r.__state__ || '').trim();
-    };
+    // ST / Prov bucketing uses the component-level effectiveStateCode,
+    // shared with classifyMarket so a site is labelled by the same
+    // state / country this sheet buckets it under.
 
     // Both commodities use a per-state curated savings range — see
     // ELECTRIC_DEREGULATION and GAS_DEREGULATION above for the
@@ -4751,27 +4789,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           const kwh = (typeof r.__kwh__ === 'number' && Number.isFinite(r.__kwh__)) ? r.__kwh__ : 0;
           if (kwh > MEXICO_CFE_KWH_THRESHOLD) g.hasMexicoSourcing = true;
         }
-        // Country buckets defer to the country reference for the dereg
-        // classification — the per-utility classifier is keyed off US
-        // naming patterns and would mis-classify international utilities.
-        //
-        // US/CA buckets: the curated ELECTRIC_DEREGULATION /
-        // GAS_DEREGULATION maps are the source of truth for whether the
-        // STATE is a deregulated market (g.status !== 'no' means it's in
-        // the curated list as deregulated or limited). Only inside such a
-        // market does the per-utility classifier decide which SITES count
-        // — excluding municipals / coops on a regulated tariff (e.g.
-        // CPS Energy / Austin Energy in TX). A state absent from the map
-        // (g.status === 'no') is a regulated market with zero commodity
-        // savings, so none of its sites count — even though the heuristic
-        // classifier would otherwise default an unrecognized utility name
-        // (e.g. "Duke Energy Florida") to Deregulated and wrongly surface
-        // the regulated state as a deregulated row.
-        const isDereg = isCountryBucket
-          ? (g.status === 'Deregulated' || g.status === 'Some deregulation')
-          : (g.status !== 'no'
-             && (classifyUtility(provider) === 'Deregulated' || !!r[supplierKey]));
-        if (!isDereg) continue;
+        // Deregulation gate — see classifyMarket for the rule (curated
+        // state map first, then the per-utility classifier / supplier
+        // inside a competitive state; country reference for international
+        // sites). This sheet's Deregulated Sites column is the number the
+        // page's Market card and the Overview tabs are held to.
+        if (classifyMarket(r, commodity) !== 'Deregulated') continue;
         g.deregulatedSites += 1;
         const consumption = r[consumptionKey];
         if (typeof consumption === 'number' && Number.isFinite(consumption)) {
@@ -8794,23 +8817,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           ? (!!electricUtility && isRegulatedRateOpportunity(stateCode, electricUtility))
           : countryHasRegulatedRateOpportunity(rawCountry);
         const country = rawCountry;
-        // Per-commodity Regulated / Deregulated status. When we know
-        // the utility (US/CA), use the same per-utility classification
-        // the Utility Lookup page renders — so e.g. LADWP and Roseville
-        // Electric come through as Regulated even though California is
-        // a Direct Access state overall. When the utility isn't known
-        // (or for international sites), fall back to the state-level
-        // NA deregulation map / COUNTRY_DEREGULATION reference.
+        // Per-commodity Regulated / Deregulated status, from the shared
+        // classifyMarket — so summing the Deregulated rows of this sheet
+        // reproduces the by-state sheet's Deregulated Sites total and the
+        // page's Market card. It used to read the utility name first,
+        // which labelled a site in a regulated state Deregulated whenever
+        // the name didn't match a municipal / coop pattern.
         const isUSSite = /^(united states|usa|us)$/i.test(rawCountry);
         const isCASite = /^(canada|ca)$/i.test(rawCountry);
-        const naCat = (isUSSite || isCASite) ? naCategoryFor(stateCode, isUSSite, isCASite) : null;
-        const countryDereg = (!isUSSite && !isCASite) ? COUNTRY_DEREGULATION[normalizeCountryName(rawCountry) || rawCountry] : null;
-        const electricMarket = electricUtility
-          ? (classifyUtility(electricUtility) || '')
-          : (naCat ? (naCat.ep || '') : (countryDereg?.electric || ''));
-        const gasMarket = gasUtility
-          ? (classifyUtility(gasUtility) || '')
-          : (naCat ? (naCat.ng || '') : (countryDereg?.gas || ''));
+        const electricMarket = classifyMarket(r, 'electric') || '';
+        const gasMarket = classifyMarket(r, 'gas') || '';
         // ISO / RTO market for the site, resolved the same fine way as the
         // ISO tab — electric utility first, then ZIP, then state / province.
         // Only US/CA sites carry a market; everything else (and NA sites
@@ -12686,7 +12702,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
               {sumLine(SLATE, 'Gas — Unknown',             fmtInt(s.utility.gas.unknown),          fmtPct(s.utility.gas.unknown, s.total), bad(s.utility.gas.unknown))}
             </div>
             <div style={cardStyle}>
-              <div style={cardTitleStyle} title="Market structure per site. Classified from the utility provider when known, otherwise from the site's US/CA state deregulation map. Deregulated = competitive retail market (supplier choice — sourcing opportunity). Regulated = single-utility monopoly market. Unknown = no provider and no recognized US/CA state.">Market</div>
+              <div style={cardTitleStyle} title="Market structure per site, on the same rule the Master Analysis uses — so these counts match its Deregulated Sites totals. US/CA: the state's deregulation map decides whether the market is competitive; inside a competitive state the site's utility (or a supplier on file) decides whether that site counts, so municipals and coops drop out. International sites follow the country reference. Deregulated = supplier choice, a sourcing opportunity. Regulated = single-utility market. Unknown = no recognized state or country, or a competitive state with no utility / supplier on file yet.">Market</div>
               {sumLine(ELEC, 'Electric — Deregulated', fmtInt(m.electric.deregulated), fmtPct(m.electric.deregulated, m.total), good(m.electric.deregulated))}
               {sumLine(ELEC, 'Electric — Regulated',   fmtInt(m.electric.regulated),   fmtPct(m.electric.regulated, m.total), warn(m.electric.regulated))}
               {sumLine(SLATE, 'Electric — Unknown',     fmtInt(m.electric.unknown),     fmtPct(m.electric.unknown, m.total), bad(m.electric.unknown))}
