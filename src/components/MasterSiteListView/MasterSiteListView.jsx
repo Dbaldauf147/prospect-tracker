@@ -195,6 +195,147 @@ function UnmappedMatchRow({ name, count, value, canonical, onChange }) {
   );
 }
 
+// Company filter for the toolbar: a predictive-text box rather than a plain
+// <select>, since the list runs to hundreds of companies and scrolling a
+// native dropdown to find one is painful. Typing narrows to prefix matches
+// first, then substring matches; ↑/↓ + Enter pick, Esc closes. "All
+// companies" always heads the list so clearing the filter is one click.
+function CompanyFilterCombo({ companies, counts, total, value, onChange }) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const boxRef = useRef(null);
+  const inputRef = useRef(null);
+  const listRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e) { if (!boxRef.current?.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return companies;
+    const starts = [], includes = [];
+    for (const c of companies) {
+      const lower = c.toLowerCase();
+      if (lower.startsWith(q)) starts.push(c);
+      else if (lower.includes(q)) includes.push(c);
+    }
+    return [...starts, ...includes];
+  }, [query, companies]);
+
+  // Capped for render cost — the count line below says when there's more.
+  const shown = useMemo(() => matches.slice(0, 50), [matches]);
+  const options = useMemo(() => [ALL, ...shown], [shown]);
+
+  // Keep the highlighted option in view during keyboard navigation.
+  useEffect(() => {
+    if (!open) return;
+    listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'nearest' });
+  }, [active, open]);
+
+  function pick(name) {
+    onChange(name);
+    setQuery('');
+    setOpen(false);
+    inputRef.current?.blur();
+  }
+
+  function onKeyDown(e) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!open) { setOpen(true); return; }
+      const step = e.key === 'ArrowDown' ? 1 : -1;
+      setActive(i => (i + step + options.length) % options.length);
+    } else if (e.key === 'Enter') {
+      if (!open) return;
+      e.preventDefault();
+      const choice = options[active];
+      if (choice != null) pick(choice);
+    } else if (e.key === 'Escape') {
+      if (!open) return;
+      e.preventDefault();
+      setQuery('');
+      setActive(0);
+      setOpen(false);
+    }
+  }
+
+  const selected = value !== ALL;
+
+  return (
+    <div className={styles.comboWrap} ref={boxRef}>
+      <input
+        ref={inputRef}
+        className={selected ? styles.comboInputOn : styles.comboInput}
+        type="text"
+        role="combobox"
+        aria-expanded={open}
+        aria-autocomplete="list"
+        aria-controls="msl-company-filter-list"
+        autoComplete="off"
+        // Closed, the box reads as the current filter; focused, it empties so
+        // typing starts a fresh search with the active pick still in view as
+        // the placeholder.
+        value={open ? query : (selected ? value : '')}
+        placeholder={selected ? value : `All companies (${total})`}
+        title="Filter the list to one company — type to search"
+        // The highlight resets alongside every query change rather than in an
+        // effect, so the list and its selection never render out of step.
+        onFocus={() => { setQuery(''); setActive(0); setOpen(true); }}
+        onChange={e => { setQuery(e.target.value); setActive(0); setOpen(true); }}
+        onKeyDown={onKeyDown}
+      />
+      {selected && !open && (
+        <button
+          type="button"
+          className={styles.comboClear}
+          title="Show all companies"
+          aria-label="Clear company filter"
+          onClick={() => pick(ALL)}
+        >
+          ×
+        </button>
+      )}
+      {open && (
+        <div className={styles.comboList} id="msl-company-filter-list" role="listbox" ref={listRef}>
+          {options.map((name, i) => (
+            <div
+              key={name === ALL ? '__all__option' : name}
+              role="option"
+              aria-selected={name === value}
+              data-active={i === active ? 'true' : undefined}
+              className={i === active ? styles.comboOptionOn : styles.comboOption}
+              // mousedown, not click: the input's blur would otherwise tear
+              // the list down before the click lands.
+              onMouseDown={e => { e.preventDefault(); pick(name); }}
+              onMouseEnter={() => setActive(i)}
+            >
+              <span className={styles.comboOptionName}>
+                {name === ALL ? 'All companies' : name}
+              </span>
+              <span className={styles.comboOptionCount}>
+                {name === ALL ? total : (counts.get(name) || 0)}
+              </span>
+            </div>
+          ))}
+          {shown.length === 0 && (
+            <div className={styles.comboEmpty}>No company matches “{query.trim()}”.</div>
+          )}
+          {matches.length > shown.length && (
+            <div className={styles.comboEmpty}>
+              Showing {shown.length} of {matches.length} — keep typing to narrow.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function MasterSiteListView({ prospects = [] }) {
   const [rows, setRows] = useState([]);
   const [zipMap, setZipMap] = useState(null);
@@ -335,11 +476,21 @@ export function MasterSiteListView({ prospects = [] }) {
     saveList(MASTER_STORAGE_KEY, rows).catch(() => {});
   }, [rows, loaded]);
 
-  const companies = useMemo(() => {
-    const set = new Set();
-    for (const r of rows) { const c = String(r.company || '').trim(); if (c) set.add(c); }
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  // company name -> how many rows carry it. Drives both the filter's option
+  // list and the site count shown against each suggestion.
+  const companyCounts = useMemo(() => {
+    const m = new Map();
+    for (const r of rows) {
+      const c = String(r.company || '').trim();
+      if (c) m.set(c, (m.get(c) || 0) + 1);
+    }
+    return m;
   }, [rows]);
+
+  const companies = useMemo(
+    () => Array.from(companyCounts.keys()).sort((a, b) => a.localeCompare(b)),
+    [companyCounts],
+  );
 
   // Distinct Table View (prospects) company names, sorted — powers both the
   // predictive-search datalist on the Company cells and the mapping index.
@@ -719,10 +870,13 @@ export function MasterSiteListView({ prospects = [] }) {
           onChange={onFile}
         />
 
-        <select className={styles.select} value={companyFilter} onChange={e => setCompanyFilter(e.target.value)}>
-          <option value={ALL}>All companies ({rows.length})</option>
-          {companies.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
+        <CompanyFilterCombo
+          companies={companies}
+          counts={companyCounts}
+          total={rows.length}
+          value={companyFilter}
+          onChange={setCompanyFilter}
+        />
 
         <button
           className={unmappedOnly ? styles.btnActive : styles.btn}
