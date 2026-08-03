@@ -16,38 +16,40 @@ import { SettingsBackupsModal } from './components/SettingsBackupsModal';
 import { CdmNameModal } from './components/CdmNameModal';
 import { LoginPage } from './components/LoginPage';
 import { FilterBar } from './components/FilterBar/FilterBar';
-import { TableView } from './components/TableView/TableView';
-import { KanbanView } from './components/KanbanView/KanbanView';
 import { PrivacyPolicy } from './components/PrivacyPolicy';
-import { ProspectModal } from './components/ProspectModal/ProspectModal';
 import { UpdateBanner } from './components/UpdateBanner';
 import { SyncPanel } from './components/SyncPanel';
-import { MyAccountsView } from './components/MyAccountsView/MyAccountsView';
-import { ContactsView } from './components/ContactsView/ContactsView';
-import { OppsView } from './components/OppsView/OppsView';
-import { OppsView2 } from './components/OppsView2/OppsView2';
-import { DropdownsView } from './components/DropdownsView/DropdownsView';
-import { ClientsView } from './components/ClientsView/ClientsView';
-import { IssuesView } from './components/IssuesView/IssuesView';
-import { ActivityView } from './components/ActivityView/ActivityView';
-import { AgentsView } from './components/AgentsView/AgentsView';
-import { loadTargetAccountsFromDB } from './components/TargetAccountsView/TargetAccountsView';
-import { DraftEmailsPage } from './components/DraftEmailView/DraftEmailsPage';
-import { VibeProspecting } from './components/VibeProspecting/VibeProspecting';
-import { ListsView } from './components/ListsView/ListsView';
-import { UploadedListView } from './components/UploadedListView/UploadedListView';
-import { PEPortfolioView } from './components/PEPortfolioView/PEPortfolioView';
-// Charts host: YOY / Progress / Pipeline as sub-tabs. Its YOY + Progress
-// sub-views stay code-split inside ChartsView.
-import { ChartsView } from './components/ChartsView/ChartsView';
-// Chart-heavy views (recharts ~250 KB gz, plus their own xlsx usage)
-// are split out of the main chunk; each load on first navigation.
-const PricingView = lazy(() => import('./components/PricingView/PricingView').then(m => ({ default: m.PricingView })));
-import { BFOActivityView } from './components/BFOActivityView/BFOActivityView';
-import { EmailTrackingView } from './components/EmailTrackingView/EmailTrackingView';
 import { DailySuccessManager } from './components/DailySuccess/DailySuccessManager';
 import { DailySuccessLogModal } from './components/DailySuccess/DailySuccessLogModal';
 import './App.css';
+
+// Route views load on first navigation rather than shipping in the entry
+// chunk. Before this, opening the login page downloaded and parsed every
+// page in the app — 6.3 MB of JS (1.6 MB gzipped) for whichever one tab
+// you were headed to. One <Suspense> around the view switch below covers
+// them all; ProspectModal gets its own, plus an idle prefetch since it
+// opens from nearly every view.
+const ActivityView = lazy(() => import('./components/ActivityView/ActivityView').then(m => ({ default: m.ActivityView })));
+const AgentsView = lazy(() => import('./components/AgentsView/AgentsView').then(m => ({ default: m.AgentsView })));
+const BFOActivityView = lazy(() => import('./components/BFOActivityView/BFOActivityView').then(m => ({ default: m.BFOActivityView })));
+const ChartsView = lazy(() => import('./components/ChartsView/ChartsView').then(m => ({ default: m.ChartsView })));
+const ClientsView = lazy(() => import('./components/ClientsView/ClientsView').then(m => ({ default: m.ClientsView })));
+const ContactsView = lazy(() => import('./components/ContactsView/ContactsView').then(m => ({ default: m.ContactsView })));
+const DraftEmailsPage = lazy(() => import('./components/DraftEmailView/DraftEmailsPage').then(m => ({ default: m.DraftEmailsPage })));
+const DropdownsView = lazy(() => import('./components/DropdownsView/DropdownsView').then(m => ({ default: m.DropdownsView })));
+const EmailTrackingView = lazy(() => import('./components/EmailTrackingView/EmailTrackingView').then(m => ({ default: m.EmailTrackingView })));
+const IssuesView = lazy(() => import('./components/IssuesView/IssuesView').then(m => ({ default: m.IssuesView })));
+const KanbanView = lazy(() => import('./components/KanbanView/KanbanView').then(m => ({ default: m.KanbanView })));
+const ListsView = lazy(() => import('./components/ListsView/ListsView').then(m => ({ default: m.ListsView })));
+const MyAccountsView = lazy(() => import('./components/MyAccountsView/MyAccountsView').then(m => ({ default: m.MyAccountsView })));
+const OppsView = lazy(() => import('./components/OppsView/OppsView').then(m => ({ default: m.OppsView })));
+const OppsView2 = lazy(() => import('./components/OppsView2/OppsView2').then(m => ({ default: m.OppsView2 })));
+const PEPortfolioView = lazy(() => import('./components/PEPortfolioView/PEPortfolioView').then(m => ({ default: m.PEPortfolioView })));
+const PricingView = lazy(() => import('./components/PricingView/PricingView').then(m => ({ default: m.PricingView })));
+const ProspectModal = lazy(() => import('./components/ProspectModal/ProspectModal').then(m => ({ default: m.ProspectModal })));
+const TableView = lazy(() => import('./components/TableView/TableView').then(m => ({ default: m.TableView })));
+const UploadedListView = lazy(() => import('./components/UploadedListView/UploadedListView').then(m => ({ default: m.UploadedListView })));
+const VibeProspecting = lazy(() => import('./components/VibeProspecting/VibeProspecting').then(m => ({ default: m.VibeProspecting })));
 
 const EMPTY_OBJ = Object.freeze({});
 
@@ -185,14 +187,35 @@ function App() {
     });
   }, [hubspotContacts, settings?.contactLocalFields]);
 
+  // Warm the company-popup chunk once the browser is idle. It opens from
+  // nearly every view, so waiting for the click would trade a fast first
+  // paint for a stutter on the first company opened.
+  useEffect(() => {
+    if (!user) return undefined;
+    const warm = () => { import('./components/ProspectModal/ProspectModal').catch(() => {}); };
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(warm, { timeout: 4000 });
+      return () => window.cancelIdleCallback?.(id);
+    }
+    const t = setTimeout(warm, 2000);
+    return () => clearTimeout(t);
+  }, [user]);
+
   const [targetAccountsData, setTargetAccountsData] = useState(null);
 
   // Load Target Accounts from Firestore/IndexedDB on startup
   useEffect(() => {
-    if (!user) return;
-    loadTargetAccountsFromDB(user.uid).then(data => {
-      if (data) setTargetAccountsData(data);
-    });
+    if (!user) return undefined;
+    // Imported on demand: this loader lives on the Target Accounts view
+    // module, so a static import would pull that whole view (and its xlsx
+    // dependency) into the entry chunk for the sake of one function. The
+    // fetch still starts at login — it's just off the critical path.
+    let cancelled = false;
+    import('./components/TargetAccountsView/TargetAccountsView')
+      .then(m => m.loadTargetAccountsFromDB(user.uid))
+      .then(data => { if (!cancelled && data) setTargetAccountsData(data); })
+      .catch(err => console.warn('Target accounts load failed:', err));
+    return () => { cancelled = true; };
   }, [user]);
 
   // One-time prospect backfills (see utils/peOwnerBackfill.js): each
@@ -350,6 +373,7 @@ function App() {
           />
         )}
         <div className="content">
+          <Suspense fallback={<div className="loading">Loading view…</div>}>
           {dataLoading ? (
             <div className="loading">Loading prospects...</div>
           ) : view === 'drafts' || view === 'campaigns' ? (
@@ -359,9 +383,7 @@ function App() {
           ) : view === 'vibe' ? (
             <VibeProspecting prospects={prospects} onUpdate={updateProspect} cdmName={cdmName} />
           ) : view === 'pricing' ? (
-            <Suspense fallback={<div className="loading">Loading view…</div>}>
-              <PricingView settings={settings} />
-            </Suspense>
+            <PricingView settings={settings} />
           ) : view === 'bfo' ? (
             <BFOActivityView prospects={prospects} />
           ) : view === 'tracking' ? (
@@ -447,10 +469,12 @@ function App() {
               onSelect={handleSelect}
             />
           )}
+          </Suspense>
         </div>
       </div>
 
       {modal && (
+        <Suspense fallback={null}>
         <ProspectModal
           prospect={modal.prospect}
           prospects={prospects}
@@ -470,6 +494,7 @@ function App() {
           cdmName={cdmName}
           targetAccountsData={targetAccountsData}
         />
+        </Suspense>
       )}
 
       {showSync && <SyncPanel prospects={prospects} onClose={() => setShowSync(false)} />}
