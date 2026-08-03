@@ -481,11 +481,12 @@ function detectNewBfoMissingData({ prospects = [], oppsCache = null, serviceOver
 // for the CDM) — that's the table's own "No active clients found" state,
 // where every row would otherwise read 0%.
 const COVERAGE_DETAIL_NAMES = 6;
-function detectServiceCoverageGaps({ prospects = [], cdmName, coverageServices = [], oppsCache = null, serviceCatalogSettings = {}, clientStatusMap = {} }) {
+function detectServiceCoverageGaps({ prospects = [], cdmName, coverageServices = [], oppsCache = null, serviceCatalogSettings = {}, clientStatusMap = {}, untrackedMap = {} }) {
   if (!Array.isArray(coverageServices) || coverageServices.length === 0) return [];
-  // Same client set as the table — including its "Cancelling for Sure"
-  // exclusion, so a warning can't count clients the table left out.
-  const clients = coverageClientsOf(prospects, cdmName, clientStatusMap);
+  // Same client set as the table — including its "Cancelling for Sure" /
+  // "Don't Track" exclusions, so a warning can't count clients the table
+  // left out.
+  const clients = coverageClientsOf(prospects, cdmName, { statusMap: clientStatusMap, untrackedMap });
   if (clients.length === 0) return [];
   const oppStagesByClient = buildOppStagesByClient(clients, oppsCache?.records || []);
   const labels = serviceLabelMap(buildServiceCatalog(serviceCatalogSettings));
@@ -561,6 +562,6 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   issues.push(...detectUntaggedBfoOppNames({ bfoActivity, oppsCache }));
   issues.push(...detectOppBfoNameNotInActivity({ bfoActivity, oppsCache, prospects }));
   issues.push(...detectNewBfoMissingData({ prospects, oppsCache, serviceOverrides }));
-  issues.push(...detectServiceCoverageGaps({ prospects, cdmName, coverageServices, oppsCache, serviceCatalogSettings, clientStatusMap }));
+  issues.push(...detectServiceCoverageGaps({ prospects, cdmName, coverageServices, oppsCache, serviceCatalogSettings, clientStatusMap, untrackedMap }));
   return issues;
 }

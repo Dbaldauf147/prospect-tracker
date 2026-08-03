@@ -20,6 +20,7 @@ import {
   buildServiceCatalog,
   computeServiceCoverage,
   coverageClientsOf,
+  coverageExclusions,
   serviceLabelMap,
 } from '../../utils/serviceCoverage';
 import { notifyPipelineDashboardChanged } from '../../utils/pipelineDashboardStore';
@@ -900,7 +901,7 @@ function useCalc() {
 // The client set mirrors the renewals table: Status = Client and matching the
 // configured CDM (or all clients when no CDM is set). The tracked-service list
 // is passed in from persisted Pipeline state via `services` / `onChangeServices`.
-function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, onSelectProspect, services = [], onChangeServices, oppsRecords = [], clientStatusMap = {} }) {
+function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, onSelectProspect, services = [], onChangeServices, oppsRecords = [], clientStatusMap = {}, clientUntrackedMap = {} }) {
   const catalog = useMemo(
     () => buildServiceCatalog(settings),
     [settings.hiddenServices, settings.serviceRenames, settings.customServiceCategories],
@@ -915,17 +916,21 @@ function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, o
 
   // Active clients: Status = Client, and matching the configured CDM. When no
   // CDM is configured, include every client so the table still works. Clients
-  // marked "Cancelling for Sure" on the Clients tab are left out.
+  // the Clients tab marks "Cancelling for Sure" or "Don't Track" are left out.
+  const exclusions = useMemo(
+    () => ({ statusMap: clientStatusMap, untrackedMap: clientUntrackedMap }),
+    [clientStatusMap, clientUntrackedMap],
+  );
   const clients = useMemo(
-    () => coverageClientsOf(prospects, cdmName, clientStatusMap),
-    [prospects, cdmName, clientStatusMap],
+    () => coverageClientsOf(prospects, cdmName, exclusions),
+    [prospects, cdmName, exclusions],
   );
 
-  // How many clients that exclusion dropped, so the table can say why its
+  // How many clients each exclusion dropped, so the table can say why its
   // totals are smaller than the client count elsewhere.
-  const cancellingCount = useMemo(
-    () => coverageClientsOf(prospects, cdmName).length - clients.length,
-    [prospects, cdmName, clients],
+  const excluded = useMemo(
+    () => coverageExclusions(prospects, cdmName, exclusions),
+    [prospects, cdmName, exclusions],
   );
 
   // Opp-derived service statuses per client, so a client with an active (or
@@ -986,10 +991,13 @@ function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, o
             No active clients found{cdmName ? ` for ${cdmName}` : ''}.
           </div>
         )}
-        {cancellingCount > 0 && (
+        {excluded.total > 0 && (
           <div className={styles.svcCovEmpty}>
-            Excludes {cancellingCount} client{cancellingCount === 1 ? '' : 's'} marked
-            &ldquo;Cancelling for Sure&rdquo; on the Clients tab.
+            Excludes {excluded.total} client{excluded.total === 1 ? '' : 's'} on the Clients tab
+            {' '}({[
+              excluded.cancelling > 0 ? `${excluded.cancelling} \u201CCancelling for Sure\u201D` : '',
+              excluded.untracked > 0 ? `${excluded.untracked} \u201CDon\u2019t Track\u201D` : '',
+            ].filter(Boolean).join(', ')}).
           </div>
         )}
 
@@ -1915,7 +1923,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       // when the user tracks no services.
       serviceCoverage: (() => {
         const services = state.coverageServices || [];
-        const clients = coverageClientsOf(prospects, cdmName, clientStores.statusMap);
+        const clients = coverageClientsOf(prospects, cdmName, { statusMap: clientStores.statusMap, untrackedMap: clientStores.untrackedMap });
         const oppStagesByClient = buildOppStagesByClient(clients, oppsRecords);
         const labels = serviceLabelMap(buildServiceCatalog(settings));
         return {
@@ -2721,6 +2729,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           onChangeServices={(next) => setField('coverageServices', next)}
           oppsRecords={oppsRecords}
           clientStatusMap={clientStores.statusMap}
+          clientUntrackedMap={clientStores.untrackedMap}
         />
 
         {/* Client renewals — active clients whose soonest contract End Date
