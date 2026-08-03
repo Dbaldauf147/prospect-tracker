@@ -141,6 +141,93 @@ function renderDaysToGoal(soldRaw) {
   return <span style={{ color, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }} title={title}>{followUpGoalLabel(left)}</span>;
 }
 
+// ---- Close-rate stage signals ---------------------------------------------
+// "Did this opp actually reach stage N?" read off the Opps tab. Defined
+// once here and shared by the rolling-365-day Close Rate Actual column in
+// Pipeline Metrics and the month-by-month close-rate table under it, so
+// the two views of the same number can never drift apart.
+//
+// Opps whose Scope mentions "pull through" are excluded from every close
+// rate — they ride along with another deal rather than being won on their
+// own merits.
+const CLOSE_RATE_PULL_THROUGH = /pull[\s-]?through/i;
+
+// A value that's present and isn't one of the spreadsheet's null markers.
+const filledCell = (v) => {
+  const s = String(v ?? '').trim();
+  return !!s && s !== '-' && s !== '—' && s !== 'N/A' && s !== '#N/A';
+};
+const hasBfoOpportunity = (r) => filledCell(r['BFO Link']);
+const isAemScope = (r) => /\baem\b/i.test(String(r.Scope || ''));
+const isNeverConnected = (r) => String(r.Status || '').trim().toLowerCase() === 'never connected';
+const hasQuotedOn = (r) => {
+  const v = r['Quoted On'] || r['Quoted Date'] || '';
+  return !!v && !Number.isNaN(Date.parse(v));
+};
+
+// Listed high stage → low, matching the Pipeline Metrics table's row order.
+const CLOSE_RATE_STAGES = [
+  {
+    num: 6,
+    label: 'Stage 6 — Negotiate to Win',
+    signal: 'a non-empty Entity Outside the US Approval value',
+    test: (r) => filledCell(r['Entity Outside the US Approval']),
+  },
+  {
+    num: 5,
+    label: 'Stage 5 — Prepare & Bid',
+    signal: 'a Quoted On date',
+    test: hasQuotedOn,
+  },
+  {
+    num: 4,
+    label: 'Stage 4 — Influence and Develop',
+    signal: 'a BFO opportunity value (non-empty BFO Link), excluding AEM scope and "Never connected" status',
+    test: (r) => hasBfoOpportunity(r) && !isAemScope(r) && !isNeverConnected(r),
+  },
+  {
+    num: 3,
+    label: 'Stage 3 — Qualify Opportunity',
+    signal: 'a BFO opportunity value (non-empty BFO Link)',
+    test: hasBfoOpportunity,
+  },
+];
+
+// A closed opp (Sold / Not Sold) that counts toward close rates, or null.
+// `ts` is the parsed Close Date — the month bucket and the rolling window
+// both key off it.
+function closedOppEntry(r) {
+  const stage = String(r.Stage || '').trim();
+  if (stage !== 'Sold' && stage !== 'Not Sold') return null;
+  const closeDate = r['Close Date'];
+  if (!closeDate) return null;
+  const ts = Date.parse(closeDate);
+  if (Number.isNaN(ts)) return null;
+  if (CLOSE_RATE_PULL_THROUGH.test(String(r.Scope || ''))) return null;
+  return {
+    account: String(r.Account || '').trim(),
+    bfoName: bfoOppNameOf(r),
+    scope: String(r.Scope || '').trim(),
+    stage,
+    closeDate,
+    ts,
+    amount: parseMoney(r['Quoted Amount']) || 0,
+  };
+}
+
+// Roll an array of closed-opp entries into { sold, notSold, rate, included }.
+// Returns null for an empty bucket so a cell reads "—" rather than "0%".
+function closeRateTally(entries) {
+  if (!entries.length) return null;
+  let sold = 0;
+  for (const e of entries) if (e.stage === 'Sold') sold += 1;
+  const included = entries.slice().sort((a, b) => b.ts - a.ts);
+  return { sold, notSold: entries.length - sold, rate: sold / entries.length, included };
+}
+
+// How many calendar months the Close Rate by Month table shows.
+const CLOSE_RATE_MONTHS = 12;
+
 // Stages that mean a deal was genuinely quoted. A closed deal that never
 // logged time in either of these counts as "not quoted" for the
 // "% of deals not Quoted" table.
@@ -1330,122 +1417,82 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
   const oppsCloseRateActual = useMemo(() => {
     if (oppsRecords.length === 0) return null;
     const cutoff = Date.now() - 365 * 86400000;
-    const PULL_THROUGH = /pull[\s-]?through/i;
-    let sold = 0;
-    let notSold = 0;
-    const included = [];
+    const entries = [];
     for (const r of oppsRecords) {
-      const stage = (r.Stage || '').trim();
-      if (stage !== 'Sold' && stage !== 'Not Sold') continue;
-      const cd = r['Close Date'];
-      if (!cd) continue;
-      const ts = Date.parse(cd);
-      if (Number.isNaN(ts) || ts < cutoff) continue;
-      if (PULL_THROUGH.test(String(r.Scope || ''))) continue;
-      if (stage === 'Sold') sold += 1;
-      else notSold += 1;
-      included.push({
-        account: String(r.Account || '').trim(),
-        bfoName: bfoOppNameOf(r),
-        scope: String(r.Scope || '').trim(),
-        stage,
-        closeDate: cd,
-        ts,
-        amount: parseMoney(r['Quoted Amount']) || 0,
-      });
+      const e = closedOppEntry(r);
+      if (e && e.ts >= cutoff) entries.push(e);
     }
-    const total = sold + notSold;
-    if (total === 0) return null;
-    included.sort((a, b) => b.ts - a.ts);
-    return { sold, notSold, rate: sold / total, included };
+    return closeRateTally(entries);
   }, [oppsRecords]);
 
-  // Per-stage Close Rate Actual on a rolling 365-day window. Each
-  // stage uses a different "did it actually reach this stage?" signal
-  // on the Opps tab:
-  //   Stage 3 (Qualify Opportunity)    — has a BFO opportunity value, i.e.
-  //                                      a non-empty BFO Link (every opp
-  //                                      that made it into BFO).
-  //   Stage 4 (Influence and Develop)  — same signal as Stage 3 (a BFO
-  //                                      opportunity value), but excluding
-  //                                      opps whose Scope is "AEM" or whose
-  //                                      Status is "Never connected".
-  //   Stage 5 (Prepare & Bid / Quoted) — non-empty Quoted On date.
-  //   Stage 6 (Negotiate to Win)       — non-empty Entity Outside the US
-  //                                      Approval value (blank or "-"
-  //                                      means it never made it to 6).
+  // Per-stage Close Rate Actual on a rolling 365-day window, using the
+  // shared CLOSE_RATE_STAGES signals for "did it actually reach this
+  // stage?". An opp counts toward every stage whose signal it carries,
+  // so Stage 3's denominator is the widest and Stage 6's the narrowest.
   const oppsCloseRateByStage = useMemo(() => {
     const out = { 3: null, 4: null, 5: null, 6: null };
     if (oppsRecords.length === 0) return out;
     const cutoff = Date.now() - 365 * 86400000;
-    const PULL_THROUGH = /pull[\s-]?through/i;
-    const hasBfoOpportunity = (r) => {
-      const v = String(r['BFO Link'] ?? '').trim();
-      if (!v) return false;
-      if (v === '-' || v === '—' || v === 'N/A' || v === '#N/A') return false;
-      return true;
-    };
-    // Stage 4 exclusions: AEM scope and "Never connected" status.
-    const isAemScope = (r) => /\baem\b/i.test(String(r.Scope || ''));
-    const isNeverConnected = (r) => String(r['Status'] || '').trim().toLowerCase() === 'never connected';
-    const stage4Signal = (r) => hasBfoOpportunity(r) && !isAemScope(r) && !isNeverConnected(r);
-    const hasQuotedOn = (r) => {
-      const v = r['Quoted On'] || r['Quoted Date'] || '';
-      if (!v) return false;
-      const ts = Date.parse(v);
-      return !Number.isNaN(ts);
-    };
-    const hasEntityApproval = (r) => {
-      const v = String(r['Entity Outside the US Approval'] || '').trim();
-      if (!v) return false;
-      if (v === '-' || v === '—' || v === 'N/A' || v === '#N/A') return false;
-      return true;
-    };
-    const stagePredicates = {
-      3: hasBfoOpportunity,
-      4: stage4Signal,
-      5: hasQuotedOn,
-      6: hasEntityApproval,
-    };
-    const tallies = {
-      3: { sold: 0, notSold: 0, included: [] },
-      4: { sold: 0, notSold: 0, included: [] },
-      5: { sold: 0, notSold: 0, included: [] },
-      6: { sold: 0, notSold: 0, included: [] },
-    };
+    const buckets = { 3: [], 4: [], 5: [], 6: [] };
     for (const r of oppsRecords) {
-      const stage = (r.Stage || '').trim();
-      if (stage !== 'Sold' && stage !== 'Not Sold') continue;
-      const cd = r['Close Date'];
-      if (!cd) continue;
-      const ts = Date.parse(cd);
-      if (Number.isNaN(ts) || ts < cutoff) continue;
-      if (PULL_THROUGH.test(String(r.Scope || ''))) continue;
-      const entry = {
-        account: String(r.Account || '').trim(),
-        bfoName: bfoOppNameOf(r),
-        scope: String(r.Scope || '').trim(),
-        stage,
-        closeDate: cd,
-        ts,
-        amount: parseMoney(r['Quoted Amount']) || 0,
-      };
-      for (const stageNum of Object.keys(stagePredicates)) {
-        if (!stagePredicates[stageNum](r)) continue;
-        if (stage === 'Sold') tallies[stageNum].sold += 1;
-        else tallies[stageNum].notSold += 1;
-        tallies[stageNum].included.push(entry);
+      const entry = closedOppEntry(r);
+      if (!entry || entry.ts < cutoff) continue;
+      for (const st of CLOSE_RATE_STAGES) {
+        if (st.test(r)) buckets[st.num].push(entry);
       }
     }
-    for (const stageNum of [3, 4, 5, 6]) {
-      const { sold, notSold, included } = tallies[stageNum];
-      const total = sold + notSold;
-      if (total > 0) {
-        included.sort((a, b) => b.ts - a.ts);
-        out[stageNum] = { sold, notSold, rate: sold / total, included };
-      }
-    }
+    for (const st of CLOSE_RATE_STAGES) out[st.num] = closeRateTally(buckets[st.num]);
     return out;
+  }, [oppsRecords]);
+
+  // Close rate month by month, per stage — the same numbers the Close
+  // Rate Actual column shows, cut into calendar months of Close Date so
+  // a trend is visible instead of one rolling snapshot. Rows are the
+  // four stages plus "All closed opps" (every closed opp, whatever it
+  // reached — the row that matches the Total line in Pipeline Metrics).
+  const oppsCloseRateByMonth = useMemo(() => {
+    const now = new Date();
+    const months = [];
+    const indexByKey = new Map();
+    for (let i = CLOSE_RATE_MONTHS - 1; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      indexByKey.set(key, months.length);
+      months.push({
+        key,
+        label: d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+        longLabel: d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+      });
+    }
+    // rowKey → array of per-month entry buckets, plus a window total.
+    const rowKeys = [...CLOSE_RATE_STAGES.map(s => String(s.num)), 'all'];
+    const buckets = {};
+    for (const k of rowKeys) buckets[k] = months.map(() => []);
+    for (const r of oppsRecords) {
+      const entry = closedOppEntry(r);
+      if (!entry) continue;
+      const d = new Date(entry.ts);
+      const mi = indexByKey.get(`${d.getFullYear()}-${d.getMonth()}`);
+      if (mi == null) continue; // closed outside the window
+      buckets.all[mi].push(entry);
+      for (const st of CLOSE_RATE_STAGES) {
+        if (st.test(r)) buckets[String(st.num)][mi].push(entry);
+      }
+    }
+    const rows = [
+      ...CLOSE_RATE_STAGES.map(st => ({ key: String(st.num), label: st.label, signal: st.signal })),
+      {
+        key: 'all',
+        label: 'All closed opps',
+        signal: 'no stage signal — every closed opp counts',
+      },
+    ].map(row => ({
+      ...row,
+      cells: buckets[row.key].map(closeRateTally),
+      total: closeRateTally(buckets[row.key].flat()),
+    }));
+    const anyData = rows.some(row => row.total);
+    return { months, rows, anyData };
   }, [oppsRecords]);
 
   // % of closed deals that were never quoted. A deal counts as "quoted"
@@ -2366,6 +2413,86 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           </table>
           </div>
           </MetricsTableBoundary>
+        </div>
+
+        {/* Close Rate by Month — the Close Rate Actual column above, cut into
+            calendar months of Close Date so the trend per stage is visible
+            rather than one rolling-365-day snapshot. Same stage signals and
+            the same pull-through exclusion, so a stage's monthly cells and
+            its rolling figure are the same arithmetic over different windows. */}
+        <div className={styles.section}>
+          <div className={styles.sectionTitle}>
+            <EL id="crm-title">{`Close Rate by Month — Last ${CLOSE_RATE_MONTHS} Months`}</EL>
+          </div>
+          {!oppsCloseRateByMonth.anyData ? (
+            <div style={{ color: '#64748b', fontWeight: 500, fontSize: '0.8rem', padding: '0.25rem 0' }}>
+              No opps closed in the last {CLOSE_RATE_MONTHS} months. Paste the Opps tab to feed this table.
+            </div>
+          ) : (
+            <div className={styles.scrollX}>
+            <table className={styles.grid}>
+              <thead>
+                <tr>
+                  <th className={styles.headerLeft}><EL id="crm-stage">Stage</EL></th>
+                  {oppsCloseRateByMonth.months.map(m => <th key={m.key}>{m.label}</th>)}
+                  <th><EL id="crm-total">{`${CLOSE_RATE_MONTHS}-mo`}</EL></th>
+                </tr>
+              </thead>
+              <tbody>
+                {oppsCloseRateByMonth.rows.map(row => {
+                  // The stage rows drill down; the "all closed opps" row is
+                  // the same denominator as the metrics table's Total line.
+                  const cell = (tally, label, id) => {
+                    if (!tally) {
+                      return <span style={{ color: '#94a3b8', fontWeight: 500 }}>—</span>;
+                    }
+                    const pct = `${(tally.rate * 100).toFixed(0)}%`;
+                    return (
+                      <LiveValue
+                        id={id}
+                        className={styles.liveCell}
+                        style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1.15 }}
+                        breakdown={{
+                          title: `${row.label} — Close Rate, ${label}`,
+                          value: `${pct}  (${tally.sold}/${tally.sold + tally.notSold})`,
+                          formula: `Sold ÷ (Sold + Not Sold), over Opps whose Close Date falls in ${label} and that reached this stage (signal: ${row.signal}), with a Scope without "pull through".`,
+                          inputs: [
+                            { label: 'Sold', value: tally.sold },
+                            { label: 'Not Sold', value: tally.notSold },
+                            { label: 'Close rate', value: pct },
+                          ],
+                          rows: closeRateRows(tally.included, 'Opps included (newest close first)'),
+                          note: 'Auto-fed from the Opps tab. Re-paste the Opps tab to refresh.',
+                        }}
+                      >
+                        <span>{pct}</span>
+                        <span style={{ fontSize: '0.65rem', opacity: 0.75, fontWeight: 500 }}>{tally.sold}/{tally.sold + tally.notSold}</span>
+                      </LiveValue>
+                    );
+                  };
+                  return (
+                    <tr key={row.key}>
+                      <td className={styles.label} style={{ textAlign: 'left', whiteSpace: 'nowrap' }}>{row.label}</td>
+                      {row.cells.map((tally, i) => (
+                        <td key={oppsCloseRateByMonth.months[i].key} className={styles.numCell} style={{ textAlign: 'center' }}>
+                          {cell(tally, oppsCloseRateByMonth.months[i].longLabel, `closerate-month-${row.key}-${oppsCloseRateByMonth.months[i].key}`)}
+                        </td>
+                      ))}
+                      <td className={styles.numCell} style={{ textAlign: 'center', fontWeight: 700 }}>
+                        {cell(row.total, `the last ${CLOSE_RATE_MONTHS} months`, `closerate-month-${row.key}-total`)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            </div>
+          )}
+          <div style={{ color: '#64748b', fontSize: '0.7rem', marginTop: '0.35rem' }}>
+            Bucketed by Close Date. An opp counts in every stage it reached, so Stage 3 has the widest
+            denominator and Stage 6 the narrowest. Pull-through scopes are excluded throughout.
+            Blank months had nothing close.
+          </div>
         </div>
 
         {/* Mid row — Client/Greenfield + Coverage Ratio + % deals
