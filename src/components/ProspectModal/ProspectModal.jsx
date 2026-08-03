@@ -25,6 +25,16 @@ import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientMa
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions, buildCdmOptions } from '../../utils/prospectOptions';
 import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
+import {
+  divisionsFor,
+  divisionRulesFor,
+  companiesMatchingKeyword,
+  addDivisionPatch,
+  addDivisionsPatch,
+  removeDivisionPatch,
+  addDivisionRulePatch,
+  removeDivisionRulePatch,
+} from '../../utils/divisions';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
 import { userLsGet } from '../../utils/userLs';
@@ -2179,6 +2189,210 @@ function smeInitials(name) {
   const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
   if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   return (parts[0] || '').slice(0, 4);
+}
+
+// Divisions — which other tracker companies are divisions (subsidiaries,
+// operating brands, regional entities) of this one. The same mapping the
+// My Accounts "Divisions" column edits, so rolled-up counts there pick up
+// anything mapped here; both write through utils/divisions.js.
+function DivisionsSection({ parentId, parentCompany, prospects, settings, updateSettings }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [ruleText, setRuleText] = useState('');
+  const [showRuleInput, setShowRuleInput] = useState(false);
+
+  const divisions = divisionsFor(settings, parentId);
+  const rules = divisionRulesFor(settings, parentId);
+
+  // Every company in the tracker, sorted, minus this one.
+  const companies = useMemo(() => (prospects || [])
+    .filter(p => p?.id && p.id !== parentId && String(p.company || '').trim())
+    .map(p => ({ id: p.id, company: p.company, status: p.status }))
+    .sort((a, b) => a.company.localeCompare(b.company)), [prospects, parentId]);
+
+  const byId = useMemo(() => new Map(companies.map(c => [c.id, c])), [companies]);
+  const divisionIds = useMemo(() => new Set(divisions.map(d => d.id)), [divisions]);
+
+  // Prefix matches ahead of substring matches, same ranking as the other
+  // company pickers in the app.
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const starts = [], includes = [];
+    for (const c of companies) {
+      const lower = c.company.toLowerCase();
+      if (lower.startsWith(q)) starts.push(c);
+      else if (lower.includes(q)) includes.push(c);
+    }
+    return [...starts, ...includes].slice(0, 40);
+  }, [query, companies]);
+
+  const add = (c) => updateSettings(addDivisionPatch(settings, parentId, c));
+  const addMany = (list) => updateSettings(addDivisionsPatch(settings, parentId, list));
+  const remove = (id) => updateSettings(removeDivisionPatch(settings, parentId, id));
+  const addRule = (word) => updateSettings(addDivisionRulePatch(settings, parentId, word, companies));
+  const removeRule = (i) => updateSettings(removeDivisionRulePatch(settings, parentId, i));
+
+  const chipStyle = {
+    display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
+    background: '#F0FDF4', border: '1px solid #BBF7D0', color: '#166534',
+    borderRadius: 999, padding: '0.15rem 0.3rem 0.15rem 0.6rem',
+    fontSize: '0.72rem', fontWeight: 600,
+  };
+  const xStyle = {
+    border: 'none', background: 'transparent', color: '#166534',
+    cursor: 'pointer', fontSize: '0.85rem', lineHeight: 1, padding: '0 0.2rem', fontFamily: 'inherit',
+  };
+
+  return (
+    <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
+      <div
+        style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', userSelect: 'none' }}
+        onClick={() => setOpen(o => !o)}
+      >
+        <label className={styles.label} style={{ margin: 0, cursor: 'pointer' }}>Divisions</label>
+        <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', transform: open ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>&#9660;</span>
+        {divisions.length > 0 && (
+          <span style={{ fontSize: '0.68rem', color: '#64748B' }}>
+            {divisions.length} {divisions.length === 1 ? 'division' : 'divisions'}
+          </span>
+        )}
+      </div>
+
+      {open && (
+        <div style={{ marginTop: '0.6rem' }}>
+          <p style={{ fontSize: '0.72rem', color: '#94A3B8', margin: '0 0 0.5rem' }}>
+            Map the tracker companies that are divisions of {parentCompany || 'this company'} — subsidiaries,
+            operating brands, regional entities. My Accounts rolls their sites up under the parent.
+          </p>
+
+          {divisions.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.6rem' }}>
+              {divisions.map(d => {
+                // Show the company's current name — the mapping stores a
+                // snapshot, so a rename would otherwise show the old one.
+                const live = byId.get(d.id);
+                const name = live?.company || d.company;
+                return (
+                  <span key={d.id} style={chipStyle} title={live ? name : `${name} — no longer in the tracker`}>
+                    {name}{!live && <span style={{ color: '#94A3B8', fontWeight: 500 }}>· removed</span>}
+                    <button type="button" style={xStyle} onClick={() => remove(d.id)} aria-label={`Remove ${name}`}>&times;</button>
+                  </span>
+                );
+              })}
+            </div>
+          )}
+
+          <input
+            type="text"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search companies to add as a division…"
+            className={styles.input}
+            style={{ fontSize: '0.75rem' }}
+          />
+
+          {query.trim() && (
+            <div style={{ marginTop: '0.35rem', maxHeight: 220, overflowY: 'auto', border: '1px solid var(--color-border-light)', borderRadius: 6 }}>
+              {matches.length === 0 && (
+                <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.72rem', color: '#94A3B8' }}>No company matches “{query.trim()}”.</div>
+              )}
+              {matches.map(c => (
+                <label
+                  key={c.id}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', padding: '0.3rem 0.6rem', fontSize: '0.74rem', cursor: 'pointer' }}
+                  onMouseOver={e => e.currentTarget.style.background = '#F1F5F9'}
+                  onMouseOut={e => e.currentTarget.style.background = ''}
+                >
+                  <input
+                    type="checkbox"
+                    checked={divisionIds.has(c.id)}
+                    onChange={() => divisionIds.has(c.id) ? remove(c.id) : add(c)}
+                    style={{ accentColor: '#22C55E' }}
+                  />
+                  <span style={{ fontWeight: 500 }}>{c.company}</span>
+                  {c.status && <span style={{ fontSize: '0.65rem', color: '#94A3B8' }}>{c.status}</span>}
+                </label>
+              ))}
+              {matches.length > 0 && matches.some(c => !divisionIds.has(c.id)) && (
+                <button
+                  type="button"
+                  onClick={() => addMany(matches.filter(c => !divisionIds.has(c.id)))}
+                  style={{ display: 'block', width: '100%', padding: '0.35rem', border: 'none', borderTop: '1px solid var(--color-border-light)', background: 'transparent', color: 'var(--color-accent)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                >
+                  Add all {matches.length} match{matches.length === 1 ? '' : 'es'}
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Auto-map by keyword: folds in every company whose name carries
+              the keyword, and keeps the rule visible so the intent behind
+              the mapping is legible later. */}
+          <div style={{ marginTop: '0.6rem' }}>
+            {rules.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', marginBottom: '0.35rem' }}>
+                {rules.map((rule, i) => (
+                  <span key={`${rule}-${i}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', background: '#EFF6FF', border: '1px solid #BFDBFE', color: '#1D4ED8', borderRadius: 6, padding: '0.15rem 0.3rem 0.15rem 0.5rem', fontSize: '0.7rem', fontWeight: 600 }}>
+                    Contains “{rule}”
+                    <span style={{ color: '#94A3B8', fontWeight: 500 }}>
+                      {(() => {
+                        const n = companiesMatchingKeyword(companies, parentId, rule).length;
+                        return `${n} match${n === 1 ? '' : 'es'}`;
+                      })()}
+                    </span>
+                    <button type="button" onClick={() => removeRule(i)} style={{ ...xStyle, color: '#1D4ED8' }} aria-label={`Remove rule ${rule}`}>&times;</button>
+                  </span>
+                ))}
+              </div>
+            )}
+            {!showRuleInput ? (
+              <button
+                type="button"
+                onClick={() => { setShowRuleInput(true); setRuleText(''); }}
+                style={{ padding: '0.3rem 0.6rem', border: '1px dashed #CBD5E1', borderRadius: 6, background: 'transparent', color: 'var(--color-accent)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+              >
+                + Auto-map by keyword
+              </button>
+            ) : (
+              <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                <input
+                  type="text"
+                  value={ruleText}
+                  onChange={e => setRuleText(e.target.value)}
+                  placeholder={`e.g. “${(parentCompany || 'Acme').split(/\s+/)[0]}”`}
+                  autoFocus
+                  className={styles.input}
+                  style={{ fontSize: '0.72rem', flex: 1 }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && ruleText.trim()) { addRule(ruleText.trim()); setRuleText(''); setShowRuleInput(false); }
+                    if (e.key === 'Escape') setShowRuleInput(false);
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={!ruleText.trim()}
+                  onClick={() => { addRule(ruleText.trim()); setRuleText(''); setShowRuleInput(false); }}
+                  style={{ padding: '0.3rem 0.6rem', border: 'none', borderRadius: 6, background: ruleText.trim() ? 'var(--color-accent)' : '#E2E8F0', color: '#fff', fontSize: '0.7rem', fontWeight: 600, cursor: ruleText.trim() ? 'pointer' : 'default', fontFamily: 'inherit' }}
+                >Add</button>
+                <button
+                  type="button"
+                  onClick={() => setShowRuleInput(false)}
+                  style={{ padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 6, background: 'var(--color-surface)', color: '#64748B', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit' }}
+                >Cancel</button>
+              </div>
+            )}
+          </div>
+
+          {divisions.length === 0 && !query.trim() && (
+            <p style={{ fontSize: '0.7rem', color: '#94A3B8', margin: '0.5rem 0 0' }}>
+              No divisions mapped yet.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, onDeleteProspect, onUpdateProspect, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, updateSettingsPath = () => {}, targetAccountsData = null, cdmName = '', initialEditContact = null }) {
@@ -6071,6 +6285,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 );
               })()}
             </div>
+          )}
+
+          {/* Divisions — other tracker companies that roll up under this
+              one. Shares settings.divisionsMap with the My Accounts
+              Divisions column. Needs a saved record to key the mapping. */}
+          {!isNew && prospect?.id && (
+            <DivisionsSection
+              parentId={prospect.id}
+              parentCompany={fields.company}
+              prospects={prospects}
+              settings={settings}
+              updateSettings={updateSettings}
+            />
           )}
 
           {/* Site List — uploaded spreadsheet of this company's physical
