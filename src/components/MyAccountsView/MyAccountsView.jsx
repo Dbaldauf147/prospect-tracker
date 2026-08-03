@@ -19,6 +19,13 @@ import { loadOppsFromCache } from '../../utils/oppsCache';
 import { loadList } from '../../utils/uploadedListStore';
 import { MASTER_FIELDS, CANONICAL_HEADERS } from '../MasterSiteListView/masterSiteFields';
 import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
+import {
+  addDivisionPatch,
+  addDivisionsPatch,
+  removeDivisionPatch,
+  addDivisionRulePatch,
+  removeDivisionRulePatch,
+} from '../../utils/divisions';
 import * as XLSX from 'xlsx';
 import styles from './MyAccountsView.module.css';
 
@@ -368,7 +375,7 @@ function otherRepMatch(a, b) {
 // Target Accounts data is now passed as a prop from App.jsx
 
 
-function DivisionPicker({ parentId, divisions, allCompanies, onAdd, onRemove, rules, onSetRule, onRemoveRule }) {
+function DivisionPicker({ parentId, divisions, allCompanies, onAdd, onAddMany, onRemove, rules, onSetRule, onRemoveRule }) {
   const [open, setOpen] = useState(false);
   const [inputText, setInputText] = useState('');
   const [dropPos, setDropPos] = useState({ top: 0, left: 0 });
@@ -472,7 +479,10 @@ function DivisionPicker({ parentId, divisions, allCompanies, onAdd, onRemove, ru
                 <span style={{ fontSize: '0.62rem', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Search Results ({filtered.length})</span>
                 {filtered.some(c => !divisionIds.has(c.id)) && (
                   <button
-                    onClick={e => { e.stopPropagation(); filtered.slice(0, 30).forEach(c => { if (!divisionIds.has(c.id)) onAdd(parentId, c.id, c.company); }); }}
+                    // One bulk write — adding them one at a time made each
+                    // call build on the same pre-add settings, so only the
+                    // last company in the batch survived.
+                    onClick={e => { e.stopPropagation(); onAddMany(parentId, filtered.slice(0, 30).filter(c => !divisionIds.has(c.id))); }}
                     style={{ fontSize: '0.62rem', fontWeight: 600, color: '#3B7DDD', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: '0.1rem 0.3rem' }}
                   >Select All</button>
                 )}
@@ -1299,46 +1309,26 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     updateSettings({ targetMap: next });
   }
 
+  // Division mutations live in utils/divisions.js so this column and the
+  // company popup's Divisions section write the mapping the same way.
   function addDivision(parentId, childId, childCompany) {
-    const next = { ...divisionsMap };
-    const existing = next[parentId] || [];
-    if (!existing.find(d => d.id === childId)) {
-      next[parentId] = [...existing, { id: childId, company: childCompany }];
-    }
-    updateSettings({ divisionsMap: next });
-    return next;
+    updateSettings(addDivisionPatch(settings, parentId, { id: childId, company: childCompany }));
+  }
+
+  function addDivisions(parentId, children) {
+    updateSettings(addDivisionsPatch(settings, parentId, children));
   }
 
   function addDivisionRule(parentId, keyword) {
-    const nextRules = { ...divisionRules };
-    const existing = nextRules[parentId] || [];
-    if (!existing.includes(keyword)) nextRules[parentId] = [...existing, keyword];
-    // Auto-add all matching companies as divisions
-    const matches = prospects.filter(c => c.id !== parentId && c.company.toLowerCase().includes(keyword.toLowerCase()));
-    const nextDivisions = { ...divisionsMap };
-    for (const c of matches) {
-      const divExisting = nextDivisions[parentId] || [];
-      if (!divExisting.find(d => d.id === c.id)) {
-        nextDivisions[parentId] = [...divExisting, { id: c.id, company: c.company }];
-      }
-    }
-    updateSettings({ divisionRules: nextRules, divisionsMap: nextDivisions });
+    updateSettings(addDivisionRulePatch(settings, parentId, keyword, prospects));
   }
 
   function removeDivisionRule(parentId, ruleIndex) {
-    const next = { ...divisionRules };
-    const existing = [...(next[parentId] || [])];
-    existing.splice(ruleIndex, 1);
-    if (existing.length === 0) delete next[parentId];
-    else next[parentId] = existing;
-    updateSettings({ divisionRules: next });
+    updateSettings(removeDivisionRulePatch(settings, parentId, ruleIndex));
   }
 
   function removeDivision(parentId, childId) {
-    const next = { ...divisionsMap };
-    next[parentId] = (next[parentId] || []).filter(d => d.id !== childId);
-    if (next[parentId].length === 0) delete next[parentId];
-    updateSettings({ divisionsMap: next });
+    updateSettings(removeDivisionPatch(settings, parentId, childId));
   }
 
   // All companies for division picker (from all prospects, not just My Accounts)
@@ -2908,7 +2898,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         }};
       }
       if (col.key === 'divisions') {
-        return { ...col, getFilterValue: (row) => (divisionsMap[row.id] || []).map(d => d.company).filter(Boolean).join(', '), render: (row) => <DivisionPicker parentId={row.id} divisions={divisionsMap[row.id] || []} allCompanies={allCompaniesForDivisions} onAdd={addDivision} onRemove={removeDivision} rules={divisionRules[row.id] || []} onSetRule={addDivisionRule} onRemoveRule={removeDivisionRule} /> };
+        return { ...col, getFilterValue: (row) => (divisionsMap[row.id] || []).map(d => d.company).filter(Boolean).join(', '), render: (row) => <DivisionPicker parentId={row.id} divisions={divisionsMap[row.id] || []} allCompanies={allCompaniesForDivisions} onAdd={addDivision} onAddMany={addDivisions} onRemove={removeDivision} rules={divisionRules[row.id] || []} onSetRule={addDivisionRule} onRemoveRule={removeDivisionRule} /> };
       }
       if (col.key === 'status') {
         const mismatchAccounts = filteredAccounts.filter(a => a.statusMismatch).map(a => a.company);
