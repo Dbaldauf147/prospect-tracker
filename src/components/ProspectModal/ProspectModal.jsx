@@ -29,6 +29,7 @@ import {
   divisionsFor,
   buildDivisionTree,
   addNamedDivisionPatch,
+  renameDivisionPatch,
   removeDivisionPatch,
 } from '../../utils/divisions';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
@@ -2196,62 +2197,163 @@ function smeInitials(name) {
 // Used from level 2 down; level 1 fans out horizontally instead (see
 // DivisionsChart), which is what gives the chart its shape: a wide row of
 // divisions, each growing a tidy column of sub-divisions.
-function DivisionNode({ node, onRemove }) {
+// A small text box that commits on Enter or blur and cancels on Escape.
+// Used for both renaming a box and typing a new one under it, so the two
+// behave identically.
+function DivisionInlineInput({ value, placeholder, onCommit, onCancel }) {
+  const [text, setText] = useState(value || '');
+  return (
+    <input
+      type="text"
+      autoFocus
+      value={text}
+      placeholder={placeholder}
+      onChange={e => setText(e.target.value)}
+      onKeyDown={e => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); onCommit(text); }
+        if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+      }}
+      onBlur={() => onCommit(text)}
+      style={{
+        width: '100%', boxSizing: 'border-box', padding: '0.3rem 0.4rem',
+        border: '1px solid var(--color-accent)', borderRadius: 4,
+        fontSize: '0.72rem', fontFamily: 'inherit', textAlign: 'center',
+      }}
+    />
+  );
+}
+
+// One box in the chart, plus its own divisions below it.
+//
+// `ownerId` is the id whose list this box lives in — renaming or removing
+// the box edits that list, and a box added from here lands in THIS box's
+// list (node.id), which is what nests it one level deeper.
+function DivisionNode({ node, ownerId, editing, adding, actions }) {
+  const isEditing = editing === node.id;
+  const isAdding = adding === node.id;
+  const btn = {
+    border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer',
+    fontSize: '0.8rem', lineHeight: 1, padding: '0 0.15rem', fontFamily: 'inherit',
+  };
   return (
     <>
       {/* The wrapper is what the connector elbow anchors to — see
           .divBoxWrap in the stylesheet. */}
       <div className={styles.divBoxWrap}>
-        <div
-          className={`${styles.divBox}${node.missing ? ` ${styles.divBoxMissing}` : ''}`}
-          title={node.missing ? `${node.company} — no longer in the tracker` : node.company}
-        >
-          {node.company || '—'}
-        </div>
-        {onRemove && (
-          <button
-            type="button"
-            onClick={() => onRemove(node.id)}
-            aria-label={`Remove ${node.company}`}
-            title={`Unmap ${node.company} from this company`}
-            style={{
-              position: 'absolute', top: 1, right: 2, border: 'none', background: 'transparent',
-              color: '#94A3B8', cursor: 'pointer', fontSize: '0.8rem', lineHeight: 1,
-              padding: '0 0.15rem', fontFamily: 'inherit',
-            }}
-          >&times;</button>
+        {isEditing ? (
+          <DivisionInlineInput
+            value={node.company}
+            onCommit={(text) => actions.rename(ownerId, node.id, text)}
+            onCancel={actions.cancel}
+          />
+        ) : (
+          <>
+            <div
+              className={`${styles.divBox}${node.missing ? ` ${styles.divBoxMissing}` : ''}`}
+              style={{ cursor: 'text' }}
+              onClick={() => actions.startEdit(node.id)}
+              title={node.missing
+                ? `${node.company} — no longer in the tracker. Click to rename.`
+                : `${node.company} — click to rename`}
+            >
+              {node.company || '—'}
+            </div>
+            <button
+              type="button"
+              onClick={() => actions.startAdd(node.id)}
+              aria-label={`Add a division under ${node.company}`}
+              title={`Add a division under ${node.company}`}
+              style={{ ...btn, position: 'absolute', top: 1, left: 2 }}
+            >+</button>
+            <button
+              type="button"
+              onClick={() => actions.remove(ownerId, node.id)}
+              aria-label={`Remove ${node.company}`}
+              title={`Remove ${node.company} from ${ownerId === node.id ? 'this list' : 'its parent'}`}
+              style={{ ...btn, position: 'absolute', top: 1, right: 2 }}
+            >&times;</button>
+          </>
         )}
       </div>
-      {node.children.length > 0 && (
+      {(node.children.length > 0 || isAdding) && (
         <div className={styles.divSub}>
           {node.children.map(child => (
             <div key={child.id} className={styles.divSubItem}>
-              <DivisionNode node={child} />
+              <DivisionNode
+                node={child}
+                ownerId={node.id}
+                editing={editing}
+                adding={adding}
+                actions={actions}
+              />
             </div>
           ))}
+          {isAdding && (
+            <div className={styles.divSubItem}>
+              <div className={styles.divBoxWrap}>
+                <DivisionInlineInput
+                  placeholder="New division…"
+                  onCommit={(text) => actions.addChild(node.id, text)}
+                  onCancel={actions.cancel}
+                />
+              </div>
+            </div>
+          )}
         </div>
       )}
     </>
   );
 }
 
-// Only this company's direct divisions carry an unmap button — a
-// sub-division is mapped under ITS parent, so it's unmapped from that
-// company's popup rather than silently re-parented from here.
-function DivisionsChart({ tree, onRemove }) {
+// The root box is the company the popup is showing, so it isn't renamable
+// or removable here — its own name field is a few rows up. Everything
+// below it is editable in place.
+function DivisionsChart({ tree, editing, adding, actions }) {
+  const rootAdding = adding === tree.id;
   return (
     <div className={styles.divChart}>
       <div className={styles.divChartInner}>
         <div className={styles.divRootRow}>
-          <div className={`${styles.divBox} ${styles.divRoot}`}>{tree.company || '—'}</div>
+          <div className={styles.divBoxWrap}>
+            <div className={`${styles.divBox} ${styles.divRoot}`}>{tree.company || '—'}</div>
+            <button
+              type="button"
+              onClick={() => actions.startAdd(tree.id)}
+              aria-label={`Add a division under ${tree.company}`}
+              title={`Add a division under ${tree.company}`}
+              style={{
+                position: 'absolute', top: 1, left: 2, border: 'none', background: 'transparent',
+                color: '#94A3B8', cursor: 'pointer', fontSize: '0.8rem', lineHeight: 1,
+                padding: '0 0.15rem', fontFamily: 'inherit',
+              }}
+            >+</button>
+          </div>
         </div>
         <div className={styles.divStem} />
         <div className={styles.divRow}>
           {tree.children.map(child => (
             <div key={child.id} className={styles.divCol}>
-              <DivisionNode node={child} onRemove={onRemove} />
+              <DivisionNode
+                node={child}
+                ownerId={tree.id}
+                editing={editing}
+                adding={adding}
+                actions={actions}
+              />
             </div>
           ))}
+          {rootAdding && (
+            <div className={styles.divCol}>
+              <div className={styles.divBoxWrap}>
+                <DivisionInlineInput
+                  placeholder="New division…"
+                  onCommit={(text) => actions.addChild(tree.id, text)}
+                  onCancel={actions.cancel}
+                />
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -2261,6 +2363,11 @@ function DivisionsChart({ tree, onRemove }) {
 function DivisionsSection({ parentId, parentCompany, prospects, settings, updateSettings }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState('');
+  // Which box is being renamed, and which box is having one added under
+  // it. Only one of each at a time, so a stray click can't leave two
+  // editors open on the same chart.
+  const [editing, setEditing] = useState(null);
+  const [adding, setAdding] = useState(null);
 
   const divisions = divisionsFor(settings, parentId);
 
@@ -2299,12 +2406,33 @@ function DivisionsSection({ parentId, parentCompany, prospects, settings, update
   // you didn't write down. When the text happens to name a company already
   // in the tracker the entry links to it — that's what lets its own
   // divisions nest in the chart — but the typed name is what counts.
-  const remove = (id) => updateSettings(removeDivisionPatch(settings, parentId, id));
   function addTyped() {
     const patch = addNamedDivisionPatch(settings, parentId, draft, companies);
     // null = blank or already mapped; keep the text so it isn't just eaten.
     if (patch) { updateSettings(patch); setDraft(''); }
   }
+
+  // Chart editing. Every box can be renamed, removed, or given a division
+  // of its own — a box added under X lands in X's list, which is what
+  // nests it a level deeper. Adding under a box that's linked to a tracker
+  // company writes that company's own divisions, the same list its popup
+  // and the My Accounts column edit; that's what the link means.
+  const actions = useMemo(() => ({
+    startEdit: (id) => { setAdding(null); setEditing(id); },
+    startAdd: (id) => { setEditing(null); setAdding(id); },
+    cancel: () => { setEditing(null); setAdding(null); },
+    rename: (ownerId, childId, text) => {
+      const patch = renameDivisionPatch(settings, ownerId, childId, text);
+      if (patch) updateSettings(patch);
+      setEditing(null);
+    },
+    addChild: (ownerId, text) => {
+      const patch = addNamedDivisionPatch(settings, ownerId, text, companies);
+      if (patch) updateSettings(patch);
+      setAdding(null);
+    },
+    remove: (ownerId, childId) => updateSettings(removeDivisionPatch(settings, ownerId, childId)),
+  }), [settings, companies, updateSettings]);
 
   return (
     <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
@@ -2325,13 +2453,16 @@ function DivisionsSection({ parentId, parentCompany, prospects, settings, update
         <div style={{ marginTop: '0.6rem' }}>
           <p style={{ fontSize: '0.72rem', color: '#94A3B8', margin: '0 0 0.5rem' }}>
             Type the divisions of {parentCompany || 'this company'} — subsidiaries, operating brands,
-            regional entities — one per entry. Nothing is added for you. My Accounts rolls a division's
-            sites up under the parent by name, so spell it the way it appears on the site list.
+            regional entities — one per entry. Click any box to rename it, + to add one beneath it,
+            × to remove it. Nothing is added for you. My Accounts rolls a division's sites up under the
+            parent by name, so spell it the way it appears on the site list.
           </p>
 
-          {/* The map itself. Doubles as the editor for this company's own
-              divisions — each top-level box carries an unmap ×. */}
-          {divisions.length > 0 && <DivisionsChart tree={tree} onRemove={remove} />}
+          {/* The map is the editor: click a box to rename it, + to add one
+              under it, × to remove it. */}
+          {(divisions.length > 0 || adding) && (
+            <DivisionsChart tree={tree} editing={editing} adding={adding} actions={actions} />
+          )}
 
           <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
             <input

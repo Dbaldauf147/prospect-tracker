@@ -28,10 +28,12 @@ export function isTextDivision(id) {
   return String(id || '').startsWith(TEXT_ID_PREFIX);
 }
 
-// Deterministic, so the same name always yields the same id: React keys stay
-// stable across renders and a name can't end up mapped twice under two ids.
+// Derived from the name at creation time, so the same name always yields
+// the same id: React keys stay stable across renders and a name can't end
+// up mapped twice under two ids. A later rename keeps the id it was given
+// — anything nested under it is keyed by that id.
 export function textDivisionId(name) {
-  return TEXT_ID_PREFIX + String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return TEXT_ID_PREFIX + nameKey(name);
 }
 
 export function divisionsFor(settings, parentId) {
@@ -131,21 +133,65 @@ export function addDivisionsPatch(settings, parentId, children) {
 export function addNamedDivisionPatch(settings, parentId, name, companies) {
   const typed = String(name || '').trim();
   if (!typed) return null;
-  const key = typed.toLowerCase().replace(/\s+/g, ' ');
+  const key = nameKey(typed);
 
   const existing = (settings?.divisionsMap || {})[parentId] || [];
-  if (existing.some(d => String(d.company || '').trim().toLowerCase().replace(/\s+/g, ' ') === key)) {
-    return null;
-  }
+  if (existing.some(d => nameKey(d.company) === key)) return null;
 
   const match = (companies || []).find(c =>
-    c && c.id !== parentId
-    && String(c.company || '').trim().toLowerCase().replace(/\s+/g, ' ') === key);
+    c && c.id !== parentId && nameKey(c.company) === key);
 
   const child = match
     ? { id: match.id, company: match.company }
     : { id: textDivisionId(typed), company: typed };
   return addDivisionsPatch(settings, parentId, [child]);
+}
+
+// Comparison key for a division name — the one place case and spacing are
+// normalized, so the add guard, the rename guard and the id derivation
+// can't disagree about whether two names are the same.
+export function nameKey(name) {
+  return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+// Rename one entry in `ownerId`'s list, in place.
+//
+// A typed entry just takes the new name; its id stays put so anything
+// nested under it keeps its parent. A LINKED entry is a pointer at a
+// company record, and renaming a division here must not rename that
+// company — so it detaches into a typed entry carrying the new name, and
+// whatever hung under it in the chart is carried across to the new id so
+// the branch doesn't vanish mid-edit. The company keeps its own divisions.
+//
+// Returns null when the name is blank, unchanged, or would collide with a
+// sibling, so the caller can leave the editor open rather than appearing
+// to accept an edit it dropped.
+export function renameDivisionPatch(settings, ownerId, childId, newName) {
+  const name = String(newName || '').trim();
+  if (!name) return null;
+  const map = { ...(settings?.divisionsMap || {}) };
+  const list = map[ownerId] || [];
+  const idx = list.findIndex(d => d.id === childId);
+  if (idx < 0) return null;
+
+  const key = nameKey(name);
+  if (list.some((d, i) => i !== idx && nameKey(d.company) === key)) return null;
+  if (isTextDivision(childId) && nameKey(list[idx].company) === key) return null;
+
+  const next = list.slice();
+  if (isTextDivision(childId)) {
+    next[idx] = { ...next[idx], company: name };
+    map[ownerId] = next;
+    return { divisionsMap: map };
+  }
+
+  const newId = textDivisionId(name);
+  next[idx] = { id: newId, company: name };
+  map[ownerId] = next;
+  const carried = map[childId];
+  // Don't clobber a same-named typed division that already has children.
+  if (carried?.length && !map[newId]) map[newId] = carried.map(c => ({ ...c }));
+  return { divisionsMap: map };
 }
 
 export function removeDivisionPatch(settings, parentId, childId) {
