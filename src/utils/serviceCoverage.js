@@ -134,12 +134,33 @@ export function serviceLabelMap(catalog) {
   return m;
 }
 
+// Renewal Status (Clients tab) that takes a client out of coverage entirely:
+// an account that's told us it's cancelling isn't one we'd explore new
+// services with, so counting it only drags every service's coverage down.
+const EXCLUDED_RENEWAL_STATUS = 'cancelling for sure';
+
+// Does this client's Renewal Status mark it as cancelling? The column is free
+// text by default but can be bound to a Dropdowns list (including a
+// multi-select), so a value can arrive as a comma-joined list — match on any
+// one part rather than the whole string.
+export function isCancellingForSure(renewalStatus) {
+  return String(renewalStatus || '')
+    .split(',')
+    .some(part => part.trim().toLowerCase() === EXCLUDED_RENEWAL_STATUS);
+}
+
 // Active clients for coverage: Status = Client and matching the configured CDM
-// (or every client when no CDM is set). Mirrors the renewals table's client set.
-export function coverageClientsOf(prospects, cdmName) {
+// (or every client when no CDM is set), minus anyone the Clients tab marks
+// "Cancelling for Sure". Otherwise mirrors the renewals table's client set.
+// `statusMap` is the Clients tab's Renewal Status map (clients-status-map),
+// keyed by normalized company name — omit it to skip that exclusion.
+export function coverageClientsOf(prospects, cdmName, statusMap = {}) {
   return (prospects || []).filter(p => {
     if (String(p?.status || '').trim().toLowerCase() !== 'client') return false;
-    return cdmName ? matchesCdm(p.cdm, cdmName) : true;
+    if (cdmName && !matchesCdm(p.cdm, cdmName)) return false;
+    // Same normalization as normClientName / the Clients tab's own key.
+    const key = String(p?.company || '').trim().toLowerCase();
+    return !isCancellingForSure(statusMap?.[key]);
   });
 }
 
