@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx';
 import { sanitizeExcelWorkbook, sanitizeSheetJsWorkbook } from '../../utils/exportSanitize.js';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer } from 'recharts';
 import styles from './PricingView.module.css';
+import { downloadPricingMarginWorkbook } from '../../utils/pricingMarginWorkbook';
 import { useAuth } from '../../contexts/AuthContext';
 import { parsePricingWorkbook, priceFromCostAndGm } from '../../utils/pricingParse';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
@@ -1618,6 +1619,7 @@ export function PricingView({ settings } = {}) {
   // Below pick, falling back to the tag); 'automated' groups costs by
   // their Automated Fee Name to build a fee structure from scratch.
   const [feeMapBy, setFeeMapBy] = useState('below');
+  const [exportingMargin, setExportingMargin] = useState(false);
   const [linkedToDefaults, setLinkedToDefaults] = useState({}); // { [`${lineItem}::${type}`]: 'value' }
   const [linkedToUnitDefaults, setLinkedToUnitDefaults] = useState({}); // { [`${lineItem}::${type}`]: 'Per Site' | 'Per Account' | 'Fixed' | 'Per Meter' }
   const [linkedToStartMonthDefaults, setLinkedToStartMonthDefaults] = useState({}); // { [`${lineItem}::${type}`]: number } — overrides the CTS row's startMonth for the auto-derive that feeds alt-fee rows
@@ -3187,6 +3189,113 @@ export function PricingView({ settings } = {}) {
   // rounded to a whole percent, and Escalator is the annual revenue
   // escalator. Customer Name / SIA Link / RFP fields are left blank
   // for the user to fill in.
+  // Fee-margin Excel for the active option: what each fee bills over the
+  // term, the cost items behind it, and the margin that falls out. Reads
+  // the same helpers the page renders from — priceFor, ctsItemYearCost,
+  // altFeeYearRevenue, mappingNameFor — so the report can't disagree with
+  // what's on screen. Every cost item lands in exactly one section: its
+  // fee's, or the unmapped block at the end.
+  async function exportFeeMargin() {
+    const optNow = workbook?.options.find(o => o.optionNumber === activeOption) || workbook?.options[0];
+    if (!optNow) return;
+    setExportingMargin(true);
+    try {
+      const numYears = Math.max(1, Math.ceil(termMonths / 12));
+      const years = Array.from({ length: numYears }, (_, i) => i + 1);
+      const zeros = () => years.map(() => 0);
+      const costItems = optNow.sections.flatMap(sec => sec.items);
+
+      const costRow = (item) => {
+        const { gm, price } = priceFor(item);
+        const cts = typeof item.cts === 'number' ? item.cts : null;
+        const passThrough = isPassThrough(item);
+        const costByYear = years.map(y => ctsItemYearCost(item, y));
+        return {
+          lineItem: item.description || '(unnamed line item)',
+          type: effectiveType(item),
+          passThrough,
+          cts,
+          techDepr: cts == null ? null : (passThrough ? 0 : cts * techDeprPct),
+          effectiveCost: cts == null ? null : ctsItemEffectiveCost(item),
+          gmPct: typeof gm === 'number' ? gm : null,
+          price: typeof price === 'number' ? price : null,
+          costByYear,
+          termCost: costByYear.reduce((a, b) => a + b, 0),
+        };
+      };
+
+      // Group the schedule's fee rows by name — costs match a name, not a
+      // row, so two rows sharing a name are one fee line here.
+      const feeRows = altFees[optNow.optionNumber] || [];
+      const byName = new Map();
+      for (const row of feeRows) {
+        const name = String(row.altItem || '').trim();
+        if (!name) continue;
+        const key = name.toLowerCase();
+        if (!byName.has(key)) byName.set(key, { name, rows: [] });
+        byName.get(key).rows.push(row);
+      }
+
+      const claimed = new Set();
+      const fees = [...byName.values()].map(({ name, rows }) => {
+        const key = name.toLowerCase();
+        const mine = costItems.filter(it => mappingNameFor(it).trim().toLowerCase() === key);
+        mine.forEach(it => claimed.add(it.id));
+        const costs = mine.map(costRow);
+        const costByYear = costs.reduce((acc, c) => acc.map((v, i) => v + c.costByYear[i]), zeros());
+        const revenueByYear = rows.reduce(
+          (acc, row) => acc.map((v, i) => v + altFeeYearRevenue(row, i + 1)), zeros());
+        const termCost = costByYear.reduce((a, b) => a + b, 0);
+        const termRevenue = revenueByYear.reduce((a, b) => a + b, 0);
+        const first = rows[0] || {};
+        const manual = rows.find(r => r.fee != null && r.fee !== '' && Number.isFinite(Number(r.fee)));
+        const auto = autoFeePerUnitFor(first);
+        return {
+          name,
+          type: [...new Set(rows.map(r => String(r.type || '').trim()).filter(Boolean))].join(' / '),
+          unit: [...new Set(rows.map(r => String(r.unit || '').trim()).filter(Boolean))].join(' / '),
+          unitCount: rows.reduce((s, r) => s + (Number(r.unitCount) || 0), 0),
+          feePerUnit: manual ? Number(manual.fee) : (auto ?? null),
+          feeSource: manual ? 'typed' : (auto == null ? 'none' : 'auto'),
+          costs, costByYear, termCost,
+          revenueByYear, termRevenue,
+          marginByYear: revenueByYear.map((rev, i) => (rev > 0 ? (rev - costByYear[i]) / rev : null)),
+          margin: termRevenue > 0 ? (termRevenue - termCost) / termRevenue : null,
+        };
+      });
+
+      const unmappedCosts = costItems.filter(it => !claimed.has(it.id)).map(costRow);
+      const totals = {
+        revenueByYear: fees.reduce((acc, f) => acc.map((v, i) => v + f.revenueByYear[i]), zeros()),
+        costByYear: fees.reduce((acc, f) => acc.map((v, i) => v + f.costByYear[i]), zeros()),
+        termRevenue: fees.reduce((s, f) => s + f.termRevenue, 0),
+        termCost: fees.reduce((s, f) => s + f.termCost, 0),
+      };
+      totals.margin = totals.termRevenue > 0
+        ? (totals.termRevenue - totals.termCost) / totals.termRevenue : null;
+
+      await downloadPricingMarginWorkbook({
+        generatedAt: new Date(),
+        fileName: workbook?.fileName || '',
+        optionName: optNow.sheetName || `Option ${optNow.optionNumber}`,
+        termMonths, numYears,
+        annualEscalator, costEscalator, techDeprPct,
+        globalGmPct: typeof globalGmPct === 'number' ? globalGmPct : null,
+        mapBy: feeMapBy === 'automated' ? 'Automated Fee Name' : 'Fee Name Below',
+        fees,
+        unmapped: {
+          costs: unmappedCosts,
+          termCost: unmappedCosts.reduce((s, c) => s + c.termCost, 0),
+        },
+        costItemCount: costItems.length,
+        mappedCostItemCount: claimed.size,
+        totals,
+      });
+    } finally {
+      setExportingMargin(false);
+    }
+  }
+
   async function exportMarginRequest() {
     if (!workbook || !Array.isArray(workbook.options) || workbook.options.length === 0) return;
     const { Workbook } = await import('exceljs');
@@ -3765,6 +3874,13 @@ export function PricingView({ settings } = {}) {
                       onClick={exportCommercialRef}
                       title={`Export "${opt.sheetName}" cost line items as a Commercial Reference CSV. Monthly costs are annualized (×12); Quantity is always 1.`}
                     >Commercial Ref ⇩</button>
+                    <button
+                      type="button"
+                      className={styles.actionBtn}
+                      disabled={exportingMargin}
+                      onClick={exportFeeMargin}
+                      title={`Export "${opt.sheetName}" as an Excel report: a summary of every fee line's term revenue, cost and margin, plus a per-fee breakdown of the cost items behind it and how they mark up across the term. Costs with no fee are listed too.`}
+                    >{exportingMargin ? 'Building…' : 'Fee Margin Excel ⇩'}</button>
                     <button
                       type="button"
                       className={styles.actionBtn}
