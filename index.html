@@ -6,7 +6,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <!-- Inter loads without blocking the first paint. A plain stylesheet link
+         holds rendering until it resolves, so any hiccup reaching
+         fonts.googleapis.com (VPN, corporate proxy, blocker, flaky wifi) left
+         the app on a white screen — measured at 15s when the host didn't
+         answer, with the app's own JS ready in under 200ms. Fetching it as
+         `print` media takes it off the critical path; onload flips it to
+         `all` and the text re-renders in Inter a moment later. No <noscript>
+         fallback: this is a React SPA, so a scripting-disabled browser has
+         nothing to render the font onto. -->
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      media="print"
+      onload="this.media='all'; this.onload=null;"
+    />
     <title>Prospect Tracker</title>
   </head>
   <body>
