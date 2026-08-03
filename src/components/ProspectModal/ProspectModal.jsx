@@ -28,7 +28,7 @@ import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import {
   divisionsFor,
   buildDivisionTree,
-  addDivisionPatch,
+  addNamedDivisionPatch,
   removeDivisionPatch,
 } from '../../utils/divisions';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
@@ -2260,7 +2260,7 @@ function DivisionsChart({ tree, onRemove }) {
 
 function DivisionsSection({ parentId, parentCompany, prospects, settings, updateSettings }) {
   const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
+  const [draft, setDraft] = useState('');
 
   const divisions = divisionsFor(settings, parentId);
 
@@ -2269,8 +2269,6 @@ function DivisionsSection({ parentId, parentCompany, prospects, settings, update
     .filter(p => p?.id && p.id !== parentId && String(p.company || '').trim())
     .map(p => ({ id: p.id, company: p.company, status: p.status }))
     .sort((a, b) => a.company.localeCompare(b.company)), [prospects, parentId]);
-
-  const divisionIds = useMemo(() => new Set(divisions.map(d => d.id)), [divisions]);
 
   // Live name per company id, so the chart labels every box with the
   // company's current name rather than the one stored when it was mapped.
@@ -2289,27 +2287,24 @@ function DivisionsSection({ parentId, parentCompany, prospects, settings, update
     [settings, parentId, parentCompany, nameById],
   );
 
-  // Prefix matches ahead of substring matches, same ranking as the other
-  // company pickers in the app.
-  const matches = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return [];
-    const starts = [], includes = [];
-    for (const c of companies) {
-      const lower = c.company.toLowerCase();
-      if (lower.startsWith(q)) starts.push(c);
-      else if (lower.includes(q)) includes.push(c);
-    }
-    return [...starts, ...includes].slice(0, 40);
-  }, [query, companies]);
+  // Same normalization the add helper uses, so the disabled Add button and
+  // the note under it agree with what actually gets rejected.
+  const normalize = (v) => String(v || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const alreadyMapped = useMemo(() => {
+    const key = normalize(draft);
+    return !!key && divisions.some(d => normalize(d.company) === key);
+  }, [draft, divisions]);
 
-  // Divisions are mapped one company at a time, on purpose: nothing here
-  // adds a company you didn't tick. Name-similarity is a poor proxy for
-  // ownership in both directions — "MGPA, a Blackrock Co." matches on the
-  // name without being how you'd map it, and a division under a different
-  // brand never matches at all.
-  const add = (c) => updateSettings(addDivisionPatch(settings, parentId, c));
+  // Divisions are typed in, one at a time: nothing here adds a division
+  // you didn't write down. When the text happens to name a company already
+  // in the tracker the entry links to it — that's what lets its own
+  // divisions nest in the chart — but the typed name is what counts.
   const remove = (id) => updateSettings(removeDivisionPatch(settings, parentId, id));
+  function addTyped() {
+    const patch = addNamedDivisionPatch(settings, parentId, draft, companies);
+    // null = blank or already mapped; keep the text so it isn't just eaten.
+    if (patch) { updateSettings(patch); setDraft(''); }
+  }
 
   return (
     <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
@@ -2329,50 +2324,48 @@ function DivisionsSection({ parentId, parentCompany, prospects, settings, update
       {open && (
         <div style={{ marginTop: '0.6rem' }}>
           <p style={{ fontSize: '0.72rem', color: '#94A3B8', margin: '0 0 0.5rem' }}>
-            Map the tracker companies that are divisions of {parentCompany || 'this company'} — subsidiaries,
-            operating brands, regional entities. Search and tick each one; nothing is mapped for you.
-            My Accounts rolls their sites up under the parent.
+            Type the divisions of {parentCompany || 'this company'} — subsidiaries, operating brands,
+            regional entities — one per entry. Nothing is added for you. My Accounts rolls a division's
+            sites up under the parent by name, so spell it the way it appears on the site list.
           </p>
 
           {/* The map itself. Doubles as the editor for this company's own
               divisions — each top-level box carries an unmap ×. */}
           {divisions.length > 0 && <DivisionsChart tree={tree} onRemove={remove} />}
 
-          <input
-            type="text"
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="Search companies to add as a division…"
-            className={styles.input}
-            style={{ fontSize: '0.75rem' }}
-          />
-
-          {query.trim() && (
-            <div style={{ marginTop: '0.35rem', maxHeight: 220, overflowY: 'auto', border: '1px solid var(--color-border-light)', borderRadius: 6 }}>
-              {matches.length === 0 && (
-                <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.72rem', color: '#94A3B8' }}>No company matches “{query.trim()}”.</div>
-              )}
-              {matches.map(c => (
-                <label
-                  key={c.id}
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', padding: '0.3rem 0.6rem', fontSize: '0.74rem', cursor: 'pointer' }}
-                  onMouseOver={e => e.currentTarget.style.background = '#F1F5F9'}
-                  onMouseOut={e => e.currentTarget.style.background = ''}
-                >
-                  <input
-                    type="checkbox"
-                    checked={divisionIds.has(c.id)}
-                    onChange={() => divisionIds.has(c.id) ? remove(c.id) : add(c)}
-                    style={{ accentColor: '#22C55E' }}
-                  />
-                  <span style={{ fontWeight: 500 }}>{c.company}</span>
-                  {c.status && <span style={{ fontSize: '0.65rem', color: '#94A3B8' }}>{c.status}</span>}
-                </label>
-              ))}
-            </div>
+          <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+            <input
+              type="text"
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { e.preventDefault(); addTyped(); }
+                if (e.key === 'Escape') setDraft('');
+              }}
+              placeholder="Type a division name…"
+              className={styles.input}
+              style={{ fontSize: '0.75rem', flex: 1 }}
+            />
+            <button
+              type="button"
+              onClick={addTyped}
+              disabled={!draft.trim() || alreadyMapped}
+              title={alreadyMapped ? 'Already a division of this company' : 'Add this division'}
+              style={{
+                padding: '0.35rem 0.75rem', border: 'none', borderRadius: 6,
+                background: (draft.trim() && !alreadyMapped) ? 'var(--color-accent)' : '#E2E8F0',
+                color: '#fff', fontSize: '0.72rem', fontWeight: 600,
+                cursor: (draft.trim() && !alreadyMapped) ? 'pointer' : 'default', fontFamily: 'inherit',
+              }}
+            >Add</button>
+          </div>
+          {alreadyMapped && (
+            <p style={{ fontSize: '0.68rem', color: '#94A3B8', margin: '0.3rem 0 0' }}>
+              “{draft.trim()}” is already a division of this company.
+            </p>
           )}
 
-          {divisions.length === 0 && !query.trim() && (
+          {divisions.length === 0 && !draft.trim() && (
             <p style={{ fontSize: '0.7rem', color: '#94A3B8', margin: '0.5rem 0 0' }}>
               No divisions mapped yet.
             </p>

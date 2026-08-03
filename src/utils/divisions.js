@@ -14,6 +14,25 @@
 //
 // Both the My Accounts "Divisions" column and the company popup's Divisions
 // section write through these helpers, so the two can't drift.
+//
+// An entry's `id` is normally a prospect id, but the popup lets you type a
+// division that has no record of its own — a brand or regional entity you
+// track on paper and nowhere else. Those carry a `txt:` id derived from the
+// name. Everything downstream reads `company`, not `id` (the My Accounts
+// site rollup matches Master Site List rows by company name), so a typed
+// division rolls up exactly like a linked one as long as the text matches.
+
+const TEXT_ID_PREFIX = 'txt:';
+
+export function isTextDivision(id) {
+  return String(id || '').startsWith(TEXT_ID_PREFIX);
+}
+
+// Deterministic, so the same name always yields the same id: React keys stay
+// stable across renders and a name can't end up mapped twice under two ids.
+export function textDivisionId(name) {
+  return TEXT_ID_PREFIX + String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
 
 export function divisionsFor(settings, parentId) {
   if (!parentId) return [];
@@ -48,10 +67,13 @@ export function buildDivisionTree(settings, rootId, rootName, nameById) {
 
   function walk(id, storedName, ancestors, depth) {
     const live = names.get(id);
+    const typed = isTextDivision(id);
     const node = {
       id,
       company: live || storedName || '',
-      missing: !live,
+      // A typed division has no record to go missing — it IS its text.
+      // Only a link to a prospect that's gone counts as missing.
+      missing: !typed && !live,
       children: [],
     };
     if (depth >= MAX_DEPTH) return node;
@@ -96,6 +118,34 @@ export function addDivisionsPatch(settings, parentId, children) {
   }
   if (list.length) map[parentId] = list;
   return { divisionsMap: map };
+}
+
+// Add a division by typed name. When the text matches a tracker company
+// exactly (case- and space-insensitively) the entry links to that record,
+// which buys live renaming and lets that company's own divisions nest
+// under it in the chart. Otherwise it's stored as free text. Either way
+// the name is what downstream rollups read, so both behave the same there.
+//
+// Returns null when the name is blank or already mapped under this parent
+// — the caller can leave the box's text alone so nothing looks lost.
+export function addNamedDivisionPatch(settings, parentId, name, companies) {
+  const typed = String(name || '').trim();
+  if (!typed) return null;
+  const key = typed.toLowerCase().replace(/\s+/g, ' ');
+
+  const existing = (settings?.divisionsMap || {})[parentId] || [];
+  if (existing.some(d => String(d.company || '').trim().toLowerCase().replace(/\s+/g, ' ') === key)) {
+    return null;
+  }
+
+  const match = (companies || []).find(c =>
+    c && c.id !== parentId
+    && String(c.company || '').trim().toLowerCase().replace(/\s+/g, ' ') === key);
+
+  const child = match
+    ? { id: match.id, company: match.company }
+    : { id: textDivisionId(typed), company: typed };
+  return addDivisionsPatch(settings, parentId, [child]);
 }
 
 export function removeDivisionPatch(settings, parentId, childId) {
