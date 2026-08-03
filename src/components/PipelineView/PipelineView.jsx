@@ -6,6 +6,7 @@
 import { Component, createContext, Fragment, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import styles from './PipelineView.module.css';
+import { PipelineFunnel } from './PipelineFunnel';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { sanitizeSheetJsWorkbook } from '../../utils/exportSanitize.js';
@@ -1900,6 +1901,26 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
     };
   }, { activeActual: 0, activeGoal: 0, pipelineActual: 0, pipelineGoal: 0, targetProjGoal: 0, targetProjActual: 0, lifeGoalProduct: 0, lifeGoalWeight: 0, lifeActualProduct: 0, lifeActualWeight: 0 });
 
+  // Stage rows for the funnel chart. Same live-BFO-or-manual resolution
+  // the metrics table uses, flattened to the four numbers the funnel
+  // draws (count + pipeline $, each with its goal), so the picture and
+  // the table can never disagree.
+  const funnelStages = useMemo(() => renderStages.map((st) => {
+    const stageNum = Number(String(st.key).replace(/[^0-9]/g, ''));
+    const m = bfoMetrics[stageNum];
+    const live = (v) => (hasBfo && v !== null && v !== undefined ? v : null);
+    return {
+      key: st.key,
+      stageNum,
+      label: st.label,
+      countActual: live(m?.count) ?? (Number(st.activeActual) || 0),
+      countGoal: Number(st.activeGoal) || 0,
+      amtActual: live(m?.total) ?? (Number(st.pipelineActual) || 0),
+      amtGoal: Number(st.pipelineGoal) || 0,
+      isLive: hasBfo && m?.count !== null && m?.count !== undefined,
+    };
+  }), [renderStages, bfoMetrics, hasBfo]);
+
   const dealSizeAvgGoal = stageTotals.pipelineGoal && stageTotals.activeGoal
     ? Math.round(stageTotals.pipelineGoal / stageTotals.activeGoal) : 0;
   // Total Deal Size Actual matches the Excel `=AVERAGE(Activity!U2:U70)`
@@ -2180,6 +2201,17 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
               </tr>
             </tbody>
           </table>
+        </div>
+
+        {/* Pipeline funnel — the stage volumes from the metrics table drawn
+            as a horizontal funnel, with a red dotted goal line (and shaded
+            shortfall) on every stage that's running under its goal. */}
+        <div className={styles.section}>
+          <div className={styles.sectionTitle}><EL id="t-pipeline-funnel">PIPELINE FUNNEL</EL></div>
+          <PipelineFunnel
+            stages={funnelStages}
+            outcome={{ label: 'Closed YTD', value: fmtMoney(effectiveClosedYTD) }}
+          />
         </div>
 
         {/* Pipeline metrics */}
