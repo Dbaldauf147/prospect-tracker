@@ -343,6 +343,20 @@
 .divBoxHead {
   position: relative;
 }
+/* Stacked boxes keep the same width as the fanned-out ones. Without a
+   cap they stretch to the container, which only showed up once a top
+   level could be stacked as well as a sub-level. */
+.divSubItem > .divBoxWrap {
+  max-width: 15rem;
+}
+
+/* …except when the box fans its own children out across the page: then
+   it spans them, so the bus and drop lines land under the box they
+   belong to rather than off to one side of it. */
+.divSubItem > .divBoxWrapWide {
+  max-width: none;
+}
+
 .divSubItem > .divBoxWrap::before {
   content: '';
   position: absolute;
