@@ -55,11 +55,26 @@ const H = 480;
 const CY = 236;          // funnel centerline
 const MAX_HALF = 104;    // half-height of the tallest band
 const MIN_HALF = 5;      // so a 1-deal stage still draws something
-const X0 = 190;          // funnel left edge (abuts the entry bar)
-const X1 = 950;          // funnel right edge (left of the exit arrow)
+const X0 = 150;          // funnel left edge (abuts the axis bar)
+const X1 = 890;          // funnel right edge (left of the exit arrow)
+const AXIS_X = X0 - 14;  // left edge of the grey axis bar
+const OUT_X = X1 + 92;   // outcome block, right of the exit arrow
 const SEG_GAP = 2;       // surface gap between segments
 const MIN_SEG_W = 72;    // shortest a stage can be drawn, whatever its life
 const CALLOUT_W = 248;   // callout text block, for anti-collision spacing
+
+// Round tick values for the left axis — 1 / 2 / 2.5 / 5 × 10^k, aiming
+// for ~4 steps between the centerline and the tallest band.
+function niceTicks(max, count = 5) {
+  if (!(max > 0)) return [];
+  const raw = max / count;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const norm = raw / mag;
+  const step = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10) * mag;
+  const out = [];
+  for (let v = step; v <= max * 1.0001; v += step) out.push(v);
+  return out;
+}
 
 const fmtDays = (n) => (Number(n) > 0 ? `${Math.round(n)}d` : '—');
 
@@ -69,7 +84,7 @@ const fmtInt = (n) => (Number.isFinite(n) ? Math.round(n).toLocaleString('en-US'
 function fmtCompactMoney(n) {
   if (!Number.isFinite(n)) return '—';
   const a = Math.abs(n);
-  if (a >= 1e6) return `$${(n / 1e6).toFixed(a >= 1e7 ? 0 : 1)}M`;
+  if (a >= 1e6) return `$${(n / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace(/\.0$/, '')}M`;
   if (a >= 1e3) return `$${Math.round(n / 1e3).toLocaleString('en-US')}K`;
   return `$${Math.round(n).toLocaleString('en-US')}`;
 }
@@ -83,6 +98,12 @@ const METRICS = {
     goal: (s) => s.countGoal,
     fmt: fmtInt,
     unit: (v) => (Math.abs(v) === 1 ? 'opp' : 'opps'),
+    // Axis ticks, and the outcome block's closed / projected figures.
+    fmtAxis: fmtInt,
+    fmtOut: (v) => `${fmtInt(v)} opps`,
+    // A weighted count lands between whole opps, so keep one decimal.
+    fmtProj: (v) => `${(Math.round(v * 10) / 10).toLocaleString('en-US')} opps`,
+    sold: (o) => (Number.isFinite(o?.soldCount) ? o.soldCount : null),
   },
   amount: {
     key: 'amount',
@@ -92,6 +113,10 @@ const METRICS = {
     goal: (s) => s.amtGoal,
     fmt: fmtCompactMoney,
     unit: () => '',
+    fmtAxis: fmtCompactMoney,
+    fmtOut: fmtCompactMoney,
+    fmtProj: fmtCompactMoney,
+    sold: (o) => (Number.isFinite(o?.soldAmount) ? o.soldAmount : null),
   },
 };
 
@@ -127,7 +152,10 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
     // band it marks still fits inside the canvas.
     const max = Math.max(...rows.map((r) => Math.max(r.actual, r.goal)), 0);
     if (max <= 0) return null;
-    const half = (v) => (v > 0 ? Math.max(MIN_HALF, (v / max) * MAX_HALF) : 0);
+    // Bands get a floor so a near-zero stage still draws; the axis maps
+    // straight through, so its ticks stay true to the scale.
+    const scale = (v) => (v / max) * MAX_HALF;
+    const half = (v) => (v > 0 ? Math.max(MIN_HALF, scale(v)) : 0);
 
     // Segment LENGTH carries Avg Opp Life — a stage deals sit in twice as
     // long is drawn twice as long. Only when every stage has a life to
@@ -185,7 +213,20 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
       const wanted = Math.max(Math.min(segs[i].x0 + 6, W - CALLOUT_W), prevSameSide + CALLOUT_W);
       txs.push(Math.min(wanted, W - CALLOUT_W));
     }
-    return { segs: segs.map((g, i) => ({ ...g, tx: txs[i] })), byLife, totalLife };
+    // Weighted pipeline — each stage's value × the close rate that stage
+    // actually runs at. The same arithmetic as the table's Target
+    // Projection, read off the actuals rather than the goals.
+    const rated = segs.filter((g) => Number(g.closeRate) > 0);
+    const projected = rated.length
+      ? rated.reduce((a, g) => a + g.actual * Number(g.closeRate), 0)
+      : null;
+
+    return {
+      segs: segs.map((g, i) => ({ ...g, tx: txs[i] })),
+      byLife, totalLife,
+      max, scale, ticks: niceTicks(max),
+      projected, ratedCount: rated.length,
+    };
   }, [rows]);
 
   if (!geom) {
@@ -228,18 +269,70 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
           role="img"
           aria-label={`Pipeline funnel — ${metric.heading} by stage, segment length by average opportunity life. ${gapCount} of ${geom.segs.length} stages are short of goal.`}
         >
-          {/* Entry gate + exit arrow — chrome that frames the funnel. */}
-          <rect x={X0 - 14} y={CY - MAX_HALF - 22} width={12} height={(MAX_HALF + 22) * 2} rx={2} fill="#94a3b8" />
+          {/* Left axis — the entry bar, now scaled. A tick sits where a band
+              of that value would reach, so any band can be read off it. The
+              funnel is symmetric about the centerline, so ticks are labelled
+              on the upper half and mirrored unlabelled below. */}
+          <rect x={AXIS_X} y={CY - MAX_HALF - 22} width={12} height={(MAX_HALF + 22) * 2} rx={2} fill="#94a3b8" />
+          <line x1={AXIS_X - 8} y1={CY} x2={AXIS_X} y2={CY} stroke={CHROME} strokeWidth={1} />
+          <text x={AXIS_X - 12} y={CY + 4} fontSize={11} fill={INK_MUTED} textAnchor="end">0</text>
+          {geom.ticks.map((v) => (
+            <g key={`tick-${v}`}>
+              <line x1={AXIS_X - 8} y1={CY - geom.scale(v)} x2={AXIS_X} y2={CY - geom.scale(v)} stroke={CHROME} strokeWidth={1} />
+              <line x1={AXIS_X - 5} y1={CY + geom.scale(v)} x2={AXIS_X} y2={CY + geom.scale(v)} stroke={CHROME} strokeWidth={1} opacity={0.6} />
+              <text x={AXIS_X - 12} y={CY - geom.scale(v) + 4} fontSize={11} fill={INK_MUTED} textAnchor="end">
+                {metric.fmtAxis(v)}
+              </text>
+            </g>
+          ))}
+
+          {/* Exit arrow, then what the funnel is worth on the way out. */}
           <path
-            d={`M ${X1 + 8} ${CY - 24} L ${X1 + 52} ${CY - 24} L ${X1 + 52} ${CY - 40} L ${X1 + 96} ${CY} L ${X1 + 52} ${CY + 40} L ${X1 + 52} ${CY + 24} L ${X1 + 8} ${CY + 24} Z`}
+            d={`M ${X1 + 8} ${CY - 24} L ${X1 + 44} ${CY - 24} L ${X1 + 44} ${CY - 40} L ${X1 + 84} ${CY} L ${X1 + 44} ${CY + 40} L ${X1 + 44} ${CY + 24} L ${X1 + 8} ${CY + 24} Z`}
             fill="#dfe3e8"
           />
-          {outcome && (
-            <>
-              <text x={X1 + 108} y={CY - 4} fontSize={13} fontWeight={700} fill={INK}>{outcome.label}</text>
-              <text x={X1 + 108} y={CY + 15} fontSize={13} fill={INK_MUTED}>{outcome.value}</text>
-            </>
-          )}
+          {(() => {
+            const sold = metric.sold(outcome);
+            const proj = geom.projected;
+            const total = sold != null && proj != null ? sold + proj : null;
+            const rx = W - 8;
+            const row = (y, label, value, opts = {}) => (
+              <>
+                <text x={OUT_X} y={y} fontSize={opts.big ? 12.5 : 11.5} fill={opts.strong ? INK : INK_MUTED}>{label}</text>
+                <text x={rx} y={y} fontSize={opts.big ? 14 : 12.5} fontWeight={opts.strong ? 700 : 600} fill={opts.strong ? INK : INK} textAnchor="end">{value}</text>
+              </>
+            );
+            return (
+              <g>
+                <title>
+                  {`Projected = each stage's ${metric.heading.toLowerCase()} × that stage's close rate, summed across the funnel, added to what has already closed.`}
+                </title>
+                {sold != null ? (
+                  <>
+                    {row(CY - 26, outcome?.soldLabel || 'Closed YTD', metric.fmtOut(sold), { strong: true })}
+                    {row(CY - 6, '+ weighted pipeline', proj == null ? '—' : metric.fmtProj(proj))}
+                    <line x1={OUT_X} y1={CY + 4} x2={rx} y2={CY + 4} stroke={CHROME} strokeWidth={1} />
+                    {row(CY + 22, '= projected total', total == null ? '—' : metric.fmtProj(total), { strong: true, big: true })}
+                    {metricKey === 'amount' && outcome?.target > 0 && total != null && (
+                      <text x={rx} y={CY + 40} fontSize={11} fill={INK_MUTED} textAnchor="end">
+                        {`${Math.round((total / outcome.target) * 100)}% of ${fmtCompactMoney(outcome.target)} target`}
+                      </text>
+                    )}
+                  </>
+                ) : (
+                  /* Nothing closed to add to — show the funnel's own weight
+                     and say what's missing rather than a hollow total. */
+                  <>
+                    {row(CY - 10, 'weighted pipeline', proj == null ? '—' : metric.fmtProj(proj), { strong: true, big: true })}
+                    <text x={OUT_X} y={CY + 12} fontSize={10.5} fill={INK_MUTED}>closed count needs the Opps tab</text>
+                  </>
+                )}
+                {proj == null && (
+                  <text x={OUT_X} y={CY + 40} fontSize={10.5} fill={INK_MUTED}>no close rates yet</text>
+                )}
+              </g>
+            );
+          })()}
 
           {geom.segs.map((g) => {
             const fill = STAGE_FILL[g.stageNum] || '#2a78d6';
@@ -409,6 +502,8 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
             ? 'Every stage is at or above goal.'
             : `${gapCount} of ${geom.segs.length} stages below goal.`}
         </span>
+        <span className={styles.legendItem}>Left axis measures from the centre line.</span>
+        <span className={styles.legendItem}>Projected = each stage × its own close rate.</span>
         <span className={styles.legendItem}>Full numbers in the Pipeline Metrics table below.</span>
       </div>
     </div>

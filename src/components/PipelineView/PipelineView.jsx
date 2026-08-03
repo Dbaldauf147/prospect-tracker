@@ -1794,9 +1794,13 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       // Avg Opp Life — the funnel draws each stage as long as deals sit in it.
       lifeActual: live(m?.avgAge) ?? (Number(st.lifeActual) || 0),
       lifeGoal: Number(st.lifeGoal) || 0,
+      // Close Rate Actual — live rolling-365 rate when the Opps tab is
+      // loaded, the manual cell otherwise. Feeds the funnel's weighted
+      // "projected" figure, one stage at a time.
+      closeRate: oppsCloseRateByStage[stageNum]?.rate ?? (Number(st.closeActual) || 0),
       isLive: hasBfo && m?.count !== null && m?.count !== undefined,
     };
-  }), [renderStages, bfoMetrics, hasBfo]);
+  }), [renderStages, bfoMetrics, hasBfo, oppsCloseRateByStage]);
 
   const dealSizeAvgGoal = stageTotals.pipelineGoal && stageTotals.activeGoal
     ? Math.round(stageTotals.pipelineGoal / stageTotals.activeGoal) : 0;
@@ -2087,7 +2091,12 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           <div className={styles.sectionTitle}><EL id="t-pipeline-funnel">PIPELINE FUNNEL</EL></div>
           <PipelineFunnel
             stages={funnelStages}
-            outcome={{ label: 'Closed YTD', value: fmtMoney(effectiveClosedYTD) }}
+            outcome={{
+              soldLabel: 'Closed YTD',
+              soldAmount: effectiveClosedYTD,
+              soldCount: oppsClosedYTD ? oppsClosedYTD.deals.length : null,
+              target: Number(state.target) || 0,
+            }}
           />
         </div>
 
