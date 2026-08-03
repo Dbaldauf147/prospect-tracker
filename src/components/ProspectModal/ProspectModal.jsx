@@ -27,14 +27,9 @@ import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions, bui
 import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import {
   divisionsFor,
-  divisionRulesFor,
-  companiesMatchingKeyword,
   buildDivisionTree,
   addDivisionPatch,
-  addDivisionsPatch,
   removeDivisionPatch,
-  addDivisionRulePatch,
-  removeDivisionRulePatch,
 } from '../../utils/divisions';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
@@ -2265,11 +2260,8 @@ function DivisionsChart({ tree, onRemove }) {
 function DivisionsSection({ parentId, parentCompany, prospects, settings, updateSettings }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [ruleText, setRuleText] = useState('');
-  const [showRuleInput, setShowRuleInput] = useState(false);
 
   const divisions = divisionsFor(settings, parentId);
-  const rules = divisionRulesFor(settings, parentId);
 
   // Every company in the tracker, sorted, minus this one.
   const companies = useMemo(() => (prospects || [])
@@ -2310,17 +2302,13 @@ function DivisionsSection({ parentId, parentCompany, prospects, settings, update
     return [...starts, ...includes].slice(0, 40);
   }, [query, companies]);
 
+  // Divisions are mapped one company at a time, on purpose: nothing here
+  // adds a company you didn't tick. Name-similarity is a poor proxy for
+  // ownership in both directions — "MGPA, a Blackrock Co." matches on the
+  // name without being how you'd map it, and a division under a different
+  // brand never matches at all.
   const add = (c) => updateSettings(addDivisionPatch(settings, parentId, c));
-  const addMany = (list) => updateSettings(addDivisionsPatch(settings, parentId, list));
   const remove = (id) => updateSettings(removeDivisionPatch(settings, parentId, id));
-  const addRule = (word) => updateSettings(addDivisionRulePatch(settings, parentId, word, companies));
-  const removeRule = (i) => updateSettings(removeDivisionRulePatch(settings, parentId, i));
-
-  // Shared by the keyword-rule chips below the map.
-  const xStyle = {
-    border: 'none', background: 'transparent',
-    cursor: 'pointer', fontSize: '0.85rem', lineHeight: 1, padding: '0 0.2rem', fontFamily: 'inherit',
-  };
 
   return (
     <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
@@ -2341,7 +2329,8 @@ function DivisionsSection({ parentId, parentCompany, prospects, settings, update
         <div style={{ marginTop: '0.6rem' }}>
           <p style={{ fontSize: '0.72rem', color: '#94A3B8', margin: '0 0 0.5rem' }}>
             Map the tracker companies that are divisions of {parentCompany || 'this company'} — subsidiaries,
-            operating brands, regional entities. My Accounts rolls their sites up under the parent.
+            operating brands, regional entities. Search and tick each one; nothing is mapped for you.
+            My Accounts rolls their sites up under the parent.
           </p>
 
           {/* The map itself. Doubles as the editor for this company's own
@@ -2379,75 +2368,8 @@ function DivisionsSection({ parentId, parentCompany, prospects, settings, update
                   {c.status && <span style={{ fontSize: '0.65rem', color: '#94A3B8' }}>{c.status}</span>}
                 </label>
               ))}
-              {matches.length > 0 && matches.some(c => !divisionIds.has(c.id)) && (
-                <button
-                  type="button"
-                  onClick={() => addMany(matches.filter(c => !divisionIds.has(c.id)))}
-                  style={{ display: 'block', width: '100%', padding: '0.35rem', border: 'none', borderTop: '1px solid var(--color-border-light)', background: 'transparent', color: 'var(--color-accent)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
-                >
-                  Add all {matches.length} match{matches.length === 1 ? '' : 'es'}
-                </button>
-              )}
             </div>
           )}
-
-          {/* Auto-map by keyword: folds in every company whose name carries
-              the keyword, and keeps the rule visible so the intent behind
-              the mapping is legible later. */}
-          <div style={{ marginTop: '0.6rem' }}>
-            {rules.length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', marginBottom: '0.35rem' }}>
-                {rules.map((rule, i) => (
-                  <span key={`${rule}-${i}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', background: '#EFF6FF', border: '1px solid #BFDBFE', color: '#1D4ED8', borderRadius: 6, padding: '0.15rem 0.3rem 0.15rem 0.5rem', fontSize: '0.7rem', fontWeight: 600 }}>
-                    Contains “{rule}”
-                    <span style={{ color: '#94A3B8', fontWeight: 500 }}>
-                      {(() => {
-                        const n = companiesMatchingKeyword(companies, parentId, rule).length;
-                        return `${n} match${n === 1 ? '' : 'es'}`;
-                      })()}
-                    </span>
-                    <button type="button" onClick={() => removeRule(i)} style={{ ...xStyle, color: '#1D4ED8' }} aria-label={`Remove rule ${rule}`}>&times;</button>
-                  </span>
-                ))}
-              </div>
-            )}
-            {!showRuleInput ? (
-              <button
-                type="button"
-                onClick={() => { setShowRuleInput(true); setRuleText(''); }}
-                style={{ padding: '0.3rem 0.6rem', border: '1px dashed #CBD5E1', borderRadius: 6, background: 'transparent', color: 'var(--color-accent)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
-              >
-                + Auto-map by keyword
-              </button>
-            ) : (
-              <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
-                <input
-                  type="text"
-                  value={ruleText}
-                  onChange={e => setRuleText(e.target.value)}
-                  placeholder={`e.g. “${(parentCompany || 'Acme').split(/\s+/)[0]}”`}
-                  autoFocus
-                  className={styles.input}
-                  style={{ fontSize: '0.72rem', flex: 1 }}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && ruleText.trim()) { addRule(ruleText.trim()); setRuleText(''); setShowRuleInput(false); }
-                    if (e.key === 'Escape') setShowRuleInput(false);
-                  }}
-                />
-                <button
-                  type="button"
-                  disabled={!ruleText.trim()}
-                  onClick={() => { addRule(ruleText.trim()); setRuleText(''); setShowRuleInput(false); }}
-                  style={{ padding: '0.3rem 0.6rem', border: 'none', borderRadius: 6, background: ruleText.trim() ? 'var(--color-accent)' : '#E2E8F0', color: '#fff', fontSize: '0.7rem', fontWeight: 600, cursor: ruleText.trim() ? 'pointer' : 'default', fontFamily: 'inherit' }}
-                >Add</button>
-                <button
-                  type="button"
-                  onClick={() => setShowRuleInput(false)}
-                  style={{ padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 6, background: 'var(--color-surface)', color: '#64748B', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit' }}
-                >Cancel</button>
-              </div>
-            )}
-          </div>
 
           {divisions.length === 0 && !query.trim() && (
             <p style={{ fontSize: '0.7rem', color: '#94A3B8', margin: '0.5rem 0 0' }}>
