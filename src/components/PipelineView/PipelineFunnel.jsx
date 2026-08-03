@@ -33,10 +33,14 @@ const STAGE_NAME = {
   6: 'Negotiate to Win',
 };
 
-// Status "critical" — reserved for the goal/gap cue, never a stage color.
-// Always paired with a written "short of goal" label, never color alone.
+// Reserved status colors for the goal marker — never a stage color, and
+// always paired with a written "short of / above goal" label so the cue
+// never rests on hue alone. Red marks a shortfall (goal line sits outside
+// the band, shortfall shaded); green marks a stage that hit its goal
+// (line sits inside the band, the surplus is the band itself).
 const GAP_RED = '#d03b3b';
 const GAP_SHADE = 'rgba(208, 59, 59, 0.14)';
+const MET_GREEN = '#0ca30c';
 
 const INK = '#0b0b0b';
 const INK_MUTED = '#898781';
@@ -91,7 +95,8 @@ function withUnit(metric, v) {
 }
 
 export function PipelineFunnel({ stages = [], outcome = null }) {
-  const [metricKey, setMetricKey] = useState('deals');
+  // Pipeline $ is the default read of the funnel; Deals is a click away.
+  const [metricKey, setMetricKey] = useState('amount');
   const [hover, setHover] = useState(null); // { i, x, y, w } — px inside .plot
   const plotRef = useRef(null);
   const metric = METRICS[metricKey];
@@ -132,6 +137,9 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
         leftH, rightH, goalH,
         midH: (leftH + rightH) / 2,
         gap: gap > 0 ? gap : 0,
+        over: gap < 0 ? -gap : 0,
+        // A zero/blank goal has no meaningful line to draw.
+        hasGoal: r.goal > 0,
         above: i % 2 === 0,
       };
     });
@@ -223,6 +231,17 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
                     <line x1={g.x0} y1={CY + g.goalH} x2={g.x1} y2={CY + g.goalH} stroke={GAP_RED} strokeWidth={2} strokeDasharray="6 5" strokeLinecap="round" />
                   </>
                 )}
+                {/* Goal met: the same dotted marker in green. The line falls
+                    inside the band here, so the band above it *is* the
+                    surplus — no shading needed to read it. Each dash gets a
+                    white casing, since green-on-stage-blue is too close in
+                    lightness to separate on its own. */}
+                {g.gap === 0 && g.hasGoal && [CY - g.goalH, CY + g.goalH].map((y, k) => (
+                  <g key={`goal-${k}`}>
+                    <line x1={g.x0} y1={y} x2={g.x1} y2={y} stroke="#fff" strokeWidth={5} strokeDasharray="6 5" strokeLinecap="round" opacity={0.9} />
+                    <line x1={g.x0} y1={y} x2={g.x1} y2={y} stroke={MET_GREEN} strokeWidth={2} strokeDasharray="6 5" strokeLinecap="round" />
+                  </g>
+                ))}
                 {/* Stage number, mirroring the funnel reference. A band too
                     thin to hold the circle gets the number in stage color
                     just outside it instead, so no segment goes unlabeled. */}
@@ -243,7 +262,7 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
                     fontSize={18} fontWeight={700} fill={fill} textAnchor="middle"
                   >{g.stageNum}</text>
                 )}
-                <title>{`Stage ${g.stageNum} — ${STAGE_NAME[g.stageNum] || ''}\n${metric.heading}: ${withUnit(metric, g.actual)}\nGoal: ${withUnit(metric, g.goal)}${g.gap > 0 ? `\nShort by ${withUnit(metric, g.gap)}` : ''}`}</title>
+                <title>{`Stage ${g.stageNum} — ${STAGE_NAME[g.stageNum] || ''}\n${metric.heading}: ${withUnit(metric, g.actual)}\nGoal: ${withUnit(metric, g.goal)}${g.gap > 0 ? `\nShort by ${withUnit(metric, g.gap)}` : g.over > 0 ? `\nAbove goal by ${withUnit(metric, g.over)}` : ''}`}</title>
                 {/* Invisible hit area so thin bands are still hoverable. */}
                 <rect x={g.x0} y={CY - MAX_HALF - 10} width={g.x1 - g.x0} height={(MAX_HALF + 10) * 2} fill="transparent" />
               </g>
@@ -277,8 +296,14 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
                   <text x={tx} y={gapY} fontSize={12.5} fontWeight={700} fill={GAP_RED}>
                     ▼ Gap — {withUnit(metric, g.gap)} short of goal
                   </text>
+                ) : g.over > 0 ? (
+                  <text x={tx} y={gapY} fontSize={12.5} fontWeight={700} fill={MET_GREEN}>
+                    ▲ {withUnit(metric, g.over)} above goal
+                  </text>
                 ) : (
-                  <text x={tx} y={gapY} fontSize={12.5} fill={INK_MUTED}>✓ At or above goal</text>
+                  <text x={tx} y={gapY} fontSize={12.5} fontWeight={700} fill={g.hasGoal ? MET_GREEN : INK_MUTED}>
+                    {g.hasGoal ? '✓ Exactly at goal' : 'No goal set'}
+                  </text>
                 )}
               </g>
             );
@@ -304,7 +329,9 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
             <div className={styles.tipRow}><span>Goal</span><strong>{withUnit(metric, hovered.goal)}</strong></div>
             {hovered.gap > 0
               ? <div className={styles.tipGap}>▼ {withUnit(metric, hovered.gap)} short of goal</div>
-              : <div className={styles.tipOk}>✓ At or above goal</div>}
+              : hovered.over > 0
+                ? <div className={styles.tipOk}>▲ {withUnit(metric, hovered.over)} above goal</div>
+                : <div className={hovered.hasGoal ? styles.tipOk : styles.tipNote}>{hovered.hasGoal ? '✓ Exactly at goal' : 'No goal set'}</div>}
             {hovered.isLive && <div className={styles.tipNote}>Live from BFO Activity</div>}
           </div>
         )}
@@ -313,7 +340,11 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
       <div className={styles.legend}>
         <span className={styles.legendItem}>
           <svg width="26" height="10" aria-hidden="true"><line x1="1" y1="5" x2="25" y2="5" stroke={GAP_RED} strokeWidth="2" strokeDasharray="6 5" strokeLinecap="round" /></svg>
-          Goal, drawn only where the stage is short — shaded band is the gap
+          Goal — stage is short, shaded band is the gap
+        </span>
+        <span className={styles.legendItem}>
+          <svg width="26" height="10" aria-hidden="true"><line x1="1" y1="5" x2="25" y2="5" stroke={MET_GREEN} strokeWidth="2" strokeDasharray="6 5" strokeLinecap="round" /></svg>
+          Goal — stage is at or above it, band beyond the line is the surplus
         </span>
         <span className={styles.legendItem}>
           {gapCount === 0
