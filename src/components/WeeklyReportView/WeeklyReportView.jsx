@@ -304,7 +304,10 @@ export function WeeklyReportView({ settings, cdmName = '' }) {
         }),
       });
       const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) throw new Error(data?.error || `HTTP ${resp.status}`);
+      // The endpoint streams, so it commits a 200 before it knows whether the
+      // review succeeded — a failure after that point arrives as `error` in
+      // the body rather than as a status code.
+      if (!resp.ok || data?.error) throw new Error(data?.error || `HTTP ${resp.status}`);
       if (!data?.review) throw new Error('No review returned.');
 
       const entry = {
