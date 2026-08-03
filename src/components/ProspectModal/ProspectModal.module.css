@@ -255,7 +255,9 @@
   color: var(--color-text);
   font-size: 0.72rem;
   line-height: 1.25;
-  padding: 0.4rem 0.6rem;
+  /* Wide side padding keeps the label clear of the + / × controls pinned
+     to the box's top corners. */
+  padding: 0.4rem 1.1rem;
   text-align: center;
   min-height: 2.4rem;
   display: flex;
