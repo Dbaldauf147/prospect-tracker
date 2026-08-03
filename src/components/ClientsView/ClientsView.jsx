@@ -25,10 +25,20 @@ import {
   SelectCell, MultiSelectCell, LinkColumnsModal,
 } from '../common/columnLinks';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
+import { getIndicativeAnalysisMeta } from '../../utils/firestoreSync';
 // Shared with the Issues tab so both surfaces agree on what's expired.
 import { isInactiveAgreement, normClientName, soonestExpiration } from '../../utils/clientIssues';
 
 const MS_PER_DAY = 86400000;
+
+// Master Analysis lookups for clients whose record carries no saved-analysis
+// marker, cached for the session (prospectId → meta | null) so switching
+// subtabs or re-filtering doesn't re-read the same documents. Saves made
+// after this page loaded arrive through the record marker instead, so a
+// cached miss can't hide a fresh save.
+const analysisMetaCache = new Map();
+// How many of those metadata reads to run at once.
+const ANALYSIS_PROBE_BATCH = 8;
 
 // A client row is tinted light red as a "needs a status" warning when its
 // soonest renewal is inside this many days AND the Status column is still
@@ -741,6 +751,40 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     if (touchedRemote && updateSettings) updateSettings({ tablePrefs: nextTablePrefs });
   }, [settings, updateSettings]);
 
+  // Same one-time injection for the Master Analysis column, under its own
+  // flag so users who already ran the Tier migration still get it.
+  useEffect(() => {
+    if (!settings) return;
+    const nextTablePrefs = { ...(settings.tablePrefs || {}) };
+    let touchedRemote = false;
+    for (const tid of ['clients', 'oldclients']) {
+      const flag = `clients-view:mig-master-analysis-col-${tid}`;
+      let alreadyDone = true;
+      try { alreadyDone = !!localStorage.getItem(flag); } catch { /* storage blocked */ }
+      if (alreadyDone) continue;
+      const remote = settings.tablePrefs?.[tid]?.visible;
+      let lsSaved = null;
+      try {
+        const raw = JSON.parse(localStorage.getItem(`prospect-col-visible-${tid}`));
+        if (Array.isArray(raw)) lsSaved = raw;
+      } catch { /* ignore malformed */ }
+      const saved = Array.isArray(remote) && remote.length > 0
+        ? remote
+        : (Array.isArray(lsSaved) && lsSaved.length > 0 ? lsSaved : null);
+      try { localStorage.setItem(flag, '1'); } catch { /* storage blocked */ }
+      if (!saved || saved.includes('masterAnalysis')) continue;
+      // Sits right after Sites, matching the column order below.
+      const next = [...saved];
+      const sitesIdx = next.indexOf('numberOfSites');
+      if (sitesIdx >= 0) next.splice(sitesIdx + 1, 0, 'masterAnalysis');
+      else next.push('masterAnalysis');
+      try { localStorage.setItem(`prospect-col-visible-${tid}`, JSON.stringify(next)); } catch { /* storage blocked */ }
+      nextTablePrefs[tid] = { ...(settings.tablePrefs?.[tid] || {}), visible: next };
+      touchedRemote = true;
+    }
+    if (touchedRemote && updateSettings) updateSettings({ tablePrefs: nextTablePrefs });
+  }, [settings, updateSettings]);
+
   // User-configurable column-to-Dropdowns-list bindings, mirroring the
   // Deals / Opps 2 "Link columns" feature. Lets the Status column on
   // this table pull picks from a Dropdowns-tab list.
@@ -831,15 +875,58 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     return Array.from(s).sort();
   }, [prospects]);
 
+  // Master Analysis status per client. Saves made from Utility Lookup
+  // stamp a lightweight `indicativeAnalysisMeta` marker on the prospect
+  // record, so most rows resolve with no extra reads (and a save made
+  // while this page is open shows up as soon as the record syncs).
+  // Analyses saved before that marker existed live only in the prospect's
+  // /analyses subcollection, so rows without a marker get one metadata-
+  // only document read each rather than wrongly reading "Not saved".
+  const [analysisProbes, setAnalysisProbes] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    const ids = clients
+      .filter(c => c?.id && !c.indicativeAnalysisMeta)
+      .map(c => c.id);
+    if (ids.length === 0) return undefined;
+    (async () => {
+      // Cache hits resolve without a read, so a batch mixing known and
+      // unknown ids costs only the unknown ones.
+      for (let i = 0; i < ids.length; i += ANALYSIS_PROBE_BATCH) {
+        const batch = ids.slice(i, i + ANALYSIS_PROBE_BATCH);
+        const metas = await Promise.all(batch.map(id => (
+          analysisMetaCache.has(id)
+            ? analysisMetaCache.get(id)
+            : getIndicativeAnalysisMeta(id).catch(() => null)
+        )));
+        if (cancelled) return;
+        const found = {};
+        batch.forEach((id, j) => {
+          analysisMetaCache.set(id, metas[j] || null);
+          found[id] = metas[j] || null;
+        });
+        setAnalysisProbes(prev => ({ ...prev, ...found }));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [clients]);
+
   const rows = useMemo(() => filtered.map(c => {
     const ck = normClientName(c.company);
     const clientDeals = dealsByClient.get(ck) || [];
     const next = soonestExpiration(clientDeals);
     const untracked = !!untrackedMap[ck];
     const tt = resolveTargetTier(c);
+    // Marker on the record first, then the probe. `undefined` means the
+    // probe hasn't come back yet — distinct from a probe that returned
+    // nothing, so the cell can say "checking" instead of "not saved".
+    const analysis = c.indicativeAnalysisMeta
+      || (c.id && Object.prototype.hasOwnProperty.call(analysisProbes, c.id) ? analysisProbes[c.id] : undefined);
     return {
       ...c,
       id: c.id,
+      masterAnalysis: analysis || null,
+      masterAnalysisChecked: analysis !== undefined,
       targetTier: tt.tier,
       targetTierName: tt.name,
       targetTierSource: tt.source,
@@ -860,7 +947,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       notes: notesMap[ck] || '',
       untracked,
     };
-  }), [filtered, dealsByClient, managerMap, inPersonMap, louisvilleMap, statusMap, statusSetAtMap, notesMap, untrackedMap, resolveTargetTier]);
+  }), [filtered, dealsByClient, managerMap, inPersonMap, louisvilleMap, statusMap, statusSetAtMap, notesMap, untrackedMap, resolveTargetTier, analysisProbes]);
 
   // Drive the "Reached out to CM" 30-day timer: start the clock for any such
   // status that has no stamp yet (e.g. set before this shipped), and clear
@@ -1042,6 +1129,53 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       render: (row) => (
         <span style={{ color: '#475569' }}>{row.numberOfSites || '—'}</span>
       ),
+    },
+    {
+      key: 'masterAnalysis', label: 'Master Analysis', defaultWidth: 140,
+      // Whether a Master Analysis has been saved to this company's popup
+      // (Utility Lookup → ⬇ Master Analysis → Save to Company). Saved
+      // first so a sort surfaces the companies that have one.
+      getSortValue: (row) => (row.masterAnalysis ? 1 : 0),
+      getFilterValue: (row) => (
+        row.masterAnalysis ? 'Saved' : row.masterAnalysisChecked ? 'Not saved' : 'Checking'
+      ),
+      // The row value is the analysis metadata object, so the export needs
+      // its own mapper or every saved row would land as "[object Object]".
+      exportValue: (row) => {
+        if (!row.masterAnalysis) return row.masterAnalysisChecked ? 'Not saved' : '';
+        const when = row.masterAnalysis.savedAt ? new Date(row.masterAnalysis.savedAt) : null;
+        return when && !Number.isNaN(when.getTime()) ? `Saved ${fmtDate(when)}` : 'Saved';
+      },
+      render: (row) => {
+        if (!row.masterAnalysis) {
+          if (!row.masterAnalysisChecked) {
+            return <span style={{ color: '#CBD5E1' }} title="Checking for a saved Master Analysis…">…</span>;
+          }
+          return (
+            <span
+              style={{ color: '#94A3B8' }}
+              title={`No Master Analysis saved to ${row.company || 'this company'}'s popup. Save one from Utility Lookup — load the sites, then "⬇ Master Analysis" → "Save to Company".`}
+            >—</span>
+          );
+        }
+        const meta = row.masterAnalysis;
+        const when = meta.savedAt ? new Date(meta.savedAt) : null;
+        const whenLabel = when && !Number.isNaN(when.getTime()) ? fmtDate(when) : null;
+        const kb = meta.sizeBytes ? ` · ${Math.round(meta.sizeBytes / 1024).toLocaleString()} KB` : '';
+        return (
+          <span
+            title={`${meta.fileName || 'Master Analysis'} — saved ${whenLabel || 'previously'}${kb}. Open this company's popup to download it.`}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}
+          >
+            <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: '#DCFCE7', color: '#166534', whiteSpace: 'nowrap' }}>
+              Saved
+            </span>
+            {whenLabel && (
+              <span style={{ fontSize: '0.68rem', color: '#64748B', fontVariantNumeric: 'tabular-nums' }}>{whenLabel}</span>
+            )}
+          </span>
+        );
+      },
     },
     {
       key: 'soonestExpiration', label: 'Soonest Expiration', defaultWidth: 150,
