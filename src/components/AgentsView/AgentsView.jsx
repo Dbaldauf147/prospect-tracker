@@ -14,6 +14,14 @@ import { computeNewBfoOpps, computeNewBfoMissingData } from '../../utils/newBfoO
 import { resolveSfUrl } from '../../utils/salesforceLeads';
 import { OppInfoModal } from '../OppsView2/OppsView2';
 import styles from './AgentsView.module.css';
+import {
+  AGENTS_SETTINGS_KEY,
+  AGENTS_RUN_INTERVAL_DAYS,
+  agentsDaysSinceRun,
+  agentsDaysUntilDue,
+  agentsLastRunMs,
+} from '../../utils/agentsRunReminder';
+import { useAgentsRunDue } from '../../hooks/useAgentsRunDue';
 
 // Manual BFO Opportunity tags the user picked for an email recipient
 // (or meeting contact) that didn't auto-match an Opps-tab row. Keyed
@@ -1366,6 +1374,21 @@ function PromptLibrary({ prompts, onChange }) {
 
 export function AgentsView({ prospects = [], settings, updateProspect, updateSettings }) {
   const { user } = useAuth();
+  // "Run the prompts" reminder. The stamp lives on synced settings, so the
+  // banner here and the Sidebar's red badge always agree — and marking a run
+  // on one device clears it on the others.
+  const agentsLastRunAt = settings?.[AGENTS_SETTINGS_KEY] || '';
+  const agentsRunDue = useAgentsRunDue(agentsLastRunAt, !!settings);
+  const agentsDaysSince = agentsDaysSinceRun(agentsLastRunAt);
+  const agentsDaysLeft = agentsDaysUntilDue(agentsLastRunAt);
+  const agentsLastRunLabel = (() => {
+    const ms = agentsLastRunMs(agentsLastRunAt);
+    return ms == null ? '' : new Date(ms).toLocaleString();
+  })();
+  function markAgentsRan() {
+    if (!updateSettings) return;
+    updateSettings({ [AGENTS_SETTINGS_KEY]: new Date().toISOString() });
+  }
   // Configured per-user via Settings → CDM Name. The Sent emails section
   // matches HubSpot's hs_email_from_email against this address; blank
   // means "no outbound to show yet — set your work email in Settings".
@@ -2933,6 +2956,39 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
           </>
         )}
       </div>
+
+      {agentsRunDue ? (
+        <div className={styles.runAlert} role="status">
+          <span className={styles.runAlertIcon} aria-hidden="true">!</span>
+          <div className={styles.runAlertText}>
+            <strong>Time to run the agent prompts.</strong>{' '}
+            {agentsDaysSince == null
+              ? 'No run recorded yet.'
+              : `Last run ${agentsLastRunLabel} (${agentsDaysSince} day${agentsDaysSince === 1 ? '' : 's'} ago).`}
+            {' '}Work through the prompts below, then mark the run to clear this
+            alert — it comes back every {AGENTS_RUN_INTERVAL_DAYS} days.
+          </div>
+          <button
+            type="button"
+            className={styles.runAlertBtn}
+            onClick={markAgentsRan}
+            disabled={!updateSettings}
+            title={`Record that you've run the agent prompts. Clears this alert and the red dot on the Agents tab for ${AGENTS_RUN_INTERVAL_DAYS} days.`}
+          >Agents Ran</button>
+        </div>
+      ) : (
+        <div className={styles.runStatus}>
+          Agent prompts last run {agentsLastRunLabel}
+          {agentsDaysLeft != null && ` · next reminder in ${agentsDaysLeft} day${agentsDaysLeft === 1 ? '' : 's'}`}
+          <button
+            type="button"
+            className={styles.runStatusBtn}
+            onClick={markAgentsRan}
+            disabled={!updateSettings}
+            title="Record another run now, restarting the reminder clock."
+          >Agents Ran</button>
+        </div>
+      )}
 
       <div className={styles.subTabs}>
         <button

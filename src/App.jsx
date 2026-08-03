@@ -9,6 +9,8 @@ import { useSheetSync } from './hooks/useSheetSync';
 import { useFilters } from './hooks/useFilters';
 import { useUserSettings } from './hooks/useUserSettings';
 import { useIssues } from './hooks/useIssues';
+import { useAgentsRunDue } from './hooks/useAgentsRunDue';
+import { AGENTS_SETTINGS_KEY } from './utils/agentsRunReminder';
 import { Sidebar } from './components/Sidebar';
 import { SettingsBackupsModal } from './components/SettingsBackupsModal';
 import { CdmNameModal } from './components/CdmNameModal';
@@ -92,6 +94,9 @@ function App() {
   const whatToDoTodayEnabled = settingsLoaded && settings.whatToDoTodayEnabled !== false;
   // Open (non-snoozed) issue count for the sidebar badge. Shares the same
   // hook the Issues tab uses so the badge and the tab never disagree.
+  // Is the Agents tab's "run the prompts" reminder up? Gated on settings
+  // having loaded so the badge doesn't flash before the stamp arrives.
+  const agentsRunDue = useAgentsRunDue(settings[AGENTS_SETTINGS_KEY], settingsLoaded);
   const { openCount: openIssuesCount } = useIssues({ prospects, cdmName, user, marketingLeads: settings.marketingLeads, serviceOverrides: settings.serviceOverrides, settings });
   useSheetSync(user);
   const {
@@ -293,6 +298,7 @@ function App() {
         onToggleDailyLog={() => updateSettings({ dailyLogEnabled: !dailyLogEnabled })}
         onToggleWhatToDoToday={() => updateSettings({ whatToDoTodayEnabled: !whatToDoTodayEnabled })}
         issuesCount={openIssuesCount}
+        agentsRunDue={agentsRunDue}
         prospects={prospects}
         contacts={effectiveHubspotContacts}
         onSelectProspect={handleSelect}
