@@ -223,3 +223,63 @@ export function removeDivisionRulePatch(settings, parentId, ruleIndex) {
   else rules[parentId] = existing;
   return { divisionRules: rules };
 }
+
+// ── Division contacts ───────────────────────────────────────────────
+// Who covers a division, stored beside the mapping:
+//   settings.divisionContacts[divisionId] = [{ id, name, jobtitle, email }, …]
+//
+// Keyed by the DIVISION's id — the same id the chart nests children
+// under — so a contact assigned to a division stays with it wherever it
+// sits, and a typed division can carry contacts just as a linked one can.
+// The name is stored alongside the id so a contact that later drops out
+// of the company's contact list still shows who was on it.
+
+export function divisionContactsFor(settings, divisionId) {
+  if (!divisionId) return [];
+  return (settings?.divisionContacts || {})[divisionId] || [];
+}
+
+// `contact` is { id, name, jobtitle, email } — already flattened by the
+// caller, since contacts arrive in a few shapes (HubSpot vid vs id).
+// Returns null when the contact is blank or already on this division, so
+// the caller can leave its picker open rather than appearing to accept it.
+export function addDivisionContactPatch(settings, divisionId, contact) {
+  const id = String(contact?.id || '').trim();
+  const name = String(contact?.name || '').trim();
+  if (!divisionId || (!id && !name)) return null;
+  const map = { ...(settings?.divisionContacts || {}) };
+  const list = map[divisionId] || [];
+  const key = id || nameKey(name);
+  if (list.some(c => (String(c.id || '') || nameKey(c.name)) === key)) return null;
+  map[divisionId] = [...list, {
+    id,
+    name,
+    jobtitle: String(contact?.jobtitle || ''),
+    email: String(contact?.email || ''),
+  }];
+  return { divisionContacts: map };
+}
+
+export function removeDivisionContactPatch(settings, divisionId, contactKey) {
+  const map = { ...(settings?.divisionContacts || {}) };
+  const next = (map[divisionId] || []).filter(c =>
+    (String(c.id || '') || nameKey(c.name)) !== contactKey);
+  if (next.length === 0) delete map[divisionId];
+  else map[divisionId] = next;
+  return { divisionContacts: map };
+}
+
+// Stable key for a stored contact — id when it has one, name otherwise,
+// so a typed-in name can still be removed.
+export function divisionContactKey(c) {
+  return String(c?.id || '') || nameKey(c?.name);
+}
+
+// Carry a division's contacts across when a linked entry is renamed into
+// a typed one, so the people on it don't fall off with the id change.
+export function moveDivisionContactsPatch(settings, fromId, toId) {
+  const map = settings?.divisionContacts || {};
+  const list = map[fromId];
+  if (!fromId || !toId || fromId === toId || !list?.length || map[toId]) return null;
+  return { divisionContacts: { ...map, [toId]: list.map(c => ({ ...c })) } };
+}

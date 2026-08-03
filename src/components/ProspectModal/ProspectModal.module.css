@@ -336,6 +336,13 @@
 .divBoxWrap {
   position: relative;
 }
+
+/* The box and its corner controls. Separate from .divBoxWrap because the
+   wrapper also holds the contact chips below the box — anchoring the
+   controls to the wrapper put them over the chips. */
+.divBoxHead {
+  position: relative;
+}
 .divSubItem > .divBoxWrap::before {
   content: '';
   position: absolute;
