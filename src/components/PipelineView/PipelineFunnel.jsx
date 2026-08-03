@@ -540,9 +540,23 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
                     x={g.cx}
                     // Above the band — and above the goal line too when this
                     // stage has a gap, so the digit never sits on the dashes.
-                    y={BASE_Y - Math.max(g.h, g.gap > 0 ? g.goalH : 0) - 10}
+                    y={BASE_Y - Math.max(g.h, g.gap > 0 ? g.goalH : 0) - (metricKey === 'needed' && g.neededCount > 0 && g.gap > 0 ? 24 : 10)}
                     fontSize={18} fontWeight={700} fill={fill} textAnchor="middle"
                   >{g.stageNum}</text>
+                )}
+                {/* The plan's opportunity count, on the line it belongs to.
+                    Without it a change to a stage's goal DEAL SIZE moves
+                    the number of opps but not the pipeline $ the stage
+                    needs — the line stays put and the edit looks inert. */}
+                {metricKey === 'needed' && g.neededCount > 0 && (
+                  <text
+                    x={g.cx}
+                    y={BASE_Y - g.goalH - 6}
+                    fontSize={11.5}
+                    fontWeight={700}
+                    fill={g.gap > 0 ? GAP_RED : MET_GREEN}
+                    textAnchor="middle"
+                  >{`${fmtInt(g.neededCount)} opp${g.neededCount === 1 ? '' : 's'}`}</text>
                 )}
                 <title>{`Stage ${g.stageNum} — ${STAGE_NAME[g.stageNum] || ''}\n${metric.heading}: ${withUnit(metric, g.actual)}\n${metric.goalLabel}: ${withUnit(metric, g.goal)}${g.gap > 0 ? `\n${withUnit(metric, g.gap)} ${metric.shortWord}` : g.over > 0 ? `\n${withUnit(metric, g.over)} ${metric.overWord}` : ''}\nAvg opp life: ${fmtDays(g.life)}`}</title>
                 {/* Invisible hit area so thin bands are still hoverable. */}
