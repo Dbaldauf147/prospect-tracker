@@ -53,7 +53,13 @@ const CHROME = '#c3c2b7';
 
 // Canvas. Rendered responsively via viewBox, so these are layout units.
 const W = 1200;
-const H = 480;
+// The drawing keeps its original coordinates; the view is cropped to the
+// band of canvas still in use now that the per-stage callouts above and
+// below the funnel are gone. Top clears the tallest goal line and the
+// stage numbers that sit above a thin band; bottom clears the baseline
+// and its "0" axis label.
+const VIEW_TOP = 108;
+const VIEW_H = 262;
 const BASE_Y = 348;      // the zero line the funnel sits on
 const MAX_H = 208;       // height of the tallest band, above the baseline
 const MIN_H = 6;         // so a 1-deal stage still draws something
@@ -63,7 +69,6 @@ const AXIS_X = X0 - 14;  // left edge of the grey axis bar
 const OUT_X = X1 + 92;   // outcome block, right of the exit arrow
 const SEG_GAP = 4;       // surface gap between the stage boxes
 const MIN_SEG_W = 72;    // shortest a stage can be drawn, whatever its life
-const CALLOUT_W = 248;   // callout text block, for anti-collision spacing
 
 // Round tick values for the left axis — 1 / 2 / 2.5 / 5 × 10^k, aiming
 // for ~4 steps between the centerline and the tallest band.
@@ -200,20 +205,9 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
         life, lifeGoal,
         // Avg Opp Life is a "less than" target — over it is the bad side.
         lifeOver: life > 0 && lifeGoal > 0 && life > lifeGoal,
-        above: i % 2 === 0,
       };
     });
 
-    // Callout anchors. Segments are no longer evenly spaced, so two
-    // callouts on the same side can collide — push each one right of its
-    // same-side predecessor (always two positions back, since sides
-    // alternate) rather than letting the text overlap.
-    const txs = [];
-    for (let i = 0; i < segs.length; i += 1) {
-      const prevSameSide = i >= 2 ? txs[i - 2] : -Infinity;
-      const wanted = Math.max(Math.min(segs[i].x0 + 6, W - CALLOUT_W), prevSameSide + CALLOUT_W);
-      txs.push(Math.min(wanted, W - CALLOUT_W));
-    }
     // Weighted pipeline — each stage's value × the close rate that stage
     // actually runs at. The same arithmetic as the table's Target
     // Projection, read off the actuals rather than the goals.
@@ -223,7 +217,7 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
       : null;
 
     return {
-      segs: segs.map((g, i) => ({ ...g, tx: txs[i] })),
+      segs,
       byLife, totalLife,
       max, scale, ticks: niceTicks(max),
       projected, ratedCount: rated.length,
@@ -265,7 +259,7 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
 
       <div className={styles.plot} ref={plotRef}>
         <svg
-          viewBox={`0 0 ${W} ${H}`}
+          viewBox={`0 ${VIEW_TOP} ${W} ${VIEW_H}`}
           className={styles.svg}
           role="img"
           aria-label={`Pipeline funnel — ${metric.heading} by stage, segment length by average opportunity life. ${gapCount} of ${geom.segs.length} stages are short of goal.`}
@@ -406,54 +400,6 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
             );
           })}
 
-          {/* Callouts — alternating above / below with an elbow connector. */}
-          {geom.segs.map((g) => {
-            const fill = STAGE_FILL[g.stageNum] || '#2a78d6';
-            const elbowY = g.above ? 122 : BASE_Y + 18;
-            const edgeY = g.above
-              ? BASE_Y - Math.max(g.h, g.gap > 0 ? g.goalH : 0) - 6
-              : BASE_Y + 4;
-            const tx = g.tx;
-            const titleY = g.above ? 46 : BASE_Y + 44;
-            const valueY = g.above ? 66 : BASE_Y + 64;
-            const gapY = g.above ? 86 : BASE_Y + 84;
-            const lifeY = g.above ? 106 : BASE_Y + 104;
-            return (
-              <g key={`c-${g.key || g.stageNum}`}>
-                <polyline
-                  points={`${tx + 4},${elbowY} ${g.cx},${elbowY} ${g.cx},${edgeY}`}
-                  fill="none" stroke={CHROME} strokeWidth={1}
-                />
-                <circle cx={tx + 4} cy={elbowY} r={3} fill={CHROME} />
-                <text x={tx} y={titleY} fontSize={14} fontWeight={700} fill={fill}>
-                  Stage {g.stageNum} — {STAGE_NAME[g.stageNum] || ''}
-                </text>
-                <text x={tx} y={valueY} fontSize={13} fill={INK}>
-                  {withUnit(metric, g.actual)}
-                  <tspan fill={INK_MUTED}>{`  ·  goal ${withUnit(metric, g.goal)}`}</tspan>
-                </text>
-                {g.gap > 0 ? (
-                  <text x={tx} y={gapY} fontSize={12.5} fontWeight={700} fill={GAP_RED}>
-                    ▼ Gap — {withUnit(metric, g.gap)} short of goal
-                  </text>
-                ) : g.over > 0 ? (
-                  <text x={tx} y={gapY} fontSize={12.5} fontWeight={700} fill={MET_GREEN}>
-                    ▲ {withUnit(metric, g.over)} above goal
-                  </text>
-                ) : (
-                  <text x={tx} y={gapY} fontSize={12.5} fontWeight={700} fill={g.hasGoal ? MET_GREEN : INK_MUTED}>
-                    {g.hasGoal ? '✓ Exactly at goal' : 'No goal set'}
-                  </text>
-                )}
-                {/* Avg Opp Life — the number this segment's length encodes. */}
-                <text x={tx} y={lifeY} fontSize={12} fill={INK_MUTED}>
-                  <tspan>⏱ avg life </tspan>
-                  <tspan fill={g.lifeOver ? GAP_RED : INK} fontWeight={700}>{fmtDays(g.life)}</tspan>
-                  {g.lifeGoal > 0 && <tspan>{`  ·  goal < ${fmtDays(g.lifeGoal)}`}</tspan>}
-                </text>
-              </g>
-            );
-          })}
         </svg>
 
         {hovered && (
@@ -489,23 +435,6 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
         )}
       </div>
 
-      <div className={styles.legend}>
-        <span className={styles.legendItem}>
-          <svg width="26" height="10" aria-hidden="true"><line x1="1" y1="5" x2="25" y2="5" stroke={GAP_RED} strokeWidth="2" strokeDasharray="6 5" strokeLinecap="round" /></svg>
-          Goal — stage is short, shaded band is the gap
-        </span>
-        <span className={styles.legendItem}>
-          <svg width="26" height="10" aria-hidden="true"><line x1="1" y1="5" x2="25" y2="5" stroke={MET_GREEN} strokeWidth="2" strokeDasharray="6 5" strokeLinecap="round" /></svg>
-          Goal — stage is at or above it, band beyond the line is the surplus
-        </span>
-        <span className={styles.legendItem}>
-          {gapCount === 0
-            ? 'Every stage is at or above goal.'
-            : `${gapCount} of ${geom.segs.length} stages below goal.`}
-        </span>
-        <span className={styles.legendItem}>Projected = each stage × its own close rate.</span>
-        <span className={styles.legendItem}>Full numbers in the Pipeline Metrics table below.</span>
-      </div>
     </div>
   );
 }
