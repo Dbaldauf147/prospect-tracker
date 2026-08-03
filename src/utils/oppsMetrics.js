@@ -1,0 +1,222 @@
+// Shared parsing + year-bucketing over the Opps 2 records.
+//
+// The YOY charts and the Weekly Review both read the same opp rows, so the
+// rules that decide "what year is this deal in" and "what counts as quoted"
+// live here rather than being written twice. Everything is pure — the caller
+// passes the already-loaded records array.
+
+// Parse "USD 15,000.00" / "$15,000" / "15000" -> 15000. Returns null for
+// blanks and anything that isn't a finite number.
+export function parseMoney(v) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).replace(/[^0-9.-]/g, '');
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Pull the first standalone 4-digit year out of the value. This keeps plain
+// "2026" working while still recognising date-formatted Open Year cells like
+// "2026-06-01" or "6/1/2026" — stripping every non-digit first would turn
+// those into 20260601 / 612026 and lose the year.
+export function parseYear(v) {
+  const m = String(v ?? '').match(/(?:19|20)\d{2}/);
+  if (!m) return null;
+  const n = Number(m[0]);
+  return n >= 1900 && n <= 2100 ? n : null;
+}
+
+// Epoch ms for a date cell ("6/1/2026" or "2026-06-01"), or null. A bare ISO
+// date is read by Date.parse as UTC midnight, which lands on the previous day
+// in a negative-offset timezone — so ISO strings are re-read from their UTC
+// parts and rebuilt as local midnight. Slash/locale strings already parse as
+// local.
+export function parseDateMs(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return null;
+  const ts = Date.parse(s);
+  if (Number.isNaN(ts)) return null;
+  const d = new Date(ts);
+  if (/^\d{4}-\d{2}/.test(s)) {
+    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()).getTime();
+  }
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+// Calendar year of a date cell. Mirrors parseDateMs's ISO handling so a
+// 2026-01-01 close stays in 2026.
+export function parseDateYear(v) {
+  const ms = parseDateMs(v);
+  if (ms === null) return null;
+  const y = new Date(ms).getFullYear();
+  return Number.isFinite(y) && y >= 1900 && y <= 2100 ? y : null;
+}
+
+// Status values that mean the opp got priced — the Quoted+ filter behind the
+// Quoted close-rate denominator.
+const QUOTED_PLUS_STATUSES = new Set([
+  'Quoted', 'Contracting', 'Agreement Sent', 'Sold', 'Not Sold',
+]);
+
+export function isQuotedPlus(record) {
+  const status = String(record.Status || '').trim();
+  if (QUOTED_PLUS_STATUSES.has(status)) return true;
+  const amt = parseMoney(record['Quoted Amount']);
+  return typeof amt === 'number' && amt > 0;
+}
+
+// Fraction of `year` elapsed — the annualization factor behind "Projected"
+// figures. Past years are complete (1); the current year is clamped to at
+// least one day so a Jan 1 run can't divide by zero.
+export function yearElapsedFraction(year, nowMs = Date.now()) {
+  const now = new Date(nowMs);
+  if (year !== now.getFullYear()) return 1;
+  const start = new Date(year, 0, 1).getTime();
+  const yearMs = new Date(year + 1, 0, 1).getTime() - start;
+  const frac = (now.getTime() - start) / yearMs;
+  return Math.max(1 / 366, Math.min(1, frac));
+}
+
+// ---- Weekly-review aggregations ----------------------------------------
+//
+// A compact read of the same numbers the YOY charts plot: sold $ by year,
+// close rate by year, average deal size by year, new-lead counts, and the
+// open pipeline as it stands today. Deliberately narrower than the charts —
+// this is the "am I on pace, and where does the funnel leak" view, not the
+// full chart set.
+
+// Year of a Sold deal: Close Date year, falling back to Open Year when the
+// close date is missing or unparseable (same rule the Annual Sales chart uses).
+function soldYear(r) {
+  return parseDateYear(r['Close Date']) ?? parseYear(r['Open Year']);
+}
+
+// Month/day of the year a timestamp falls on, as a 0-based day index. Used to
+// compare "this year through today" against "last year through the same day".
+function dayOfYear(ms) {
+  const d = new Date(ms);
+  const start = new Date(d.getFullYear(), 0, 1).getTime();
+  return Math.floor((ms - start) / 86400000);
+}
+
+const LATE_STAGES = new Set(['Agreement Sent', 'Contracting']);
+const CLOSED_STAGES = new Set(['Sold', 'Not Sold']);
+
+export function yoyReviewMetrics(records, { target = 0, nowMs = Date.now() } = {}) {
+  const list = Array.isArray(records) ? records : [];
+  const now = new Date(nowMs);
+  const currentYear = now.getFullYear();
+  const todayIndex = dayOfYear(nowMs);
+
+  const byYear = new Map(); // year -> { sold, notSold, inProgress, quotedNotSold, soldAmount, leads }
+  const bucket = (y) => {
+    if (!byYear.has(y)) {
+      byYear.set(y, {
+        year: y, sold: 0, notSold: 0, inProgress: 0, quotedNotSold: 0,
+        soldAmount: 0, soldAmountCount: 0, leads: 0,
+      });
+    }
+    return byYear.get(y);
+  };
+
+  // Sold $ and deal counts bucket by close year; lead counts and close-rate
+  // outcomes bucket by Open Year (the year the opp was created), matching the
+  // YOY charts.
+  let ytdSoldAmount = 0, ytdSoldDeals = 0;
+  let priorSameDateAmount = 0, priorSameDateDeals = 0;
+  const openStages = new Map();
+  let openCount = 0, openAmount = 0, lateCount = 0, lateAmount = 0;
+
+  for (const r of list) {
+    const stage = String(r.Stage || '').trim();
+    const amt = parseMoney(r['Quoted Amount']);
+
+    const openYear = parseYear(r['Open Year']);
+    if (openYear !== null) {
+      const b = bucket(openYear);
+      b.leads += 1;
+      if (stage === 'Sold') b.sold += 1;
+      else if (stage === 'Not Sold') {
+        b.notSold += 1;
+        if (isQuotedPlus(r)) b.quotedNotSold += 1;
+      } else b.inProgress += 1;
+    }
+
+    if (stage === 'Sold') {
+      const y = soldYear(r);
+      if (y !== null) {
+        const b = bucket(y);
+        if (typeof amt === 'number') { b.soldAmount += amt; b.soldAmountCount += 1; }
+        // Year-to-date pace: this year's closes so far, and last year's
+        // closes through the same calendar day for an apples-to-apples read.
+        const closeMs = parseDateMs(r['Close Date']);
+        if (y === currentYear) {
+          ytdSoldAmount += amt || 0;
+          ytdSoldDeals += 1;
+        } else if (y === currentYear - 1 && closeMs !== null && dayOfYear(closeMs) <= todayIndex) {
+          priorSameDateAmount += amt || 0;
+          priorSameDateDeals += 1;
+        }
+      }
+    } else if (!CLOSED_STAGES.has(stage)) {
+      openCount += 1;
+      openAmount += amt || 0;
+      const key = stage || '(no stage)';
+      const s = openStages.get(key) || { stage: key, count: 0, amount: 0 };
+      s.count += 1;
+      s.amount += amt || 0;
+      openStages.set(key, s);
+      if (LATE_STAGES.has(stage)) { lateCount += 1; lateAmount += amt || 0; }
+    }
+  }
+
+  const years = [...byYear.values()].sort((a, b) => a.year - b.year);
+  const frac = yearElapsedFraction(currentYear, nowMs);
+
+  return {
+    currentYear,
+    // One row per year the data covers, newest last.
+    years: years.map(b => ({
+      year: b.year,
+      leads: b.leads,
+      sold: b.sold,
+      notSold: b.notSold,
+      inProgress: b.inProgress,
+      soldAmount: Math.round(b.soldAmount),
+      avgDealSize: b.soldAmountCount ? Math.round(b.soldAmount / b.soldAmountCount) : null,
+      // Total C/R counts every closed opp; Quoted C/R restricts the losses to
+      // opps that actually got priced.
+      totalCR: (b.sold + b.notSold) > 0 ? +((b.sold / (b.sold + b.notSold)) * 100).toFixed(1) : null,
+      quotedCR: (b.sold + b.quotedNotSold) > 0 ? +((b.sold / (b.sold + b.quotedNotSold)) * 100).toFixed(1) : null,
+    })),
+    ytd: {
+      year: currentYear,
+      deals: ytdSoldDeals,
+      amount: Math.round(ytdSoldAmount),
+      target: Math.round(Number(target) || 0),
+      pctOfTarget: target > 0 ? +((ytdSoldAmount / target) * 100).toFixed(1) : null,
+      // Where the year lands if the rest of it closes at the same rate.
+      runRateFullYear: Math.round(ytdSoldAmount / frac),
+      yearElapsedPct: +(frac * 100).toFixed(1),
+      // What "on pace" would look like today, and the gap to it.
+      onPaceAmount: Math.round((Number(target) || 0) * frac),
+      gapToTarget: Math.round((Number(target) || 0) - ytdSoldAmount),
+    },
+    priorYearSameDate: {
+      year: currentYear - 1,
+      deals: priorSameDateDeals,
+      amount: Math.round(priorSameDateAmount),
+      // Positive = ahead of where last year stood on this date.
+      deltaAmount: Math.round(ytdSoldAmount - priorSameDateAmount),
+    },
+    openPipeline: {
+      count: openCount,
+      amount: Math.round(openAmount),
+      lateStageCount: lateCount,
+      lateStageAmount: Math.round(lateAmount),
+      byStage: [...openStages.values()]
+        .map(s => ({ ...s, amount: Math.round(s.amount) }))
+        .sort((a, b) => b.amount - a.amount),
+    },
+  };
+}
