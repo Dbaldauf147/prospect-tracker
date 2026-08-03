@@ -280,6 +280,8 @@ const DEFAULT_STATE = {
   labels: {},
 
   // Pipeline metrics by stage. Each stage row is a dict of values.
+  // pipelineGoal is seeded here for shape only — it's recomputed on every
+  // render as activeGoal × dealSizeGoal (see renderStages).
   stages: [
     { key: 's6', label: 'Stage 6',                       activeGoal: 3,  activeActual: 4,  dealSizeGoal: 125000, dealSizeActual: 58952,  pipelineGoal: 375000,  pipelineActual: 235806,  closeGoal: 0.75, closeActual: 0.50, targetProj: 281250, lifeGoal: 200, lifeActual: 212 },
     { key: 's5', label: 'Stage 5',                       activeGoal: 12, activeActual: 6,  dealSizeGoal: 125000, dealSizeActual: 52146,  pipelineGoal: 1500000, pipelineActual: 578831,  closeGoal: 0.40, closeActual: 0.11, targetProj: 600000, lifeGoal: 150, lifeActual: 68 },
@@ -1730,7 +1732,15 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
   // each row with its DEFAULT_STATE counterpart and replaces any wrong-
   // typed field, so render-time `<NumCell value={…} />` and `{st.label}`
   // can never receive an object/array that would crash the table.
-  const renderStages = useMemo(() => sanitizeStages(state.stages), [state.stages]);
+  // Pipeline Goal is derived, never entered: Active Opp Goal × Deal Size
+  // Goal. Deriving it here (rather than at each use site) means the row,
+  // the Total, the funnel and the Excel export all read the same number,
+  // and the self-heal effect below writes it back so a stored record can
+  // never drift from the two goals that produce it.
+  const renderStages = useMemo(() => sanitizeStages(state.stages).map((st) => ({
+    ...st,
+    pipelineGoal: (Number(st.activeGoal) || 0) * (Number(st.dealSizeGoal) || 0),
+  })), [state.stages]);
   // Self-heal: if the sanitized rows differ from what's in state, write
   // them back so the persisted record is no longer malformed.
   useEffect(() => {
@@ -2225,7 +2235,26 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                           >{fmtMoney(Math.round(dealSizeActual))}</LiveValue>
                         : <NumCell value={st.dealSizeActual} kind="money" onCommit={(v) => setStage(i, { dealSizeActual: v })} />}
                     </td>
-                    <td><NumCell value={st.pipelineGoal} kind="money" onCommit={(v) => setStage(i, { pipelineGoal: v })} /></td>
+                    {/* Calculated from the two goals to its left — the cell
+                        isn't editable; change Active Opportunities Goal or
+                        Deal Size Goal to move it. */}
+                    <td className={styles.numCell}>
+                      <LiveValue
+                        id={`pipelinegoal-${stageNum}`}
+                        className={styles.liveCell}
+                        breakdown={{
+                          title: `${st.label} — Pipeline (Goal)`,
+                          value: fmtMoney(st.pipelineGoal),
+                          formula: 'Active Opportunities Goal × Deal Size Goal.',
+                          inputs: [
+                            { label: 'Active opp goal', value: Number(st.activeGoal) || 0 },
+                            { label: 'Deal size goal', value: fmtMoney(Number(st.dealSizeGoal) || 0) },
+                            { label: 'Pipeline goal', value: fmtMoney(st.pipelineGoal) },
+                          ],
+                          note: 'Calculated — edit the Active Opportunities or Deal Size goal to change it.',
+                        }}
+                      >{st.pipelineGoal ? fmtMoney(st.pipelineGoal) : ''}</LiveValue>
+                    </td>
                     <td className={compareClass(pipelineActual, st.pipelineGoal, 'higher-better')}>
                       {fromBfo(m?.total)
                         ? <LiveValue
