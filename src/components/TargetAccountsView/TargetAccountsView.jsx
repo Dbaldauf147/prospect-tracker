@@ -1,5 +1,4 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
-import * as XLSX from 'xlsx';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -270,9 +269,12 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
     setStatus(null);
 
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
         const arrayBuffer = e.target.result;
+        // Pulled in on use — the spreadsheet library is ~140 KB gzipped
+        // and this page only needs it for import / the template download.
+        const XLSX = await import('xlsx');
         const workbook = XLSX.read(arrayBuffer, { type: 'array' });
 
         const sheets = {};
@@ -737,7 +739,8 @@ function ListSection({
               Additional columns are preserved and displayed. Multiple sheets are supported — each sheet is shown as a separate tab.
             </p>
             <button
-              onClick={() => {
+              onClick={async () => {
+                const XLSX = await import('xlsx');
                 const wb = XLSX.utils.book_new();
                 const wsData = [
                   ['Account Name', 'CDM', 'Tier'],

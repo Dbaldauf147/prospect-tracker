@@ -1,6 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import { DateCell } from '../common/DateCell';
 import {
@@ -1670,6 +1669,9 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     setUploadError(null);
     try {
       const buf = await file.arrayBuffer();
+      // Pulled in on use — the spreadsheet library is ~140 KB gzipped
+      // and this page only needs it for import / export.
+      const XLSX = await import('xlsx');
       const wb = XLSX.read(buf, { cellDates: true });
       const sheet = wb.Sheets[wb.SheetNames[0]];
       if (!sheet) throw new Error('Workbook has no sheets');

@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import * as XLSX from 'xlsx';
 import { Badge } from '../common/Badge';
 import { statusColor, tierColor, formatAum, formatNumber } from '../../utils/formatters';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS } from '../../data/enums';
@@ -541,8 +540,11 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
     setUploadStatus({ type: 'loading', message: 'Reading file...' });
 
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
+        // Pulled in on use — the spreadsheet library is ~140 KB gzipped
+        // and this page only needs it for import / export.
+        const XLSX = await import('xlsx');
         const workbook = XLSX.read(e.target.result, { type: 'array' });
         const ws = workbook.Sheets[workbook.SheetNames[0]];
         const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
@@ -732,8 +734,9 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
         <button className={styles.resetWidthsBtn} onClick={() => { setColWidths({}); saveColWidths({}); }}>
           Reset widths
         </button>
-        <button style={{ marginLeft: 'auto', padding: '0.3rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', fontSize: 'var(--font-size-xs)', fontWeight: 500, color: 'var(--color-text-secondary)', background: 'var(--color-surface)', cursor: 'pointer', fontFamily: 'inherit' }} onClick={() => {
+        <button style={{ marginLeft: 'auto', padding: '0.3rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', fontSize: 'var(--font-size-xs)', fontWeight: 500, color: 'var(--color-text-secondary)', background: 'var(--color-surface)', cursor: 'pointer', fontFamily: 'inherit' }} onClick={async () => {
           const activeCols = COLUMNS.filter(c => !removedCols.has(c.key));
+          const XLSX = await import('xlsx');
           const ws = XLSX.utils.aoa_to_sheet([activeCols.map(c => c.label)]);
           ws['!cols'] = activeCols.map(c => ({ wch: Math.max(c.label.length + 2, 14) }));
           const wb = XLSX.utils.book_new();
