@@ -514,20 +514,39 @@ function formatNumDisplay(v, kind) {
   return fmtNum(Number(v));
 }
 
-// Cells use `key` to force remount when the upstream value changes
-// (driven by parents passing the value into key) so internal draft
-// state never has to sync to props.
+// Editable numeric cell. The input keeps a local draft while typing and
+// commits on blur, but the draft must follow the committed value whenever
+// that value changes underneath it — the page mounts on DEFAULT_STATE and
+// only swaps in the saved record once IndexedDB hydration resolves, so a
+// draft that never re-syncs would keep showing the seed defaults while
+// every calculated cell used the saved numbers.
 function NumCell({ value, kind = 'num', onCommit }) {
   const initial = formatNumDisplay(value, kind);
   const [draft, setDraft] = useState(initial);
+  // Render-phase sync (React's documented "adjust state when props change"
+  // pattern): only fires when the committed value actually changes, so
+  // typing — which never moves `value` — is left alone.
+  const [lastValue, setLastValue] = useState(value);
+  if (value !== lastValue) {
+    setLastValue(value);
+    setDraft(initial);
+  }
   function commit() {
     const raw = String(draft).replace(/[$,\s%]/g, '').trim();
-    if (raw === '') { onCommit(null); return; }
+    if (raw === '') { onCommit(null); setDraft(''); return; }
     const n = Number(raw);
     if (!Number.isFinite(n)) { setDraft(initial); return; }
-    if (kind === 'pct') onCommit(n > 1 ? n / 100 : n);
-    else onCommit(n);
+    const next = (kind === 'pct' && n > 1) ? n / 100 : n;
+    onCommit(next);
+    // Re-format in place so a committed entry reads back the way the cell
+    // displays it, even when the value didn't change (no prop-sync then).
+    setDraft(formatNumDisplay(next, kind));
   }
+  // Escape cancels the edit. blur() fires onBlur synchronously, so without
+  // this flag the cancelled draft would still be committed on the way out —
+  // the cell would snap back to the old number while the calculated cells
+  // used the abandoned one.
+  const cancelling = useRef(false);
   return (
     <input
       className={styles.cell}
@@ -535,10 +554,13 @@ function NumCell({ value, kind = 'num', onCommit }) {
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
       onFocus={(e) => e.target.select()}
-      onBlur={commit}
+      onBlur={() => {
+        if (cancelling.current) { cancelling.current = false; return; }
+        commit();
+      }}
       onKeyDown={(e) => {
         if (e.key === 'Enter') e.currentTarget.blur();
-        if (e.key === 'Escape') { setDraft(initial); e.currentTarget.blur(); }
+        if (e.key === 'Escape') { cancelling.current = true; setDraft(initial); e.currentTarget.blur(); }
       }}
     />
   );
@@ -546,16 +568,27 @@ function NumCell({ value, kind = 'num', onCommit }) {
 
 function TextCell({ value, onCommit }) {
   const [draft, setDraft] = useState(value ?? '');
+  // Same prop-sync as NumCell — hydration/reset has to reach the input.
+  const [lastValue, setLastValue] = useState(value);
+  if (value !== lastValue) {
+    setLastValue(value);
+    setDraft(value ?? '');
+  }
+  // Same Escape-cancels-without-committing guard as NumCell.
+  const cancelling = useRef(false);
   return (
     <input
       className={styles.cellLeft}
       type="text"
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => onCommit(draft)}
+      onBlur={() => {
+        if (cancelling.current) { cancelling.current = false; return; }
+        onCommit(draft);
+      }}
       onKeyDown={(e) => {
         if (e.key === 'Enter') e.currentTarget.blur();
-        if (e.key === 'Escape') { setDraft(value ?? ''); e.currentTarget.blur(); }
+        if (e.key === 'Escape') { cancelling.current = true; setDraft(value ?? ''); e.currentTarget.blur(); }
       }}
     />
   );
