@@ -10,6 +10,7 @@ import {
 import { buildComplianceReportHtml } from '../../utils/complianceReportHtml';
 import { exportComplianceReportXlsx } from '../../utils/complianceReportXlsx';
 import { schneiderLogoSvg } from '../../utils/schneiderLogo';
+import { OwnershipScopeBar } from './OwnershipScopeBar.jsx';
 import styles from './BuildingComplianceScreening.module.css';
 
 const usd = (n) => n == null ? '$-' : '$' + Math.round(n).toLocaleString('en-US');
@@ -201,7 +202,16 @@ function SiteDetailModal({ site, onClose }) {
 // reference (City Lookup → Government ID → Master Ordinances) and surfaces
 // BBS / Audits / BPS eligibility, a summary dashboard, and the exportable
 // branded report.
-export function BuildingComplianceScreening({ sites = [], companyName = '' }) {
+export function BuildingComplianceScreening({
+  sites = [],
+  // The unscoped list behind `sites` — drives the ownership toggle's
+  // counts and tells an ownership-emptied view apart from no upload.
+  allSites = null,
+  ownedOnly = false,
+  onOwnedOnlyChange = null,
+  companyName = '',
+}) {
+  const loadedSites = allSites || sites;
   const [mode, setMode] = useState('sites'); // 'sites' | 'manual'
   const [city, setCity] = useState('');
   const [state, setState] = useState('');
@@ -320,6 +330,12 @@ export function BuildingComplianceScreening({ sites = [], companyName = '' }) {
     writeRawWorkbook(filtered, 'Building-Compliance-Screening.xlsx');
   }
 
+  // Owned / All-sites control. Only rendered when the parent owns the
+  // scope state — a standalone mount screens whatever it's handed.
+  const scopeBar = onOwnedOnlyChange
+    ? <OwnershipScopeBar sites={loadedSites} ownedOnly={ownedOnly} onChange={onOwnedOnlyChange} />
+    : null;
+
   return (
     <div className={styles.wrapper}>
       <div className={styles.brandBand}>
@@ -355,7 +371,7 @@ export function BuildingComplianceScreening({ sites = [], companyName = '' }) {
       </div>
 
       {mode === 'sites' ? (
-        sites.length === 0 ? (
+        loadedSites.length === 0 ? (
           <div className={styles.noMatch}>
             <strong>No site list loaded.</strong>
             <div className={styles.noMatchSub}>
@@ -363,8 +379,21 @@ export function BuildingComplianceScreening({ sites = [], companyName = '' }) {
               square-footage / property-type column) and every site is screened here automatically.
             </div>
           </div>
+        ) : sites.length === 0 ? (
+          <>
+            {scopeBar}
+            <div className={styles.noMatch}>
+              <strong>No owned sites in the loaded list.</strong>
+              <div className={styles.noMatchSub}>
+                All {loadedSites.length.toLocaleString()} loaded site{loadedSites.length === 1 ? ' is' : 's are'} leased or
+                carry no ownership status, so the owned-only scope leaves nothing to screen. Switch to
+                {' '}<strong>All sites</strong> above, or map the Ownership column on the <strong>Utility Lookup</strong> subtab.
+              </div>
+            </div>
+          </>
         ) : (
           <>
+            {scopeBar}
             {/* KPI summary strip — portfolio-level headline figures. */}
             <div className={styles.kpiStrip}>
               <div className={styles.kpiTile}>

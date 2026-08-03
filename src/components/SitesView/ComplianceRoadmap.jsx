@@ -10,6 +10,7 @@ import {
 } from '../../data/corporateComplianceDeadlines';
 import { companyScreeningKey } from '../../data/corporateComplianceScreening';
 import { schneiderLogoSvg } from '../../utils/schneiderLogo';
+import { OwnershipScopeBar } from './OwnershipScopeBar.jsx';
 import styles from './ComplianceRoadmap.module.css';
 
 const usd = (n) => n == null ? '$-' : '$' + Math.round(n).toLocaleString('en-US');
@@ -213,8 +214,19 @@ function ChartCard({ title, subtitle, children }) {
 // scope, and the cumulative max-yearly fine exposure grow over time. Runs off
 // the same screened Utility Lookup site list as the Building Compliance
 // Screening subtab.
-export function ComplianceRoadmap({ sites = [], settings }) {
-  const companyLabel = useMemo(() => sitesCompanyLabel(sites), [sites]);
+export function ComplianceRoadmap({
+  sites = [],
+  // The unscoped list behind `sites` — drives the ownership toggle's
+  // counts and tells an ownership-emptied view apart from no upload.
+  allSites = null,
+  ownedOnly = false,
+  onOwnedOnlyChange = null,
+  settings,
+}) {
+  const loadedSites = allSites || sites;
+  // Company identity comes off the full list — the ownership scope
+  // narrows which buildings are charted, not who the portfolio is.
+  const companyLabel = useMemo(() => sitesCompanyLabel(loadedSites), [loadedSites]);
   const results = useMemo(() => screenSites(sites), [sites]);
   const roadmap = useMemo(() => buildComplianceRoadmap(results), [results]);
   const { periods, totals } = roadmap;
@@ -229,7 +241,10 @@ export function ComplianceRoadmap({ sites = [], settings }) {
   const screenedYes = useMemo(() => {
     const screening = settings?.corporateComplianceScreening || {};
     const keys = new Set();
-    for (const s of (sites || [])) {
+    // Full list, not the owned-only scope: corporate disclosure mandates
+    // bind the company, so a company whose buildings are all leased still
+    // counts here.
+    for (const s of (loadedSites || [])) {
       const k = companyScreeningKey(s?.company);
       if (k) keys.add(k);
     }
@@ -240,7 +255,7 @@ export function ComplianceRoadmap({ sites = [], settings }) {
       for (const j of DEADLINE_JURISDICTIONS) if (answers[j.key] === 'Yes') out.add(j.key);
     }
     return out;
-  }, [settings?.corporateComplianceScreening, sites]);
+  }, [settings?.corporateComplianceScreening, loadedSites]);
 
   // Default to the screened-in view when there is one, so the roadmap opens on
   // the deadlines that actually bite. With nothing screened yet it shows all
@@ -313,10 +328,23 @@ export function ComplianceRoadmap({ sites = [], settings }) {
         </div>
       </div>
 
-      {sites.length === 0 ? (
+      {onOwnedOnlyChange && loadedSites.length > 0 && (
+        <OwnershipScopeBar sites={loadedSites} ownedOnly={ownedOnly} onChange={onOwnedOnlyChange} />
+      )}
+
+      {loadedSites.length === 0 ? (
         <div className={styles.empty}>
           <strong>No site list loaded.</strong>
           <div className={styles.emptySub}>Upload a site list on the <strong>Utility Lookup</strong> subtab (with City and State) and the roadmap builds automatically.</div>
+        </div>
+      ) : sites.length === 0 ? (
+        <div className={styles.empty}>
+          <strong>No owned sites in the loaded list.</strong>
+          <div className={styles.emptySub}>
+            All {loadedSites.length.toLocaleString()} loaded site{loadedSites.length === 1 ? ' is' : 's are'} leased or carry
+            no ownership status, so the owned-only scope leaves nothing to chart. Switch to <strong>All sites</strong> above,
+            or map the Ownership column on the <strong>Utility Lookup</strong> subtab.
+          </div>
         </div>
       ) : !periods.length ? (
         <div className={styles.empty}>
