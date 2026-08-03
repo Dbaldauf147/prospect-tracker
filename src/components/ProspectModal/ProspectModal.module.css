@@ -289,12 +289,26 @@
   align-items: flex-start;
   justify-content: center;
 }
+/* A column is as wide as what it holds — capping it here let a branch
+   whose own children fan out spill sideways over the next column (and
+   its contact chips paint on top of the boxes underneath). The cap
+   belongs on the box, not the column. */
 .divCol {
   position: relative;
   padding: 18px 0.5rem 0;
   min-width: 9.5rem;
-  max-width: 15rem;
   flex: 0 0 auto;
+}
+
+.divCol > .divBoxWrap {
+  max-width: 15rem;
+  margin: 0 auto;
+}
+
+/* A box fanning its own children out spans them instead, so the bus and
+   drop lines land under the box they belong to. */
+.divCol > .divBoxWrapWide {
+  max-width: none;
 }
 /* Bus segment: half-width on the outermost columns so the line starts
    and ends under a box rather than hanging in space. */
