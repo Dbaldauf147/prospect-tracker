@@ -143,18 +143,18 @@ const METRICS = {
   needed: {
     key: 'needed',
     label: 'To target',
-    heading: 'Active opportunities',
+    heading: 'Pipeline value',
     goalLabel: 'Needed for target',
-    shortWord: 'still to find',
+    shortWord: 'still to build',
     overWord: 'more than needed',
-    actual: (s) => s.countActual,
-    goal: (s) => s.neededCount,
-    fmt: fmtInt,
-    unit: (v) => (Math.abs(v) === 1 ? 'opp' : 'opps'),
-    fmtAxis: fmtInt,
-    fmtOut: (v) => `${fmtInt(v)} opps`,
-    fmtProj: (v) => `${(Math.round(v * 10) / 10).toLocaleString('en-US')} opps`,
-    sold: (o) => (Number.isFinite(o?.soldCount) ? o.soldCount : null),
+    actual: (s) => s.amtActual,
+    goal: (s) => s.neededAmt,
+    fmt: fmtCompactMoney,
+    unit: () => '',
+    fmtAxis: fmtCompactMoney,
+    fmtOut: fmtCompactMoney,
+    fmtProj: fmtCompactMoney,
+    sold: (o) => (Number.isFinite(o?.soldAmount) ? o.soldAmount : null),
   },
 };
 
@@ -300,10 +300,10 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
           {metricKey === 'needed' ? (
             remaining > 0 ? (
               <>
-                Bands = <strong>opps you have</strong>, dotted line ={' '}
-                <strong>opps each stage needs</strong> to close the{' '}
+                Bands = <strong>pipeline you have</strong>, dotted line ={' '}
+                <strong>pipeline each stage needs</strong> to close the{' '}
                 <strong>{fmtCompactMoney(remaining)}</strong> left on target, at that stage&rsquo;s
-                own close rate and average deal size. Shaded = still to find.
+                own close rate. Shaded = still to build; hover for the deal count behind it.
               </>
             ) : (
               <>Set a target above{outcome?.target > 0 ? ' — it is already covered by closed business' : ''} to see what the pipeline needs to look like.</>
@@ -335,7 +335,7 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
           className={styles.svg}
           role="img"
           aria-label={metricKey === 'needed'
-            ? `Pipeline funnel — opportunities by stage against what each stage needs to close ${fmtCompactMoney(remaining)}. ${gapCount} of ${geom.segs.length} stages are short of the requirement.`
+            ? `Pipeline funnel — pipeline value by stage against what each stage needs to close ${fmtCompactMoney(remaining)}. ${gapCount} of ${geom.segs.length} stages are short of the requirement.`
             : `Pipeline funnel — ${metric.heading} by stage, segment length by average opportunity life. ${gapCount} of ${geom.segs.length} stages are short of goal.`}
         >
           {/* Left axis — the entry bar, scaled, reading 0 at the baseline
@@ -508,10 +508,18 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
                 {fmtDays(hovered.life)}{hovered.lifeGoal > 0 ? ` (goal < ${fmtDays(hovered.lifeGoal)})` : ''}
               </strong>
             </div>
-            {metricKey === 'needed' && hovered.neededCount > 0 && (
-              <div className={styles.tipNote}>
-                {`${fmtCompactMoney(remaining)} left ÷ ${Math.round((Number(hovered.closeRate) || 0) * 100)}% close ÷ ${fmtCompactMoney(hovered.avgSize)} avg deal`}
-              </div>
+            {metricKey === 'needed' && hovered.neededAmt > 0 && (
+              <>
+                <div className={styles.tipRow}>
+                  <span>Opps at this stage</span>
+                  <strong>
+                    {`${fmtInt(hovered.countActual)} of ${fmtInt(hovered.neededCount)}`}
+                  </strong>
+                </div>
+                <div className={styles.tipNote}>
+                  {`${fmtCompactMoney(remaining)} left ÷ ${Math.round((Number(hovered.closeRate) || 0) * 100)}% close · ${fmtCompactMoney(hovered.avgSize)} avg deal`}
+                </div>
+              </>
             )}
             {hovered.isLive && <div className={styles.tipNote}>Live from BFO Activity</div>}
           </div>
