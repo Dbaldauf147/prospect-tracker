@@ -132,14 +132,9 @@ const METRICS = {
     sold: (o) => (Number.isFinite(o?.soldAmount) ? o.soldAmount : null),
   },
   // What the pipeline would have to look like to land the target. Bands
-  // stay the deals you have; the dotted line is what each stage would
-  // need to carry, so the shaded gap is the deals still to find.
-  //
-  // Every deal that closes passes through every stage, so the whole
-  // remaining target has to flow through each one: a stage that closes
-  // r of what sits in it needs (remaining ÷ r) of value, which at that
-  // stage's own average deal size is (remaining ÷ r ÷ size) deals. Both
-  // inputs are the stage's own current numbers — no assumed rates.
+  // stay the pipeline you have; the dotted line is the pipeline the plan
+  // puts in each stage, so the shaded gap is what's still to build. See
+  // the `plan` memo for how the target is split across stages.
   needed: {
     key: 'needed',
     label: 'To target',
@@ -173,34 +168,112 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
 
   // Earliest stage first (3 → 6) so the funnel reads left to right, the
   // opposite of the metrics table's 6 → 3 ordering.
-  // What's left to close before the target is met. Everything the "To
-  // target" view draws is scaled off this one number.
-  const remaining = useMemo(() => {
-    const target = Number(outcome?.target) || 0;
-    const closed = Number(outcome?.soldAmount) || 0;
-    return target > 0 ? Math.max(target - closed, 0) : 0;
-  }, [outcome]);
+  const target = Number(outcome?.target) || 0;
+
+  // The pipeline the target implies, stage by stage.
+  //
+  // Each opportunity is worth deal size × close rate of weighted value,
+  // and the stages' weighted values SUM to the target — the same
+  // arithmetic as the outcome block's projected total, run backwards.
+  // One target against four stages is underdetermined, so the split has
+  // to be chosen: contribution is shared evenly across the stages that
+  // can carry it, which is the neutral starting point to then tune by
+  // hand in the metrics table.
+  //
+  // Inputs are the GOAL deal size and GOAL close rate — the numbers the
+  // stage is meant to run at, not the ones it happens to be running at —
+  // falling back to actuals where a goal cell is blank.
+  const plan = useMemo(() => {
+    const ordered = stages
+      .filter((s) => Number.isFinite(s.stageNum))
+      .sort((a, b) => a.stageNum - b.stageNum);
+    if (!ordered.length || target <= 0) return null;
+
+    const totalAmt = ordered.reduce((a, s) => a + (Number(s.amtActual) || 0), 0);
+    const totalCnt = ordered.reduce((a, s) => a + (Number(s.countActual) || 0), 0);
+    const fallbackSize = totalCnt > 0 ? totalAmt / totalCnt : 0;
+
+    const inputs = ordered.map((s) => {
+      const cnt = Number(s.countActual) || 0;
+      const amt = Number(s.amtActual) || 0;
+      const size = Number(s.dealSizeGoal) > 0 ? Number(s.dealSizeGoal)
+        : Number(s.dealSizeActual) > 0 ? Number(s.dealSizeActual)
+          : (cnt > 0 && amt > 0 ? amt / cnt : fallbackSize);
+      const rate = Number(s.closeGoal) > 0 ? Number(s.closeGoal) : (Number(s.closeRate) || 0);
+      return { key: s.key ?? s.stageNum, size, rate, perOpp: size * rate };
+    });
+
+    const live = inputs.filter((x) => x.perOpp > 0);
+    if (!live.length) return null;
+
+    // Even contribution, rounded up to whole opportunities — the floor of
+    // any plan that reaches the target.
+    const share = target / live.length;
+    const counts = new Map(live.map((x) => [x.key, Math.max(1, Math.ceil(share / x.perOpp))]));
+    const weightedOf = (c) => live.reduce((a, x) => a + c.get(x.key) * x.perOpp, 0);
+
+    // Rounding up every stage overshoots. Search a small neighbourhood
+    // below the rounded-up counts for the combination that still clears
+    // the target with the least excess — usually landing on it exactly,
+    // which a greedy trim can miss.
+    const SPAN = 4;
+    let best = new Map(counts);
+    let bestWeighted = weightedOf(counts);
+    const walk = (i, cur) => {
+      if (i === live.length) {
+        const w = weightedOf(cur);
+        if (w >= target && w < bestWeighted) { bestWeighted = w; best = new Map(cur); }
+        return;
+      }
+      const x = live[i];
+      const top = counts.get(x.key);
+      for (let n = Math.max(0, top - SPAN); n <= top; n += 1) {
+        cur.set(x.key, n);
+        walk(i + 1, cur);
+      }
+      cur.set(x.key, top);
+    };
+    walk(0, new Map(counts));
+
+    const byKey = new Map(inputs.map((x) => [x.key, x]));
+    const perStage = new Map(ordered.map((s) => {
+      const key = s.key ?? s.stageNum;
+      const x = byKey.get(key);
+      const n = best.get(key) || 0;
+      return [key, {
+        size: x?.size || 0,
+        rate: x?.rate || 0,
+        perOpp: x?.perOpp || 0,
+        neededCount: n,
+        neededAmt: n * (x?.size || 0),
+        weighted: n * (x?.perOpp || 0),
+      }];
+    }));
+
+    const totals = [...perStage.values()].reduce((a, v) => ({
+      count: a.count + v.neededCount,
+      amt: a.amt + v.neededAmt,
+      weighted: a.weighted + v.weighted,
+    }), { count: 0, amt: 0, weighted: 0 });
+
+    return { perStage, totals };
+  }, [stages, target]);
 
   const rows = useMemo(() => {
     const ordered = stages
       .filter((s) => Number.isFinite(s.stageNum))
       .sort((a, b) => a.stageNum - b.stageNum);
 
-    // Average deal size per stage, from that stage's own value and count.
-    // A stage missing either falls back to the funnel-wide average, so one
-    // sparse stage doesn't drop out of the requirement entirely.
-    const totalAmt = ordered.reduce((a, s) => a + (Number(s.amtActual) || 0), 0);
-    const totalCnt = ordered.reduce((a, s) => a + (Number(s.countActual) || 0), 0);
-    const fallbackSize = totalCnt > 0 ? totalAmt / totalCnt : 0;
-
     const withNeed = ordered.map((s) => {
-      const rate = Number(s.closeRate) || 0;
-      const cnt = Number(s.countActual) || 0;
-      const amt = Number(s.amtActual) || 0;
-      const avgSize = cnt > 0 && amt > 0 ? amt / cnt : fallbackSize;
-      const neededAmt = rate > 0 && remaining > 0 ? remaining / rate : 0;
-      const neededCount = neededAmt > 0 && avgSize > 0 ? neededAmt / avgSize : 0;
-      return { ...s, avgSize, neededAmt, neededCount };
+      const p = plan?.perStage.get(s.key ?? s.stageNum);
+      return {
+        ...s,
+        planSize: p?.size || 0,
+        planRate: p?.rate || 0,
+        neededCount: p?.neededCount || 0,
+        neededAmt: p?.neededAmt || 0,
+        neededWeighted: p?.weighted || 0,
+      };
     });
 
     return withNeed.map((s) => ({
@@ -208,7 +281,7 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
       actual: Number(metric.actual(s)) || 0,
       goal: Number(metric.goal(s)) || 0,
     }));
-  }, [stages, metric, remaining]);
+  }, [stages, metric, plan]);
 
   const geom = useMemo(() => {
     if (!rows.length) return null;
@@ -298,15 +371,19 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
       <div className={styles.toolbar}>
         <div className={styles.caption}>
           {metricKey === 'needed' ? (
-            remaining > 0 ? (
+            plan ? (
               <>
                 Bands = <strong>pipeline you have</strong>, dotted line ={' '}
-                <strong>pipeline each stage needs</strong> to close the{' '}
-                <strong>{fmtCompactMoney(remaining)}</strong> left on target, at that stage&rsquo;s
-                own close rate. Shaded = still to build; hover for the deal count behind it.
+                <strong>pipeline the plan needs</strong> —{' '}
+                <strong>{fmtInt(plan.totals.count)} opps</strong> worth{' '}
+                <strong>{fmtCompactMoney(plan.totals.amt)}</strong>, weighting to{' '}
+                <strong>{fmtCompactMoney(plan.totals.weighted)}</strong> against a{' '}
+                <strong>{fmtCompactMoney(target)}</strong> target at each stage&rsquo;s goal deal
+                size and close rate, contribution split evenly across stages. Hover for a stage&rsquo;s
+                own numbers.
               </>
             ) : (
-              <>Set a target above{outcome?.target > 0 ? ' — it is already covered by closed business' : ''} to see what the pipeline needs to look like.</>
+              <>Set a target, plus a goal deal size and close rate per stage, to see the pipeline they imply.</>
             )
           ) : (
             <>
@@ -335,7 +412,7 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
           className={styles.svg}
           role="img"
           aria-label={metricKey === 'needed'
-            ? `Pipeline funnel — pipeline value by stage against what each stage needs to close ${fmtCompactMoney(remaining)}. ${gapCount} of ${geom.segs.length} stages are short of the requirement.`
+            ? `Pipeline funnel — pipeline value by stage against the plan for a ${fmtCompactMoney(target)} target. ${gapCount} of ${geom.segs.length} stages are short of it.`
             : `Pipeline funnel — ${metric.heading} by stage, segment length by average opportunity life. ${gapCount} of ${geom.segs.length} stages are short of goal.`}
         >
           {/* Left axis — the entry bar, scaled, reading 0 at the baseline
@@ -508,16 +585,20 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
                 {fmtDays(hovered.life)}{hovered.lifeGoal > 0 ? ` (goal < ${fmtDays(hovered.lifeGoal)})` : ''}
               </strong>
             </div>
-            {metricKey === 'needed' && hovered.neededAmt > 0 && (
+            {metricKey === 'needed' && hovered.neededCount > 0 && (
               <>
                 <div className={styles.tipRow}>
-                  <span>Opps at this stage</span>
+                  <span>Opps needed</span>
+                  <strong>{`${fmtInt(hovered.countActual)} of ${fmtInt(hovered.neededCount)}`}</strong>
+                </div>
+                <div className={styles.tipRow}>
+                  <span>Weighted contribution</span>
                   <strong>
-                    {`${fmtInt(hovered.countActual)} of ${fmtInt(hovered.neededCount)}`}
+                    {`${fmtCompactMoney(hovered.neededWeighted)}${target > 0 ? ` · ${Math.round((hovered.neededWeighted / target) * 100)}%` : ''}`}
                   </strong>
                 </div>
                 <div className={styles.tipNote}>
-                  {`${fmtCompactMoney(remaining)} left ÷ ${Math.round((Number(hovered.closeRate) || 0) * 100)}% close · ${fmtCompactMoney(hovered.avgSize)} avg deal`}
+                  {`${fmtInt(hovered.neededCount)} × ${fmtCompactMoney(hovered.planSize)} deal × ${Math.round(hovered.planRate * 100)}% close`}
                 </div>
               </>
             )}

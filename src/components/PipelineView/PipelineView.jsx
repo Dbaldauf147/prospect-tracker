@@ -1841,6 +1841,12 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       // loaded, the manual cell otherwise. Feeds the funnel's weighted
       // "projected" figure, one stage at a time.
       closeRate: oppsCloseRateByStage[stageNum]?.rate ?? (Number(st.closeActual) || 0),
+      // Goal-side inputs — the deal size and close rate the stage is
+      // MEANT to run at. The funnel's "To target" view plans off these,
+      // falling back to the actuals where a goal cell is blank.
+      dealSizeGoal: Number(st.dealSizeGoal) || 0,
+      dealSizeActual: live(m?.avg) ?? (Number(st.dealSizeActual) || 0),
+      closeGoal: Number(st.closeGoal) || 0,
       isLive: hasBfo && m?.count !== null && m?.count !== undefined,
     };
   }), [renderStages, bfoMetrics, hasBfo, oppsCloseRateByStage]);
