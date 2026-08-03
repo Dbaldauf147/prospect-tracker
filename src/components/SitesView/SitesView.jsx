@@ -33,6 +33,7 @@ import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripS
 import { UtilityMappingView } from './UtilityMappingView';
 import { BuildingComplianceScreening } from './BuildingComplianceScreening';
 import { ComplianceRoadmap } from './ComplianceRoadmap';
+import { scopeSitesByOwnership } from './ownershipScope.js';
 import CorporateCompliance from './CorporateCompliance';
 import { screenSites, CATEGORIES, totalPenalty, bpsPrioritization } from '../../utils/complianceMandates';
 import {
@@ -2245,10 +2246,24 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       country: String(r.__country__ || '').trim(),
       sqft: (typeof r.__propertySizeFt2__ === 'number' && Number.isFinite(r.__propertySizeFt2__)) ? r.__propertySizeFt2__ : null,
       propertyType: r.__propertyType__ || r.__propertyTypeRaw__ || '',
+      // 'Owned' | 'Leased' | null — scopes the two building-compliance
+      // subtabs, whose obligations fall on the owner.
+      ownership: r.__ownership__ || null,
       electricUtility: r.__electric__ || '',
       gasUtility: r.__gas__ || '',
     }));
   }, [rows, siteNameColumn, cityOverride, stateColumnOverride]);
+
+  // Building Compliance Screening + Compliance Roadmap default to the
+  // owned buildings and toggle back to the full list. Shared here rather
+  // than per-subtab so the two views of the same analysis always agree.
+  // Inert (and the toggle disabled) when no site carries an ownership
+  // status, so a portfolio that never mapped the column is unaffected.
+  const [complianceOwnedOnly, setComplianceOwnedOnly] = useState(true);
+  const complianceScopedSites = useMemo(
+    () => scopeSitesByOwnership(complianceSites, complianceOwnedOnly),
+    [complianceSites, complianceOwnedOnly],
+  );
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
@@ -8517,7 +8532,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // the compliance report: sites screened, sites with any eligible
         // mandate, distinct matched jurisdictions, and the summed max
         // yearly penalty across the three mandate types.
-        const complianceResults = screenSites(complianceSites);
+        // Same ownership scope the Compliance Screening subtab is showing,
+        // so the workbook's KPI tiles reconcile with the page.
+        const complianceResults = screenSites(complianceScopedSites);
         const cMatched = complianceResults.filter(r => r.matched);
         const cJurisdictions = new Set(cMatched.map(r => r.govId)).size;
         const cWithMandate = complianceResults.filter(r => CATEGORIES.some(c => r[c]?.eligible === true)).length;
@@ -11413,11 +11430,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // 2. Building Compliance report + Site Detail, screened from the same
     //    site list the compliance subtabs use. Site Detail is renamed to
     //    avoid colliding with Indicative Savings' Site Detail sheet.
-    const complianceResults = screenSites(complianceSites);
+    //    Scoped to the same Owned / All-sites toggle the subtabs are on.
+    const complianceResults = screenSites(complianceScopedSites);
     await exportComplianceReportXlsx(complianceResults, {
       targetWb: wb,
       generatedAt: new Date().toLocaleString('en-US'),
-      siteCount: complianceSites.length,
+      siteCount: complianceScopedSites.length,
       siteDetailSheetName: 'Compliance Site Detail',
       companyName: company,
     });
@@ -12250,9 +12268,21 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       {mainTab === 'corporate' ? (
         <CorporateCompliance sites={complianceSites} settings={settings} updateSettingsPath={updateSettingsPath} prospects={prospects} updateProspect={updateProspect} />
       ) : mainTab === 'roadmap' ? (
-        <ComplianceRoadmap sites={complianceSites} settings={settings} />
+        <ComplianceRoadmap
+          sites={complianceScopedSites}
+          allSites={complianceSites}
+          ownedOnly={complianceOwnedOnly}
+          onOwnedOnlyChange={setComplianceOwnedOnly}
+          settings={settings}
+        />
       ) : mainTab === 'compliance' ? (
-        <BuildingComplianceScreening sites={complianceSites} companyName={deriveExportCompanyName(null)} />
+        <BuildingComplianceScreening
+          sites={complianceScopedSites}
+          allSites={complianceSites}
+          ownedOnly={complianceOwnedOnly}
+          onOwnedOnlyChange={setComplianceOwnedOnly}
+          companyName={deriveExportCompanyName(null)}
+        />
       ) : mainTab === 'mapping' ? (
         <UtilityMappingView siteUtilities={siteUtilities} referenceUtilityNames={knownUtilityNames} onExportSiteMapping={exportUtilityMappingAnalysis} />
       ) : (
