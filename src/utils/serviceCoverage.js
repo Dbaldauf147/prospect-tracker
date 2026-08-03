@@ -149,19 +149,54 @@ export function isCancellingForSure(renewalStatus) {
     .some(part => part.trim().toLowerCase() === EXCLUDED_RENEWAL_STATUS);
 }
 
-// Active clients for coverage: Status = Client and matching the configured CDM
-// (or every client when no CDM is set), minus anyone the Clients tab marks
-// "Cancelling for Sure". Otherwise mirrors the renewals table's client set.
-// `statusMap` is the Clients tab's Renewal Status map (clients-status-map),
-// keyed by normalized company name — omit it to skip that exclusion.
-export function coverageClientsOf(prospects, cdmName, statusMap = {}) {
+// Clients-tab maps are keyed by the company name trimmed + lowercased —
+// same normalization as normClientName and clientManagerStore's own key.
+function coverageKey(company) {
+  return String(company || '').trim().toLowerCase();
+}
+
+// Every client eligible for coverage before the Clients-tab exclusions:
+// Status = Client and matching the configured CDM (or every client when no
+// CDM is set). Mirrors the renewals table's client set.
+function coverageBaseClients(prospects, cdmName) {
   return (prospects || []).filter(p => {
     if (String(p?.status || '').trim().toLowerCase() !== 'client') return false;
-    if (cdmName && !matchesCdm(p.cdm, cdmName)) return false;
-    // Same normalization as normClientName / the Clients tab's own key.
-    const key = String(p?.company || '').trim().toLowerCase();
-    return !isCancellingForSure(statusMap?.[key]);
+    return cdmName ? matchesCdm(p.cdm, cdmName) : true;
   });
+}
+
+// Which Clients-tab flag (if any) takes a client out of coverage. Both mean
+// "not an account we'd explore new services with", so counting them only
+// drags every service's percentage down. Returns '' when the client counts.
+function coverageExclusionOf(prospect, { statusMap, untrackedMap }) {
+  const key = coverageKey(prospect?.company);
+  if (isCancellingForSure(statusMap?.[key])) return 'cancelling';
+  if (untrackedMap?.[key]) return 'untracked';
+  return '';
+}
+
+// Active clients for coverage, minus anyone the Clients tab marks
+// "Cancelling for Sure" (Renewal Status) or "Don't Track". `exclusions`
+// carries those two maps — `statusMap` (clients-status-map) and
+// `untrackedMap` (clients-untracked-map), both keyed by normalized company
+// name. Omit either to skip that exclusion.
+export function coverageClientsOf(prospects, cdmName, exclusions = {}) {
+  return coverageBaseClients(prospects, cdmName)
+    .filter(p => !coverageExclusionOf(p, exclusions));
+}
+
+// How many clients each exclusion removed, so a caller can explain a total
+// that's smaller than the client count elsewhere. A client that's both
+// cancelling and untracked is counted once, under `cancelling`.
+export function coverageExclusions(prospects, cdmName, exclusions = {}) {
+  let cancelling = 0;
+  let untracked = 0;
+  for (const p of coverageBaseClients(prospects, cdmName)) {
+    const reason = coverageExclusionOf(p, exclusions);
+    if (reason === 'cancelling') cancelling += 1;
+    else if (reason === 'untracked') untracked += 1;
+  }
+  return { cancelling, untracked, total: cancelling + untracked };
 }
 
 // Coverage of one service across a client list: who's explored it (with each
