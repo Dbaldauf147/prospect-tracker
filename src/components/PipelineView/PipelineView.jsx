@@ -900,7 +900,7 @@ function useCalc() {
 // The client set mirrors the renewals table: Status = Client and matching the
 // configured CDM (or all clients when no CDM is set). The tracked-service list
 // is passed in from persisted Pipeline state via `services` / `onChangeServices`.
-function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, onSelectProspect, services = [], onChangeServices, oppsRecords = [] }) {
+function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, onSelectProspect, services = [], onChangeServices, oppsRecords = [], clientStatusMap = {} }) {
   const catalog = useMemo(
     () => buildServiceCatalog(settings),
     [settings.hiddenServices, settings.serviceRenames, settings.customServiceCategories],
@@ -914,8 +914,19 @@ function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, o
   }, [catalog]);
 
   // Active clients: Status = Client, and matching the configured CDM. When no
-  // CDM is configured, include every client so the table still works.
-  const clients = useMemo(() => coverageClientsOf(prospects, cdmName), [prospects, cdmName]);
+  // CDM is configured, include every client so the table still works. Clients
+  // marked "Cancelling for Sure" on the Clients tab are left out.
+  const clients = useMemo(
+    () => coverageClientsOf(prospects, cdmName, clientStatusMap),
+    [prospects, cdmName, clientStatusMap],
+  );
+
+  // How many clients that exclusion dropped, so the table can say why its
+  // totals are smaller than the client count elsewhere.
+  const cancellingCount = useMemo(
+    () => coverageClientsOf(prospects, cdmName).length - clients.length,
+    [prospects, cdmName, clients],
+  );
 
   // Opp-derived service statuses per client, so a client with an active (or
   // closed) opportunity naming a service counts as having explored it — the
@@ -973,6 +984,12 @@ function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, o
         {noClients && (
           <div className={styles.svcCovEmpty}>
             No active clients found{cdmName ? ` for ${cdmName}` : ''}.
+          </div>
+        )}
+        {cancellingCount > 0 && (
+          <div className={styles.svcCovEmpty}>
+            Excludes {cancellingCount} client{cancellingCount === 1 ? '' : 's'} marked
+            &ldquo;Cancelling for Sure&rdquo; on the Clients tab.
           </div>
         )}
 
@@ -1895,7 +1912,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       // when the user tracks no services.
       serviceCoverage: (() => {
         const services = state.coverageServices || [];
-        const clients = coverageClientsOf(prospects, cdmName);
+        const clients = coverageClientsOf(prospects, cdmName, clientStores.statusMap);
         const oppStagesByClient = buildOppStagesByClient(clients, oppsRecords);
         const labels = serviceLabelMap(buildServiceCatalog(settings));
         return {
@@ -2700,6 +2717,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           services={state.coverageServices || []}
           onChangeServices={(next) => setField('coverageServices', next)}
           oppsRecords={oppsRecords}
+          clientStatusMap={clientStores.statusMap}
         />
 
         {/* Client renewals — active clients whose soonest contract End Date
