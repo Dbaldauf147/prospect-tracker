@@ -283,3 +283,23 @@ export function moveDivisionContactsPatch(settings, fromId, toId) {
   if (!fromId || !toId || fromId === toId || !list?.length || map[toId]) return null;
   return { divisionContacts: { ...map, [toId]: list.map(c => ({ ...c })) } };
 }
+
+// ── Layout ──────────────────────────────────────────────────────────
+// How a box's children are arranged: 'row' fans them out horizontally
+// under a bus, 'column' stacks them vertically off a spine. Stored per
+// box in settings.divisionLayout so one branch can run across the page
+// while another runs down it.
+//
+// The defaults reproduce the original chart — the company's own
+// divisions fan out, everything deeper stacks — so a chart drawn before
+// this existed looks the same until someone flips a box.
+
+export function divisionLayoutFor(settings, boxId, fallback = 'column') {
+  const v = (settings?.divisionLayout || {})[boxId];
+  return (v === 'row' || v === 'column') ? v : fallback;
+}
+
+export function setDivisionLayoutPatch(settings, boxId, layout) {
+  if (!boxId || (layout !== 'row' && layout !== 'column')) return null;
+  return { divisionLayout: { ...(settings?.divisionLayout || {}), [boxId]: layout } };
+}

@@ -36,6 +36,8 @@ import {
   addDivisionContactPatch,
   removeDivisionContactPatch,
   moveDivisionContactsPatch,
+  divisionLayoutFor,
+  setDivisionLayoutPatch,
   nameKey,
 } from '../../utils/divisions';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
@@ -2375,15 +2377,62 @@ function DivisionContacts({ boxId, boxName, contacts, assigned, picking, actions
   );
 }
 
+// A box's children, laid out the way that box is set to: 'row' fans them
+// out horizontally under a bus, 'column' stacks them off a vertical
+// spine. Both shapes were already in the stylesheet — the root used one
+// and everything below it the other — so this just lets any box pick.
+function DivisionChildren({ node, layout, shared }) {
+  const { adding, actions } = shared;
+  const isAdding = adding === node.id;
+  if (!node.children.length && !isAdding) return null;
+
+  const kid = (child) => (
+    <DivisionNode node={child} ownerId={node.id} {...shared} />
+  );
+  const newBox = (
+    <div className={styles.divBoxWrap}>
+      <DivisionInlineInput
+        placeholder="New division…"
+        onCommit={(text) => actions.addChild(node.id, text)}
+        onCancel={actions.cancel}
+      />
+    </div>
+  );
+
+  if (layout === 'row') {
+    return (
+      <>
+        <div className={styles.divStem} />
+        <div className={styles.divRow}>
+          {node.children.map(child => (
+            <div key={child.id} className={styles.divCol}>{kid(child)}</div>
+          ))}
+          {isAdding && <div className={styles.divCol}>{newBox}</div>}
+        </div>
+      </>
+    );
+  }
+  return (
+    <div className={styles.divSub}>
+      {node.children.map(child => (
+        <div key={child.id} className={styles.divSubItem}>{kid(child)}</div>
+      ))}
+      {isAdding && <div className={styles.divSubItem}>{newBox}</div>}
+    </div>
+  );
+}
+
 // One box in the chart, plus its own divisions below it.
 //
 // `ownerId` is the id whose list this box lives in — renaming or removing
 // the box edits that list, and a box added from here lands in THIS box's
 // list (node.id), which is what nests it one level deeper.
-function DivisionNode({ node, ownerId, editing, adding, picking, contacts, contactsByBox, actions }) {
+function DivisionNode({ node, ownerId, editing, adding, picking, contacts, contactsByBox, layoutOf, actions }) {
+  const shared = { editing, adding, picking, contacts, contactsByBox, layoutOf, actions };
   const isEditing = editing === node.id;
-  const isAdding = adding === node.id;
   const assigned = contactsByBox(node.id);
+  const layout = layoutOf(node.id);
+  const hasBelow = node.children.length > 0 || adding === node.id;
   const btn = {
     border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer',
     fontSize: '0.8rem', lineHeight: 1, padding: '0 0.15rem', fontFamily: 'inherit',
@@ -2392,7 +2441,7 @@ function DivisionNode({ node, ownerId, editing, adding, picking, contacts, conta
     <>
       {/* The wrapper is what the connector elbow anchors to — see
           .divBoxWrap in the stylesheet. */}
-      <div className={styles.divBoxWrap}>
+      <div className={`${styles.divBoxWrap}${layout === 'row' && hasBelow ? ` ${styles.divBoxWrapWide}` : ''}`}>
         <div className={styles.divBoxHead}>
         {isEditing ? (
           <DivisionInlineInput
@@ -2443,6 +2492,17 @@ function DivisionNode({ node, ownerId, editing, adding, picking, contacts, conta
               title={`Add a contact to ${node.company}`}
               style={{ ...btn, position: 'absolute', bottom: 1, left: 2, fontSize: '0.7rem' }}
             >&#128100;</button>
+            {hasBelow && (
+              <button
+                type="button"
+                onClick={() => actions.toggleLayout(node.id, layout)}
+                aria-label={`Lay out divisions under ${node.company} ${layout === 'row' ? 'vertically' : 'horizontally'}`}
+                title={layout === 'row'
+                  ? `Divisions under ${node.company} run across — click to stack them down`
+                  : `Divisions under ${node.company} stack down — click to run them across`}
+                style={{ ...btn, position: 'absolute', bottom: 1, left: '50%', transform: 'translateX(-50%)', fontSize: '0.7rem' }}
+              >{layout === 'row' ? '\u21C5' : '\u21C4'}</button>
+            )}
           </>
         )}
         </div>
@@ -2455,35 +2515,7 @@ function DivisionNode({ node, ownerId, editing, adding, picking, contacts, conta
           actions={actions}
         />
       </div>
-      {(node.children.length > 0 || isAdding) && (
-        <div className={styles.divSub}>
-          {node.children.map(child => (
-            <div key={child.id} className={styles.divSubItem}>
-              <DivisionNode
-                node={child}
-                ownerId={node.id}
-                editing={editing}
-                adding={adding}
-                picking={picking}
-                contacts={contacts}
-                contactsByBox={contactsByBox}
-                actions={actions}
-              />
-            </div>
-          ))}
-          {isAdding && (
-            <div className={styles.divSubItem}>
-              <div className={styles.divBoxWrap}>
-                <DivisionInlineInput
-                  placeholder="New division…"
-                  onCommit={(text) => actions.addChild(node.id, text)}
-                  onCancel={actions.cancel}
-                />
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+      <DivisionChildren node={node} layout={layout} shared={shared} />
     </>
   );
 }
@@ -2491,8 +2523,10 @@ function DivisionNode({ node, ownerId, editing, adding, picking, contacts, conta
 // The root box is the company the popup is showing, so it isn't renamable
 // or removable here — its own name field is a few rows up. Everything
 // below it is editable in place.
-function DivisionsChart({ tree, editing, adding, picking, contacts, contactsByBox, actions }) {
-  const rootAdding = adding === tree.id;
+function DivisionsChart({ tree, editing, adding, picking, contacts, contactsByBox, layoutOf, actions }) {
+  const shared = { editing, adding, picking, contacts, contactsByBox, layoutOf, actions };
+  const rootLayout = layoutOf(tree.id, 'row');
+  const rootHasBelow = tree.children.length > 0 || adding === tree.id;
   return (
     <div className={styles.divChart}>
       <div className={styles.divChartInner}>
@@ -2525,6 +2559,21 @@ function DivisionsChart({ tree, editing, adding, picking, contacts, contactsByBo
                 padding: '0 0.15rem', fontFamily: 'inherit',
               }}
             >&#128100;</button>
+            {rootHasBelow && (
+              <button
+                type="button"
+                onClick={() => actions.toggleLayout(tree.id, rootLayout)}
+                aria-label={`Lay out divisions under ${tree.company} ${rootLayout === 'row' ? 'vertically' : 'horizontally'}`}
+                title={rootLayout === 'row'
+                  ? `Divisions run across — click to stack them down`
+                  : `Divisions stack down — click to run them across`}
+                style={{
+                  position: 'absolute', bottom: 1, left: '50%', transform: 'translateX(-50%)',
+                  border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer',
+                  fontSize: '0.7rem', lineHeight: 1, padding: '0 0.15rem', fontFamily: 'inherit',
+                }}
+              >{rootLayout === 'row' ? '\u21C5' : '\u21C4'}</button>
+            )}
             </div>
             <DivisionContacts
               boxId={tree.id}
@@ -2536,34 +2585,7 @@ function DivisionsChart({ tree, editing, adding, picking, contacts, contactsByBo
             />
           </div>
         </div>
-        <div className={styles.divStem} />
-        <div className={styles.divRow}>
-          {tree.children.map(child => (
-            <div key={child.id} className={styles.divCol}>
-              <DivisionNode
-                node={child}
-                ownerId={tree.id}
-                editing={editing}
-                adding={adding}
-                picking={picking}
-                contacts={contacts}
-                contactsByBox={contactsByBox}
-                actions={actions}
-              />
-            </div>
-          ))}
-          {rootAdding && (
-            <div className={styles.divCol}>
-              <div className={styles.divBoxWrap}>
-                <DivisionInlineInput
-                  placeholder="New division…"
-                  onCommit={(text) => actions.addChild(tree.id, text)}
-                  onCancel={actions.cancel}
-                />
-              </div>
-            </div>
-          )}
-        </div>
+        <DivisionChildren node={tree} layout={rootLayout} shared={shared} />
       </div>
     </div>
   );
@@ -2609,6 +2631,12 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
 
   const contactsByBox = useCallback(
     (boxId) => divisionContactsFor(settings, boxId), [settings]);
+
+  // How each box arranges what's under it. The company's own divisions
+  // default to running across the page and everything deeper to stacking
+  // down — the shape the chart always had — until a box is flipped.
+  const layoutOf = useCallback(
+    (boxId, fallback = 'column') => divisionLayoutFor(settings, boxId, fallback), [settings]);
 
   // Sub-divisions come along for free: a division's own divisions nest
   // under it, so the chart shows the whole structure, not just one level.
@@ -2665,6 +2693,10 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
       setPicking(null);
     },
     removeContact: (boxId, key) => updateSettings(removeDivisionContactPatch(settings, boxId, key)),
+    toggleLayout: (boxId, current) => {
+      const patch = setDivisionLayoutPatch(settings, boxId, current === 'row' ? 'column' : 'row');
+      if (patch) updateSettings(patch);
+    },
     addChild: (ownerId, text) => {
       const patch = addNamedDivisionPatch(settings, ownerId, text, companies);
       if (patch) updateSettings(patch);
@@ -2708,11 +2740,12 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
                 picking={picking}
                 contacts={contactOptions}
                 contactsByBox={contactsByBox}
+                layoutOf={layoutOf}
                 actions={actions}
               />
               <p style={{ fontSize: '0.66rem', color: '#94A3B8', margin: '0 0 0.5rem', textAlign: 'center' }}>
                 Click a box or ✎ to rename it · + adds a division beneath it · 👤 adds a contact ·
-                × removes it · Enter saves, Esc cancels
+                ⇄ / ⇅ switches that box's divisions between across and down · × removes it
               </p>
             </>
           )}
