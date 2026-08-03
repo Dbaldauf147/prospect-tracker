@@ -128,24 +128,6 @@
   font-size: 0.68rem;
 }
 
-.legend {
-  display: flex;
-  align-items: center;
-  gap: 1.25rem;
-  flex-wrap: wrap;
-  font-size: 0.72rem;
-  color: #52514e;
-  border-top: 1px solid #e2e8f0;
-  padding-top: 0.5rem;
-  margin-top: 0.35rem;
-}
-
-.legendItem {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-}
-
 .empty {
   padding: 1.25rem 1rem;
   background: #fff;
