@@ -4823,6 +4823,18 @@ export function PricingView({ settings } = {}) {
                                     </label>
                                   </>
                                 )}
+                                {/* Same report as the option header's button —
+                                    this panel is where the per-line-item
+                                    margin questions get asked, so the export
+                                    that answers them for every line belongs
+                                    here too. */}
+                                <button
+                                  type="button"
+                                  className={styles.viewToggleBtn}
+                                  disabled={exportingMargin}
+                                  onClick={exportFeeMargin}
+                                  title="Export every fee line on this option to Excel: a summary of term revenue, cost and margin per line, plus a per-line breakdown of the cost items behind it and how they mark up across the term."
+                                >{exportingMargin ? 'Building…' : 'Fee Margin Excel ⇩'}</button>
                                 <button
                                   type="button"
                                   className={styles.viewToggleBtn}
