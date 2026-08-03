@@ -1783,6 +1783,9 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       countGoal: Number(st.activeGoal) || 0,
       amtActual: live(m?.total) ?? (Number(st.pipelineActual) || 0),
       amtGoal: Number(st.pipelineGoal) || 0,
+      // Avg Opp Life — the funnel draws each stage as long as deals sit in it.
+      lifeActual: live(m?.avgAge) ?? (Number(st.lifeActual) || 0),
+      lifeGoal: Number(st.lifeGoal) || 0,
       isLive: hasBfo && m?.count !== null && m?.count !== undefined,
     };
   }), [renderStages, bfoMetrics, hasBfo]);
