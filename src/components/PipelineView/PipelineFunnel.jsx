@@ -101,6 +101,9 @@ const METRICS = {
     key: 'deals',
     label: 'Deals',
     heading: 'Active opportunities',
+    goalLabel: 'Goal',
+    shortWord: 'short of goal',
+    overWord: 'above goal',
     actual: (s) => s.countActual,
     goal: (s) => s.countGoal,
     fmt: fmtInt,
@@ -116,6 +119,9 @@ const METRICS = {
     key: 'amount',
     label: 'Pipeline $',
     heading: 'Pipeline value',
+    goalLabel: 'Goal',
+    shortWord: 'short of goal',
+    overWord: 'above goal',
     actual: (s) => s.amtActual,
     goal: (s) => s.amtGoal,
     fmt: fmtCompactMoney,
@@ -124,6 +130,31 @@ const METRICS = {
     fmtOut: fmtCompactMoney,
     fmtProj: fmtCompactMoney,
     sold: (o) => (Number.isFinite(o?.soldAmount) ? o.soldAmount : null),
+  },
+  // What the pipeline would have to look like to land the target. Bands
+  // stay the deals you have; the dotted line is what each stage would
+  // need to carry, so the shaded gap is the deals still to find.
+  //
+  // Every deal that closes passes through every stage, so the whole
+  // remaining target has to flow through each one: a stage that closes
+  // r of what sits in it needs (remaining ÷ r) of value, which at that
+  // stage's own average deal size is (remaining ÷ r ÷ size) deals. Both
+  // inputs are the stage's own current numbers — no assumed rates.
+  needed: {
+    key: 'needed',
+    label: 'To target',
+    heading: 'Active opportunities',
+    goalLabel: 'Needed for target',
+    shortWord: 'still to find',
+    overWord: 'more than needed',
+    actual: (s) => s.countActual,
+    goal: (s) => s.neededCount,
+    fmt: fmtInt,
+    unit: (v) => (Math.abs(v) === 1 ? 'opp' : 'opps'),
+    fmtAxis: fmtInt,
+    fmtOut: (v) => `${fmtInt(v)} opps`,
+    fmtProj: (v) => `${(Math.round(v * 10) / 10).toLocaleString('en-US')} opps`,
+    sold: (o) => (Number.isFinite(o?.soldCount) ? o.soldCount : null),
   },
 };
 
@@ -142,16 +173,42 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
 
   // Earliest stage first (3 → 6) so the funnel reads left to right, the
   // opposite of the metrics table's 6 → 3 ordering.
+  // What's left to close before the target is met. Everything the "To
+  // target" view draws is scaled off this one number.
+  const remaining = useMemo(() => {
+    const target = Number(outcome?.target) || 0;
+    const closed = Number(outcome?.soldAmount) || 0;
+    return target > 0 ? Math.max(target - closed, 0) : 0;
+  }, [outcome]);
+
   const rows = useMemo(() => {
-    const list = stages
-      .map((s) => ({
-        ...s,
-        actual: Number(metric.actual(s)) || 0,
-        goal: Number(metric.goal(s)) || 0,
-      }))
-      .filter((s) => Number.isFinite(s.stageNum));
-    return list.sort((a, b) => a.stageNum - b.stageNum);
-  }, [stages, metric]);
+    const ordered = stages
+      .filter((s) => Number.isFinite(s.stageNum))
+      .sort((a, b) => a.stageNum - b.stageNum);
+
+    // Average deal size per stage, from that stage's own value and count.
+    // A stage missing either falls back to the funnel-wide average, so one
+    // sparse stage doesn't drop out of the requirement entirely.
+    const totalAmt = ordered.reduce((a, s) => a + (Number(s.amtActual) || 0), 0);
+    const totalCnt = ordered.reduce((a, s) => a + (Number(s.countActual) || 0), 0);
+    const fallbackSize = totalCnt > 0 ? totalAmt / totalCnt : 0;
+
+    const withNeed = ordered.map((s) => {
+      const rate = Number(s.closeRate) || 0;
+      const cnt = Number(s.countActual) || 0;
+      const amt = Number(s.amtActual) || 0;
+      const avgSize = cnt > 0 && amt > 0 ? amt / cnt : fallbackSize;
+      const neededAmt = rate > 0 && remaining > 0 ? remaining / rate : 0;
+      const neededCount = neededAmt > 0 && avgSize > 0 ? neededAmt / avgSize : 0;
+      return { ...s, avgSize, neededAmt, neededCount };
+    });
+
+    return withNeed.map((s) => ({
+      ...s,
+      actual: Number(metric.actual(s)) || 0,
+      goal: Number(metric.goal(s)) || 0,
+    }));
+  }, [stages, metric, remaining]);
 
   const geom = useMemo(() => {
     if (!rows.length) return null;
@@ -240,9 +297,24 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
     <div className={styles.wrap}>
       <div className={styles.toolbar}>
         <div className={styles.caption}>
-          Band height = <strong>{metric.heading}</strong>, segment length ={' '}
-          <strong>{geom.byLife ? 'avg opp life' : 'even (no avg opp life yet)'}</strong>
-          {geom.byLife ? ` — ${Math.round(geom.totalLife)} days end to end.` : '.'}
+          {metricKey === 'needed' ? (
+            remaining > 0 ? (
+              <>
+                Bands = <strong>opps you have</strong>, dotted line ={' '}
+                <strong>opps each stage needs</strong> to close the{' '}
+                <strong>{fmtCompactMoney(remaining)}</strong> left on target, at that stage&rsquo;s
+                own close rate and average deal size. Shaded = still to find.
+              </>
+            ) : (
+              <>Set a target above{outcome?.target > 0 ? ' — it is already covered by closed business' : ''} to see what the pipeline needs to look like.</>
+            )
+          ) : (
+            <>
+              Band height = <strong>{metric.heading}</strong>, segment length ={' '}
+              <strong>{geom.byLife ? 'avg opp life' : 'even (no avg opp life yet)'}</strong>
+              {geom.byLife ? ` — ${Math.round(geom.totalLife)} days end to end.` : '.'}
+            </>
+          )}
         </div>
         <div className={styles.toggle} role="group" aria-label="Funnel metric">
           {Object.values(METRICS).map((m) => (
@@ -262,7 +334,9 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
           viewBox={`0 ${VIEW_TOP} ${W} ${VIEW_H}`}
           className={styles.svg}
           role="img"
-          aria-label={`Pipeline funnel — ${metric.heading} by stage, segment length by average opportunity life. ${gapCount} of ${geom.segs.length} stages are short of goal.`}
+          aria-label={metricKey === 'needed'
+            ? `Pipeline funnel — opportunities by stage against what each stage needs to close ${fmtCompactMoney(remaining)}. ${gapCount} of ${geom.segs.length} stages are short of the requirement.`
+            : `Pipeline funnel — ${metric.heading} by stage, segment length by average opportunity life. ${gapCount} of ${geom.segs.length} stages are short of goal.`}
         >
           {/* Left axis — the entry bar, scaled, reading 0 at the baseline
               the funnel sits on and climbing to the tallest stage. A band's
@@ -393,7 +467,7 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
                     fontSize={18} fontWeight={700} fill={fill} textAnchor="middle"
                   >{g.stageNum}</text>
                 )}
-                <title>{`Stage ${g.stageNum} — ${STAGE_NAME[g.stageNum] || ''}\n${metric.heading}: ${withUnit(metric, g.actual)}\nGoal: ${withUnit(metric, g.goal)}${g.gap > 0 ? `\nShort by ${withUnit(metric, g.gap)}` : g.over > 0 ? `\nAbove goal by ${withUnit(metric, g.over)}` : ''}\nAvg opp life: ${fmtDays(g.life)}`}</title>
+                <title>{`Stage ${g.stageNum} — ${STAGE_NAME[g.stageNum] || ''}\n${metric.heading}: ${withUnit(metric, g.actual)}\n${metric.goalLabel}: ${withUnit(metric, g.goal)}${g.gap > 0 ? `\n${withUnit(metric, g.gap)} ${metric.shortWord}` : g.over > 0 ? `\n${withUnit(metric, g.over)} ${metric.overWord}` : ''}\nAvg opp life: ${fmtDays(g.life)}`}</title>
                 {/* Invisible hit area so thin bands are still hoverable. */}
                 <rect x={g.x0} y={BASE_Y - MAX_H - 24} width={g.x1 - g.x0} height={MAX_H + 30} fill="transparent" />
               </g>
@@ -418,18 +492,27 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
               Stage {hovered.stageNum} — {STAGE_NAME[hovered.stageNum] || ''}
             </div>
             <div className={styles.tipRow}><span>{metric.heading}</span><strong>{withUnit(metric, hovered.actual)}</strong></div>
-            <div className={styles.tipRow}><span>Goal</span><strong>{withUnit(metric, hovered.goal)}</strong></div>
+            <div className={styles.tipRow}><span>{metric.goalLabel}</span><strong>{withUnit(metric, hovered.goal)}</strong></div>
             {hovered.gap > 0
-              ? <div className={styles.tipGap}>▼ {withUnit(metric, hovered.gap)} short of goal</div>
+              ? <div className={styles.tipGap}>▼ {withUnit(metric, hovered.gap)} {metric.shortWord}</div>
               : hovered.over > 0
-                ? <div className={styles.tipOk}>▲ {withUnit(metric, hovered.over)} above goal</div>
-                : <div className={hovered.hasGoal ? styles.tipOk : styles.tipNote}>{hovered.hasGoal ? '✓ Exactly at goal' : 'No goal set'}</div>}
+                ? <div className={styles.tipOk}>▲ {withUnit(metric, hovered.over)} {metric.overWord}</div>
+                : <div className={hovered.hasGoal ? styles.tipOk : styles.tipNote}>
+                    {hovered.hasGoal
+                      ? (metricKey === 'needed' ? '✓ Exactly enough' : '✓ Exactly at goal')
+                      : (metricKey === 'needed' ? 'No requirement — needs a target and a close rate' : 'No goal set')}
+                  </div>}
             <div className={styles.tipRow}>
               <span>Avg opp life</span>
               <strong style={hovered.lifeOver ? { color: GAP_RED } : undefined}>
                 {fmtDays(hovered.life)}{hovered.lifeGoal > 0 ? ` (goal < ${fmtDays(hovered.lifeGoal)})` : ''}
               </strong>
             </div>
+            {metricKey === 'needed' && hovered.neededCount > 0 && (
+              <div className={styles.tipNote}>
+                {`${fmtCompactMoney(remaining)} left ÷ ${Math.round((Number(hovered.closeRate) || 0) * 100)}% close ÷ ${fmtCompactMoney(hovered.avgSize)} avg deal`}
+              </div>
+            )}
             {hovered.isLive && <div className={styles.tipNote}>Live from BFO Activity</div>}
           </div>
         )}
