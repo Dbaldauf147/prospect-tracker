@@ -55,7 +55,8 @@ import {
   groupStageDaysByStage,
   StageDaysBoard,
 } from './daysInStage';
-import { downloadNewOppsOutlookDraft } from '../../utils/newOppsDigestEmail';
+import { downloadNewOppsOutlookDraft, resolveNewOppsDraftTemplate } from '../../utils/newOppsDigestEmail';
+import { NewOppsDraftEmailModal } from './NewOppsDraftEmailModal';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { reasonOptionsForCompetition } from '../../data/closeNotSoldRules';
 import { buildNewOppsTableHtml, downloadOppsTableOutlookDraft, NEW_OPPS_EMAIL_COLUMNS, NEW_OPPS_EMAIL_DEFAULT_COLUMN_KEYS } from '../../utils/newOppsEmailTable';
@@ -6662,6 +6663,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   const [activeTab, setActiveTab] = useState('opps');
   // New Opps subtab: controls the recurring-email schedule manager modal.
   const [newOppsScheduleOpen, setNewOppsScheduleOpen] = useState(false);
+  // Wording the New Opps Outlook draft opens with — the saved override from
+  // userSettings over the built-in defaults.
+  const [newOppsDraftTextOpen, setNewOppsDraftTextOpen] = useState(false);
+  const newOppsDraftTemplate = useMemo(
+    () => resolveNewOppsDraftTemplate(settings?.newOppsDraftEmail),
+    [settings?.newOppsDraftEmail],
+  );
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   // Dedicated Start Date range for the "By Source" tab. Kept separate
@@ -10187,11 +10195,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             <button
               type="button"
               onClick={() => downloadNewOppsOutlookDraft(newOpps, {
-                // To / subject / greeting use the util's defaults
-                // (keith.mchugh@se.com, "Dan B New Opportunities",
-                // "Hey Keith,"). Signature is the same one the Draft
-                // Email tab appends: the saved settings.emailSignature,
-                // falling back to the bundled default for the admin.
+                // To / subject / greeting / intro come from the saved
+                // template ("Edit email text"), falling back to the built-in
+                // defaults. Signature is the same one the Draft Email tab
+                // appends: the saved settings.emailSignature, falling back to
+                // the bundled default for the admin.
+                ...newOppsDraftTemplate,
                 signature: settings?.emailSignature || (isAdmin ? DEFAULT_EMAIL_SIGNATURE : ''),
               })}
               disabled={newOpps.length === 0}
@@ -10206,6 +10215,16 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 borderRadius: 6, cursor: newOpps.length ? 'pointer' : 'not-allowed',
               }}
             >Download Outlook draft</button>
+            <button
+              type="button"
+              onClick={() => setNewOppsDraftTextOpen(true)}
+              title="Edit the recipient, subject, greeting and intro paragraph the Outlook draft starts with"
+              style={{
+                marginLeft: '0.5rem', padding: '0.3rem 0.7rem', fontSize: '0.78rem', fontWeight: 600,
+                fontFamily: 'inherit', color: '#0F6CBD', background: '#fff',
+                border: '1px solid #0F6CBD', borderRadius: 6, cursor: 'pointer',
+              }}
+            >✎ Edit email text</button>
             <button
               type="button"
               onClick={() => setNewOppsScheduleOpen(true)}
@@ -10274,6 +10293,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           )}
         </>
       )}
+
+      <NewOppsDraftEmailModal
+        open={newOppsDraftTextOpen}
+        onClose={() => setNewOppsDraftTextOpen(false)}
+        records={newOpps}
+        signature={settings?.emailSignature || (isAdmin ? DEFAULT_EMAIL_SIGNATURE : '')}
+        template={settings?.newOppsDraftEmail}
+        onSave={(next) => updateSettings?.({ newOppsDraftEmail: next })}
+      />
 
       <NewOppsScheduleModal
         open={newOppsScheduleOpen}

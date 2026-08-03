@@ -142,13 +142,36 @@ export function buildNewOppsEml({ to = '', subject = 'Dan B New Opportunities', 
   return `${headers.join('\r\n')}\r\n\r\n${base64Utf8(html)}\r\n`;
 }
 
+// The wording a downloaded draft starts with when the user hasn't saved
+// their own. Editable on the New Opps tab ("Edit email text"), which stores
+// an override in userSettings.newOppsDraftEmail; these are the fallback and
+// what "Reset to default" restores.
+export const NEW_OPPS_DRAFT_DEFAULTS = {
+  to: 'keith.mchugh@se.com',
+  subject: 'Dan B New Opportunities',
+  greeting: 'Hey Keith,',
+  message: '',
+};
+
+// Merge a saved override over the defaults, keeping only the fields this
+// email understands and letting a deliberately-blank field stay blank.
+export function resolveNewOppsDraftTemplate(saved) {
+  const out = { ...NEW_OPPS_DRAFT_DEFAULTS };
+  if (saved && typeof saved === 'object') {
+    for (const key of Object.keys(NEW_OPPS_DRAFT_DEFAULTS)) {
+      if (typeof saved[key] === 'string') out[key] = saved[key];
+    }
+  }
+  return out;
+}
+
 // Build + download an Outlook draft (.eml) of the New Opps digest for the
 // given records. Returns the number of opps included.
 export function downloadNewOppsOutlookDraft(records, {
-  to = 'keith.mchugh@se.com',
-  subject = 'Dan B New Opportunities',
-  message = '',
-  greeting = 'Hey Keith,',
+  to = NEW_OPPS_DRAFT_DEFAULTS.to,
+  subject = NEW_OPPS_DRAFT_DEFAULTS.subject,
+  message = NEW_OPPS_DRAFT_DEFAULTS.message,
+  greeting = NEW_OPPS_DRAFT_DEFAULTS.greeting,
   signature = '',
 } = {}) {
   const html = buildNewOppsDigestEmailHtml(records, { message, greeting, signature });
