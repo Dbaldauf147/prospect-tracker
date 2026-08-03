@@ -31,6 +31,12 @@ import {
   addNamedDivisionPatch,
   renameDivisionPatch,
   removeDivisionPatch,
+  divisionContactsFor,
+  divisionContactKey,
+  addDivisionContactPatch,
+  removeDivisionContactPatch,
+  moveDivisionContactsPatch,
+  nameKey,
 } from '../../utils/divisions';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
@@ -2238,14 +2244,146 @@ function DivisionInlineInput({ value, placeholder, onCommit, onCancel }) {
   );
 }
 
+// The people on a division, listed under its box, plus the picker that
+// assigns them. Contacts come from the company's own contact list; a name
+// that isn't on it can still be typed, the same way a division can.
+function DivisionContactPicker({ boxId, contacts, assigned, actions }) {
+  const [query, setQuery] = useState('');
+  const assignedKeys = useMemo(
+    () => new Set(assigned.map(divisionContactKey)), [assigned]);
+
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return (contacts || [])
+      .filter(c => !assignedKeys.has(c.id || nameKey(c.name)))
+      .filter(c => !q
+        || c.name.toLowerCase().includes(q)
+        || (c.jobtitle || '').toLowerCase().includes(q)
+        || (c.email || '').toLowerCase().includes(q))
+      .slice(0, 12);
+  }, [contacts, query, assignedKeys]);
+
+  const typedIsNew = query.trim()
+    && !matches.some(c => nameKey(c.name) === nameKey(query))
+    && !assigned.some(c => nameKey(c.name) === nameKey(query));
+
+  return (
+    <>
+      <div
+          onMouseDown={e => e.stopPropagation()}
+          style={{
+            marginTop: '0.25rem', border: '1px solid var(--color-accent)', borderRadius: 6,
+            background: 'var(--color-surface)', padding: '0.25rem', textAlign: 'left',
+          }}
+        >
+          <input
+            type="text"
+            autoFocus
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            onKeyDown={e => {
+              e.stopPropagation();
+              if (e.key === 'Escape') { e.preventDefault(); actions.cancel(); }
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                if (matches.length) actions.addContact(boxId, matches[0]);
+                else if (query.trim()) actions.addContact(boxId, { id: '', name: query.trim() });
+              }
+            }}
+            placeholder="Find or type a contact…"
+            style={{
+              width: '100%', boxSizing: 'border-box', padding: '0.2rem 0.3rem',
+              border: '1px solid var(--color-border)', borderRadius: 4,
+              fontSize: '0.65rem', fontFamily: 'inherit',
+            }}
+          />
+          <div style={{ maxHeight: 130, overflowY: 'auto', marginTop: '0.15rem' }}>
+            {matches.map(c => (
+              <div
+                key={c.id || c.name}
+                onClick={() => actions.addContact(boxId, c)}
+                style={{ padding: '0.15rem 0.3rem', fontSize: '0.65rem', color: '#1E293B', cursor: 'pointer', borderRadius: 3 }}
+                onMouseOver={e => e.currentTarget.style.background = '#F1F5F9'}
+                onMouseOut={e => e.currentTarget.style.background = ''}
+              >
+                <div style={{ fontWeight: 600 }}>{c.name}</div>
+                {(c.jobtitle || c.email) && (
+                  <div style={{ color: '#94A3B8', fontSize: '0.6rem' }}>{c.jobtitle || c.email}</div>
+                )}
+              </div>
+            ))}
+            {typedIsNew && (
+              <div
+                onClick={() => actions.addContact(boxId, { id: '', name: query.trim() })}
+                style={{ padding: '0.2rem 0.3rem', fontSize: '0.63rem', color: 'var(--color-accent)', cursor: 'pointer', fontWeight: 600 }}
+              >
+                + Add “{query.trim()}”
+              </div>
+            )}
+            {!matches.length && !typedIsNew && (
+              <div style={{ padding: '0.2rem 0.3rem', fontSize: '0.62rem', color: '#94A3B8' }}>
+                {contacts.length ? 'Everyone here is already on this division.' : 'No contacts on this company yet.'}
+              </div>
+            )}
+          </div>
+      </div>
+    </>
+  );
+}
+
+// The people on a division, listed under its box. The picker above is a
+// separate component so it mounts fresh every time it opens — otherwise
+// its search text survived a close and prepended itself to the next one.
+function DivisionContacts({ boxId, boxName, contacts, assigned, picking, actions }) {
+  return (
+    <>
+      {assigned.length > 0 && (
+        <div style={{ marginTop: '0.2rem', display: 'flex', flexDirection: 'column', gap: '0.12rem' }}>
+          {assigned.map(c => (
+            <span
+              key={divisionContactKey(c)}
+              title={[c.name, c.jobtitle, c.email].filter(Boolean).join(' · ')}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '0.2rem',
+                fontSize: '0.62rem', color: '#334155', background: '#F1F5F9',
+                border: '1px solid #E2E8F0', borderRadius: 999, padding: '0.05rem 0.15rem 0.05rem 0.4rem',
+              }}
+            >
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {c.name}
+              </span>
+              <button
+                type="button"
+                onClick={() => actions.removeContact(boxId, divisionContactKey(c))}
+                aria-label={`Remove ${c.name} from ${boxName}`}
+                title={`Remove ${c.name} from ${boxName}`}
+                style={{ border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer', fontSize: '0.7rem', lineHeight: 1, padding: '0 0.15rem', fontFamily: 'inherit' }}
+              >&times;</button>
+            </span>
+          ))}
+        </div>
+      )}
+      {picking && (
+        <DivisionContactPicker
+          boxId={boxId}
+          contacts={contacts}
+          assigned={assigned}
+          actions={actions}
+        />
+      )}
+    </>
+  );
+}
+
 // One box in the chart, plus its own divisions below it.
 //
 // `ownerId` is the id whose list this box lives in — renaming or removing
 // the box edits that list, and a box added from here lands in THIS box's
 // list (node.id), which is what nests it one level deeper.
-function DivisionNode({ node, ownerId, editing, adding, actions }) {
+function DivisionNode({ node, ownerId, editing, adding, picking, contacts, contactsByBox, actions }) {
   const isEditing = editing === node.id;
   const isAdding = adding === node.id;
+  const assigned = contactsByBox(node.id);
   const btn = {
     border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer',
     fontSize: '0.8rem', lineHeight: 1, padding: '0 0.15rem', fontFamily: 'inherit',
@@ -2255,6 +2393,7 @@ function DivisionNode({ node, ownerId, editing, adding, actions }) {
       {/* The wrapper is what the connector elbow anchors to — see
           .divBoxWrap in the stylesheet. */}
       <div className={styles.divBoxWrap}>
+        <div className={styles.divBoxHead}>
         {isEditing ? (
           <DivisionInlineInput
             value={node.company}
@@ -2297,8 +2436,24 @@ function DivisionNode({ node, ownerId, editing, adding, actions }) {
               title={`Remove ${node.company} from ${ownerId === node.id ? 'this list' : 'its parent'}`}
               style={{ ...btn, position: 'absolute', top: 1, right: 2 }}
             >&times;</button>
+            <button
+              type="button"
+              onClick={() => actions.startPick(node.id)}
+              aria-label={`Add a contact to ${node.company}`}
+              title={`Add a contact to ${node.company}`}
+              style={{ ...btn, position: 'absolute', bottom: 1, left: 2, fontSize: '0.7rem' }}
+            >&#128100;</button>
           </>
         )}
+        </div>
+        <DivisionContacts
+          boxId={node.id}
+          boxName={node.company}
+          contacts={contacts}
+          assigned={assigned}
+          picking={picking === node.id}
+          actions={actions}
+        />
       </div>
       {(node.children.length > 0 || isAdding) && (
         <div className={styles.divSub}>
@@ -2309,6 +2464,9 @@ function DivisionNode({ node, ownerId, editing, adding, actions }) {
                 ownerId={node.id}
                 editing={editing}
                 adding={adding}
+                picking={picking}
+                contacts={contacts}
+                contactsByBox={contactsByBox}
                 actions={actions}
               />
             </div>
@@ -2333,13 +2491,14 @@ function DivisionNode({ node, ownerId, editing, adding, actions }) {
 // The root box is the company the popup is showing, so it isn't renamable
 // or removable here — its own name field is a few rows up. Everything
 // below it is editable in place.
-function DivisionsChart({ tree, editing, adding, actions }) {
+function DivisionsChart({ tree, editing, adding, picking, contacts, contactsByBox, actions }) {
   const rootAdding = adding === tree.id;
   return (
     <div className={styles.divChart}>
       <div className={styles.divChartInner}>
         <div className={styles.divRootRow}>
           <div className={styles.divBoxWrap}>
+            <div className={styles.divBoxHead}>
             <div
               className={`${styles.divBox} ${styles.divRoot}`}
               title={`${tree.company} is this company — rename it in the Company field above, not here.`}
@@ -2355,6 +2514,26 @@ function DivisionsChart({ tree, editing, adding, actions }) {
                 padding: '0 0.15rem', fontFamily: 'inherit',
               }}
             >+</button>
+            <button
+              type="button"
+              onClick={() => actions.startPick(tree.id)}
+              aria-label={`Add a contact to ${tree.company}`}
+              title={`Add a contact to ${tree.company}`}
+              style={{
+                position: 'absolute', bottom: 1, left: 2, border: 'none', background: 'transparent',
+                color: '#94A3B8', cursor: 'pointer', fontSize: '0.7rem', lineHeight: 1,
+                padding: '0 0.15rem', fontFamily: 'inherit',
+              }}
+            >&#128100;</button>
+            </div>
+            <DivisionContacts
+              boxId={tree.id}
+              boxName={tree.company}
+              contacts={contacts}
+              assigned={contactsByBox(tree.id)}
+              picking={picking === tree.id}
+              actions={actions}
+            />
           </div>
         </div>
         <div className={styles.divStem} />
@@ -2366,6 +2545,9 @@ function DivisionsChart({ tree, editing, adding, actions }) {
                 ownerId={tree.id}
                 editing={editing}
                 adding={adding}
+                picking={picking}
+                contacts={contacts}
+                contactsByBox={contactsByBox}
                 actions={actions}
               />
             </div>
@@ -2387,7 +2569,7 @@ function DivisionsChart({ tree, editing, adding, actions }) {
   );
 }
 
-function DivisionsSection({ parentId, parentCompany, prospects, settings, updateSettings }) {
+function DivisionsSection({ parentId, parentCompany, prospects, contacts, settings, updateSettings }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState('');
   // Which box is being renamed, and which box is having one added under
@@ -2395,6 +2577,7 @@ function DivisionsSection({ parentId, parentCompany, prospects, settings, update
   // editors open on the same chart.
   const [editing, setEditing] = useState(null);
   const [adding, setAdding] = useState(null);
+  const [picking, setPicking] = useState(null);
 
   const divisions = divisionsFor(settings, parentId);
 
@@ -2413,6 +2596,19 @@ function DivisionsSection({ parentId, parentCompany, prospects, settings, update
     }
     return m;
   }, [prospects]);
+
+  // The company's contacts, flattened to { id, name, jobtitle, email }.
+  // Contacts arrive in a couple of shapes (HubSpot `vid` vs `id`), so the
+  // id is resolved the same way the contacts panel does it.
+  const contactOptions = useMemo(() => (contacts || []).map(c => ({
+    id: String(c.id || c.vid || c.email || ''),
+    name: [c.firstname, c.lastname].filter(Boolean).join(' ').trim() || c.email || '(no name)',
+    jobtitle: c.jobtitle || '',
+    email: c.email || '',
+  })).filter(c => c.name), [contacts]);
+
+  const contactsByBox = useCallback(
+    (boxId) => divisionContactsFor(settings, boxId), [settings]);
 
   // Sub-divisions come along for free: a division's own divisions nest
   // under it, so the chart shows the whole structure, not just one level.
@@ -2445,14 +2641,30 @@ function DivisionsSection({ parentId, parentCompany, prospects, settings, update
   // company writes that company's own divisions, the same list its popup
   // and the My Accounts column edit; that's what the link means.
   const actions = useMemo(() => ({
-    startEdit: (id) => { setAdding(null); setEditing(id); },
-    startAdd: (id) => { setEditing(null); setAdding(id); },
-    cancel: () => { setEditing(null); setAdding(null); },
+    startEdit: (id) => { setAdding(null); setPicking(null); setEditing(id); },
+    startAdd: (id) => { setEditing(null); setPicking(null); setAdding(id); },
+    startPick: (id) => { setEditing(null); setAdding(null); setPicking(id); },
+    cancel: () => { setEditing(null); setAdding(null); setPicking(null); },
     rename: (ownerId, childId, text) => {
       const patch = renameDivisionPatch(settings, ownerId, childId, text);
-      if (patch) updateSettings(patch);
+      if (patch) {
+        // A rename that detaches a linked division changes its id, so the
+        // people on it have to travel with it or they'd be orphaned under
+        // an id nothing points at any more.
+        const newId = (patch.divisionsMap[ownerId] || []).find(d => nameKey(d.company) === nameKey(text))?.id;
+        const moved = newId && newId !== childId
+          ? moveDivisionContactsPatch(settings, childId, newId)
+          : null;
+        updateSettings(moved ? { ...patch, ...moved } : patch);
+      }
       setEditing(null);
     },
+    addContact: (boxId, contact) => {
+      const patch = addDivisionContactPatch(settings, boxId, contact);
+      if (patch) updateSettings(patch);
+      setPicking(null);
+    },
+    removeContact: (boxId, key) => updateSettings(removeDivisionContactPatch(settings, boxId, key)),
     addChild: (ownerId, text) => {
       const patch = addNamedDivisionPatch(settings, ownerId, text, companies);
       if (patch) updateSettings(patch);
@@ -2489,10 +2701,18 @@ function DivisionsSection({ parentId, parentCompany, prospects, settings, update
               under it, × to remove it. */}
           {(divisions.length > 0 || adding) && (
             <>
-              <DivisionsChart tree={tree} editing={editing} adding={adding} actions={actions} />
+              <DivisionsChart
+                tree={tree}
+                editing={editing}
+                adding={adding}
+                picking={picking}
+                contacts={contactOptions}
+                contactsByBox={contactsByBox}
+                actions={actions}
+              />
               <p style={{ fontSize: '0.66rem', color: '#94A3B8', margin: '0 0 0.5rem', textAlign: 'center' }}>
-                Click a box or ✎ to rename it · + adds a division beneath it · × removes it ·
-                Enter saves, Esc cancels
+                Click a box or ✎ to rename it · + adds a division beneath it · 👤 adds a contact ·
+                × removes it · Enter saves, Esc cancels
               </p>
             </>
           )}
@@ -6475,6 +6695,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               parentId={prospect.id}
               parentCompany={fields.company}
               prospects={prospects}
+              contacts={localContacts}
               settings={settings}
               updateSettings={updateSettings}
             />
