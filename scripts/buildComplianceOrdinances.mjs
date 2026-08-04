@@ -94,6 +94,16 @@ function parseMoney(v) {
 
 const isActive = (status) => /active/i.test(status) && !/rescind|cancel|repeal/i.test(status);
 
+// Benchmarking screens on "Active/ Mandatory" alone. The other seven BBS
+// statuses in the workbook are "Active/ Voluntary" — Calgary, Edmonton,
+// British Columbia, Winnipeg, Grand Rapids, Longmont, Ottawa — which oblige
+// nobody, yet two of them publish a maximum yearly penalty that was being
+// summed into portfolio exposure. A voluntary programme still shows on the
+// site detail as the ordinance on file; it just no longer counts as a mandate.
+// Audits and BPS keep the broader test (BPS has one voluntary programme,
+// Reno's).
+const isMandatory = (status) => isActive(status) && /mandator/i.test(status);
+
 function main() {
   const buf = fs.readFileSync(IN);
   const text = new TextDecoder('windows-1252').decode(buf);
@@ -124,7 +134,7 @@ function main() {
       bbs: {
         policyName: col(row, 'BBS - Policy Name'),
         status: bbsStatus,
-        active: isActive(bbsStatus),
+        active: isMandatory(bbsStatus),
         deadline: parseDate(col(row, 'BBS - Compliance Deadline')),
         deadlineRaw: col(row, 'BBS - Compliance Deadline') || null,
         thresholds: {

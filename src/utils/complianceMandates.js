@@ -204,6 +204,11 @@ function thresholdFor(category, mandate, ptClass) {
 // Evaluate one category for one site. `site`: { sqft, propertyType }.
 // Returns { applicable, active, eligible, threshold, deadline, penalty, ... }.
 //   active:   the jurisdiction has an in-force ordinance for this category.
+//             Benchmarking counts only an "Active/ Mandatory" policy status —
+//             a voluntary programme (Calgary, Building Benchmark BC, Grand
+//             Rapids) obliges nobody, so it is reported as the ordinance on
+//             file rather than a mandate the portfolio is exposed to. The flag
+//             is set in the seed by scripts/buildComplianceOrdinances.mjs.
 //   eligible: whether THIS building has to report under it —
 //             true  = active ordinance and the building meets the size
 //                     requirement (or the ordinance publishes none, or the
