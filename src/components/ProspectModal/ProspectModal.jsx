@@ -916,10 +916,6 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     return [...set, ...extraTags].join(';');
   }
 
-  function buildTagsString() {
-    return buildTagsStringFrom(checkedTags);
-  }
-
   async function persistDansTags(tagsStr) {
     const cid = contact.id || contact.vid;
     if (!cid) return; // new contact — save will include tags on create
@@ -979,12 +975,26 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
 
   function set(key, val) { setF(prev => ({ ...prev, [key]: val })); }
 
-  async function handleSave() {
+  // Autosave fires from a debounce timer (and from the unmount flush), so it
+  // can't read the render-time closure — by the time it runs the user has
+  // usually typed more. Keep the editable state on a ref that every render
+  // refreshes and have handleSave read from that instead.
+  const stateRef = useRef(null);
+  stateRef.current = { f, checkedTags, ccEmails, toAlsoEmails, metInPerson, invitedToLouisville };
+
+  // `auto` marks a background (debounced) save: the modal stays open and any
+  // status is reported inline rather than by handing control back to the
+  // caller, which closes the popup on a non-silent onSave.
+  async function handleSave({ auto = false } = {}) {
+    const snap = stateRef.current;
+    // An explicit click means the user is done typing, so the Company field's
+    // current text counts as committed even if it never lost focus.
+    if (!auto) companyCommittedRef.current = snap.f.company;
     setSaving(true);
     setError(null);
     setCompanyNote('');
     try {
-      const allProps = { ...f, dans_tags: buildTagsString() };
+      const allProps = { ...snap.f, company: companyCommittedRef.current, dans_tags: buildTagsStringFrom(snap.checkedTags) };
       // HubSpot doesn't have these local-only fields — save them separately via settings.
       const { notes, oldEmails, oldCompany, nickname, teamName, partner, kids, ...hsProps } = allProps;
       const noteValue = notes || '';
@@ -1089,10 +1099,10 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
         onSaveFamily(savedCid, familyValue);
       }
       if (savedCid && onSaveMetInPerson) {
-        onSaveMetInPerson(savedCid, metInPerson);
+        onSaveMetInPerson(savedCid, snap.metInPerson);
       }
       if (savedCid && onSaveInvitedToLouisville) {
-        onSaveInvitedToLouisville(savedCid, invitedToLouisville);
+        onSaveInvitedToLouisville(savedCid, snap.invitedToLouisville);
       }
       // Company edits behave the same here as on the HubSpot Contacts
       // page: the API renames the Company record this contact is linked to,
@@ -1126,25 +1136,116 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       const primaryEmail = (savedContact.email || '').trim();
       if (primaryEmail && onSaveCcMap) {
         const next = { ...(ccMap || {}) };
-        if (ccEmails.length > 0) next[primaryEmail] = ccEmails;
+        if (snap.ccEmails.length > 0) next[primaryEmail] = snap.ccEmails;
         else delete next[primaryEmail];
         onSaveCcMap(next);
       }
       if (primaryEmail && onSaveToAlsoMap) {
         const next = { ...(toAlsoMap || {}) };
-        if (toAlsoEmails.length > 0) next[primaryEmail] = toAlsoEmails;
+        if (snap.toAlsoEmails.length > 0) next[primaryEmail] = snap.toAlsoEmails;
         else delete next[primaryEmail];
         onSaveToAlsoMap(next);
       }
-      onSave(savedContact);
+      // Mark exactly what went to HubSpot as clean, so edits made *during*
+      // the request still register as unsaved and get their own pass.
+      savedSigRef.current = signatureOf(snap);
+      failedSigRef.current = null;
+      setSavedSig(savedSigRef.current);
+      // A non-silent onSave hands control back to the caller, which closes the
+      // popup — right for an explicit "Save now", wrong for a background save.
+      onSave(savedContact, auto ? { silent: true } : undefined);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
+      failedSigRef.current = signatureOf(snap);
       setError(err.message || 'Save failed');
     } finally {
       setSaving(false);
     }
   }
+
+  // ---------------------------------------------------------------------
+  // Autosave. Editing an existing HubSpot contact writes back on its own a
+  // beat after typing stops — the Save button stays as a "save it right now"
+  // escape hatch and a status readout. New contacts are excluded: an
+  // unfinished form shouldn't mint a HubSpot record, so those still go
+  // through the explicit "Create in HubSpot" click.
+  //
+  // Tags, Met In Person, Invited to Louisville, Reports To and Events already
+  // persist the moment they're toggled, so the signature below only covers the
+  // fields that used to need the button: the text inputs plus CC / To Also.
+  const AUTOSAVE_DELAY_MS = 900;
+  // The Company field is special: saving it renames the linked HubSpot Company
+  // record, which cascades to every contact there. Autosaving on each keystroke
+  // would rename it to "Acm" on the way to "Acme", so the field only counts as
+  // edited once it's committed — blurred, picked from the list, or pushed by an
+  // explicit Save click. A ref (not state) because the commit often lands in the
+  // same batch as the close that unmounts us.
+  const companyCommittedRef = useRef(contact.company || '');
+  const [, setCompanyCommittedTick] = useState(0);
+  function commitCompany(value) {
+    if (companyCommittedRef.current === value) return;
+    companyCommittedRef.current = value;
+    setCompanyCommittedTick(n => n + 1); // re-run the dirty check with the new value
+  }
+  // Tags are deliberately absent: persistDansTags already pushes them on
+  // toggle, so counting them here would fire a second, identical write.
+  // Company comes from the committed value, not the raw field — see below.
+  function signatureOf(snap) {
+    return JSON.stringify({
+      f: { ...snap.f, company: companyCommittedRef.current },
+      cc: snap.ccEmails,
+      toAlso: snap.toAlsoEmails,
+    });
+  }
+  const existingHsId = contact.id || contact.vid;
+  const autosaveEnabled = !!existingHsId && !(typeof existingHsId === 'string' && existingHsId.startsWith('local-'));
+  const currentSig = signatureOf(stateRef.current);
+  const [savedSig, setSavedSig] = useState(currentSig);
+  const savedSigRef = useRef(currentSig);
+  // Signature of the payload whose save failed — retrying it on a timer would
+  // just hammer a broken request, so we wait for the next edit (or a click).
+  const failedSigRef = useRef(null);
+  const inFlightRef = useRef(null);
+  const dirty = currentSig !== savedSig;
+  // Saving a half-typed address would push "dan@" to HubSpot (and key the
+  // CC / To Also maps off it) before the next keystroke fixes it, so hold the
+  // autosave until the address is at least shaped like one. The explicit
+  // button is unaffected — it only needs a non-empty value, as before.
+  const emailLooksComplete = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((f.email || '').trim());
+  const canAutosave = autosaveEnabled && dirty && emailLooksComplete && failedSigRef.current !== currentSig;
+
+  function runSave(opts) {
+    const p = handleSave(opts);
+    inFlightRef.current = p;
+    return p;
+  }
+
+  useEffect(() => {
+    if (!canAutosave || saving) return;
+    const t = setTimeout(() => { void runSave({ auto: true }); }, AUTOSAVE_DELAY_MS);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSig, savedSig, saving, canAutosave]);
+
+  // Closing the popup (backdrop, ×, Close, Esc) unmounts us mid-debounce, so
+  // flush whatever is still pending. If a save is already in flight the flush
+  // waits for it and re-checks — stateRef is frozen at that point, so the
+  // comparison against the last persisted signature is still accurate.
+  const flushRef = useRef(null);
+  flushRef.current = () => {
+    if (!autosaveEnabled) return;
+    const flush = () => {
+      const sig = signatureOf(stateRef.current);
+      if (sig === savedSigRef.current) return;
+      if (!stateRef.current.f.email.trim()) return;
+      if (failedSigRef.current === sig) return;
+      void handleSave({ auto: true });
+    };
+    if (inFlightRef.current) inFlightRef.current.then(flush, flush);
+    else flush();
+  };
+  useEffect(() => () => flushRef.current?.(), []);
 
   const inputStyle = { width: '100%', padding: '0.35rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: '6px', fontSize: '0.78rem', fontFamily: 'inherit', boxSizing: 'border-box', outline: 'none' };
   const labelStyle = { fontSize: '0.65rem', fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block', marginBottom: '3px' };
@@ -1264,11 +1365,12 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                     value={f.company}
                     onFocus={() => { setCompanyOpen(true); setCompanyHover(0); }}
                     onChange={e => { set('company', e.target.value); setCompanyOpen(true); setCompanyHover(0); }}
+                    onBlur={e => commitCompany(e.target.value)}
                     onKeyDown={e => {
                       if (!showList) return;
                       if (e.key === 'ArrowDown') { e.preventDefault(); setCompanyHover(h => Math.min(h + 1, matches.length - 1)); }
                       else if (e.key === 'ArrowUp') { e.preventDefault(); setCompanyHover(h => Math.max(h - 1, 0)); }
-                      else if (e.key === 'Enter') { e.preventDefault(); set('company', matches[companyHover]); setCompanyOpen(false); }
+                      else if (e.key === 'Enter') { e.preventDefault(); set('company', matches[companyHover]); commitCompany(matches[companyHover]); setCompanyOpen(false); }
                       else if (e.key === 'Escape') { setCompanyOpen(false); }
                     }}
                     placeholder="Type to search Table View companies…"
@@ -1294,7 +1396,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                       {matches.map((n, i) => (
                         <div
                           key={n}
-                          onMouseDown={e => { e.preventDefault(); set('company', n); setCompanyOpen(false); }}
+                          onMouseDown={e => { e.preventDefault(); set('company', n); commitCompany(n); setCompanyOpen(false); }}
                           onMouseEnter={() => setCompanyHover(i)}
                           style={{
                             padding: '0.4rem 0.6rem',
@@ -1804,15 +1906,23 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               >{deleting ? 'Deleting…' : 'Delete Contact'}</button>
             </div>
           ) : <span />}
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button onClick={onClose} style={{ padding: '0.5rem 1rem', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer', color: '#64748B' }}>Cancel</button>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            {autosaveEnabled && (
+              <span
+                title="Edits save to HubSpot automatically a moment after you stop typing."
+                style={{ fontSize: '0.7rem', color: saving ? '#0369A1' : !dirty ? '#059669' : '#B45309', fontWeight: 600, whiteSpace: 'nowrap' }}
+              >
+                {saving ? 'Saving…' : !dirty ? 'All changes saved' : !emailLooksComplete ? 'Enter a valid email to save' : 'Saving shortly…'}
+              </span>
+            )}
+            <button onClick={onClose} style={{ padding: '0.5rem 1rem', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer', color: '#64748B' }}>{autosaveEnabled ? 'Close' : 'Cancel'}</button>
             <button
-              onClick={handleSave}
-              disabled={saving || saved || !f.email.trim()}
-              title={!f.email.trim() ? 'Email is required' : ''}
-              style={{ padding: '0.5rem 1rem', border: 'none', borderRadius: '6px', background: saved ? '#059669' : (!f.email.trim() ? '#94A3B8' : '#0078D4'), color: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: (!f.email.trim() || saving) ? 'not-allowed' : 'pointer', fontWeight: 600, transition: 'background 0.2s', opacity: (!f.email.trim() && !saved) ? 0.6 : 1 }}
+              onClick={() => runSave({ auto: autosaveEnabled })}
+              disabled={saving || (autosaveEnabled ? !dirty : saved) || !f.email.trim()}
+              title={!f.email.trim() ? 'Email is required' : autosaveEnabled ? 'Edits save automatically — click to push them now' : ''}
+              style={{ padding: '0.5rem 1rem', border: 'none', borderRadius: '6px', background: (saved || (autosaveEnabled && !dirty)) ? '#059669' : (!f.email.trim() ? '#94A3B8' : '#0078D4'), color: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: (!f.email.trim() || saving || (autosaveEnabled && !dirty)) ? 'not-allowed' : 'pointer', fontWeight: 600, transition: 'background 0.2s', opacity: (!f.email.trim() && !saved) ? 0.6 : 1 }}
             >
-              {saving ? 'Saving…' : saved ? '✓ Saved!' : !f.email.trim() ? 'Email required' : (!contact.id && !contact.vid) ? 'Create in HubSpot' : 'Save to HubSpot'}
+              {saving ? 'Saving…' : !f.email.trim() ? 'Email required' : autosaveEnabled ? (dirty ? 'Save now' : '✓ Saved') : saved ? '✓ Saved!' : (!contact.id && !contact.vid) ? 'Create in HubSpot' : 'Save to HubSpot'}
             </button>
           </div>
         </div>
