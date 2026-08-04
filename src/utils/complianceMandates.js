@@ -220,15 +220,13 @@ function thresholdFor(category, mandate, ptClass) {
 //   active:   the jurisdiction has an in-force ordinance for this category.
 //   eligible: whether THIS building has to report under it —
 //             true  = active ordinance and the building meets the size
-//                     requirement (or the ordinance publishes none).
+//                     requirement (or the ordinance publishes none, or the
+//                     site carries no square footage — see below).
 //             false = active ordinance but the building is under the size
 //                     requirement, or no ordinance at all.
-//             null  = active ordinance with a size requirement, but the site
-//                     carries no square footage, so it can't be decided.
 //   Every count, penalty total and chart downstream keys off `eligible ===
-//   true`, so a building below the threshold no longer shows up as needing to
-//   report, and one with no square footage is held back as undecided rather
-//   than being quietly counted either way.
+//   true`, so a building below the threshold doesn't show up as needing to
+//   report.
 function evalCategory(category, mandate, site) {
   const cat = mandate[category];
   if (!cat || !cat.active) {
@@ -240,7 +238,15 @@ function evalCategory(category, mandate, site) {
   // The size requirement gates applicability: it's the ordinance's own test
   // for which buildings are covered, so screening a 5,000 ft² building as
   // needing to report under a 50,000 ft² mandate overstates the portfolio.
-  const meetsThreshold = (sqft == null || threshold == null) ? null : sqft >= threshold;
+  //
+  // A site with no square footage is taken to meet the requirement rather than
+  // held out of the screening. A missing value is a gap in the uploaded list,
+  // not evidence of a small building — holding those sites back dropped them
+  // from the counts entirely, which reads as "no mandate here" and understates
+  // the portfolio. `sizeAssumed` marks the ones counted on that assumption so
+  // the page and the exports can say which figures rest on it.
+  const sizeAssumed = threshold != null && sqft == null;
+  const meetsThreshold = threshold == null ? null : (sqft == null ? true : sqft >= threshold);
   // No published threshold => the ordinance covers the building outright.
   const eligible = threshold == null ? true : meetsThreshold;
   // BPS penalties can be quoted per square foot per year (Denver: $10/ft²/yr),
@@ -259,6 +265,9 @@ function evalCategory(category, mandate, site) {
     eligible,
     threshold,
     meetsThreshold,
+    // Counted as meeting the size requirement because the site has no square
+    // footage to test, not because it was measured.
+    sizeAssumed,
     ptClass,
     deadline: cat.deadline || null,
     deadlineRaw: cat.deadlineRaw || null,

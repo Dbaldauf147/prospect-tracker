@@ -81,13 +81,20 @@ eq(classifyPropertyType('Office'), 'nonresidential', 'classify nonresidential');
   eq(big.bbs.penalty, 4000, 'Seattle BBS penalty 4000');
 
   const small = screenSite({ id: 2, city: 'Seattle', state: 'WA', sqft: 30000, propertyType: 'Office' });
-  ok(small.bbs.eligible === true, 'Seattle 30k: BBS applicable');
-  ok(small.audits.eligible === true, 'Seattle 30k: Audits applicable (ft² threshold ignored)');
-  ok(small.audits.meetsThreshold === false, 'Seattle 30k: below Audits threshold (informational only)');
+  ok(small.bbs.eligible === true, 'Seattle 30k: BBS applicable (over the 20k threshold)');
+  ok(small.audits.eligible === false, 'Seattle 30k: Audits not applicable (under the 50k threshold)');
+  ok(small.audits.meetsThreshold === false, 'Seattle 30k: below Audits threshold');
+  ok(small.audits.sizeAssumed === false, 'Seattle 30k: measured, not assumed');
 
+  // No square footage is taken as meeting the size requirement rather than
+  // held out — a missing value is a gap in the uploaded list, not a small
+  // building — and the result says the size was assumed.
   const noSize = screenSite({ id: 3, city: 'Seattle', state: 'WA', propertyType: 'Office' });
-  ok(noSize.bbs.eligible === true, 'no square footage -> still applicable');
-  ok(noSize.bbs.meetsThreshold === null, 'no square footage -> meetsThreshold unknown');
+  ok(noSize.bbs.eligible === true, 'no square footage -> BBS applicable');
+  ok(noSize.audits.eligible === true, 'no square footage -> Audits applicable despite the 50k threshold');
+  ok(noSize.bbs.meetsThreshold === true, 'no square footage -> threshold taken as met');
+  ok(noSize.bbs.sizeAssumed === true, 'no square footage -> flagged as assumed');
+  ok(noSize.bbs.applicable === true, 'no square footage -> counts toward the totals');
 
   const unmatched = screenSite({ id: 4, city: 'Nowhere', state: 'ZZ', sqft: 99999 });
   ok(unmatched.matched === false, 'unmatched site');

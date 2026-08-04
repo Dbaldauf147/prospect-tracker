@@ -485,7 +485,11 @@
 
 .pillEligible { display: inline-block; padding: 1px 8px; border-radius: 999px; background: #DCFCE7; color: #166534; font-size: 0.68rem; font-weight: 700; }
 .pillBelow { display: inline-block; padding: 1px 8px; border-radius: 999px; background: #F1F5F9; color: #64748B; font-size: 0.68rem; font-weight: 600; }
-.pillUnknown { display: inline-block; padding: 1px 8px; border-radius: 999px; background: #FEF3C7; color: #92400E; font-size: 0.68rem; font-weight: 600; }
+/* Applicable, but on an assumed size — the site carries no square footage to
+   measure against the threshold. Reads as applicable (same green) with a
+   dashed amber edge marking the assumption. Padding is 1px short of
+   .pillEligible so the border doesn't change the pill's box. */
+.pillAssumed { display: inline-block; padding: 0 7px; border: 1px dashed #D97706; border-radius: 999px; background: #DCFCE7; color: #166534; font-size: 0.68rem; font-weight: 700; }
 
 .manualResult { margin-top: 0.5rem; }
 .manualHead { font-size: 1rem; font-weight: 800; color: #1E293B; margin-bottom: 0.5rem; }
