@@ -4303,9 +4303,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     const complianceResearch = settings?.companyComplianceResearch || {};
     // The reference link and findings the user typed against each row —
     // their own work, and the part of the card a static export was
-    // previously dropping entirely.
-    const links = settings?.companyComplianceLinks || {};
-    const findings = settings?.companyComplianceFindings || {};
+    // previously dropping entirely. Links are filed by row key for the whole
+    // page (the same statute whoever is screened); findings stay per company,
+    // so those are looked up one company at a time inside the loop below.
+    // Both maps used to be indexed here with a row key against the
+    // per-company map, which resolved to nothing — the export shipped an
+    // empty Reference column no matter what was on the card.
+    const sharedLinks = settings?.complianceReferenceLinks || {};
+    const legacyLinks = settings?.companyComplianceLinks || {};
+    const allFindings = settings?.companyComplianceFindings || {};
     // HQ sources, in the same priority order the card's HQ row uses.
     const hqResearch = settings?.companyHqResearch || {};
     const hqRegionMap = settings?.hqRegionMap || {};
@@ -4348,6 +4354,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const yesJurisdictions = JURISDICTION_QUESTIONS
         .filter(q => answers[q.key] === 'Yes')
         .map(q => q.jurisdiction);
+
+      // One row's reference link and this company's findings on it, resolved
+      // the way the card resolves them: the shared link first, then anything
+      // filed per company before links moved off the company.
+      const companyLinks = legacyLinks[e.key] || {};
+      const findings = allFindings[e.key] || {};
+      const links = (rowKey) => sharedLinks[rowKey] || companyLinks[rowKey] || '';
 
       // Revenue: the researched figure, else the matched prospect record —
       // the same fallback order the page's cards use.
@@ -4442,7 +4455,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                 auto: !groupNA && !saved && !!derived,
                 basis: groupNA ? caRuledOutWhy : (derived?.basis || ''),
                 na: groupNA,
-                reference: links[cKey] || '',
+                reference: links(cKey),
                 findings: findings[cKey] || '',
               };
             }),
@@ -4457,7 +4470,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         const regs = (REGULATIONS_BY_JURISDICTION[q.key] || []).map((reg) => {
           const regKey = `${q.key}__${String(reg.regulation || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
           const picked = answers[regKey] || '';
-          const reference = links[regKey] || '';
+          const reference = links(regKey);
           const regFindings = findings[regKey] || '';
           if (!showRegs && !reference && !regFindings) return null;
           // California's mandates turn on revenue plus the doing-business
@@ -4498,7 +4511,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           ruledOutWhy: ruledOut ? caRuledOutWhy : '',
           criteriaGroups,
           regulations: regs,
-          reference: links[q.key] || '',
+          reference: links(q.key),
           findings: findings[q.key] || '',
         };
       });
@@ -11301,9 +11314,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       complianceResearch: (settings?.companyComplianceResearch || {})[key] || null,
       complianceLinks: (settings?.companyComplianceLinks || {})[key] || null,
       complianceFindings: (settings?.companyComplianceFindings || {})[key] || null,
+      // Reference links belong to the row rather than the company, so they
+      // live in one page-level map. It travels whole — otherwise an analysis
+      // exported today would arrive with an empty Reference column.
+      complianceReferenceLinks: settings?.complianceReferenceLinks || null,
     };
     const hasAny = payload.revenue || payload.screening || payload.complianceResearch
-      || payload.complianceLinks || payload.complianceFindings;
+      || payload.complianceLinks || payload.complianceFindings
+      || payload.complianceReferenceLinks;
     return hasAny ? payload : null;
   }
 
@@ -11324,6 +11342,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     if (research.complianceResearch) updates[`companyComplianceResearch.${key}`] = research.complianceResearch;
     if (research.complianceLinks) updates[`companyComplianceLinks.${key}`] = research.complianceLinks;
     if (research.complianceFindings) updates[`companyComplianceFindings.${key}`] = research.complianceFindings;
+    // Shared reference links land row by row, and only where this account
+    // has nothing already — an imported analysis fills gaps, it doesn't
+    // overwrite the links whoever is importing has curated.
+    if (research.complianceReferenceLinks && typeof research.complianceReferenceLinks === 'object') {
+      const mine = settings?.complianceReferenceLinks || {};
+      for (const [rowKey, url] of Object.entries(research.complianceReferenceLinks)) {
+        if (!rowKey || typeof url !== 'string' || !url.trim() || mine[rowKey]) continue;
+        updates[`complianceReferenceLinks.${rowKey}`] = url;
+      }
+    }
     if (Object.keys(updates).length === 0) return false;
     try {
       updateSettingsPath(updates);
