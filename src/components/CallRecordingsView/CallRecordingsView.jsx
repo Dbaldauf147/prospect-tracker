@@ -17,6 +17,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
 import { secureGet, secureSet, secureClear } from '../../utils/secureStorage';
+import {
+  supportsDirectoryPicker, pickFolder, loadFolderHandle, forgetFolderHandle,
+  folderPermission, listFolderRecordings, recordsFromFileList,
+} from '../../utils/localRecordings';
 import styles from './CallRecordingsView.module.css';
 
 const TOKEN_KEY = 'onedrive-access-token';
@@ -101,8 +105,21 @@ function CompanyPicker({ prospects, onPick, onClose }) {
 }
 
 export function CallRecordingsView({ prospects = [], settings = {}, updateSettings, onSelectProspect }) {
+  // 'onedrive' | 'local'. Local reads a folder on this computer and needs
+  // no Microsoft account at all.
+  const [source, setSource] = useState(settings.callRecordingsSource || 'onedrive');
   const [connected, setConnected] = useState(false);
   const [checkedConnection, setCheckedConnection] = useState(false);
+  // Local-folder state.
+  const [folderHandle, setFolderHandle] = useState(null);
+  const [folderName, setFolderName] = useState('');
+  const [needsPermission, setNeedsPermission] = useState(false);
+  const [truncated, setTruncated] = useState(false);
+  const fileInputRef = useRef(null);
+  // itemId -> object URL, created on play and revoked when the player
+  // closes. Without the revoke a few 200 MB recordings would sit in
+  // memory for the life of the page.
+  const objectUrls = useRef({});
   const [folder, setFolder] = useState(settings.callRecordingsFolder || DEFAULT_FOLDER);
   const [folderDraft, setFolderDraft] = useState(settings.callRecordingsFolder || DEFAULT_FOLDER);
   const [recordings, setRecordings] = useState([]);
@@ -186,11 +203,96 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     }
   }, [getToken]);
 
-  // Initial load: figure out whether there's a live connection, and if so
-  // pull the configured folder.
+  // ---- local folder --------------------------------------------------------
+  const readLocalFolder = useCallback(async (handle) => {
+    setError('');
+    setLoading(true);
+    try {
+      const { recordings: found, skipped: skip, truncated: cut } = await listFolderRecordings(handle);
+      setRecordings(found);
+      setSkipped(skip);
+      setTruncated(cut);
+    } catch (err) {
+      setError(err?.message || String(err));
+      setRecordings([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  async function chooseFolder() {
+    try {
+      const handle = await pickFolder();
+      setFolderHandle(handle);
+      setFolderName(handle.name);
+      setNeedsPermission(false);
+      readLocalFolder(handle);
+    } catch (err) {
+      // AbortError = the user closed the picker; not worth an error banner.
+      if (err?.name !== 'AbortError') setError(err?.message || String(err));
+    }
+  }
+
+  // A handle restored from IndexedDB comes back needing permission again;
+  // re-granting has to happen inside a user gesture, hence the button.
+  async function regrantFolder() {
+    if (!folderHandle) return;
+    const state = await folderPermission(folderHandle, { request: true });
+    if (state === 'granted') {
+      setNeedsPermission(false);
+      readLocalFolder(folderHandle);
+    } else {
+      setError('Permission to read that folder was declined. Choose the folder again to continue.');
+    }
+  }
+
+  async function forgetFolder() {
+    await forgetFolderHandle();
+    setFolderHandle(null);
+    setFolderName('');
+    setNeedsPermission(false);
+    setRecordings([]);
+  }
+
+  function onFolderInput(e) {
+    const { recordings: found, skipped: skip, truncated: cut } = recordsFromFileList(e.target.files);
+    const first = e.target.files?.[0];
+    setFolderName(first?.webkitRelativePath?.split('/')[0] || 'Selected files');
+    setRecordings(found);
+    setSkipped(skip);
+    setTruncated(cut);
+    setError('');
+  }
+
+  function switchSource(next) {
+    setSource(next);
+    updateSettings?.({ callRecordingsSource: next });
+    setRecordings([]);
+    setSkipped(0);
+    setTruncated(false);
+    setError('');
+    setPlaying(null);
+  }
+
+  // Initial load. OneDrive: check for a live token and pull the configured
+  // folder. Local: restore the remembered folder handle, and list it
+  // straight away when permission survived.
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      if (source === 'local') {
+        setCheckedConnection(true);
+        if (!supportsDirectoryPicker()) return;
+        const handle = await loadFolderHandle();
+        if (cancelled || !handle) return;
+        setFolderHandle(handle);
+        setFolderName(handle.name);
+        const state = await folderPermission(handle);
+        if (cancelled) return;
+        if (state === 'granted') readLocalFolder(handle);
+        else setNeedsPermission(true);
+        return;
+      }
       const token = await getToken();
       if (cancelled) return;
       setCheckedConnection(true);
@@ -201,7 +303,34 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     return () => { cancelled = true; };
     // Folder changes go through applyFolder, which reloads explicitly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [getToken]);
+  }, [getToken, source, readLocalFolder]);
+
+  // Release every object URL on unmount.
+  useEffect(() => {
+    const urls = objectUrls.current;
+    return () => { for (const u of Object.values(urls)) URL.revokeObjectURL(u); };
+  }, []);
+
+  // The URL an <audio>/<video> plays from: OneDrive's pre-authenticated
+  // link, or a blob URL minted from the local File.
+  function mediaUrlFor(rec) {
+    if (!rec.isLocal) return rec.downloadUrl;
+    if (!objectUrls.current[rec.id]) {
+      objectUrls.current[rec.id] = URL.createObjectURL(rec.file);
+    }
+    return objectUrls.current[rec.id];
+  }
+
+  function togglePlay(rec) {
+    setPlaying(prev => {
+      if (prev === rec.id) {
+        const url = objectUrls.current[rec.id];
+        if (url) { URL.revokeObjectURL(url); delete objectUrls.current[rec.id]; }
+        return null;
+      }
+      return rec.id;
+    });
+  }
 
   // Sign-in popup result.
   useEffect(() => {
@@ -311,74 +440,188 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
 
   const pickerRecording = pickerFor ? recordings.find(r => r.id === pickerFor) : null;
 
+  // The fallback <input webkitdirectory> path never produces a handle, so
+  // "have we been pointed at a folder yet?" is handle-or-name, not handle.
+  const hasLocalSelection = !!folderHandle || !!folderName;
+
+  // Which empty state (if any) stands in for the recording list. Returning
+  // null here means "render the cards".
+  const emptyState = (() => {
+    if (loading || recordings.length > 0) return null;
+    if (source === 'local') {
+      if (!hasLocalSelection) {
+        return (
+          <div className={styles.empty}>
+            <span className={styles.emptyTitle}>Pick the folder your recordings are in</span>
+            Anything on this machine works — Desktop, Documents, or the OneDrive folder your PC already syncs.
+            The files are read straight from disk and played here; nothing is uploaded and nothing is copied.
+            {supportsDirectoryPicker()
+              ? ' Chrome and Edge remember the folder, so you only pick it once.'
+              : ' This browser can’t remember the folder, so you’ll pick it each visit — Chrome or Edge can remember it.'}
+          </div>
+        );
+      }
+      if (needsPermission || error) return null;
+      return (
+        <div className={styles.empty}>
+          <span className={styles.emptyTitle}>Nothing to play in {folderName || 'that folder'}</span>
+          {skipped > 0
+            ? `Found ${skipped} file${skipped === 1 ? '' : 's'}, but none are audio or video.`
+            : 'That folder (and its subfolders, three deep) has no media files in it.'}
+        </div>
+      );
+    }
+    if (!connected) {
+      return checkedConnection ? (
+        <div className={styles.empty}>
+          <span className={styles.emptyTitle}>Connect your personal OneDrive</span>
+          You’ll be asked to sign in with Microsoft and grant read-only access to your files
+          (<code>Files.Read</code>). Pick your <strong>personal</strong> account on the sign-in screen —
+          the work account is the one Outlook already uses.
+        </div>
+      ) : null;
+    }
+    if (error) return null;
+    return (
+      <div className={styles.empty}>
+        <span className={styles.emptyTitle}>Nothing to play in {folder}</span>
+        {skipped > 0
+          ? `The folder exists and holds ${skipped} file${skipped === 1 ? '' : 's'}, but none are audio or video.`
+          : 'The folder is empty. Check the path above — it’s case-sensitive and relative to your OneDrive root.'}
+      </div>
+    );
+  })();
+
   return (
     <div className={styles.wrapper}>
       <div className={styles.header}>
         <div className={styles.titleBlock}>
           <h1 className={styles.title}>Call Recordings</h1>
           <div className={styles.subtitle}>
-            Recordings from a folder in your personal OneDrive. Play them here, link one to a company,
-            or transcribe it. This connection is separate from the work Outlook one — signing in here
-            doesn’t touch your calendar or mail integration.
+            {source === 'local'
+              ? 'Recordings from a folder on this computer. Nothing is uploaded — the files are read and played locally, and only the company link is saved.'
+              : 'Recordings from a folder in your personal OneDrive. This connection is separate from the work Outlook one — signing in here doesn’t touch your calendar or mail integration.'}
           </div>
         </div>
         <div className={styles.toolbar}>
-          <span className={connected ? styles.connected : styles.disconnected}>
-            {connected ? '● OneDrive connected' : '○ Not connected'}
+          <span className={styles.sourceToggle}>
+            <button
+              type="button"
+              className={source === 'onedrive' ? styles.sourceOn : styles.sourceOff}
+              onClick={() => switchSource('onedrive')}
+            >OneDrive</button>
+            <button
+              type="button"
+              className={source === 'local' ? styles.sourceOn : styles.sourceOff}
+              onClick={() => switchSource('local')}
+            >This computer</button>
           </span>
-          {connected ? (
+          {source === 'onedrive' ? (
             <>
-              <button type="button" className={styles.btn} onClick={() => loadRecordings(folder)} disabled={loading}>
-                {loading ? 'Loading…' : 'Refresh'}
-              </button>
-              <button type="button" className={styles.btn} onClick={disconnect}>Disconnect</button>
+              <span className={connected ? styles.connected : styles.disconnected}>
+                {connected ? '● OneDrive connected' : '○ Not connected'}
+              </span>
+              {connected ? (
+                <>
+                  <button type="button" className={styles.btn} onClick={() => loadRecordings(folder)} disabled={loading}>
+                    {loading ? 'Loading…' : 'Refresh'}
+                  </button>
+                  <button type="button" className={styles.btn} onClick={disconnect}>Disconnect</button>
+                </>
+              ) : (
+                <button type="button" className={styles.btnPrimary} onClick={connect}>Connect OneDrive</button>
+              )}
             </>
           ) : (
-            <button type="button" className={styles.btnPrimary} onClick={connect}>Connect OneDrive</button>
+            recordings.length > 0 && folderHandle && (
+              <button type="button" className={styles.btn} onClick={() => readLocalFolder(folderHandle)} disabled={loading}>
+                {loading ? 'Reading…' : 'Refresh'}
+              </button>
+            )
           )}
         </div>
       </div>
 
-      <div className={styles.controls}>
-        <span className={styles.fieldLabel}>Folder</span>
-        <input
-          className={styles.input}
-          type="text"
-          value={folderDraft}
-          placeholder={DEFAULT_FOLDER}
-          onChange={e => setFolderDraft(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') applyFolder(); }}
-          title="Path relative to your OneDrive root, e.g. /Recordings or /Documents/Calls. Case-sensitive."
-        />
-        <button
-          type="button"
-          className={styles.btn}
-          onClick={applyFolder}
-          disabled={!connected || folderDraft.trim() === folder}
-        >Load folder</button>
-        <span className={styles.transcriptStatus}>
-          Relative to your OneDrive root. Leave as <code>/</code> to list the root itself.
-        </span>
-      </div>
+      {source === 'onedrive' ? (
+        <div className={styles.controls}>
+          <span className={styles.fieldLabel}>Folder</span>
+          <input
+            className={styles.input}
+            type="text"
+            value={folderDraft}
+            placeholder={DEFAULT_FOLDER}
+            onChange={e => setFolderDraft(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') applyFolder(); }}
+            title="Path relative to your OneDrive root, e.g. /Recordings or /Documents/Calls. Case-sensitive."
+          />
+          <button
+            type="button"
+            className={styles.btn}
+            onClick={applyFolder}
+            disabled={!connected || folderDraft.trim() === folder}
+          >Load folder</button>
+          <span className={styles.transcriptStatus}>
+            Relative to your OneDrive root. Leave as <code>/</code> to list the root itself.
+          </span>
+        </div>
+      ) : (
+        <div className={styles.controls}>
+          <span className={styles.fieldLabel}>Folder</span>
+          {supportsDirectoryPicker() ? (
+            <>
+              <button type="button" className={styles.btnPrimary} onClick={chooseFolder}>
+                {folderHandle ? 'Choose a different folder' : 'Choose folder…'}
+              </button>
+              {folderHandle && (
+                <>
+                  <span className={styles.connected} title="Remembered — this folder reopens next time you visit">
+                    📁 {folderName}
+                  </span>
+                  <button type="button" className={styles.btn} onClick={forgetFolder}>Forget folder</button>
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              {/* Safari / Firefox have no directory picker, so fall back to
+                  a folder-scoped file input. No persistence is possible. */}
+              <button type="button" className={styles.btnPrimary} onClick={() => fileInputRef.current?.click()}>
+                Choose folder…
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                webkitdirectory=""
+                directory=""
+                multiple
+                style={{ display: 'none' }}
+                onChange={onFolderInput}
+              />
+              {folderName && <span className={styles.connected}>📁 {folderName}</span>}
+            </>
+          )}
+          <span className={styles.transcriptStatus}>
+            Any folder on this machine — Desktop, Documents, a synced OneDrive folder. Subfolders are included.
+          </span>
+        </div>
+      )}
 
       <div className={styles.body}>
         {error && <div className={styles.error}>{error}</div>}
+        {truncated && (
+          <div className={styles.notice}>
+            Showing the first 500 recordings found. Point at a narrower folder to see the rest.
+          </div>
+        )}
+        {source === 'local' && needsPermission && (
+          <div className={styles.notice}>
+            <strong>{folderName}</strong> is remembered, but the browser needs your permission again to read it
+            this session.{' '}
+            <button type="button" className={styles.btn} onClick={regrantFolder}>Reconnect folder</button>
+          </div>
+        )}
 
-        {!connected && checkedConnection ? (
-          <div className={styles.empty}>
-            <span className={styles.emptyTitle}>Connect your personal OneDrive</span>
-            You’ll be asked to sign in with Microsoft and grant read-only access to your files
-            (<code>Files.Read</code>). Pick your <strong>personal</strong> account on the sign-in screen —
-            the work account is the one Outlook already uses.
-          </div>
-        ) : connected && !loading && recordings.length === 0 && !error ? (
-          <div className={styles.empty}>
-            <span className={styles.emptyTitle}>Nothing to play in {folder}</span>
-            {skipped > 0
-              ? `The folder exists and holds ${skipped} file${skipped === 1 ? '' : 's'}, but none are audio or video.`
-              : 'The folder is empty. Check the path above — it’s case-sensitive and relative to your OneDrive root.'}
-          </div>
-        ) : (
+        {emptyState || (
           recordings.map(rec => {
             const link = links[rec.id];
             const tr = transcripts[rec.id];
@@ -407,9 +650,13 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                     <button
                       type="button"
                       className={styles.btn}
-                      onClick={() => setPlaying(p => (p === rec.id ? null : rec.id))}
+                      onClick={() => togglePlay(rec)}
                     >{playing === rec.id ? 'Hide player' : '▶ Play'}</button>
-                    <a className={styles.btn} href={rec.downloadUrl} download={rec.name} target="_blank" rel="noopener noreferrer">⬇ Download</a>
+                    {/* A local file is already on disk — there is nothing
+                        to download, so the button only appears for OneDrive. */}
+                    {!rec.isLocal && (
+                      <a className={styles.btn} href={rec.downloadUrl} download={rec.name} target="_blank" rel="noopener noreferrer">⬇ Download</a>
+                    )}
                     <button type="button" className={styles.btn} onClick={() => setPickerFor(rec.id)}>
                       {link ? 'Change company' : 'Link to company'}
                     </button>
@@ -420,7 +667,10 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                       type="button"
                       className={styles.btn}
                       onClick={() => transcribe(rec)}
-                      disabled={tr && (tr.status === 'starting' || tr.status === 'queued' || tr.status === 'processing')}
+                      disabled={rec.isLocal || (tr && (tr.status === 'starting' || tr.status === 'queued' || tr.status === 'processing'))}
+                      title={rec.isLocal
+                        ? 'Transcription needs the file reachable by a URL, which a file on your computer is not. Only OneDrive-sourced recordings can be transcribed today.'
+                        : undefined}
                     >
                       {tr?.status === 'completed' ? 'Re-transcribe' : 'Transcribe'}
                     </button>
@@ -430,8 +680,8 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                 {playing === rec.id && (
                   <div className={styles.player}>
                     {video
-                      ? <video src={rec.downloadUrl} controls preload="metadata" />
-                      : <audio src={rec.downloadUrl} controls preload="metadata" />}
+                      ? <video src={mediaUrlFor(rec)} controls preload="metadata" />
+                      : <audio src={mediaUrlFor(rec)} controls preload="metadata" />}
                   </div>
                 )}
 
