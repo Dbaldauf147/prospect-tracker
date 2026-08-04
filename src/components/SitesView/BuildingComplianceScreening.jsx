@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx';
 import MASTER_ORDINANCES from '../../data/masterOrdinances.js';
 import { STATES, GOV_IDS, JURISDICTIONS, CITY_ROWS } from '../../data/complianceCityLookup.js';
 import {
-  screenSites, lookupGovId, getMandates, classifyPropertyType,
+  screenSites, lookupGovId, getMandates,
   CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
   totalEligible, eligibilityByOrdinance, totalPenalty, penaltyByOrdinance, sitesCompanyLabel,
   bpsPrioritization, penaltyBasis,
@@ -17,6 +17,9 @@ import styles from './BuildingComplianceScreening.module.css';
 const usd = (n) => n == null ? '$-' : '$' + Math.round(n).toLocaleString('en-US');
 const isUrl = (v) => /^https?:\/\//i.test(String(v).trim());
 const mdY = (iso) => { if (!iso) return '—'; const [y, m, d] = String(iso).split('-'); return `${Number(m)}/${Number(d)}/${y}`; };
+// Property-type buckets the size requirements are published against, for the
+// lines that have to name the bucket a building fell into.
+const PT_CLASS_LABEL = { multifamily: 'multifamily', public: 'public / institutional', nonresidential: 'non-residential' };
 
 // Compact horizontal-bar list used for the on-page eligibility/penalty
 // summaries. items: [{ label, value }]. Every jurisdiction is listed — the
@@ -76,6 +79,21 @@ function CatCell({ res }) {
     thr,
     res.eligible === true && res.penalty != null ? `Max penalty ${usd(res.penalty)}/yr` : null,
   ].filter(Boolean).join(' · ');
+  // The ordinance covers other building types but not this one — e.g. Austin's
+  // audit requirement is multifamily-only, Seattle's is commercial-only.
+  if (res.coveredType === false) {
+    return (
+      <span className={styles.catCell}>
+        <span
+          className={styles.pillBelow}
+          title={[res.policyName, `This ordinance does not cover ${PT_CLASS_LABEL[res.ptClass] || 'this'} buildings`].filter(Boolean).join(' · ')}
+        >Building type not covered</span>
+        <span className={styles.catFineNone}>
+          {PT_CLASS_LABEL[res.ptClass] || 'this type'} not in scope
+        </span>
+      </span>
+    );
+  }
   // Below the size requirement: the ordinance is live in this jurisdiction but
   // this building isn't covered, so no deadline and no fine ride along.
   if (res.eligible === false) {
@@ -159,14 +177,22 @@ function MandateDetail({ res, mandate, sqft }) {
         {row('Status', res.status || '—')}
         {row('Deadline', res.deadline ? mdY(res.deadline) : (res.deadlineRaw || '—'))}
         {row('Compliance cycle', m.complianceCycle)}
-        {row('Size requirement', res.threshold != null
-          ? `${res.threshold.toLocaleString('en-US')} ft² (${res.ptClass})`
-            + (res.sizeAssumed ? ' — square footage unknown, taken as meeting it'
-              : res.meetsThreshold === true ? ` — this building's ${sqft != null ? `${sqft.toLocaleString('en-US')} ft² ` : ''}meets it`
-              : res.meetsThreshold === false ? ` — this building's ${sqft != null ? `${sqft.toLocaleString('en-US')} ft² ` : ''}is below it`
-              : '')
-          : 'None published')}
-        {res.eligible === false && (
+        {row('Size requirement', res.coveredType === false
+          ? `None for ${PT_CLASS_LABEL[res.ptClass] || 'this'} buildings — the ordinance publishes requirements for other building types only`
+          : res.threshold != null
+            ? `${res.threshold.toLocaleString('en-US')} ft² (${res.ptClass})`
+              + (res.sizeAssumed ? ' — square footage unknown, taken as meeting it'
+                : res.meetsThreshold === true ? ` — this building's ${sqft != null ? `${sqft.toLocaleString('en-US')} ft² ` : ''}meets it`
+                : res.meetsThreshold === false ? ` — this building's ${sqft != null ? `${sqft.toLocaleString('en-US')} ft² ` : ''}is below it`
+                : '')
+            : 'None published')}
+        {res.coveredType === false ? (
+          <div className={styles.mdNote}>
+            The ordinance is in force in this jurisdiction, but it scopes itself to building types
+            this site isn&apos;t one of — it publishes no requirement for {PT_CLASS_LABEL[res.ptClass] || 'this type of'} buildings,
+            so this site isn&apos;t counted as needing to report and carries no penalty here.
+          </div>
+        ) : res.eligible === false && (
           <div className={styles.mdNote}>
             The ordinance is in force in this jurisdiction, but this building is under its size
             requirement, so it isn&apos;t counted as needing to report and carries no penalty here.
@@ -182,9 +208,10 @@ function MandateDetail({ res, mandate, sqft }) {
 
         <div className={styles.mdSubhead}>How this fine was calculated</div>
         <div className={styles.mdFine}>{
-          res.eligible === true
-            ? fineLine
-            : 'No fine — this building is under the size requirement, so the mandate does not reach it.'
+          res.eligible === true ? fineLine
+            : res.coveredType === false
+              ? 'No fine — the mandate does not cover this building type.'
+              : 'No fine — this building is under the size requirement, so the mandate does not reach it.'
         }</div>
         {basis && (
           <>
@@ -486,6 +513,7 @@ export function BuildingComplianceScreening({
       for (const c of CATEGORIES) {
         const e = r[c];
         row[`${CATEGORY_LABEL[c]} Applicable`] = !e?.active ? 'No'
+          : e.coveredType === false ? 'No — building type not covered'
           : e.eligible !== true ? 'No — below size requirement'
           : e.sizeAssumed ? 'Yes — sq ft assumed'
           : 'Yes';
@@ -494,6 +522,7 @@ export function BuildingComplianceScreening({
         row[`${CATEGORY_LABEL[c]} Deadline`] = e?.eligible === true ? (e.deadline ? mdY(e.deadline) : (e.deadlineRaw || '')) : '';
         row[`${CATEGORY_LABEL[c]} Size Requirement (ft²)`] = e?.threshold ?? '';
         row[`${CATEGORY_LABEL[c]} Meets Requirement`] = !e?.active ? ''
+          : e.coveredType === false ? 'n/a — building type not covered'
           : e.sizeAssumed ? 'Assumed (no sq ft)'
           : e.meetsThreshold === true ? 'Yes'
           : e.meetsThreshold === false ? 'No'
