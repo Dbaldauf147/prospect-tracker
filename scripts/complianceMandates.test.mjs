@@ -4,7 +4,7 @@ import {
   lookupGovId, getMandates, screenSite, screenSites,
   classifyPropertyType, eligibilityByOrdinance, totalEligible,
   deadlinesByDate, penaltyByOrdinance, utilityFeedEligibility,
-  buildComplianceRoadmap,
+  buildComplianceRoadmap, auditRequirements, auditRequirementsLabel, categoryColumns,
 } from '../src/utils/complianceMandates.js';
 import MASTER_ORDINANCES from '../src/data/masterOrdinances.js';
 
@@ -89,6 +89,60 @@ eq(lookupGovId('Seattle', 'DC'), null, 'Seattle,DC -> not Seattle WA');
     'Longmont: BPS unaffected by the benchmarking rule');
   ok(MASTER_ORDINANCES.every(g => !g.bbs.active || /mandator/i.test(g.bbs.status)),
     'no jurisdiction has an active BBS without a mandatory status');
+}
+
+// --- what an audit ordinance asks for --------------------------------------
+{
+  const la = screenSite({ id: 1, city: 'Los Angeles', state: 'CA', sqft: 250000, propertyType: 'Office' });
+  eq(la.audits.requirements.map(r => [r.key, r.level]),
+    [['energyAudit', 'required'], ['waterAudit', 'required'], ['rcx', 'required']],
+    'Los Angeles audits: energy + water + retro-commissioning');
+  eq(la.audits.requirements[0].value, 'ASHRAE Level II', 'a named standard travels with the requirement');
+  // "May be required" is conditional, "Optional" is not required — the columns
+  // mix all three and the screening has to keep them apart.
+  const atl = getMandates(lookupGovId('Atlanta', 'GA'));
+  eq(auditRequirements(atl).map(r => [r.key, r.level]),
+    [['energyAudit', 'required'], ['waterAudit', 'required'], ['rcx', 'optional']],
+    'Atlanta: RCx is optional, not required');
+  eq(auditRequirements(getMandates(lookupGovId('Seattle', 'WA'))).map(r => [r.key, r.level]),
+    [['rcx', 'conditional'], ['tuneUp', 'conditional']], 'Seattle: both obligations are conditional');
+  eq(auditRequirementsLabel(getMandates(lookupGovId('Madison', 'WI'))), 'Tune-up: Mandatory',
+    'label reads as one line for a spreadsheet cell');
+  // A blank set is missing detail, not an absent ordinance: those still screen.
+  const den = screenSite({ id: 2, city: 'Denver', state: 'CO', sqft: 250000, propertyType: 'Office' });
+  eq(den.audits.requirements, [], 'Denver publishes no requirement detail');
+  ok(den.audits.eligible === true, 'Denver audits still applicable without requirement detail');
+  // Only the audits category carries them.
+  eq(la.bbs.requirements, [], 'BBS carries no audit requirements');
+
+  // The export columns: the workbook's own order for one category.
+  const cols = categoryColumns('audits');
+  eq(cols[0], 'Audits - Policy Status', 'audit columns start at the policy status');
+  eq(cols.slice(1, 8), ['Audits - Ordinance Name', 'Audits - URL', 'Audits - Due Date',
+    'Audits - Compliance Cycle', 'Audits - Sq Thr / Public', 'Audits - Sq Thr / Commercial',
+    'Audits - Sq Thr / Multifamily'], 'audit columns keep the workbook order');
+  ok(cols.length === 22 && cols.every(c => c.startsWith('Audits - ')), 'every audit column, and only those');
+  // No row carries all 22, so the order is merged across rows — it has to match
+  // the header order of the richest row it does see.
+  for (const want of ['Audits - Eligibility Details', 'Audits - Energy Audit Requirement',
+    'Audits - Water Audit Requirement', 'Audits - RCxing Requirement', 'Audits - Tune-Up Requirement',
+    'Audits - Required Credentials', 'Audits - Exemption Link', 'Audits - Exemption Criteria',
+    'Audits - Performance Exemptions', 'Audits - Enforcement', 'Audits - Max Yearly Penalty Estimation',
+    'Audits - Max Yearly Penalty', 'Audits - Considerations']) {
+    ok(cols.includes(want), `export carries ${want}`);
+  }
+  ok(cols.indexOf('Audits - Max Yearly Penalty') > cols.indexOf('Audits - Enforcement'),
+    'merged columns keep their relative header order');
+  ok(categoryColumns('bbs').every(c => c.startsWith('BBS - ')), 'the same works per category');
+  // A merged jurisdiction quotes each category from the row carrying it.
+  const pdx = getMandates('US-OR-Portla-01');
+  ok(pdx.categoryRaw.bbs['BBS - Policy Status'] === pdx.bbs.status, 'merged BBS detail comes from its own row');
+  ok(pdx.categoryRaw.bps['BPS - Policy Status'] === pdx.bps.status, 'merged BPS detail comes from its own row');
+  // A one-row jurisdiction carries it too, or its export columns come out blank.
+  ok(MASTER_ORDINANCES.every(g => getMandates(g.govId)?.categoryRaw),
+    'every jurisdiction carries per-category source rows');
+  eq(getMandates(lookupGovId('Atlanta', 'GA')).categoryRaw.audits['Audits - Water Audit Requirement'],
+    'Mandatory', 'a single-row jurisdiction quotes its own audit columns');
 }
 
 // --- jurisdictions split across several rows -------------------------------
