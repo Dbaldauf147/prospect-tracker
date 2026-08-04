@@ -101,7 +101,10 @@ export async function saveTargetAccountsToDB(userId, data) {
 export function renameTargetAccountRows(data, oldName, newName) {
   const o = String(oldName || '').trim().toLowerCase();
   const n = String(newName || '').trim();
-  if (!data?.sheets || !o || !n || o === n.toLowerCase()) return { data, count: 0 };
+  // Rows are matched case-insensitively, but the cell stores the name as it
+  // is displayed, so a capitalisation-only rename still has to be written
+  // through — only an identical string leaves nothing to do.
+  if (!data?.sheets || !o || !n || String(oldName || '').trim() === n) return { data, count: 0 };
   let count = 0;
   const sheets = {};
   for (const [name, sheet] of Object.entries(data.sheets)) {

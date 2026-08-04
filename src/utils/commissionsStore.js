@@ -105,7 +105,10 @@ const commissionMatches = (row, lowerName) =>
 export function countCommissionsClientRename(oldName, newName) {
   const o = String(oldName || '').trim().toLowerCase();
   const n = String(newName || '').trim();
-  if (!o || !n || o === n.toLowerCase()) return 0;
+  // Rows are found case-insensitively, but the cell stores the name as text,
+  // so only an identical string means there's nothing to rewrite — a
+  // capitalisation fix still has to be written through.
+  if (!o || !n || String(oldName || '').trim() === n) return 0;
   return loadCommissions().data.filter(r => commissionMatches(r, o)).length;
 }
 
@@ -115,7 +118,7 @@ export function countCommissionsClientRename(oldName, newName) {
 export function renameCommissionsClient(oldName, newName) {
   const o = String(oldName || '').trim().toLowerCase();
   const n = String(newName || '').trim();
-  if (!o || !n || o === n.toLowerCase()) return 0;
+  if (!o || !n || String(oldName || '').trim() === n) return 0;
   const { data } = loadCommissions();
   let count = 0;
   const next = data.map(row => {
