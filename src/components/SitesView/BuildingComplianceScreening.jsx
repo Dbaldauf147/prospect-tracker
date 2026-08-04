@@ -92,6 +92,19 @@ function CatCell({ res }) {
     thr,
     res.eligible === true && res.penalty != null ? `Max penalty ${usd(res.penalty)}/yr` : null,
   ].filter(Boolean).join(' · ');
+  // No date on file, so nothing is due and the site isn't counted as needing
+  // to comply — Austin, Columbus and Denver publish no audit deadline.
+  if (res.noDeadline) {
+    return (
+      <span className={styles.catCell}>
+        <span
+          className={styles.pillBelow}
+          title={[res.policyName, 'This ordinance publishes no compliance deadline, so nothing is due here yet'].filter(Boolean).join(' · ')}
+        >No deadline published</span>
+        <span className={styles.catFineNone}>nothing due</span>
+      </span>
+    );
+  }
   // The ordinance covers other building types but not this one — e.g. Austin's
   // audit requirement is multifamily-only, Seattle's is commercial-only.
   if (res.coveredType === false) {
@@ -235,7 +248,13 @@ function MandateDetail({ res, mandate, sqft }) {
                 : res.meetsThreshold === false ? ` — this building's ${sqft != null ? `${sqft.toLocaleString('en-US')} ft² ` : ''}is below it`
                 : '')
             : 'None published')}
-        {res.coveredType === false ? (
+        {res.noDeadline ? (
+          <div className={styles.mdNote}>
+            The ordinance is in force in this jurisdiction, but publishes no compliance deadline —
+            there is nothing due and nothing to plan against, so this site isn&apos;t counted as
+            needing an audit and carries no penalty here.
+          </div>
+        ) : res.coveredType === false ? (
           <div className={styles.mdNote}>
             The ordinance is in force in this jurisdiction, but it scopes itself to building types
             this site isn&apos;t one of — it publishes no requirement for {PT_CLASS_LABEL[res.ptClass] || 'this type of'} buildings,
@@ -272,9 +291,11 @@ function MandateDetail({ res, mandate, sqft }) {
         <div className={styles.mdSubhead}>How this fine was calculated</div>
         <div className={styles.mdFine}>{
           res.eligible === true ? fineLine
-            : res.coveredType === false
-              ? 'No fine — the mandate does not cover this building type.'
-              : 'No fine — this building is under the size requirement, so the mandate does not reach it.'
+            : res.noDeadline
+              ? 'No fine — the ordinance publishes no deadline, so nothing is due here yet.'
+              : res.coveredType === false
+                ? 'No fine — the mandate does not cover this building type.'
+                : 'No fine — this building is under the size requirement, so the mandate does not reach it.'
         }</div>
         {basis && (
           <>
@@ -583,6 +604,7 @@ export function BuildingComplianceScreening({
       for (const c of CATEGORIES) {
         const e = r[c];
         row[`${CATEGORY_LABEL[c]} Applicable`] = !e?.active ? 'No'
+          : e.noDeadline ? 'No — no deadline published'
           : e.coveredType === false ? 'No — building type not covered'
           : e.eligible !== true ? 'No — below size requirement'
           : e.sizeAssumed ? 'Yes — sq ft assumed'
@@ -592,6 +614,7 @@ export function BuildingComplianceScreening({
         row[`${CATEGORY_LABEL[c]} Deadline`] = e?.eligible === true ? (e.deadline ? mdY(e.deadline) : (e.deadlineRaw || '')) : '';
         row[`${CATEGORY_LABEL[c]} Size Requirement (ft²)`] = e?.threshold ?? '';
         row[`${CATEGORY_LABEL[c]} Meets Requirement`] = !e?.active ? ''
+          : e.noDeadline ? 'n/a — no deadline published'
           : e.coveredType === false ? 'n/a — building type not covered'
           : e.sizeAssumed ? 'Assumed (no sq ft)'
           : e.meetsThreshold === true ? 'Yes'
