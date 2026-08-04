@@ -65,6 +65,8 @@ import {
   CONSUMPTION_ESTIMATES,
   ACCOUNT_ESTIMATES,
   PROPERTY_TYPE_OPTIONS,
+  PROPERTY_TYPE_EXCLUDED,
+  PROPERTY_TYPE_EXCLUDED_LABEL,
 } from '../../data/propertyTypeEstimates';
 import {
   normalizeCountryName,
@@ -397,6 +399,10 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose }) {
     return seed;
   });
   const chosen = Object.values(draft).filter(Boolean).length;
+  // Types marked N/A, and how many sites that drops — the consequence is worth
+  // stating before the mapping is applied.
+  const excludedKeys = items.filter(it => draft[it.key] === PROPERTY_TYPE_EXCLUDED);
+  const excludedSiteCount = excludedKeys.reduce((n, it) => n + (it.count || 0), 0);
   // Rows still without a target, judged against the draft so the copy
   // updates as the user fills the table in.
   const pending = items.filter((it) => !draft[it.key]).length;
@@ -433,6 +439,14 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose }) {
               <>Every property type is mapped. Change a target below to re-map it, or set one back
                 to &ldquo;leave unmapped&rdquo; to drop the mapping.</>
             )}
+            {items.length > 0 && (
+              <div style={{ marginTop: '0.35rem' }}>
+                Pick <strong>{PROPERTY_TYPE_EXCLUDED_LABEL}</strong> for anything that isn&apos;t a building you
+                analyse — parking lots, ATMs, cell towers. Those sites drop out of the site count,
+                the spend and account estimates, and the compliance and procurement screening. They
+                stay in your file, so you can map them back at any time.
+              </div>
+            )}
           </div>
         </div>
 
@@ -458,9 +472,10 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose }) {
               {items.map((it) => (
                 <tr key={it.key}>
                   <td style={{ padding: '0.4rem 0.5rem 0.4rem 0', borderBottom: '1px solid #F1F5F9', verticalAlign: 'middle' }}>
-                    <div style={{ fontWeight: 600, color: '#1E293B', wordBreak: 'break-word' }}>{it.raw}</div>
-                    <div style={{ fontSize: '0.68rem', color: '#94A3B8' }}>
+                    <div style={{ fontWeight: 600, color: draft[it.key] === PROPERTY_TYPE_EXCLUDED ? '#94A3B8' : '#1E293B', wordBreak: 'break-word', textDecoration: draft[it.key] === PROPERTY_TYPE_EXCLUDED ? 'line-through' : 'none' }}>{it.raw}</div>
+                    <div style={{ fontSize: '0.68rem', color: draft[it.key] === PROPERTY_TYPE_EXCLUDED ? '#B45309' : '#94A3B8' }}>
                       {it.count} {it.count === 1 ? 'site' : 'sites'}
+                      {draft[it.key] === PROPERTY_TYPE_EXCLUDED ? ' · excluded from the analysis' : ''}
                     </div>
                   </td>
                   <td style={{ padding: '0.4rem 0.5rem', borderBottom: '1px solid #F1F5F9', verticalAlign: 'middle' }}>
@@ -475,6 +490,7 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose }) {
                       }}
                     >
                       <option value="">— leave unmapped —</option>
+                      <option value={PROPERTY_TYPE_EXCLUDED}>{PROPERTY_TYPE_EXCLUDED_LABEL}</option>
                       {PROPERTY_TYPE_OPTIONS.map((opt) => (
                         <option key={opt} value={opt}>{opt}</option>
                       ))}
@@ -490,6 +506,12 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose }) {
         <div style={{ padding: '0.7rem 1.1rem', borderTop: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem' }}>
           <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
             {items.length > 0 ? `${chosen} of ${items.length} mapped` : ''}
+            {excludedKeys.length > 0 && (
+              <span style={{ color: '#B45309', fontWeight: 600 }}>
+                {' · '}{excludedKeys.length} marked N/A
+                {excludedSiteCount > 0 ? ` (${excludedSiteCount.toLocaleString()} site${excludedSiteCount === 1 ? '' : 's'} excluded)` : ''}
+              </span>
+            )}
           </span>
           <div style={{ display: 'flex', gap: '0.4rem' }}>
             <button
@@ -1873,7 +1895,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     [zipFallback]
   );
 
-  const rows = useMemo(() => {
+  // Every site in the file, derived. `rows` below is this minus the ones a
+  // property-type mapping marked N/A — keep both so the mapping modal can
+  // still count what it excluded and the round-trip export can still carry
+  // those rows out.
+  const allRows = useMemo(() => {
     return cleanSitesData.map((r, i) => {
       const cityColInput = cityOverride ? String(r[cityOverride] || '').trim() : '';
       const stateColInput = stateColumnOverride ? String(r[stateColumnOverride] || '').trim() : '';
@@ -1903,11 +1929,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // A hand-drawn mapping wins over the automatic resolver: the user
       // set it precisely because the resolver got this value wrong (or
       // couldn't place it at all).
-      const mappedPropertyType = inputPropertyType
+      const mappingTarget = inputPropertyType
         ? propertyTypeMap[inputPropertyType.toLowerCase()] || null
         : null;
+      // Mapped to N/A: this value isn't a building we analyse, so the row is
+      // flagged here and filtered out of `rows` below rather than resolving to
+      // a canonical type.
+      const excludedType = mappingTarget === PROPERTY_TYPE_EXCLUDED;
+      const mappedPropertyType = excludedType ? null : mappingTarget;
       const canonicalPropertyType = mappedPropertyType
-        || (inputPropertyType ? normalizePropertyType(inputPropertyType) : null);
+        || (inputPropertyType && !excludedType ? normalizePropertyType(inputPropertyType) : null);
       const segmentFromColumn = segmentOverride ? normalizeSegment(r[segmentOverride]) : null;
       const segment = segmentFromColumn || propertyTypeSegment(canonicalPropertyType) || 'commercial';
       const segmentSource = segmentFromColumn ? 'column' : (propertyTypeSegment(canonicalPropertyType) ? 'propertyType' : 'default');
@@ -2137,6 +2168,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         })(),
         __companyName__: (inputCompanyName || portfolioCompanyName) || null,
         __propertyTypeRaw__: inputPropertyType || null,
+        __excludedType__: excludedType,
         __propertyType__: canonicalPropertyType,
         __segment__: segment,
         __segmentSource__: segmentSource,
@@ -2179,32 +2211,55 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     });
   }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, companyNameOverride, portfolioCompanyName, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, propertyTypeMap, segmentOverride, ownershipOverride, siteDescriptionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
 
+  // The analysis set: every derived site except those whose property type was
+  // mapped to N/A. Defining it here means the whole page — counts, spend, the
+  // compliance screening, the indicative-savings maths and every export built
+  // from `rows` — drops them without each consumer having to remember to.
+  const rows = useMemo(() => allRows.filter(r => !r.__excludedType__), [allRows]);
+
+  // What the N/A mapping took out, for the notice next to the site count.
+  const excludedSites = useMemo(() => {
+    const byType = new Map();
+    for (const r of allRows) {
+      if (!r.__excludedType__) continue;
+      const raw = String(r.__propertyTypeRaw__ || '').trim() || '(blank)';
+      byType.set(raw, (byType.get(raw) || 0) + 1);
+    }
+    return {
+      total: [...byType.values()].reduce((n, v) => n + v, 0),
+      byType: [...byType.entries()].map(([raw, count]) => ({ raw, count })).sort((a, b) => b.count - a.count),
+    };
+  }, [allRows]);
+
   // Distinct Property Type strings from the upload that still have no
   // canonical match — the rows the mapping modal exists to resolve.
   // Sorted by how many sites carry each value so the biggest wins are
-  // at the top.
+  // at the top. Read from `allRows`: a type mapped to N/A is a decision, not
+  // an unresolved value, and its sites are gone from `rows`.
   const unmappedPropertyTypes = useMemo(() => {
     const counts = new Map();
-    for (const r of rows) {
+    for (const r of allRows) {
       const raw = String(r.__propertyTypeRaw__ || '').trim();
-      if (!raw || r.__propertyType__) continue;
+      if (!raw || r.__propertyType__ || r.__excludedType__) continue;
       const key = raw.toLowerCase();
       const prev = counts.get(key);
       if (prev) prev.count += 1;
       else counts.set(key, { key, raw, count: 1 });
     }
     return [...counts.values()].sort((a, b) => b.count - a.count || a.raw.localeCompare(b.raw));
-  }, [rows]);
+  }, [allRows]);
 
   // Everything the mapping modal can act on: the property types in the
   // current file with no canonical match (the ones needing attention),
   // plus every value already hand-mapped — so opening it from the toolbar
-  // can edit or clear an existing mapping, not only fill in blanks.
+  // can edit or clear an existing mapping, not only fill in blanks. Counted
+  // over `allRows` so a type mapped to N/A still shows how many sites it
+  // covers, and can be mapped back to a real type.
   const propertyTypeMappingItems = useMemo(() => {
     // Original casing + per-file counts for whatever the upload carries.
     const rawByKey = new Map();
     const counts = new Map();
-    for (const r of rows) {
+    for (const r of allRows) {
       const raw = String(r.__propertyTypeRaw__ || '').trim();
       if (!raw) continue;
       const k = raw.toLowerCase();
@@ -2224,7 +2279,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       if (aPending !== bPending) return aPending ? -1 : 1;
       return b.count - a.count || a.raw.localeCompare(b.raw);
     });
-  }, [rows, unmappedPropertyTypes, propertyTypeMap]);
+  }, [allRows, unmappedPropertyTypes, propertyTypeMap]);
 
   // Auto-open the mapping modal after an import that brought in property
   // types we can't place. Only on import — the modal stays reachable
@@ -11393,12 +11448,17 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       addAppended(SNAPSHOT_RATE_GAS);
       const inputHeaders = [...sourceHeaders, ...appended];
 
-      // Build enriched rows from the derived `rows` array so the
-      // baked-in values reflect everything the page is showing —
-      // per-row supplier overrides, fuzzy-match canonicalization,
-      // zip-derived state, rates-file utility lookups. Keep the raw
-      // source values for every other column.
-      const enrichedRows = rows.map(r => {
+      // Build enriched rows from the derived rows so the baked-in values
+      // reflect everything the page is showing — per-row supplier overrides,
+      // fuzzy-match canonicalization, zip-derived state, rates-file utility
+      // lookups. Keep the raw source values for every other column.
+      //
+      // `allRows`, not `rows`: sites excluded by an N/A property-type mapping
+      // still belong in the Site List tab. The mapping rides along in the
+      // round-trip state below and re-excludes them on import, so carrying the
+      // rows costs nothing and keeps the decision reversible — dropping them
+      // would make it permanent the moment the analysis is saved.
+      const enrichedRows = allRows.map(r => {
         const out = {};
         for (const h of sourceHeaders) out[h] = r[h];
         const electricResolved = r.__electricSupplier__ || '';
@@ -12344,8 +12404,20 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem', flexWrap: 'wrap' }}>
             <h1 className={styles.title}>Utility Lookup</h1>
             <div className={styles.subtitle}>
-            {cleanSitesData.length} {cleanSitesData.length === 1 ? 'site' : 'sites'}
+            {rows.length} {rows.length === 1 ? 'site' : 'sites'}
             {sitesData.length > cleanSitesData.length && <span style={{ color: 'var(--color-text-muted)' }}> ({sitesData.length - cleanSitesData.length} blank-name row{sitesData.length - cleanSitesData.length === 1 ? '' : 's'} ignored)</span>}
+            {/* Sites an N/A property-type mapping took out. Named, with the
+                types behind them, so a headline count smaller than the file
+                reads as a decision rather than a lost upload. */}
+            {excludedSites.total > 0 && (
+              <span
+                style={{ color: '#B45309' }}
+                title={`Excluded by property type: ${excludedSites.byType.map(t => `${t.raw} (${t.count})`).join(', ')}`}
+              >
+                {' '}({excludedSites.total.toLocaleString()} excluded as N/A: {excludedSites.byType.slice(0, 3).map(t => t.raw).join(', ')}
+                {excludedSites.byType.length > 3 ? ` +${excludedSites.byType.length - 3} more` : ''})
+              </span>
+            )}
             {matchStats && (
               <>
                 {' '}· <strong style={{ color: '#166534' }}>{matchStats.matched}</strong>/{matchStats.total} matched to utility lookup

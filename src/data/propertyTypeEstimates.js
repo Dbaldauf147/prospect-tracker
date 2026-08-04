@@ -109,6 +109,16 @@ export const ACCOUNT_ESTIMATES = {
 // dropdown on the template / mapping UI later.
 export const PROPERTY_TYPE_OPTIONS = Object.keys(CONSUMPTION_ESTIMATES);
 
+// Sentinel target for the property-type mapping: rather than pointing a
+// source value at one of the canonical types, mark it as not-a-building so
+// every site carrying it drops out of the analysis. Parking lots, ATMs,
+// cell towers and the like have no meaningful consumption, compliance
+// obligation or procurement opportunity, and counting them inflates every
+// figure on the page. Stored as a mapping value, so it round-trips with the
+// rest of the mapping and can be undone from the same dropdown.
+export const PROPERTY_TYPE_EXCLUDED = '__excluded__';
+export const PROPERTY_TYPE_EXCLUDED_LABEL = 'N/A — exclude these sites';
+
 // Common alternate spellings the user's sheets carry. Normalized
 // against a punctuation-light, case-folded key so "Office High Rise",
 // "OFFICE  HIGHRISE", "office - high rise" all collapse to one entry.
