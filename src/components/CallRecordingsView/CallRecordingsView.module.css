@@ -1,0 +1,346 @@
+.wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem 0.5rem;
+  flex-wrap: wrap;
+}
+
+.titleBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.title {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  margin: 0;
+  color: var(--color-text);
+}
+
+.subtitle {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  max-width: 70ch;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.btn {
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--color-accent);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btnPrimary {
+  composes: btn;
+  background: #009530;
+  border-color: #009530;
+  color: #fff;
+  font-weight: 600;
+}
+
+.btnPrimary:hover:not(:disabled) {
+  background: #007d28;
+  border-color: #007d28;
+}
+
+/* Folder + connection strip under the header. */
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding: 0 1.25rem 0.75rem;
+}
+
+.fieldLabel {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.input {
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  min-width: 240px;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.connected,
+.disconnected {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+}
+
+.connected {
+  background: #dcfce7;
+  border: 1px solid #86efac;
+  color: #166534;
+}
+
+.disconnected {
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  color: #475569;
+}
+
+.body {
+  flex: 1;
+  overflow: auto;
+  padding: 0 1.25rem 2rem;
+}
+
+.error {
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.7rem;
+  background: #fee2e2;
+  border: 1px solid #fca5a5;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  color: #991b1b;
+}
+
+.notice {
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.7rem;
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  color: #92400e;
+}
+
+.empty {
+  margin: 3rem auto;
+  max-width: 640px;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+}
+
+.emptyTitle {
+  display: block;
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  color: var(--color-text);
+  margin-bottom: 0.4rem;
+}
+
+/* One recording. */
+.card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  margin-bottom: 0.6rem;
+  overflow: hidden;
+}
+
+.cardTop {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.8rem;
+  flex-wrap: wrap;
+}
+
+.name {
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  flex: 1;
+  min-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.cardActions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.player {
+  width: 100%;
+  padding: 0 0.8rem 0.7rem;
+}
+
+.player audio,
+.player video {
+  width: 100%;
+  display: block;
+}
+
+.player video {
+  max-height: 320px;
+  background: #000;
+  border-radius: var(--radius-sm);
+}
+
+/* Company link chip on a card. */
+.linkChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: #e0e7ff;
+  border: 1px solid #a5b4fc;
+  color: #3730a3;
+  cursor: pointer;
+}
+
+.linkChip:hover {
+  background: #c7d2fe;
+}
+
+.transcript {
+  border-top: 1px solid var(--color-border);
+  padding: 0.6rem 0.8rem;
+  background: var(--color-bg-subtle, #f8fafc);
+  max-height: 340px;
+  overflow: auto;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.transcriptStatus {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.utterance {
+  margin-bottom: 0.45rem;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.speaker {
+  flex: 0 0 auto;
+  font-weight: 700;
+  color: #3730a3;
+  font-size: var(--font-size-xs);
+  padding-top: 0.1rem;
+  min-width: 4.5rem;
+}
+
+/* Company picker popover. */
+.pickerBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.pickerCard {
+  background: var(--color-bg);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  width: min(460px, 92vw);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.pickerHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid var(--color-border);
+  font-weight: 700;
+  font-size: var(--font-size-sm);
+}
+
+.pickerClose {
+  border: none;
+  background: transparent;
+  font-size: 1.1rem;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  line-height: 1;
+}
+
+.pickerBody {
+  overflow: auto;
+  padding: 0.6rem 0.9rem 0.9rem;
+}
+
+.pickerOption {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.pickerOption:hover {
+  background: #f1f5f9;
+}
