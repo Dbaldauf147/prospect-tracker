@@ -45,7 +45,7 @@ import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCach
 import { userLsGet } from '../../utils/userLs';
 import { dbGet } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
-import { subscribeIndicativeAnalysis } from '../../utils/firestoreSync';
+import { subscribeIndicativeAnalysisMeta, loadIndicativeAnalysis } from '../../utils/firestoreSync';
 import { ListsMatchPanel } from './ListsMatchPanel';
 import styles from './ProspectModal.module.css';
 
@@ -2922,27 +2922,45 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // Utility Lookup page. Stored in a /analyses/main subcollection so
   // the bulk prospects query stays lean — fetched only when the modal
   // opens. null while loading or when no analysis has been saved.
+  //
+  // Only the metadata is subscribed to. The workbook itself is chunked
+  // across sibling docs and can run to tens of megabytes for a large
+  // portfolio; pulling that on every popup open just to render a filename
+  // was what kept the save size capped. It's fetched on the download click.
   const [indicativeAnalysis, setIndicativeAnalysis] = useState(null);
+  const [analysisDownloading, setAnalysisDownloading] = useState(false);
+  const [analysisError, setAnalysisError] = useState('');
   useEffect(() => {
     if (!prospect?.id || isNew) { setIndicativeAnalysis(null); return; }
-    const unsub = subscribeIndicativeAnalysis(prospect.id, (data) => setIndicativeAnalysis(data));
+    const unsub = subscribeIndicativeAnalysisMeta(prospect.id, (data) => setIndicativeAnalysis(data));
     return () => { if (unsub) unsub(); };
   }, [prospect?.id, isNew]);
 
-  function downloadIndicativeAnalysis() {
-    if (!indicativeAnalysis?.dataBase64) return;
-    const binary = atob(indicativeAnalysis.dataBase64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = indicativeAnalysis.fileName || 'Indicative Savings.xlsx';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+  async function downloadIndicativeAnalysis() {
+    if (!prospect?.id || analysisDownloading) return;
+    setAnalysisDownloading(true);
+    setAnalysisError('');
+    try {
+      const saved = await loadIndicativeAnalysis(prospect.id);
+      if (!saved?.dataBase64) throw new Error('The saved analysis is empty — re-save it from Utility Lookup.');
+      const binary = atob(saved.dataBase64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = saved.fileName || indicativeAnalysis?.fileName || 'Indicative Savings.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Indicative analysis download failed:', err);
+      setAnalysisError(err?.message || 'Download failed.');
+    } finally {
+      setAnalysisDownloading(false);
+    }
   }
 
   // Local contact state — updated optimistically after HubSpot saves
@@ -5372,22 +5390,28 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     return `Saved ${when}${kb}`;
                   })()}
                 </div>
+                {analysisError && (
+                  <div style={{ fontSize: '0.68rem', color: '#B91C1C', marginTop: '0.2rem' }}>{analysisError}</div>
+                )}
               </div>
               <button
                 type="button"
                 onClick={downloadIndicativeAnalysis}
+                disabled={analysisDownloading}
+                title={analysisDownloading ? 'Fetching the workbook…' : 'Download the saved analysis'}
                 style={{
                   padding: '0.4rem 0.9rem',
-                  background: '#009530',
+                  background: analysisDownloading ? '#94A3B8' : '#009530',
                   color: '#fff',
-                  border: '1px solid #009530',
+                  border: `1px solid ${analysisDownloading ? '#94A3B8' : '#009530'}`,
                   borderRadius: 6,
                   fontSize: '0.78rem',
                   fontWeight: 600,
-                  cursor: 'pointer',
+                  cursor: analysisDownloading ? 'wait' : 'pointer',
                   fontFamily: 'inherit',
+                  whiteSpace: 'nowrap',
                 }}
-              >⬇ Download</button>
+              >{analysisDownloading ? 'Preparing…' : '⬇ Download'}</button>
             </div>
           )}
           <div className={styles.grid}>

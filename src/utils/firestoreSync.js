@@ -409,36 +409,23 @@ export async function loadIndicativeAnalysis(prospectId) {
   return { ...base, dataBase64: parts.join('') };
 }
 
-export function subscribeIndicativeAnalysis(prospectId, onChange) {
+// Live metadata for a prospect's saved analysis — { fileName, sizeBytes,
+// capturedAt } — watching only the `main` doc. The chunk docs are never
+// touched, so opening a company popup costs one document read no matter how
+// large the workbook is; callers fetch the payload with
+// loadIndicativeAnalysis() when the user actually asks to download it.
+export function subscribeIndicativeAnalysisMeta(prospectId, onChange) {
   const col = getAnalysisCol(prospectId);
-  // Guards against out-of-order async chunk reads: only the newest
-  // snapshot's reassembly is allowed to call onChange.
-  let generation = 0;
-  return onSnapshot(doc(col, ANALYSIS_DOC_ID), async (snap) => {
-    const gen = ++generation;
+  return onSnapshot(doc(col, ANALYSIS_DOC_ID), (snap) => {
     if (!snap.exists()) { onChange(null); return; }
-    const meta = snap.data();
-    // Legacy single-doc format: the whole base64 lived on the main doc.
-    if (typeof meta.dataBase64 === 'string') { onChange(meta); return; }
-    const chunkCount = Number(meta.chunkCount) || 0;
-    if (chunkCount === 0) { onChange({ ...meta, dataBase64: '' }); return; }
-    try {
-      const all = await getDocs(col);
-      if (gen !== generation) return; // superseded by a newer snapshot
-      const parts = new Array(chunkCount).fill('');
-      all.forEach((d) => {
-        const idx = analysisChunkIndex(d.id);
-        if (idx != null && idx >= 0 && idx < chunkCount) parts[idx] = d.data()?.data || '';
-      });
-      onChange({
-        fileName: meta.fileName,
-        sizeBytes: meta.sizeBytes,
-        capturedAt: meta.capturedAt,
-        dataBase64: parts.join(''),
-      });
-    } catch (err) {
-      console.error('Firestore analysis chunk read failed:', err);
-    }
+    const meta = snap.data() || {};
+    // Legacy single-doc analyses carry the base64 inline; drop it here so a
+    // metadata subscription never drags the payload into memory.
+    onChange({
+      fileName: meta.fileName || '',
+      sizeBytes: Number(meta.sizeBytes) || 0,
+      capturedAt: meta.capturedAt || null,
+    });
   }, (err) => {
     console.error('Firestore analysis subscription error:', err);
   });

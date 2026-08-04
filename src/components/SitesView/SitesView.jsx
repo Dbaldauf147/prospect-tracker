@@ -46,7 +46,7 @@ import {
 import { classifyHqRegion, normalizeHqRegion } from '../../utils/hqRegion';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { exportComplianceReportXlsx, buildCorporateComplianceSheet, buildComplianceMethodologySheet } from '../../utils/complianceReportXlsx';
-import { saveIndicativeAnalysis, deleteIndicativeAnalysis, getIndicativeAnalysisMeta, loadIndicativeAnalysis } from '../../utils/firestoreSync';
+import { saveIndicativeAnalysis, getIndicativeAnalysisMeta, loadIndicativeAnalysis } from '../../utils/firestoreSync';
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
 import { classifyUtility } from '../../utils/utilityClassify';
@@ -107,6 +107,14 @@ import {
 import styles from './SitesView.module.css';
 
 const SITES_STORAGE_KEY = 'sites-list-override';
+
+// Ceiling on a Master Analysis saved against a company. The workbook is
+// chunked across Firestore docs (900 KB of base64 each) and the company popup
+// reads only the metadata doc, so the binding cost is the upload itself — this
+// is a backstop against a runaway workbook, not a portfolio-size limit. A
+// ~2,700-site portfolio lands around 11–12 MB, so this leaves real headroom.
+const MAX_ANALYSIS_MB = 40;
+const MAX_ANALYSIS_BASE64_CHARS = Math.ceil((MAX_ANALYSIS_MB * 1024 * 1024) / 3) * 4;
 
 // xlsxParse reads date cells with raw:true, so source date values
 // arrive as Excel serial numbers (e.g., 45673) rather than JS Dates.
@@ -4112,19 +4120,27 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       }
       const { buffer, fileName } = result;
       const dataBase64 = arrayBufferToBase64(buffer);
+      const sizeMb = buffer.byteLength / (1024 * 1024);
       // The analysis is chunked across multiple Firestore docs on save, so
-      // it's no longer bound by the ~1 MiB single-document cap. Keep a
-      // generous sanity ceiling so a pathologically large workbook can't
-      // spray dozens of chunk docs (and slow the company popup's read).
-      if (dataBase64.length > 15_000_000) {
-        setSaveStatus({ state: 'error', message: 'Analysis is too large to save (over ~11 MB). Trim sites and retry.' });
+      // it's not bound by the ~1 MiB single-document cap, and the company
+      // popup now reads only the metadata doc — the chunks are fetched on
+      // the Download click. That leaves upload time as the real cost, so the
+      // ceiling here is a backstop against a runaway workbook rather than a
+      // limit real portfolios are expected to hit.
+      if (dataBase64.length > MAX_ANALYSIS_BASE64_CHARS) {
+        setSaveStatus({
+          state: 'error',
+          message: `Analysis is ${sizeMb.toFixed(1)} MB — over the ${MAX_ANALYSIS_MB} MB save limit. Trim sites and retry.`,
+        });
         return;
       }
-      // Wipe any prior saved analysis on this prospect before writing
-      // the new one, so the save is a clean replace rather than relying
-      // solely on setDoc semantics — guards against any stale field
-      // surviving an interrupted prior write.
-      try { await deleteIndicativeAnalysis(prospect.id); } catch { /* nothing to delete is fine */ }
+      setSaveStatus({ state: 'saving', message: `Saving ${sizeMb.toFixed(1)} MB to ${prospect.company || 'company'}…` });
+      // No pre-delete: saveIndicativeAnalysis writes the chunks first, the
+      // `main` metadata doc last, and prunes any stale tail chunks, so a
+      // re-save is already a clean replace. Wiping first meant an upload that
+      // died partway — far likelier now that a workbook can run to tens of
+      // megabytes — left the company with no analysis at all instead of the
+      // previous one.
       await saveIndicativeAnalysis(prospect.id, {
         fileName,
         dataBase64,
