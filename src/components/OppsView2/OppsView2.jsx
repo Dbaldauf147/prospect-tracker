@@ -86,10 +86,17 @@ const SHOW_IMPORT_BUTTONS = false;
 // array of field names.
 const OPP_DETAIL_HIDDEN_FIELDS_KEY = 'opp-detail-hidden-fields';
 
-// Per-user localStorage key holding the "No Further Action Today" clear
-// schedules — one per mark type. These replace the old fixed
-// start-of-day blank-all + 2 PM X sweep with user-configured
-// day-of-week + time schedules set from the toolbar button.
+// The "No Further Action Today" clear schedules — one per mark type —
+// live on user settings (`settings.nfatSchedules`), which is
+// Firestore-backed. They used to sit in per-browser localStorage, which
+// meant a schedule set on one machine simply didn't exist on the next
+// one, and clearing site data switched the feature off with nothing on
+// screen to say so. The legacy key is still read once, to promote an
+// existing browser-local schedule into settings.
+//
+// These replace the old fixed start-of-day blank-all + 2 PM X sweep
+// with user-configured day-of-week + time schedules set from the
+// toolbar button.
 const NFAT_SCHEDULES_KEY = 'opps2-nfat-schedules';
 
 // The three things a schedule can clear from the tristate column:
@@ -148,19 +155,30 @@ function defaultNfatSchedules() {
   return { check: { ...base }, x: { ...base }, any: { ...base } };
 }
 
-// Load the saved schedules, merged onto defaults so a partial/older
-// stored shape still yields a complete config for every type.
-function loadNfatSchedules() {
+// A stored config merged onto defaults, so a partial or older shape
+// still yields a complete schedule for every type.
+function normalizeNfatSchedules(stored) {
   const def = defaultNfatSchedules();
+  for (const t of NFAT_SCHEDULE_TYPES) {
+    if (stored && stored[t]) def[t] = { ...def[t], ...stored[t] };
+  }
+  return def;
+}
+
+// The pre-settings schedule, if this browser still has one. Read only to
+// promote it into settings the first time the tab loads after the move.
+function loadLegacyNfatSchedules() {
   try {
     const raw = userLsGet(NFAT_SCHEDULES_KEY);
-    if (!raw) return def;
-    const parsed = JSON.parse(raw);
-    for (const t of NFAT_SCHEDULE_TYPES) {
-      if (parsed && parsed[t]) def[t] = { ...def[t], ...parsed[t] };
-    }
-  } catch { /* fall back to defaults */ }
-  return def;
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+// True when any type is set to clear on a schedule — surfaced on the
+// toolbar button so a schedule that isn't configured (or was never
+// carried over from another browser) is visible rather than silent.
+function anyNfatScheduleEnabled(schedules) {
+  return NFAT_SCHEDULE_TYPES.some(t => schedules?.[t]?.enabled);
 }
 
 // True when the tristate "No Further Action Today" value matches the
@@ -7539,21 +7557,50 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     });
   }, []);
 
-  // Configurable per-type clear schedules (✓ / ✗ / any), persisted in
-  // per-user localStorage. The toolbar button opens a modal to edit these.
-  const [nfatSchedules, setNfatSchedules] = useState(loadNfatSchedules);
+  // Configurable per-type clear schedules (✓ / ✗ / any), stored on user
+  // settings so they apply on every browser the tracker is open in. The
+  // toolbar button opens a modal to edit them.
+  const nfatSchedules = useMemo(
+    () => normalizeNfatSchedules(settings?.nfatSchedules),
+    [settings?.nfatSchedules],
+  );
   const [nfatScheduleOpen, setNfatScheduleOpen] = useState(false);
   const saveNfatSchedules = useCallback((next) => {
-    setNfatSchedules(next);
-    try { userLsSet(NFAT_SCHEDULES_KEY, JSON.stringify(next)); } catch { /* quota */ }
-  }, []);
+    updateSettings?.({ nfatSchedules: next });
+  }, [updateSettings]);
+  const nfatScheduled = anyNfatScheduleEnabled(nfatSchedules);
+  const nfatScheduleSummary = useMemo(() => NFAT_SCHEDULE_TYPES
+    .filter(t => nfatSchedules[t]?.enabled)
+    .map(t => `${NFAT_TYPE_LABELS[t]} at ${nfatSchedules[t].time} ET`)
+    .join(', '), [nfatSchedules]);
+
+  // One-time promotion of a schedule left in this browser's localStorage
+  // from before these moved to settings. Runs only while settings has no
+  // schedule of its own, so it can't overwrite one set elsewhere. The
+  // legacy key is left in place — it costs nothing and keeps the old
+  // config recoverable if the settings write doesn't land.
+  const nfatMigratedRef = useRef(false);
+  useEffect(() => {
+    if (nfatMigratedRef.current || settings?.nfatSchedules) return;
+    const legacy = loadLegacyNfatSchedules();
+    if (!legacy) return;
+    nfatMigratedRef.current = true;
+    updateSettings?.({ nfatSchedules: normalizeNfatSchedules(legacy) });
+  }, [settings?.nfatSchedules, updateSettings]);
 
   // Blank the matching "No Further Action Today" cells for a given clear
   // type ('check' → ✓, 'x' → ✗, 'any' → anything set). Shared by the
-  // configurable schedules and the modal's "Clear now" buttons. Clears the
-  // value, drops the `_nfatSetAt` tracking stamp, and bumps
-  // `_rowUpdatedAt` so the cleared value wins the cross-device merge over
-  // a stale mark on another device. Returns the number of rows cleared.
+  // configurable schedules and the modal's "Clear now" buttons. Returns
+  // the number of rows cleared.
+  //
+  // The clear is stamped like any other edit — `_fieldUpdatedAt` on the
+  // column, not just `_rowUpdatedAt`. mergeOpps2Datasets resolves this
+  // column field-by-field off that stamp, so leaving it at the time the
+  // mark was PLACED meant a second tab or device still holding the mark
+  // won the merge and put it straight back, which read as the schedule
+  // never having run. `_nfatSetAt` is blanked rather than deleted for the
+  // same reason: the merge unions keys missing from one side, so a
+  // deleted key comes back from the stale copy.
   const clearNfat = useCallback((type) => {
     const recs = dataRef.current?.records || [];
     const count = recs.reduce(
@@ -7563,14 +7610,16 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     if (count > 0) {
       setData(prev => {
         const rs = prev?.records || [];
+        const now = Date.now();
         let touched = false;
         const next = rs.map(r => {
           if (!nfatValueMatches(r?.['No Further Action Today'], type)) return r;
           touched = true;
           const copy = { ...r };
           copy['No Further Action Today'] = '';
-          delete copy._nfatSetAt;
-          copy._rowUpdatedAt = Date.now();
+          copy._nfatSetAt = '';
+          copy._rowUpdatedAt = now;
+          copy._fieldUpdatedAt = stampChangedFields(r, copy, now);
           return copy;
         });
         if (!touched) return prev;
@@ -7790,11 +7839,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           }
           // Track when the No-Further-Action-Today X was placed so the
           // 2 PM Eastern sweep can clear stale ones without nuking a
-          // mark the user just made.
+          // mark the user just made. Blanked rather than deleted — the
+          // cross-device merge unions keys missing from one side, so a
+          // deleted stamp would return from a stale copy.
           if (field === 'No Further Action Today') {
             const norm = String(value ?? '').trim().toLowerCase();
-            if (norm === 'no') next._nfatSetAt = new Date().toISOString();
-            else delete next._nfatSetAt;
+            next._nfatSetAt = norm === 'no' ? new Date().toISOString() : '';
           }
           // Record per-field edit times so a concurrent edit to a
           // *different* field of this same opp on another device merges
@@ -7988,8 +8038,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           // Eastern sweep needs the stamp to decide what to clear.
           if (field === 'No Further Action Today') {
             const norm = String(value ?? '').trim().toLowerCase();
-            if (norm === 'no') next._nfatSetAt = new Date().toISOString();
-            else delete next._nfatSetAt;
+            next._nfatSetAt = norm === 'no' ? new Date().toISOString() : '';
           }
           next._fieldUpdatedAt = stampChangedFields(r, next, now);
           return next;
@@ -8043,6 +8092,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // We re-check on mount (after hydration) and every minute the tab is
   // open, so a tab left open across a scheduled time self-clears. Gating on
   // `hydrated` ensures we clear the reconciled dataset, not the cache paint.
+  const nfatFiredRef = useRef({});
   useEffect(() => {
     if (!hydrated) return undefined;
     const tick = () => {
@@ -8054,6 +8104,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         if (!s?.enabled) continue;
         const occ = mostRecentNfatScheduleMs(s.days, s.time, now);
         if (occ == null || (s.lastRunAt || 0) >= occ) continue;
+        // The advanced lastRunAt goes out through settings, which is a
+        // round trip — remember in-session which occurrence each type has
+        // already handled so the minute tick can't fire it again while
+        // that write is in flight.
+        if ((nfatFiredRef.current[type] || 0) >= occ) continue;
+        nfatFiredRef.current[type] = occ;
         clearNfat(type);
         next[type] = { ...s, lastRunAt: now };
         changed = true;
@@ -9547,12 +9603,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             onClick={() => setNfatScheduleOpen(true)}
             style={{
               padding: '0.45rem 0.85rem', background: 'transparent',
-              border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
+              border: `1px solid ${nfatScheduled ? '#2563EB' : 'var(--color-border)'}`,
+              borderRadius: 'var(--radius-md)',
               fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
-              color: 'var(--color-text)', cursor: 'pointer',
+              color: nfatScheduled ? '#2563EB' : 'var(--color-text)', cursor: 'pointer',
             }}
-            title="Schedule automatic clears of the No Further Action Today column (✓ / ✗ / any), or clear now"
-          >Clear No Further Action</button>
+            title={nfatScheduled
+              ? `Scheduled: ${nfatScheduleSummary}. Click to change, or clear now.`
+              : 'No automatic clear is scheduled — click to set one up, or clear now'}
+          >Clear No Further Action{nfatScheduled ? ' ⏱' : ''}</button>
           <button
             type="button"
             onClick={undoLastChange}
