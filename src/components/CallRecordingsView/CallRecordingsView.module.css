@@ -107,6 +107,38 @@
   border-color: var(--color-accent);
 }
 
+/* OneDrive / This computer switch. */
+.sourceToggle {
+  display: inline-flex;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.sourceOff,
+.sourceOn {
+  padding: 0.3rem 0.7rem;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sourceOff + .sourceOff,
+.sourceOff + .sourceOn,
+.sourceOn + .sourceOff {
+  border-left: none;
+}
+
+.sourceOn {
+  background: #009530;
+  border-color: #009530;
+  color: #fff;
+}
+
 .connected,
 .disconnected {
   display: inline-flex;

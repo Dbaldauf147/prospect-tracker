@@ -26,6 +26,9 @@ const STORES = [
   { name: 'pipeline-dashboard',  keyPath: null },
   { name: 'bfo-activity',        keyPath: null },
   { name: 'quoted-month-rows',   keyPath: null },
+  // Holds the FileSystemDirectoryHandle for the Call Recordings page's
+  // local folder, so a picked folder is remembered across sessions.
+  { name: 'local-recordings',    keyPath: null },
 ];
 
 let dbPromise = null;
