@@ -143,6 +143,42 @@ function CatCell({ res }) {
   );
 }
 
+// What an audit mandate asks this site for — an energy audit (and to which
+// ASHRAE level), a water audit, retro-commissioning, a tune-up — on the row
+// itself, since each is separate work to scope and "Applicable" alone doesn't
+// say which. Only where the mandate reaches the building: a site that doesn't
+// have to audit is on the hook for none of it.
+//
+// "Mandatory" / "May be required" say only how firmly the requirement applies,
+// which the tag already carries; anything else the column says (an ASHRAE
+// level, a scope note) is the requirement itself and is printed beside it.
+const REQ_CLASS = { required: 'reqRequired', conditional: 'reqConditional', optional: 'reqOptional' };
+const REQ_LEVEL_ONLY = /^(mandatory|required|may\s+be\s+required|optional|conditional)$/i;
+function AuditTypeCell({ res }) {
+  if (!res || res.eligible !== true) return <span className={styles.dash}>—</span>;
+  const reqs = res.requirements || [];
+  if (!reqs.length) {
+    return (
+      <span className={styles.dash} title="The reference records no audit detail for this ordinance">
+        not published
+      </span>
+    );
+  }
+  return (
+    <span className={styles.reqList}>
+      {reqs.map(rq => (
+        <span key={rq.key} className={styles.reqRow} title={`${rq.label} — ${rq.value}`}>
+          <span className={styles[REQ_CLASS[rq.level]]}>{rq.label}</span>
+          {!REQ_LEVEL_ONLY.test(rq.value) && <span className={styles.reqSpec}>{rq.value}</span>}
+          {rq.level !== 'required' && (
+            <span className={styles.reqSpec}>{rq.level === 'optional' ? 'optional' : 'may be required'}</span>
+          )}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 // One mandate inside the site detail popup: whether it applies, the policy
 // behind it, and the arithmetic that produced the fine on the row.
 function MandateDetail({ res, mandate, sqft }) {
@@ -193,7 +229,7 @@ function MandateDetail({ res, mandate, sqft }) {
         {row('Size requirement', res.coveredType === false
           ? `None for ${PT_CLASS_LABEL[res.ptClass] || 'this'} buildings — the ordinance publishes requirements for other building types only`
           : res.threshold != null
-            ? `${res.threshold.toLocaleString('en-US')} ft² (${res.ptClass})`
+            ? `${res.threshold.toLocaleString('en-US')} ft² (${res.thresholdKey || res.ptClass})`
               + (res.sizeAssumed ? ' — square footage unknown, taken as meeting it'
                 : res.meetsThreshold === true ? ` — this building's ${sqft != null ? `${sqft.toLocaleString('en-US')} ft² ` : ''}meets it`
                 : res.meetsThreshold === false ? ` — this building's ${sqft != null ? `${sqft.toLocaleString('en-US')} ft² ` : ''}is below it`
@@ -864,7 +900,7 @@ export function BuildingComplianceScreening({
                 <thead>
                   <tr>
                     <th>Site</th><th>City</th><th>State</th><th>Jurisdiction</th><th>Gov ID</th><th>Sq Ft</th>
-                    <th>BBS</th><th>Energy Audits</th><th>BPS</th>
+                    <th>BBS</th><th>Energy Audits</th><th>Audit Required</th><th>BPS</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -886,11 +922,12 @@ export function BuildingComplianceScreening({
                       <td>{r.sqft != null ? r.sqft.toLocaleString() : <span className={styles.dash}>—</span>}</td>
                       <td><CatCell res={r.bbs} /></td>
                       <td><CatCell res={r.audits} /></td>
+                      <td><AuditTypeCell res={r.audits} /></td>
                       <td><CatCell res={r.bps} /></td>
                     </tr>
                   ))}
                   {filtered.length === 0 && (
-                    <tr><td colSpan={9} className={styles.emptyRow}>No sites match the current filters.</td></tr>
+                    <tr><td colSpan={10} className={styles.emptyRow}>No sites match the current filters.</td></tr>
                   )}
                 </tbody>
               </table>

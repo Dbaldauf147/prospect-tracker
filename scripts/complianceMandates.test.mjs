@@ -243,8 +243,24 @@ eq(classifyPropertyType('Office'), 'nonresidential', 'classify nonresidential');
     'NYC office: LL87 audits still applicable');
   ok(screenSite({ id: 7, city: 'Atlanta', state: 'GA', sqft: 60000, propertyType: 'Office' }).audits.eligible === true,
     'Atlanta office: audits still applicable');
+  // Every non-multifamily site reads "Sq Thr / Commercial", public buildings
+  // included — the audits "Sq Thr / Public" column isn't used. Orlando
+  // publishes 10,000 public / 50,000 commercial, so a school there is screened
+  // at 50,000: over it applies, under it doesn't.
   ok(screenSite({ id: 8, city: 'Boston', state: 'MA', sqft: 60000, propertyType: 'K-12 School' }).audits.eligible === true,
-    'Boston school: reads the non-residential requirement when no public one is published');
+    'Boston school: reads the commercial requirement');
+  {
+    const big = screenSite({ id: 13, city: 'Orlando', state: 'FL', sqft: 60000, propertyType: 'K-12 School' });
+    eq(big.audits.threshold, 50000, 'Orlando school: screened against the commercial 50,000 ft², not the public 10,000');
+    eq(big.audits.thresholdKey, 'commercial', 'Orlando school: the figure is labelled as the commercial one');
+    ok(big.audits.eligible === true, 'Orlando 60k school: Audits applicable');
+    const small = screenSite({ id: 14, city: 'Orlando', state: 'FL', sqft: 20000, propertyType: 'K-12 School' });
+    ok(small.audits.eligible === false && small.audits.coveredType === true,
+      'Orlando 20k school: below the commercial requirement');
+    // Multifamily still reads its own column.
+    eq(screenSite({ id: 15, city: 'Austin', state: 'TX', sqft: 60000, propertyType: 'Multifamily Housing' }).audits.thresholdKey,
+      'multifamily', 'Austin apartments: labelled as the multifamily figure');
+  }
   {
     const denver = screenSite({ id: 9, city: 'Denver', state: 'CO', sqft: 60000, propertyType: 'Office' });
     ok(denver.audits.eligible === true && denver.audits.threshold === null,

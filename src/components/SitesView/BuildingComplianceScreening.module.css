@@ -541,6 +541,28 @@
   white-space: nowrap;
 }
 
+/* What an audit mandate asks a site for: one line per obligation (energy
+   audit, water audit, retro-commissioning, tune-up), the tag carrying how
+   firmly it applies and the published detail — an ASHRAE level, a scope
+   note — set beside it. */
+.reqList {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 150px;
+}
+
+.reqRow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
+
+.reqRequired { display: inline-block; padding: 1px 7px; border-radius: 999px; background: #FEF3C7; color: #92400E; font-size: 0.66rem; font-weight: 700; white-space: nowrap; }
+/* Conditional and optional in a quieter grey — the obligation is on file but
+   this building may never be asked for it. */
+.reqConditional { display: inline-block; padding: 1px 7px; border-radius: 999px; background: #F1F5F9; color: #475569; font-size: 0.66rem; font-weight: 600; white-space: nowrap; }
+.reqOptional { display: inline-block; padding: 0 6px; border: 1px dashed #CBD5E1; border-radius: 999px; color: #64748B; font-size: 0.66rem; font-weight: 600; white-space: nowrap; }
+
+.reqSpec { font-size: 0.62rem; color: var(--color-text-muted, #64748B); }
+
 /* Explains what the ft² size requirement removed from the KPI counts, so a
    smaller "sites with a mandate" figure reads as a screen rather than a loss. */
 .sizeNote {

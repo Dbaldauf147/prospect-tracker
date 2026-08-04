@@ -275,19 +275,16 @@ function thresholdFor(category, mandate, ptClass) {
       : ptClass === 'multifamily' ? ['multiFamily', 'nonResidential', 'statewide']
       : ['nonResidential', 'statewide', 'public'];
   } else if (category === 'audits') {
-    // Audit ordinances scope themselves by building type, so their columns
-    // are not interchangeable: a blank one means that type isn't covered.
-    // Austin's audit requirement is multifamily-only (510 ft²) and Seattle's,
-    // San Francisco's, Philadelphia's and Salt Lake City's are commercial-only.
-    // Borrowing another type's number screened an Austin office into a
-    // multifamily mandate and a Seattle apartment building into a commercial
-    // one, so nothing crosses the residential / non-residential line here.
-    // A public building still reads the general non-residential (commercial)
-    // requirement when the ordinance doesn't publish a separate public one —
-    // both describe the same non-residential stock.
-    order = ptClass === 'public' ? ['public', 'commercial']
-      : ptClass === 'multifamily' ? ['multifamily']
-      : ['commercial'];
+    // Audits read one column and one only: "Audits - Sq Thr / Commercial" for
+    // every site, "Audits - Sq Thr / Multifamily" for a multifamily one. The
+    // columns are not interchangeable — Austin's audit requirement is
+    // multifamily-only (510 ft²) and Seattle's, San Francisco's,
+    // Philadelphia's and Salt Lake City's are commercial-only — so a blank
+    // column means the ordinance doesn't reach that kind of building rather
+    // than that another column's number stands in. Public buildings read the
+    // commercial threshold like everything else; the "Sq Thr / Public" column
+    // is left to the BBS mandate, which does scope itself that way.
+    order = ptClass === 'multifamily' ? ['multifamily'] : ['commercial'];
   } else { // bps
     order = ptClass === 'multifamily' ? ['multiFamily', 'nonResidential'] : ['nonResidential', 'multiFamily'];
   }
@@ -395,6 +392,11 @@ function evalCategory(category, mandate, site) {
     // water / retro-commissioning / tune-up obligations behind an Energy
     // Audits hit. Empty for the other two categories.
     requirements: category === 'audits' ? auditRequirements(mandate) : [],
+    // The threshold column the number came from, where that isn't simply the
+    // building's own bucket: audits read Commercial for every site that isn't
+    // multifamily, so a school screened at the commercial figure shouldn't be
+    // labelled "public".
+    thresholdKey: category === 'audits' ? (ptClass === 'multifamily' ? 'multifamily' : 'commercial') : null,
   };
 }
 
