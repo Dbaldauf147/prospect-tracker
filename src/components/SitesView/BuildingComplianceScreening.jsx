@@ -18,21 +18,37 @@ const isUrl = (v) => /^https?:\/\//i.test(String(v).trim());
 const mdY = (iso) => { if (!iso) return '—'; const [y, m, d] = String(iso).split('-'); return `${Number(m)}/${Number(d)}/${y}`; };
 
 // Compact horizontal-bar list used for the on-page eligibility/penalty
-// summaries. items: [{ label, value }].
-function HBars({ items, color, fmt = String, wide = false, empty = 'No eligible sites' }) {
+// summaries. items: [{ label, value }]. Every jurisdiction is listed — the
+// lists used to stop at the top 8, which quietly dropped cities from a
+// portfolio's exposure. With `onSelect`, each row becomes a button that opens
+// the sites behind it.
+function HBars({ items, color, fmt = String, wide = false, empty = 'No eligible sites', onSelect = null }) {
   if (!items.length) return <div className={styles.miniEmpty}>{empty}</div>;
   const max = Math.max(1, ...items.map(i => i.value));
+  const rowClass = wide ? styles.hbarRowWide : styles.hbarRow;
   return (
     <div className={styles.hbars}>
-      {items.map((it) => (
-        <div key={it.label} className={wide ? styles.hbarRowWide : styles.hbarRow}>
-          <span className={styles.hbarLabel} title={it.label}>{it.label}</span>
-          <span className={styles.hbarTrack}>
-            <span className={styles.hbarFill} style={{ width: `${Math.max(2, (it.value / max) * 100)}%`, background: color }} />
-          </span>
-          <span className={styles.hbarVal}>{fmt(it.value)}</span>
-        </div>
-      ))}
+      {items.map((it) => {
+        const body = (
+          <>
+            <span className={styles.hbarLabel} title={it.label}>{it.label}</span>
+            <span className={styles.hbarTrack}>
+              <span className={styles.hbarFill} style={{ width: `${Math.max(2, (it.value / max) * 100)}%`, background: color }} />
+            </span>
+            <span className={styles.hbarVal}>{fmt(it.value)}</span>
+          </>
+        );
+        if (!onSelect) return <div key={it.label} className={rowClass}>{body}</div>;
+        return (
+          <button
+            key={it.label}
+            type="button"
+            className={`${rowClass} ${styles.hbarRowBtn}`}
+            onClick={() => onSelect(it.label)}
+            title={`Show the ${it.label} sites behind this figure`}
+          >{body}</button>
+        );
+      })}
     </div>
   );
 }
@@ -198,6 +214,103 @@ function SiteDetailModal({ site, onClose }) {
   );
 }
 
+// The sites behind one bar on a dashboard card: every site in `government`
+// that the `category` mandate applies to, with the figures that produced the
+// jurisdiction's count and penalty total. Exports the same rows to Excel.
+function JurisdictionSitesModal({ category, government, rows, onExport, onSiteClick, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const totalPenalty = rows.reduce((n, r) => n + (r[category]?.penalty || 0), 0);
+  const unsized = rows.filter(r => r[category]?.penaltyUnsized).length;
+  const label = CATEGORY_LABEL[category];
+  return (
+    <div className={styles.modalBackdrop} onClick={onClose} role="presentation">
+      <div
+        className={`${styles.modal} ${styles.modalWide}`}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${label} sites in ${government}`}
+      >
+        <div className={styles.modalHead} style={{ background: CATEGORY_COLOR[category] }}>
+          <div>
+            <div className={styles.modalTitle}>{government} — {label}</div>
+            <div className={styles.modalSub}>
+              {rows.length.toLocaleString('en-US')} applicable site{rows.length === 1 ? '' : 's'}
+              {' · '}{usd(totalPenalty)}/yr max penalty
+              {unsized ? ` · ${unsized} site${unsized === 1 ? '' : 's'} unsized` : ''}
+            </div>
+          </div>
+          <div className={styles.modalHeadActions}>
+            <button
+              type="button"
+              className={styles.modalExportBtn}
+              onClick={onExport}
+              title="Download these sites as an Excel workbook"
+            >⬇ Export to Excel</button>
+            <button type="button" className={styles.modalClose} onClick={onClose} aria-label="Close">×</button>
+          </div>
+        </div>
+        <div className={styles.modalBody}>
+          <div className={`${styles.tableScroll} ${styles.modalTableScroll}`}>
+            <table className={styles.siteTable}>
+              <thead>
+                <tr>
+                  <th>Site</th>
+                  <th>City</th>
+                  <th>State</th>
+                  <th style={{ textAlign: 'right' }}>Sq Ft</th>
+                  <th>Property Type</th>
+                  <th>Policy</th>
+                  <th>Deadline</th>
+                  <th style={{ textAlign: 'right' }}>Max Yearly Penalty</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => {
+                  const e = r[category] || {};
+                  return (
+                    <tr
+                      key={`${r.siteName}-${i}`}
+                      className={styles.siteRowClickable}
+                      onClick={() => onSiteClick(r)}
+                      title="Open the full screening detail for this site"
+                    >
+                      <td className={styles.siteCell}>{r.siteName || '—'}</td>
+                      <td>{r.city || '—'}</td>
+                      <td>{r.state || '—'}</td>
+                      <td style={{ textAlign: 'right' }}>{r.sqft != null ? r.sqft.toLocaleString('en-US') : '—'}</td>
+                      <td>{r.propertyType || '—'}</td>
+                      <td>{e.policyName || '—'}</td>
+                      <td>{e.deadline ? mdY(e.deadline) : (e.deadlineRaw || '—')}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        {e.penalty != null
+                          ? usd(e.penalty)
+                          : e.penaltyUnsized
+                            ? <span className={styles.catFineNone}>{usd(e.penaltyRate)}/ft² · needs sq ft</span>
+                            : <span className={styles.catFineNone}>no fine on file</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colSpan={7} style={{ fontWeight: 700 }}>Total</td>
+                  <td style={{ textAlign: 'right', fontWeight: 700 }}>{usd(totalPenalty)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Screens the Utility Lookup site list against the two-tab compliance
 // reference (City Lookup → Government ID → Master Ordinances) and surfaces
 // BBS / Audits / BPS eligibility, a summary dashboard, and the exportable
@@ -219,6 +332,9 @@ export function BuildingComplianceScreening({
   const [onlyEligible, setOnlyEligible] = useState(false);
   // The screened site whose detail popup is open, if any.
   const [detailSite, setDetailSite] = useState(null);
+  // The dashboard bar drilled into, as { category, government }. Opens the
+  // list of sites behind that jurisdiction's count / penalty figure.
+  const [drill, setDrill] = useState(null);
 
   const companyLabel = useMemo(() => sitesCompanyLabel(sites), [sites]);
   const results = useMemo(() => screenSites(sites), [sites]);
@@ -330,6 +446,23 @@ export function BuildingComplianceScreening({
     writeRawWorkbook(filtered, 'Building-Compliance-Screening.xlsx');
   }
 
+  // The sites behind one dashboard bar: everything in that jurisdiction the
+  // mandate applies to. Both bar lists on a card drill into the same set — the
+  // dollar list is the penalty view of the same applicable sites — so a
+  // jurisdiction with sites but no published fine still opens.
+  const drillRows = useMemo(() => {
+    if (!drill) return [];
+    return results.filter(r => r.matched
+      && r.government === drill.government
+      && r[drill.category]?.eligible === true);
+  }, [results, drill]);
+
+  function exportDrill() {
+    if (!drillRows.length) return;
+    const slug = (s) => String(s || '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    writeRawWorkbook(drillRows, `${slug(drill.government)}-${slug(CATEGORY_LABEL[drill.category])}-Sites.xlsx`);
+  }
+
   // Owned / All-sites control. Only rendered when the parent owns the
   // scope state — a standalone mount screens whatever it's handed.
   const scopeBar = onOwnedOnlyChange
@@ -427,17 +560,22 @@ export function BuildingComplianceScreening({
                     <div><div className={styles.kpiNum} style={{ color: CATEGORY_COLOR[c] }}>{totalEligible(results, c)}</div><div className={styles.kpiLbl}>applicable sites</div></div>
                     <div><div className={styles.kpiNum} style={{ color: CATEGORY_COLOR[c] }}>{usd(totalPenalty(results, c))}</div><div className={styles.kpiLbl}>max yearly penalty</div></div>
                   </div>
-                  <div className={styles.dashSubhead}>Applicable sites by jurisdiction</div>
-                  <HBars items={eligibilityByOrdinance(results, c).slice(0, 8).map(x => ({ label: x.government, value: x.count }))} color={CATEGORY_COLOR[c]} />
+                  <div className={styles.dashSubhead}>Applicable sites by jurisdiction <span className={styles.dashHint}>· click a city for its sites</span></div>
+                  <HBars
+                    items={eligibilityByOrdinance(results, c).map(x => ({ label: x.government, value: x.count }))}
+                    color={CATEGORY_COLOR[c]}
+                    onSelect={(government) => setDrill({ category: c, government })}
+                  />
                   {/* The same jurisdictions in dollars — what the mandate is
                       actually worth, which the site counts alone don't say. */}
-                  <div className={styles.dashSubhead}>Max yearly fines by jurisdiction</div>
+                  <div className={styles.dashSubhead}>Max yearly fines by jurisdiction <span className={styles.dashHint}>· click a city for its sites</span></div>
                   <HBars
-                    items={penaltyByOrdinance(results, c).slice(0, 8).map(x => ({ label: x.government, value: x.penalty }))}
+                    items={penaltyByOrdinance(results, c).map(x => ({ label: x.government, value: x.penalty }))}
                     color={CATEGORY_COLOR[c]}
                     fmt={usd}
                     wide
                     empty="No fines on file"
+                    onSelect={(government) => setDrill({ category: c, government })}
                   />
                 </div>
               ))}
@@ -526,6 +664,16 @@ export function BuildingComplianceScreening({
                 </tbody>
               </table>
             </div>
+            {drill && (
+              <JurisdictionSitesModal
+                category={drill.category}
+                government={drill.government}
+                rows={drillRows}
+                onExport={exportDrill}
+                onSiteClick={(site) => { setDrill(null); setDetailSite(site); }}
+                onClose={() => setDrill(null)}
+              />
+            )}
             {detailSite && <SiteDetailModal site={detailSite} onClose={() => setDetailSite(null)} />}
           </>
         )

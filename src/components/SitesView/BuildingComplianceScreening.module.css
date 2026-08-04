@@ -539,6 +539,33 @@
   gap: 6px;
 }
 
+/* A bar row that drills into the sites behind it. Keeps the grid from the
+   base row class — this only strips the button chrome and adds the hover. */
+.hbarRowBtn {
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 1px 2px;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+  text-align: inherit;
+}
+.hbarRowBtn:hover { background: #F1F5F9; }
+.hbarRowBtn:hover .hbarLabel { color: #0F172A; text-decoration: underline; }
+.hbarRowBtn:focus-visible { outline: 2px solid var(--color-accent, #3B7DDD); outline-offset: -2px; }
+
+/* Trailing note on a card subhead — tells the reader the bars are clickable
+   without competing with the caption itself. */
+.dashHint {
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--color-text-muted, #94A3B8);
+}
+
 /* --- Site detail popup ------------------------------------------------ */
 
 .siteRowClickable { cursor: pointer; }
@@ -575,8 +602,41 @@
   color: #fff;
 }
 
+/* The jurisdiction drill-down carries a full site table, so it gets more
+   room than the single-site detail popup. */
+.modalWide { width: min(1180px, 100%); }
+
 .modalTitle { font-size: 1rem; font-weight: 800; }
 .modalSub { font-size: 0.72rem; opacity: 0.92; margin-top: 2px; }
+
+.modalHeadActions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.modalExportBtn {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font-size: 0.74rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.modalExportBtn:hover { background: rgba(255, 255, 255, 0.28); }
+
+/* A jurisdiction with a hundred sites shouldn't push the header (and its
+   Export button) off screen — scroll the table instead. The sticky <th>
+   keeps the column names in view while it scrolls. */
+.modalTableScroll {
+  max-height: 62vh;
+  overflow: auto;
+}
 
 .modalClose {
   background: transparent;
