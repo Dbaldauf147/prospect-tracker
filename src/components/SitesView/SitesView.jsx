@@ -1986,10 +1986,23 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const canonicalOwnership = normalizeOwnership(inputOwnership);
       // Loose numeric parse for the optional Size_ft2 column — strips
       // commas, "sf"/"sqft" suffixes, etc.
+      //
+      // A zero is kept as zero, not folded into "no value". The two mean
+      // different things downstream: the compliance screening takes a missing
+      // size as meeting an ordinance's ft² threshold (a gap in the upload
+      // isn't evidence of a small building), so a 0 that arrived as a blank
+      // was screened as if it qualified. A 0 in the file is a measurement,
+      // and it is below every threshold.
+      //
+      // Text that carries no digits at all ("N/A", "TBD", "—") still reads as
+      // no value — stripping it would leave "", and Number("") is 0, which
+      // would turn every one of those into a zero-size building.
       const parseSize = (v) => {
         if (v == null || v === '') return null;
-        const n = Number(String(v).replace(/[^0-9.]/g, ''));
-        return Number.isFinite(n) && n > 0 ? n : null;
+        const cleaned = String(v).replace(/[^0-9.]/g, '');
+        if (!/\d/.test(cleaned)) return null;
+        const n = Number(cleaned);
+        return Number.isFinite(n) && n >= 0 ? n : null;
       };
       const inputPropertySize = propertySizeOverride ? parseSize(r[propertySizeOverride]) : null;
       // Property-type-driven consumption fallback. When the source
