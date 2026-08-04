@@ -32,6 +32,7 @@ import './App.css';
 const ActivityView = lazy(() => import('./components/ActivityView/ActivityView').then(m => ({ default: m.ActivityView })));
 const AgentsView = lazy(() => import('./components/AgentsView/AgentsView').then(m => ({ default: m.AgentsView })));
 const BFOActivityView = lazy(() => import('./components/BFOActivityView/BFOActivityView').then(m => ({ default: m.BFOActivityView })));
+const CallRecordingsView = lazy(() => import('./components/CallRecordingsView/CallRecordingsView').then(m => ({ default: m.CallRecordingsView })));
 const ChartsView = lazy(() => import('./components/ChartsView/ChartsView').then(m => ({ default: m.ChartsView })));
 const ClientsView = lazy(() => import('./components/ClientsView/ClientsView').then(m => ({ default: m.ClientsView })));
 const ContactsView = lazy(() => import('./components/ContactsView/ContactsView').then(m => ({ default: m.ContactsView })));
@@ -386,6 +387,13 @@ function App() {
             <PricingView settings={settings} />
           ) : view === 'bfo' ? (
             <BFOActivityView prospects={prospects} />
+          ) : view === 'recordings' ? (
+            <CallRecordingsView
+              prospects={prospects}
+              settings={settings}
+              updateSettings={updateSettings}
+              onSelectProspect={handleSelect}
+            />
           ) : view === 'tracking' ? (
             <EmailTrackingView />
           ) : view === 'privacy' ? (

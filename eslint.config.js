@@ -26,4 +26,13 @@ export default defineConfig([
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
     },
   },
+  // The serverless functions under api/ run on Node, not in the browser,
+  // so `process`, `Buffer` and friends are real globals there. Without
+  // this every api/ file reports `'process' is not defined`.
+  {
+    files: ['api/**/*.js'],
+    languageOptions: {
+      globals: { ...globals.node },
+    },
+  },
 ])
