@@ -159,6 +159,10 @@ function StatusSelect({ item, manual, auto, onSet, disabled, disabledReason }) {
 export function ScopeServicesModal({
   value, onChange, onClose, options = [], account, prospects, updateProspect,
   settings, oppRows, currentOppId, extraGroups, extraGroupsLabel, extraGroupsPlaceholder,
+  // Optional line in the header saying why the board opened — set when it's
+  // raised by something other than a click on the Scope cell (e.g. an opp
+  // leaving the Not Started stage).
+  note,
 }) {
   const [query, setQuery] = useState('');
   const [quickPick, setQuickPick] = useState('');
@@ -288,6 +292,13 @@ export function ScopeServicesModal({
             <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
               {account}
             </span>
+          )}
+          {note && (
+            <span style={{
+              fontSize: '0.7rem', fontWeight: 600, color: '#92400E',
+              background: '#FEF3C7', border: '1px solid #FDE68A',
+              borderRadius: 999, padding: '1px 8px',
+            }}>{note}</span>
           )}
           <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#15803D' }}>
             {selected.length} selected
