@@ -1,4 +1,4 @@
-import { userLsGet } from './userLs';
+import { userLsGet } from './userLs.js';
 
 // Shared helper for computing "which Lists-tab lists is this company
 // flagged on" across the app. Used by MyAccountsView's List Flags

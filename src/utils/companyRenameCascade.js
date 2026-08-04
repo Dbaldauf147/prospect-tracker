@@ -22,9 +22,9 @@
 // uses. Manual framework flags (prospect.frameworks) and the My Accounts
 // activity counts already follow a rename on their own — they read the
 // prospect's current name — so they need no migration here.
-import { splitPeOwners, joinPeOwners } from './peOwners';
-import { LIST_FLAG_SOURCES } from './listFlags';
-import { userLsGet, userLsSet } from './userLs';
+import { splitPeOwners, joinPeOwners } from './peOwners.js';
+import { LIST_FLAG_SOURCES } from './listFlags.js';
+import { userLsGet, userLsSet } from './userLs.js';
 
 // Mirror of PEPortfolioView's opp-account matcher so the cascade repoints
 // exactly the opps the PE/Opps views consider linked. Kept in sync with
@@ -53,6 +53,13 @@ export function accountMatchesCompany(companyName, oppAccount) {
 
 const eq = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
 
+// Two names are the same *stored string* — trimmed, case and all. Distinct
+// from eq(), which asks whether they're the same company. A rename that only
+// changes capitalisation ("iberconsa" → "Iberconsa") is eq() but not this, and
+// it still has to be carried: every reference below stores the name as text
+// and renders it, so skipping one leaves the old spelling on screen.
+const sameText = (a, b) => String(a || '').trim() === String(b || '').trim();
+
 function readListMapping(key) {
   try { const raw = userLsGet(key); return raw ? (JSON.parse(raw) || {}) : null; } catch { return null; }
 }
@@ -65,7 +72,11 @@ export function buildCompanyRenamePlan({ oldName, newName, prospects = [], curre
   const plan = { oppIds: [], peOwnerUpdates: [], dismissed: null, listWrites: [], portfolioUpdates: [], portfolioEntryCount: 0, savedPortfolioMappings: null, events: null, eventAttendeeCount: 0, counts: {} };
   const old = String(oldName || '').trim();
   const next = String(newName || '').trim();
-  if (!old || !next || eq(old, next)) { plan.counts = { opps: 0, peOwner: 0, dismissed: 0, listMappings: 0, portfolio: 0, savedPortfolioMappings: 0, eventAttendees: 0 }; return plan; }
+  // Nothing to write only when the new name is the same text as the old. This
+  // used to bail on a case-insensitive match, which made a capitalisation fix
+  // a no-op — the opps kept rendering their stored lower-case Account long
+  // after the company record was corrected.
+  if (!old || !next || sameText(old, next)) { plan.counts = { opps: 0, peOwner: 0, dismissed: 0, listMappings: 0, portfolio: 0, savedPortfolioMappings: 0, eventAttendees: 0 }; return plan; }
 
   // Opps whose Account currently links to the old company name.
   for (const r of oppsRecords) {
@@ -81,9 +92,11 @@ export function buildCompanyRenamePlan({ oldName, newName, prospects = [], curre
     plan.peOwnerUpdates.push({ id: p.id, peOwner: joinPeOwners(owners.map(o => (eq(o, old) ? next : o))) });
   }
 
-  // Dismissed RA/Target suggestions keyed by lowercased name.
+  // Dismissed RA/Target suggestions keyed by lowercased name. A case-only
+  // rename lands on the same key, so there's nothing to move — and moving it
+  // would mean writing then deleting the one key, which drops the entry.
   const dg = settings.dismissedPortfolioGuesses;
-  if (dg && typeof dg === 'object') {
+  if (dg && typeof dg === 'object' && old.toLowerCase() !== next.toLowerCase()) {
     const ok = old.toLowerCase();
     const nk = next.toLowerCase();
     let changed = false;

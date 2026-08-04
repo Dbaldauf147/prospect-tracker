@@ -95,7 +95,10 @@ export function bulkSetDealClientMapping(sourceNames, target) {
 function planDealClientRename(oldName, newName) {
   const old = String(oldName || '').trim();
   const next = String(newName || '').trim();
-  if (!old || !next || old.toLowerCase() === next.toLowerCase()) return null;
+  // Targets are matched case-insensitively, but the stored value is the name
+  // as it will be displayed, so a capitalisation-only rename still has to be
+  // written through — only an identical string is a no-op.
+  if (!old || !next || old === next) return null;
   const map = loadDealClientMap();
   const updated = { ...map };
   let count = 0;
