@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState, useCallback } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { loadList } from '../../utils/uploadedListStore';
 import { normalizeCompany, pickNameKey } from '../../utils/companyNorm';
 import { UPLOADED_LISTS } from '../../utils/uploadedListsRegistry';
@@ -309,10 +309,17 @@ function EmployeesSection({ data, loading }) {
 function safeUrl(raw) {
   const s = String(raw || '').trim();
   if (!s) return '';
-  const withScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(s) ? s : `https://${s}`;
+  const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(s);
+  const withScheme = hasScheme ? s : `https://${s}`;
   try {
     const u = new URL(withScheme);
-    return (u.protocol === 'http:' || u.protocol === 'https:') ? u.href : '';
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+    // Without a scheme to go on, "not a url at all" parses as a hostname and
+    // used to be saved as a link that goes nowhere. Insist it look like a
+    // domain — dotted, no spaces. A typed-out scheme is taken at its word, so
+    // an intranet host like http://sharepoint/page still works.
+    if (!hasScheme && !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(u.hostname)) return '';
+    return u.href;
   } catch { return ''; }
 }
 
@@ -398,6 +405,9 @@ function ReferenceCell({ url, findings, onSaveUrl, onSaveFindings, label, disabl
 function ReferenceLink({ url, onSave, ariaLabel, disabled, shared }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(url || '');
+  // Set while the mouse is down on ✕ so the blur it fires first isn't
+  // treated as "clicked away, save it" — cancel has to mean cancel.
+  const cancellingRef = useRef(false);
   useEffect(() => { setDraft(url || ''); }, [url]);
 
   const tiny = {
@@ -413,13 +423,27 @@ function ReferenceLink({ url, onSave, ariaLabel, disabled, shared }) {
     const invalid = !!draft.trim() && !safeUrl(draft);
     const commit = () => {
       // A non-empty entry that isn't a usable http(s) URL is rejected rather
-      // than saved as a dead link; clearing the box removes the link.
+      // than saved as a dead link; clearing the box removes the link. A
+      // rejection leaves the editor open with the reason on screen — the
+      // old silent return read as "the button didn't keep my link".
       if (draft.trim() && !safeUrl(draft)) return;
       onSave(draft.trim() ? safeUrl(draft) : '');
       setEditing(false);
     };
     return (
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', marginTop: '0.2rem' }}>
+      <span
+        style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', marginTop: '0.2rem', flexWrap: 'wrap' }}
+        // Clicking away commits what was typed rather than throwing it out.
+        // Requiring Save or Enter is the single biggest reason a pasted link
+        // never appeared: type it, click the next row, and it was gone.
+        onBlur={(e) => {
+          // Focus moved to Save / ✕ inside this editor — let the button act.
+          if (e.currentTarget.contains(e.relatedTarget)) return;
+          if (cancellingRef.current) return;
+          if (draft.trim() === (url || '')) { setEditing(false); return; }
+          commit();
+        }}
+      >
         <input
           type="text"
           value={draft}
@@ -437,7 +461,18 @@ function ReferenceLink({ url, onSave, ariaLabel, disabled, shared }) {
           }}
         />
         <button type="button" onClick={commit} title={invalid ? 'Enter a valid http(s) URL' : 'Save link'} style={tiny}>Save</button>
-        <button type="button" onClick={() => { setDraft(url || ''); setEditing(false); }} title="Cancel" style={tiny}>✕</button>
+        <button
+          type="button"
+          onMouseDown={() => { cancellingRef.current = true; }}
+          onClick={() => { cancellingRef.current = false; setDraft(url || ''); setEditing(false); }}
+          title="Cancel"
+          style={tiny}
+        >✕</button>
+        {invalid && (
+          <span style={{ width: '100%', fontSize: '0.58rem', color: '#B91C1C' }}>
+            Not a usable web address — it needs to look like example.com/page.
+          </span>
+        )}
       </span>
     );
   }
@@ -604,7 +639,12 @@ function answerSelectStyle(val, derived = false) {
 // california__sb-253: 'Yes', … }); `onSet(key, value)` persists one
 // answer. The "Research answers" button asks Claude (web search) to fill
 // the jurisdiction rows; `research` holds that run's rationale + sources.
-function JurisdictionScreening({ answers, links, onSetLink, sharedLinks, onSetSharedLink, findings, onSetFindings, caSiteCount = 0, revenue = '', employees = null, onSet, disabled, onResearch, researching, researchError, research }) {
+//
+// Every reference link on this table is filed against the row, not the
+// company (`sharedLinks` / `onSetSharedLink`) — a statute is the same page
+// whoever is being screened. `links` is the old per-company map, read as a
+// fallback so anything saved before that stays on screen.
+function JurisdictionScreening({ answers, links, sharedLinks, onSetSharedLink, findings, onSetFindings, caSiteCount = 0, revenue = '', employees = null, onSet, disabled, onResearch, researching, researchError, research }) {
   // Revenue drives the derived Applies? verdicts (SB 253 / SB 261). Parsed
   // once per render rather than per regulation row.
   const revenueLabel = String(revenue || '').trim();
@@ -710,7 +750,7 @@ function JurisdictionScreening({ answers, links, onSetLink, sharedLinks, onSetSh
                 const regKeys = regs.map((r) => regulationAnswerKey(q.key, r.regulation));
                 const hiddenCount = criteriaRows.length + regKeys.length;
                 const hiddenAnnotated = [...criteriaRows, ...regKeys]
-                  .filter((k) => links?.[k] || findings?.[k]).length;
+                  .filter((k) => sharedLinks?.[k] || links?.[k] || findings?.[k]).length;
                 return (
                   <Fragment key={q.key}>
                     <tr style={ruledOut ? ruledOutRow : undefined} title={ruledOut ? caRuledOutWhy : undefined}>
@@ -788,13 +828,18 @@ function JurisdictionScreening({ answers, links, onSetLink, sharedLinks, onSetSh
                         )}
                       </td>
                       <td style={td}>
+                        {/* The page that answers "do they operate there?" —
+                            a regulator's register, a scope note — is the
+                            same page for every company, so the link is
+                            shared. The findings stay this company's. */}
                         <ReferenceCell
-                          url={links?.[q.key] || ''}
+                          url={sharedLinks?.[q.key] || links?.[q.key] || ''}
                           findings={findings?.[q.key] || ''}
-                          onSaveUrl={(v) => onSetLink?.(q.key, v)}
+                          onSaveUrl={(v) => onSetSharedLink?.(q.key, v)}
                           onSaveFindings={(v) => onSetFindings?.(q.key, v)}
                           label={q.jurisdiction}
                           disabled={disabled}
+                          shared
                         />
                       </td>
                     </tr>
@@ -893,25 +938,21 @@ function JurisdictionScreening({ answers, links, onSetLink, sharedLinks, onSetSh
                                 )}
                               </td>
                               <td style={td}>
-                                {/* A manual row is one somebody looks up, and
-                                    they look it up in the same place for every
-                                    company — so its link is shared, while the
-                                    findings beside it stay this company's. An
-                                    older per-company link still shows until a
-                                    shared one is saved over it, so nothing
-                                    already recorded disappears. */}
+                                {/* A criterion row is one somebody looks up,
+                                    and they look it up in the same place for
+                                    every company — so its link is shared,
+                                    while the findings beside it stay this
+                                    company's. An older per-company link still
+                                    shows until a shared one is saved over it,
+                                    so nothing already recorded disappears. */}
                                 <ReferenceCell
-                                  url={row.source === 'manual'
-                                    ? (sharedLinks?.[cKey] || links?.[cKey] || '')
-                                    : (links?.[cKey] || '')}
+                                  url={sharedLinks?.[cKey] || links?.[cKey] || ''}
                                   findings={findings?.[cKey] || ''}
-                                  onSaveUrl={(v) => (row.source === 'manual'
-                                    ? onSetSharedLink?.(cKey, v)
-                                    : onSetLink?.(cKey, v))}
+                                  onSaveUrl={(v) => onSetSharedLink?.(cKey, v)}
                                   onSaveFindings={(v) => onSetFindings?.(cKey, v)}
                                   label={row.label}
                                   disabled={disabled}
-                                  shared={row.source === 'manual'}
+                                  shared
                                 />
                               </td>
                             </tr>
@@ -931,7 +972,7 @@ function JurisdictionScreening({ answers, links, onSetLink, sharedLinks, onSetSh
                       // matters if one is ever taken back out of that set.)
                       const triggered = val === 'Yes' || val === 'Unknown'
                         || ALWAYS_SHOW_REGULATIONS.has(q.key);
-                      if (!triggered && !(links?.[rKey] || findings?.[rKey])) return null;
+                      if (!triggered && !(sharedLinks?.[rKey] || links?.[rKey] || findings?.[rKey])) return null;
                       const rVal = answers?.[rKey] || '';
                       // Pure threshold tests (SB 253 / SB 261) answer
                       // themselves from the revenue already on this card.
@@ -1342,10 +1383,14 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
     updateSettingsPath({ [`corporateComplianceScreening.${slug}.${key}`]: value || null });
   }, [updateSettingsPath]);
 
-  // Reference URLs the user attaches to each question / regulation. Kept in
-  // their own map (company slug → question or regulation key) rather than
-  // beside the answers, so a URL can never be read as a screening answer.
-  const complianceLinks = settings?.companyComplianceLinks || {};
+  // Reference URLs this page used to file per company (company slug →
+  // question or regulation key). Nothing writes here any more — links belong
+  // to the row, not the company — but it's still read as a fallback, and the
+  // promotion effect below lifts what's in it into the shared map.
+  const complianceLinks = useMemo(
+    () => settings?.companyComplianceLinks || {},
+    [settings?.companyComplianceLinks],
+  );
   // Manual findings the user recorded from each reference link. Its own map
   // for the same reason the links are: never confusable with an answer.
   const complianceFindings = settings?.companyComplianceFindings || {};
@@ -1353,20 +1398,53 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
     if (!updateSettingsPath || !slug) return;
     updateSettingsPath({ [`companyComplianceFindings.${slug}.${key}`]: text || null });
   };
-  const setComplianceLink = useCallback((slug, key, url) => {
-    if (!updateSettingsPath || !slug) return;
-    updateSettingsPath({ [`companyComplianceLinks.${slug}.${key}`]: url || null });
-  }, [updateSettingsPath]);
-
-  // Reference links for the manual rows — the pages somebody goes to in order
-  // to answer them (the FTB sales-threshold page, a Secretary of State search).
-  // Those don't change from company to company, so they're filed by row key
-  // alone rather than under a company, and show on every card.
-  const sharedLinks = settings?.complianceReferenceLinks || {};
+  // Every reference link on this page — the statute, the regulator's
+  // guidance, the register somebody checks. None of it changes from company
+  // to company, so it's filed by row key alone rather than under a company,
+  // and shows on every card. Filing them per company was why a link pasted
+  // on one card was missing on the next, and why renaming a company (or
+  // re-uploading the site list under a different name) lost them outright.
+  const sharedLinks = useMemo(
+    () => settings?.complianceReferenceLinks || {},
+    [settings?.complianceReferenceLinks],
+  );
   const setSharedLink = useCallback((key, url) => {
     if (!updateSettingsPath || !key) return;
     updateSettingsPath({ [`complianceReferenceLinks.${key}`]: url || null });
   }, [updateSettingsPath]);
+
+  // One-time lift of the per-company links into the shared map, so links
+  // recorded before this stop being invisible on every other company. Runs
+  // only when there's something to lift and stamps itself, so deleting a
+  // shared link afterwards doesn't resurrect it from the old copy. Anything
+  // already shared wins; where companies disagreed on a row, the URL the most
+  // of them recorded does (ties break on company key, so it's deterministic).
+  // The per-company copies are left where they are — this adds, never
+  // destroys, and they still serve as the read fallback.
+  useEffect(() => {
+    if (!updateSettingsPath || settings?.complianceLinksPromotedAt) return;
+    const byRow = new Map();
+    for (const [companyKey, rows] of Object.entries(settings?.companyComplianceLinks || {})) {
+      if (!rows || typeof rows !== 'object') continue;
+      for (const [rowKey, url] of Object.entries(rows)) {
+        if (!rowKey || typeof url !== 'string' || !url.trim()) continue;
+        if (sharedLinks[rowKey]) continue;
+        if (!byRow.has(rowKey)) byRow.set(rowKey, new Map());
+        const votes = byRow.get(rowKey);
+        const prior = votes.get(url) || { count: 0, firstCompany: companyKey };
+        votes.set(url, { count: prior.count + 1, firstCompany: prior.firstCompany });
+      }
+    }
+    if (byRow.size === 0) return;
+    const updates = { complianceLinksPromotedAt: Date.now() };
+    for (const [rowKey, votes] of byRow) {
+      const [url] = [...votes.entries()].sort(
+        (a, b) => b[1].count - a[1].count || a[1].firstCompany.localeCompare(b[1].firstCompany),
+      )[0];
+      updates[`complianceReferenceLinks.${rowKey}`] = url;
+    }
+    updateSettingsPath(updates);
+  }, [settings?.complianceLinksPromotedAt, settings?.companyComplianceLinks, sharedLinks, updateSettingsPath]);
 
   // Portfolio company field. Writes the shared setting SitesView reads to
   // name every uploaded site that has no per-row Company Name column — so
@@ -1919,7 +1997,6 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                         links={complianceLinks[c.key] || null}
                         findings={complianceFindings[c.key] || null}
                         onSetFindings={(fieldKey, text) => setComplianceFinding(c.key, fieldKey, text)}
-                        onSetLink={(fieldKey, url) => setComplianceLink(c.key, fieldKey, url)}
                         sharedLinks={sharedLinks}
                         onSetSharedLink={setSharedLink}
                         caSiteCount={c.california}
