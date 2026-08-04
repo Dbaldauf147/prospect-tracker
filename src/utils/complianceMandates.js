@@ -311,8 +311,9 @@ function thresholdFor(category, mandate, ptClass) {
 //                     site carries no square footage — see below).
 //             false = active ordinance but the building is under the size
 //                     requirement, or of a building type the ordinance
-//                     doesn't cover (`coveredType: false`), or no ordinance
-//                     at all.
+//                     doesn't cover (`coveredType: false`), or — for audits —
+//                     an ordinance with no published deadline
+//                     (`noDeadline: true`), or no ordinance at all.
 //   Every count, penalty total and chart downstream keys off `eligible ===
 //   true`, so a building below the threshold doesn't show up as needing to
 //   report.
@@ -322,6 +323,25 @@ function evalCategory(category, mandate, site) {
     return { category, applicable: false, active: false, eligible: false };
   }
   const ptClass = classifyPropertyType(site.propertyType);
+  // No published deadline, nothing due: an audit mandate with no date on file
+  // gives a site nothing to comply with and no point to plan against, so it
+  // isn't counted as needing an audit. Austin, Columbus and Denver are the
+  // three active audit ordinances in that position; the other 18 all publish
+  // a date. The ordinance stays on file as in force — it's the obligation
+  // that isn't established, not the policy that's absent.
+  if (category === 'audits' && !cat.deadline && !cat.deadlineRaw) {
+    return {
+      category, applicable: false, active: true, eligible: false,
+      noDeadline: true, coveredType: null, threshold: null, meetsThreshold: null,
+      sizeAssumed: false, ptClass, thresholdKey: null,
+      deadline: null, deadlineRaw: null,
+      penalty: null, penaltyRate: null, penaltyUom: null,
+      penaltyPerSqft: false, penaltyUnsized: false,
+      requirements: auditRequirements(mandate),
+      policyName: cat.policyName || cat.ordinanceName || '',
+      status: cat.status || '',
+    };
+  }
   const threshold = thresholdFor(category, mandate, ptClass);
   // The ordinance is live here but doesn't reach this kind of building, so no
   // deadline and no fine ride along — same treatment as a building under the

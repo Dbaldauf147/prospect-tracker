@@ -108,10 +108,12 @@ eq(lookupGovId('Seattle', 'DC'), null, 'Seattle,DC -> not Seattle WA');
     [['rcx', 'conditional'], ['tuneUp', 'conditional']], 'Seattle: both obligations are conditional');
   eq(auditRequirementsLabel(getMandates(lookupGovId('Madison', 'WI'))), 'Tune-up: Mandatory',
     'label reads as one line for a spreadsheet cell');
-  // A blank set is missing detail, not an absent ordinance: those still screen.
+  // A blank set is missing detail, not an absent ordinance: the ordinance is
+  // still read as in force. (Denver publishes no audit deadline either, so no
+  // site is counted as needing an audit there — see the deadline block below.)
   const den = screenSite({ id: 2, city: 'Denver', state: 'CO', sqft: 250000, propertyType: 'Office' });
   eq(den.audits.requirements, [], 'Denver publishes no requirement detail');
-  ok(den.audits.eligible === true, 'Denver audits still applicable without requirement detail');
+  ok(den.audits.active === true, 'Denver audits ordinance still reads as in force');
   // Only the audits category carries them.
   eq(la.bbs.requirements, [], 'BBS carries no audit requirements');
 
@@ -211,19 +213,30 @@ eq(classifyPropertyType('Office'), 'nonresidential', 'classify nonresidential');
 // column means that type isn't covered — the thresholds are not interchangeable
 // the way a fallback treated them.
 {
-  // Austin's audit requirement is multifamily-only (510 ft²). An office there
-  // was borrowing that 510 and screening as a mandate.
-  const office = screenSite({ id: 1, city: 'Austin', state: 'TX', sqft: 60000, propertyType: 'Office' });
+  // Austin's audit requirement is multifamily-only (510 ft²), and an office
+  // there was borrowing that 510 and screening as a mandate. Austin publishes
+  // no audit deadline, so today it drops out one step earlier — the
+  // building-type rule is exercised here against the same ordinance with a
+  // deadline filled in, so it stays under test either way.
+  const AUSTIN_DATED = MASTER_ORDINANCES
+    .filter(g => g.govId === 'US-TX-Austin-01')
+    .map(g => ({ ...g, audits: { ...g.audits, deadline: '2027-06-01', deadlineRaw: '6/1/2027' } }));
+  const AUSTIN_LOOKUP = { austintx: 'US-TX-Austin-01' };
+  const dated = (propertyType) => screenSite(
+    { id: 1, city: 'Austin', state: 'TX', sqft: 60000, propertyType },
+    { ordinances: AUSTIN_DATED, cityLookup: AUSTIN_LOOKUP },
+  );
+  const office = dated('Office');
   ok(office.matched === true, 'Austin office resolves');
   ok(office.audits.active === true, 'Austin: the audit ordinance is still on file as in force');
   ok(office.audits.coveredType === false, 'Austin office: not a building type the audit ordinance covers');
   ok(office.audits.eligible === false, 'Austin office: Audits not applicable');
   ok(office.audits.threshold === null, 'Austin office: no size requirement to show');
   ok(office.audits.penalty === null && office.audits.deadline === null, 'Austin office: no fine or deadline rides along');
-  const school = screenSite({ id: 2, city: 'Austin', state: 'TX', sqft: 60000, propertyType: 'K-12 School' });
-  ok(school.audits.coveredType === false, 'Austin school: not covered either');
-  const apts = screenSite({ id: 3, city: 'Austin', state: 'TX', sqft: 60000, propertyType: 'Multifamily Housing' });
-  ok(apts.audits.eligible === true && apts.audits.threshold === 510, 'Austin apartments: still covered at 510 ft²');
+  ok(dated('K-12 School').audits.coveredType === false, 'Austin school: not covered either');
+  const apts = dated('Multifamily Housing');
+  ok(apts.audits.eligible === true && apts.audits.threshold === 510, 'Austin apartments: covered at 510 ft² once a deadline is published');
+  eq(apts.audits.thresholdKey, 'multifamily', 'Austin apartments: labelled as the multifamily figure');
 
   // The mirror image: Seattle's, San Francisco's, Philadelphia's and Salt Lake
   // City's audit requirements are commercial-only, so an apartment building
@@ -257,19 +270,48 @@ eq(classifyPropertyType('Office'), 'nonresidential', 'classify nonresidential');
     const small = screenSite({ id: 14, city: 'Orlando', state: 'FL', sqft: 20000, propertyType: 'K-12 School' });
     ok(small.audits.eligible === false && small.audits.coveredType === true,
       'Orlando 20k school: below the commercial requirement');
-    // Multifamily still reads its own column.
-    eq(screenSite({ id: 15, city: 'Austin', state: 'TX', sqft: 60000, propertyType: 'Multifamily Housing' }).audits.thresholdKey,
-      'multifamily', 'Austin apartments: labelled as the multifamily figure');
-  }
-  {
-    const denver = screenSite({ id: 9, city: 'Denver', state: 'CO', sqft: 60000, propertyType: 'Office' });
-    ok(denver.audits.eligible === true && denver.audits.threshold === null,
-      'Denver office: an ordinance publishing no size requirements still covers everything');
   }
   // Property type is only known for some sites; a blank one classifies as
   // non-residential and must keep reading the non-residential column.
   ok(screenSite({ id: 10, city: 'Seattle', state: 'WA', sqft: 250000 }).audits.eligible === true,
     'Seattle site with no property type: still screened against the commercial requirement');
+}
+
+// --- audits: no deadline, nothing due --------------------------------------
+// An audit ordinance with no date on file gives a site nothing to comply with,
+// so it isn't counted as needing an audit. Austin, Columbus and Denver are the
+// three active audit ordinances with no published deadline.
+{
+  for (const [city, state] of [['Austin', 'TX'], ['Columbus', 'OH'], ['Denver', 'CO']]) {
+    for (const propertyType of ['Office', 'Multifamily Housing', 'K-12 School']) {
+      const r = screenSite({ id: 1, city, state, sqft: 250000, propertyType });
+      ok(r.audits.active === true, `${city} ${propertyType}: the audit ordinance is still on file as in force`);
+      ok(r.audits.noDeadline === true, `${city} ${propertyType}: flagged as publishing no deadline`);
+      ok(r.audits.eligible === false, `${city} ${propertyType}: not counted as needing an audit`);
+      ok(r.audits.penalty === null, `${city} ${propertyType}: no audit penalty rides along`);
+    }
+  }
+  // Only the audits mandate is judged this way, and only where the date is
+  // genuinely missing: Denver's BPS and benchmarking mandates are untouched,
+  // and the 18 audit ordinances that do publish a date still screen.
+  const den = screenSite({ id: 2, city: 'Denver', state: 'CO', sqft: 250000, propertyType: 'Office' });
+  ok(den.bbs.eligible === true && den.bps.eligible === true, 'Denver: BBS and BPS unaffected by the audit deadline rule');
+  for (const [city, state] of [['Seattle', 'WA'], ['New York', 'NY'], ['Los Angeles', 'CA'], ['Atlanta', 'GA']]) {
+    const r = screenSite({ id: 3, city, state, sqft: 250000, propertyType: 'Office' });
+    ok(r.audits.eligible === true && !r.audits.noDeadline, `${city}: audit deadline published, still applicable`);
+  }
+  // A jurisdiction whose date only survives as the workbook's raw string still
+  // counts — it has a deadline, just not a parsed one.
+  {
+    const RAW_ONLY = MASTER_ORDINANCES
+      .filter(g => g.govId === 'US-TX-Austin-01')
+      .map(g => ({ ...g, audits: { ...g.audits, deadline: null, deadlineRaw: 'Within 10 years of 6/1/2027' } }));
+    const r = screenSite(
+      { id: 4, city: 'Austin', state: 'TX', sqft: 250000, propertyType: 'Multifamily Housing' },
+      { ordinances: RAW_ONLY, cityLookup: { austintx: 'US-TX-Austin-01' } },
+    );
+    ok(r.audits.eligible === true, 'an unparsed deadline still counts as a deadline');
+  }
 }
 
 // --- aggregations ----------------------------------------------------------
