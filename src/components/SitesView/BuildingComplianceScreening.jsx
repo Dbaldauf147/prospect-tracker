@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import MASTER_ORDINANCES from '../../data/masterOrdinances.js';
+import { STATES, GOV_IDS, JURISDICTIONS, CITY_ROWS } from '../../data/complianceCityLookup.js';
 import {
   screenSites, lookupGovId, getMandates, classifyPropertyType,
   CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
@@ -434,9 +435,28 @@ export function BuildingComplianceScreening({
   }, [city, state]);
 
   // ---- downloads ----------------------------------------------------------
-  // City Lookup: the human-readable city+state → Government ID table.
+  // City Lookup: the reference table itself — every city the screening can
+  // resolve, the jurisdiction it rolls up to, and that jurisdiction's headline
+  // benchmarking terms. One row per city + state, so a member city (Silver
+  // Spring under Montgomery County) is visible as its own line.
   function downloadCityLookup() {
-    const data = MASTER_ORDINANCES.map(g => ({ 'City / Government': g.government, 'State': g.state, 'Government ID': g.govId }));
+    const juris = new Map(JURISDICTIONS.map(j => [j.govId, j]));
+    const data = CITY_ROWS.map(([city, si, gi]) => {
+      const [state, abbr, country] = STATES[si];
+      const j = juris.get(GOV_IDS[gi]) || {};
+      return {
+        'City': city, 'State': state, 'State Abbreviation': abbr, 'Country': country,
+        'Government ID': GOV_IDS[gi], 'Master City': j.masterCity || '',
+        'BECS - Compliance Deadline': j.becsDeadline ? mdY(j.becsDeadline) : '',
+        'BECS - Threshold': j.becsThreshold || '',
+        'BECS - Policy Name': j.becsPolicyName || '',
+        'BECS - Compliance Source': j.becsSource || '',
+        'Efficiency - Deadline': j.efficiencyDeadline ? mdY(j.efficiencyDeadline) : '',
+        'Efficiency - Threshold': j.efficiencyThreshold || '',
+        'Notes': j.notes || '',
+        'Data Required': j.dataRequired || '',
+      };
+    });
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'City Lookup');
@@ -580,11 +600,11 @@ export function BuildingComplianceScreening({
           <div className={styles.subtitle}>
             Screens each Utility Lookup site: <strong>city + state → Government ID</strong> (City Lookup),
             then <strong>Government ID → BBS / Audits / BPS mandates</strong> (Master Ordinances).
-            {' '}· <strong>{MASTER_ORDINANCES.length}</strong> jurisdictions on file.
+            {' '}· <strong>{CITY_ROWS.length.toLocaleString('en-US')}</strong> cities across <strong>{MASTER_ORDINANCES.length}</strong> jurisdictions on file.
           </div>
         </div>
         <div className={styles.actions}>
-          <button type="button" className={styles.btn} onClick={downloadCityLookup} title="Download the City Lookup table (city + state → Government ID)">City Lookup</button>
+          <button type="button" className={styles.btn} onClick={downloadCityLookup} title={`Download the City Lookup table — ${CITY_ROWS.length.toLocaleString('en-US')} cities, each with the Government ID it screens against`}>City Lookup</button>
           <button type="button" className={styles.btn} onClick={downloadMasterOrdinances} title="Download the Master Ordinances Database (Government ID → BBS/Audits/BPS)">Master Ordinances</button>
           <button type="button" className={styles.btnPrimary} onClick={exportReport} title="Open the branded report (print / Save as PDF) and download the accompanying raw-data Excel">Export report (PDF)</button>
           <button type="button" className={styles.btnPrimary} onClick={exportExcelReport} disabled={sites.length === 0} title="Download the branded report as a formatted Excel workbook (KPI tiles, roadmap + penalty tables, charts)">Export report (Excel)</button>
@@ -831,7 +851,7 @@ export function BuildingComplianceScreening({
           ) : !manual?.mandate ? (
             <div className={styles.noMatch}>
               <strong>No jurisdiction found</strong> for “{city.trim()}{state.trim() ? `, ${state.trim()}` : ''}”.
-              <div className={styles.noMatchSub}>The city+state isn't in the City Lookup. Member cities of county / state ordinances need the full City Lookup tab.</div>
+              <div className={styles.noMatchSub}>The City Lookup has no benchmarking or performance ordinance covering this city+state. A city name with no state is only resolved when one jurisdiction carries it — “Portland” could be Maine or Oregon.</div>
             </div>
           ) : (
             <div className={styles.manualResult}>
