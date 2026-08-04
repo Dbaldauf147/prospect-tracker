@@ -179,6 +179,12 @@ export function classifyPropertyType(propertyType) {
   return 'nonresidential';
 }
 
+// Returned by thresholdFor when the ordinance publishes size requirements but
+// none for this building's property type — the mandate doesn't reach the
+// building at all. That is a different answer from `null`, which means the
+// ordinance publishes no size requirement anywhere and so covers everything.
+const NOT_COVERED = Symbol('notCovered');
+
 // Pick the applicable ft² threshold for a category given the property-type
 // bucket, falling back to whatever threshold the ordinance does define.
 function thresholdFor(category, mandate, ptClass) {
@@ -189,13 +195,26 @@ function thresholdFor(category, mandate, ptClass) {
       : ptClass === 'multifamily' ? ['multiFamily', 'nonResidential', 'statewide']
       : ['nonResidential', 'statewide', 'public'];
   } else if (category === 'audits') {
+    // Audit ordinances scope themselves by building type, so their columns
+    // are not interchangeable: a blank one means that type isn't covered.
+    // Austin's audit requirement is multifamily-only (510 ft²) and Seattle's,
+    // San Francisco's, Philadelphia's and Salt Lake City's are commercial-only.
+    // Borrowing another type's number screened an Austin office into a
+    // multifamily mandate and a Seattle apartment building into a commercial
+    // one, so nothing crosses the residential / non-residential line here.
+    // A public building still reads the general non-residential (commercial)
+    // requirement when the ordinance doesn't publish a separate public one —
+    // both describe the same non-residential stock.
     order = ptClass === 'public' ? ['public', 'commercial']
-      : ptClass === 'multifamily' ? ['multifamily', 'commercial']
-      : ['commercial', 'public'];
+      : ptClass === 'multifamily' ? ['multifamily']
+      : ['commercial'];
   } else { // bps
     order = ptClass === 'multifamily' ? ['multiFamily', 'nonResidential'] : ['nonResidential', 'multiFamily'];
   }
   for (const key of order) if (t[key] != null) return t[key];
+  if (category === 'audits') {
+    return Object.values(t).some(v => v != null) ? NOT_COVERED : null;
+  }
   // Last resort: any defined threshold.
   for (const v of Object.values(t)) if (v != null) return v;
   return null;
@@ -214,7 +233,9 @@ function thresholdFor(category, mandate, ptClass) {
 //                     requirement (or the ordinance publishes none, or the
 //                     site carries no square footage — see below).
 //             false = active ordinance but the building is under the size
-//                     requirement, or no ordinance at all.
+//                     requirement, or of a building type the ordinance
+//                     doesn't cover (`coveredType: false`), or no ordinance
+//                     at all.
 //   Every count, penalty total and chart downstream keys off `eligible ===
 //   true`, so a building below the threshold doesn't show up as needing to
 //   report.
@@ -225,6 +246,22 @@ function evalCategory(category, mandate, site) {
   }
   const ptClass = classifyPropertyType(site.propertyType);
   const threshold = thresholdFor(category, mandate, ptClass);
+  // The ordinance is live here but doesn't reach this kind of building, so no
+  // deadline and no fine ride along — same treatment as a building under the
+  // size requirement, with its own reason so the page and the exports can say
+  // which of the two it was.
+  if (threshold === NOT_COVERED) {
+    return {
+      category, applicable: false, active: true, eligible: false,
+      coveredType: false, threshold: null, meetsThreshold: null,
+      sizeAssumed: false, ptClass,
+      deadline: null, deadlineRaw: null,
+      penalty: null, penaltyRate: null, penaltyUom: null,
+      penaltyPerSqft: false, penaltyUnsized: false,
+      policyName: cat.policyName || cat.ordinanceName || '',
+      status: cat.status || '',
+    };
+  }
   const sqft = Number.isFinite(site.sqft) ? site.sqft : null;
   // The size requirement gates applicability: it's the ordinance's own test
   // for which buildings are covered, so screening a 5,000 ft² building as
@@ -254,6 +291,8 @@ function evalCategory(category, mandate, site) {
     applicable: eligible === true,
     active: true,
     eligible,
+    // This building's type is one the ordinance covers.
+    coveredType: true,
     threshold,
     meetsThreshold,
     // Counted as meeting the size requirement because the site has no square

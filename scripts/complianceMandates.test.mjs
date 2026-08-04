@@ -152,6 +152,56 @@ eq(classifyPropertyType('Office'), 'nonresidential', 'classify nonresidential');
   ok(unmatched.matched === false, 'unmatched site');
 }
 
+// --- audits: the ordinance's own building-type scope ------------------------
+// An audit requirement is written for particular building types, so a blank
+// column means that type isn't covered — the thresholds are not interchangeable
+// the way a fallback treated them.
+{
+  // Austin's audit requirement is multifamily-only (510 ft²). An office there
+  // was borrowing that 510 and screening as a mandate.
+  const office = screenSite({ id: 1, city: 'Austin', state: 'TX', sqft: 60000, propertyType: 'Office' });
+  ok(office.matched === true, 'Austin office resolves');
+  ok(office.audits.active === true, 'Austin: the audit ordinance is still on file as in force');
+  ok(office.audits.coveredType === false, 'Austin office: not a building type the audit ordinance covers');
+  ok(office.audits.eligible === false, 'Austin office: Audits not applicable');
+  ok(office.audits.threshold === null, 'Austin office: no size requirement to show');
+  ok(office.audits.penalty === null && office.audits.deadline === null, 'Austin office: no fine or deadline rides along');
+  const school = screenSite({ id: 2, city: 'Austin', state: 'TX', sqft: 60000, propertyType: 'K-12 School' });
+  ok(school.audits.coveredType === false, 'Austin school: not covered either');
+  const apts = screenSite({ id: 3, city: 'Austin', state: 'TX', sqft: 60000, propertyType: 'Multifamily Housing' });
+  ok(apts.audits.eligible === true && apts.audits.threshold === 510, 'Austin apartments: still covered at 510 ft²');
+
+  // The mirror image: Seattle's, San Francisco's, Philadelphia's and Salt Lake
+  // City's audit requirements are commercial-only, so an apartment building
+  // must not borrow the commercial threshold.
+  for (const [city, state] of [['Seattle', 'WA'], ['San Francisco', 'CA'], ['Philadelphia', 'PA'], ['Salt Lake City', 'UT']]) {
+    const mf = screenSite({ id: 4, city, state, sqft: 250000, propertyType: 'Multifamily Housing' });
+    ok(mf.audits.coveredType === false, `${city} apartments: commercial-only audit ordinance does not reach multifamily`);
+    ok(mf.audits.eligible === false, `${city} apartments: Audits not applicable`);
+    const comm = screenSite({ id: 5, city, state, sqft: 250000, propertyType: 'Office' });
+    ok(comm.audits.eligible === true, `${city} office: still covered`);
+  }
+
+  // Ordinances that publish a commercial or public requirement are untouched:
+  // NYC LL87 reaches a 250k ft² office, and a jurisdiction publishing no audit
+  // thresholds at all still covers everything.
+  ok(screenSite({ id: 6, city: 'New York', state: 'NY', sqft: 250000, propertyType: 'Office' }).audits.eligible === true,
+    'NYC office: LL87 audits still applicable');
+  ok(screenSite({ id: 7, city: 'Atlanta', state: 'GA', sqft: 60000, propertyType: 'Office' }).audits.eligible === true,
+    'Atlanta office: audits still applicable');
+  ok(screenSite({ id: 8, city: 'Boston', state: 'MA', sqft: 60000, propertyType: 'K-12 School' }).audits.eligible === true,
+    'Boston school: reads the non-residential requirement when no public one is published');
+  {
+    const denver = screenSite({ id: 9, city: 'Denver', state: 'CO', sqft: 60000, propertyType: 'Office' });
+    ok(denver.audits.eligible === true && denver.audits.threshold === null,
+      'Denver office: an ordinance publishing no size requirements still covers everything');
+  }
+  // Property type is only known for some sites; a blank one classifies as
+  // non-residential and must keep reading the non-residential column.
+  ok(screenSite({ id: 10, city: 'Seattle', state: 'WA', sqft: 250000 }).audits.eligible === true,
+    'Seattle site with no property type: still screened against the commercial requirement');
+}
+
 // --- aggregations ----------------------------------------------------------
 {
   const sites = [
