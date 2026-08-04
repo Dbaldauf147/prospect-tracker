@@ -60,6 +60,7 @@ import { NewOppsDraftEmailModal } from './NewOppsDraftEmailModal';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { reasonOptionsForCompetition } from '../../data/closeNotSoldRules';
 import { buildNewOppsTableHtml, downloadOppsTableOutlookDraft, NEW_OPPS_EMAIL_COLUMNS, NEW_OPPS_EMAIL_DEFAULT_COLUMN_KEYS } from '../../utils/newOppsEmailTable';
+import { LinkedCalls } from './LinkedCalls';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — user-entered opps stored in Firestore
@@ -4814,6 +4815,10 @@ export function OppInfoModal({
               })}
             </tbody>
           </table>
+
+          {/* Call recordings tagged to this opp on the Call Recordings
+              page. Renders nothing when there are none. */}
+          <LinkedCalls oppId={opp._id} />
         </div>
 
         <div style={{

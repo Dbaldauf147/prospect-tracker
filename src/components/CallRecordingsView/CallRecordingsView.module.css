@@ -376,3 +376,173 @@
 .pickerOption:hover {
   background: #f1f5f9;
 }
+
+/* ---- opportunity tag ------------------------------------------------- */
+
+/* Deliberately a different hue from .linkChip: a card can carry both a
+   company and an opp chip, and they have to read as different things at
+   a glance. Not clickable — the opp lives on the Opps 2 tab. */
+.oppChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: #dcfce7;
+  border: 1px solid #86efac;
+  color: #166534;
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.autoPush {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.pushedNote {
+  padding: 0 0.8rem 0.5rem;
+  font-size: var(--font-size-xs);
+  color: #166534;
+}
+
+.pickerGroupLabel {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  margin: 0.5rem 0 0.25rem;
+}
+
+/* ---- AI summary ------------------------------------------------------ */
+
+.summary {
+  border-top: 1px solid var(--color-border);
+  padding: 0.7rem 0.8rem;
+}
+
+.summaryHead {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
+.summaryTitle {
+  font-weight: 700;
+  font-size: var(--font-size-sm);
+}
+
+.sentiment {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  text-transform: capitalize;
+  background: #f1f5f9;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.sentiment[data-tone='positive'] { background: #dcfce7; border-color: #86efac; color: #166534; }
+.sentiment[data-tone='cautious'] { background: #fef3c7; border-color: #fcd34d; color: #92400e; }
+.sentiment[data-tone='negative'] { background: #fee2e2; border-color: #fca5a5; color: #991b1b; }
+
+.summaryBody {
+  margin: 0 0 0.5rem;
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+}
+
+.summaryLabel {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  margin: 0.5rem 0 0.2rem;
+}
+
+.summaryList {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.followMeta {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* ---- transcript topic search ----------------------------------------- */
+
+.searchBox {
+  border-top: 1px solid var(--color-border);
+  padding: 0.7rem 0.8rem;
+}
+
+.searchRow {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.searchRow .input {
+  flex: 1;
+}
+
+.finding {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+/* Fixed width so the quotes line up into a column regardless of whether
+   a timestamp came back for each one. */
+.timeLink {
+  flex: 0 0 auto;
+  min-width: 3.4rem;
+  text-align: right;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--color-primary, #4f46e5);
+  cursor: pointer;
+}
+
+.timeLink[data-disabled='true'] {
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+.timeLink:hover:not([data-disabled='true']) {
+  text-decoration: underline;
+}
+
+.quote {
+  font-style: italic;
+}
+
+.findingNote {
+  display: block;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  font-style: normal;
+}

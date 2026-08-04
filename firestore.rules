@@ -124,6 +124,19 @@ service cloud.firestore {
       allow read, write: if owns(userId);
     }
 
+    // Call recordings: the transcript, AI summary, and company/opp tag
+    // for each recording on the Call Recordings page. The media itself
+    // stays in the user's OneDrive or on their PC and is never stored
+    // here — only text derived from it. One document per recording (a
+    // long transcript would blow the 1 MB cap if they shared one), so
+    // the parent doc is a container and the items live beneath it.
+    match /callRecordings/{userId} {
+      allow read, write: if owns(userId);
+    }
+    match /callRecordings/{userId}/items/{recordingId} {
+      allow read, write: if owns(userId);
+    }
+
     // Progress history: users can only read/write their own data
     match /progressHistory/{userId} {
       allow read, write: if owns(userId);
