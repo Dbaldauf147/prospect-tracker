@@ -6,7 +6,7 @@ import {
   screenSites, lookupGovId, getMandates,
   CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
   totalEligible, eligibilityByOrdinance, totalPenalty, penaltyByOrdinance, sitesCompanyLabel,
-  bpsPrioritization, penaltyBasis,
+  bpsPrioritization, penaltyBasis, auditRequirements, auditRequirementsLabel, categoryColumns,
 } from '../../utils/complianceMandates';
 import { buildComplianceReportHtml } from '../../utils/complianceReportHtml';
 import { exportComplianceReportXlsx } from '../../utils/complianceReportXlsx';
@@ -20,6 +20,19 @@ const mdY = (iso) => { if (!iso) return '—'; const [y, m, d] = String(iso).spl
 // Property-type buckets the size requirements are published against, for the
 // lines that have to name the bucket a building fell into.
 const PT_CLASS_LABEL = { multifamily: 'multifamily', public: 'public / institutional', nonresidential: 'non-residential' };
+
+// A source column as it should read in an export. The workbook leaves some
+// dates as Excel serials — Seattle's audit due date is "45931" — which is
+// unreadable in a column headed "Due Date". Everything else passes through as
+// written, so the export stays a faithful copy of the reference.
+const EXCEL_EPOCH = Date.UTC(1899, 11, 30);
+function sourceValue(column, value) {
+  const s = value == null ? '' : String(value).trim();
+  if (!/date|deadline/i.test(column) || !/^\d{5}$/.test(s)) return value ?? '';
+  const n = Number(s);
+  if (n < 20000 || n > 60000) return value;
+  return mdY(new Date(EXCEL_EPOCH + n * 86400000).toISOString().slice(0, 10));
+}
 
 // Compact horizontal-bar list used for the on-page eligibility/penalty
 // summaries. items: [{ label, value }]. Every jurisdiction is listed — the
@@ -203,6 +216,20 @@ function MandateDetail({ res, mandate, sqft }) {
             This site has no square footage, so it can&apos;t be measured against the size
             requirement — it&apos;s counted as meeting it. Map a Sq Ft column on the Utility Lookup
             subtab to screen it for real.
+          </div>
+        )}
+        {/* An audit ordinance can ask for several separate pieces of work, each
+            scoped and priced on its own. "Applicable" alone doesn't say which. */}
+        {res.requirements?.length > 0 && (
+          <>
+            <div className={styles.mdSubhead}>What this ordinance requires</div>
+            {res.requirements.map(rq => row(rq.label, `${rq.value}${rq.level === 'conditional' ? ' — conditional' : rq.level === 'optional' ? ' — not required' : ''}`))}
+          </>
+        )}
+        {res.active && cat === 'audits' && !res.requirements?.length && (
+          <div className={styles.mdNote}>
+            The reference records no energy-audit, water-audit, retro-commissioning or tune-up
+            detail for this ordinance — check the jurisdiction&apos;s own guidance for what it asks for.
           </div>
         )}
 
@@ -503,7 +530,14 @@ export function BuildingComplianceScreening({
   // AND the building clears the size requirement — so the column matches the
   // counts on the page. A site with no square footage is taken as clearing it
   // and reads "Yes — sq ft assumed", so the assumption travels with the data.
-  function writeRawWorkbook(rowsToExport, filename) {
+  //
+  // `category` narrows the export to one mandate — the drill-down from a
+  // dashboard bar. Those sheets carry that category's full source columns per
+  // site (every "Audits - …" for an Energy Audits drill-down), so the sheet
+  // answers what the ordinance requires without cross-referencing the
+  // jurisdiction rows on the second tab.
+  function writeRawWorkbook(rowsToExport, filename, { category = null } = {}) {
+    const sourceCols = category ? categoryColumns(category) : [];
     const siteRows = rowsToExport.map(r => {
       const row = {
         Site: r.siteName, City: r.city, State: r.state,
@@ -528,6 +562,15 @@ export function BuildingComplianceScreening({
           : e.meetsThreshold === false ? 'No'
           : '';
         row[`${CATEGORY_LABEL[c]} Max Yearly Penalty`] = e?.eligible === true ? (e.penalty ?? '') : '';
+        // The obligations behind an Energy Audits hit — an energy audit, a
+        // water audit, retro-commissioning, a tune-up — each of which is
+        // separate work to scope.
+        if (c === 'audits') row['Energy Audits Requirements'] = e?.active ? auditRequirementsLabel(getMandates(r.govId)) : '';
+      }
+      // One category's full reference columns, for a single-mandate export.
+      if (sourceCols.length) {
+        const raw = (r.matched && getMandates(r.govId)?.categoryRaw?.[category]) || {};
+        for (const col of sourceCols) row[col] = sourceValue(col, raw[col]);
       }
       return row;
     });
@@ -602,6 +645,7 @@ export function BuildingComplianceScreening({
     writeRawWorkbook(
       drillRows,
       drill.government ? `${slug(drill.government)}-${cat}-Sites.xlsx` : `${cat}-Applicable-Sites.xlsx`,
+      { category: drill.category },
     );
   }
 
@@ -896,6 +940,9 @@ export function BuildingComplianceScreening({
                         <div className={styles.manualMeta}>Status: {cat.status || '—'}</div>
                         <div className={styles.manualMeta}>Deadline: {cat.deadline ? mdY(cat.deadline) : (cat.deadlineRaw || '—')}</div>
                         <div className={styles.manualMeta}>Max penalty: {cat.maxPenalty != null ? `${usd(cat.maxPenalty)}/yr` : '—'}</div>
+                        {c === 'audits' && cat.active && auditRequirements(manual.mandate).map(rq => (
+                          <div key={rq.key} className={styles.manualMeta}>{rq.label}: {rq.value}</div>
+                        ))}
                         {(cat.link || cat.url) && isUrl(cat.link || cat.url) && (
                           <div><a href={cat.link || cat.url} target="_blank" rel="noopener noreferrer">Ordinance link</a></div>
                         )}

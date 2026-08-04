@@ -131,13 +131,18 @@ export function lookupGovId(city, state, cityLookup = CITY_LOOKUP, ordinances = 
 // Rows naming the same government + state are therefore one jurisdiction: a
 // category is active if any of its rows says so, and the detail comes from
 // the row carrying that active ordinance. `raws` keeps every underlying row
-// so the export still shows the full reference behind a merged match.
+// so the export still shows the full reference behind a merged match, and
+// `categoryRaw` names the one row each category's detail was taken from — the
+// exports quote a category's source columns from there rather than from
+// whichever row happened to come first.
 function mergeOrdinances(list) {
   const primary = list[0];
   const out = { ...primary, govIds: list.map(g => g.govId), raws: list.map(g => g.raw).filter(Boolean) };
+  out.categoryRaw = {};
   for (const c of CATEGORIES) {
-    const active = list.find(g => g[c]?.active);
-    out[c] = active ? active[c] : (list.find(g => g[c]) || primary)[c];
+    const src = list.find(g => g[c]?.active) || list.find(g => g[c]) || primary;
+    out[c] = src[c];
+    out.categoryRaw[c] = src.raw || null;
   }
   return out;
 }
@@ -157,9 +162,9 @@ function mergedIndex(ordinances) {
   }
   m = new Map();
   for (const list of groups.values()) {
-    const merged = list.length === 1
-      ? { ...list[0], govIds: [list[0].govId], raws: list[0].raw ? [list[0].raw] : [] }
-      : mergeOrdinances(list);
+    // Every jurisdiction goes through the merge, one row or several, so a
+    // single-row jurisdiction still carries govIds / raws / categoryRaw.
+    const merged = mergeOrdinances(list);
     for (const g of list) m.set(g.govId, merged);
   }
   _mergedCache.set(ordinances, m);
@@ -169,6 +174,81 @@ function mergedIndex(ordinances) {
 export function getMandates(govId, ordinances = MASTER_ORDINANCES) {
   if (!govId) return null;
   return mergedIndex(ordinances).get(govId) || null;
+}
+
+// ---- what an audit ordinance actually asks for ----------------------------
+// "Energy Audits applicable" is the start of the answer, not the whole of it:
+// a jurisdiction can require an ASHRAE Level II energy audit, a water audit,
+// retro-commissioning and a periodic tune-up, in any combination, and each is
+// a separate piece of work to scope. The workbook carries one column per
+// obligation, so the screening reads them out per site rather than leaving
+// them in a reference sheet nobody opens.
+//
+// `level` grades how firm each one is, since the columns mix a hard
+// requirement with a conditional: "Mandatory" and a named standard ("ASHRAE
+// Level II") are required, "May be required" is conditional, "Optional" is
+// not required. Anything else names a standard, so it counts as required.
+const AUDIT_REQUIREMENTS = [
+  ['energyAudit', 'Energy audit', 'Audits - Energy Audit Requirement'],
+  ['waterAudit', 'Water audit', 'Audits - Water Audit Requirement'],
+  ['rcx', 'Retro-commissioning', 'Audits - RCxing Requirement'],
+  ['tuneUp', 'Tune-up', 'Audits - Tune-Up Requirement'],
+];
+
+const NO_REQUIREMENT = /^(n\/?a|none|not\s*(specified|identified|required|applicable|available))$/i;
+
+function requirementLevel(value) {
+  const v = String(value || '').trim();
+  if (!v || NO_REQUIREMENT.test(v)) return null;
+  if (/optional/i.test(v)) return 'optional';
+  if (/may\s+be\s+required|if\s|conditional/i.test(v)) return 'conditional';
+  return 'required';
+}
+
+// The audit obligations a jurisdiction publishes, as
+// [{ key, label, value, level }]. Empty when the ordinance names none — four
+// of the 21 active audit ordinances (Columbus, Denver, Evanston, Minneapolis)
+// leave every column blank, which says the workbook doesn't record the detail,
+// not that the ordinance asks for nothing. Those still screen as applicable.
+export function auditRequirements(mandate) {
+  const raw = mandate?.categoryRaw?.audits || mandate?.raw || {};
+  const out = [];
+  for (const [key, label, column] of AUDIT_REQUIREMENTS) {
+    const value = String(raw[column] || '').trim();
+    const level = requirementLevel(value);
+    if (level) out.push({ key, label, value, level });
+  }
+  return out;
+}
+
+// One-line summary of the above for a spreadsheet cell: "Energy audit: ASHRAE
+// Level II · Water audit: Mandatory".
+export function auditRequirementsLabel(mandate) {
+  return auditRequirements(mandate).map(r => `${r.label}: ${r.value}`).join(' · ');
+}
+
+// The workbook's own column order for one category's source columns.
+// A jurisdiction's raw row only keeps the columns it has a value for, so no
+// single row lists them all; each row is merged in after the last column it
+// shares with the order so far, which reconstructs the header order.
+const _colCache = new WeakMap();
+export function categoryColumns(category, ordinances = MASTER_ORDINANCES) {
+  let byCat = _colCache.get(ordinances);
+  if (!byCat) { byCat = new Map(); _colCache.set(ordinances, byCat); }
+  if (byCat.has(category)) return byCat.get(category);
+  const prefix = { bbs: 'BBS - ', audits: 'Audits - ', bps: 'BPS - ' }[category];
+  const order = [];
+  for (const g of ordinances) {
+    let at = 0;
+    for (const k of Object.keys(g.raw || {})) {
+      if (!k.startsWith(prefix)) continue;
+      const idx = order.indexOf(k);
+      if (idx >= 0) at = idx + 1;
+      else { order.splice(at, 0, k); at++; }
+    }
+  }
+  byCat.set(category, order);
+  return order;
 }
 
 // Classify a property type into the threshold bucket the ordinances use.
@@ -311,6 +391,10 @@ function evalCategory(category, mandate, site) {
     penaltyUnsized: perSqft && cat.maxPenalty != null && !Number.isFinite(sqft),
     policyName: cat.policyName || cat.ordinanceName || '',
     status: cat.status || '',
+    // What the ordinance asks for, not just that it applies: the energy /
+    // water / retro-commissioning / tune-up obligations behind an Energy
+    // Audits hit. Empty for the other two categories.
+    requirements: category === 'audits' ? auditRequirements(mandate) : [],
   };
 }
 
