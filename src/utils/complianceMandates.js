@@ -217,8 +217,18 @@ function thresholdFor(category, mandate, ptClass) {
 
 // Evaluate one category for one site. `site`: { sqft, propertyType }.
 // Returns { applicable, active, eligible, threshold, deadline, penalty, ... }.
-//   eligible: true | false | null (unknown — no square footage, or the
-//             ordinance defines no usable threshold for this property type).
+//   active:   the jurisdiction has an in-force ordinance for this category.
+//   eligible: whether THIS building has to report under it —
+//             true  = active ordinance and the building meets the size
+//                     requirement (or the ordinance publishes none).
+//             false = active ordinance but the building is under the size
+//                     requirement, or no ordinance at all.
+//             null  = active ordinance with a size requirement, but the site
+//                     carries no square footage, so it can't be decided.
+//   Every count, penalty total and chart downstream keys off `eligible ===
+//   true`, so a building below the threshold no longer shows up as needing to
+//   report, and one with no square footage is held back as undecided rather
+//   than being quietly counted either way.
 function evalCategory(category, mandate, site) {
   const cat = mandate[category];
   if (!cat || !cat.active) {
@@ -227,10 +237,12 @@ function evalCategory(category, mandate, site) {
   const ptClass = classifyPropertyType(site.propertyType);
   const threshold = thresholdFor(category, mandate, ptClass);
   const sqft = Number.isFinite(site.sqft) ? site.sqft : null;
-  // Applicability follows the active ordinance ONLY — the ft² threshold is
-  // reported as a requirement but does not gate applicability. `meetsThreshold`
-  // is kept purely as informational context (true/false/null-unknown).
+  // The size requirement gates applicability: it's the ordinance's own test
+  // for which buildings are covered, so screening a 5,000 ft² building as
+  // needing to report under a 50,000 ft² mandate overstates the portfolio.
   const meetsThreshold = (sqft == null || threshold == null) ? null : sqft >= threshold;
+  // No published threshold => the ordinance covers the building outright.
+  const eligible = threshold == null ? true : meetsThreshold;
   // BPS penalties can be quoted per square foot per year (Denver: $10/ft²/yr),
   // which is a very different number from a flat annual fee — $10 against
   // $600,000 for a 60,000 ft² building. bpsNonReportingPenalty already
@@ -242,9 +254,9 @@ function evalCategory(category, mandate, site) {
     : (cat.maxPenalty ?? null);
   return {
     category,
-    applicable: true,
+    applicable: eligible === true,
     active: true,
-    eligible: true,          // active ordinance => applicable, regardless of size
+    eligible,
     threshold,
     meetsThreshold,
     ptClass,
@@ -535,7 +547,10 @@ export function buildComplianceRoadmap(results) {
     if (!r.matched) continue;
     for (const c of CATEGORIES) {
       const e = r[c];
-      if (!e || !e.active) continue;
+      // Only buildings that actually have to report belong on the roadmap —
+      // same `eligible === true` test the counts and penalty totals use, so a
+      // site under the size requirement doesn't carry a deadline here.
+      if (!e || e.eligible !== true) continue;
       if (!e.deadline) { undated++; continue; }
       const q = quarterOf(e.deadline);
       events.push({ siteId: r.id, category: c, penalty: e.penalty || 0, sort: q.sort });

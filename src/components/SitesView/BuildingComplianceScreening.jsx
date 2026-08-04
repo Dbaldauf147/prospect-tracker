@@ -59,19 +59,43 @@ function HBars({ items, color, fmt = String, wide = false, empty = 'No eligible 
 // hover to find.
 function CatCell({ res }) {
   if (!res || !res.active) return <span className={styles.dash}>—</span>;
-  // Applicability follows the active ordinance; the ft² threshold is shown as
-  // a listed requirement (with whether the building meets it), not a gate.
+  // The ft² threshold gates applicability, so the pill has three states: the
+  // building is over the size requirement (applicable), under it (not required
+  // to report), or carries no square footage (can't be decided).
   const thr = res.threshold != null
     ? `Size requirement ${res.threshold.toLocaleString()} ft²`
       + (res.meetsThreshold === true ? ' — building meets it'
-        : res.meetsThreshold === false ? ' — building below (still applicable)' : '')
+        : res.meetsThreshold === false ? ' — building is below it, so it does not have to report'
+        : ' — this site has no square footage')
     : null;
   const tip = [
     res.policyName,
     res.deadline ? `Deadline ${mdY(res.deadline)}` : (res.deadlineRaw ? `Deadline ${res.deadlineRaw}` : null),
     thr,
-    res.penalty != null ? `Max penalty ${usd(res.penalty)}/yr` : null,
+    res.eligible === true && res.penalty != null ? `Max penalty ${usd(res.penalty)}/yr` : null,
   ].filter(Boolean).join(' · ');
+  // Below the size requirement: the ordinance is live in this jurisdiction but
+  // this building isn't covered, so no deadline and no fine ride along.
+  if (res.eligible === false) {
+    return (
+      <span className={styles.catCell}>
+        <span className={styles.pillBelow} title={tip}>Below size requirement</span>
+        <span className={styles.catFineNone}>
+          under {res.threshold?.toLocaleString('en-US')} ft²
+        </span>
+      </span>
+    );
+  }
+  if (res.eligible == null) {
+    return (
+      <span className={styles.catCell}>
+        <span className={styles.pillUnknown} title={tip}>Sq ft unknown</span>
+        <span className={styles.catFineNone}>
+          needs sq ft vs {res.threshold?.toLocaleString('en-US')} ft²
+        </span>
+      </span>
+    );
+  }
   return (
     <span className={styles.catCell}>
       <span className={styles.pillEligible} title={tip}>Applicable</span>
@@ -122,9 +146,17 @@ function MandateDetail({ res, mandate, sqft }) {
   const row = (label, value) => value == null || value === '' ? null : (
     <div key={label} className={styles.mdRow}><span className={styles.mdKey}>{label}</span><span className={styles.mdVal}>{value}</span></div>
   );
+  // Header and note follow the three-state result: covered, under the size
+  // requirement, or undecided for want of square footage.
+  const headLabel = res.eligible === true ? 'Applicable'
+    : res.eligible === false ? 'Not required to report'
+    : 'Square footage needed';
+  const headColor = res.eligible === true ? CATEGORY_COLOR[cat]
+    : res.eligible === false ? '#94A3B8'
+    : '#D97706';
   return (
     <div className={styles.mdBlock}>
-      <div className={styles.mdHead} style={{ background: CATEGORY_COLOR[cat] }}>{CATEGORY_LABEL[cat]} — Applicable</div>
+      <div className={styles.mdHead} style={{ background: headColor }}>{CATEGORY_LABEL[cat]} — {headLabel}</div>
       <div className={styles.mdBody}>
         {row('Policy', res.policyName || '—')}
         {row('Status', res.status || '—')}
@@ -132,19 +164,30 @@ function MandateDetail({ res, mandate, sqft }) {
         {row('Compliance cycle', m.complianceCycle)}
         {row('Size requirement', res.threshold != null
           ? `${res.threshold.toLocaleString('en-US')} ft² (${res.ptClass})`
-            + (res.meetsThreshold === true ? ' — this building meets it'
-              : res.meetsThreshold === false ? ' — this building is below it'
+            + (res.meetsThreshold === true ? ` — this building's ${sqft != null ? `${sqft.toLocaleString('en-US')} ft² ` : ''}meets it`
+              : res.meetsThreshold === false ? ` — this building's ${sqft != null ? `${sqft.toLocaleString('en-US')} ft² ` : ''}is below it`
               : ' — square footage unknown')
           : 'None published')}
-        {res.threshold != null && (
+        {res.eligible === false && (
           <div className={styles.mdNote}>
-            The size requirement is listed for reference. Applicability follows the active
-            ordinance, so a building below the threshold is still screened as applicable.
+            The ordinance is in force in this jurisdiction, but this building is under its size
+            requirement, so it isn&apos;t counted as needing to report and carries no penalty here.
+          </div>
+        )}
+        {res.eligible == null && res.threshold != null && (
+          <div className={styles.mdNote}>
+            This site has no square footage, so it can&apos;t be measured against the size
+            requirement. It&apos;s held out of the applicable counts until a value is mapped on the
+            Utility Lookup subtab.
           </div>
         )}
 
         <div className={styles.mdSubhead}>How this fine was calculated</div>
-        <div className={styles.mdFine}>{fineLine}</div>
+        <div className={styles.mdFine}>{
+          res.eligible === true ? fineLine
+            : res.eligible === false ? 'No fine — this building is under the size requirement, so the mandate does not reach it.'
+            : "Can't be worked out until this site has square footage to measure against the size requirement."
+        }</div>
         {basis && (
           <>
             {row('Published figure', basis.amount == null ? null
@@ -176,8 +219,10 @@ function SiteDetailModal({ site, onClose }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
   if (!site) return null;
-  const total = CATEGORIES.reduce((n, c) => n + (site[c]?.penalty || 0), 0);
-  const anyUnsized = CATEGORIES.some(c => site[c]?.penaltyUnsized);
+  // Only mandates the building actually has to report under contribute to its
+  // exposure — one it's under the size requirement for costs it nothing.
+  const total = CATEGORIES.reduce((n, c) => n + (site[c]?.eligible === true ? (site[c]?.penalty || 0) : 0), 0);
+  const anyUnsized = CATEGORIES.some(c => site[c]?.eligible === true && site[c]?.penaltyUnsized);
   return (
     <div className={styles.modalBackdrop} onClick={onClose} role="presentation">
       <div className={styles.modal} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={`Compliance detail for ${site.siteName || 'site'}`}>
@@ -344,6 +389,23 @@ export function BuildingComplianceScreening({
     () => results.filter(r => CATEGORIES.some(c => r[c]?.eligible === true)).length,
     [results],
   );
+  // Sites the size requirement decided against, and sites it couldn't decide.
+  // Both used to be counted as applicable; now that the threshold gates the
+  // screening, they have to be visible or the totals look like they shrank for
+  // no reason.
+  const sizeScreened = useMemo(() => {
+    let below = 0;
+    let unsized = 0;
+    for (const r of results) {
+      if (!r.matched) continue;
+      const cats = CATEGORIES.map(c => r[c]).filter(e => e?.active);
+      if (!cats.length) continue;
+      if (cats.some(e => e.eligible === true)) continue;
+      if (cats.some(e => e.eligible == null)) unsized++;
+      else below++;
+    }
+    return { below, unsized };
+  }, [results]);
 
   const filtered = useMemo(() => {
     let out = results;
@@ -378,10 +440,12 @@ export function BuildingComplianceScreening({
     XLSX.utils.book_append_sheet(wb, ws, 'Master Ordinances Database');
     XLSX.writeFile(wb, 'Master-Ordinances-Database.xlsx');
   }
-  // Raw-data workbook that accompanies the PDF: a per-site screening sheet
-  // (with the ft² threshold listed as a requirement, plus whether the building
-  // meets it — informational, not a gate) and the full raw rows for every
-  // matched jurisdiction.
+  // Raw-data workbook that accompanies the PDF: a per-site screening sheet and
+  // the full raw rows for every matched jurisdiction. "Applicable" is the
+  // screening verdict — Yes only when the jurisdiction's ordinance is in force
+  // AND the building clears the size requirement — so the column matches the
+  // counts on the page. A site with no square footage reads "Unknown (needs sq
+  // ft)" rather than a Yes or No the data can't support.
   function writeRawWorkbook(rowsToExport, filename) {
     const siteRows = rowsToExport.map(r => {
       const row = {
@@ -391,12 +455,16 @@ export function BuildingComplianceScreening({
       };
       for (const c of CATEGORIES) {
         const e = r[c];
-        row[`${CATEGORY_LABEL[c]} Applicable`] = e?.active ? 'Yes' : 'No';
+        row[`${CATEGORY_LABEL[c]} Applicable`] = !e?.active ? 'No'
+          : e.eligible === true ? 'Yes'
+          : e.eligible === false ? 'No — below size requirement'
+          : 'Unknown (needs sq ft)';
+        row[`${CATEGORY_LABEL[c]} Ordinance In Force`] = e?.active ? 'Yes' : 'No';
         row[`${CATEGORY_LABEL[c]} Policy`] = e?.policyName || '';
-        row[`${CATEGORY_LABEL[c]} Deadline`] = e?.deadline ? mdY(e.deadline) : (e?.deadlineRaw || '');
+        row[`${CATEGORY_LABEL[c]} Deadline`] = e?.eligible === true ? (e.deadline ? mdY(e.deadline) : (e.deadlineRaw || '')) : '';
         row[`${CATEGORY_LABEL[c]} Size Requirement (ft²)`] = e?.threshold ?? '';
         row[`${CATEGORY_LABEL[c]} Meets Requirement`] = !e?.active ? '' : e.meetsThreshold === true ? 'Yes' : e.meetsThreshold === false ? 'No' : 'Unknown';
-        row[`${CATEGORY_LABEL[c]} Max Yearly Penalty`] = e?.penalty ?? '';
+        row[`${CATEGORY_LABEL[c]} Max Yearly Penalty`] = e?.eligible === true ? (e.penalty ?? '') : '';
       }
       return row;
     });
@@ -550,6 +618,30 @@ export function BuildingComplianceScreening({
                 <div className={styles.kpiTileLbl}>Est. max yearly exposure</div>
               </div>
             </div>
+
+            {/* What the size requirement took out of the counts above. Screening
+                on ft² is what keeps a small building out of the applicable
+                totals, so the sites it excluded — and the ones it couldn't
+                judge — are named rather than just missing. */}
+            {(sizeScreened.below > 0 || sizeScreened.unsized > 0) && (
+              <div className={styles.sizeNote}>
+                <strong>Screened on the size requirement.</strong> A site is counted as needing to
+                report only where the ordinance is in force <em>and</em> the building meets that
+                mandate&apos;s ft² threshold.
+                {sizeScreened.below > 0 && (
+                  <> <strong>{sizeScreened.below.toLocaleString()}</strong> matched site
+                    {sizeScreened.below === 1 ? ' is' : 's are'} under the threshold for every mandate in
+                    {sizeScreened.below === 1 ? ' its' : ' their'} jurisdiction.</>
+                )}
+                {sizeScreened.unsized > 0 && (
+                  <> <strong>{sizeScreened.unsized.toLocaleString()}</strong> carr
+                    {sizeScreened.unsized === 1 ? 'ies' : 'y'} no square footage, so
+                    {sizeScreened.unsized === 1 ? ' it is' : ' they are'} held out of the counts — map a
+                    Sq Ft column on the <strong>Utility Lookup</strong> subtab to screen
+                    {sizeScreened.unsized === 1 ? ' it' : ' them'}.</>
+                )}
+              </div>
+            )}
 
             {/* Summary dashboard — the same figures the exported report charts. */}
             <div className={styles.dashGrid}>

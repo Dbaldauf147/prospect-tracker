@@ -520,6 +520,20 @@
   white-space: nowrap;
 }
 
+/* Explains what the ft² size requirement removed from the KPI counts, so a
+   smaller "sites with a mandate" figure reads as a screen rather than a loss. */
+.sizeNote {
+  margin: 0 0 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #BFDBFE;
+  border-left: 3px solid #2563EB;
+  border-radius: 6px;
+  background: #EFF6FF;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  color: #1E3A5F;
+}
+
 /* Caption above each bar list inside a mandate card — the cards now carry
    two lists (sites, then dollars) and need to say which is which. */
 .dashSubhead {

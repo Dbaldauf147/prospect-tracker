@@ -1155,22 +1155,22 @@ export function buildComplianceMethodologySheet(wb, results, meta = {}) {
   // --- Overview -----------------------------------------------------------
   section('Overview');
   para('Two-step lookup.', 'Every site is resolved city + state → Government ID (City Lookup), then Government ID → the jurisdiction\'s BBS, Energy-Audit, and BPS mandates (Master Ordinances). Sites whose city/state don\'t resolve to a jurisdiction are reported as "no match" and carry no estimated fine.', { lines: 3 });
-  para('Applicability.', 'A mandate applies to a site when that jurisdiction\'s ordinance is Active. The square-footage threshold for the site\'s property type is reported as context but does not gate applicability — an active ordinance makes the site applicable regardless of size.', { lines: 3 });
+  para('Applicability.', 'A mandate applies to a site when that jurisdiction\'s ordinance is Active AND the building meets the ordinance\'s square-footage threshold for its property type. A building under the threshold is not counted as needing to report and carries no estimated fine. Where an ordinance publishes no threshold, an active ordinance is enough. A site with no square footage cannot be measured against a threshold, so it is held out of the counts rather than assumed either way.', { lines: 4 });
   para('Estimates only.', 'All figures are preliminary maximum-exposure estimates for prioritization, not a legal determination of liability. Actual penalties depend on each jurisdiction\'s enforcement, compliance pathway, and the site\'s reported performance.', { lines: 2 });
 
   // --- Per-mandate calculation --------------------------------------------
   section('Fine Calculation by Mandate');
 
   mandateBanner('BBS — Building Benchmarking & Disclosure', argb(CATEGORY_COLOR.bbs));
-  para('Applies when', 'the site\'s jurisdiction has an active BBS benchmarking / disclosure ordinance.', { lines: 1 });
+  para('Applies when', 'the site\'s jurisdiction has an active BBS benchmarking / disclosure ordinance and the building meets that ordinance\'s ft² threshold for its property type.', { lines: 2 });
   para('Estimated max yearly penalty', '= the jurisdiction\'s maximum annual BBS penalty (from the Master Ordinances), charged once per applicable site per year.', { lines: 2 });
 
   mandateBanner('Energy Audits', argb(CATEGORY_COLOR.audits));
-  para('Applies when', 'the site\'s jurisdiction has an active energy-audit / tune-up ordinance.', { lines: 1 });
+  para('Applies when', 'the site\'s jurisdiction has an active energy-audit / tune-up ordinance and the building meets that ordinance\'s ft² threshold for its property type.', { lines: 2 });
   para('Estimated max yearly penalty', '= the jurisdiction\'s maximum annual energy-audit penalty (from the Master Ordinances), charged once per applicable site per year.', { lines: 2 });
 
   mandateBanner('BPS — Building Performance Standards', argb(CATEGORY_COLOR.bps));
-  para('Applies when', 'the site\'s jurisdiction has an active BPS ordinance.', { lines: 1 });
+  para('Applies when', 'the site\'s jurisdiction has an active BPS ordinance and the building meets that ordinance\'s ft² threshold for its property type.', { lines: 2 });
   para('Estimated non-reporting penalty', '= the jurisdiction\'s BPS penalty. When the penalty UOM is "$ per SqFt / Year" it scales by the building\'s square footage (rate × ft²); otherwise it is a flat annual amount. A size-based penalty on a site with no square footage is left blank ("—") rather than guessed.', { lines: 3 });
   para('Fee for exceeding limits', 'is the jurisdiction\'s enforcement cost for exceeding performance targets. It is shown as its own labelled figure on the Compliance Report\'s BPS Prioritization table and is NOT added into the estimated exposure totals.', { lines: 2 });
 
