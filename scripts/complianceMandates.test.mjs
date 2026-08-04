@@ -6,6 +6,7 @@ import {
   deadlinesByDate, penaltyByOrdinance, utilityFeedEligibility,
   buildComplianceRoadmap,
 } from '../src/utils/complianceMandates.js';
+import MASTER_ORDINANCES from '../src/data/masterOrdinances.js';
 
 let pass = 0, fail = 0;
 const ok = (c, n) => c ? (pass++, console.log('PASS ', n)) : (fail++, console.log('FAIL ', n));
@@ -65,6 +66,30 @@ eq(lookupGovId('Columbus', ''), 'US-OH-Columb-01', 'Columbus with no state uncha
 eq(lookupGovId('Columbus', 'Multiple'), 'US-OH-Columb-01', 'unresolvable state does not veto');
 // Washington DC is not Washington state.
 eq(lookupGovId('Seattle', 'DC'), null, 'Seattle,DC -> not Seattle WA');
+
+// --- benchmarking counts only mandatory programmes -------------------------
+// "Active/ Voluntary" benchmarking obliges nobody, so it must not screen as a
+// mandate — Calgary's and Edmonton's voluntary programmes each publish a
+// $3,900 maximum that was being summed into portfolio exposure.
+{
+  for (const [city, state] of [['Calgary', 'Alberta'], ['Edmonton', 'Alberta'], ['Winnipeg', 'Manitoba'],
+    ['Grand Rapids', 'MI'], ['Longmont', 'CO'], ['Victoria', 'BC']]) {
+    const r = screenSite({ id: 1, city, state, sqft: 250000, propertyType: 'Office' });
+    ok(r.matched === true, `${city} still resolves to a jurisdiction`);
+    ok(r.bbs.active === false && r.bbs.eligible === false, `${city}: voluntary BBS is not a mandate`);
+    ok(/voluntary/i.test(getMandates(r.govId).bbs.status), `${city}: the voluntary status is still on file`);
+  }
+  // Mandatory programmes are untouched, including in the same states.
+  for (const [city, state] of [['Vancouver', 'BC'], ['Denver', 'CO'], ['Detroit', 'MI'], ['Seattle', 'WA']]) {
+    const r = screenSite({ id: 2, city, state, sqft: 250000, propertyType: 'Office' });
+    ok(r.bbs.active === true && r.bbs.eligible === true, `${city}: mandatory BBS still screens`);
+  }
+  // Longmont keeps the BPS mandate it does carry — only benchmarking drops.
+  ok(screenSite({ id: 3, city: 'Longmont', state: 'CO', sqft: 250000, propertyType: 'Office' }).bps.active === true,
+    'Longmont: BPS unaffected by the benchmarking rule');
+  ok(MASTER_ORDINANCES.every(g => !g.bbs.active || /mandator/i.test(g.bbs.status)),
+    'no jurisdiction has an active BBS without a mandatory status');
+}
 
 // --- jurisdictions split across several rows -------------------------------
 // Portland, Oregon is two rows in the source workbook: one carries the BPS
