@@ -17,7 +17,7 @@ import {
   MultiSelectCell,
   LinkColumnsModal,
 } from '../common/columnLinks';
-import { ScopeServicesCell } from './ScopeServicesPicker';
+import { ScopeServicesCell, ScopeServicesModal } from './ScopeServicesPicker';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
 import { dbGet } from '../../utils/db';
@@ -6758,6 +6758,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // Amount so a newly-activated opp carries a dollar figure. Cleared on
   // Save or Skip.
   const [leadQuotedPromptId, setLeadQuotedPromptId] = useState(null);
+  // { id, next } for an opp that just left the "Not Started" stage. An opp
+  // becoming active is the moment its service is decided, so the Scope board
+  // opens on that transition — whatever stage it moved to. `next` carries the
+  // stage's own prompt (Deal Size, Quoted details, …) so it opens after this
+  // one closes rather than stacking two modals on top of each other.
+  const [scopePrompt, setScopePrompt] = useState(null);
   // _id of the opp that just had its Follow Up date changed. When set,
   // the FollowUpStatusModal asks the user to pick the new Status
   // (Who is waiting) for that opp. Cleared on Save or Skip.
@@ -7647,6 +7653,17 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [undoLastChange]);
 
+  // Opens one of the stage-specific popups by name. Split out so a transition
+  // that also raises the Scope board can hand its stage prompt over to be
+  // opened afterwards instead of rendering both at once.
+  const openStagePrompt = useCallback((kind, id) => {
+    if (kind === 'notSold') setNotSoldPromptId(id);
+    else if (kind === 'quoted') setQuotedPromptId(id);
+    else if (kind === 'agreementSent') setAgreementSentPromptId(id);
+    else if (kind === 'sold') setSoldPromptId(id);
+    else if (kind === 'leadQuoted') setLeadQuotedPromptId(id);
+  }, []);
+
   const updateOppField = useCallback((id, field, rawValue) => {
     // Auto-format a user-entered Quoted Amount to currency ($25,000) so
     // the stored value — and every view that reads it — stays consistent,
@@ -7855,42 +7872,29 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         }),
       };
     });
-    // Prompt for the close-out details (Close Date / Reason Not Sold /
-    // Final Margin) whenever the Stage flips TO "Not Sold". Skipped on
-    // bulk mass-edits — those run through the bulk path below and we
-    // don't want to multi-modal across selections.
-    if (stageChanged && String(value ?? '').trim().toLowerCase() === 'not sold') {
-      setNotSoldPromptId(id);
+    // Which stage-specific popup this transition warrants, if any. Each is
+    // the same prompt as before — close-out details on "Not Sold" / "Sold",
+    // quote tracking on "Quoted", the approval set on "Agreement Sent", and
+    // the Deal Size when an opp first becomes a Lead. Skipped on bulk
+    // mass-edits — those run through the bulk path below and we don't want to
+    // multi-modal across selections.
+    const prevStage = String(row['Stage'] ?? '').trim().toLowerCase();
+    const nextStage = String(value ?? '').trim().toLowerCase();
+    let stagePrompt = null;
+    if (stageChanged) {
+      if (nextStage === 'not sold') stagePrompt = 'notSold';
+      else if (nextStage === 'quoted') stagePrompt = 'quoted';
+      else if (nextStage === 'agreement sent') stagePrompt = 'agreementSent';
+      else if (nextStage === 'sold') stagePrompt = 'sold';
+      else if (nextStage === 'lead' && prevStage === 'not started') stagePrompt = 'leadQuoted';
     }
-    // Prompt for the quote-tracking data points (Quoted On / Chance? /
-    // Margin Email Date - Sales Leader Review Date) whenever the Stage
-    // flips TO "Quoted" so they can be entered or reviewed on the spot.
-    if (stageChanged && String(value ?? '').trim().toLowerCase() === 'quoted') {
-      setQuotedPromptId(id);
-    }
-    // Prompt for the agreement-stage approval data points (USD?, Margin
-    // Email / Sales Leader Review date, Chance?, Multiple Invoices?,
-    // Verbal, Entity Outside the US Approval, COA Approval) whenever the
-    // Stage flips TO "Agreement Sent" so they can be entered / reviewed
-    // on the spot.
-    if (stageChanged && String(value ?? '').trim().toLowerCase() === 'agreement sent') {
-      setAgreementSentPromptId(id);
-    }
-    // Prompt for the close-out details (Reason Not Sold / Final Margin /
-    // Competition) whenever the Stage flips TO "Sold". The Close Date was
-    // already auto-stamped above.
-    if (stageChanged && String(value ?? '').trim().toLowerCase() === 'sold') {
-      setSoldPromptId(id);
-    }
-    // Prompt for the Quoted Amount whenever the Stage flips FROM "Not
-    // Started" TO "Lead", so the number is captured the moment the opp
-    // becomes active.
-    if (
-      stageChanged
-      && String(row['Stage'] ?? '').trim().toLowerCase() === 'not started'
-      && String(value ?? '').trim().toLowerCase() === 'lead'
-    ) {
-      setLeadQuotedPromptId(id);
+    // An opp leaving "Not Started" is the point its service is decided, so ask
+    // for Scope on that transition whichever stage it moved to. The stage's
+    // own prompt is handed over and opens once this one closes.
+    if (stageChanged && prevStage === 'not started' && nextStage && nextStage !== 'not started') {
+      setScopePrompt({ id, next: stagePrompt });
+    } else if (stagePrompt) {
+      openStagePrompt(stagePrompt, id);
     }
     // Whenever the Follow Up date changes, prompt for the new Status so
     // the "Who is waiting" value stays current with each follow-up.
@@ -7906,7 +7910,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         callIn: row['Call In'],
       });
     }
-  }, [pushUndoEntry]);
+  }, [pushUndoEntry, openStagePrompt]);
 
   // Restore the Follow Up date (and its sibling Call In) to the snapshot
   // taken before the edit that opened the FollowUpStatusModal. Writes the
@@ -9812,6 +9816,44 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               setLeadQuotedPromptId(null);
             }}
             onClose={() => setLeadQuotedPromptId(null)}
+          />
+        );
+      })()}
+
+      {/* Scope board raised by an opp leaving "Not Started". Same picker the
+          Scope cell opens, with a note saying what moved. Closing it hands off
+          to whatever prompt that stage would have shown on its own. */}
+      {scopePrompt != null && (() => {
+        const opp = records.find(r => r._id === scopePrompt.id);
+        if (!opp) return null;
+        const closeAndContinue = () => {
+          const { id, next } = scopePrompt;
+          setScopePrompt(null);
+          if (next) openStagePrompt(next, id);
+        };
+        const extraGroups = Object.entries(pricingOptionServices || {})
+          .map(([sheetName, services]) => ({
+            label: sheetName,
+            options: Array.isArray(services) ? services : [],
+          }))
+          .filter(g => g.options.length > 0)
+          .sort((a, b) => a.label.localeCompare(b.label));
+        return (
+          <ScopeServicesModal
+            value={opp['Scope']}
+            onChange={(v) => updateOppField(opp._id, 'Scope', v)}
+            onClose={closeAndContinue}
+            options={listRegistry.get('solutions')?.options || []}
+            account={opp['Account']}
+            prospects={prospects}
+            updateProspect={updateProspect}
+            settings={settings}
+            oppRows={records}
+            currentOppId={opp._id}
+            extraGroups={extraGroups}
+            extraGroupsLabel="Add from Pricing Option"
+            extraGroupsPlaceholder="— pick an option —"
+            note={`Now ${String(opp['Stage'] ?? '').trim() || 'active'} — pick the service(s)`}
           />
         );
       })()}
