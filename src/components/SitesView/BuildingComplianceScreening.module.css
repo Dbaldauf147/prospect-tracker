@@ -472,6 +472,23 @@
   gap: 1rem;
   padding: 0.6rem 0.75rem 0.3rem;
 }
+/* Card headline figures double as the drill-down into every site behind
+   them, so they're buttons — stripped of chrome, with a hover that says so. */
+.dashKpiBtn {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  font: inherit;
+  text-align: left;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.dashKpiBtn:hover:not(:disabled) { background: #F1F5F9; }
+.dashKpiBtn:hover:not(:disabled) .kpiLbl { color: #334155; text-decoration: underline; }
+.dashKpiBtn:disabled { cursor: default; }
+.dashKpiBtn:focus-visible { outline: 2px solid var(--color-accent, #3B7DDD); outline-offset: 1px; }
+
 .kpiNum { font-size: 1.25rem; font-weight: 800; line-height: 1.1; }
 .kpiLbl { font-size: 0.62rem; color: var(--color-text-muted, #64748B); text-transform: uppercase; letter-spacing: 0.03em; }
 
