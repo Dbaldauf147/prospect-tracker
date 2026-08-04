@@ -14,23 +14,42 @@ const eq = (a, b, n) => ok(JSON.stringify(a) === JSON.stringify(b), `${n} (got $
 // --- two-step lookup -------------------------------------------------------
 eq(lookupGovId('Seattle', 'WA'), 'US-WA-Seattl-01', 'Seattle,WA -> govId');
 eq(lookupGovId('Seattle', 'Washington'), 'US-WA-Seattl-01', 'Seattle,Washington -> govId');
-eq(lookupGovId('Brooklyn', 'NY'), 'US--New Yo-01', 'Brooklyn,NY -> NYC govId (borough alias)');
-eq(lookupGovId('Queens', 'NY'), 'US--New Yo-01', 'Queens,NY -> NYC govId (borough alias)');
+eq(lookupGovId('Brooklyn', 'NY'), 'US--New Yo-01', 'Brooklyn,NY -> NYC govId');
+eq(lookupGovId('Queens', 'NY'), 'US--New Yo-01', 'Queens,NY -> NYC govId');
 eq(lookupGovId('Nowhere', 'ZZ'), null, 'unknown city -> null');
 ok(getMandates('US-WA-Seattl-01')?.government === 'Seattle', 'getMandates(Seattle)');
+
+// --- member cities ---------------------------------------------------------
+// What the real City Lookup tab buys over the old derived table: a city that
+// is covered by another jurisdiction's ordinance resolves to that jurisdiction
+// rather than reporting "no match".
+eq(lookupGovId('Silver Spring', 'MD'), 'US-MD-Montgo-01', 'Silver Spring,MD -> Montgomery County');
+eq(lookupGovId('Gaithersburg', 'Maryland'), 'US-MD-Montgo-01', 'Gaithersburg,MD -> Montgomery County');
+eq(lookupGovId('West Hollywood', 'CA'), 'US-CA-Los An-01', 'West Hollywood,CA -> Los Angeles');
+eq(lookupGovId('Allston', 'MA'), 'US-MA-Boston-01', 'Allston,MA -> Boston');
+eq(lookupGovId('Milwaukie', 'OR'), 'US-OR-Portla-01', 'Milwaukie,OR -> Portland');
+// Cities with no ordinance of their own fall to their state's program.
+eq(lookupGovId('Sacramento', 'CA'), 'US-CA-Califo-01', 'Sacramento,CA -> California state program');
+eq(lookupGovId('Fresno', 'California'), 'US-CA-Califo-01', 'Fresno,CA -> California state program');
+eq(lookupGovId('Cambridge', 'ON'), 'CAN-ON-Ontari-01', 'Cambridge,ON -> Ontario program, not Cambridge MA');
+// A city ordinance beats the statewide program covering the same city.
+eq(lookupGovId('St. Paul', 'MN'), 'US-MN-St. Pa-01', 'St. Paul,MN -> St. Paul, not Minnesota state');
+eq(lookupGovId('Boston', 'Massachusetts'), 'US-MA-Boston-01', 'Boston,MA -> Boston, not Massachusetts state');
 
 // A bare city name must not cross a border: the city-only fallback is
 // rejected when the site's state and the candidate jurisdiction resolve to
 // different countries.
 eq(lookupGovId('Cambridge', 'Canada'), null, 'Cambridge,Canada -> not Cambridge MA');
-eq(lookupGovId('Cambridge', 'ON'), null, 'Cambridge,ON -> not Cambridge MA');
 eq(lookupGovId('Cambridge', 'MA'), 'US-MA-Cambri-01', 'Cambridge,MA still resolves');
-eq(lookupGovId('Cambridge', ''), 'US-MA-Cambri-01', 'Cambridge with no state unchanged');
+eq(lookupGovId('Cambridge', ''), 'US-MA-Cambri-01', 'Cambridge with no state -> the one city ordinance of that name');
 eq(lookupGovId('Calgary', 'Canada'), 'CAN-AB-Calgar-01', 'Calgary,Canada resolves');
-// Ottawa and Montreal sit in Canada behind a "US-" Government ID prefix, so
-// the country test has to read the state name, not the prefix.
-eq(lookupGovId('Ottawa', 'Canada'), 'US-ON-Ottawa-01', 'Ottawa,Canada resolves despite US- prefix');
+// Ottawa's own benchmarking row is superseded by the province-wide program the
+// tab maps every Ontario city to. Montreal sits in Canada behind a "US-"
+// Government ID prefix, so the country test has to read the state name.
+eq(lookupGovId('Ottawa', 'Canada'), 'CAN-ON-Ontari-01', 'Ottawa,Canada -> Ontario program');
+eq(lookupGovId('Ottawa', 'ON'), 'CAN-ON-Ontari-01', 'Ottawa,ON -> Ontario program');
 eq(lookupGovId('Montreal', 'Canada'), 'US-QC-Montre-01', 'Montreal,Canada resolves despite US- prefix');
+eq(lookupGovId('Toronto', 'ON'), 'CAN-ON-Toront-01', 'Toronto,ON -> Toronto (Government ID left blank in the tab)');
 // "PR" in a state column is usually a mis-mapped field, not Puerto Rico, so
 // it must not veto anything.
 eq(lookupGovId('Montreal', 'PR'), 'US-QC-Montre-01', 'Montreal with a junk PR state resolves');
@@ -61,10 +80,18 @@ eq(lookupGovId('Seattle', 'DC'), null, 'Seattle,DC -> not Seattle WA');
   const site = screenSite({ id: 9, city: 'Portland', state: 'OR', sqft: 50000, propertyType: 'Office' });
   ok(site.bbs.active === true && site.bps.active === true, 'Portland OR site screens against both mandates');
   ok(site.bbs.eligible === true, 'Portland OR 50k office: BBS eligible');
-  // Same-name jurisdictions elsewhere stay separate.
+  // Same-name jurisdictions elsewhere stay separate. The City Lookup tab keys
+  // Portland, Maine to Oregon's Government ID; the build repairs it against the
+  // same-named Maine jurisdiction, so a Maine site is not screened against
+  // Oregon's BPS mandate.
   const me = getMandates(lookupGovId('Portland', 'Maine'));
   ok(me.govId === 'US-ME-Portla-01' && me.bps.active === false, 'Portland ME is not merged with Portland OR');
-  ok(getMandates(lookupGovId('South Portland', 'ME')).govId === 'US-ME-South -01', 'South Portland ME separate');
+  eq(lookupGovId('Portland', 'ME'), 'US-ME-Portla-01', 'Portland,ME -> Maine, not Oregon');
+  eq(lookupGovId('South Portland', 'ME'), 'US-ME-Maine-01', 'South Portland,ME -> Maine state program');
+  // Two city ordinances share the name, so a state-less Portland is a coin
+  // flip the lookup declines to make.
+  eq(lookupGovId('Portland', ''), null, 'Portland with no state -> no match (ME vs OR)');
+  eq(lookupGovId('Bloomington', ''), null, 'Bloomington with no state -> no match (CA vs MN programs)');
 }
 
 // --- property-type classification -----------------------------------------
