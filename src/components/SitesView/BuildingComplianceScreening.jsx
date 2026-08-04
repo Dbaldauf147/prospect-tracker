@@ -259,9 +259,9 @@ function SiteDetailModal({ site, onClose }) {
   );
 }
 
-// The sites behind one bar on a dashboard card: every site in `government`
-// that the `category` mandate applies to, with the figures that produced the
-// jurisdiction's count and penalty total. Exports the same rows to Excel.
+// The sites behind a figure on a dashboard card: either one jurisdiction's bar
+// (`government` set) or the card's whole applicable-sites total (`government`
+// null), with the numbers that produced it. Exports the same rows to Excel.
 function JurisdictionSitesModal({ category, government, rows, onExport, onSiteClick, onClose }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -271,6 +271,10 @@ function JurisdictionSitesModal({ category, government, rows, onExport, onSiteCl
   const totalPenalty = rows.reduce((n, r) => n + (r[category]?.penalty || 0), 0);
   const unsized = rows.filter(r => r[category]?.penaltyUnsized).length;
   const label = CATEGORY_LABEL[category];
+  // Portfolio-wide view: name the jurisdiction on each row and say how many
+  // are represented, since they're no longer all the same one.
+  const allJurisdictions = !government;
+  const govCount = allJurisdictions ? new Set(rows.map(r => r.government)).size : 1;
   return (
     <div className={styles.modalBackdrop} onClick={onClose} role="presentation">
       <div
@@ -278,13 +282,16 @@ function JurisdictionSitesModal({ category, government, rows, onExport, onSiteCl
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label={`${label} sites in ${government}`}
+        aria-label={allJurisdictions ? `All ${label} applicable sites` : `${label} sites in ${government}`}
       >
         <div className={styles.modalHead} style={{ background: CATEGORY_COLOR[category] }}>
           <div>
-            <div className={styles.modalTitle}>{government} — {label}</div>
+            <div className={styles.modalTitle}>
+              {allJurisdictions ? `${label} — all applicable sites` : `${government} — ${label}`}
+            </div>
             <div className={styles.modalSub}>
               {rows.length.toLocaleString('en-US')} applicable site{rows.length === 1 ? '' : 's'}
+              {allJurisdictions ? ` across ${govCount} jurisdiction${govCount === 1 ? '' : 's'}` : ''}
               {' · '}{usd(totalPenalty)}/yr max penalty
               {unsized ? ` · ${unsized} site${unsized === 1 ? '' : 's'} unsized` : ''}
             </div>
@@ -305,6 +312,7 @@ function JurisdictionSitesModal({ category, government, rows, onExport, onSiteCl
               <thead>
                 <tr>
                   <th>Site</th>
+                  {allJurisdictions && <th>Jurisdiction</th>}
                   <th>City</th>
                   <th>State</th>
                   <th style={{ textAlign: 'right' }}>Sq Ft</th>
@@ -325,6 +333,7 @@ function JurisdictionSitesModal({ category, government, rows, onExport, onSiteCl
                       title="Open the full screening detail for this site"
                     >
                       <td className={styles.siteCell}>{r.siteName || '—'}</td>
+                      {allJurisdictions && <td><strong>{r.government || '—'}</strong></td>}
                       <td>{r.city || '—'}</td>
                       <td>{r.state || '—'}</td>
                       <td style={{ textAlign: 'right' }}>{r.sqft != null ? r.sqft.toLocaleString('en-US') : '—'}</td>
@@ -344,7 +353,7 @@ function JurisdictionSitesModal({ category, government, rows, onExport, onSiteCl
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={7} style={{ fontWeight: 700 }}>Total</td>
+                  <td colSpan={allJurisdictions ? 8 : 7} style={{ fontWeight: 700 }}>Total</td>
                   <td style={{ textAlign: 'right', fontWeight: 700 }}>{usd(totalPenalty)}</td>
                 </tr>
               </tfoot>
@@ -514,21 +523,32 @@ export function BuildingComplianceScreening({
     writeRawWorkbook(filtered, 'Building-Compliance-Screening.xlsx');
   }
 
-  // The sites behind one dashboard bar: everything in that jurisdiction the
-  // mandate applies to. Both bar lists on a card drill into the same set — the
-  // dollar list is the penalty view of the same applicable sites — so a
-  // jurisdiction with sites but no published fine still opens.
+  // The sites behind a figure on a dashboard card. With a `government` it's one
+  // bar; without one it's the card's whole applicable-sites total. Both bar
+  // lists drill into the same set — the dollar list is the penalty view of the
+  // same applicable sites — so a jurisdiction with sites but no published fine
+  // still opens. Ordered by jurisdiction then site so the portfolio-wide list
+  // reads as groups rather than upload order.
   const drillRows = useMemo(() => {
     if (!drill) return [];
-    return results.filter(r => r.matched
-      && r.government === drill.government
+    const out = results.filter(r => r.matched
+      && (!drill.government || r.government === drill.government)
       && r[drill.category]?.eligible === true);
+    if (!drill.government) {
+      out.sort((a, b) => String(a.government || '').localeCompare(String(b.government || ''))
+        || String(a.siteName || '').localeCompare(String(b.siteName || '')));
+    }
+    return out;
   }, [results, drill]);
 
   function exportDrill() {
     if (!drillRows.length) return;
     const slug = (s) => String(s || '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '');
-    writeRawWorkbook(drillRows, `${slug(drill.government)}-${slug(CATEGORY_LABEL[drill.category])}-Sites.xlsx`);
+    const cat = slug(CATEGORY_LABEL[drill.category]);
+    writeRawWorkbook(
+      drillRows,
+      drill.government ? `${slug(drill.government)}-${cat}-Sites.xlsx` : `${cat}-Applicable-Sites.xlsx`,
+    );
   }
 
   // Owned / All-sites control. Only rendered when the parent owns the
@@ -649,8 +669,29 @@ export function BuildingComplianceScreening({
                 <div key={c} className={styles.dashCard}>
                   <div className={styles.dashHead} style={{ background: CATEGORY_COLOR[c] }}>{CATEGORY_LABEL[c]} Eligibility</div>
                   <div className={styles.dashKpis}>
-                    <div><div className={styles.kpiNum} style={{ color: CATEGORY_COLOR[c] }}>{totalEligible(results, c)}</div><div className={styles.kpiLbl}>applicable sites</div></div>
-                    <div><div className={styles.kpiNum} style={{ color: CATEGORY_COLOR[c] }}>{usd(totalPenalty(results, c))}</div><div className={styles.kpiLbl}>max yearly penalty</div></div>
+                    {/* Both totals open the same list — every site this mandate
+                        applies to, across all jurisdictions — so the headline
+                        figure is as traceable as the per-city bars. */}
+                    <button
+                      type="button"
+                      className={styles.dashKpiBtn}
+                      onClick={() => setDrill({ category: c, government: null })}
+                      disabled={totalEligible(results, c) === 0}
+                      title={`Show all ${CATEGORY_LABEL[c]} applicable sites`}
+                    >
+                      <div className={styles.kpiNum} style={{ color: CATEGORY_COLOR[c] }}>{totalEligible(results, c)}</div>
+                      <div className={styles.kpiLbl}>applicable sites</div>
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.dashKpiBtn}
+                      onClick={() => setDrill({ category: c, government: null })}
+                      disabled={totalEligible(results, c) === 0}
+                      title={`Show the ${CATEGORY_LABEL[c]} sites behind this figure`}
+                    >
+                      <div className={styles.kpiNum} style={{ color: CATEGORY_COLOR[c] }}>{usd(totalPenalty(results, c))}</div>
+                      <div className={styles.kpiLbl}>max yearly penalty</div>
+                    </button>
                   </div>
                   <div className={styles.dashSubhead}>Applicable sites by jurisdiction <span className={styles.dashHint}>· click a city for its sites</span></div>
                   <HBars
