@@ -1,3 +1,13 @@
+# NOT ACTIVE YET — this file has to move to .github/workflows/ to run.
+#
+#   git mv .github/workflows-pending/firestore-rules.yml .github/workflows/
+#
+# It lives here because creating anything under .github/workflows/ requires
+# a GitHub token with the `workflow` scope, which the assistant that wrote
+# this doesn't have; the move is a one-liner for a human who does. Delete
+# the workflows-pending directory once it's moved.
+#
+# ---------------------------------------------------------------------------
 # Keeps the deployed Firestore security rules in step with the ones in git.
 #
 # Why this exists: `firestore.rules` is the only part of the app that isn't
