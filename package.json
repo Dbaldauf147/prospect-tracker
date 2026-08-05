@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "deploy:rules": "node scripts/deployFirestoreRules.mjs",
+    "prebuild": "node scripts/deployFirestoreRules.mjs --build",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"

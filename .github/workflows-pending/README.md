@@ -54,13 +54,38 @@ insufficient permissions.` — the rules granting access to
 `callRecordings/{uid}/items` have been in `firestore.rules` since
 `1778c72` (4 Aug 2026) but were never released to `tracker-3161a`, so
 every read *and write* to that path is denied. Calls sync and appear to
-save; nothing persists. Until this workflow is live, a one-off release
-is the fix:
+save; nothing persists.
+
+**This workflow is now a second line of defence, not the only one.**
+Because it cannot be activated without a human, the release was hung off
+the pipeline that does run on every merge: `scripts/deployFirestoreRules.mjs`,
+wired in as `prebuild` in `package.json`, publishes `firestore.rules` to
+`tracker-3161a` during the Vercel **production** build. It is idempotent
+(an unchanged file is a no-op, so it doesn't burn through the 2500-ruleset
+cap), it is skipped entirely on preview and local builds so a branch can
+never overwrite the live rules, and it never fails the build — a refused
+release is logged loudly and the site still deploys.
+
+It reuses `FIREBASE_SERVICE_ACCOUNT_KEY`, the credential the API routes
+already use, so there was nothing new to configure. That service account
+needs `roles/firebaserules.admin`; if it doesn't have it, the Vercel build
+log will say so by name and the rules will simply stay where they are.
+
+To release by hand — right now, or after editing rules without deploying:
+
+    npm run deploy:rules
+
+Same code path, but it reads `.env` as well as the environment and exits
+non-zero on failure. Equivalent, if you'd rather use the CLI:
 
     npx firebase deploy --only firestore:rules --project tracker-3161a
 
-Check Firebase Console → Firestore → Rules first: that command replaces
+Check Firebase Console → Firestore → Rules first: either command replaces
 the deployed ruleset with git's, so any console-only edits are lost.
+
+Activating the workflow below is still worth doing — it adds validation on
+pull requests, which the build hook cannot provide (by the time a build
+runs, the change is already merged).
 
 **Requires the `FIREBASE_SERVICE_ACCOUNT` secret to exist before it is
 activated** — the workflow fails deliberately when the secret is missing,
