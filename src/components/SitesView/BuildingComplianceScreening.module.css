@@ -914,72 +914,18 @@
   letter-spacing: 0.04em;
   color: var(--color-text-muted, #64748B);
 }
-.tlLegend { display: flex; gap: 0.7rem; }
-.tlKey {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  font-size: 0.64rem;
-  font-weight: 700;
-  color: var(--color-text-secondary, #5A6B7E);
+/* Says what the chart under it is, in the chart's own terms — the lanes and
+   the fines chart share an axis and would otherwise read as one drawing. */
+.tlHeadSub {
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--color-text-muted, #94A3B8);
+  font-style: italic;
 }
-.tlSwatch { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
-.tlChart { padding: 0.1rem 0.75rem 0.2rem; }
-
-/* Milestones: one row per deadline, hung off a spine so the list reads as a
-   sequence rather than as a table that happens to be sorted by date. */
-.mileList {
-  list-style: none;
-  margin: 0;
-  padding: 0.3rem 0.75rem 0.7rem;
-  position: relative;
-  border-top: 1px solid var(--color-border-light, #F1F5F9);
-}
-.mileList::before {
-  content: '';
-  position: absolute;
-  left: calc(0.75rem + 4px);
-  top: 1rem;
-  bottom: 1.1rem;
-  width: 2px;
-  background: var(--color-border, #E2E8F0);
-}
-.mileRow {
-  display: grid;
-  /* The bar is capped rather than stretched across the row: at full width a
-     single busy deadline turned into a 1000px stripe that said less than a
-     short one would. */
-  grid-template-columns: 10px 74px 88px minmax(70px, 200px) 1fr 62px;
-  align-items: center;
-  gap: 0.55rem;
-  padding: 0.32rem 0;
-  position: relative;
-}
-.mileDot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #3DCD58;
-  box-shadow: 0 0 0 3px var(--color-surface, #fff);
-  z-index: 1;
-}
-.mileDate { font-size: 0.74rem; font-weight: 800; color: var(--color-text, #0F172A); white-space: nowrap; }
-.mileWhen { font-size: 0.66rem; color: var(--color-text-secondary, #5A6B7E); white-space: nowrap; }
-.mileBar { display: flex; gap: 2px; height: 10px; align-items: center; }
-.mileSeg { height: 10px; border-radius: 2px; min-width: 3px; }
-/* Chips sit against the bar, not against the far edge — the two are one
-   reading of the same date. */
-.mileChips { display: flex; gap: 0.3rem; flex-wrap: wrap; justify-content: flex-start; }
-.mileTotal { font-size: 0.76rem; font-weight: 900; color: var(--color-text, #0F172A); text-align: right; white-space: nowrap; }
-.mileTotalUnit { font-size: 0.6rem; font-weight: 700; color: var(--color-text-muted, #94A3B8); }
-
-/* Passed: still on the roadmap — a missed deadline doesn't stop mattering —
-   but quietened so the eye lands on what's ahead. */
-.milePast { opacity: 0.62; }
-.milePast .mileDot { background: var(--color-text-muted, #94A3B8); }
-/* The next one up, marked on the row as well as in the summary tile. */
-.mileNext { background: #F2FCF5; border-radius: 6px; }
-.mileNext .mileDot { box-shadow: 0 0 0 3px #F2FCF5, 0 0 0 5px #3DCD5855; }
+.tlChart { padding: 0.1rem 0.75rem 0.4rem; }
+/* The fines chart hangs off the lanes above it. */
+.tlChart + .tlHead { border-top: 1px solid var(--color-border-light, #F1F5F9); margin-top: 0.2rem; padding-top: 0.6rem; }
 
 .rmFootnote {
   font-size: 0.66rem;
@@ -1160,7 +1106,6 @@
   .dashCard,
   .rmSumTile,
   .tlChart,
-  .mileRow,
   .disclaimerBox,
   .sizeNote,
   .siteTable tr,
