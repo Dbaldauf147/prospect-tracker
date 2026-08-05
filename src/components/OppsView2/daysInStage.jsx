@@ -27,6 +27,39 @@ const STAGE_BANDS = [
   { label: 'Stage 6', name: 'Negotiate to Win', stages: ['Agreement Sent'] },
 ];
 
+const BAND_BY_STAGE = new Map(STAGE_BANDS.flatMap(b => b.stages.map(s => [s, b])));
+
+// The numbered stage a board column rolls up into, or null for a column
+// with no number (Not Started).
+function stageBandFor(stage) {
+  const band = BAND_BY_STAGE.get(String(stage || '').trim());
+  return band && band.label ? band : null;
+}
+
+// When an opp entered its current *numbered* stage — not its current
+// column. Qualifying → Quoting is a move inside Stage 4, so the clock
+// keeps running rather than restarting at the column boundary; the same
+// goes for Quoted → Contracting in Stage 5.
+//
+// Walks back through `_stageHistory` (entries record the stage being
+// left, oldest first) while the previous stage belongs to the same band,
+// then falls back to `_stageEnteredAt` and finally Start Date, so an opp
+// that has never had a stage change still reports something.
+export function stageBandEnteredISO(row) {
+  const entered = toISODate(row?._stageEnteredAt) || toISODate(row?.['Start Date']);
+  const band = BAND_BY_STAGE.get(String(row?.['Stage'] || '').trim());
+  if (!band || band.stages.length < 2) return entered;
+  const hist = Array.isArray(row?._stageHistory) ? row._stageHistory : [];
+  let earliest = entered;
+  for (let i = hist.length - 1; i >= 0; i--) {
+    if (!band.stages.includes(String(hist[i]?.stage || '').trim())) break;
+    const e = toISODate(hist[i]?.enteredAt);
+    if (!e) break;
+    earliest = e;
+  }
+  return earliest;
+}
+
 // Stage-specific "stalled too long" thresholds. An opp that has sat in
 // one of these stages for more than `days` calendar days surfaces as a
 // flagged card with the paired suggestion. Stages not listed (Not
@@ -53,9 +86,11 @@ export function stageActionFor(stage, days) {
   return rule;
 }
 
-// Build the Days-in-Stage rows for a set of opp records. Reads
-// `_stageEnteredAt` (stamped when Stage flips) and falls back to Start
-// Date so pre-existing opps that have never had a stage change still
+// Build the Days-in-Stage rows for a set of opp records. `days` counts
+// time in the numbered stage (Stage 3 / 4 / 5 / 6), so an opp that moved
+// Qualifying → Quoting keeps its Stage 4 clock instead of restarting at
+// the column boundary — see stageBandEnteredISO. Falls back to Start Date
+// so pre-existing opps that have never had a stage change still
 // contribute something instead of showing blank. Sorted descending by
 // days so the longest-stalling opps lead each column.
 //
@@ -68,15 +103,22 @@ export function buildStageDaysRows(records) {
     if (!TRACKED_STAGES_SET.has(stage)) continue;
     if (resolveCallIn(r) == null) continue;
     if (PULL_THROUGH_RE.test(String(r['Scope'] || ''))) continue;
-    const enteredISO = toISODate(r._stageEnteredAt) || toISODate(r['Start Date']);
+    const enteredISO = stageBandEnteredISO(r);
     const days = enteredISO ? -daysFromToday(enteredISO) : null;
     const scope = String(r['Scope'] ?? '').trim();
+    const band = stageBandFor(stage);
     rows.push({
       id: r._id,
       Account: r['Account'] || '',
       Stage: stage,
+      // The numbered stage the day count is measured over ('' for Not
+      // Started, which sits ahead of the numbered stages).
+      bandLabel: band ? band.label : '',
       days,
       enteredAt: enteredISO || '',
+      // The column's own entry date, so the hover can say when the opp
+      // reached this step as well as when its numbered stage started.
+      columnEnteredAt: toISODate(r._stageEnteredAt) || toISODate(r['Start Date']) || '',
       startDate: toISODate(r['Start Date']) || '',
       scope: scope && scope !== '-' && scope !== '#N/A' ? scope : '',
       _hasExplicitEntry: !!toISODate(r._stageEnteredAt),
@@ -129,8 +171,15 @@ function StageColumn({ stage, items, onCardClick }) {
             textAlign: 'center', padding: '8px 0',
           }}>-</div>
         ) : items.map(row => {
+          // The badge counts time in the numbered stage, so the hover
+          // names it — and adds the column's own entry date when the two
+          // differ, which is exactly the Qualifying → Quoting (and
+          // Quoted → Contracting) case the band exists for.
+          const what = row.bandLabel || 'Stage';
+          const movedWithinBand = row.columnEnteredAt && row.columnEnteredAt !== row.enteredAt;
           const dayBadgeTitle = row.enteredAt
-            ? `Stage entered ${formatDateDisplay(row.enteredAt)}${row._hasExplicitEntry ? '' : ' (fallback to Start Date)'}`
+            ? `${what} entered ${formatDateDisplay(row.enteredAt)}${row._hasExplicitEntry ? '' : ' (fallback to Start Date)'}`
+              + (movedWithinBand ? `\nReached ${row.Stage} ${formatDateDisplay(row.columnEnteredAt)}` : '')
             : 'No entry date recorded.';
           // Flagged opps (stalled past the stage's limit) stay in
           // the same column but render in amber, with the suggested
@@ -139,7 +188,7 @@ function StageColumn({ stage, items, onCardClick }) {
           // ignored on the Opps tab don't flag here.
           const action = row.ignoreStall ? null : stageActionFor(row.Stage, row.days);
           const accountTitle = action
-            ? `Stalled ${row.days}d (> ${action.days}d) → ${action.suggestion}${row.scope ? `\nScope: ${row.scope}` : ''}`
+            ? `Stalled ${row.days}d in ${what} (> ${action.days}d) → ${action.suggestion}${row.scope ? `\nScope: ${row.scope}` : ''}`
             : (row.scope ? `Scope: ${row.scope}` : 'No scope set on this opp.');
           return (
             <div
@@ -225,7 +274,7 @@ export function StageDaysBoard({ byStage, hideNotStarted, setHideNotStarted, onC
             width: 10, height: 10, borderRadius: 2,
             background: '#FEF3C7', border: '1px solid #FCD34D', display: 'inline-block',
           }} />
-          ⚠ flagged = stalled past its stage limit (hover for the suggested move)
+          ⚠ flagged = stalled past its stage limit (hover for the suggested move) · days count time in the numbered stage, not the column
         </span>
       </div>
       <div style={{

@@ -52,6 +52,7 @@ import {
   TRACKED_STAGES_SET,
   PULL_THROUGH_RE,
   stageActionFor,
+  stageBandEnteredISO,
   buildStageDaysRows,
   groupStageDaysByStage,
   StageDaysBoard,
@@ -1079,16 +1080,19 @@ const resolveCallIn = (row) => resolveComputedDays(row, 'Call In', 'Follow Up', 
 const resolveLastSpoke = (row) => resolveComputedDays(row, 'Last Spoke', 'Last Client Heard From Us', businessDaysSince);
 
 // Days-in-Stage stall flag for an opp record. Returns { days, suggestion }
-// when the opp has sat in its current stage longer than that stage's limit
-// (same gates as the Days-in-Stage board: tracked stage, has a Call In,
-// not a pull-through), or null otherwise. Ignores the per-opp
+// when the opp has sat in its current numbered stage longer than that
+// stage's limit (same gates as the Days-in-Stage board: tracked stage, has
+// a Call In, not a pull-through), or null otherwise. Ignores the per-opp
 // `_ignoreStallFlag` so callers can offer an explicit ignore/restore.
+//
+// Counts from stageBandEnteredISO, the same clock the board's cards show,
+// so this column and that board can't report different day counts.
 function oppStageStall(row) {
   const stage = String(row?.['Stage'] || '').trim();
   if (!TRACKED_STAGES_SET.has(stage)) return null;
   if (resolveCallIn(row) == null) return null;
   if (PULL_THROUGH_RE.test(String(row?.['Scope'] || ''))) return null;
-  const enteredISO = toISODate(row?._stageEnteredAt) || toISODate(row?.['Start Date']);
+  const enteredISO = stageBandEnteredISO(row);
   const days = enteredISO ? -daysFromToday(enteredISO) : null;
   const rule = stageActionFor(stage, days);
   return rule ? { days, suggestion: rule.suggestion, limit: rule.days } : null;
