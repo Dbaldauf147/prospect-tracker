@@ -60,13 +60,27 @@ export function docIdFor(recordingId) {
 export function emptyRecord(recordingId) {
   return {
     id: String(recordingId || ''),
-    // Where the file came from, so the page can tell a stored record it
-    // can no longer see (folder not picked yet) from one it can.
+    // Where the recording came from — 'granola' | 'onedrive' | 'local' —
+    // so the page can tell a stored record it can no longer see (folder
+    // not picked yet) from one it can. A Granola record is the only one
+    // that stands on its own: it carries the whole call as text, so it
+    // renders with nothing connected.
     source: '',
     name: '',
     path: '',
     recordedAt: null,
     durationSeconds: null,
+    // --- Granola ingest ---
+    granolaNoteId: '',
+    granolaUrl: '',
+    // Granola's own AI notes, kept apart from `summary` (ours) so a
+    // re-sync can refresh theirs without touching what we pushed to an opp.
+    granolaSummary: '',
+    granolaUpdatedAt: null,
+    owner: null,
+    attendees: [],
+    folders: [],
+    syncedAt: null,
     // --- tagging ---
     prospectId: '',
     company: '',

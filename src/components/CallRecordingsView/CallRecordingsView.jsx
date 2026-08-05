@@ -1,8 +1,25 @@
-// Call Recordings — lists media files from a folder in the user's
-// PERSONAL OneDrive, plays them inline, links one to a company, and
-// transcribes it.
+// Call Recordings — the record of what was said on every call, tagged to
+// the company and the opportunity it belongs to.
 //
-// Connection model: this deliberately uses its own Microsoft sign-in
+// Three sources feed it, and they are not equals:
+//
+//   Granola (primary) — the AI notetaker sits in the meeting and hands
+//     over a note that is ALREADY transcribed and summarised. There is no
+//     file: a synced call is text from the moment it lands, so it can be
+//     tagged, summarised, and pushed onto an opp without waiting on a
+//     transcription job. This is the default source and where call data
+//     is meant to come from.
+//
+//   OneDrive / this computer — the older media-first paths, kept for
+//     calls Granola wasn't in: a dialer recording, a forwarded file. They
+//     list audio, play it, and have to transcribe before any of the rest
+//     of the page can do anything with it.
+//
+// All three converge on the same stored record (callRecordingsStore.js),
+// so tagging, the AI summary, transcript search, and the push onto an
+// opp are written once and work whatever the call came from.
+//
+// Connection model for OneDrive: this deliberately uses its own Microsoft sign-in
 // (/api/onedrive-auth) and its own token keys, separate from the
 // `outlook-*` ones the calendar/mail integration uses. The recordings
 // live in a personal Microsoft account, which is normally not the work
@@ -26,6 +43,11 @@ import {
   loadCallRecords, saveCallRecord, deleteCallRecord, migrateSettingsLinks,
   oppLabel, summaryForOpp, mergeIntoNotes,
 } from '../../utils/callRecordingsStore';
+import {
+  probeGranola, syncGranolaCalls, recordPatchFor, recordingFromStored,
+  matchCompanyForCall, daysAgoIso, DEFAULT_BACKFILL_DAYS,
+} from '../../utils/granolaCalls';
+import { buildCompanyGuessIndex } from '../../utils/companyGuess';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { buildActiveOppsIndex, activeOppsForCompany } from '../../utils/targetAccountOpps';
 import { setOppField } from '../../utils/opps2Store';
@@ -197,6 +219,15 @@ function OppPicker({ oppsIndex, company, onPick, onClose }) {
   );
 }
 
+// How a transcript turn is labelled. AssemblyAI numbers its speakers
+// ("A", "B"), which only reads as a person with the word in front;
+// Granola names them ("You", "Them", "Rita Chen"), which doesn't.
+function speakerName(label) {
+  const s = String(label ?? '').trim();
+  if (!s) return 'Speaker ?';
+  return /^[A-Za-z0-9]$/.test(s) ? `Speaker ${s}` : s;
+}
+
 // Seconds → m:ss, for the jump-to links on transcript search results.
 function fmtClock(sec) {
   if (sec == null || !Number.isFinite(Number(sec))) return '';
@@ -207,11 +238,17 @@ function fmtClock(sec) {
 
 export function CallRecordingsView({ prospects = [], settings = {}, updateSettings, onSelectProspect }) {
   const { user } = useAuth();
-  // 'onedrive' | 'local'. Local reads a folder on this computer and needs
-  // no Microsoft account at all.
-  const [source, setSource] = useState(settings.callRecordingsSource || 'onedrive');
+  // 'granola' | 'onedrive' | 'local'. Granola is the default because it is
+  // where call data is supposed to come from; the other two need a
+  // Microsoft account or a folder on this particular machine.
+  const [source, setSource] = useState(settings.callRecordingsSource || 'granola');
   const [connected, setConnected] = useState(false);
   const [checkedConnection, setCheckedConnection] = useState(false);
+  // Granola: { configured, ok, error } from the probe, plus sync state.
+  const [granolaStatus, setGranolaStatus] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncNote, setSyncNote] = useState('');
+  const autoSynced = useRef(false);
   // Local-folder state.
   const [folderHandle, setFolderHandle] = useState(null);
   const [folderName, setFolderName] = useState('');
@@ -394,14 +431,25 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     setTruncated(false);
     setError('');
     setPlaying(null);
+    setSyncNote('');
   }
 
-  // Initial load. OneDrive: check for a live token and pull the configured
-  // folder. Local: restore the remembered folder handle, and list it
-  // straight away when permission survived.
+  // Initial load. Granola: ask the API whether it's configured and the
+  // key is live (the calls themselves come from the stored records, so
+  // the list is already on screen). OneDrive: check for a live token and
+  // pull the configured folder. Local: restore the remembered folder
+  // handle, and list it straight away when permission survived.
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      if (source === 'granola') {
+        const status = await probeGranola();
+        if (cancelled) return;
+        setGranolaStatus(status);
+        setConnected(!!(status.configured && status.ok));
+        setCheckedConnection(true);
+        return;
+      }
       if (source === 'local') {
         setCheckedConnection(true);
         if (!supportsDirectoryPicker()) return;
@@ -514,6 +562,8 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     // records in the gap before theirs arrive.
     setRecords({});
     setRecordsLoaded(false);
+    // A different account gets its own first-visit Granola sync.
+    autoSynced.current = false;
     if (!uid) return undefined;
     let cancelled = false;
     (async () => {
@@ -555,7 +605,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   // describes its recording when the folder isn't connected.
   function metaFor(rec) {
     return {
-      source: rec.isLocal ? 'local' : 'onedrive',
+      source: rec.isGranola ? 'granola' : rec.isLocal ? 'local' : 'onedrive',
       name: rec.name || '',
       path: rec.path || '',
       recordedAt: rec.modified || rec.created || null,
@@ -583,9 +633,136 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     setActionError(e => ({ ...e, [id]: message || '' }));
   }
 
+  // ---- Granola ingest ------------------------------------------------------
+  // Granola calls are listed from the stored records, not from a live
+  // fetch: the note IS the record once it has been synced, so the list
+  // survives a dead key, a lapsed plan, and being offline. Syncing adds
+  // to it; it never has to run for the page to work.
+  const granolaRecordings = useMemo(() => (
+    Object.values(records)
+      .filter(r => r?.source === 'granola')
+      .map(recordingFromStored)
+      .sort((a, b) => String(b.recordedAt || '').localeCompare(String(a.recordedAt || '')))
+  ), [records]);
+
+  // What the body renders. Granola comes from the stored records; the two
+  // media sources from whatever the last listing returned.
+  const visible = source === 'granola' ? granolaRecordings : recordings;
+
+  // Which company a call was with, from who was on it. Only ever fills a
+  // blank — a company the user set by hand is never overwritten by a
+  // guess, on this sync or any later one.
+  const autoLink = useCallback((call, stored, idx) => {
+    if (stored?.prospectId || stored?.company) return null;
+    const match = matchCompanyForCall(call, prospects, idx);
+    return match ? { prospectId: match.prospectId, company: match.company } : null;
+  }, [prospects]);
+
+  /**
+   * Pull calls from Granola into the stored records.
+   *
+   * Incremental by default: only notes changed since the last sync are
+   * fetched in full, with the watermark kept in user settings so it holds
+   * across devices. `full` re-reads everything in the back-fill window,
+   * which is the repair path when a sync was interrupted.
+   */
+  const syncGranola = useCallback(async ({ full = false } = {}) => {
+    if (!uid || syncing) return;
+    setSyncing(true);
+    setError('');
+    setSyncNote('Checking Granola for new calls…');
+    const idx = buildCompanyGuessIndex(prospects || []);
+    const watermark = full ? '' : String(settings.granolaSyncedThrough || '');
+    try {
+      const result = await syncGranolaCalls({
+        updatedAfter: watermark,
+        // No watermark means a first sync, which would otherwise pull the
+        // whole workspace history; cap it at the back-fill window.
+        createdAfter: watermark ? '' : daysAgoIso(DEFAULT_BACKFILL_DAYS),
+        shouldFetchDetail: (summary) => {
+          if (full) return true;
+          const stored = recordsRef.current[`granola:${summary.noteId}`];
+          if (!stored) return true;
+          // Changed in Granola since we stored it, or stored without its
+          // transcript (synced before the plan allowed transcripts).
+          if (!stored.transcript) return true;
+          const seen = String(stored.granolaUpdatedAt || '');
+          return !seen || String(summary.updatedAt || '') > seen;
+        },
+        onCall: async (call) => {
+          const stored = recordsRef.current[call.id] || null;
+          await persist(call.id, {
+            ...recordPatchFor(call),
+            ...(autoLink(call, stored, idx) || {}),
+          });
+          return stored ? 'updated' : 'imported';
+        },
+        onProgress: (p) => setSyncNote(`Syncing… ${p.imported + p.updated} call${p.imported + p.updated === 1 ? '' : 's'} so far`),
+      });
+
+      // Advance the watermark only when the sync ran clean. A partial
+      // sync that moved it would leave the calls it failed on permanently
+      // behind the cursor.
+      if (result.errors.length === 0 && !result.truncated && result.latest) {
+        updateSettings?.({ granolaSyncedThrough: result.latest });
+      }
+
+      const counts = [
+        result.imported ? `${result.imported} new` : '',
+        result.updated ? `${result.updated} updated` : '',
+      ].filter(Boolean).join(', ');
+      setSyncNote(
+        counts
+          ? `Synced ${counts} from Granola.${result.truncated ? ' More remain — sync again to continue.' : ''}`
+          : 'Already up to date with Granola.',
+      );
+      if (result.errors.length > 0) {
+        setError(`Some calls didn't import: ${result.errors.slice(0, 3).join(' · ')}`);
+      }
+    } catch (err) {
+      setSyncNote('');
+      setError(err?.message || String(err));
+    } finally {
+      setSyncing(false);
+    }
+  }, [uid, syncing, prospects, settings.granolaSyncedThrough, updateSettings, persist, autoLink]);
+
+  // Re-run attendee matching over every Granola call that still has no
+  // company. Worth its own button because the prospect list can arrive
+  // after a sync, or grow after one — a call that matched nothing in
+  // January matches once the account is added in March.
+  const linkCompanies = useCallback(async () => {
+    const idx = buildCompanyGuessIndex(prospects || []);
+    let linked = 0;
+    for (const record of Object.values(recordsRef.current)) {
+      if (record?.source !== 'granola' || record.prospectId || record.company) continue;
+      const match = matchCompanyForCall(
+        { owner: record.owner, attendees: record.attendees || [] },
+        prospects,
+        idx,
+      );
+      if (!match) continue;
+      await persist(record.id, { prospectId: match.prospectId, company: match.company });
+      linked += 1;
+    }
+    setSyncNote(linked
+      ? `Linked ${linked} call${linked === 1 ? '' : 's'} to a company from their attendees.`
+      : 'No unlinked call matched a company by attendee email.');
+  }, [prospects, persist]);
+
+  // First visit to the tab in this page session pulls anything new.
+  // Waits for the stored records so the incremental check has something
+  // to compare against — without it every note would be re-fetched.
+  useEffect(() => {
+    if (source !== 'granola' || !uid || !recordsLoaded) return;
+    if (!granolaStatus?.ok || autoSynced.current) return;
+    autoSynced.current = true;
+    syncGranola({});
+  }, [source, uid, recordsLoaded, granolaStatus, syncGranola]);
+
   // ---- company + opportunity tagging ---------------------------------------
   function linkTo(recordingId, prospect) {
-    const rec = recordings.find(r => r.id === recordingId);
+    const rec = visible.find(r => r.id === recordingId);
     persist(recordingId, {
       ...(rec ? metaFor(rec) : {}),
       prospectId: prospect.id,
@@ -601,7 +778,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   }
 
   function tagOpp(recordingId, opp) {
-    const rec = recordings.find(r => r.id === recordingId);
+    const rec = visible.find(r => r.id === recordingId);
     persist(recordingId, {
       ...(rec ? metaFor(rec) : {}),
       oppId: String(opp?._id || ''),
@@ -618,7 +795,13 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   }
 
   async function forgetRecord(recordingId) {
-    if (!window.confirm('Delete the stored transcript, summary, and tags for this recording? The recording file itself is not touched.')) return;
+    // A Granola call has no file behind it, so forgetting it removes the
+    // card outright — until the next sync pulls the note back in.
+    const isGranola = String(recordingId).startsWith('granola:');
+    const message = isGranola
+      ? 'Delete the stored transcript, summary, and tags for this call? The note stays in Granola, and the next sync will pull it back in without its tags.'
+      : 'Delete the stored transcript, summary, and tags for this recording? The recording file itself is not touched.';
+    if (!window.confirm(message)) return;
     await deleteCallRecord(uid, recordingId);
     setRecords(r => {
       const next = { ...r };
@@ -855,8 +1038,8 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     }
   }
 
-  const pickerRecording = pickerFor ? recordings.find(r => r.id === pickerFor) : null;
-  const oppPickerRecording = oppPickerFor ? recordings.find(r => r.id === oppPickerFor) : null;
+  const pickerRecording = pickerFor ? visible.find(r => r.id === pickerFor) : null;
+  const oppPickerRecording = oppPickerFor ? visible.find(r => r.id === oppPickerFor) : null;
 
   // The fallback <input webkitdirectory> path never produces a handle, so
   // "have we been pointed at a folder yet?" is handle-or-name, not handle.
@@ -865,7 +1048,33 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   // Which empty state (if any) stands in for the recording list. Returning
   // null here means "render the cards".
   const emptyState = (() => {
-    if (loading || recordings.length > 0) return null;
+    if (loading || visible.length > 0) return null;
+    if (source === 'granola') {
+      // Granola calls come out of Firestore, so "nothing here" isn't
+      // knowable until that read lands — otherwise the empty state
+      // flashes over a list that is about to appear.
+      if (!checkedConnection || (uid && !recordsLoaded)) return null;
+      if (granolaStatus && !granolaStatus.configured) {
+        return (
+          <div className={styles.empty}>
+            <span className={styles.emptyTitle}>Granola isn’t connected yet</span>
+            Granola is the notetaker this page ingests calls from. Create an API key in Granola
+            (Settings → API — it needs note and transcript access, which is a Business or Enterprise
+            plan) and set it as <code>GRANOLA_API_KEY</code> in the deployment environment. Every call
+            Granola has taken notes on then lands here, already transcribed.
+          </div>
+        );
+      }
+      if (granolaStatus && !granolaStatus.ok) return null;
+      return (
+        <div className={styles.empty}>
+          <span className={styles.emptyTitle}>No Granola calls yet</span>
+          {syncing
+            ? 'Pulling your calls from Granola…'
+            : `Nothing has been synced from Granola. Sync pulls the last ${DEFAULT_BACKFILL_DAYS} days the first time, then only what has changed. Granola only serves notes it has finished summarising, so a call from the last few minutes may not be there yet.`}
+        </div>
+      );
+    }
     if (source === 'local') {
       if (!hasLocalSelection) {
         return (
@@ -916,9 +1125,11 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
         <div className={styles.titleBlock}>
           <h1 className={styles.title}>Call Recordings</h1>
           <div className={styles.subtitle}>
-            {source === 'local'
-              ? 'Recordings from a folder on this computer. Nothing is uploaded — the files are read and played locally, and only the company link is saved.'
-              : 'Recordings from a folder in your personal OneDrive. This connection is separate from the work Outlook one — signing in here doesn’t touch your calendar or mail integration.'}
+            {source === 'granola'
+              ? 'Calls from Granola, already transcribed and with Granola’s own notes attached. Tag one to a company and an opportunity, and its summary can be pushed straight onto the deal.'
+              : source === 'local'
+                ? 'Recordings from a folder on this computer. Nothing is uploaded — the files are read and played locally, and only the company link is saved.'
+                : 'Recordings from a folder in your personal OneDrive. This connection is separate from the work Outlook one — signing in here doesn’t touch your calendar or mail integration.'}
           </div>
         </div>
         <div className={styles.toolbar}>
@@ -936,6 +1147,12 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
           <span className={styles.sourceToggle}>
             <button
               type="button"
+              className={source === 'granola' ? styles.sourceOn : styles.sourceOff}
+              onClick={() => switchSource('granola')}
+              title="Calls Granola took notes on — the primary source"
+            >Granola</button>
+            <button
+              type="button"
               className={source === 'onedrive' ? styles.sourceOn : styles.sourceOff}
               onClick={() => switchSource('onedrive')}
             >OneDrive</button>
@@ -945,7 +1162,23 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
               onClick={() => switchSource('local')}
             >This computer</button>
           </span>
-          {source === 'onedrive' ? (
+          {source === 'granola' ? (
+            <>
+              <span className={granolaStatus?.ok ? styles.connected : styles.disconnected}>
+                {!checkedConnection ? '○ Checking Granola…'
+                  : granolaStatus?.ok ? '● Granola connected'
+                  : granolaStatus?.configured === false ? '○ Granola not configured'
+                  : '○ Granola unavailable'}
+              </span>
+              <button
+                type="button"
+                className={styles.btnPrimary}
+                onClick={() => syncGranola({})}
+                disabled={syncing || !granolaStatus?.ok}
+                title="Pull calls Granola has notes for that aren't here yet"
+              >{syncing ? 'Syncing…' : '⟲ Sync calls'}</button>
+            </>
+          ) : source === 'onedrive' ? (
             <>
               <span className={connected ? styles.connected : styles.disconnected}>
                 {connected ? '● OneDrive connected' : '○ Not connected'}
@@ -971,7 +1204,31 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
         </div>
       </div>
 
-      {source === 'onedrive' ? (
+      {source === 'granola' ? (
+        <div className={styles.controls}>
+          <span className={styles.fieldLabel}>Granola</span>
+          <button
+            type="button"
+            className={styles.btn}
+            onClick={() => syncGranola({ full: true })}
+            disabled={syncing || !granolaStatus?.ok}
+            title={`Re-read every Granola note from the last ${DEFAULT_BACKFILL_DAYS} days, not just what changed since the last sync`}
+          >Re-sync everything</button>
+          <button
+            type="button"
+            className={styles.btn}
+            onClick={linkCompanies}
+            disabled={syncing || granolaRecordings.length === 0}
+            title="Match calls that still have no company against your prospect list, using who was on the call"
+          >Link companies from attendees</button>
+          <span className={styles.transcriptStatus}>
+            {syncNote
+              || (settings.granolaSyncedThrough
+                ? `Synced up to ${fmtWhen(settings.granolaSyncedThrough)}. New calls appear when you open this tab.`
+                : 'Calls arrive already transcribed — there is nothing to upload or transcribe here.')}
+          </span>
+        </div>
+      ) : source === 'onedrive' ? (
         <div className={styles.controls}>
           <span className={styles.fieldLabel}>Folder</span>
           <input
@@ -1037,9 +1294,15 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
 
       <div className={styles.body}>
         {error && <div className={styles.error}>{error}</div>}
+        {/* A dead key or a plan without transcript access stops new calls
+            arriving, but everything already synced still reads — so this
+            is a notice above the list, not an empty state replacing it. */}
+        {source === 'granola' && granolaStatus?.configured && !granolaStatus.ok && granolaStatus.error && (
+          <div className={styles.error}>{granolaStatus.error}</div>
+        )}
         {/* Tags and stored transcripts land a beat after the file list,
             so say so rather than letting a tagged call look untagged. */}
-        {uid && !recordsLoaded && recordings.length > 0 && (
+        {uid && !recordsLoaded && visible.length > 0 && (
           <div className={styles.transcriptStatus} style={{ marginBottom: '0.6rem' }}>
             Loading saved transcripts and tags…
           </div>
@@ -1058,7 +1321,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
         )}
 
         {emptyState || (
-          recordings.map(rec => {
+          visible.map(rec => {
             const stored = records[rec.id] || null;
             const tr = transcripts[rec.id];
             const video = isVideo(rec);
@@ -1101,15 +1364,29 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                     >◆ {stored.oppLabel || 'Opportunity'}</span>
                   )}
                   <span className={styles.cardActions}>
-                    <button
-                      type="button"
-                      className={styles.btn}
-                      onClick={() => togglePlay(rec)}
-                    >{playing === rec.id ? 'Hide player' : '▶ Play'}</button>
+                    {/* A Granola call has no media behind it — the note is
+                        the whole artifact — so there is nothing to play,
+                        download, or transcribe. */}
+                    {!rec.isGranola && (
+                      <button
+                        type="button"
+                        className={styles.btn}
+                        onClick={() => togglePlay(rec)}
+                      >{playing === rec.id ? 'Hide player' : '▶ Play'}</button>
+                    )}
                     {/* A local file is already on disk — there is nothing
                         to download, so the button only appears for OneDrive. */}
-                    {!rec.isLocal && (
+                    {!rec.isLocal && !rec.isGranola && (
                       <a className={styles.btn} href={rec.downloadUrl} download={rec.name} target="_blank" rel="noopener noreferrer">⬇ Download</a>
+                    )}
+                    {rec.isGranola && rec.granolaUrl && (
+                      <a
+                        className={styles.btn}
+                        href={rec.granolaUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Open this note in Granola"
+                      >↗ Granola</a>
                     )}
                     <button type="button" className={styles.btn} onClick={() => setPickerFor(rec.id)}>
                       {company ? 'Change company' : 'Link to company'}
@@ -1126,17 +1403,19 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                     {company && (
                       <button type="button" className={styles.btn} onClick={() => unlink(rec.id)} title={`Remove the link to ${company}`}>Unlink</button>
                     )}
-                    <button
-                      type="button"
-                      className={styles.btn}
-                      onClick={() => transcribe(rec)}
-                      disabled={rec.isLocal || inFlight}
-                      title={rec.isLocal
-                        ? 'Transcription needs the file reachable by a URL, which a file on your computer is not. Only OneDrive-sourced recordings can be transcribed today.'
-                        : undefined}
-                    >
-                      {hasTranscript ? 'Re-transcribe' : 'Transcribe'}
-                    </button>
+                    {!rec.isGranola && (
+                      <button
+                        type="button"
+                        className={styles.btn}
+                        onClick={() => transcribe(rec)}
+                        disabled={rec.isLocal || inFlight}
+                        title={rec.isLocal
+                          ? 'Transcription needs the file reachable by a URL, which a file on your computer is not. Only OneDrive-sourced recordings can be transcribed today.'
+                          : undefined}
+                      >
+                        {hasTranscript ? 'Re-transcribe' : 'Transcribe'}
+                      </button>
+                    )}
                     {hasTranscript && (
                       <button
                         type="button"
@@ -1169,6 +1448,35 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                 {stored?.pushedToOppAt && (
                   <div className={styles.pushedNote}>
                     Pushed to {stored.oppLabel || 'the opp'} on {fmtWhen(stored.pushedToOppAt)}.
+                  </div>
+                )}
+
+                {/* Who was on the call. This is what the company link is
+                    guessed from, so showing it makes a wrong guess
+                    self-explanatory rather than mysterious. */}
+                {rec.isGranola && rec.attendees?.length > 0 && (
+                  <div className={styles.attendees}>
+                    <span className={styles.attendeeLabel}>On the call</span>
+                    {rec.attendees.slice(0, 8).map((a, i) => (
+                      <span key={i} className={styles.attendee} title={a.email || a.name}>
+                        {a.name || a.email}
+                      </span>
+                    ))}
+                    {rec.attendees.length > 8 && (
+                      <span className={styles.attendee}>+{rec.attendees.length - 8} more</span>
+                    )}
+                  </div>
+                )}
+
+                {/* Granola's own notes, kept separate from our summary
+                    below: this is what Granola wrote in the meeting, that
+                    one is what Claude pulled out for the deal. */}
+                {rec.isGranola && rec.granolaSummary && (
+                  <div className={styles.granolaNote}>
+                    <div className={styles.summaryHead}>
+                      <span className={styles.summaryTitle}>Granola notes</span>
+                    </div>
+                    <div className={styles.granolaBody}>{rec.granolaSummary}</div>
                   </div>
                 )}
 
@@ -1230,6 +1538,16 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                         </ul>
                       </>
                     )}
+                  </div>
+                )}
+
+                {/* Summarise and search both read the transcript, so a
+                    Granola call that arrived without one can't use either.
+                    Say why rather than silently hiding the buttons. */}
+                {rec.isGranola && stored?.syncedAt && !hasTranscript && (
+                  <div className={styles.transcriptStatus} style={{ marginBottom: '0.5rem' }}>
+                    Granola sent its notes for this call but no transcript. Transcript access is a
+                    Business/Enterprise feature — without it, Summarize and call search have nothing to read.
                   </div>
                 )}
 
@@ -1296,7 +1614,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                     ) : utterances.length ? (
                       utterances.map((u, i) => (
                         <div key={i} className={styles.utterance}>
-                          <span className={styles.speaker}>Speaker {u.speaker}</span>
+                          <span className={styles.speaker}>{speakerName(u.speaker)}</span>
                           <span>{u.text}</span>
                         </div>
                       ))
