@@ -287,16 +287,18 @@ export async function loadWholeBuildingLookup() {
   //      commodity, the predominant one first.
   //   3. Otherwise the recorded name is kept as-is.
   //
-  // Returns { name, state, predominant, source } — `source` is 'reference'
-  // when the name came from the table and 'record' when it couldn't answer and
-  // the site's own utility stood. Keeping the recorded name matters: the
-  // reference is silent on plenty of zips, and dropping those sites would
-  // shrink the eligible counts for the reference's silence rather than for
-  // anything true about the site. `source` is what lets a caller say which
-  // figures rest on the reference. Null when neither side names a utility.
+  // Returns { name, state, predominant, source, meters } — `source` is
+  // 'reference' when the name came from the table and 'record' when it
+  // couldn't answer and the site's own utility stood, and `meters` is what the
+  // reference's own commodity column says about the utility it named: 'yes',
+  // 'no', or '' for unknown (which is also what a kept recorded name gets,
+  // there being no row to read). Only 'yes' is a feed anyone can collect, so
+  // that flag is what the WBUDC cards count on; the name is still resolved
+  // either way, because the sheets show a site's utilities whichever card it
+  // was listed under. Null when neither side names a utility.
   function utility(zip, commodity, recordedName = '') {
     const recorded = String(recordedName || '').trim();
-    const kept = recorded ? { name: recorded, state: '', predominant: false, source: 'record' } : null;
+    const kept = recorded ? { name: recorded, state: '', predominant: false, source: 'record', meters: '' } : null;
     const col = COMMODITY_COLUMN[commodity];
     const rows = col ? rowsAt(zip) : [];
     if (!rows.length) return kept;
@@ -310,7 +312,13 @@ export async function loadWholeBuildingLookup() {
     const pick = (list) => list.find(r => r.predominant) || list[0] || null;
     const hit = pick(named) || pick(flagged);
     if (!hit) return kept;
-    return { name: nameOf(hit) || recorded, state: hit.state, predominant: hit.predominant, source: 'reference' };
+    return {
+      name: nameOf(hit) || recorded,
+      state: hit.state,
+      predominant: hit.predominant,
+      source: 'reference',
+      meters: carries(hit),
+    };
   }
 
   return { terms, termsWithMatch: values2, utility };
@@ -335,14 +343,19 @@ export const MATCH_LABEL = {
 // ('reference' | 'record'), so the cards can say how much of the count the
 // reference actually named. A null `lookup` (not loaded yet) passes the rows
 // straight through.
+//
+// `wbMeters` carries the reference's commodity flag for each named utility —
+// 'yes' where it says that utility hands over that commodity's whole-building
+// data, and what utilityFeedSites() admits a site to a feed on.
 export function withWholeBuildingUtilities(results, lookup) {
   if (!lookup) return results || [];
   return (results || []).map((r) => {
-    const out = { ...r, wbSource: {} };
+    const out = { ...r, wbSource: {}, wbMeters: {} };
     for (const [commodity, field] of Object.entries(COMMODITY_FIELD)) {
       const hit = lookup.utility(r.zip, commodity, r[field]);
       out[field] = hit ? hit.name : '';
       out.wbSource[commodity] = hit ? hit.source : '';
+      out.wbMeters[commodity] = hit ? hit.meters : '';
     }
     return out;
   });

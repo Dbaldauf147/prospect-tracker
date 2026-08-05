@@ -1048,16 +1048,27 @@ export function BuildingComplianceScreening({
     electric: utilityFeedEligibility(feedResults, 'electric'),
     gas: utilityFeedEligibility(feedResults, 'gas'),
   }), [feedResults]);
-  // How much of each card's total the reference actually named, so a figure
-  // resting partly on the uploaded utility names says so instead of reading
-  // as the workbook's whole answer.
-  const feedSourced = useMemo(() => Object.fromEntries(FEED_CARDS.map(({ key }) => {
-    const sites = utilityFeedSites(feedResults, key);
-    return [key, {
-      reference: sites.filter(s => s.wbSource?.[key] === 'reference').length,
-      record: sites.filter(s => s.wbSource?.[key] !== 'reference').length,
-    }];
-  })), [feedResults]);
+  // Obligated sites the card leaves out, and why. A card counts a site only
+  // where the reference says its utility hands that commodity over, so the
+  // total is smaller than the obligation — which reads as sites gone missing
+  // unless the difference is stated and split into its two reasons.
+  const feedOmitted = useMemo(() => {
+    const obligated = feedResults.filter(r => r.matched && (r.bbs?.eligible === true || r.bps?.eligible === true));
+    return Object.fromEntries(FEED_CARDS.map(({ key }) => {
+      const counted = new Set(utilityFeedSites(feedResults, key).map(s => s.id));
+      const left = obligated.filter(r => !counted.has(r.id));
+      return [key, {
+        obligated: obligated.length,
+        // The reference named a utility and said it doesn't hand this over —
+        // or said nothing about it, which is not a feed either.
+        noFeed: left.filter(r => r.wbSource?.[key] === 'reference').length,
+        // Nothing in the reference to ask: the zip isn't in the file, or no
+        // utility on the site to look up.
+        unlisted: left.filter(r => r.wbSource?.[key] !== 'reference').length,
+        total: left.length,
+      }];
+    }));
+  }, [feedResults]);
   const jurisdictionCount = useMemo(() => new Set(results.filter(r => r.matched).map(r => r.govId)).size, [results]);
 
   const filtered = useMemo(() => {
@@ -1330,9 +1341,10 @@ export function BuildingComplianceScreening({
   // eligibility read belongs.
   //
   // The three utility columns are the reference's own answer for the site's
-  // zip, same as the cards — `Utility Source` says where each row's utility
-  // came from, since a zip the workbook doesn't list keeps the utility the
-  // site was uploaded with.
+  // zip, same as the cards. `Utility Source` says where each row's utility
+  // came from: the sheet's own commodity is always the reference's, since
+  // that's what a site is listed here on, but the other two columns fall back
+  // to the uploaded name where the workbook doesn't list the zip.
   //
   // `terms` adds the reference's terms for the utility this sheet is about:
   // what it meters, how it releases data, and whether that release covers
@@ -1713,12 +1725,21 @@ export function BuildingComplianceScreening({
               The Whole Building Utility Data Collection (WBUDC) service supports BPS and BBS offerings via
               whole-building data collection; applicability depends on whether the site&apos;s utilities provide
               this option. Each site&apos;s utility is the one the Whole Building Data file names for its zip
-              code{wholeBuilding ? '' : ' (loading…)'}.
+              code, and a site counts here only where that file says the utility hands the commodity over —
+              <strong> Electric? = Yes</strong> for EP, <strong>Gas? = Yes</strong> for NG.
             </div>
+            {/* Held back until the reference is in. The counts are a different
+                number without it — every site with a utility, rather than
+                every site with a collectible feed — and a headline figure
+                that lands and then drops is worse than one that arrives a
+                moment late. */}
+            {!wholeBuilding ? (
+              <div className={styles.miniEmpty}>Reading the Whole Building Data file…</div>
+            ) : (
             <div className={styles.feedGrid}>
-              {FEED_CARDS.map(({ key, label, color }) => {
+              {FEED_CARDS.map(({ key, label, abbr, color }) => {
                 const feed = utilityFeeds[key];
-                const sourced = feedSourced[key];
+                const omitted = feedOmitted[key];
                 // The bar label carries the state, so the drill-down has to map
                 // it back to the (state, utility) pair it was built from.
                 const byLabel = new Map(feed.rows.map(r => [`${r.state ? `${r.state} · ` : ''}${r.utility}`, r]));
@@ -1748,20 +1769,25 @@ export function BuildingComplianceScreening({
                         if (row) setFeedDrill({ commodity: key, state: row.state, utility: row.utility });
                       }}
                     />
-                    {/* The reference doesn't list every zip. Where it can't
-                        name the utility the site keeps the one it was
-                        uploaded with — counted the same, but said out loud
-                        rather than passed off as the workbook's answer. */}
-                    {sourced.record > 0 && (
+                    {/* The gap between the obligation and the feed. Without
+                        it the card reads as though the sites it can't serve
+                        were never obligated, and the two reasons want telling
+                        apart: a utility that doesn't offer the data is a
+                        closed door, a zip the file doesn't list is an open
+                        question. */}
+                    {omitted.total > 0 && (
                       <div className={styles.feedSource}>
-                        {sourced.reference} of {feed.total} named by the Whole Building Data file ·{' '}
-                        {sourced.record} from the site record (zip not listed)
+                        {feed.total} of {omitted.obligated} obligated sites ·{' '}
+                        {omitted.noFeed > 0 && <>{omitted.noFeed} whose utility isn&apos;t marked {abbr === 'EP' ? 'Electric?' : 'Gas?'} = Yes</>}
+                        {omitted.noFeed > 0 && omitted.unlisted > 0 && ' · '}
+                        {omitted.unlisted > 0 && <>{omitted.unlisted} not in the Whole Building Data file</>}
                       </div>
                     )}
                   </div>
                 );
               })}
             </div>
+            )}
 
             <div className={styles.sectionTitle}>Site-by-Site Mandate Detail</div>
             <div className={styles.wbudcNote}>
