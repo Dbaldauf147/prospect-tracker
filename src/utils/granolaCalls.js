@@ -30,8 +30,41 @@ const MAX_PAGES = 20;
 // broken with nothing to act on.
 const REQUEST_TIMEOUT_MS = 45000;
 
-function timeoutSignal(ms = REQUEST_TIMEOUT_MS) {
-  try { return AbortSignal.timeout(ms); } catch { return undefined; }
+// The probe gets a tighter one. It runs on every visit to the tab and
+// blocks the status pill, and the route bounds its own call to Granola at
+// 20s — so anything past this is a stall below that, not a slow answer on
+// its way.
+const PROBE_TIMEOUT_MS = 30000;
+
+// Marker resolved by the deadline below. A sentinel rather than a
+// rejection so the race can tell "the clock won" from "the request threw".
+const TIMED_OUT = Symbol('granola-timeout');
+
+/**
+ * A wall-clock deadline for one request.
+ *
+ * An abort signal alone isn't enough here for two reasons:
+ * AbortSignal.timeout doesn't exist on every browser we run in (older
+ * Safari), and even where it does it only reaches the fetch — apiFetch
+ * first awaits a Firebase ID token, and a token refresh that never
+ * settles is outside any signal's reach. So callers get both: a signal
+ * that aborts the request, and `expired`, which resolves no matter which
+ * layer stalled. Call `done()` to stop the timer once the work settles.
+ */
+function deadline(ms = REQUEST_TIMEOUT_MS) {
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  let timer = null;
+  const expired = new Promise(resolve => {
+    timer = setTimeout(() => {
+      try { controller?.abort(); } catch { /* already gone */ }
+      resolve(TIMED_OUT);
+    }, ms);
+  });
+  return {
+    signal: controller?.signal,
+    expired,
+    done() { if (timer !== null) { clearTimeout(timer); timer = null; } },
+  };
 }
 
 function isTimeout(err) {
@@ -48,15 +81,42 @@ async function readJson(response) {
 }
 
 /**
- * Is Granola configured and is the key live? Resolves to
- * { configured, ok, error, hint } and never throws — the page shows a
- * setup message rather than an error banner when it comes back
- * unconfigured. `hint` carries which deployment answered and what it
- * could see, so "not configured" can name its own cause.
+ * One request to our route, bounded by a deadline it cannot outlive.
+ * Throws `whenSlow` if the clock wins, so a sync reports a stall rather
+ * than hanging on a promise that never settles.
  */
-export async function probeGranola() {
+async function request(url, whenSlow) {
+  const clock = deadline();
   try {
-    const r = await apiFetch('/api/granola-calls?probe=1', { signal: timeoutSignal() });
+    const result = await Promise.race([
+      apiFetch(url, { signal: clock.signal }).catch(err => {
+        if (isTimeout(err)) return TIMED_OUT;
+        throw new Error(err?.message || String(err));
+      }),
+      clock.expired,
+    ]);
+    if (result === TIMED_OUT) throw new Error(whenSlow);
+    return result;
+  } finally {
+    clock.done();
+  }
+}
+
+// What a probe that never came back looks like. `timedOut` marks the
+// status as unknown rather than bad: nothing was learned about Granola,
+// so the page keeps the sync buttons live instead of locking the tab
+// behind a check that failed on our side of the wire.
+const PROBE_TIMED_OUT = {
+  configured: true,
+  ok: false,
+  timedOut: true,
+  error: 'The check for Granola timed out — that may be this page, not Granola. '
+    + 'Calls already synced still show below: use Check again, or Sync calls to try anyway.',
+};
+
+async function runProbe(signal) {
+  try {
+    const r = await apiFetch('/api/granola-calls?probe=1', { signal });
     const data = await readJson(r);
     if (r.status === 501) {
       return { configured: false, ok: false, error: data.error || '', hint: data.hint || null };
@@ -64,13 +124,29 @@ export async function probeGranola() {
     if (!r.ok) return { configured: true, ok: false, error: data.error || `HTTP ${r.status}` };
     return { configured: true, ok: true, error: '' };
   } catch (err) {
-    return {
-      configured: true,
-      ok: false,
-      error: isTimeout(err)
-        ? 'The check for Granola timed out. Calls already synced still show below: use Sync calls to retry.'
-        : (err?.message || String(err)),
-    };
+    if (isTimeout(err)) return PROBE_TIMED_OUT;
+    return { configured: true, ok: false, error: err?.message || String(err) };
+  }
+}
+
+/**
+ * Is Granola configured and is the key live? Resolves to
+ * { configured, ok, error, hint, timedOut } and never throws — the page
+ * shows a setup message rather than an error banner when it comes back
+ * unconfigured. `hint` carries which deployment answered and what it
+ * could see, so "not configured" can name its own cause.
+ *
+ * Guaranteed to settle: the request races a deadline, so a stalled token
+ * refresh or a request the browser never fails can no longer leave the
+ * page on "Checking Granola…" with no way out.
+ */
+export async function probeGranola() {
+  const clock = deadline(PROBE_TIMEOUT_MS);
+  try {
+    const status = await Promise.race([runProbe(clock.signal), clock.expired]);
+    return status === TIMED_OUT ? PROBE_TIMED_OUT : status;
+  } finally {
+    clock.done();
   }
 }
 
@@ -110,12 +186,10 @@ export async function fetchGranolaPage({ cursor = '', updatedAfter = '', created
   if (cursor) params.set('cursor', cursor);
   if (updatedAfter) params.set('updatedAfter', updatedAfter);
   if (createdAfter) params.set('createdAfter', createdAfter);
-  let r;
-  try {
-    r = await apiFetch(`/api/granola-calls?${params.toString()}`, { signal: timeoutSignal() });
-  } catch (err) {
-    throw new Error(isTimeout(err) ? 'Timed out listing calls from Granola.' : (err?.message || String(err)));
-  }
+  const r = await request(
+    `/api/granola-calls?${params.toString()}`,
+    'Timed out listing calls from Granola.',
+  );
   const data = await readJson(r);
   if (!r.ok) throw new Error(data.error || `Granola list failed (HTTP ${r.status})`);
   return { calls: data.calls || [], cursor: data.cursor || '', hasMore: !!data.hasMore };
@@ -123,12 +197,10 @@ export async function fetchGranolaPage({ cursor = '', updatedAfter = '', created
 
 /** One note in full, including its transcript. */
 export async function fetchGranolaNote(noteId) {
-  let r;
-  try {
-    r = await apiFetch(`/api/granola-calls?noteId=${encodeURIComponent(noteId)}`, { signal: timeoutSignal() });
-  } catch (err) {
-    throw new Error(isTimeout(err) ? 'Timed out fetching this call from Granola.' : (err?.message || String(err)));
-  }
+  const r = await request(
+    `/api/granola-calls?noteId=${encodeURIComponent(noteId)}`,
+    'Timed out fetching this call from Granola.',
+  );
   const data = await readJson(r);
   if (!r.ok) throw new Error(data.error || `Granola note fetch failed (HTTP ${r.status})`);
   return data.call || null;
