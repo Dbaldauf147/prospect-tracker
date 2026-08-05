@@ -59,10 +59,15 @@ export async function loadCallRecords(userId) {
  * history need to tell those apart: one keeps the last known copy and
  * says the read failed, the other really is empty.
  *
- * Returns { records, ok, error }.
+ * Returns { records, ok, error, code }.
+ *
+ * `code` is Firestore's own error code ('permission-denied',
+ * 'unavailable', …), carried separately from the message because it is
+ * what decides whether a retry can work — see utils/callReadError.js. The
+ * message is prose and can be reworded; the code is a contract.
  */
 export async function loadCallRecordsResult(userId) {
-  if (!userId) return { records: {}, ok: false, error: 'Not signed in.' };
+  if (!userId) return { records: {}, ok: false, error: 'Not signed in.', code: 'unauthenticated' };
   try {
     const snap = await getDocs(itemsRef(userId));
     const records = {};
@@ -70,10 +75,10 @@ export async function loadCallRecordsResult(userId) {
       const data = d.data();
       if (data?.id) records[data.id] = data;
     });
-    return { records, ok: true, error: '' };
+    return { records, ok: true, error: '', code: '' };
   } catch (err) {
     console.warn('callRecordings: load failed', err);
-    return { records: {}, ok: false, error: err?.message || String(err) };
+    return { records: {}, ok: false, error: err?.message || String(err), code: err?.code || '' };
   }
 }
 
