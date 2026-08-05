@@ -25,6 +25,28 @@ const monthYr = (iso) => {
   const [y, m] = String(iso).split('-');
   return `${MONTHS[Number(m) - 1] || '?'} ${y}`;
 };
+// Deadlines are calendar dates, so they're compared in UTC against a UTC
+// midnight "today" — a local-midnight clock would put a site in a deadline's
+// last day or its first depending on the reader's timezone.
+const DAY = 86400000;
+const isoTime = (iso) => {
+  const [y, m, d] = String(iso).split('-').map(Number);
+  return Date.UTC(y, (m || 1) - 1, d || 1);
+};
+const utcToday = () => {
+  const n = new Date();
+  return Date.UTC(n.getFullYear(), n.getMonth(), n.getDate());
+};
+// How far off a deadline is, in the terms someone plans in — days while it's
+// close enough to act on, then months, then years.
+const relDue = (days) => {
+  if (days === 0) return 'due today';
+  const n = Math.abs(days);
+  const span = n < 45 ? `${n} day${n === 1 ? '' : 's'}`
+    : n < 730 ? `${Math.round(n / 30.44)} months`
+    : `${(n / 365.25).toFixed(1).replace(/\.0$/, '')} years`;
+  return days < 0 ? `${span} ago` : `in ${span}`;
+};
 
 // Rides on the face of the report — this is a preliminary screen off the
 // city + square footage supplied, not a compliance determination, and the
@@ -80,29 +102,97 @@ function HBars({ items, color, fmt = String, wide = false, empty = 'No eligible 
   );
 }
 
-// Sites falling due per deadline date, as a column chart. Vector rather than
-// CSS boxes so it stays sharp at print resolution, and a column reads far
-// better than a near-flat line when the per-date counts are small.
-function DeadlineColumns({ points, color, width = 460, height = 168 }) {
-  if (!points.length) return <div className={styles.miniEmpty}>No dated deadlines</div>;
-  const padL = 14, padR = 14, padT = 22, padB = 34;
-  const iw = width - padL - padR, ih = height - padT - padB;
-  const slot = iw / points.length;
-  const bw = Math.min(46, slot * 0.6);
-  const max = Math.max(1, ...points.map(p => p.value));
+// The portfolio's dated deadlines on one time-proportional axis, each a
+// stacked column of the BBS / Energy Audits / BPS obligations falling due on
+// it, with today marked.
+//
+// This replaced three separate per-category column charts sitting beside a
+// plain table. Those charts spaced deadlines evenly, so a date two months out
+// and one four years out looked equally far away, and splitting the
+// categories meant the three views couldn't be read against each other —
+// with a quiet "No dated deadlines" panel whenever a category had none. One
+// axis says both things the section is for: when the work lands, and what
+// kind of work it is.
+function DeadlineTimeline({ points, todayTime }) {
+  if (!points.length) return <div className={styles.miniEmpty}>No dated deadlines across the screened portfolio.</div>;
+  const W = 920, H = 216;
+  const padL = 30, padR = 30, padT = 30, padB = 48;
+  const iw = W - padL - padR, ih = H - padT - padB;
   const baseY = padT + ih;
+
+  // Today is inside the domain, not just drawn on it — the gap between now and
+  // the first deadline is the most useful distance on the chart.
+  const times = points.map(p => isoTime(p.date));
+  let lo = Math.min(todayTime, ...times);
+  let hi = Math.max(todayTime, ...times);
+  if (hi === lo) { lo -= 30 * DAY; hi += 30 * DAY; }
+  const x = (t) => padL + ((t - lo) / (hi - lo)) * iw;
+
+  // Deadlines cluster — a jurisdiction's dates land within weeks of each
+  // other, then nothing for two years. Placed on a strict time scale those
+  // columns overlap into an unreadable smear, so they're nudged apart to a
+  // minimum spacing, in order, and clamped back inside the axis. Spacing is
+  // true to the calendar wherever there's room for it and merely ordered
+  // where there isn't; the milestone list below carries the exact dates.
+  const bw = 20, minSep = 24;
+  const xs = times.map(x);
+  for (let i = 1; i < xs.length; i++) xs[i] = Math.max(xs[i], xs[i - 1] + minSep);
+  const overshoot = xs[xs.length - 1] - (W - padR - bw / 2);
+  if (overshoot > 0) {
+    for (let i = xs.length - 1; i >= 0; i--) {
+      xs[i] = Math.min(xs[i], (i === xs.length - 1 ? W - padR - bw / 2 : xs[i + 1] - minSep));
+      xs[i] = Math.max(xs[i], padL + bw / 2);
+    }
+  }
+  const max = Math.max(1, ...points.map(p => p.total));
+
+  // Year boundaries, so the axis reads as time rather than as a row of ticks.
+  const years = [];
+  for (let y = new Date(lo).getUTCFullYear(); y <= new Date(hi).getUTCFullYear(); y++) {
+    const t = Date.UTC(y, 0, 1);
+    if (t > lo && t < hi) years.push({ y, px: x(t) });
+  }
+
+  const todayX = x(todayTime);
+  // Date labels are dropped rather than allowed to collide.
+  let lastLabelX = -Infinity;
   return (
-    <svg width="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" role="img">
-      <line x1={padL} y1={baseY} x2={width - padR} y2={baseY} stroke="#E2E8F0" strokeWidth="1.5" />
+    <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" role="img"
+      aria-label="Compliance deadlines over time, by mandate">
+      {years.map(({ y, px }) => (
+        <g key={y}>
+          <line x1={px} y1={padT - 8} x2={px} y2={baseY} stroke="#E2E8F0" strokeWidth="1" strokeDasharray="3 3" />
+          <text x={px + 4} y={padT - 12} fontSize="10" fontWeight="700" fill="#94A3B8">{y}</text>
+        </g>
+      ))}
+      <line x1={padL} y1={baseY} x2={W - padR} y2={baseY} stroke="#CBD5E1" strokeWidth="1.5" />
+      {/* Today */}
+      <line x1={todayX} y1={padT - 4} x2={todayX} y2={baseY + 6} stroke="#0F172A" strokeWidth="1.5" strokeDasharray="4 3" opacity="0.25" />
+      <circle cx={todayX} cy={baseY} r="3.5" fill="#0F172A" opacity="0.6" />
+      <text x={todayX} y={baseY + 32} textAnchor="middle" fontSize="9.5" fontWeight="800" fill="#0F172A" opacity="0.65">TODAY</text>
       {points.map((p, i) => {
-        const cx = padL + slot * (i + 0.5);
-        const bh = Math.max(3, (p.value / max) * ih);
-        const y = baseY - bh;
+        const cx = xs[i];
+        const full = (p.total / max) * ih;
+        let y = baseY;
+        const segs = CATEGORIES.filter(c => p[c] > 0).map(c => {
+          const h = Math.max(3, (p[c] / p.total) * full);
+          y -= h;
+          return { c, h, y };
+        });
+        const topY = segs.length ? segs[segs.length - 1].y : baseY;
+        const showLabel = cx - lastLabelX >= 52;
+        if (showLabel) lastLabelX = cx;
         return (
           <g key={p.date}>
-            <rect x={cx - bw / 2} y={y} width={bw} height={bh} rx="4" fill={color} />
-            <text x={cx} y={y - 7} textAnchor="middle" fontSize="12" fontWeight="800" fill="#0F172A">{p.value}</text>
-            <text x={cx} y={baseY + 15} textAnchor="middle" fontSize="10" fill="#475569">{monthYr(p.date)}</text>
+            {segs.map(({ c, h, y: sy }) => (
+              <rect key={c} x={cx - bw / 2} y={sy} width={bw} height={h} fill={CATEGORY_COLOR[c]}>
+                <title>{`${mdY(p.date)} — ${CATEGORY_LABEL[c]}: ${p[c]} site${p[c] === 1 ? '' : 's'}`}</title>
+              </rect>
+            ))}
+            <text x={cx} y={topY - 7} textAnchor="middle" fontSize="11.5" fontWeight="800" fill="#0F172A">{p.total}</text>
+            {showLabel && (
+              <text x={cx} y={baseY + 16} textAnchor="middle" fontSize="9.5" fill="#475569">{monthYr(p.date)}</text>
+            )}
           </g>
         );
       })}
@@ -597,10 +687,32 @@ export function BuildingComplianceScreening({
       .map(([date, v]) => ({ date, ...v, total: v.bbs + v.audits + v.bps }))
       .sort((a, b) => a.date.localeCompare(b.date));
   }, [results]);
-  const deadlinePoints = useMemo(
-    () => Object.fromEntries(CATEGORIES.map(c => [c, deadlinesByDate(results, c).map(d => ({ date: d.date, value: d.count }))])),
-    [results],
-  );
+  // Fixed for the life of the mount, so the countdowns and the "today" marker
+  // can't shift under a re-render mid-session.
+  const todayTime = useMemo(() => utcToday(), []);
+  // The headline read on the roadmap: what's next, how much is still ahead,
+  // and which single date carries the most work.
+  const roadmapSummary = useMemo(() => {
+    const dated = roadmap.map(r => ({ ...r, time: isoTime(r.date), days: Math.round((isoTime(r.date) - todayTime) / DAY) }));
+    const ahead = dated.filter(r => r.days >= 0);
+    const busiest = dated.reduce((a, b) => (b.total > (a?.total ?? -1) ? b : a), null);
+    // Obligations the ordinance is silent on. They're real applicability with
+    // nothing to plan against, so they can't sit on the timeline — but the
+    // timeline shouldn't quietly drop them either.
+    let undated = 0;
+    for (const r of results) {
+      for (const c of CATEGORIES) if (r[c]?.eligible === true && !r[c].deadline) undated++;
+    }
+    return {
+      rows: dated,
+      next: ahead[0] || null,
+      passed: dated.length - ahead.length,
+      aheadCount: ahead.length,
+      sitesAhead: ahead.reduce((s, r) => s + r.total, 0),
+      busiest,
+      undated,
+    };
+  }, [roadmap, results, todayTime]);
   // Per-jurisdiction fine exposure merged across the three categories, worst
   // first. The dashboard's bars say what each mandate is worth on its own;
   // this says what a city is worth in total, which is the figure a portfolio
@@ -977,45 +1089,107 @@ export function BuildingComplianceScreening({
                 with the sites each mandate brings due on it, beside the same
                 counts as a per-category column chart. */}
             <div className={styles.sectionTitle}>Compliance Roadmap Upcoming Deadlines</div>
-            <div className={styles.roadmapGrid}>
-              <div className={styles.panelWrap}>
-                {roadmap.length ? (
-                  <table className={styles.rmTable}>
-                    <thead>
-                      <tr><th>Compliance deadline</th><th>BBS</th><th>Energy Audits</th><th>BPS</th><th>Total sites</th></tr>
-                    </thead>
-                    <tbody>
-                      {roadmap.map(r => (
-                        <tr key={r.date}>
-                          <td className={styles.rmDate}>{mdY(r.date)}</td>
-                          {CATEGORIES.map(c => (
-                            <td key={c}>
-                              {r[c] ? (
-                                <span
-                                  className={styles.rmChip}
-                                  style={{ background: `${CATEGORY_COLOR[c]}1A`, color: CATEGORY_COLOR[c], borderColor: `${CATEGORY_COLOR[c]}66` }}
-                                >{r[c]}</span>
-                              ) : null}
-                            </td>
-                          ))}
-                          <td className={styles.rmTotal}>{r.total}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+            {/* What's next, how much is left, and where the heaviest date is —
+                the three questions asked of a roadmap before any single row
+                of it matters. */}
+            <div className={styles.rmSummary}>
+              <div className={`${styles.rmSumTile} ${styles.rmSumNext}`}>
+                <div className={styles.rmSumLbl}>Next deadline</div>
+                {roadmapSummary.next ? (
+                  <>
+                    <div className={styles.rmSumVal}>{mdY(roadmapSummary.next.date)}</div>
+                    <div className={styles.rmSumSub}>
+                      {relDue(roadmapSummary.next.days)} · {roadmapSummary.next.total} site{roadmapSummary.next.total === 1 ? '' : 's'} due
+                    </div>
+                  </>
                 ) : (
-                  <div className={styles.miniEmpty}>No dated deadlines across the screened portfolio.</div>
+                  <>
+                    <div className={styles.rmSumVal}>—</div>
+                    <div className={styles.rmSumSub}>{roadmap.length ? 'every dated deadline has passed' : 'no dated deadlines'}</div>
+                  </>
                 )}
               </div>
-              <div className={styles.tlGrid}>
-                {CATEGORIES.map(c => (
-                  <div key={c} className={styles.tlCard}>
-                    <div className={styles.tlTitle} style={{ color: CATEGORY_COLOR[c] }}>{CATEGORY_LABEL[c]} sites per deadline</div>
-                    <DeadlineColumns points={deadlinePoints[c]} color={CATEGORY_COLOR[c]} />
-                  </div>
-                ))}
+              <div className={styles.rmSumTile}>
+                <div className={styles.rmSumLbl}>Deadlines ahead</div>
+                <div className={styles.rmSumVal}>{roadmapSummary.aheadCount}</div>
+                <div className={styles.rmSumSub}>
+                  {roadmapSummary.passed ? `${roadmapSummary.passed} already passed` : `across ${roadmap.length} dated date${roadmap.length === 1 ? '' : 's'}`}
+                </div>
+              </div>
+              <div className={styles.rmSumTile}>
+                <div className={styles.rmSumLbl}>Site obligations ahead</div>
+                <div className={styles.rmSumVal}>{roadmapSummary.sitesAhead}</div>
+                <div className={styles.rmSumSub}>site + mandate pairs still to file</div>
+              </div>
+              <div className={styles.rmSumTile}>
+                <div className={styles.rmSumLbl}>Busiest deadline</div>
+                <div className={styles.rmSumVal}>{roadmapSummary.busiest ? mdY(roadmapSummary.busiest.date) : '—'}</div>
+                <div className={styles.rmSumSub}>
+                  {roadmapSummary.busiest ? `${roadmapSummary.busiest.total} sites land on one date` : 'nothing scheduled'}
+                </div>
               </div>
             </div>
+
+            <div className={styles.panelWrap}>
+              <div className={styles.tlHead}>
+                <span className={styles.tlHeadTitle}>Sites falling due over time</span>
+                <span className={styles.tlLegend}>
+                  {CATEGORIES.map(c => (
+                    <span key={c} className={styles.tlKey}>
+                      <span className={styles.tlSwatch} style={{ background: CATEGORY_COLOR[c] }} />
+                      {CATEGORY_LABEL[c]}
+                    </span>
+                  ))}
+                </span>
+              </div>
+              <div className={styles.tlChart}>
+                <DeadlineTimeline points={roadmap} todayTime={todayTime} />
+              </div>
+              {roadmap.length > 0 && (
+                <ol className={styles.mileList}>
+                  {roadmapSummary.rows.map(r => (
+                    <li
+                      key={r.date}
+                      className={`${styles.mileRow}${r.days < 0 ? ` ${styles.milePast}` : ''}${r === roadmapSummary.next ? ` ${styles.mileNext}` : ''}`}
+                    >
+                      <span className={styles.mileDot} />
+                      <span className={styles.mileDate}>{mdY(r.date)}</span>
+                      <span className={styles.mileWhen}>{relDue(r.days)}</span>
+                      {/* One bar per date, split by mandate and scaled against
+                          the heaviest date — the weight of a deadline reads
+                          before any of the numbers do. */}
+                      <span className={styles.mileBar}>
+                        {CATEGORIES.map(c => (r[c] ? (
+                          <span
+                            key={c}
+                            className={styles.mileSeg}
+                            style={{ width: `${(r[c] / roadmapSummary.busiest.total) * 100}%`, background: CATEGORY_COLOR[c] }}
+                            title={`${CATEGORY_LABEL[c]}: ${r[c]} site${r[c] === 1 ? '' : 's'}`}
+                          />
+                        ) : null))}
+                      </span>
+                      <span className={styles.mileChips}>
+                        {CATEGORIES.map(c => (r[c] ? (
+                          <span
+                            key={c}
+                            className={styles.rmChip}
+                            style={{ background: `${CATEGORY_COLOR[c]}1A`, color: CATEGORY_COLOR[c], borderColor: `${CATEGORY_COLOR[c]}66` }}
+                          >{CATEGORY_LABEL[c]} {r[c]}</span>
+                        ) : null))}
+                      </span>
+                      <span className={styles.mileTotal}>{r.total} <span className={styles.mileTotalUnit}>sites</span></span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+            {roadmapSummary.undated > 0 && (
+              <div className={styles.rmFootnote}>
+                <strong>{roadmapSummary.undated}</strong> applicable mandate{roadmapSummary.undated === 1 ? '' : 's'} publish
+                {roadmapSummary.undated === 1 ? 'es' : ''} no compliance deadline, so {roadmapSummary.undated === 1 ? 'it isn’t' : 'they aren’t'} on
+                the timeline — there is nothing due and nothing to plan against.
+              </div>
+            )}
 
             {/* Summary dashboard — the same figures the exported report charts. */}
             <div className={styles.sectionTitle}>Total Eligible Sites by Requirement</div>
