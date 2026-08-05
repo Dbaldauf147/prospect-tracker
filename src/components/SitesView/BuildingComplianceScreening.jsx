@@ -13,7 +13,7 @@ import {
   deadlinesWithRecurrence, utilityFeedEligibility, utilityFeedSites,
 } from '../../utils/complianceMandates';
 import { exportComplianceReportXlsx } from '../../utils/complianceReportXlsx';
-import { loadWholeBuildingLookup } from '../../utils/wholeBuildingLookup';
+import { loadWholeBuildingLookup, withWholeBuildingUtilities } from '../../utils/wholeBuildingLookup';
 import { schneiderLogoSvg } from '../../utils/schneiderLogo';
 import { OwnershipScopeBar } from './OwnershipScopeBar.jsx';
 import styles from './BuildingComplianceScreening.module.css';
@@ -983,12 +983,37 @@ export function BuildingComplianceScreening({
       undated,
     };
   }, [roadmap, results, todayTime]);
+  // The Whole Building Data reference, loaded for the WBUDC section below —
+  // which utility serves a zip is the workbook's answer to give, not the site
+  // list's. Dynamic-imported (it's ~70k rows), so the section renders off it
+  // once it arrives rather than blocking the page on it.
+  const [wholeBuilding, setWholeBuilding] = useState(null);
+  useEffect(() => {
+    let live = true;
+    loadWholeBuildingLookup().then((l) => { if (live) setWholeBuilding(l); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  // The screened sites with their utilities re-sourced from that reference.
+  // Only the WBUDC section reads these — the site-by-site table below still
+  // shows the utilities the portfolio was uploaded with.
+  const feedResults = useMemo(() => withWholeBuildingUtilities(results, wholeBuilding), [results, wholeBuilding]);
+
   // Whole Building Utility Data Collection reach: of the sites carrying a BBS
   // or BPS obligation, which utilities serve them.
   const utilityFeeds = useMemo(() => ({
-    electric: utilityFeedEligibility(results, 'electric'),
-    gas: utilityFeedEligibility(results, 'gas'),
-  }), [results]);
+    electric: utilityFeedEligibility(feedResults, 'electric'),
+    gas: utilityFeedEligibility(feedResults, 'gas'),
+  }), [feedResults]);
+  // How much of each card's total the reference actually named, so a figure
+  // resting partly on the uploaded utility names says so instead of reading
+  // as the workbook's whole answer.
+  const feedSourced = useMemo(() => Object.fromEntries(FEED_CARDS.map(({ key }) => {
+    const sites = utilityFeedSites(feedResults, key);
+    return [key, {
+      reference: sites.filter(s => s.wbSource?.[key] === 'reference').length,
+      record: sites.filter(s => s.wbSource?.[key] !== 'reference').length,
+    }];
+  })), [feedResults]);
   const jurisdictionCount = useMemo(() => new Set(results.filter(r => r.matched).map(r => r.govId)).size, [results]);
 
   const filtered = useMemo(() => {
@@ -1225,8 +1250,8 @@ export function BuildingComplianceScreening({
   // The sites behind a utility-feed figure — one utility's bar, or the card's
   // whole total when no utility is set.
   const feedDrillRows = useMemo(
-    () => (feedDrill ? utilityFeedSites(results, feedDrill.commodity, { state: feedDrill.state, utility: feedDrill.utility }) : []),
-    [results, feedDrill],
+    () => (feedDrill ? utilityFeedSites(feedResults, feedDrill.commodity, { state: feedDrill.state, utility: feedDrill.utility }) : []),
+    [feedResults, feedDrill],
   );
 
   // A utility-feed site as it reads in an export: the mapping on screen, so
@@ -1234,9 +1259,14 @@ export function BuildingComplianceScreening({
   // this sheet is the utility mapping, and the screening export is where the
   // eligibility read belongs.
   //
-  // `wholeBuildingFor` adds the reference's terms for the utility this sheet
-  // is about: what it meters, how it releases data, and whether that release
-  // covers multifamily.
+  // The three utility columns are the reference's own answer for the site's
+  // zip, same as the cards — `Utility Source` says where each row's utility
+  // came from, since a zip the workbook doesn't list keeps the utility the
+  // site was uploaded with.
+  //
+  // `terms` adds the reference's terms for the utility this sheet is about:
+  // what it meters, how it releases data, and whether that release covers
+  // multifamily.
   //
   // Which utility that is has to be pinned down, because there is one set of
   // these columns and a site's utilities disagree — at 80525 the city
@@ -1245,7 +1275,7 @@ export function BuildingComplianceScreening({
   // the electric sheet and the gas utility on the gas sheet, which is the only
   // reading where a row describes the feed it was listed for. Blank when the
   // reference can't place the utility, rather than answering about another one.
-  function feedSiteRow(r, wholeBuildingFor) {
+  function feedSiteRow(r, lookup, commodity) {
     const row = {
       Site: r.siteName || '',
       City: r.city || '',
@@ -1254,8 +1284,9 @@ export function BuildingComplianceScreening({
       'Electric Utility': r.electricUtility || '',
       'Natural Gas Utility': r.gasUtility || '',
       'Water Utility': r.waterUtility || '',
+      'Utility Source': r.wbSource?.[commodity] === 'reference' ? 'Whole Building Data' : 'Site record',
     };
-    return wholeBuildingFor ? { ...row, ...wholeBuildingFor(r.zip, r.feedUtility || r.electricUtility) } : row;
+    return lookup ? { ...row, ...lookup.terms(r.zip, r.feedUtility || r.electricUtility) } : row;
   }
   // The card's bars as rows — the counts on screen, so the workbook opens on
   // the same summary the reader clicked from.
@@ -1273,12 +1304,12 @@ export function BuildingComplianceScreening({
   // Both utility-feed cards in one workbook: the per-utility counts and the
   // sites behind them, for each commodity.
   async function exportUtilityFeeds() {
-    const wholeBuildingFor = await loadWholeBuildingLookup();
+    const lookup = wholeBuilding || await loadWholeBuildingLookup();
     const sheets = [];
     for (const { key, feed, label } of FEED_CARDS.map(f => ({ ...f, feed: utilityFeeds[f.key] }))) {
       if (!feed.total) continue;
       sheets.push([`${label} Summary`, feedSummaryRows(feed)]);
-      sheets.push([`${label} Sites`, utilityFeedSites(results, key).map(r => feedSiteRow(r, wholeBuildingFor))]);
+      sheets.push([`${label} Sites`, utilityFeedSites(feedResults, key).map(r => feedSiteRow(r, lookup, key))]);
     }
     if (!sheets.length) { alert('No utility feed data to export.'); return; }
     writeSheets(sheets, 'Utility-Feed-Eligibility.xlsx');
@@ -1290,8 +1321,8 @@ export function BuildingComplianceScreening({
     const name = feedDrill.utility
       ? `${slug(feedDrill.state)}-${slug(feedDrill.utility)}-${card.abbr}-Sites.xlsx`
       : `${card.abbr}-Utility-Feed-Sites.xlsx`;
-    const wholeBuildingFor = await loadWholeBuildingLookup();
-    writeSheets([[`${card.label} Sites`, feedDrillRows.map(r => feedSiteRow(r, wholeBuildingFor))]], name.replace(/^-+/, ''));
+    const lookup = wholeBuilding || await loadWholeBuildingLookup();
+    writeSheets([[`${card.label} Sites`, feedDrillRows.map(r => feedSiteRow(r, lookup, feedDrill.commodity))]], name.replace(/^-+/, ''));
   }
 
   // Owned / All-sites control. Only rendered when the parent owns the
@@ -1606,11 +1637,13 @@ export function BuildingComplianceScreening({
             <div className={styles.wbudcNote}>
               The Whole Building Utility Data Collection (WBUDC) service supports BPS and BBS offerings via
               whole-building data collection; applicability depends on whether the site&apos;s utilities provide
-              this option.
+              this option. Each site&apos;s utility is the one the Whole Building Data file names for its zip
+              code{wholeBuilding ? '' : ' (loading…)'}.
             </div>
             <div className={styles.feedGrid}>
               {FEED_CARDS.map(({ key, label, color }) => {
                 const feed = utilityFeeds[key];
+                const sourced = feedSourced[key];
                 // The bar label carries the state, so the drill-down has to map
                 // it back to the (state, utility) pair it was built from.
                 const byLabel = new Map(feed.rows.map(r => [`${r.state ? `${r.state} · ` : ''}${r.utility}`, r]));
@@ -1640,6 +1673,16 @@ export function BuildingComplianceScreening({
                         if (row) setFeedDrill({ commodity: key, state: row.state, utility: row.utility });
                       }}
                     />
+                    {/* The reference doesn't list every zip. Where it can't
+                        name the utility the site keeps the one it was
+                        uploaded with — counted the same, but said out loud
+                        rather than passed off as the workbook's answer. */}
+                    {sourced.record > 0 && (
+                      <div className={styles.feedSource}>
+                        {sourced.reference} of {feed.total} named by the Whole Building Data file ·{' '}
+                        {sourced.record} from the site record (zip not listed)
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1688,12 +1731,16 @@ export function BuildingComplianceScreening({
                       <td>{r.matched ? r.government : <span className={styles.dash}>no match</span>}</td>
                       <td>{r.govId ? <span className={styles.govIdCell}>{r.govId}</span> : <span className={styles.dash}>-</span>}</td>
                       <td>{r.sqft != null ? r.sqft.toLocaleString() : <span className={styles.dash}>-</span>}</td>
-                      {/* Same two columns, and the same source fields, as the
-                          utility-feed drill-down modal. Shown for every site,
-                          not just the ones the WBUDC cards count: those cards
-                          total the sites carrying a BBS or BPS mandate AND a
-                          known utility, which is a narrower set than this
-                          table lists. */}
+                      {/* The utilities the portfolio was uploaded with, as
+                          they were uploaded. The WBUDC cards above re-source
+                          the same two columns from the Whole Building Data
+                          file, so the names there are that workbook's — this
+                          table is what the site list said, which is what
+                          someone checking their own upload came here for.
+                          Shown for every site, not just the ones those cards
+                          count: they total the sites carrying a BBS or BPS
+                          mandate AND a known utility, a narrower set than
+                          this table lists. */}
                       <td>{r.electricUtility || <span className={styles.dash}>-</span>}</td>
                       <td>{r.gasUtility || <span className={styles.dash}>-</span>}</td>
                       <td><CatCell res={r.bbs} /></td>

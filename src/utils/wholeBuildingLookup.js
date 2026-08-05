@@ -1,18 +1,22 @@
-// Site → its utility's whole-building data terms.
+// Site → the utility serving it, and that utility's whole-building data terms,
+// both out of the Whole Building Data By Utility table (zip code → serving
+// utility).
 //
-// The utility-feed export names the utility serving each site; this resolves
-// that name against the Whole Building Data By Utility table (zip code →
-// serving utility) so the export can also say whether that utility hands over
-// aggregated whole-building data, in what form, and whether multifamily is
-// included.
+// Two answers, for the two things the WBUDC section asks. Which utility serves
+// a site is the reference's answer to give — it is the file that knows a zip's
+// utilities and which of them hand over aggregated whole-building data, where
+// the site list only carries whoever bills the building. And once a utility is
+// named, the same table says whether it releases that data, in what form, and
+// whether the release covers multifamily.
 //
 // The two sides don't spell utilities the same way. The site list carries the
-// billing name ("City of Fort Collins", "Xcel Energy of CO (PSC of Colorado)",
-// "CORE Electric Cooperative (fka Intermountain Rural Electric Association)");
-// the reference carries the utility's own ("Fort Collins Utilities", "Xcel
-// Energy", "CORE Electric Cooperative"). So matching is on a normalized key
-// that drops the parenthetical, the "City of" prefix and the industry words
-// both sides pad the name with, leaving what actually identifies the utility.
+// billing name ("City of Fort Collins", "Pepco of DC", "Exelon (Commonwealth
+// Edison)"); the reference carries the utility's own ("Fort Collins Utilities",
+// "Pepco", "Commonwealth Edison"). So matching is on a normalized key that
+// drops the "City of" prefix, the trailing state tag and the industry words
+// both sides pad the name with, leaving what identifies the utility — and a
+// parenthetical is tried as a name in its own right, since it is regularly the
+// one the reference files the utility under.
 //
 // Matching is scoped to the site's zip code, which keeps the normalization
 // honest: a key only has to separate the two or three utilities serving one
@@ -24,6 +28,21 @@ export const WHOLE_BUILDING_COLUMNS = [
   'Data Type', 'Aggregate Whole-Building Data?', 'Multifamily Included?',
 ];
 
+// The commodities the WBUDC section resolves a utility for: the two cards, and
+// water because the sites sheet carries that column alongside them. Each maps
+// to the reference column that says whether a utility meters it, and to the
+// field the screened site carries it in.
+const COMMODITY_COLUMN = { electric: 'Electric?', gas: 'Gas?', water: 'Water?' };
+export const COMMODITY_FIELD = { electric: 'electricUtility', gas: 'gasUtility', water: 'waterUtility' };
+
+// "Yes" / "No" / "Not Available" as the reference writes them. "Not Available"
+// is unknown, not "No" — most of the table is unknown, and reading it as a
+// denial would rule out utilities the workbook simply says nothing about.
+const meters = (v) => {
+  const s = String(v || '').trim().toLowerCase();
+  return s === 'yes' ? 'yes' : s === 'no' ? 'no' : '';
+};
+
 // Words that describe what a utility does rather than which one it is. Dropped
 // from both sides before comparing — "Fort Collins Utilities" and "City of
 // Fort Collins" are the same company, and only "fort collins" says so.
@@ -33,8 +52,26 @@ const NOISE = new Set([
   'company', 'co', 'inc', 'llc', 'lp', 'corp', 'corporation',
   'cooperative', 'coop', 'association', 'assn', 'district', 'department',
   'dept', 'municipal', 'municipality', 'service', 'services', 'authority',
-  'board', 'commission', 'system', 'systems', 'public', 'the', 'of', 'and',
+  'board', 'commission', 'comm', 'system', 'systems', 'public', 'the', 'of', 'and',
 ]);
+
+// States as the site list tags them on: postal code or full name, keyed the
+// same way a utility name is so a tag can be spotted in the token list.
+// "Pepco of DC", "National Grid of MA", "Peoples Gas IL" are the site list
+// saying which service territory, not part of what the utility is called —
+// the reference just says "Pepco", "National Grid", "Peoples Gas". Only a
+// trailing tag is dropped: "Georgia Power" and "Florida City Gas" are named
+// after their state and keep it.
+const STATE_TAGS = new Set((
+  'al alabama ak alaska az arizona ar arkansas ca california co colorado ct connecticut ' +
+  'de delaware dc districtcolumbia fl florida ga georgia hi hawaii id idaho il illinois ' +
+  'in indiana ia iowa ks kansas ky kentucky la louisiana me maine md maryland ma massachusetts ' +
+  'mi michigan mn minnesota ms mississippi mo missouri mt montana ne nebraska nv nevada ' +
+  'newhampshire nh nj newjersey nm newmexico ny newyork nc northcarolina nd northdakota ' +
+  'oh ohio ok oklahoma or oregon pa pennsylvania ri rhodeisland sc southcarolina sd southdakota ' +
+  'tn tennessee tx texas ut utah vt vermont va virginia wa washington wv westvirginia ' +
+  'wi wisconsin wy wyoming'
+).split(' '));
 
 // A utility name reduced to what identifies it. Empty when the name was
 // nothing but noise words, which never matches — better than every such name
@@ -44,18 +81,54 @@ export function utilityKey(name) {
     .toLowerCase()
     // "(PSC of Colorado)", "(fka Intermountain Rural Electric Association)" —
     // an alias or regulator tag, never part of what distinguishes the utility.
+    // utilityKeys() below reads them separately, since some are the name the
+    // reference files the utility under.
     .replace(/\([^)]*\)/g, ' ')
     // "City of Fort Collins" -> "Fort Collins".
     .replace(/^\s*(city|town|village|county|borough)\s+of\s+/, ' ')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
   if (!bare) return '';
-  return bare.split(' ').filter(w => w && !NOISE.has(w)).join('');
+  const words = bare.split(' ').filter(w => w && !NOISE.has(w));
+  // A trailing state tag, one or two words — "MA", "New Jersey". Never the
+  // last thing left, or "Georgia Power" would key as nothing.
+  for (const n of [2, 1]) {
+    if (words.length > n && STATE_TAGS.has(words.slice(-n).join(''))) { words.length -= n; break; }
+  }
+  return words.join('');
 }
 
-// Load the reference and return a resolver. The table is ~70k rows, so it is
-// dynamic-imported here rather than bundled into whatever page calls this —
-// only an export that actually needs the columns pays for it.
+// Every name one utility answers to, primary first: the name itself, and each
+// parenthetical, which on this side of the join is regularly the name the
+// reference actually files it under — "Exelon (Commonwealth Edison)" is the
+// reference's "Commonwealth Edison", "TECO (Peoples Gas)" its "Peoples Gas".
+export function utilityKeys(name) {
+  const out = [];
+  const push = (v) => { const k = utilityKey(v); if (k && !out.includes(k)) out.push(k); };
+  push(name);
+  for (const [, inner] of String(name || '').matchAll(/\(([^)]*)\)/g)) {
+    // "fka Intermountain Rural Electric Association" — the alias, not the
+    // word introducing it.
+    push(inner.replace(/^\s*(fka|aka|dba|formerly|now|nka)\b/i, ''));
+  }
+  return out;
+}
+
+// Whether two utility names are the same utility. Scoped to one zip by every
+// caller, which is what keeps the normalization honest — a key only has to
+// separate the two or three utilities serving one zip.
+export function sameUtility(a, b) {
+  const keys = utilityKeys(a);
+  return keys.length > 0 && utilityKeys(b).some(k => keys.includes(k));
+}
+
+// Load the reference and return its two resolvers:
+//
+//   terms(zip, utilityName)              — the whole-building columns for a utility.
+//   utility(zip, commodity, recorded)    — which utility the reference names.
+//
+// The table is ~70k rows, so it is dynamic-imported here rather than bundled
+// into whatever page calls this — only a caller that actually needs it pays.
 export async function loadWholeBuildingLookup() {
   const { GROUPS, UTILITIES, UTIL_COLUMNS, STATES } = await import('../data/wholeBuildingUtilities.js');
   const colIdx = new Map(UTIL_COLUMNS.map((c, i) => [c, i]));
@@ -80,6 +153,9 @@ export async function loadWholeBuildingLookup() {
   };
   const blanks = () => Object.fromEntries(WHOLE_BUILDING_COLUMNS.map(c => [c, '']));
 
+  const rowsAt = (zip) => byZip.get(String(zip || '').trim().padStart(5, '0')) || [];
+  const nameOf = (row) => row.util[colIdx.get('Utility Name')] || '';
+
   // The whole-building terms for `utilityName` at `zip`.
   //
   // Deliberately narrow about what it will answer with. A named utility is
@@ -89,17 +165,82 @@ export async function loadWholeBuildingLookup() {
   // utilities in one zip disagree (at 80525 the city's rows say multifamily is
   // included and Xcel's say it isn't), so picking one would not be a near miss,
   // it would be the wrong answer stated as fact.
-  return function wholeBuildingFor(zip, utilityName) {
-    const z = String(zip || '').trim().padStart(5, '0');
-    const rows = byZip.get(z);
-    if (!rows || !rows.length) return blanks();
+  function terms(zip, utilityName) {
+    const rows = rowsAt(zip);
+    if (!rows.length) return blanks();
 
-    const key = utilityKey(utilityName);
-    if (key) {
-      const hits = rows.filter(r => utilityKey(r.util[colIdx.get('Utility Name')]) === key);
+    if (utilityKey(utilityName)) {
+      const hits = rows.filter(r => sameUtility(utilityName, nameOf(r)));
       if (hits.length) return values(hits.find(r => r.predominant) || hits[0]);
     }
     if (rows.length === 1) return values(rows[0]);
     return blanks();
-  };
+  }
+
+  // The utility serving `zip` for a commodity ('electric' | 'gas' | 'water'),
+  // as the reference names it.
+  //
+  // `recordedName` is the utility already on the site, and it is a tie-breaker
+  // rather than an override: the reference answers per zip, and a zip is often
+  // served by several utilities, so the site's own utility is what says which
+  // of them this building actually buys from. Order:
+  //
+  //   1. The recorded utility, where the reference lists it at this zip and
+  //      doesn't say it skips the commodity. Same utility, the reference's own
+  //      spelling — which is the point of resolving at all, since one utility
+  //      reaches the site list under several billing names.
+  //   2. Otherwise the reference's own answer: a utility flagged for the
+  //      commodity, the predominant one first.
+  //   3. Otherwise the recorded name is kept as-is.
+  //
+  // Returns { name, state, predominant, source } — `source` is 'reference'
+  // when the name came from the table and 'record' when it couldn't answer and
+  // the site's own utility stood. Keeping the recorded name matters: the
+  // reference is silent on plenty of zips, and dropping those sites would
+  // shrink the eligible counts for the reference's silence rather than for
+  // anything true about the site. `source` is what lets a caller say which
+  // figures rest on the reference. Null when neither side names a utility.
+  function utility(zip, commodity, recordedName = '') {
+    const recorded = String(recordedName || '').trim();
+    const kept = recorded ? { name: recorded, state: '', predominant: false, source: 'record' } : null;
+    const col = COMMODITY_COLUMN[commodity];
+    const rows = col ? rowsAt(zip) : [];
+    if (!rows.length) return kept;
+
+    const carries = (r) => meters(r.util[colIdx.get(col)]);
+    // The reference lists a utility twice at some zips — "Eversource" and
+    // "Eversource (for Boston/Cambridge Reporting)" both serve 02210 — so the
+    // predominant row wins on either path rather than whichever came first.
+    const named = rows.filter(r => carries(r) !== 'no' && sameUtility(recorded, nameOf(r)));
+    const flagged = rows.filter(r => carries(r) === 'yes');
+    const pick = (list) => list.find(r => r.predominant) || list[0] || null;
+    const hit = pick(named) || pick(flagged);
+    if (!hit) return kept;
+    return { name: nameOf(hit) || recorded, state: hit.state, predominant: hit.predominant, source: 'reference' };
+  }
+
+  return { terms, utility };
+}
+
+// Re-source a screened site's utilities from the reference, for the callers
+// that read them off the site rather than out of the workbook — the WBUDC
+// cards, the sites behind them, and both exports of either.
+//
+// Returns new rows; the screened results themselves are left alone, so the
+// site-by-site table below the cards still shows the utilities the portfolio
+// was uploaded with. `wbSource` records where each commodity's name came from
+// ('reference' | 'record'), so the cards can say how much of the count the
+// reference actually named. A null `lookup` (not loaded yet) passes the rows
+// straight through.
+export function withWholeBuildingUtilities(results, lookup) {
+  if (!lookup) return results || [];
+  return (results || []).map((r) => {
+    const out = { ...r, wbSource: {} };
+    for (const [commodity, field] of Object.entries(COMMODITY_FIELD)) {
+      const hit = lookup.utility(r.zip, commodity, r[field]);
+      out[field] = hit ? hit.name : '';
+      out.wbSource[commodity] = hit ? hit.source : '';
+    }
+    return out;
+  });
 }
