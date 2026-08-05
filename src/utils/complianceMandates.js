@@ -723,28 +723,47 @@ export function bpsPrioritization(results, ordinances = MASTER_ORDINANCES) {
   });
 }
 
+// The sites behind a utility-feed figure: BBS- or BPS-eligible sites whose
+// commodity utility ('electric' | 'gas') is known. With `state` + `utility`
+// it's one bar on the card; without them it's the card's whole total. The
+// counts below are grouped from this same list, so a bar and the list it
+// opens can't disagree. Each row carries the state and utility it was counted
+// under (`feedState` / `feedUtility`) — the mandate's state, which is what the
+// card groups by, not necessarily the site's own.
+export function utilityFeedSites(results, commodity, { state = null, utility = null } = {}) {
+  const utilKey = commodity === 'gas' ? 'gasUtility' : 'electricUtility';
+  const out = [];
+  for (const r of (results || [])) {
+    if (!(isEligible(r, 'bbs') || isEligible(r, 'bps'))) continue;
+    const feedUtility = String(r[utilKey] || '').trim();
+    if (!feedUtility) continue;
+    const feedState = String(r.mandateState || r.state || '').trim();
+    if (utility != null && feedUtility !== utility) continue;
+    if (state != null && feedState !== state) continue;
+    out.push({ ...r, feedState, feedUtility });
+  }
+  out.sort((a, b) => a.feedState.localeCompare(b.feedState)
+    || a.feedUtility.localeCompare(b.feedUtility)
+    || String(a.siteName || '').localeCompare(String(b.siteName || '')));
+  return out;
+}
+
 // Whole-Building Utility Data Collection eligibility: sites eligible for BBS or
 // BPS, grouped by state → utility, for a commodity ('electric' | 'gas').
 export function utilityFeedEligibility(results, commodity) {
-  const utilKey = commodity === 'gas' ? 'gasUtility' : 'electricUtility';
+  const sites = utilityFeedSites(results, commodity);
   const byState = new Map();
-  let total = 0;
-  for (const r of results) {
-    if (!(isEligible(r, 'bbs') || isEligible(r, 'bps'))) continue;
-    const util = String(r[utilKey] || '').trim();
-    if (!util) continue;
-    const st = String(r.mandateState || r.state || '').trim();
-    if (!byState.has(st)) byState.set(st, new Map());
-    const u = byState.get(st);
-    u.set(util, (u.get(util) || 0) + 1);
-    total++;
+  for (const r of sites) {
+    if (!byState.has(r.feedState)) byState.set(r.feedState, new Map());
+    const u = byState.get(r.feedState);
+    u.set(r.feedUtility, (u.get(r.feedUtility) || 0) + 1);
   }
   const rows = [];
   for (const [state, utils] of byState) {
     for (const [utility, count] of utils) rows.push({ state, utility, count });
   }
   rows.sort((a, b) => a.state.localeCompare(b.state) || b.count - a.count);
-  return { total, rows };
+  return { total: sites.length, rows };
 }
 
 // ---- Compliance Roadmap: obligations, sites, and fine exposure over time --

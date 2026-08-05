@@ -821,6 +821,18 @@
   border-left: 4px solid #3DCD58;
 }
 
+/* A section heading with its own action (an export for just that section)
+   sitting on the same line, right-aligned. */
+.sectionTitleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 1.1rem 0 0.55rem;
+}
+.sectionTitleRow .sectionTitle { margin: 0; }
+
 .reportMeta {
   display: flex;
   align-items: flex-start;
@@ -989,6 +1001,20 @@
 }
 .feedGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
 .feedKpi { display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.75rem 0; }
+/* The total opens every site behind it, the way the eligibility cards' KPIs
+   do — the headline figure should be as traceable as the bars under it. */
+.feedKpiBtn {
+  width: 100%;
+  background: none;
+  border: none;
+  margin: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.feedKpiBtn:hover:not(:disabled) .kpiLbl { color: #334155; text-decoration: underline; }
+.feedKpiBtn:disabled { cursor: default; }
+.feedKpiBtn:focus-visible { outline: 2px solid var(--color-accent, #3B7DDD); outline-offset: -2px; }
 .feedKpiNum {
   border: 2px solid;
   border-radius: 8px;
@@ -1028,6 +1054,7 @@
   .actions,
   .modeToggle,
   .siteToolbar,
+  .sectionAction,
   .dashHint {
     display: none !important;
   }
