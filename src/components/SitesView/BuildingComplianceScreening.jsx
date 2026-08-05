@@ -14,7 +14,7 @@ import {
 } from '../../utils/complianceMandates';
 import { exportComplianceReportXlsx } from '../../utils/complianceReportXlsx';
 import {
-  loadWholeBuildingLookup, withWholeBuildingUtilities,
+  loadWholeBuildingLookup, withWholeBuildingUtilities, MATCH_LABEL,
   wholeBuildingForSite, WB_COMMODITIES,
 } from '../../utils/wholeBuildingLookup';
 import { schneiderLogoSvg } from '../../utils/schneiderLogo';
@@ -1356,7 +1356,12 @@ export function BuildingComplianceScreening({
       'Water Utility': r.waterUtility || '',
       'Utility Source': r.wbSource?.[commodity] === 'reference' ? 'Whole Building Data' : 'Site record',
     };
-    return lookup ? { ...row, ...lookup.terms(r.zip, r.feedUtility || r.electricUtility) } : row;
+    if (!lookup) return row;
+    // Say whether the file could answer for this utility, not just what it
+    // said. The whole-building columns are blank on a miss and the file writes
+    // "Not Available" into them on a hit, so without this the two read alike.
+    const { values, status } = lookup.termsWithMatch(r.zip, r.feedUtility || r.electricUtility);
+    return { ...row, 'Whole Building Data Match': MATCH_LABEL[status] || '', ...values };
   }
   // The card's bars as rows — the counts on screen, so the workbook opens on
   // the same summary the reader clicked from.
