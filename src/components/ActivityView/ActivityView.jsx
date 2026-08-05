@@ -9,7 +9,7 @@ import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContacts
 import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
 import { loadCallRecords, saveCallRecord } from '../../utils/callRecordingsStore';
 import {
-  importGranolaMeetings, recordPatchFor, DEFAULT_MEETING_WINDOW_DAYS,
+  importGranolaMeetings, recordPatchFor, diagnoseEmptySync, DEFAULT_MEETING_WINDOW_DAYS,
 } from '../../utils/granolaCalls';
 import {
   granolaMeetingsFromRecords, mergeMeetings, meetingsInRange, rangeForDays, groupMeetingsByDay,
@@ -453,6 +453,11 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
       try { userLsSet(GRANOLA_IMPORTED_AT_KEY, stamp); } catch { /* quota */ }
       if (result.errors.length > 0) {
         setGranolaError(`Some meetings didn't import: ${result.errors.slice(0, 2).join(' · ')}`);
+      } else {
+        // An import that read nothing at all is either a quiet month or
+        // a reply this build couldn't parse. Only the second is worth
+        // reporting, and only `shape` can tell them apart.
+        setGranolaError(result.seen === 0 ? diagnoseEmptySync(result.shape) : '');
       }
     } catch (err) {
       // "Not configured" is a setup state, not an error: the key was
