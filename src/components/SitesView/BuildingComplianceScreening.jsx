@@ -1021,6 +1021,9 @@ export function BuildingComplianceScreening({
         Site: r.siteName, City: r.city, State: r.state,
         Jurisdiction: r.government || '', 'Government ID': r.govId || '',
         'Sq Ft': r.sqft ?? '', 'Property Type': r.propertyType || '',
+        // Carried alongside the screening so the workbook holds every column
+        // the site table shows, the utility feeds included.
+        'Electric Utility': r.electricUtility || '', 'Natural Gas Utility': r.gasUtility || '',
       };
       for (const c of CATEGORIES) {
         const e = r[c];
@@ -1591,6 +1594,7 @@ export function BuildingComplianceScreening({
                 <thead>
                   <tr>
                     <th>Site</th><th>City</th><th>State</th><th>Jurisdiction</th><th>Gov ID</th><th>Sq Ft</th>
+                    <th>Electric Utility</th><th>Natural Gas Utility</th>
                     <th>BBS</th><th>Energy Audits</th><th>Audit Required</th><th>BPS</th>
                   </tr>
                 </thead>
@@ -1611,6 +1615,14 @@ export function BuildingComplianceScreening({
                       <td>{r.matched ? r.government : <span className={styles.dash}>no match</span>}</td>
                       <td>{r.govId ? <span className={styles.govIdCell}>{r.govId}</span> : <span className={styles.dash}>-</span>}</td>
                       <td>{r.sqft != null ? r.sqft.toLocaleString() : <span className={styles.dash}>-</span>}</td>
+                      {/* Same two columns, and the same source fields, as the
+                          utility-feed drill-down modal. Shown for every site,
+                          not just the ones the WBUDC cards count: those cards
+                          total the sites carrying a BBS or BPS mandate AND a
+                          known utility, which is a narrower set than this
+                          table lists. */}
+                      <td>{r.electricUtility || <span className={styles.dash}>-</span>}</td>
+                      <td>{r.gasUtility || <span className={styles.dash}>-</span>}</td>
                       <td><CatCell res={r.bbs} /></td>
                       <td><CatCell res={r.audits} /></td>
                       <td><AuditTypeCell res={r.audits} /></td>
@@ -1618,7 +1630,7 @@ export function BuildingComplianceScreening({
                     </tr>
                   ))}
                   {filtered.length === 0 && (
-                    <tr><td colSpan={10} className={styles.emptyRow}>No sites match the current filters.</td></tr>
+                    <tr><td colSpan={12} className={styles.emptyRow}>No sites match the current filters.</td></tr>
                   )}
                 </tbody>
               </table>
