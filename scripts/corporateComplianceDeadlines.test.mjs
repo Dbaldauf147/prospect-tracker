@@ -51,7 +51,15 @@ for (const d of CORPORATE_MANDATE_DEADLINES) {
   // against the regulators. A general text-vs-data rule doesn't work here —
   // the strings legitimately vary between "yearly, on the company's cycle" and
   // a named year — so these pin the specific facts that were wrong.
-  const timelineOf = (jk, reg) => REGULATIONS_BY_JURISDICTION[jk].find(r => r.regulation === reg).timeline;
+  // Looked up by exact name, so a rename in the data has to be mirrored
+  // here. It used to throw when it missed, which took the whole file down
+  // with it — every assertion below this block silently stopped running.
+  // Report the miss and carry on instead.
+  const timelineOf = (jk, reg) => {
+    const found = (REGULATIONS_BY_JURISDICTION[jk] || []).find(r => r.regulation === reg);
+    ok(!!found, `${jk}: a regulation named "${reg}" exists`);
+    return found ? found.timeline : '';
+  };
   {
     // Said "2026 data (reporting starts 2027)". CARB's first cycle covers
     // FY2025 and scope 1 & 2 landed on 10 Nov 2026.
@@ -67,7 +75,7 @@ for (const d of CORPORATE_MANDATE_DEADLINES) {
 
     // Said "2026 data (reporting starts 2027)" — that mandatory phase was
     // withdrawn by CVM Resolution 244; comply-or-explain runs from 2027.
-    const cvm = timelineOf('brazil', 'Brazil — CVM');
+    const cvm = timelineOf('brazil', 'Brazil: CVM');
     ok(cvm.includes('2027') && /comply-or-explain/i.test(cvm), `CVM timeline describes comply-or-explain from 2027 (says "${cvm}")`);
     ok(!/^2026 data/.test(cvm), 'CVM timeline no longer claims a mandatory 2026 phase');
   }
