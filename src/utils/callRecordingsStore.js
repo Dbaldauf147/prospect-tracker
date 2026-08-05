@@ -47,18 +47,33 @@ function itemsRef(userId) {
  * still list and play recordings when Firestore is unreachable.
  */
 export async function loadCallRecords(userId) {
-  if (!userId) return {};
+  return (await loadCallRecordsResult(userId)).records;
+}
+
+/**
+ * The same read, but saying whether it worked.
+ *
+ * `loadCallRecords` returns {} on failure, which renders identically to
+ * genuinely having no calls — so an unreachable Firestore looked like an
+ * empty call history, with nothing to act on. Callers that draw the
+ * history need to tell those apart: one keeps the last known copy and
+ * says the read failed, the other really is empty.
+ *
+ * Returns { records, ok, error }.
+ */
+export async function loadCallRecordsResult(userId) {
+  if (!userId) return { records: {}, ok: false, error: 'Not signed in.' };
   try {
     const snap = await getDocs(itemsRef(userId));
-    const out = {};
+    const records = {};
     snap.forEach((d) => {
       const data = d.data();
-      if (data?.id) out[data.id] = data;
+      if (data?.id) records[data.id] = data;
     });
-    return out;
+    return { records, ok: true, error: '' };
   } catch (err) {
     console.warn('callRecordings: load failed', err);
-    return {};
+    return { records: {}, ok: false, error: err?.message || String(err) };
   }
 }
 

@@ -29,6 +29,10 @@ const STORES = [
   // Holds the FileSystemDirectoryHandle for the Call Recordings page's
   // local folder, so a picked folder is remembered across sessions.
   { name: 'local-recordings',    keyPath: null },
+  // The Call Recordings History tab's rows, so the page can show your
+  // call history the instant it opens — before Firestore answers, and
+  // whether or not it answers at all.
+  { name: 'call-history',        keyPath: null },
 ];
 
 let dbPromise = null;
