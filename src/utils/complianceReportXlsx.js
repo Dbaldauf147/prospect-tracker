@@ -17,6 +17,7 @@ import {
   penaltyByOrdinance, totalPenalty, utilityFeedEligibility,
   bpsPrioritization,
 } from './complianceMandates.js';
+import { loadWholeBuildingLookup, withWholeBuildingUtilities } from './wholeBuildingLookup.js';
 import { schneiderLogoPngDataUrl, SE_GREEN_DARK } from './schneiderLogo.js';
 import { isCaliforniaSite } from './siteRegion.js';
 
@@ -446,9 +447,14 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
   // instead of being flattened to an image. Each panel's utility names span
   // the wide gutter/card columns (merged) so long provider names fit.
   sectionTitle('Eligibility per Data Stream for Utility Feeds');
+  // Utilities named from the Whole Building Data file, the same as the panels
+  // on screen — the workbook decides which utility serves a zip, and the site
+  // list's own name only stands where it doesn't list the zip. Failing to load
+  // the reference leaves the uploaded names rather than losing the section.
+  const feedResults = withWholeBuildingUtilities(results, await loadWholeBuildingLookup().catch(() => null));
   // Rows ordered by eligible-site count, high to low (ties alphabetical).
   const feedData = (commodity) => {
-    const f = utilityFeedEligibility(results, commodity);
+    const f = utilityFeedEligibility(feedResults, commodity);
     return { total: f.total, rows: [...f.rows].sort((a, b) => b.count - a.count || a.utility.localeCompare(b.utility)) };
   };
   const feeds = [
