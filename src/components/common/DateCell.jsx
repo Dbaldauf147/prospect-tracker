@@ -8,7 +8,7 @@ import { toISODate, formatDateDisplay } from '../../utils/isoDate';
 //
 // Lifted out of OppsView2 so the Deals tab's contract-term dates behave the
 // same way.
-export function DateCell({ value, onChange, title = 'Click to pick a date', emptyText = '—' }) {
+export function DateCell({ value, onChange, title = 'Click to pick a date', emptyText = '-' }) {
   // The native <input type="date"> is permanently mounted but visually
   // hidden and not directly interactable (pointer-events: none, tab
   // disabled). The only way to change the value is via the calendar

@@ -42,7 +42,7 @@ export default function handler(req, res) {
 </head><body>
 <div class="card">
   <h1>Outlook Drafts</h1>
-  <p>Click the button to open each draft. The formatted body is copied to your clipboard — in Outlook press <strong>Ctrl+A</strong> then <strong>Ctrl+V</strong> to replace with formatted text.</p>
+  <p>Click the button to open each draft. The formatted body is copied to your clipboard: in Outlook press <strong>Ctrl+A</strong> then <strong>Ctrl+V</strong> to replace with formatted text.</p>
   <div class="list" id="list">
     ${links.map(l => `<div class="item pending" id="item-${l.index}"><span class="check">&#9744;</span> ${l.name}</div>`).join('')}
   </div>
@@ -68,7 +68,7 @@ export default function handler(req, res) {
     }
     window.open(link.url, '_blank');
     document.getElementById('item-' + link.index).className = 'item done';
-    document.getElementById('item-' + link.index).innerHTML = '<span class="check">&#9745;</span> ' + link.name + ' — opened (body copied to clipboard)';
+    document.getElementById('item-' + link.index).innerHTML = '<span class="check">&#9745;</span> ' + link.name + ': opened (body copied to clipboard)';
     current++;
     if (current < links.length) {
       document.getElementById('item-' + links[current].index).className = 'item current';

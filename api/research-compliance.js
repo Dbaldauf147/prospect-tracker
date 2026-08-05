@@ -48,20 +48,20 @@ async function handler(req, res, auth) {
 Questions (answer each by its key):
 ${questionList}
 
-Be conservative and evidence-based. Answer "Yes" or "No" only when the public record supports it; answer "Unknown" when you cannot find sufficient evidence — do not guess. Consider the whole corporate group (parent and major subsidiaries) when judging where a company operates or is listed, and note in the rationale when a Yes rests on a subsidiary or a parent.
+Be conservative and evidence-based. Answer "Yes" or "No" only when the public record supports it; answer "Unknown" when you cannot find sufficient evidence: do not guess. Consider the whole corporate group (parent and major subsidiaries) when judging where a company operates or is listed, and note in the rationale when a Yes rests on a subsidiary or a parent.
 
 Return ONLY a single JSON object (no prose, no markdown fences) with these fields:
 - answers: object mapping each question key to exactly "Yes", "No", or "Unknown".
 - notes: object mapping each question key to a one-sentence rationale (plain language; cite the specific fact, e.g. "Incorporated in Delaware; no UK entity found" or "Shares listed on B3 (Brazil) under TICKER"). Keep each under ~200 characters.
-- summary: string — 1-2 sentence overview of the company's footprint relevant to these regimes. Empty string if unclear.
-- sources: array of { title: string, url: string } — citation list, most authoritative first (official filings / investor relations / exchange listings preferred). Up to 6 entries.
-- csrd: object with the specific inputs the EU CSRD waves screen on. Fill what the public record supports; use null for any figure you cannot establish — do NOT estimate or interpolate. Fields:
-  - euIncorporated: "Yes" | "No" | "Unknown" — is the company itself legally incorporated in an EU member state?
-  - euListed: "Yes" | "No" | "Unknown" — are its securities listed on an EU regulated market? (An EU regulated market means an official exchange in an EU member state, e.g. Euronext, Deutsche Börse Regulated Market, Borsa Italiana. Do not count UK, Swiss, US or other non-EU venues.)
-  - globalTurnoverEurM: number | null — consolidated worldwide net turnover in MILLIONS OF EUR. Convert from the reporting currency at a recent rate and say so in the note.
-  - euTurnoverEurM: number | null — net turnover generated in the EU, in MILLIONS OF EUR. Many companies do not break this out; return null rather than guessing from a broader "Europe" or "EMEA" segment, and if you use such a segment as a proxy, say so explicitly in the note.
-  - topEuSubsidiaryTurnoverEurM: number | null — the highest net turnover of any single EU subsidiary or branch, in MILLIONS OF EUR. This is rarely public; null is the expected answer unless you find subsidiary accounts.
-  - employees: number | null — total employee headcount (group-wide).
+- summary: string: 1-2 sentence overview of the company's footprint relevant to these regimes. Empty string if unclear.
+- sources: array of { title: string, url: string }: citation list, most authoritative first (official filings / investor relations / exchange listings preferred). Up to 6 entries.
+- csrd: object with the specific inputs the EU CSRD waves screen on. Fill what the public record supports; use null for any figure you cannot establish: do NOT estimate or interpolate. Fields:
+  - euIncorporated: "Yes" | "No" | "Unknown": is the company itself legally incorporated in an EU member state?
+  - euListed: "Yes" | "No" | "Unknown": are its securities listed on an EU regulated market? (An EU regulated market means an official exchange in an EU member state, e.g. Euronext, Deutsche Börse Regulated Market, Borsa Italiana. Do not count UK, Swiss, US or other non-EU venues.)
+  - globalTurnoverEurM: number | null: consolidated worldwide net turnover in MILLIONS OF EUR. Convert from the reporting currency at a recent rate and say so in the note.
+  - euTurnoverEurM: number | null: net turnover generated in the EU, in MILLIONS OF EUR. Many companies do not break this out; return null rather than guessing from a broader "Europe" or "EMEA" segment, and if you use such a segment as a proxy, say so explicitly in the note.
+  - topEuSubsidiaryTurnoverEurM: number | null: the highest net turnover of any single EU subsidiary or branch, in MILLIONS OF EUR. This is rarely public; null is the expected answer unless you find subsidiary accounts.
+  - employees: number | null: total employee headcount (group-wide).
 - csrdNotes: object mapping each csrd field name to a one-sentence rationale naming the source, the period, and any conversion or proxy you applied. Keep each under ~200 characters. Use an empty string for a field you returned as null with nothing to say.
 
 Every question key must appear in both answers and notes.`;
@@ -164,7 +164,7 @@ Every question key must appear in both answers and notes.`;
   } catch (err) {
     if (err?.name === 'AbortError') {
       return res.status(504).json({
-        error: `Compliance research timed out after ${Math.round(researchBudgetMs() / 1000)}s. Try again — if it keeps timing out, raise RESEARCH_TIMEOUT_MS (needs a plan whose function limit allows it).`,
+        error: `Compliance research timed out after ${Math.round(researchBudgetMs() / 1000)}s. Try again: if it keeps timing out, raise RESEARCH_TIMEOUT_MS (needs a plan whose function limit allows it).`,
       });
     }
     return res.status(500).json({ error: err.message || 'Unknown error' });

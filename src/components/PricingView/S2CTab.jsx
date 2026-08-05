@@ -137,7 +137,7 @@ export function S2CTab({ rows, setRows }) {
   return (
     <div className={styles.wrapper} onPaste={handleTablePaste}>
       <div className={styles.intro}>
-        Costs to Serve worksheet — paste a block straight from Excel (5 columns: Cost Element ·
+        Costs to Serve worksheet: paste a block straight from Excel (5 columns: Cost Element ·
         SET-UP or ONE-OFF · Cost UoM · ON-GOING per month · Cost UoM). The two-row header banner
         from the source workbook is auto-skipped.
       </div>

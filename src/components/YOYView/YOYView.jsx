@@ -241,7 +241,7 @@ const REBUILD_SENSITIVE_FIELDS = [
   { label: 'Quoted Amount', keys: ['Quoted Amount'] },
 ];
 
-const NOT_TRACKED = 'Not tracked — no edit history on this row';
+const NOT_TRACKED = 'Not tracked: no edit history on this row';
 
 function changedSinceMonthEnd(record, monthEndMs) {
   const stamps = record && typeof record._fieldUpdatedAt === 'object' && record._fieldUpdatedAt
@@ -314,7 +314,7 @@ function quotedStoredSource(key, saved) {
 // Same, for a plotted row — the in-progress month is computed live rather
 // than read from the store.
 function quotedValueSource(row, quotedTable) {
-  if (row._live) return 'Live — computed now from Opps + BFO Activity';
+  if (row._live) return 'Live: computed now from Opps + BFO Activity';
   const saved = quotedTable?.[row.monthKey];
   if (!saved) return row._hasData ? 'Recorded' : 'No values recorded';
   return quotedStoredSource(row.monthKey, saved);
@@ -1370,7 +1370,7 @@ export function YOYView() {
           'Chance?': chance,
           'Quoted Amount ($)': quotedAmt,
           'Quoted Amount ($K)': Math.round(quotedAmt / 100) / 10,
-          'Chart Series': series || '(no Chance — feeds no bucket)',
+          'Chart Series': series || '(no Chance: feeds no bucket)',
           'Feeds Agreements Sent': stage === 'Agreement Sent' ? 'Yes' : 'No',
           'Open Year': oy ?? '',
           'Quoted On': quotedOn,
@@ -1609,9 +1609,9 @@ export function YOYView() {
         'On the current chart': charted.has(key) ? 'Yes' : 'No',
         // Whether this month's export can show the pipeline as it stood, or
         // has to rebuild it from today's Opps.
-        'Opp rows captured': !captured ? 'No — export rebuilds from today'
-          : capturedValuesMatch(captured, v) ? `Yes — ${captured.rows.length} rows`
-          : `Captured, but the values were edited since — export rebuilds from today`,
+        'Opp rows captured': !captured ? 'No: export rebuilds from today'
+          : capturedValuesMatch(captured, v) ? `Yes: ${captured.rows.length} rows`
+          : `Captured, but the values were edited since: export rebuilds from today`,
       };
     });
   }
@@ -1678,11 +1678,11 @@ export function YOYView() {
         'Chance?': chance,
         'Quoted Amount ($)': amt,
         'Quoted Amount ($K)': Math.round(amt / 100) / 10,
-        'Chart Series': series || '(no Chance — feeds no bucket)',
+        'Chart Series': series || '(no Chance: feeds no bucket)',
         'Feeds Agreements Sent': stage === 'Agreement Sent' ? 'Yes' : 'No',
         'In the pipeline because': quotedKnown
           ? `Quoted ${quotedOn}, still open at month end`
-          : 'No Quoted On date — open today, assumed open then',
+          : 'No Quoted On date: open today, assumed open then',
         // Which of the fields this rebuild depends on have been edited since
         // the month end — i.e. how far to trust this row's bucket.
         'Changed since month end': changed.label,
@@ -1776,10 +1776,10 @@ export function YOYView() {
         'Opp rows': g.rows,
         'Quoted $K on those rows': Math.round(g.amount / 100) / 10,
         'What it means': label === 'No'
-          ? 'Untouched since the month end — this row sat in the same bucket then.'
+          ? 'Untouched since the month end: this row sat in the same bucket then.'
           : label === NOT_TRACKED
             ? 'Imported row with no edit history, so nothing says whether it moved. Treat as unknown.'
-            : 'Edited since the month end, so the rebuild is reading a value this opp did not carry then. The old value is not recorded — only that it changed.',
+            : 'Edited since the month end, so the rebuild is reading a value this opp did not carry then. The old value is not recorded: only that it changed.',
       }));
   }
   // Where each series comes from, spelled out in the workbook — the chart
@@ -1795,13 +1795,13 @@ export function YOYView() {
       : 'Live Opps (source rows)';
     const notes = [
       { Series: 'Quoted Weak / OK / Expected', 'Where the number comes from': 'Sum of Quoted Amount on open (non-Sold/Not Sold/Closed/Lost) opps, split by the Chance? column. Divided by 1,000 for the $K axis.', 'Raw rows in this file': oppSheet },
-      { Series: 'Agreements Sent', 'Where the number comes from': 'Sum of Quoted Amount on open opps whose Stage is "Agreement Sent" — the same $ also sits in its Chance bucket.', 'Raw rows in this file': oppSheet },
-      { Series: 'BFO Pipe Total', 'Where the number comes from': 'Sum of the Amount column across every row pasted into BFO Activity. Plotted on the right-hand axis.', 'Raw rows in this file': live === false ? (capture?.useCapturedBfo ? 'BFO Activity (captured at month end)' : 'Not available — BFO Activity was not captured for this month') : 'BFO Activity' },
+      { Series: 'Agreements Sent', 'Where the number comes from': 'Sum of Quoted Amount on open opps whose Stage is "Agreement Sent": the same $ also sits in its Chance bucket.', 'Raw rows in this file': oppSheet },
+      { Series: 'BFO Pipe Total', 'Where the number comes from': 'Sum of the Amount column across every row pasted into BFO Activity. Plotted on the right-hand axis.', 'Raw rows in this file': live === false ? (capture?.useCapturedBfo ? 'BFO Activity (captured at month end)' : 'Not available: BFO Activity was not captured for this month') : 'BFO Activity' },
     ];
     if (live === false && useCaptured) {
       notes.push({
         Series: 'How this month\'s opp rows were built',
-        'Where the number comes from': `These are the actual opp rows captured with the month-end snapshot on ${String(captured.capturedAt || '').slice(0, 10)} — the pipeline as it stood, with the Chance? and Stage each opp carried at the time. The Totals check ties out to within rounding — the plotted figures are stored in whole $K.`,
+        'Where the number comes from': `These are the actual opp rows captured with the month-end snapshot on ${String(captured.capturedAt || '').slice(0, 10)}: the pipeline as it stood, with the Chance? and Stage each opp carried at the time. The Totals check ties out to within rounding: the plotted figures are stored in whole $K.`,
         'Raw rows in this file': oppSheet,
       });
     }
@@ -1809,20 +1809,20 @@ export function YOYView() {
       notes.push({
         Series: 'How this month\'s opp rows were built',
         'Where the number comes from': captured
-          ? 'Opp rows WERE captured for this month, but the plotted figures have been edited since (via "Edit values") and no longer match them. The attached rows are rebuilt from today\'s Opps data instead — quoted by that month end, not yet closed — and carry today\'s Chance? and Stage. The Totals check sheet shows the gap.'
+          ? 'Opp rows WERE captured for this month, but the plotted figures have been edited since (via "Edit values") and no longer match them. The attached rows are rebuilt from today\'s Opps data instead (quoted by that month end, not yet closed), and carry today\'s Chance? and Stage. The Totals check sheet shows the gap.'
           : quotedTable[row.monthKey]?._rebuilt
-            ? 'This month was never captured live, so both the plotted figures and these rows are reconstructions from the Opps data — the opps quoted by that month end that hadn\'t closed yet, carrying today\'s Chance? and Stage. They were reconstructed at different moments, so any Opps edit in between shows up on the Totals check sheet. Months captured live from now on carry their own rows and tie exactly.'
-            : 'This month is a recorded month-end snapshot from before the opp rows were kept, so the rows behind it were never stored. The attached rows are rebuilt from today\'s Opps data — quoted by that month end, not yet closed — and carry today\'s Chance? and Stage. Opps edited, re-graded or deleted since won\'t tie back exactly; the Totals check sheet shows the gap. Months captured from now on carry their own rows and tie exactly.',
+            ? 'This month was never captured live, so both the plotted figures and these rows are reconstructions from the Opps data: the opps quoted by that month end that hadn\'t closed yet, carrying today\'s Chance? and Stage. They were reconstructed at different moments, so any Opps edit in between shows up on the Totals check sheet. Months captured live from now on carry their own rows and tie exactly.'
+            : 'This month is a recorded month-end snapshot from before the opp rows were kept, so the rows behind it were never stored. The attached rows are rebuilt from today\'s Opps data (quoted by that month end, not yet closed), and carry today\'s Chance? and Stage. Opps edited, re-graded or deleted since won\'t tie back exactly; the Totals check sheet shows the gap. Months captured from now on carry their own rows and tie exactly.',
         'Raw rows in this file': 'Totals check',
       });
       notes.push({
         Series: 'Which rebuilt rows to trust',
-        'Where the number comes from': 'Every attached row carries a "Changed since month end" column — whether its Chance?, Stage or Quoted Amount has been edited since, from the per-field edit stamps Opps 2 keeps. A stamped row is one the rebuild is reading today\'s value for, so it is a suspect for the gap on the Totals check. The stamps record when a field changed, not what it held before, so a flagged row can be identified but not corrected. "Changed since" totals the quoted $ per group.',
+        'Where the number comes from': 'Every attached row carries a "Changed since month end" column: whether its Chance?, Stage or Quoted Amount has been edited since, from the per-field edit stamps Opps 2 keeps. A stamped row is one the rebuild is reading today\'s value for, so it is a suspect for the gap on the Totals check. The stamps record when a field changed, not what it held before, so a flagged row can be identified but not corrected. "Changed since" totals the quoted $ per group.',
         'Raw rows in this file': 'Changed since',
       });
     }
     if (!row) {
-      notes.push({ Series: 'Past months', 'Where the number comes from': 'Month-end snapshots — the figures captured at the time (auto-captured, seeded, typed via "Edit values", or rebuilt from the Opps data for a month that was never captured). Pin a month on the chart and use its ⬇ Excel button for the opp rows behind that month.', 'Raw rows in this file': 'Recorded Months (store)' });
+      notes.push({ Series: 'Past months', 'Where the number comes from': 'Month-end snapshots: the figures captured at the time (auto-captured, seeded, typed via "Edit values", or rebuilt from the Opps data for a month that was never captured). Pin a month on the chart and use its ⬇ Excel button for the opp rows behind that month.', 'Raw rows in this file': 'Recorded Months (store)' });
     }
     return notes;
   }
@@ -2043,7 +2043,7 @@ export function YOYView() {
         <div>
           <h1 className={styles.title}>YOY</h1>
           <div className={styles.subtitle}>
-            Year-over-year summary, computed off the Opps tab cache. Hover a chart’s bars or points to see how that number is calculated — details appear in a panel on the right. Click a point to pin that panel; click an empty spot or the ✕ to unpin.
+            Year-over-year summary, computed off the Opps tab cache. Hover a chart’s bars or points to see how that number is calculated: details appear in a panel on the right. Click a point to pin that panel; click an empty spot or the ✕ to unpin.
             {opps?.fetchedAt ? ` Opps fetched ${new Date(opps.fetchedAt).toLocaleString()}.` : ' Open the Opps tab to load data.'}
           </div>
         </div>
@@ -2051,7 +2051,7 @@ export function YOYView() {
           <address className={styles.nomadworks}>
             <span className={styles.nomadworksName}>Nomadworks</span>
             1216 Broadway (Entrance on W 30th St)<br />
-            New York, NY 10001 — 3rd floor
+            New York, NY 10001: 3rd floor
           </address>
           {hiddenCharts.length > 0 && (
             <div className={styles.hiddenBar}>
@@ -2284,7 +2284,7 @@ function ChartDataEditor({ chartId, cfg, rows, fields, table, onClose, onSave })
       <div className={styles.modalCard} onClick={(e) => e.stopPropagation()}>
         <div className={styles.modalHead}>
           <div>
-            <div className={styles.modalTitle}>{cfg.title} — edit data</div>
+            <div className={styles.modalTitle}>{cfg.title}: edit data</div>
             <div className={styles.modalSub}>
               Type a value to overwrite that data point; it wins over the live-computed
               number until you clear it. Leave a cell blank to keep the computed value
@@ -2315,7 +2315,7 @@ function ChartDataEditor({ chartId, cfg, rows, fields, table, onClose, onSave })
                           className={styles.editInput}
                           value={draft[key]?.[f.key] ?? ''}
                           onChange={(e) => setCell(key, f.key, e.target.value)}
-                          placeholder={fmtOverrideValue(r[f.key], f.kind) || '—'}
+                          placeholder={fmtOverrideValue(r[f.key], f.kind) || '-'}
                         />
                       </td>
                     ))}
@@ -2368,7 +2368,7 @@ function CalcContent({ payload, label, labelText, valueFormat, explain, pinned, 
         {pinned ? (
           <button type="button" className={styles.calcPinBtn} onClick={onUnpin} title="Unstick this panel">📌 Pinned ✕</button>
         ) : (
-          <span className={styles.calcTipBadge} title="Recomputed live from the Opps cache — not a stored value">∑ calculated</span>
+          <span className={styles.calcTipBadge} title="Recomputed live from the Opps cache: not a stored value">∑ calculated</span>
         )}
       </div>
       <div className={styles.calcDockSeries}>
@@ -2377,7 +2377,7 @@ function CalcContent({ payload, label, labelText, valueFormat, explain, pinned, 
             <span className={styles.calcTipSwatch} style={{ background: p.color || p.stroke || p.fill || '#94a3b8' }} />
             <span className={styles.calcDockName}>{p.name}</span>
             <span className={styles.calcDockVal}>
-              {valueFormat ? valueFormat(p.value, p.name, row) : (p.value == null ? '—' : p.value)}
+              {valueFormat ? valueFormat(p.value, p.name, row) : (p.value == null ? '-' : p.value)}
             </span>
           </span>
         ))}
@@ -2409,7 +2409,7 @@ function CalcContent({ payload, label, labelText, valueFormat, explain, pinned, 
           <div className={styles.calcDockDealsList}>
             {info.deals.map((d, i) => (
               <span key={i} className={styles.calcDockDeal}>
-                <span className={styles.calcDockDealAcct}>{d.Account || '—'}</span>
+                <span className={styles.calcDockDealAcct}>{d.Account || '-'}</span>
                 <span className={styles.calcDockDealVal}>{fmtMoneyLabel(d['Quoted Amount']) || '$0'}</span>
               </span>
             ))}
@@ -2473,7 +2473,7 @@ function LeadsCard({ data, hasOpps, onDownload, onExportPoint }) {
     <div className={styles.chartCard}>
       <ChartHeader title="Leads" chartId="leads" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
       {!hasOpps ? (
-        <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
+        <div className={styles.empty}>No Opps data: open the Opps tab to load.</div>
       ) : data.length === 0 ? (
         <div className={styles.empty}>No opps with an Open Year value.</div>
       ) : (
@@ -2486,7 +2486,7 @@ function LeadsCard({ data, hasOpps, onDownload, onExportPoint }) {
               <CalcTooltip
                 onExportPoint={onExportPoint}
                 labelText={(label, row) => row.isProjected ? 'Projected (annualized YTD)' : `Open Year ${label}`}
-                valueFormat={(v) => (v == null ? '—' : v.toLocaleString('en-US'))}
+                valueFormat={(v) => (v == null ? '-' : v.toLocaleString('en-US'))}
                 explain={(row) => row.isProjected
                   ? {
                       formula: 'Annualized: YTD lead count ÷ fraction of the year elapsed.',
@@ -2532,14 +2532,14 @@ function QuotedProjectionsCard({ data, quotedTable, live, onSaveTable, onDownloa
       <div className={styles.quotedEditRow}>
         {pinned && (
           <span className={styles.quotedPinNote} title="This month is showing saved values instead of the live Opps + BFO figures. Tick “Auto (live)” in Edit values to resume auto-updating.">
-            {liveRow.month} pinned — not auto-updating
+            {liveRow.month} pinned: not auto-updating
           </span>
         )}
         <span className={styles.quotedUnitNote}>values in $K</span>
         <button type="button" className={styles.editValuesBtn} onClick={() => setEditing(true)}>Edit values</button>
       </div>
       {!hasAnyValues ? (
-        <div className={styles.empty}>No values yet — click “Edit values” to record each month’s figures.</div>
+        <div className={styles.empty}>No values yet: click “Edit values” to record each month’s figures.</div>
       ) : (
         <ResponsiveContainer width="100%" height={320}>
           <ComposedChart data={data} margin={{ top: 18, right: 12, left: 0, bottom: 4 }}>
@@ -2560,20 +2560,20 @@ function QuotedProjectionsCard({ data, quotedTable, live, onSaveTable, onDownloa
               <CalcTooltip
                 onExportPoint={onExportPoint}
                 labelText={(label, row) => `${label} ${row.year}`}
-                valueFormat={(v) => (v == null ? '—' : fmtKLabel(v))}
+                valueFormat={(v) => (v == null ? '-' : fmtKLabel(v))}
                 explain={(row) => ({
                   formula: 'Recorded month-end values (in $K). Quoted Weak/OK/Expected are the quoted-$ Chance buckets, Agreements Sent is contracts out, and BFO Pipe Total is the total pipeline $ (its own right-hand axis). Edit via “Edit values”.',
                   inputs: [
-                    { label: 'Quoted Weak', value: row.weak == null ? '—' : fmtKLabel(row.weak) },
-                    { label: 'Quoted OK', value: row.ok == null ? '—' : fmtKLabel(row.ok) },
-                    { label: 'Quoted Expected', value: row.expected == null ? '—' : fmtKLabel(row.expected) },
-                    { label: 'Agreements Sent', value: row.agreements == null ? '—' : fmtKLabel(row.agreements) },
-                    { label: 'BFO Pipe Total', value: row.bfoPipe == null ? '—' : fmtKLabel(row.bfoPipe) },
+                    { label: 'Quoted Weak', value: row.weak == null ? '-' : fmtKLabel(row.weak) },
+                    { label: 'Quoted OK', value: row.ok == null ? '-' : fmtKLabel(row.ok) },
+                    { label: 'Quoted Expected', value: row.expected == null ? '-' : fmtKLabel(row.expected) },
+                    { label: 'Agreements Sent', value: row.agreements == null ? '-' : fmtKLabel(row.agreements) },
+                    { label: 'BFO Pipe Total', value: row.bfoPipe == null ? '-' : fmtKLabel(row.bfoPipe) },
                   ],
                   note: row._live
-                    ? 'Live — computed now from Opps (quoted $ by Chance / Agreements Sent) + BFO Activity (Pipe Total). Pin this point and hit ⬇ Excel for the opp-level rows behind it. Use “Edit values” to record a fixed month-end snapshot.'
+                    ? 'Live: computed now from Opps (quoted $ by Chance / Agreements Sent) + BFO Activity (Pipe Total). Pin this point and hit ⬇ Excel for the opp-level rows behind it. Use “Edit values” to record a fixed month-end snapshot.'
                     : (row._hasData
-                        ? 'Recorded month-end snapshot — pin this point and hit ⬇ Excel for the opp rows rebuilt as the pipeline stood at that month end.'
+                        ? 'Recorded month-end snapshot: pin this point and hit ⬇ Excel for the opp rows rebuilt as the pipeline stood at that month end.'
                         : 'No values recorded for this month yet.'),
                 })}
               />
@@ -2703,7 +2703,7 @@ function QuotedProjectionsEditor({ rows, table, live, onClose, onSave }) {
       <div className={styles.modalCard} onClick={(e) => e.stopPropagation()}>
         <div className={styles.modalHead}>
           <div>
-            <div className={styles.modalTitle}>Quoted Projections — monthly values</div>
+            <div className={styles.modalTitle}>Quoted Projections: monthly values</div>
             <div className={styles.modalSub}>All figures in thousands of dollars ($K). Leave a cell blank to omit it. Saved per month for the Dec→Nov fiscal year. The in-progress month stays on “Auto (live)” unless you pin it.</div>
           </div>
           <button type="button" className={styles.downloadBtn} onClick={onClose}>Close</button>
@@ -2740,8 +2740,8 @@ function QuotedProjectionsEditor({ rows, table, live, onClose, onSave }) {
                         value={cellValue(r.monthKey, f)}
                         onChange={(e) => setCell(r.monthKey, f, e.target.value)}
                         disabled={isAutoRow(r.monthKey)}
-                        title={isAutoRow(r.monthKey) ? 'Auto-updating from Opps + BFO Activity — untick “Auto (live)” to pin a value' : undefined}
-                        placeholder="—"
+                        title={isAutoRow(r.monthKey) ? 'Auto-updating from Opps + BFO Activity: untick “Auto (live)” to pin a value' : undefined}
+                        placeholder="-"
                       />
                     </td>
                   ))}
@@ -2766,7 +2766,7 @@ function CloseRateCard({ data, hasOpps, onDownload, onExportPoint }) {
     <div className={styles.chartCard}>
       <ChartHeader title="Close Rate" chartId="closeRate" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
       {!hasOpps ? (
-        <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
+        <div className={styles.empty}>No Opps data: open the Opps tab to load.</div>
       ) : data.length === 0 ? (
         <div className={styles.empty}>No opps with an Open Year value.</div>
       ) : (
@@ -2791,7 +2791,7 @@ function CloseRateCard({ data, hasOpps, onDownload, onExportPoint }) {
               <CalcTooltip
                 onExportPoint={onExportPoint}
                 labelText={(label) => `Open Year ${label}`}
-                valueFormat={(v) => (v == null ? '—' : `${v.toFixed(0)}%`)}
+                valueFormat={(v) => (v == null ? '-' : `${v.toFixed(0)}%`)}
                 explain={(row) => ({
                   formula: 'Bars = each stage as a % of all opps that year. Total C/R = Sold ÷ (Sold + Not Sold). Quoted C/R = Sold ÷ (Sold + Not Sold that reached Quoted+).',
                   inputs: [
@@ -2834,7 +2834,7 @@ function LeadSourcesCard({ data, hasOpps, onDownload, onExportPoint }) {
     <div className={styles.chartCard}>
       <ChartHeader title="Lead Sources 2020+" chartId="leadSources" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
       {!hasOpps ? (
-        <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
+        <div className={styles.empty}>No Opps data: open the Opps tab to load.</div>
       ) : data.length === 0 ? (
         <div className={styles.empty}>No opps with a Lead Source and Open Year ≥ 2020.</div>
       ) : (
@@ -2857,7 +2857,7 @@ function LeadSourcesCard({ data, hasOpps, onDownload, onExportPoint }) {
               <CalcTooltip
                 onExportPoint={onExportPoint}
                 labelText={(label) => `Lead Source: ${label}`}
-                valueFormat={(v) => (v == null ? '—' : v.toLocaleString('en-US'))}
+                valueFormat={(v) => (v == null ? '-' : v.toLocaleString('en-US'))}
                 explain={(row) => ({
                   formula: 'Opps with this Lead Source (Open Year ≥ 2020), counted by stage. Row-end green % = Close Rate = Sold ÷ (Sold + Not Sold).',
                   inputs: [
@@ -2865,7 +2865,7 @@ function LeadSourcesCard({ data, hasOpps, onDownload, onExportPoint }) {
                     { label: 'Not Sold', value: (row.notSold ?? 0).toLocaleString('en-US') },
                     { label: 'Sold', value: (row.sold ?? 0).toLocaleString('en-US') },
                     { label: 'Total', value: (row.total ?? 0).toLocaleString('en-US') },
-                    { label: 'Close Rate', value: row.closeRate == null ? '—' : `${Math.round(row.closeRate * 100)}%` },
+                    { label: 'Close Rate', value: row.closeRate == null ? '-' : `${Math.round(row.closeRate * 100)}%` },
                   ],
                 })}
               />
@@ -2901,7 +2901,7 @@ function QuotedByYearCard({ data, hasOpps, onDownload, onExportPoint }) {
     <div className={styles.chartCard}>
       <ChartHeader title="Quoted (Thousands)" chartId="quotedByYear" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
       {!hasOpps ? (
-        <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
+        <div className={styles.empty}>No Opps data: open the Opps tab to load.</div>
       ) : data.length === 0 ? (
         <div className={styles.empty}>No opps with an Open Year value.</div>
       ) : (
@@ -2917,7 +2917,7 @@ function QuotedByYearCard({ data, hasOpps, onDownload, onExportPoint }) {
               <CalcTooltip
                 onExportPoint={onExportPoint}
                 labelText={(label, row) => row.isProjected ? 'Projected (annualized YTD)' : `Quoted ${label}`}
-                valueFormat={(v) => (v == null ? '—' : `$${v.toLocaleString('en-US')}k`)}
+                valueFormat={(v) => (v == null ? '-' : `$${v.toLocaleString('en-US')}k`)}
                 explain={(row) => row.isProjected
                   ? {
                       formula: 'Annualized: YTD quoted $ (by Quoted On date) ÷ fraction of the year elapsed, shown in $k.',
@@ -2958,7 +2958,7 @@ function NotSoldsCard({ data, hasOpps, onDownload, onExportPoint }) {
     <div className={styles.chartCard}>
       <ChartHeader title="Not Solds" chartId="notSolds" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
       {!hasOpps ? (
-        <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
+        <div className={styles.empty}>No Opps data: open the Opps tab to load.</div>
       ) : data.length === 0 ? (
         <div className={styles.empty}>No opps with an Open Year value.</div>
       ) : (
@@ -2972,13 +2972,13 @@ function NotSoldsCard({ data, hasOpps, onDownload, onExportPoint }) {
                 onExportPoint={onExportPoint}
                 labelText={(label, row) => row.isProjected ? 'Projected (annualized YTD)' : `Open Year ${label}`}
                 valueFormat={(v, name) => {
-                  if (v == null) return '—';
+                  if (v == null) return '-';
                   if (name === 'Not Solds') return v.toLocaleString('en-US');
                   return `${v.toLocaleString('en-US')} days`;
                 }}
                 explain={(row) => row.isProjected
                   ? {
-                      formula: 'Not Sold bar annualized: YTD Not Sold ÷ fraction of year elapsed. The day-count lines are actuals only — not projected.',
+                      formula: 'Not Sold bar annualized: YTD Not Sold ÷ fraction of year elapsed. The day-count lines are actuals only: not projected.',
                       inputs: [
                         { label: 'YTD Not Sold', value: (row._ytdNotSold ?? 0).toLocaleString('en-US') },
                         { label: 'Year elapsed', value: `${Math.round((row._frac ?? 0) * 100)}%` },
@@ -2986,12 +2986,12 @@ function NotSoldsCard({ data, hasOpps, onDownload, onExportPoint }) {
                       ],
                     }
                   : {
-                      formula: 'Bar = count of Not Sold opps. Lines = mean days — Avg Opp Life (closed opps), Age of not Quoted (pre-quote opps), Quote to Close (Close Date − Quoted On).',
+                      formula: 'Bar = count of Not Sold opps. Lines = mean days: Avg Opp Life (closed opps), Age of not Quoted (pre-quote opps), Quote to Close (Close Date − Quoted On).',
                       inputs: [
                         { label: 'Not Solds', value: (row.notSold ?? 0).toLocaleString('en-US') },
-                        { label: 'Avg Opp Life', value: row.avgOppLife == null ? '—' : `${row.avgOppLife} d (n=${row._lifeCount ?? 0})` },
-                        { label: 'Age of not Quoted', value: row.ageNotQuoted == null ? '—' : `${row.ageNotQuoted} d (n=${row._notQuotedCount ?? 0})` },
-                        { label: 'Quote to Close', value: row.quoteToClose == null ? '—' : `${row.quoteToClose} d (n=${row._qtcCount ?? 0})` },
+                        { label: 'Avg Opp Life', value: row.avgOppLife == null ? '-' : `${row.avgOppLife} d (n=${row._lifeCount ?? 0})` },
+                        { label: 'Age of not Quoted', value: row.ageNotQuoted == null ? '-' : `${row.ageNotQuoted} d (n=${row._notQuotedCount ?? 0})` },
+                        { label: 'Quote to Close', value: row.quoteToClose == null ? '-' : `${row.quoteToClose} d (n=${row._qtcCount ?? 0})` },
                       ],
                     }}
               />
@@ -3064,7 +3064,7 @@ function TopAccountsCard({ data, hasOpps, onDownload, onExportPoint }) {
     <div className={styles.chartCard}>
       <ChartHeader title="Top Accounts" chartId="topAccounts" onDownload={onDownload} canDownload={hasOpps && hasAny} />
       {!hasOpps ? (
-        <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
+        <div className={styles.empty}>No Opps data: open the Opps tab to load.</div>
       ) : !hasAny ? (
         <div className={styles.empty}>No Sold opps with a Quoted Amount yet.</div>
       ) : (
@@ -3177,7 +3177,7 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear, onEx
     <div className={styles.chartCard}>
       <ChartHeader title="Annual Sales" chartId="annualSales" onDownload={onDownload} canDownload={hasOpps && hasAny} />
       {!hasOpps ? (
-        <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
+        <div className={styles.empty}>No Opps data: open the Opps tab to load.</div>
       ) : !hasAny ? (
         <div className={styles.empty}>No Sold opps with a Quoted Amount yet.</div>
       ) : (
@@ -3203,7 +3203,7 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear, onEx
                     { label: 'New Client', value: row.newClient ? fmtMoneyLabel(row.newClient) : '$0' },
                     { label: 'Total Sold', value: row._total ? fmtMoneyLabel(row._total) : '$0' },
                     { label: 'Annual target', value: fmtMoneyLabel(annualTarget) },
-                    { label: '% Quota', value: row.pctQuota == null ? '—' : `${row.pctQuota}%` },
+                    { label: '% Quota', value: row.pctQuota == null ? '-' : `${row.pctQuota}%` },
                   ],
                   deals: row._deals || [],
                   exportDeals: (Array.isArray(row._deals) && row._deals.length > 0)
@@ -3253,7 +3253,7 @@ function DealSizeCard({ data, hasOpps, onDownload, onExportPoint }) {
     <div className={styles.chartCard}>
       <ChartHeader title="Deal Size" chartId="dealSize" onDownload={onDownload} canDownload={hasOpps && hasAny} />
       {!hasOpps ? (
-        <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
+        <div className={styles.empty}>No Opps data: open the Opps tab to load.</div>
       ) : !hasAny ? (
         <div className={styles.empty}>No sold opps yet.</div>
       ) : (
@@ -3277,7 +3277,7 @@ function DealSizeCard({ data, hasOpps, onDownload, onExportPoint }) {
                 onExportPoint={onExportPoint}
                 labelText={(label, row) => row._isProjected ? 'Projected (YTD Sold + Agreement Sent)' : `Year ${label}`}
                 valueFormat={(v, name) => {
-                  if (v == null) return '—';
+                  if (v == null) return '-';
                   if (name === 'Deals') return v.toLocaleString('en-US');
                   return v ? fmtMoneyLabel(v) : '$0';
                 }}
@@ -3285,8 +3285,8 @@ function DealSizeCard({ data, hasOpps, onDownload, onExportPoint }) {
                   formula: 'Deals = count of Sold opps (won deals), by Closed Year. Quoted = mean Quoted Amount of opps quoted that year, by Quoted On date. Deal Size = average deal size (mean Quoted Amount of Sold opps), by Closed Year.',
                   inputs: [
                     { label: 'Deals (Sold)', value: (row.deals ?? 0).toLocaleString('en-US') },
-                    { label: row._isProjected ? 'Quoted mean (Sold + Agreement Sent)' : 'Quoted mean (by Quoted Year)', value: row.quoted == null ? '—' : `${fmtMoneyLabel(row.quoted)} (n=${row._quotedCount ?? 0})` },
-                    { label: 'Deal Size mean', value: row.dealSize == null ? '—' : `${fmtMoneyLabel(row.dealSize)} (n=${row._soldCount ?? 0})` },
+                    { label: row._isProjected ? 'Quoted mean (Sold + Agreement Sent)' : 'Quoted mean (by Quoted Year)', value: row.quoted == null ? '-' : `${fmtMoneyLabel(row.quoted)} (n=${row._quotedCount ?? 0})` },
+                    { label: 'Deal Size mean', value: row.dealSize == null ? '-' : `${fmtMoneyLabel(row.dealSize)} (n=${row._soldCount ?? 0})` },
                   ],
                   note: row._isProjected ? 'Projected = this year’s Sold deals + every opp in the Agreement Sent stage, counted as expected future closes. Quoted is the mean Quoted Amount across only those Sold and Agreement Sent opps; Deal Size isn’t projected.' : null,
                 })}
@@ -3338,7 +3338,7 @@ function CommissionsCard({ data, hasCommissions, onDownload, onExportPoint }) {
     <div className={styles.chartCard}>
       <ChartHeader title="Commissions" chartId="commissions" onDownload={onDownload} canDownload={hasCommissions && data.length > 0} />
       {!hasCommissions ? (
-        <div className={styles.empty}>No deals with a Year value — add a Year and Commission on the Clients › Deals tab.</div>
+        <div className={styles.empty}>No deals with a Year value: add a Year and Commission on the Clients › Deals tab.</div>
       ) : data.length === 0 ? (
         <div className={styles.empty}>No deals with a Year value.</div>
       ) : (
@@ -3354,7 +3354,7 @@ function CommissionsCard({ data, hasCommissions, onDownload, onExportPoint }) {
               <CalcTooltip
                 onExportPoint={onExportPoint}
                 labelText={(label) => `Year ${label}`}
-                valueFormat={(v) => (v == null ? '—' : fmtMoneyFull(v))}
+                valueFormat={(v) => (v == null ? '-' : fmtMoneyFull(v))}
                 explain={(row) => ({
                   formula: 'Sum of the Deals tab’s Commission column for every deal whose Year column equals this year.',
                   inputs: [

@@ -95,22 +95,22 @@ function saveCache(data) {
 }
 
 function fmtDate(dateStr) {
-  if (!dateStr) return '—';
+  if (!dateStr) return '-';
   const d = new Date(dateStr);
-  if (isNaN(d)) return '—';
+  if (isNaN(d)) return '-';
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function fmtDateTime(dateStr) {
-  if (!dateStr) return '—';
+  if (!dateStr) return '-';
   const d = new Date(dateStr);
-  if (isNaN(d)) return '—';
+  if (isNaN(d)) return '-';
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' +
     d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
 function fmtDuration(ms) {
-  if (!ms) return '—';
+  if (!ms) return '-';
   const sec = Math.round(parseInt(ms) / 1000);
   if (sec < 60) return `${sec}s`;
   const min = Math.floor(sec / 60);
@@ -577,9 +577,9 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
   }, [hubspotTodaysMeetings, outlookEvents]);
 
   function fmtMeetingTime(startStr, endStr) {
-    if (!startStr) return '—';
+    if (!startStr) return '-';
     const start = new Date(startStr);
-    if (isNaN(start)) return '—';
+    if (isNaN(start)) return '-';
     const fmt = (d) => d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
     if (!endStr) return fmt(start);
     const end = new Date(endStr);
@@ -773,11 +773,11 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
       </span>
     )},
     { key: '_timestamp', label: 'Time', defaultWidth: 120, render: (a) => <span className={styles.dateText}>{fmtDateTime(a._timestamp)}</span> },
-    { key: '_company', label: 'Company', defaultWidth: 160, render: (a) => a._company ? <span style={{ fontWeight: 600 }}>{a._company}</span> : <span className={styles.metaText}>—</span> },
-    { key: '_subject', label: 'Subject / Title', defaultWidth: 260, render: (a) => <span className={styles.subject}>{a._subject || '—'}</span> },
+    { key: '_company', label: 'Company', defaultWidth: 160, render: (a) => a._company ? <span style={{ fontWeight: 600 }}>{a._company}</span> : <span className={styles.metaText}>-</span> },
+    { key: '_subject', label: 'Subject / Title', defaultWidth: 260, render: (a) => <span className={styles.subject}>{a._subject || '-'}</span> },
     { key: '_externalTo', label: 'To (external)', defaultWidth: 280, render: (a) => {
       const recipients = a._recipients || [];
-      if (recipients.length === 0) return <span className={styles.metaText}>—</span>;
+      if (recipients.length === 0) return <span className={styles.metaText}>-</span>;
       return (
         <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 1, lineHeight: 1.25 }}>
           {recipients.map((r, i) => (
@@ -792,14 +792,14 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
 
     { key: '_activeOpp', label: 'Active Opp', defaultWidth: 220, render: (a) => {
       const opp = a._activeOpp;
-      if (!opp) return <span className={styles.metaText}>—</span>;
+      if (!opp) return <span className={styles.metaText}>-</span>;
       const stage = String(opp.Stage || '').trim();
       const tooltip = a._matchedEmail
         ? `Matched via Opp Contact = ${a._matchedEmail}`
         : `Matched by company / domain fallback`;
       return (
         <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2, lineHeight: 1.25, maxWidth: '100%' }} title={tooltip}>
-          <span style={{ fontWeight: 600 }}>{opp.Account || '—'}</span>
+          <span style={{ fontWeight: 600 }}>{opp.Account || '-'}</span>
           {stage && <span style={{ fontSize: '0.68rem', color: '#7C3AED', fontWeight: 600 }}>{stage}</span>}
         </span>
       );
@@ -810,7 +810,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     // we render it as a clickable launcher instead.
     { key: '_bfoLink', label: 'BFO Link', defaultWidth: 220, render: (a) => {
       const bfo = String(a._activeOpp?.['BFO Link'] || '').trim();
-      if (!bfo) return <span className={styles.metaText}>—</span>;
+      if (!bfo) return <span className={styles.metaText}>-</span>;
       if (/^https?:\/\//i.test(bfo)) {
         return (
           <a
@@ -837,7 +837,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     // anchor with the full address visible (and selectable for copy).
     { key: '_bfoAddress', label: 'BFO Address', defaultWidth: 320, render: (a) => {
       const opp = a._activeOpp;
-      if (!opp) return <span className={styles.metaText}>—</span>;
+      if (!opp) return <span className={styles.metaText}>-</span>;
       const isUrl = (s) => /^https?:\/\//i.test(s);
       const candidates = [
         opp['BFO Address'],
@@ -868,7 +868,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
           if (isUrl(v)) { addr = v; break; }
         }
       }
-      if (!addr) return <span className={styles.metaText}>—</span>;
+      if (!addr) return <span className={styles.metaText}>-</span>;
       return (
         <a
           href={addr}
@@ -890,18 +890,18 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
         {a._type === 'email' ? 'Email' : a._type === 'call' ? 'Call' : 'Meeting'}
       </span>
     )},
-    { key: '_direction', label: 'Direction', defaultWidth: 80, render: (a) => a._direction ? <span className={styles.directionBadge}>{a._direction}</span> : <span className={styles.metaText}>—</span> },
+    { key: '_direction', label: 'Direction', defaultWidth: 80, render: (a) => a._direction ? <span className={styles.directionBadge}>{a._direction}</span> : <span className={styles.metaText}>-</span> },
     { key: '_timestamp', label: 'Date', defaultWidth: 140, render: (a) => <span className={styles.dateText}>{fmtDateTime(a._timestamp)}</span> },
-    { key: '_company', label: 'Company', defaultWidth: 160, render: (a) => a._company ? <span style={{ fontWeight: 600 }}>{a._company}</span> : <span className={styles.metaText}>—</span> },
-    { key: '_subject', label: 'Subject / Title', defaultWidth: 250, render: (a) => <span className={styles.subject}>{a._subject || '—'}</span> },
-    { key: '_to', label: 'To', defaultWidth: 200, render: (a) => a._toName ? <span><button className={styles.contactLink} onClick={e => { e.stopPropagation(); openContactPopup(a._toName, a._to, a._company, a._phone); }}>{a._toName}</button> <span className={styles.metaText}>{a._to}</span></span> : a._to ? <button className={styles.contactLink} onClick={e => { e.stopPropagation(); openContactPopup('', a._to, a._company, a._phone); }}>{a._to}</button> : <span className={styles.metaText}>—</span> },
-    { key: '_from', label: 'From', defaultWidth: 200, render: (a) => a._fromName ? <span><button className={styles.contactLink} onClick={e => { e.stopPropagation(); openContactPopup(a._fromName, a._from, a._company, ''); }}>{a._fromName}</button> <span className={styles.metaText}>{a._from}</span></span> : a._from ? <button className={styles.contactLink} onClick={e => { e.stopPropagation(); openContactPopup('', a._from, a._company, ''); }}>{a._from}</button> : <span className={styles.metaText}>—</span> },
+    { key: '_company', label: 'Company', defaultWidth: 160, render: (a) => a._company ? <span style={{ fontWeight: 600 }}>{a._company}</span> : <span className={styles.metaText}>-</span> },
+    { key: '_subject', label: 'Subject / Title', defaultWidth: 250, render: (a) => <span className={styles.subject}>{a._subject || '-'}</span> },
+    { key: '_to', label: 'To', defaultWidth: 200, render: (a) => a._toName ? <span><button className={styles.contactLink} onClick={e => { e.stopPropagation(); openContactPopup(a._toName, a._to, a._company, a._phone); }}>{a._toName}</button> <span className={styles.metaText}>{a._to}</span></span> : a._to ? <button className={styles.contactLink} onClick={e => { e.stopPropagation(); openContactPopup('', a._to, a._company, a._phone); }}>{a._to}</button> : <span className={styles.metaText}>-</span> },
+    { key: '_from', label: 'From', defaultWidth: 200, render: (a) => a._fromName ? <span><button className={styles.contactLink} onClick={e => { e.stopPropagation(); openContactPopup(a._fromName, a._from, a._company, ''); }}>{a._fromName}</button> <span className={styles.metaText}>{a._from}</span></span> : a._from ? <button className={styles.contactLink} onClick={e => { e.stopPropagation(); openContactPopup('', a._from, a._company, ''); }}>{a._from}</button> : <span className={styles.metaText}>-</span> },
     { key: '_cc', label: 'CC', defaultWidth: 220, render: (a) => {
       // Contacts CC'd on the email. Parse the cc address list, resolve each
       // to a HubSpot contact name where we have one (falling back to the
       // email's cc-name for a single recipient, else just the address).
       const emails = String(a._cc || '').split(/[;,]/).map(s => s.trim()).filter(Boolean);
-      if (emails.length === 0) return <span className={styles.metaText}>—</span>;
+      if (emails.length === 0) return <span className={styles.metaText}>-</span>;
       return (
         <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 1, lineHeight: 1.25 }}>
           {emails.map((em, i) => {
@@ -919,7 +919,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
         </span>
       );
     } },
-    { key: '_attendees', label: 'Attendees', defaultWidth: 200, render: (a) => a._attendees ? <span className={styles.contactText}>{a._attendees}</span> : <span className={styles.metaText}>—</span> },
+    { key: '_attendees', label: 'Attendees', defaultWidth: 200, render: (a) => a._attendees ? <span className={styles.contactText}>{a._attendees}</span> : <span className={styles.metaText}>-</span> },
     { key: '_status', label: 'Status', defaultWidth: 110 },
     { key: '_duration', label: 'Duration', defaultWidth: 80, render: (a) => <span className={styles.duration}>{fmtDuration(a._duration)}</span> },
   ];
@@ -1168,7 +1168,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
           columns={todayOutboundColumns}
           rows={filteredTodayOutbound}
           alwaysVisible={[]}
-          emptyMessage={oppsRecords?.length ? 'No outbound emails or calls to external contacts yet today.' : 'No outbound emails or calls to external contacts yet today. (Active opp lookup needs the Opps tab cache — visit it once if the column shows blank.)'}
+          emptyMessage={oppsRecords?.length ? 'No outbound emails or calls to external contacts yet today.' : 'No outbound emails or calls to external contacts yet today. (Active opp lookup needs the Opps tab cache: visit it once if the column shows blank.)'}
           settings={settings}
           updateSettings={updateSettings}
         />
@@ -1239,7 +1239,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
               {contactPopup.email && (
                 <button onClick={() => {
-                  const subject = encodeURIComponent(`Follow up — ${contactPopup.company || ''}`);
+                  const subject = encodeURIComponent(`Follow up: ${contactPopup.company || ''}`);
                   const body = encodeURIComponent(`Hi ${contactPopup.firstname},\n\n`);
                   window.open(`https://outlook.office.com/mail/deeplink/compose?to=${encodeURIComponent(contactPopup.email)}&subject=${subject}&body=${body}`, '_blank');
                 }} style={{ flex: 1, padding: '0.4rem', border: '1px solid #0078D4', borderRadius: 'var(--radius-sm)', background: '#EFF6FF', color: '#0078D4', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>

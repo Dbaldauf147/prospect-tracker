@@ -87,7 +87,7 @@ export const REGULATIONS_BY_JURISDICTION = {
       // Ninth Circuit enjoined enforcement on 18 Nov 2025 and CARB's 1 Dec
       // 2025 advisory says it will set a replacement date once the appeal is
       // decided — so this row deliberately does not name a live deadline.
-      timeline: '2025 data (was due 1 Jan 2026 — enforcement stayed; biennial thereafter)',
+      timeline: '2025 data (was due 1 Jan 2026: enforcement stayed; biennial thereafter)',
       description: `Applies to companies with $500 million+ in annual revenue doing business in California (legally formed or commercially based in California, or California sales exceeding ${CA_SALES_THRESHOLD_LABEL} in the last two years).`,
       revenueThresholdUsd: 500_000_000,
       thresholds: [
@@ -98,7 +98,7 @@ export const REGULATIONS_BY_JURISDICTION = {
   ],
   eu: [
     {
-      regulation: 'CSRD — Wave 1',
+      regulation: 'CSRD: Wave 1',
       timeline: '2024 data (reporting starts 2025)',
       description: 'Large entities with securities listed on an EU regulated market meeting the new thresholds: more than 1,000 employees and a net turnover of EUR 450 million or more.',
       thresholds: [
@@ -107,7 +107,7 @@ export const REGULATIONS_BY_JURISDICTION = {
       ],
     },
     {
-      regulation: 'CSRD — Wave 2',
+      regulation: 'CSRD: Wave 2',
       timeline: '2027 data (reporting starts 2028)',
       description: 'Large entities present in the EU meeting both criteria: more than 1,000 employees and a net turnover of EUR 450 million or more.',
       thresholds: [
@@ -116,7 +116,7 @@ export const REGULATIONS_BY_JURISDICTION = {
       ],
     },
     {
-      regulation: 'CSRD — Wave 3',
+      regulation: 'CSRD: Wave 3',
       timeline: '2028 data (reporting starts 2029)',
       description: 'Large non-EU entities: a net turnover of EUR 450 million or more in the EU and at least one EU subsidiary or branch with over EUR 200 million net turnover.',
       thresholds: [
@@ -146,7 +146,7 @@ export const REGULATIONS_BY_JURISDICTION = {
     {
       regulation: 'Australia Group 1',
       timeline: '2025 data (reporting starts 2026)',
-      description: 'Files a financial report with ASIC (Part 2M, Corporations Act 2001) AND meets two of three: consolidated revenue ≥ AUD 500M, gross assets ≥ AUD 1B, ≥ 500 employees — OR reports to NGER with ≥ 50,000 tonnes CO2e.',
+      description: 'Files a financial report with ASIC (Part 2M, Corporations Act 2001) AND meets two of three: consolidated revenue ≥ AUD 500M, gross assets ≥ AUD 1B, ≥ 500 employees: OR reports to NGER with ≥ 50,000 tonnes CO2e.',
       thresholds: [
         { value: '500', metric: 'Revenue (Million AUD)' },
         { value: '1,000', metric: 'Consolidated gross assets (Million AUD)' },
@@ -157,7 +157,7 @@ export const REGULATIONS_BY_JURISDICTION = {
     {
       regulation: 'Australia Group 2',
       timeline: '2026 data (reporting starts 2027)',
-      description: 'Files a financial report with ASIC AND is a registered scheme, registrable superannuation entity, or retail CCIV AND meets two of three: consolidated revenue ≥ AUD 200M, gross assets ≥ AUD 500M, ≥ 250 employees — OR reports to NGER — OR is an asset owner with over AUD 5B in AUM.',
+      description: 'Files a financial report with ASIC AND is a registered scheme, registrable superannuation entity, or retail CCIV AND meets two of three: consolidated revenue ≥ AUD 200M, gross assets ≥ AUD 500M, ≥ 250 employees (OR reports to NGER), OR is an asset owner with over AUD 5B in AUM.',
       thresholds: [
         { value: '200', metric: 'Revenue (Million AUD)' },
         { value: '500', metric: 'Consolidated gross assets (Million AUD)' },
@@ -178,7 +178,7 @@ export const REGULATIONS_BY_JURISDICTION = {
   ],
   mexico: [
     {
-      regulation: 'Mexico — CNBV',
+      regulation: 'Mexico: CNBV',
       timeline: '2025 data (reporting starts 2026)',
       description: 'Security issuer.',
       thresholds: [],
@@ -186,7 +186,7 @@ export const REGULATIONS_BY_JURISDICTION = {
   ],
   brazil: [
     {
-      regulation: 'Brazil — CVM',
+      regulation: 'Brazil: CVM',
       // CVM Resolution 244 (published 1 Jun 2026) withdrew the mandatory phase
       // that would have applied to years beginning on/after 1 Jan 2026;
       // comply-or-explain runs from 1 Jan 2027 instead.
@@ -362,12 +362,12 @@ const isYes = (v) => (v === 'Yes' ? true : v === 'No' ? false : null);
 const isNo = (v) => (v === 'Yes' ? false : v === 'No' ? true : null);
 
 const CSRD_WAVE_RULES = {
-  'CSRD — Wave 1': (v) => [
+  'CSRD: Wave 1': (v) => [
     { label: 'listed on an EU regulated market', value: isYes(v.euListed) },
     { label: `more than ${CSRD_EMPLOYEES.toLocaleString('en-US')} employees`, value: gt(v.employees, CSRD_EMPLOYEES) },
     { label: `global net turnover of at least EUR ${CSRD_TURNOVER_EUR_M}M`, value: gte(v.globalTurnover, CSRD_TURNOVER_EUR_M) },
   ],
-  'CSRD — Wave 2': (v) => [
+  'CSRD: Wave 2': (v) => [
     // "Large entities present in the EU" — the jurisdiction question asks
     // exactly that, and being incorporated there settles it on its own.
     {
@@ -377,7 +377,7 @@ const CSRD_WAVE_RULES = {
     { label: `more than ${CSRD_EMPLOYEES.toLocaleString('en-US')} employees`, value: gt(v.employees, CSRD_EMPLOYEES) },
     { label: `global net turnover of at least EUR ${CSRD_TURNOVER_EUR_M}M`, value: gte(v.globalTurnover, CSRD_TURNOVER_EUR_M) },
   ],
-  'CSRD — Wave 3': (v) => [
+  'CSRD: Wave 3': (v) => [
     { label: 'a non-EU entity', value: isNo(v.euIncorporated) },
     { label: `EU net turnover of at least EUR ${CSRD_TURNOVER_EUR_M}M`, value: gte(v.euTurnover, CSRD_TURNOVER_EUR_M) },
     {
@@ -428,7 +428,7 @@ export function deriveCsrdWaveVerdict(regulation, { answers, context } = {}) {
   // demonstration — it doesn't need the thresholds argued from figures that
   // may be stale or converted. This beats the conditions rather than joining
   // them, so it stands even where a figure would otherwise fail the test.
-  if (regulation.regulation === 'CSRD — Wave 1' && values.alreadyReported === 'Yes') {
+  if (regulation.regulation === 'CSRD: Wave 1' && values.alreadyReported === 'Yes') {
     return {
       verdict: 'Yes',
       basis: 'Auto-derived: the company already submitted a CSRD report in 2025, so Wave 1 applies. Pick a value to override.',
@@ -439,13 +439,13 @@ export function deriveCsrdWaveVerdict(regulation, { answers, context } = {}) {
   if (failed.length) {
     return {
       verdict: 'No',
-      basis: `Auto-derived from the CSRD rows — not ${failed.map(c => c.label).join(', not ')}. Pick a value to override.`,
+      basis: `Auto-derived from the CSRD rows: not ${failed.map(c => c.label).join(', not ')}. Pick a value to override.`,
     };
   }
   if (conditions.some(c => c.value == null)) return null;
   return {
     verdict: 'Yes',
-    basis: `Auto-derived from the CSRD rows — ${conditions.map(c => c.label).join(', ')}. Pick a value to override.`,
+    basis: `Auto-derived from the CSRD rows: ${conditions.map(c => c.label).join(', ')}. Pick a value to override.`,
   };
 }
 

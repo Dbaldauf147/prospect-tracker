@@ -28,12 +28,12 @@ async function handler(req, res, auth) {
   const systemPrompt = `You are a sustainability research analyst. For the requested company, use web search to identify their public sustainability program, climate targets, ESG disclosures, and reporting frameworks they participate in.
 
 Return ONLY a single JSON object (no prose, no markdown fences) with these fields:
-- summary: string — 2-3 sentence executive overview of the company's sustainability stance. Note explicitly when public information is sparse.
-- programs: array of strings — bullet-style descriptions of major sustainability initiatives or programs (e.g. "renewable energy procurement via PPA", "Scope 3 supplier engagement", "operational efficiency program").
-- targets: array of strings — concrete quantified commitments where available, each as a single line (e.g. "Net zero across all scopes by 2050", "50% absolute Scope 1+2 reduction by 2030 vs 2019 baseline", "100% renewable electricity by 2025"). Use the company's own language where possible.
-- frameworks: array of strings — only labels they have publicly disclosed or committed to, drawn from: "RECA", "CSRD", "CDP", "GRESB", "SBT", "Ecovadis", "UN PRI", "CA SB", "NZAM". Use this exact spelling. Omit any framework you don't have direct evidence for.
-- reports: array of { title: string, url: string, year: number? } — links to public ESG / sustainability reports or pages found via web search. Prefer the most recent. Up to 5 entries.
-- sources: array of { title: string, url: string } — citation list of pages you used to derive the above. Up to 8 entries.
+- summary: string: 2-3 sentence executive overview of the company's sustainability stance. Note explicitly when public information is sparse.
+- programs: array of strings: bullet-style descriptions of major sustainability initiatives or programs (e.g. "renewable energy procurement via PPA", "Scope 3 supplier engagement", "operational efficiency program").
+- targets: array of strings: concrete quantified commitments where available, each as a single line (e.g. "Net zero across all scopes by 2050", "50% absolute Scope 1+2 reduction by 2030 vs 2019 baseline", "100% renewable electricity by 2025"). Use the company's own language where possible.
+- frameworks: array of strings: only labels they have publicly disclosed or committed to, drawn from: "RECA", "CSRD", "CDP", "GRESB", "SBT", "Ecovadis", "UN PRI", "CA SB", "NZAM". Use this exact spelling. Omit any framework you don't have direct evidence for.
+- reports: array of { title: string, url: string, year: number? }: links to public ESG / sustainability reports or pages found via web search. Prefer the most recent. Up to 5 entries.
+- sources: array of { title: string, url: string }: citation list of pages you used to derive the above. Up to 8 entries.
 
 If no public sustainability information surfaces, return the JSON object with summary explaining that and the other arrays empty.`;
 

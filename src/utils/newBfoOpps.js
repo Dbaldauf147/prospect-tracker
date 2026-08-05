@@ -103,11 +103,11 @@ export function computeNewBfoOpps({ oppsCache, prospects = [], serviceOverrides 
     rows.push({
       id: r._id ?? `${account}|${scope}`,
       raw: r,
-      company: account || '—',
+      company: account || '-',
       bfoCompanyName,
-      leadSource: leadSource || '—',
+      leadSource: leadSource || '-',
       currentCustomer: CURRENT_CUSTOMER_LEAD_SOURCE_RE.test(leadSource),
-      scope: scope || '—',
+      scope: scope || '-',
       stage,
       followUp,
       callIn: callInRaw,
@@ -128,7 +128,7 @@ export function computeNewBfoOpps({ oppsCache, prospects = [], serviceOverrides 
 // placeholder — those leave a hole in the generated prompt / Project Name.
 function isBlankBfoField(v) {
   const s = String(v ?? '').trim();
-  return !s || s === '—' || s === '-';
+  return !s || s === '-' || s === '-';
 }
 
 /**

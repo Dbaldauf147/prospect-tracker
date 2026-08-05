@@ -24,24 +24,24 @@ async function handler(req, res, auth) {
 
 For the given firm, return ONLY a JSON array (no prose, no markdown fences) of their CURRENT portfolio companies. Each object must have exactly these fields:
 - companyName: string
-- sector: MUST be one of these exact sector labels (pick the single best fit based on what the company actually does — do NOT invent new values and do NOT use "Other"):
-  • "Industrial / Manufacturing" — heavy industry, factories, chemicals, materials, energy, utilities, mining, metals, oil & gas, automotive mfg, aerospace, and Testing/Inspection/Certification (TIC) services that serve industrial clients.
-  • "Data Centers" — data center operators, colocation, hyperscale, edge compute.
-  • "Cold Storage / Food Mfg" — cold storage warehousing, food manufacturing/processing, beverage manufacturing.
-  • "Healthcare / Life Sciences" — healthcare providers, hospitals, clinics, pharma, biotech, medical devices.
-  • "Real Estate / Facilities" — real estate, REITs, property management, infrastructure, facilities management, janitorial/cleaning services, landscaping/grounds/lawn care, security services, pest control, HVAC/mechanical maintenance.
-  • "Hospitality / Food Service" — hotels, restaurants, QSR, lodging, catering, food service.
-  • "Retail / Consumer" — retail chains, consumer services (incl. auto glass/auto repair/vehicle services for consumers), grocery, apparel, e-commerce, consumer brands.
-  • "Warehousing / 3PL" — third-party logistics, warehousing, distribution, freight, transport, supply chain, last-mile delivery.
-  • "Tech / Software & Office Occupiers" — software, SaaS, fintech, media, telecom, advertising, professional services, financial services / wealth management / insurance / banking / asset management, office-based business services.
+- sector: MUST be one of these exact sector labels (pick the single best fit based on what the company actually does: do NOT invent new values and do NOT use "Other"):
+  • "Industrial / Manufacturing": heavy industry, factories, chemicals, materials, energy, utilities, mining, metals, oil & gas, automotive mfg, aerospace, and Testing/Inspection/Certification (TIC) services that serve industrial clients.
+  • "Data Centers": data center operators, colocation, hyperscale, edge compute.
+  • "Cold Storage / Food Mfg": cold storage warehousing, food manufacturing/processing, beverage manufacturing.
+  • "Healthcare / Life Sciences": healthcare providers, hospitals, clinics, pharma, biotech, medical devices.
+  • "Real Estate / Facilities": real estate, REITs, property management, infrastructure, facilities management, janitorial/cleaning services, landscaping/grounds/lawn care, security services, pest control, HVAC/mechanical maintenance.
+  • "Hospitality / Food Service": hotels, restaurants, QSR, lodging, catering, food service.
+  • "Retail / Consumer": retail chains, consumer services (incl. auto glass/auto repair/vehicle services for consumers), grocery, apparel, e-commerce, consumer brands.
+  • "Warehousing / 3PL": third-party logistics, warehousing, distribution, freight, transport, supply chain, last-mile delivery.
+  • "Tech / Software & Office Occupiers": software, SaaS, fintech, media, telecom, advertising, professional services, financial services / wealth management / insurance / banking / asset management, office-based business services.
 - hqCity: string (include state abbreviation for USA, e.g. "Dallas, TX")
 - hqCountry: string (e.g. "USA", "UK", "France")
-- energyGwh: number — an ESTIMATED annual electricity consumption in GWh/year based on the company's industry, scale, and operations. Use industry benchmarks (manufacturing = high, software = low). These are approximations.
-- siteCount: number — an ESTIMATED count of physical operating sites/facilities (offices, plants, warehouses, stores, data centers). Use best available public info or a reasonable industry estimate.
-- pcDescription: string — a short (1-2 sentence) description of what the company does.
-- acquisitionYear: number — the four-digit year the firm acquired this portfolio company (omit if unknown).
+- energyGwh: number: an ESTIMATED annual electricity consumption in GWh/year based on the company's industry, scale, and operations. Use industry benchmarks (manufacturing = high, software = low). These are approximations.
+- siteCount: number: an ESTIMATED count of physical operating sites/facilities (offices, plants, warehouses, stores, data centers). Use best available public info or a reasonable industry estimate.
+- pcDescription: string: a short (1-2 sentence) description of what the company does.
+- acquisitionYear: number: the four-digit year the firm acquired this portfolio company (omit if unknown).
 
-Return up to 100 companies. If unsure about a field, use your best estimate. Do not wrap in any object — return a bare JSON array.`;
+Return up to 100 companies. If unsure about a field, use your best estimate. Do not wrap in any object: return a bare JSON array.`;
 
   try {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {

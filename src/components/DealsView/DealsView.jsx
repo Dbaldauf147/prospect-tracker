@@ -68,7 +68,7 @@ function normClient(s) { return String(s || '').toLowerCase().trim(); }
 // strings and bare dash placeholders ("-", "—", "–") as not filled
 // so a workbook that uses a dash for "blank" doesn't bump the X/N
 // progress count.
-const DASH_PLACEHOLDERS = new Set(['-', '–', '—']);
+const DASH_PLACEHOLDERS = new Set(['-', '–', '-']);
 function isFilled(v) {
   if (v == null) return false;
   const s = String(v).trim();
@@ -140,7 +140,7 @@ function DaysPaidOnCell({ row }) {
   if (hidden) {
     return (
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, width: '100%' }}>
-        <span style={{ color: 'var(--color-text-muted)', flex: 1 }}>—</span>
+        <span style={{ color: 'var(--color-text-muted)', flex: 1 }}>-</span>
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); onUpdate?.(row.id, DAYS_PAID_ON_HIDDEN_KEY, ''); }}
@@ -153,7 +153,7 @@ function DaysPaidOnCell({ row }) {
 
   const delta = daysUntilDue(row['Due Date']);
   if (delta == null) {
-    return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+    return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
   }
 
   const color = delta < 0 ? '#B91C1C' : delta <= 7 ? '#92400E' : '#0F172A';
@@ -268,7 +268,7 @@ function ProgressTextEditor({ value, onCommit }) {
     <input
       type="text"
       value={draft}
-      placeholder="—"
+      placeholder="-"
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onClick={(e) => e.stopPropagation()}
@@ -327,7 +327,7 @@ function ProgressPopoverRow({ row, field, columnLinks, listRegistry, onSave }) {
           rel="noopener noreferrer"
           onClick={(e) => e.stopPropagation()}
           style={{ flex: 1, fontSize: '0.72rem', color: '#2563EB', textDecoration: 'underline', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-          title={`${field.label} — open the Service Desk ticket form in a new tab`}
+          title={`${field.label}: open the Service Desk ticket form in a new tab`}
         >{field.label}</a>
       ) : (
         <span style={{ flex: 1, fontSize: '0.72rem', color: filled ? '#1E293B' : '#475569', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={field.label}>{field.label}</span>
@@ -402,8 +402,8 @@ function ProgressCell({ row, columnLinks, listRegistry, onSave, onDelete }) {
         type="button"
         onClick={openPopover}
         title={ignored
-          ? 'Ignored — this deal is opted out of the handoff tally. Click to edit.'
-          : `${done} of ${total} handoff fields complete — click to edit`}
+          ? 'Ignored: this deal is opted out of the handoff tally. Click to edit.'
+          : `${done} of ${total} handoff fields complete: click to edit`}
         style={{ padding: '2px 10px', border: '1px solid', borderColor: fg, borderRadius: 999, background: bg, color: fg, fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', minWidth: 56, textDecoration: ignored ? 'line-through' : 'none', opacity: ignored ? 0.85 : 1 }}
       >
         {done}/{total}{pct === 1 && !ignored ? ' ✓' : ''}
@@ -445,7 +445,7 @@ function ProgressCell({ row, columnLinks, listRegistry, onSave, onDelete }) {
               <div style={{ padding: '0.4rem 0.75rem', borderTop: '1px solid #E2E8F0', background: '#F8FAFC', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flex: '0 0 auto' }}>
                 <label
                   style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', cursor: 'pointer', fontSize: '0.7rem', color: '#475569' }}
-                  title="Don't count this deal in the X/N tally — its pill shows greyed-out."
+                  title="Don't count this deal in the X/N tally: its pill shows greyed-out."
                 >
                   <input
                     type="checkbox"
@@ -453,7 +453,7 @@ function ProgressCell({ row, columnLinks, listRegistry, onSave, onDelete }) {
                     onChange={toggleIgnore}
                     style={{ margin: 0, cursor: 'pointer' }}
                   />
-                  <span>Ignore this deal{ignored ? '' : ` — grey out the X/${PROGRESS_FIELDS.length}`}</span>
+                  <span>Ignore this deal{ignored ? '' : `: grey out the X/${PROGRESS_FIELDS.length}`}</span>
                 </label>
                 {onDelete && (
                   <button
@@ -480,7 +480,7 @@ function ProgressCell({ row, columnLinks, listRegistry, onSave, onDelete }) {
             )}
             {!onSave && (
               <div style={{ padding: '0.4rem 0.75rem', borderTop: '1px solid #E2E8F0', fontSize: '0.65rem', color: '#94A3B8', fontStyle: 'italic', flex: '0 0 auto' }}>
-                Read-only — editing requires the inline-edit deploy.
+                Read-only: editing requires the inline-edit deploy.
               </div>
             )}
           </div>
@@ -564,7 +564,7 @@ function ClientNameWarning({ name, cdmName, onAdd, onIgnore }) {
         type="button"
         onClick={openPopover}
         onDoubleClick={(e) => e.stopPropagation()}
-        title={`"${name}" isn't a company in Table View — click to add it`}
+        title={`"${name}" isn't a company in Table View: click to add it`}
         style={{ flex: '0 0 auto', background: 'transparent', border: 'none', color: '#B45309', fontSize: '0.85rem', lineHeight: 1, cursor: 'pointer', padding: 0 }}
       >⚠</button>
       {open && createPortal(
@@ -610,7 +610,7 @@ function ClientNameWarning({ name, cdmName, onAdd, onIgnore }) {
               <button
                 type="button"
                 onClick={() => { onIgnore(name, true); setOpen(false); }}
-                title="Stop warning about this name — it won't count against the unmapped tally either"
+                title="Stop warning about this name: it won't count against the unmapped tally either"
                 style={{ padding: 0, background: 'none', border: 'none', color: '#64748B', textDecoration: 'underline', fontSize: '0.68rem', fontFamily: 'inherit', cursor: 'pointer', alignSelf: 'flex-start' }}
               >Ignore this name</button>
             )}
@@ -668,7 +668,7 @@ function MappedClientCell({ raw, manual, ignored, clientOptions, onChange, onTog
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onToggleIgnore(raw, true); }}
-            title="Ignore this row — it won't count against the unmapped tally"
+            title="Ignore this row: it won't count against the unmapped tally"
             style={{ padding: '0 6px', border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: '#475569', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit' }}
           >✕</button>
         )}
@@ -689,7 +689,7 @@ function MappedClientCell({ raw, manual, ignored, clientOptions, onChange, onTog
         color: '#1E293B',
       }}
     >
-      <option value="">— Unmap —</option>
+      <option value="">(Unmap)</option>
       {clientOptions.map(c => <option key={c} value={c}>{c}</option>)}
     </select>
   );
@@ -807,7 +807,7 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
       return fmtCurrency(n == null ? 0 : n);
     }
     function renderValue(v) {
-      if (v == null || v === '') return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+      if (v == null || v === '') return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
       if (isCurrency) return <span style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>{fmtCurrency(v)}</span>;
       if (isPercent) return <span style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>{fmtPercent(v)}</span>;
       if (isDate) return <span style={{ color: '#334155' }}>{fmtDate(v)}</span>;
@@ -861,7 +861,7 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
       let stateTitle = 'No amounts yet';
       if (ignored) {
         bg = '#F1F5F9'; fg = '#475569';
-        stateTitle = 'Ignored — click ↻ to re-enable status color';
+        stateTitle = 'Ignored: click ↻ to re-enable status color';
       } else if (numerator === 0 && denominator === 0) {
         bg = '#F1F5F9'; fg = '#475569';
         stateTitle = 'Nothing recorded yet';
@@ -888,7 +888,7 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
         ? (e) => { e.stopPropagation(); row.__onShowCommissionBreakdown?.(row.id, metricKey); }
         : undefined;
       const fullTitle = commNumerator != null
-        ? `Auto-populated from Commissions for "${String(row?.[DEAL_BFO_KEY] || '').trim()}" — ${stateTitle}. Double-click for the mapped breakdown.`
+        ? `Auto-populated from Commissions for "${String(row?.[DEAL_BFO_KEY] || '').trim()}": ${stateTitle}. Double-click for the mapped breakdown.`
         : stateTitle;
       return (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, width: '100%' }} title={fullTitle}>
@@ -902,7 +902,7 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
             type="button"
             onClick={(e) => { e.stopPropagation(); row.__onUpdate?.(row.id, ignoreKey, ignored ? '' : '1'); }}
             onDoubleClick={(e) => e.stopPropagation()}
-            title={ignored ? 'Re-enable status color for this cell' : 'Ignore this cell — show as grey'}
+            title={ignored ? 'Re-enable status color for this cell' : 'Ignore this cell: show as grey'}
             style={{ background: 'transparent', border: '1px solid var(--color-border)', color: '#94A3B8', cursor: 'pointer', fontSize: '0.7rem', padding: '0 6px', borderRadius: 4, fontFamily: 'inherit', lineHeight: 1 }}
           >{ignored ? '↻' : '⊘'}</button>
         </span>
@@ -966,7 +966,7 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
           const year = dealYear(row);
           return year
             ? <span style={{ color: '#334155', fontVariantNumeric: 'tabular-nums' }}>{year}</span>
-            : <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+            : <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
         }
         // Currently being paid mirrors the Commissions tab's Payment
         // Status pill — pulled by the deal's BFO opp name so the user
@@ -980,7 +980,7 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
             const palette = status.state === 'active' ? { bg: '#DCFCE7', fg: '#166534' }
               : status.state === 'stopped' ? { bg: '#FEE2E2', fg: '#991B1B' }
               : { bg: '#F1F5F9', fg: '#64748B' };
-            const title = `Auto-populated from Commissions for "${String(row?.[DEAL_BFO_KEY] || '').trim()}" — ${status.title}`;
+            const title = `Auto-populated from Commissions for "${String(row?.[DEAL_BFO_KEY] || '').trim()}": ${status.title}`;
             return (
               <span title={title} style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 4, background: palette.bg, color: palette.fg, fontWeight: 600, fontSize: '0.7rem' }}>
                 {status.label}
@@ -1533,7 +1533,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
       defaultWidth: 220,
       render: (row) => {
         const raw = String(row['Client Name'] || '').trim();
-        if (!raw) return <span style={{ color: '#94A3B8' }}>—</span>;
+        if (!raw) return <span style={{ color: '#94A3B8' }}>-</span>;
         const norm = normClient(raw);
         const auto = clientNameSet.has(norm);
         const manual = clientMap[norm];
@@ -1574,13 +1574,13 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
       defaultWidth: 130,
       render: (row) => {
         const raw = String(row['Client Name'] || '').trim();
-        if (!raw) return <span style={{ color: '#94A3B8' }}>—</span>;
+        if (!raw) return <span style={{ color: '#94A3B8' }}>-</span>;
         const norm = normClient(raw);
         const mapped = clientMap[norm];
         const lookupKey = mapped ? normClient(mapped) : norm;
         const prospect = prospectByName.get(lookupKey);
         const status = prospect?.status;
-        if (!status) return <span style={{ color: '#94A3B8' }}>—</span>;
+        if (!status) return <span style={{ color: '#94A3B8' }}>-</span>;
         const pill = statusPillStyle(status);
         return (
           <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, ...pill }}>
@@ -1783,7 +1783,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
           <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
             {rows.length} deals{source === 'override' ? ' · uploaded' : ''}. Upload an Excel export or paste from Google Sheets.
             {unmappedCount > 0 && (
-              <> · <span style={{ color: '#92400E', fontWeight: 700 }}>{unmappedCount} row{unmappedCount === 1 ? '' : 's'} with unmatched Client Names</span> — use the <em>Mapped to Client</em> column to assign or ignore.</>
+              <> · <span style={{ color: '#92400E', fontWeight: 700 }}>{unmappedCount} row{unmappedCount === 1 ? '' : 's'} with unmatched Client Names</span>: use the <em>Mapped to Client</em> column to assign or ignore.</>
             )}
             {ignoreSet.size > 0 && (
               <> · <span style={{ color: '#64748B' }}>{ignoreSet.size} ignored</span></>
@@ -1801,7 +1801,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
           <button
             type="button"
             onClick={addNewDeal}
-            title="Add a blank deal row at the top of the table — start typing into any cell to populate it."
+            title="Add a blank deal row at the top of the table: start typing into any cell to populate it."
             style={{ padding: '0.4rem 0.8rem', border: '1px solid #16A34A', background: '#16A34A', color: '#fff', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
           >+ New Deal</button>
           <button
@@ -1854,8 +1854,8 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
                   <strong>{o.account || 'Unknown account'}</strong>
                   {o.scope ? <> &middot; {o.scope}</> : null}
                   {o.bfo
-                    ? <span style={{ color: '#B45309' }}> — BFO opp name &ldquo;{o.bfo}&rdquo; not found on Deals</span>
-                    : <span style={{ color: '#B45309' }}> — no BFO opp name set</span>}
+                    ? <span style={{ color: '#B45309' }}>: BFO opp name &ldquo;{o.bfo}&rdquo; not found on Deals</span>
+                    : <span style={{ color: '#B45309' }}>: no BFO opp name set</span>}
                 </span>
                 <button
                   type="button"
@@ -2015,7 +2015,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
               onChange={(e) => { setBulkEditColumn(e.target.value); setBulkEditValue(''); }}
               style={{ padding: '0.25rem 0.4rem', border: '1px solid #93C5FD', borderRadius: 4, fontSize: '0.72rem', fontFamily: 'inherit', background: '#fff', color: '#1E293B', maxWidth: 220 }}
             >
-              <option value="">— Column… —</option>
+              <option value="">(Column…)</option>
               {linkableHeaders.map(h => <option key={h} value={h}>{h}</option>)}
             </select>
             <span style={{ fontSize: '0.7rem', color: '#1E40AF' }}>=</span>
@@ -2091,7 +2091,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
             onChange={(e) => setBulkPick(e.target.value)}
             style={{ padding: '0.25rem 0.4rem', border: '1px solid #FCD34D', borderRadius: 4, fontSize: '0.72rem', fontFamily: 'inherit', background: '#fff', color: '#1E293B', maxWidth: 280 }}
           >
-            <option value="">— Map all to client… —</option>
+            <option value="">(Map all to client…)</option>
             {clientOptions.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
           <button

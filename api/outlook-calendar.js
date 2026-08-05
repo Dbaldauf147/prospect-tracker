@@ -37,7 +37,7 @@ async function handler(req, res) {
     });
 
     if (resp.status === 401) {
-      return res.status(401).json({ error: 'Token expired or invalid — re-authenticate with Outlook.' });
+      return res.status(401).json({ error: 'Token expired or invalid: re-authenticate with Outlook.' });
     }
     if (!resp.ok) {
       const errBody = await resp.text();

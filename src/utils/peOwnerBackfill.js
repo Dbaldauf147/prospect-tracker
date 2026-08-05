@@ -190,7 +190,7 @@ export async function runProspectBackfill(prospects, updateProspect, { companies
         await updateProspect(p.id, writes);
         updated.push(p.company);
       } catch (err) {
-        failed.push(`${p.company} — ${err?.message || err}`);
+        failed.push(`${p.company} · ${err?.message || err}`);
       }
     }
   }
@@ -200,17 +200,17 @@ export async function runProspectBackfill(prospects, updateProspect, { companies
 
 export function formatBackfillReport(pass, { updated, alreadySet, failed, notFound }) {
   const lines = [
-    `Company update — set ${pass.description} on ${updated.length} ` +
+    `Company update: set ${pass.description} on ${updated.length} ` +
     `compan${updated.length === 1 ? 'y' : 'ies'} in Table View.`,
   ];
   if (alreadySet.length) lines.push(`\nAlready set on ${alreadySet.length}: ${alreadySet.join(', ')}`);
   if (failed.length) lines.push(`\nFAILED to save (${failed.length}):\n  ${failed.join('\n  ')}`);
   if (notFound.length) {
-    lines.push(`\nNOT FOUND in Table View (${notFound.length}) — update these by hand:`);
+    lines.push(`\nNOT FOUND in Table View (${notFound.length}): update these by hand:`);
     for (const { name, candidates } of notFound) {
       lines.push(`  • ${name}${candidates.length ? ` (close match: ${candidates.join(', ')})` : ''}`);
     }
   }
-  if (!failed.length && !notFound.length) lines.push('\nEvery company matched — nothing left to do.');
+  if (!failed.length && !notFound.length) lines.push('\nEvery company matched: nothing left to do.');
   return lines.join('\n');
 }

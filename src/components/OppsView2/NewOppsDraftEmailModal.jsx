@@ -149,7 +149,7 @@ function DraftEmailEditor({ onClose, records = [], signature = '', template, onS
             <textarea
               rows={3}
               value={form.message}
-              placeholder="Optional — sits between the greeting and the table."
+              placeholder="Optional: sits between the greeting and the table."
               onChange={(e) => set('message', e.target.value)}
               style={{ ...inputStyle, resize: 'vertical' }}
             />
@@ -157,7 +157,7 @@ function DraftEmailEditor({ onClose, records = [], signature = '', template, onS
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginTop: '0.55rem' }}>
             <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)' }}>
-              The table and your signature are added automatically. Scheduled emails keep their own subject and message — edit those under “Schedule email”.
+              The table and your signature are added automatically. Scheduled emails keep their own subject and message: edit those under “Schedule email”.
             </span>
             <button
               type="button"

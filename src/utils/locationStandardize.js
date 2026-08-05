@@ -52,22 +52,22 @@ export function checkState(value) {
   // Right name, wrong capitalization (e.g. "new york").
   if (STATE_BY_NAME.has(lower)) {
     const fix = STATE_BY_NAME.get(lower);
-    return { issue: `Non-standard capitalization — use "${fix}"`, fix };
+    return { issue: `Non-standard capitalization: use "${fix}"`, fix };
   }
   // Abbreviation, with or without dots (e.g. "NY", "N.Y.").
   const letters = raw.replace(/[^a-z]/gi, '').toLowerCase();
   if (letters.length <= 3 && STATE_BY_ABBR.has(letters)) {
     const fix = STATE_BY_ABBR.get(letters);
-    return { issue: `Abbreviation — use full name "${fix}"`, fix };
+    return { issue: `Abbreviation: use full name "${fix}"`, fix };
   }
   // Extra text / comma (e.g. "New York, USA").
   if (raw.includes(',')) {
     const first = raw.split(',')[0].trim();
     const inner = checkState(first);
     const fix = inner ? inner.fix : (STATE_BY_NAME.get(first.toLowerCase()) || null);
-    return { issue: 'Contains extra text — keep only the state', fix: fix || null };
+    return { issue: 'Contains extra text: keep only the state', fix: fix || null };
   }
-  return { issue: 'Unrecognized state — standardize manually', fix: null };
+  return { issue: 'Unrecognized state: standardize manually', fix: null };
 }
 
 export function checkCity(value) {
@@ -75,12 +75,12 @@ export function checkCity(value) {
   if (!raw) return null;
   // "Atlanta, GA" — city field carries the state.
   if (raw.includes(',')) {
-    return { issue: 'City field contains a state — keep only the city', fix: canonCity(raw.split(',')[0]) };
+    return { issue: 'City field contains a state: keep only the city', fix: canonCity(raw.split(',')[0]) };
   }
   // "Atlanta GA" — trailing 2-letter state code.
   const m = raw.match(/^(.*\S)\s+([A-Za-z]{2})$/);
   if (m && STATE_BY_ABBR.has(m[2].toLowerCase())) {
-    return { issue: 'City field contains a state abbreviation — keep only the city', fix: canonCity(m[1]) };
+    return { issue: 'City field contains a state abbreviation: keep only the city', fix: canonCity(m[1]) };
   }
   // Known alias (e.g. "NYC", "Vegas") → canonical name.
   const aliasFix = CITY_BY_ALIAS.get(raw.toLowerCase());

@@ -33,7 +33,7 @@ const matchCityNames = (query) => matchCities(query, CITY_OPTIONS).slice(0, 12);
 function InlineCell({
   value,
   onCommit,
-  placeholder = '—',
+  placeholder = '-',
   emptyColor = '#CBD5E1',
   fontSize = '0.72rem',
   fontWeight = 400,
@@ -258,7 +258,7 @@ function ExpectedEmailCell({ info, name }) {
       style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#94A3B8', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
     >{text}</div>
   );
-  if (status === 'no-company') return muted('—', 'Map a New Company to predict an email.');
+  if (status === 'no-company') return muted('-', 'Map a New Company to predict an email.');
   if (status === 'no-domain') return muted('Domain unknown', `We don't have an email domain on file for "${info.company}", so no address can be predicted. Add the company to the Table View with an Email Domain / Website to enable this.`);
   if (status === 'no-format') return muted('Format unknown', `We know the domain (${info.domain}) but haven't seen enough contacts there to learn its email format.`);
   if (status === 'no-name') return muted('Missing name', 'This contact is missing the first/last name needed to build the address.');
@@ -393,7 +393,7 @@ class ContactsErrorBoundary extends Component {
         <div style={{ padding: '1.25rem', fontFamily: 'inherit' }}>
           <h2 style={{ marginTop: 0, fontSize: '1rem' }}>Contacts page failed to render</h2>
           <p style={{ color: '#475569', fontSize: 13 }}>
-            Something in this page's render or recent interaction threw an error. The reset button below clears your per-page column widths / filter / sort preferences in localStorage and reloads — your HubSpot data and Firestore settings are not affected.
+            Something in this page's render or recent interaction threw an error. The reset button below clears your per-page column widths / filter / sort preferences in localStorage and reloads: your HubSpot data and Firestore settings are not affected.
           </p>
           <div style={{ display: 'flex', gap: '0.5rem', margin: '0.75rem 0' }}>
             <button
@@ -607,11 +607,11 @@ function KeyContactsViewInner({
       }
       if (companyAssignment?.ok === false) {
         const what = companyAssignment.mode === 'rename-failed' ? 'rename the Company record' : 'pin the Company association';
-        setMassStatus({ type: 'success', message: `Saved "${next}" locally. HubSpot couldn't ${what} — Prospect Tracker will keep your typed value here.` });
+        setMassStatus({ type: 'success', message: `Saved "${next}" locally. HubSpot couldn't ${what}: Prospect Tracker will keep your typed value here.` });
       } else if (companyAssignment?.nameDiffers && companyAssignment?.matchedName) {
         setMassStatus({ type: 'success', message: `Saved "${next}" locally. This contact had no linked company, so HubSpot linked it to "${companyAssignment.matchedName}".` });
       } else if (companyAssignment?.mode === 'renamed') {
-        setMassStatus({ type: 'success', message: `Renamed the HubSpot Company "${companyAssignment.oldName || '—'}" → "${next}" (updates every contact linked to it).` });
+        setMassStatus({ type: 'success', message: `Renamed the HubSpot Company "${companyAssignment.oldName || '-'}" → "${next}" (updates every contact linked to it).` });
       }
       if (didChange) {
         const nextLocal = { ...cur };
@@ -786,7 +786,7 @@ function KeyContactsViewInner({
     setMassProcessing(false);
     if (errors > 0) {
       const hint = /allowed options/i.test(errorMessage)
-        ? ' — add "Hide" to the Dan\'s Tags allowed values in HubSpot Settings → Properties.'
+        ? ': add "Hide" to the Dan\'s Tags allowed values in HubSpot Settings → Properties.'
         : '';
       setMassStatus({ type: 'partial', message: `Hide failed: ${errorMessage}${hint}` });
     } else {
@@ -802,7 +802,7 @@ function KeyContactsViewInner({
     setMassStatus(null);
     const { updated, errors, errorMessage } = await applyHideTag([...massSelected]);
     const hint = errors > 0 && /allowed options/i.test(errorMessage)
-      ? ' — add "Hide" to the Dan\'s Tags allowed values in HubSpot Settings → Properties.'
+      ? ': add "Hide" to the Dan\'s Tags allowed values in HubSpot Settings → Properties.'
       : '';
     setMassStatus({
       type: errors === 0 ? 'success' : 'partial',
@@ -826,7 +826,7 @@ function KeyContactsViewInner({
   async function downloadCombinedContactsCsv() {
     const cache = hubspotCache?.contacts || [];
     if (cache.length === 0) {
-      alert('No HubSpot contacts loaded — sync HubSpot Contacts first.');
+      alert('No HubSpot contacts loaded: sync HubSpot Contacts first.');
       return;
     }
     const local = settings?.contactLocalFields || {};
@@ -1104,7 +1104,7 @@ function KeyContactsViewInner({
           prospect: row.prospect,
         })));
     if (!list || list.length === 0) {
-      alert('No contacts to download — adjust your filters.');
+      alert('No contacts to download: adjust your filters.');
       return;
     }
     const headers = [
@@ -2513,8 +2513,8 @@ function KeyContactsViewInner({
             type="button"
             onClick={downloadCombinedContactsCsv}
             title={categorizeContact
-              ? 'Download a formatted Excel workbook of every contact on this page. Each row has a Categories column (Key / Active / Client / Key Prospect). The export covers the full page set — on-screen filters and search are NOT applied.'
-              : 'Download a single workbook combining contacts from Key Contacts, Active Contacts, and Client Contacts. Each row has a Categories column listing every tab the contact qualifies for. Filters and search on this page are NOT applied — the export covers the full tag/CDM-derived sets.'}
+              ? 'Download a formatted Excel workbook of every contact on this page. Each row has a Categories column (Key / Active / Client / Key Prospect). The export covers the full page set: on-screen filters and search are NOT applied.'
+              : 'Download a single workbook combining contacts from Key Contacts, Active Contacts, and Client Contacts. Each row has a Categories column listing every tab the contact qualifies for. Filters and search on this page are NOT applied: the export covers the full tag/CDM-derived sets.'}
             style={{
               padding: '0.35rem 0.75rem',
               fontSize: '0.72rem',
@@ -2898,7 +2898,7 @@ function KeyContactsViewInner({
               onChange={e => { setCampaignFilterId(e.target.value); setCampaignFilterMode(e.target.value ? 'in' : 'all'); }}
               style={{ padding: '0.35rem 0.5rem', fontSize: '0.72rem', border: '1px solid #CBD5E1', borderRadius: 6, fontFamily: 'inherit', background: '#fff', color: '#334155', maxWidth: 280 }}
             >
-              <option value="">— filter by campaign —</option>
+              <option value="">(filter by campaign)</option>
               {campaignRecipientOptions.map(o => (
                 <option key={o.id} value={o.id}>
                   {o.subject}{o.dateLabel ? ` (${o.dateLabel})` : ''} · {o.count} sent
@@ -2921,7 +2921,7 @@ function KeyContactsViewInner({
                       title={mode === 'in'
                         ? 'Show only contacts already emailed in this campaign'
                         : mode === 'out'
-                          ? 'Show only contacts NOT yet in this campaign — the ones left to add'
+                          ? 'Show only contacts NOT yet in this campaign: the ones left to add'
                           : 'Show all contacts (both in and not in the campaign)'}
                       style={{
                         padding: '1px 8px', borderRadius: 999,
@@ -3092,7 +3092,7 @@ function KeyContactsViewInner({
                             setFilterDraft(null);
                             setOpenFilterCol(col.key);
                           }}
-                          title={isFiltered ? `Filtered to ${sel.length} value${sel.length === 1 ? '' : 's'} — click to change` : 'Filter by value'}
+                          title={isFiltered ? `Filtered to ${sel.length} value${sel.length === 1 ? '' : 's'}: click to change` : 'Filter by value'}
                           style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, padding: '0.2rem 0.35rem', fontSize: '0.7rem', border: '1px solid ' + (isFiltered ? '#2563EB' : '#E2E8F0'), borderRadius: 3, fontFamily: 'inherit', background: isFiltered ? '#EFF6FF' : '#fff', color: isFiltered ? '#1D4ED8' : '#64748B', cursor: 'pointer' }}
                         >
                           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{isFiltered ? `${sel.length} selected` : 'All'}</span>
@@ -3172,7 +3172,7 @@ function KeyContactsViewInner({
                 </div>
                 {filteredContacts.length === 0 && (
                   <div style={{ padding: '1rem', textAlign: 'center', color: '#64748B', fontSize: '0.78rem', background: '#FAFAFA', borderTop: '1px solid #F1F5F9' }}>
-                    No contacts match the current filters{query ? ` for "${query}"` : ''} — clear a filter or column search to see results.
+                    No contacts match the current filters{query ? ` for "${query}"` : ''}: clear a filter or column search to see results.
                   </div>
                 )}
                 {filteredContacts.map((c, i) => (
@@ -3210,7 +3210,7 @@ function KeyContactsViewInner({
                       <div style={{ padding: '0.45rem 0.6rem', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
                         {(() => {
                           const cats = categorizeContact(c.raw || c) || [];
-                          if (cats.length === 0) return <span style={{ color: '#CBD5E1', fontSize: '0.7rem' }}>—</span>;
+                          if (cats.length === 0) return <span style={{ color: '#CBD5E1', fontSize: '0.7rem' }}>-</span>;
                           const COLORS = {
                             Key:    { bg: '#FEF3C7', border: '#FCD34D', color: '#92400E' },
                             Active: { bg: '#DCFCE7', border: '#86EFAC', color: '#166534' },
@@ -3243,7 +3243,7 @@ function KeyContactsViewInner({
                       value={c.jobtitle}
                       onCommit={v => inlineUpdateField(c.raw || c, 'jobtitle', v)}
                       textColor="#475569"
-                      title={c.jobtitle ? `Click to edit — ${c.jobtitle}` : 'Click to edit'}
+                      title={c.jobtitle ? `Click to edit: ${c.jobtitle}` : 'Click to edit'}
                     />
                     )}
                     {visibleSet.has('company') && (
@@ -3259,7 +3259,7 @@ function KeyContactsViewInner({
                         // need a Suggested Company / manual mapping.
                         ...(c.companyName && !c.prospect ? { background: '#FEF3C7', borderLeft: '3px solid #F59E0B' } : null),
                       }}
-                      title={c.companyName && !c.prospect ? `"${c.companyName}" is not mapped to any prospect in the Table View — no matching company name and no shared email domain.` : undefined}
+                      title={c.companyName && !c.prospect ? `"${c.companyName}" is not mapped to any prospect in the Table View: no matching company name and no shared email domain.` : undefined}
                     >
                       <div style={{ flex: 1, minWidth: 0 }}>
                         {linkCompanyToProspect && c.prospect ? (
@@ -3327,7 +3327,7 @@ function KeyContactsViewInner({
                             >Apply</button>
                           </>
                         ) : (
-                          <span style={{ color: '#CBD5E1' }}>—</span>
+                          <span style={{ color: '#CBD5E1' }}>-</span>
                         )}
                       </div>
                     )}
@@ -3353,7 +3353,7 @@ function KeyContactsViewInner({
                           type="button"
                           onClick={(e) => { e.stopPropagation(); toggleReachedOut(c.raw || c); }}
                           title={c.reachedOut
-                            ? `Marked reached out${c.reachedOutAt ? ` on ${new Date(c.reachedOutAt).toLocaleDateString()}` : ''} — click to unmark`
+                            ? `Marked reached out${c.reachedOutAt ? ` on ${new Date(c.reachedOutAt).toLocaleDateString()}` : ''}: click to unmark`
                             : 'Click to mark that you\'ve reached out to this contact'}
                           style={{
                             display: 'inline-flex', alignItems: 'center', gap: 4,
@@ -3391,7 +3391,7 @@ function KeyContactsViewInner({
                         await autoFillLocationFromCity(c.raw || c, city, { state: state || c.state, country: c.country });
                       }}
                       textColor="#64748B"
-                      placeholder="—"
+                      placeholder="-"
                       title="Click to edit. Type 'City, State'."
                       fontSize="0.7rem"
                     />
@@ -3410,7 +3410,7 @@ function KeyContactsViewInner({
                           suggestionsNoun="cities"
                           title="Click to edit. Pick a city for auto-filled State / Country, or type your own."
                           textColor="#64748B"
-                          placeholder="—"
+                          placeholder="-"
                           fontSize="0.7rem"
                           flagIssue={flag?.issue || null}
                           flagFix={flag?.fix || null}
@@ -3424,7 +3424,7 @@ function KeyContactsViewInner({
                           value={c.state}
                           onCommit={v => inlineUpdateField(c.raw || c, 'state', v)}
                           textColor="#64748B"
-                          placeholder="—"
+                          placeholder="-"
                           fontSize="0.7rem"
                           flagIssue={flag?.issue || null}
                           flagFix={flag?.fix || null}
@@ -3443,12 +3443,12 @@ function KeyContactsViewInner({
                     <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem' }}>
                       {c.linkedin
                         ? <a href={c.linkedin} target="_blank" rel="noopener noreferrer" style={{ color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}>Open ↗</a>
-                        : <span style={{ color: '#CBD5E1' }}>—</span>}
+                        : <span style={{ color: '#CBD5E1' }}>-</span>}
                     </div>
                     )}
                     {visibleSet.has('salesNav') && (() => {
                       const parts = [c.firstname, c.lastname, c.companyName].map(s => String(s || '').trim()).filter(Boolean);
-                      if (parts.length === 0) return <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1' }}>—</div>;
+                      if (parts.length === 0) return <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1' }}>-</div>;
                       const keywords = encodeURIComponent(parts.join(' '));
                       const liHref = `https://www.linkedin.com/search/results/people/?keywords=${keywords}`;
                       const snHref = `https://www.linkedin.com/sales/search/people?keywords=${keywords}`;
@@ -3458,7 +3458,7 @@ function KeyContactsViewInner({
                             href={liHref}
                             target="_blank"
                             rel="noopener noreferrer"
-                            title={`Open regular LinkedIn people search for "${parts.join(' ')}" — best for grabbing the canonical linkedin.com/in/ URL.`}
+                            title={`Open regular LinkedIn people search for "${parts.join(' ')}": best for grabbing the canonical linkedin.com/in/ URL.`}
                             style={{ color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}
                           >LinkedIn ↗</a>
                           <a
@@ -3475,14 +3475,14 @@ function KeyContactsViewInner({
                     <div style={{ padding: '0.45rem 0.6rem' }}>
                       {c.metInPerson
                         ? <span style={{ display: 'inline-block', padding: '1px 6px', fontSize: '0.6rem', fontWeight: 700, background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC', borderRadius: 999 }}>✓ Yes</span>
-                        : <span style={{ color: '#CBD5E1', fontSize: '0.7rem' }}>—</span>}
+                        : <span style={{ color: '#CBD5E1', fontSize: '0.7rem' }}>-</span>}
                     </div>
                     )}
                     {visibleSet.has('events') && (
                     <InlineCell
                       value={contactEvents[String(c.id || '')] || ''}
                       onCommit={v => handleSaveContactEvents(String(c.id || ''), v)}
-                      placeholder="—"
+                      placeholder="-"
                       title="Click to log events for this contact (conferences, meetings, etc.)"
                       fontSize="0.7rem"
                       textColor="#475569"
@@ -3492,7 +3492,7 @@ function KeyContactsViewInner({
                     <InlineCell
                       value={(settings?.customField || {})[String(c.id || '')] || ''}
                       onCommit={v => handleSaveContactCustom(String(c.id || ''), v)}
-                      placeholder="—"
+                      placeholder="-"
                       title="Click to edit this contact's Custom field (used by the {custom} email variable)"
                       fontSize="0.7rem"
                       textColor="#475569"
@@ -3511,7 +3511,7 @@ function KeyContactsViewInner({
                           <div
                             style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1' }}
                             title="No To / CC recipients set. Open the contact and use the To Also / CC Emails fields to link recipients."
-                          >—</div>
+                          >-</div>
                         );
                       }
                       const tip = [
@@ -3583,7 +3583,7 @@ function KeyContactsViewInner({
                             textOverflow: 'ellipsis',
                             minWidth: 0,
                           }}
-                        >{tagStr || '—'}</div>
+                        >{tagStr || '-'}</div>
                       );
                     })()}
                     {visibleSet.has('lastOutreach') && (() => {
@@ -3593,7 +3593,7 @@ function KeyContactsViewInner({
                           <div
                             style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1' }}
                             title={(activityCache || outreachIndex) ? 'No call or email logged in the Activity feed for this contact' : 'Open the Activity tab once to load HubSpot activity'}
-                          >—</div>
+                          >-</div>
                         );
                       }
                       const d = new Date(entry.ts);
@@ -3604,7 +3604,7 @@ function KeyContactsViewInner({
                       const stale = days != null && days > 100;
                       const tip = isNaN(d)
                         ? ''
-                        : `Most recent ${isCall ? 'call' : 'email'} on ${d.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })} (from the Activity tab)${stale ? ' — over 100 days since last outreach' : ''}`;
+                        : `Most recent ${isCall ? 'call' : 'email'} on ${d.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })} (from the Activity tab)${stale ? ': over 100 days since last outreach' : ''}`;
                       return (
                         <div
                           style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: stale ? '#B45309' : '#475569', fontWeight: stale ? 700 : 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
@@ -3622,7 +3622,7 @@ function KeyContactsViewInner({
                           <div
                             style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1' }}
                             title={savedCampaigns.length ? "This contact isn't a recipient in any saved email campaign" : 'Save a campaign on the Email Campaigns subtab (Draft Emails) to populate this column'}
-                          >—</div>
+                          >-</div>
                         );
                       }
                       const d = new Date(entry.ts);
@@ -3732,8 +3732,8 @@ function KeyContactsViewInner({
           const HEADER_COLUMNS = [
             { key: 'company',     label: 'Company',         align: 'left',   tip: 'Sort by company name' },
             { key: 'aum',         label: 'AUM',             align: 'right',  tip: 'PE AUM, falling back to RE AUM, from the prospect\'s Table View record' },
-            { key: 'type',        label: 'Type',            align: 'left',   tip: 'Prospect type — Private Equity, Real Estate, etc.' },
-            { key: 'status',      label: 'Status',          align: 'left',   tip: 'Prospect status — Client, Inside Sales, Qualifying, etc.' },
+            { key: 'type',        label: 'Type',            align: 'left',   tip: 'Prospect type: Private Equity, Real Estate, etc.' },
+            { key: 'status',      label: 'Status',          align: 'left',   tip: 'Prospect status: Client, Inside Sales, Qualifying, etc.' },
             { key: 'keyContacts', label: 'Key Contacts',    align: 'center', tip: 'Number of HubSpot contacts at this company tagged "Dan Key Target"' },
             { key: 'dm',          label: 'Decision Makers', align: 'center', tip: 'Number of HubSpot contacts at this company tagged "decision maker"' },
             { key: 'met',         label: 'Met in Person',   align: 'left',   tip: 'Met-in-person count / total decision makers, plus how many of them list New York / NYC' },
@@ -3778,7 +3778,7 @@ function KeyContactsViewInner({
 
               {filteredRows.length === 0 && (
                 <div style={{ padding: '1rem', textAlign: 'center', color: '#64748B', fontSize: '0.78rem', background: '#FAFAFA', borderTop: '1px solid #F1F5F9' }}>
-                  No companies match the current filters{query ? ` for "${query}"` : ''} — clear a filter or column search to see results.
+                  No companies match the current filters{query ? ` for "${query}"` : ''}: clear a filter or column search to see results.
                 </div>
               )}
               {filteredRows.map((row, rowIdx) => {
@@ -3834,11 +3834,11 @@ function KeyContactsViewInner({
                       </div>
 
                       <div style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem', color: row.type ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {row.type || '—'}
+                        {row.type || '-'}
                       </div>
 
                       <div style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem', color: row.status ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {row.status || '—'}
+                        {row.status || '-'}
                       </div>
 
                       <div
@@ -3863,7 +3863,7 @@ function KeyContactsViewInner({
                       </div>
 
                       {(() => {
-                        if (dmTotal === 0) return <div style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem', color: '#CBD5E1' }}>—</div>;
+                        if (dmTotal === 0) return <div style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem', color: '#CBD5E1' }}>-</div>;
                         const nycList = row.decisionMakerEntries
                           .filter(e => /(new york|nyc)/i.test(e.city || ''))
                           .map(e => `${e.name}${e.city ? ` (${e.city})` : ''}`)
@@ -3940,24 +3940,24 @@ function KeyContactsViewInner({
                                         style={{ color: '#1D4ED8', cursor: 'pointer', textDecoration: 'underline' }}
                                       >{c.name}</span>
                                     </div>
-                                    <div style={{ fontSize: '0.7rem', color: c.jobtitle ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.jobtitle}>{c.jobtitle || '—'}</div>
+                                    <div style={{ fontSize: '0.7rem', color: c.jobtitle ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.jobtitle}>{c.jobtitle || '-'}</div>
                                     <div style={{ fontSize: '0.7rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.email}>
                                       {c.email
                                         ? <a href={`mailto:${c.email}`} style={{ color: '#3B82F6', textDecoration: 'none' }} onClick={e => e.stopPropagation()}>{c.email}</a>
-                                        : <span style={{ color: '#CBD5E1' }}>—</span>}
+                                        : <span style={{ color: '#CBD5E1' }}>-</span>}
                                     </div>
-                                    <div style={{ fontSize: '0.7rem', color: c.phone ? '#64748B' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.phone}>{c.phone || '—'}</div>
+                                    <div style={{ fontSize: '0.7rem', color: c.phone ? '#64748B' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.phone}>{c.phone || '-'}</div>
                                     <div style={{ fontSize: '0.68rem', color: (c.city || c.state) ? '#64748B' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                      {[c.city, c.state].filter(Boolean).join(', ') || '—'}
+                                      {[c.city, c.state].filter(Boolean).join(', ') || '-'}
                                     </div>
                                     <div style={{ fontSize: '0.68rem' }}>
                                       {c.linkedin
                                         ? <a href={c.linkedin} target="_blank" rel="noopener noreferrer" style={{ color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }} onClick={e => e.stopPropagation()}>Open ↗</a>
-                                        : <span style={{ color: '#CBD5E1' }}>—</span>}
+                                        : <span style={{ color: '#CBD5E1' }}>-</span>}
                                     </div>
                                     {(() => {
                                       const parts = [c.firstname, c.lastname, row.companyName].map(s => String(s || '').trim()).filter(Boolean);
-                                      if (parts.length === 0) return <div style={{ fontSize: '0.62rem', color: '#CBD5E1' }}>—</div>;
+                                      if (parts.length === 0) return <div style={{ fontSize: '0.62rem', color: '#CBD5E1' }}>-</div>;
                                       const keywords = encodeURIComponent(parts.join(' '));
                                       const liHref = `https://www.linkedin.com/search/results/people/?keywords=${keywords}`;
                                       const snHref = `https://www.linkedin.com/sales/search/people?keywords=${keywords}`;
@@ -3985,7 +3985,7 @@ function KeyContactsViewInner({
                                     <div>
                                       {c.metInPerson
                                         ? <span style={{ display: 'inline-block', padding: '1px 6px', fontSize: '0.6rem', fontWeight: 700, background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC', borderRadius: 999 }}>✓ Yes</span>
-                                        : <span style={{ color: '#CBD5E1', fontSize: '0.68rem' }}>—</span>}
+                                        : <span style={{ color: '#CBD5E1', fontSize: '0.68rem' }}>-</span>}
                                     </div>
                                   </div>
                                 ))}

@@ -204,7 +204,7 @@ function NoteContactPicker({ contactNotes, selectedContacts, onAdd, onRemove, on
         </p>
       )}
       {trimmed.length > 0 && trimmed.length < 2 && (
-        <p style={{ fontSize: '0.7rem', color: '#9CA3AF', margin: 0 }}>Keep typing — at least 2 characters.</p>
+        <p style={{ fontSize: '0.7rem', color: '#9CA3AF', margin: 0 }}>Keep typing: at least 2 characters.</p>
       )}
       {trimmed.length >= 2 && (
         <>
@@ -268,7 +268,7 @@ function CritiquePanel({ critique, onClose, onUseRewrite }) {
     <div style={{ marginBottom: '0.6rem', border: `1px solid ${bandStyle.border}`, background: bandStyle.bg, borderRadius: 6, padding: '0.6rem 0.7rem', fontSize: '0.78rem', color: bandStyle.color }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'space-between', flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontWeight: 800, fontSize: '0.95rem' }}>{score == null ? '—' : `${score}/100`}</span>
+          <span style={{ fontWeight: 800, fontSize: '0.95rem' }}>{score == null ? '-' : `${score}/100`}</span>
           {verdict && <span style={{ fontWeight: 600 }}>{verdict}</span>}
         </div>
         <button
@@ -293,7 +293,7 @@ function CritiquePanel({ critique, onClose, onUseRewrite }) {
             {fixes.map((f, i) => (
               <li key={i} style={{ marginBottom: 3 }}>
                 {f.issue && <span style={{ fontWeight: 700 }}>{f.issue}</span>}
-                {f.issue && f.fix && <span> — </span>}
+                {f.issue && f.fix && <span>: </span>}
                 {f.fix && <span>{f.fix}</span>}
               </li>
             ))}
@@ -385,7 +385,7 @@ function CoverageEditCell({ value, editable, missingTitle, cellStyle, onCommit }
       style={{ ...cellStyle, color: '#B91C1C', fontStyle: 'italic', fontWeight: 700, cursor: editable ? 'pointer' : 'default' }}
       title={editable ? 'Click to add a value' : missingTitle}
       onClick={editable ? () => setEditing(true) : undefined}
-    >—</td>
+    >-</td>
   );
 }
 
@@ -440,7 +440,7 @@ function VariableCoverageTable({ subject, body, contacts, insertVariables, resol
       <>
         <h3 className={styles.cardTitle}>Variable Coverage</h3>
         <p className={styles.emptyDrafts}>
-          No variable tokens detected in the subject or body — nothing to check.
+          No variable tokens detected in the subject or body: nothing to check.
         </p>
       </>
     );
@@ -453,7 +453,7 @@ function VariableCoverageTable({ subject, body, contacts, insertVariables, resol
     <>
       <h3 className={styles.cardTitle}>Variable Coverage ({contacts.length})</h3>
       <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', margin: '-0.25rem 0 0.5rem 0' }}>
-        Each row is a recipient; each column is a variable used in the draft. Red <strong>—</strong> = the source data has no value to substitute, so that personalization will land blank.
+        Each row is a recipient; each column is a variable used in the draft. Red <strong>-</strong> = the source data has no value to substitute, so that personalization will land blank.
       </p>
       <div style={{
         // Grow with the viewport — leaves enough room for the page
@@ -501,7 +501,7 @@ function VariableCoverageTable({ subject, body, contacts, insertVariables, resol
                       key={v.token}
                       value={val}
                       editable={editable}
-                      missingTitle={`Missing — ${v.label} will render blank for this recipient`}
+                      missingTitle={`Missing: ${v.label} will render blank for this recipient`}
                       cellStyle={cellStyle}
                       onCommit={nv => onEditField && onEditField(c, v.token, nv)}
                     />
@@ -1515,7 +1515,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     }
     const target = existingCampaigns.find(c => String(c.subject || '').trim().toLowerCase() === name.toLowerCase());
     if (!target) {
-      setResult({ type: 'error', message: `Campaign "${name}" no longer exists — refresh and try again.` });
+      setResult({ type: 'error', message: `Campaign "${name}" no longer exists: refresh and try again.` });
       return;
     }
     setCampaignPreview({ name, ...splitSelectionForCampaign(target) });
@@ -1542,7 +1542,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       const existing = snap.exists() ? (snap.data().campaigns || []) : [];
       const idx = existing.findIndex(c => String(c.subject || '').trim().toLowerCase() === name.toLowerCase());
       if (idx === -1) {
-        setResult({ type: 'error', message: `Campaign "${name}" no longer exists — refresh and try again.` });
+        setResult({ type: 'error', message: `Campaign "${name}" no longer exists: refresh and try again.` });
         setCampaignPreview(null);
         setSavingCampaign(false);
         return;
@@ -1595,7 +1595,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       // Don't clobber an existing campaign (which may hold real tracking
       // data) that happens to share this name — ask for a unique one.
       if (existing.some(c => String(c.subject || '').trim().toLowerCase() === name.toLowerCase())) {
-        setResult({ type: 'error', message: `A campaign named "${name}" already exists — choose a different name or add to it instead.` });
+        setResult({ type: 'error', message: `A campaign named "${name}" already exists: choose a different name or add to it instead.` });
         setSavingCampaign(false);
         return;
       }
@@ -1626,7 +1626,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
         contacts,
       };
       await setDoc(ref, { campaigns: [campaign, ...existing], updatedAt: nowISO });
-      setResult({ type: 'success', message: `Saved ${contacts.length} contact${contacts.length === 1 ? '' : 's'} to Email Campaign "${name}" — find it under the Email Campaigns tab.` });
+      setResult({ type: 'success', message: `Saved ${contacts.length} contact${contacts.length === 1 ? '' : 's'} to Email Campaign "${name}": find it under the Email Campaigns tab.` });
       setNamingCampaign(false);
       setCampaignName('');
       setTimeout(() => setResult(null), 5000);
@@ -1711,7 +1711,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       if (data.success) {
         const folderNote = data.folder
           ? ` in folder "${data.folder}"`
-          : (data.folderError ? ` (couldn't create folder — landed in default Drafts: ${data.folderError})` : '');
+          : (data.folderError ? ` (couldn't create folder: landed in default Drafts: ${data.folderError})` : '');
         // Tracking is best-effort per draft — injection or the Firestore
         // write can fail without failing the draft — so report what
         // actually carried a pixel instead of assuming the whole batch did.
@@ -1992,7 +1992,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       setTimeout(() => { a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); }, i * 300);
     });
 
-    setResult({ type: 'success', message: `${built.length} .eml file${built.length !== 1 ? 's' : ''} downloading to your Downloads folder — double-click each to open in Outlook.` });
+    setResult({ type: 'success', message: `${built.length} .eml file${built.length !== 1 ? 's' : ''} downloading to your Downloads folder: double-click each to open in Outlook.` });
     saveDraft({ silent: true });
   }
 
@@ -2072,7 +2072,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                   <span
                     key={c.id}
                     className={styles.contactTag}
-                    title={selfDup ? 'Duplicate recipient — this address also appears elsewhere in the To section (double-send)' : undefined}
+                    title={selfDup ? 'Duplicate recipient: this address also appears elsewhere in the To section (double-send)' : undefined}
                     style={{
                       ...(hasExtras ? { flexDirection: 'column', alignItems: 'flex-start', whiteSpace: 'normal', gap: '0.2rem' } : {}),
                       ...(selfDup ? { background: '#FEE2E2', borderColor: '#FCA5A5', color: '#991B1B' } : {}),
@@ -2087,7 +2087,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                         title={`Open ${c.name}`}
                         style={{ cursor: 'pointer', textDecoration: 'underline' }}
                       >{c.name}</span> <span className={styles.contactEmail}>({c.email})</span>
-                      {selfDup && <span title="Double-send — this address appears more than once in the To section" style={{ fontWeight: 800, color: '#991B1B' }}>⚑</span>}
+                      {selfDup && <span title="Double-send: this address appears more than once in the To section" style={{ fontWeight: 800, color: '#991B1B' }}>⚑</span>}
                       <button className={styles.removeTag} onClick={() => removeContact(c.id)}>&times;</button>
                     </span>
                     {hasExtras && (
@@ -2097,7 +2097,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                           return (
                           <span
                             key={`to|${email}`}
-                            title={dup ? `Appears more than once in the To section — would receive two copies` : `Added to the To line alongside ${c.name}`}
+                            title={dup ? `Appears more than once in the To section: would receive two copies` : `Added to the To line alongside ${c.name}`}
                             style={{ ...extraPill, ...(dup
                               ? { background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B' }
                               : { background: '#FEF3C7', border: '1px solid #FDE68A', color: '#92400E' }) }}
@@ -2113,7 +2113,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                           return (
                             <span
                               key={`cc|${email}`}
-                              title={dup ? `Appears more than once in the To section — would receive two copies (once on To, once on CC)` : `CC'd on the email to ${c.name}`}
+                              title={dup ? `Appears more than once in the To section: would receive two copies (once on To, once on CC)` : `CC'd on the email to ${c.name}`}
                               style={{ ...extraPill, ...(dup
                                 ? { background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B' }
                                 : { background: '#EFF6FF', border: '1px solid #BFDBFE', color: '#1E40AF' }) }}
@@ -2364,7 +2364,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
 
           <label
             style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '0 0 0.6rem', fontSize: '0.76rem', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
-            title="Adds an invisible open pixel and rewrites links so you can see opens & clicks in the Email Tracking tab. Note: opens are approximate — Apple Mail & Gmail can pre-load or block the pixel."
+            title="Adds an invisible open pixel and rewrites links so you can see opens & clicks in the Email Tracking tab. Note: opens are approximate: Apple Mail & Gmail can pre-load or block the pixel."
           >
             <input
               type="checkbox"
@@ -2394,7 +2394,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
               onClick={createOutlookDrafts}
               disabled={sending || selectedContacts.length === 0 || !subject.trim()}
               title={outlookConnected
-                ? 'Create these drafts straight in your Outlook Drafts folder — no .eml files to open one by one'
+                ? 'Create these drafts straight in your Outlook Drafts folder: no .eml files to open one by one'
                 : 'Connect Outlook below first, then the drafts are created straight in your Drafts folder'}
             >
               {sending ? 'Creating…' : 'Create in Outlook'}
@@ -2409,7 +2409,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
               meeting picker, so this often already reads as connected. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.55rem', fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>
             <span style={{ width: 7, height: 7, borderRadius: '50%', background: outlookConnected ? '#16A34A' : '#CBD5E1', flexShrink: 0 }} />
-            <span>{outlookConnected ? 'Outlook connected' : 'Outlook not connected — “Create in Outlook” needs it'}</span>
+            <span>{outlookConnected ? 'Outlook connected' : 'Outlook not connected: “Create in Outlook” needs it'}</span>
             <button
               onClick={outlookConnected ? disconnectOutlook : connectOutlook}
               style={{ padding: 0, border: 'none', background: 'none', color: '#0078D4', font: 'inherit', fontWeight: 600, cursor: 'pointer' }}
@@ -2466,7 +2466,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                           {existingCampaigns.map((c, i) => {
                             const subj = String(c.subject || '').trim();
                             const count = c.totalContacts ?? c.contacts?.length ?? 0;
-                            return <option key={i} value={subj}>{subj || '(untitled)'} — {count}</option>;
+                            return <option key={i} value={subj}>{subj || '(untitled)'}: {count}</option>;
                           })}
                         </select>
                         <button
@@ -2620,7 +2620,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                           className={`${styles.draftPin} ${d.pinned ? styles.draftPinActive : ''}`}
                           onClick={() => togglePin(d.id)}
                           aria-pressed={d.pinned}
-                          title={d.pinned ? 'Pinned — kept from auto-removal. Click to unpin.' : 'Pin to keep this draft from being auto-removed.'}
+                          title={d.pinned ? 'Pinned: kept from auto-removal. Click to unpin.' : 'Pin to keep this draft from being auto-removed.'}
                         >📌</button>
                         <button className={styles.draftLoad} onClick={() => loadDraft(d)}>
                           <span className={styles.draftSubject}>{d.subject || '(No subject)'}</span>
@@ -2640,7 +2640,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       {campaignPreview && createPortal(
         (() => {
           const { name, toAdd = [], duplicates = [], noEmail = [] } = campaignPreview;
-          const label = (c) => `${c.name || c.email || '—'}${c.company ? ` · ${c.company}` : ''}`;
+          const label = (c) => `${c.name || c.email || '-'}${c.company ? ` · ${c.company}` : ''}`;
           const listBox = { maxHeight: 200, overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: 6, padding: '0.35rem 0.5rem', background: '#fff' };
           const rowStyle = { fontSize: '0.74rem', padding: '0.12rem 0', color: '#1E293B', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
           const headStyle = { fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', margin: '0 0 0.3rem' };
@@ -2666,13 +2666,13 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                   <div style={{ ...headStyle, color: '#166534' }}>Will be added ({toAdd.length})</div>
                   <div style={listBox}>
                     {toAdd.length ? toAdd.map((c, i) => <div key={c.id ?? c.email ?? i} style={rowStyle}>{label(c)}</div>)
-                      : <div style={{ ...rowStyle, color: '#94A3B8', fontStyle: 'italic' }}>Nothing new — every selected contact is already in this campaign.</div>}
+                      : <div style={{ ...rowStyle, color: '#94A3B8', fontStyle: 'italic' }}>Nothing new: every selected contact is already in this campaign.</div>}
                   </div>
                 </div>
 
                 {duplicates.length > 0 && (
                   <div style={{ marginBottom: '0.75rem' }}>
-                    <div style={{ ...headStyle, color: '#92400E' }}>Already in campaign — skipped ({duplicates.length})</div>
+                    <div style={{ ...headStyle, color: '#92400E' }}>Already in campaign: skipped ({duplicates.length})</div>
                     <div style={{ ...listBox, background: '#FFFBEB' }}>
                       {duplicates.map((c, i) => <div key={c.id ?? c.email ?? i} style={{ ...rowStyle, color: '#78716C' }}>{label(c)}</div>)}
                     </div>
@@ -2681,7 +2681,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
 
                 {noEmail.length > 0 && (
                   <div style={{ marginBottom: '0.75rem' }}>
-                    <div style={{ ...headStyle, color: '#991B1B' }}>No email — can’t be added ({noEmail.length})</div>
+                    <div style={{ ...headStyle, color: '#991B1B' }}>No email: can’t be added ({noEmail.length})</div>
                     <div style={{ ...listBox, background: '#FEF2F2' }}>
                       {noEmail.map((c, i) => <div key={c.id ?? i} style={{ ...rowStyle, color: '#B91C1C' }}>{label(c)}</div>)}
                     </div>

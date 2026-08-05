@@ -418,7 +418,7 @@ function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onR
                   </span>
                 );
               } else if (!cat) {
-                compareCell = <span className={styles.compareMuted}>—</span>;
+                compareCell = <span className={styles.compareMuted}>-</span>;
               } else if (otherByKey.has(rowKey)) {
                 const otherSum = otherByKey.get(rowKey) || 0;
                 const thisSum = thisByKey.get(rowKey) || 0;
@@ -477,7 +477,7 @@ function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onR
                       value={row.type || ''}
                       onChange={(e) => onChange(idx, 'type', e.target.value)}
                     >
-                      <option value="">—</option>
+                      <option value="">-</option>
                       {TYPE_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
                       {row.type && !TYPE_OPTIONS.includes(row.type) && (
                         <option value={row.type}>{row.type}</option>
@@ -572,7 +572,7 @@ function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onR
               <td className={styles.numCell}>{fmtMoney(totals.recurringMonthly)}<span className={styles.unitTag}>/mo</span></td>
               <td colSpan={3} className={styles.deprCell}>
                 {deprPct > 0 && totals.recurringMonthly ? (
-                  <span className={styles.deprTag} title={`Tech depreciation — ${deprPctLabel}`}>
+                  <span className={styles.deprTag} title={`Tech depreciation: ${deprPctLabel}`}>
                     +{fmtMoney(depr.recurringMonthly)} tech depr/mo
                   </span>
                 ) : null}
@@ -583,7 +583,7 @@ function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onR
               <td className={styles.numCell}>{fmtMoney(totals.setupTotal)}</td>
               <td colSpan={3} className={styles.deprCell}>
                 {deprPct > 0 && totals.setupTotal ? (
-                  <span className={styles.deprTag} title={`Tech depreciation — ${deprPctLabel}`}>
+                  <span className={styles.deprTag} title={`Tech depreciation: ${deprPctLabel}`}>
                     +{fmtMoney(depr.setup)} tech depr
                   </span>
                 ) : null}
@@ -594,7 +594,7 @@ function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onR
               <td className={styles.numCell}>{fmtMoney(totals.oneTimeTotal)}</td>
               <td colSpan={3} className={styles.deprCell}>
                 {deprPct > 0 && totals.oneTimeTotal ? (
-                  <span className={styles.deprTag} title={`Tech depreciation — ${deprPctLabel}`}>
+                  <span className={styles.deprTag} title={`Tech depreciation: ${deprPctLabel}`}>
                     +{fmtMoney(depr.oneTime)} tech depr
                   </span>
                 ) : null}
@@ -820,13 +820,13 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo, techDe
     <div className={styles.wrapper}>
       <div className={styles.intro}>
         Compare two cost-to-serve scenarios side by side. Paste blocks from Excel into the
-        {' '}{safe.currentLabel} and {safe.nextLabel} tables — totals, per-category deltas, and
+        {' '}{safe.currentLabel} and {safe.nextLabel} tables: totals, per-category deltas, and
         a first-year roll-up update as you edit. Each row's <strong>Compare</strong> column shows
         the delta vs the matching row on the other side, or a missing-row marker when the
         category isn't there. Click the 🔗 icon to manually tie a row to a specific row on the
         other side when the categories don't match exactly. You can also <strong>drag &amp; drop
         a pricing workbook</strong> (the same file you drop on the Pricing subtab) onto either
-        table — you'll be asked which Option tab's costs to import.
+        table: you'll be asked which Option tab's costs to import.
       </div>
 
       <div className={styles.labelRow}>
@@ -962,18 +962,18 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo, techDe
               {compareRows.map((r) => (
                 <tr key={r.key}>
                   <td>{r.label}</td>
-                  <td className={styles.numCell}>{r.oldMonthly ? fmtMoney(r.oldMonthly) : '—'}</td>
-                  <td className={styles.numCell}>{r.newMonthly ? fmtMoney(r.newMonthly) : '—'}</td>
+                  <td className={styles.numCell}>{r.oldMonthly ? fmtMoney(r.oldMonthly) : '-'}</td>
+                  <td className={styles.numCell}>{r.newMonthly ? fmtMoney(r.newMonthly) : '-'}</td>
                   <td className={`${styles.numCell} ${r.deltaMonthly > 0 ? styles.deltaUp : r.deltaMonthly < 0 ? styles.deltaDown : ''}`}>
-                    {r.deltaMonthly ? fmtMoneySigned(r.deltaMonthly) : '—'}
+                    {r.deltaMonthly ? fmtMoneySigned(r.deltaMonthly) : '-'}
                   </td>
                   <td className={`${styles.numCell} ${r.deltaMonthly > 0 ? styles.deltaUp : r.deltaMonthly < 0 ? styles.deltaDown : ''}`}>
-                    {r.deltaMonthly ? fmtMoneySigned(r.deltaMonthly * 12) : '—'}
+                    {r.deltaMonthly ? fmtMoneySigned(r.deltaMonthly * 12) : '-'}
                   </td>
-                  <td className={styles.numCell}>{r.oldSetup ? fmtMoney(r.oldSetup) : '—'}</td>
-                  <td className={styles.numCell}>{r.newSetup ? fmtMoney(r.newSetup) : '—'}</td>
+                  <td className={styles.numCell}>{r.oldSetup ? fmtMoney(r.oldSetup) : '-'}</td>
+                  <td className={styles.numCell}>{r.newSetup ? fmtMoney(r.newSetup) : '-'}</td>
                   <td className={`${styles.numCell} ${r.deltaSetup > 0 ? styles.deltaUp : r.deltaSetup < 0 ? styles.deltaDown : ''}`}>
-                    {r.deltaSetup ? fmtMoneySigned(r.deltaSetup) : '—'}
+                    {r.deltaSetup ? fmtMoneySigned(r.deltaSetup) : '-'}
                   </td>
                 </tr>
               ))}
@@ -1001,7 +1001,7 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo, techDe
               Import costs into “{dropImport.side === 'current' ? safe.currentLabel : safe.nextLabel}”
             </div>
             <div className={styles.modalSub}>
-              From <strong>{dropImport.fileName}</strong> — choose which Option tab to import the CTS costs from.
+              From <strong>{dropImport.fileName}</strong>: choose which Option tab to import the CTS costs from.
             </div>
             {dropImport.error ? (
               <div className={styles.modalError}>{dropImport.error}</div>

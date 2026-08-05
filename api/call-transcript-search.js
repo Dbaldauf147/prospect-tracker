@@ -56,12 +56,12 @@ function buildBlock(utterances, transcript) {
 
 function systemPrompt(hasTimestamps) {
   const timing = hasTimestamps
-    ? 'Each line is prefixed with its start time in seconds, as [123s 2:03]. Set "start_sec" to the start time of the line your quote came from — copy it, never estimate it. Set "end_sec" to the start time of the following line, or null if the quote is from the last line.'
+    ? 'Each line is prefixed with its start time in seconds, as [123s 2:03]. Set "start_sec" to the start time of the line your quote came from: copy it, never estimate it. Set "end_sec" to the start time of the following line, or null if the quote is from the last line.'
     : 'No timestamps are available for this transcript. Set "start_sec" and "end_sec" to null on every finding, and do not guess at times.';
 
   return `You answer questions about B2B sales call transcripts. The transcript is machine-generated, so expect mis-heard words and speaker labels like "A"/"B" whose roles you infer from context.
 
-Answer ONLY from the transcript. Never invent quotes, names, numbers, or commitments. Every quote must be a verbatim excerpt of at most about 40 words. If the transcript does not address the question, say so in "answer" and return an empty "findings" array — that is a correct result, not a failure.
+Answer ONLY from the transcript. Never invent quotes, names, numbers, or commitments. Every quote must be a verbatim excerpt of at most about 40 words. If the transcript does not address the question, say so in "answer" and return an empty "findings" array: that is a correct result, not a failure.
 
 ${timing}
 

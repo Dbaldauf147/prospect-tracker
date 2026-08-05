@@ -1,11 +1,11 @@
 export function formatAum(value) {
-  if (value == null || value === 0) return '—';
+  if (value == null || value === 0) return '-';
   if (value >= 1) return `$${value.toFixed(1)}B`;
   return `$${(value * 1000).toFixed(0)}M`;
 }
 
 export function formatNumber(value) {
-  if (value == null) return '—';
+  if (value == null) return '-';
   return value.toLocaleString();
 }
 

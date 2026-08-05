@@ -122,9 +122,9 @@ export const STATE_ISO_SPLIT = {
 // service-territory boundary — enough to place the corner, no more.
 export const STATE_ISO_SUBAREAS = {
   'US:TX': [{ iso: 'SPP', label: 'Panhandle (SPP)', bbox: [-103.05, 34.30, -99.90, 36.55] }],
-  'US:IL': [{ iso: 'PJM', label: 'Northern IL — ComEd (PJM)', bbox: [-89.30, 41.10, -87.40, 42.55] }],
-  'US:IN': [{ iso: 'PJM', label: 'Northeast IN — AEP I&M (PJM)', bbox: [-85.95, 40.00, -84.78, 41.30] }],
-  'US:MO': [{ iso: 'SPP', label: 'Western MO — Evergy (SPP)', bbox: [-95.80, 38.30, -93.90, 40.60] }],
+  'US:IL': [{ iso: 'PJM', label: 'Northern IL: ComEd (PJM)', bbox: [-89.30, 41.10, -87.40, 42.55] }],
+  'US:IN': [{ iso: 'PJM', label: 'Northeast IN: AEP I&M (PJM)', bbox: [-85.95, 40.00, -84.78, 41.30] }],
+  'US:MO': [{ iso: 'SPP', label: 'Western MO: Evergy (SPP)', bbox: [-95.80, 38.30, -93.90, 40.60] }],
 };
 
 // ZIP3 (first three ZIP digits) -> ISO overrides for the clearest split

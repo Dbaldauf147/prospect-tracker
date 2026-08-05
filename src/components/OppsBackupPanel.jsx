@@ -95,7 +95,7 @@ function LocalBackupsModal({ onRestore, onClose }) {
               {rows.map(b => (
                 <tr key={b.timestamp} style={{ borderBottom: '1px solid var(--color-border)' }}>
                   <td style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap' }}>{new Date(b.timestamp).toLocaleString()}</td>
-                  <td style={{ padding: '0.4rem 0.5rem', color: 'var(--color-text-muted)' }}>{b.reason || '—'}</td>
+                  <td style={{ padding: '0.4rem 0.5rem', color: 'var(--color-text-muted)' }}>{b.reason || '-'}</td>
                   <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>{b.recordCount ?? '?'}</td>
                   <td style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap', textAlign: 'right' }}>
                     <button type="button" onClick={() => downloadOne(b.timestamp)} style={{ marginRight: 8, cursor: 'pointer' }}>Download</button>
@@ -160,7 +160,7 @@ function CloudRestoreModal({ onRestore, onClose }) {
             <tbody>
               {rows.map(f => (
                 <tr key={f.name} style={{ borderBottom: '1px solid var(--color-border)' }}>
-                  <td style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap' }}>{f.createdTime ? new Date(f.createdTime).toLocaleString() : '—'}{/manual/.test(f.name) ? ' (manual)' : ''}</td>
+                  <td style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap' }}>{f.createdTime ? new Date(f.createdTime).toLocaleString() : '-'}{/manual/.test(f.name) ? ' (manual)' : ''}</td>
                   <td style={{ padding: '0.4rem 0.5rem', color: 'var(--color-text-muted)', wordBreak: 'break-all' }}>{f.name}</td>
                   <td style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap', textAlign: 'right' }}>
                     <button

@@ -199,7 +199,7 @@ function StageRow({ index, total, stage, mode, columns, priorSteps, onChange, on
               value={range?.start || ''}
               onChange={(e) => onChange({ ...stage, start: e.target.value })}
               title={byDates
-                ? 'Start date — drives where this step sits on the chart'
+                ? 'Start date: drives where this step sits on the chart'
                 : 'Start date (the chart is positioned by month numbers)'}
             />
             <span className={styles.dateSep}>→</span>
@@ -209,7 +209,7 @@ function StageRow({ index, total, stage, mode, columns, priorSteps, onChange, on
               value={range?.end || ''}
               onChange={(e) => onChange({ ...stage, end: e.target.value })}
               title={byDates
-                ? 'End date — drives how wide the bar is'
+                ? 'End date: drives how wide the bar is'
                 : 'End date (the chart is positioned by month numbers)'}
             />
             {auto && (
@@ -226,7 +226,7 @@ function StageRow({ index, total, stage, mode, columns, priorSteps, onChange, on
               value={stage.startMonth}
               placeholder={String(months.month)}
               title={byDates
-                ? 'Not in use — the chart is positioned by dates'
+                ? 'Not in use: the chart is positioned by dates'
                 : 'Month from kickoff. Blank uses the stage\'s dates.'}
               onCommit={(next) => onChange({ ...stage, startMonth: next })}
             />
@@ -235,7 +235,7 @@ function StageRow({ index, total, stage, mode, columns, priorSteps, onChange, on
               value={stage.months}
               placeholder={String(months.span)}
               title={byDates
-                ? 'Not in use — the chart is positioned by dates'
+                ? 'Not in use: the chart is positioned by dates'
                 : 'How many months the bar spans'}
               onCommit={(next) => onChange({ ...stage, months: next })}
             />
@@ -249,7 +249,7 @@ function StageRow({ index, total, stage, mode, columns, priorSteps, onChange, on
               title="The earlier step this one waits on"
               className={styles.dependsSelect}
             >
-              <option value="">—</option>
+              <option value="">-</option>
               {priorSteps.map(p => (
                 <option key={p.id} value={p.id}>{p.number}. {p.name || 'Untitled step'}</option>
               ))}
@@ -273,7 +273,7 @@ function StageRow({ index, total, stage, mode, columns, priorSteps, onChange, on
           className={styles.dateInput}
           value={range?.start || ''}
           onChange={(e) => onChange({ ...stage, start: e.target.value })}
-          title={auto ? 'Read from Timing — pick a date to override' : 'Start date'}
+          title={auto ? 'Read from Timing: pick a date to override' : 'Start date'}
         />
         <span className={styles.dateSep}>→</span>
         <input
@@ -281,7 +281,7 @@ function StageRow({ index, total, stage, mode, columns, priorSteps, onChange, on
           className={styles.dateInput}
           value={range?.end || ''}
           onChange={(e) => onChange({ ...stage, end: e.target.value })}
-          title={auto ? 'Read from Timing — pick a date to override' : 'End date'}
+          title={auto ? 'Read from Timing: pick a date to override' : 'End date'}
         />
         {auto && (
           <span className={styles.autoTag} title="Dates read from the Timing column. Pick a date to override; clear it to go back to automatic.">auto</span>
@@ -602,7 +602,7 @@ function TimelineVisual({ template, onChangeFormat }) {
             >{f.label}</button>
           ))}
         </div>
-        <span className={styles.visualHint}>Schneider Electric format — exports match this exactly</span>
+        <span className={styles.visualHint}>Schneider Electric format: exports match this exactly</span>
         <button type="button" className={styles.exportBtn} onClick={handleReport} disabled={!svg}>
           Open report
         </button>
@@ -766,7 +766,7 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
             value={template.rangeStart || ''}
             max={template.rangeEnd || undefined}
             onChange={(e) => onChange({ ...template, rangeStart: e.target.value })}
-            title="First date the timeline covers — the chart starts at this month"
+            title="First date the timeline covers: the chart starts at this month"
             className={styles.settingInput}
           />
           <span className={styles.timelineServicesLabel}>to</span>
@@ -775,7 +775,7 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
             value={template.rangeEnd || ''}
             min={template.rangeStart || undefined}
             onChange={(e) => onChange({ ...template, rangeEnd: e.target.value })}
-            title="Last date the timeline covers — the chart ends at this month"
+            title="Last date the timeline covers: the chart ends at this month"
             className={styles.settingInput}
           />
           {hasRange ? (
@@ -792,7 +792,7 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
             <span className={styles.settingHint}>
               {template.rangeStart || template.rangeEnd
                 ? 'Set both ends to fix the range'
-                : 'Unset — fits the dated stages'}
+                : 'Unset: fits the dated stages'}
             </span>
           )}
         </div>
@@ -812,7 +812,7 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
           <select
             value={mode}
             onChange={(e) => onChange({ ...template, positionMode: e.target.value })}
-            title="Dates place each step on the chart. Months lets you type the month numbers instead — for a proposal written before any date is fixed."
+            title="Dates place each step on the chart. Months lets you type the month numbers instead: for a proposal written before any date is fixed."
             className={styles.settingSelect}
           >
             <option value="dates">Start / end dates</option>
@@ -828,7 +828,7 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
             })}
             title={hasRange
               ? `The timeline range sets this: ${rangeSummary}. Clear the range to pick a month count instead.`
-              : 'How many month columns to show — applies to the visual and every export'}
+              : 'How many month columns to show: applies to the visual and every export'}
             className={styles.settingSelect}
           >
             <option value="">Auto (fit the steps)</option>
@@ -926,7 +926,7 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
             {visibleStages.length === 0 ? (
               <tr>
                 <td colSpan={columns.length} className={styles.serviceEmpty}>
-                  {stages.length === 0 ? 'No stages yet — add the first one below.' : 'No stages match the search.'}
+                  {stages.length === 0 ? 'No stages yet: add the first one below.' : 'No stages match the search.'}
                 </td>
               </tr>
             ) : (

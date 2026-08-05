@@ -126,7 +126,7 @@ export function SelectCell({ value, onChange, options }) {
         }}
         title="Click to pick a value"
       >
-        {isEmpty ? '—' : current}
+        {isEmpty ? '-' : current}
       </span>
       {open && createPortal(
         <div
@@ -277,9 +277,9 @@ export function MultiSelectCell({ value, onChange, options, extraGroups, extraGr
           overflow: nowrap ? 'hidden' : undefined,
           textOverflow: nowrap ? 'ellipsis' : undefined,
         }}
-        title={showPlaceholder ? `${placeholder} (placeholder — no service selected)` : isEmpty ? 'Click to pick values' : selected.join(', ')}
+        title={showPlaceholder ? `${placeholder} (placeholder: no service selected)` : isEmpty ? 'Click to pick values' : selected.join(', ')}
       >
-        {showPlaceholder ? placeholder : isEmpty ? '—' : selected.join(', ')}
+        {showPlaceholder ? placeholder : isEmpty ? '-' : selected.join(', ')}
       </span>
       {open && createPortal(
         <div
@@ -313,7 +313,7 @@ export function MultiSelectCell({ value, onChange, options, extraGroups, extraGr
                   background: '#fff', color: 'var(--color-text)',
                 }}
               >
-                <option value="">{extraGroupsPlaceholder || '— pick one —'}</option>
+                <option value="">{extraGroupsPlaceholder || '(pick one)'}</option>
                 {groups.map(g => (
                   <option key={g.label} value={g.label}>{g.label} ({g.options.length})</option>
                 ))}
@@ -497,7 +497,7 @@ export function LinkColumnsModal({ headers, columnLinks, defaultLinks = {}, list
                             ? `Default (${registry.get(defaultBinding.listKey)?.label || defaultBinding.listKey})`
                             : 'Default (free text)'}
                         </option>
-                        <option value="none">— No list (free text) —</option>
+                        <option value="none">(No list (free text))</option>
                         <optgroup label="Dropdowns">
                           {lists.map(l => (
                             <option key={l.key} value={l.key}>{l.label}</option>

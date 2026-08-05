@@ -18,7 +18,7 @@ export function schneiderLogoSvg({ onDark = false, width = 168 } = {}) {
   const word = onDark ? '#FFFFFF' : SE_GREEN_DARK;
   const tag = onDark ? '#FFFFFF' : SE_GREEN;
   const height = Math.round(width * (46 / 200));
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 46" width="${width}" height="${height}" role="img" aria-label="Schneider Electric — Life Is On">
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 46" width="${width}" height="${height}" role="img" aria-label="Schneider Electric: Life Is On">
   <text x="0" y="15" font-family="'Nunito Sans','Segoe UI',Arial,sans-serif" font-size="12" font-weight="800" letter-spacing="0.3" fill="${tag}">Life Is On</text>
   <text x="0" y="40" font-family="'Nunito Sans','Segoe UI',Arial,sans-serif" font-size="23" font-weight="900" letter-spacing="-0.6" fill="${word}">Schneider Electric</text>
 </svg>`;

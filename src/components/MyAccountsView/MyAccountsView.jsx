@@ -41,7 +41,7 @@ function InlineCell({ row, field, value, onUpdate, type, options, displayValue }
 
   if (editing && options) {
     return <select className={styles.inlineSelect} value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={save} autoFocus onClick={e => e.stopPropagation()}>
-      <option value="">—</option>
+      <option value="">-</option>
       {options.map(o => <option key={o} value={o}>{o}</option>)}
     </select>;
   }
@@ -51,7 +51,7 @@ function InlineCell({ row, field, value, onUpdate, type, options, displayValue }
   // displayValue lets callers render a friendly label (e.g. "1") while
   // the underlying value stored on the row stays canonical ("Tier 1")
   // so dropdown options and filters keep working.
-  const shown = (displayValue !== undefined ? displayValue : value) || '—';
+  const shown = (displayValue !== undefined ? displayValue : value) || '-';
   return <span className={styles.cellEditable} onDoubleClick={startEdit}>{shown}</span>;
 }
 
@@ -183,25 +183,25 @@ function warningHeaderTitle(description, companies) {
   const CAP = 50;
   const shown = names.slice(0, CAP);
   const more = names.length - shown.length;
-  return `${description} — ${names.length} account${names.length === 1 ? '' : 's'}:\n• ${shown.join('\n• ')}`
+  return `${description} · ${names.length} account${names.length === 1 ? '' : 's'}:\n• ${shown.join('\n• ')}`
     + (more > 0 ? `\n…and ${more} more` : '');
 }
 
 const ACCOUNT_COLUMNS = [
   { key: 'company', label: 'Company', defaultWidth: 220, sticky: true, render: null /* set below */ },
   { key: 'myTier', label: 'Tier', defaultWidth: 130, render: null /* set in columns memo */ },
-  { key: 'status', label: 'Status', defaultWidth: 130, render: (row) => row.status ? <Badge label={row.status} color={statusColor(row.status)} /> : '—' },
+  { key: 'status', label: 'Status', defaultWidth: 130, render: (row) => row.status ? <Badge label={row.status} color={statusColor(row.status)} /> : '-' },
   { key: 'type', label: 'Type', defaultWidth: 160 },
   { key: 'type2', label: 'Type 2', defaultWidth: 110, getFilterValue: (row) => TYPE2_MAP[row.type] || '', render: (row) => {
     const val = TYPE2_MAP[row.type] || '';
     const s = TYPE2_COLORS[val] || TYPE2_COLORS['Other'];
-    return val ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: s.bg, color: s.color }}>{val}</span> : <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+    return val ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: s.bg, color: s.color }}>{val}</span> : <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
   }},
   { key: 'geography', label: 'Geography', defaultWidth: 100 },
   { key: 'publicPrivate', label: 'Pub/Priv', defaultWidth: 80 },
   { key: 'reAum', label: 'RE AUM', defaultWidth: 90, render: (row) => formatAum(row.reAum) },
   { key: 'peAum', label: 'PE AUM', defaultWidth: 90, render: (row) => formatAum(row.peAum) },
-  { key: 'numberOfSites', label: 'Sites', defaultWidth: 70, render: (row) => row.numberOfSites != null ? row.numberOfSites.toLocaleString() : '—' },
+  { key: 'numberOfSites', label: 'Sites', defaultWidth: 70, render: (row) => row.numberOfSites != null ? row.numberOfSites.toLocaleString() : '-' },
   { key: 'mslSiteCount', label: 'MSL Sites', defaultWidth: 80, render: (row) => {
     const n = row.mslSiteCount || 0;
     const tip = `${n.toLocaleString()} site${n === 1 ? '' : 's'} on the Master Site List for "${row.company || ''}"`;
@@ -226,10 +226,10 @@ const ACCOUNT_COLUMNS = [
     // counts have a debuggable explanation.
     const tip = `Match diagnostics for this row:
   Prospect company (as stored): "${row.company || ''}"
-  HubSpot cache size: ${row._contactDebug?.cacheSize ?? '—'}
-  Exact-name matches: ${row._contactDebug?.exactNameMatches ?? '—'}
-  Domain matches: ${row._contactDebug?.domainMatches ?? '—'}
-  Linked (pinned) matches: ${row._contactDebug?.linkedMatches ?? '—'}
+  HubSpot cache size: ${row._contactDebug?.cacheSize ?? '-'}
+  Exact-name matches: ${row._contactDebug?.exactNameMatches ?? '-'}
+  Domain matches: ${row._contactDebug?.domainMatches ?? '-'}
+  Linked (pinned) matches: ${row._contactDebug?.linkedMatches ?? '-'}
   Prospect domains: ${row._contactDebug?.prospectDomains?.join(', ') || '(none registered)'}
   Sample HubSpot companies w/ overlapping tokens:
     ${(row._contactDebug?.similarContactCompanies || []).join('\n    ') || '(none found)'}`;
@@ -260,7 +260,7 @@ const ACCOUNT_COLUMNS = [
   { key: 'targetName', label: 'Target Accounts Name', defaultWidth: 200, render: null /* set in columns memo */ },
   { key: 'divisions', label: 'Divisions', defaultWidth: 200, render: null /* set in columns memo */ },
   { key: 'otherReps', label: 'Other Reps', defaultWidth: 260, getFilterValue: (row) => (row.otherReps && row.otherReps.length ? [...new Set(row.otherReps.map(r => r.rep))].join(', ') : ''), render: (row) => {
-    if (!row.otherReps || row.otherReps.length === 0) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
+    if (!row.otherReps || row.otherReps.length === 0) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>-</span>;
     // Deduplicate by rep name, collect all companies per rep
     const byRep = {};
     for (const r of row.otherReps) {
@@ -561,7 +561,7 @@ function TargetNamePicker({ values, companyId, companyName, targetOptions, onTog
         style={{ fontSize: '0.72rem', cursor: 'pointer', background: hasDupe ? '#FEF3C7' : count > 0 ? '#EBF2FC' : 'none', border: hasDupe ? '1px solid #F59E0B' : count > 0 ? '1px solid #BFDBFE' : '1px solid transparent', padding: '2px 8px', borderRadius: '4px', fontFamily: 'inherit', fontWeight: 500, color: hasDupe ? '#92400E' : count > 0 ? '#1E40AF' : 'var(--color-accent)', textAlign: 'left', lineHeight: 1.3 }}
       >
         {hasDupe && <span style={{ marginRight: '0.25rem' }}>&#9888;</span>}
-        {count === 0 ? '— Click to map —' : count === 1 ? values[0] : `${values[0]} +${count - 1} more`}
+        {count === 0 ? '(Click to map)' : count === 1 ? values[0] : `${values[0]} +${count - 1} more`}
       </button>
       {open && createPortal(
         <div
@@ -701,7 +701,7 @@ function TypeMismatchWarning({ row, onUpdate }) {
       <span
         style={{ color: '#F59E0B', fontSize: '0.55rem', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
         onClick={e => { e.stopPropagation(); setOpen(p => !p); }}
-        title={`Opps sourced from a PE Partner — suggest Type = "${row.suggestedType}"`}
+        title={`Opps sourced from a PE Partner: suggest Type = "${row.suggestedType}"`}
       >&#9888; {row.suggestedType}</span>
       {open && createPortal(
         <div
@@ -718,7 +718,7 @@ function TypeMismatchWarning({ row, onUpdate }) {
         >
           <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text)', marginBottom: '0.3rem' }}>Type Suggestion</div>
           <div style={{ fontSize: '0.7rem', color: 'var(--color-text-secondary)', marginBottom: '0.5rem' }}>
-            Current: <strong>{row.type || '—'}</strong><br/>
+            Current: <strong>{row.type || '-'}</strong><br/>
             At least one opp has <strong>Source = PE Partner</strong>, which usually means{' '}
             <strong>{row.suggestedType}</strong>.
           </div>
@@ -779,7 +779,7 @@ function SimilarNamesWarning({ matches, onDismiss }) {
     <>
       <span
         ref={badgeRef}
-        title={`${matches.length} similar name${matches.length === 1 ? '' : 's'} in Table View — click for details`}
+        title={`${matches.length} similar name${matches.length === 1 ? '' : 's'} in Table View: click for details`}
         onClick={e => {
           e.stopPropagation();
           if (badgeRef.current) {
@@ -847,7 +847,7 @@ function TierMismatchWarning({ row, onApply, onDismiss }) {  const [open, setOpe
         >
           <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text)', marginBottom: '0.3rem' }}>Tier Mismatch</div>
           <div style={{ fontSize: '0.7rem', color: 'var(--color-text-secondary)', marginBottom: '0.5rem' }}>
-            Your tier: <strong>{row.myTier || '—'}</strong><br/>
+            Your tier: <strong>{row.myTier || '-'}</strong><br/>
             Target Accounts says: <strong>{row.targetTier}</strong>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
@@ -947,13 +947,13 @@ function OppsHoverPopup({ row }) {
             <tbody>
               {opps.map((o, i) => (
                 <tr key={o._id ?? i}>
-                  <td style={{ padding: '3px 6px', borderBottom: '1px solid #F1F5F9', whiteSpace: 'nowrap', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis' }} title={o['Account']}>{o['Account'] || '—'}</td>
-                  <td style={{ padding: '3px 6px', borderBottom: '1px solid #F1F5F9', whiteSpace: 'nowrap' }}>{o['Stage'] || '—'}</td>
-                  <td style={{ padding: '3px 6px', borderBottom: '1px solid #F1F5F9', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={o['Scope']}>{o['Scope'] || '—'}</td>
-                  <td style={{ padding: '3px 6px', borderBottom: '1px solid #F1F5F9', whiteSpace: 'nowrap' }}>{o['Status'] || '—'}</td>
-                  <td style={{ padding: '3px 6px', borderBottom: '1px solid #F1F5F9', textAlign: 'right', whiteSpace: 'nowrap' }}>{o['Quoted Amount'] || '—'}</td>
-                  <td style={{ padding: '3px 6px', borderBottom: '1px solid #F1F5F9', whiteSpace: 'nowrap' }}>{o['Start Date'] || '—'}</td>
-                  <td style={{ padding: '3px 6px', borderBottom: '1px solid #F1F5F9', whiteSpace: 'nowrap' }}>{o['Source'] || '—'}</td>
+                  <td style={{ padding: '3px 6px', borderBottom: '1px solid #F1F5F9', whiteSpace: 'nowrap', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis' }} title={o['Account']}>{o['Account'] || '-'}</td>
+                  <td style={{ padding: '3px 6px', borderBottom: '1px solid #F1F5F9', whiteSpace: 'nowrap' }}>{o['Stage'] || '-'}</td>
+                  <td style={{ padding: '3px 6px', borderBottom: '1px solid #F1F5F9', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={o['Scope']}>{o['Scope'] || '-'}</td>
+                  <td style={{ padding: '3px 6px', borderBottom: '1px solid #F1F5F9', whiteSpace: 'nowrap' }}>{o['Status'] || '-'}</td>
+                  <td style={{ padding: '3px 6px', borderBottom: '1px solid #F1F5F9', textAlign: 'right', whiteSpace: 'nowrap' }}>{o['Quoted Amount'] || '-'}</td>
+                  <td style={{ padding: '3px 6px', borderBottom: '1px solid #F1F5F9', whiteSpace: 'nowrap' }}>{o['Start Date'] || '-'}</td>
+                  <td style={{ padding: '3px 6px', borderBottom: '1px solid #F1F5F9', whiteSpace: 'nowrap' }}>{o['Source'] || '-'}</td>
                 </tr>
               ))}
             </tbody>
@@ -1102,7 +1102,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       seen.add(name);
       for (const r of (mslRowsByCompany.get(name) || [])) rows.push(r);
     }
-    setSitesPopup({ company: row.company || '—', rows });
+    setSitesPopup({ company: row.company || '-', rows });
   }
 
   // Download the popped-up company's sites as an .xlsx, using the Master Site
@@ -2418,11 +2418,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   async function applyAllTierFlags() {
     if (tierSyncRunning) return;
     if (tierFlagged.length === 0) {
-      alert('No tier flags to apply — every account already matches its Target Accounts tier.');
+      alert('No tier flags to apply: every account already matches its Target Accounts tier.');
       return;
     }
     const sample = tierFlagged.slice(0, 12)
-      .map(a => `• ${a.company}: ${a.myTier || '—'} → ${a.targetTier}`)
+      .map(a => `• ${a.company}: ${a.myTier || '-'} → ${a.targetTier}`)
       .join('\n');
     const more = tierFlagged.length > 12 ? `\n…and ${tierFlagged.length - 12} more` : '';
     const ok = window.confirm(
@@ -2447,10 +2447,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     if (tier3BulkRunning) return;
     const updatable = (list || []).filter(a => a.id);
     if (updatable.length === 0) {
-      alert('No updatable accounts — these rows have no saved record to write to.');
+      alert('No updatable accounts: these rows have no saved record to write to.');
       return;
     }
-    const sample = updatable.slice(0, 12).map(a => `• ${a.company}: ${a.myTier || '—'} → Tier 3`).join('\n');
+    const sample = updatable.slice(0, 12).map(a => `• ${a.company}: ${a.myTier || '-'} → Tier 3`).join('\n');
     const more = updatable.length > 12 ? `\n…and ${updatable.length - 12} more` : '';
     const skipped = (list || []).length - updatable.length;
     const skippedNote = skipped > 0 ? `\n\n(${skipped} not saved yet and will be skipped.)` : '';
@@ -2563,7 +2563,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       let tooMany = false;
       for (const a of allAccounts) {
         let v = a[col.key];
-        if (v == null || v === '' || v === '—' || (typeof v === 'string' && !v.trim())) {
+        if (v == null || v === '' || v === '-' || (typeof v === 'string' && !v.trim())) {
           hasBlank = true;
           continue;
         }
@@ -2600,7 +2600,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         const nonBlankValues = values.filter(v => v !== BLANK_LABEL);
         result = result.filter(a => {
           const val = String(a[key] ?? '').trim();
-          const isEmpty = !val || val === '—';
+          const isEmpty = !val || val === '-';
           if (wantsBlank && isEmpty) return true;
           if (nonBlankValues.length > 0 && nonBlankValues.includes(val)) return true;
           return false;
@@ -2883,7 +2883,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         }, render: (row) => {
           const set = listFlagsByCompany.get((row.company || '').toLowerCase().trim());
           const flags = set ? [...set] : [];
-          if (!flags.length) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
+          if (!flags.length) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>-</span>;
           return (
             <span style={{ display: 'flex', gap: '3px', flexWrap: 'wrap' }}>
               {flags.map(label => {
@@ -2947,7 +2947,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       }
       if (col.key === 'naRegion') {
         return { ...col, getFilterValue: (row) => (row.hqRegion ? '' : (hqRegionMap[row.id] || '')), render: (row) => {
-          if (row.hqRegion) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.65rem' }}>—</span>;
+          if (row.hqRegion) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.65rem' }}>-</span>;
           const val = hqRegionMap[row.id] || '';
           return (
             <span
@@ -3002,7 +3002,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           const n = row.mslSiteCount || 0;
           const tip = n > 0
             ? `View ${n.toLocaleString()} site${n === 1 ? '' : 's'} from the Master Site List for "${row.company || ''}"`
-            : `No sites on the Master Site List for "${row.company || ''}" — click for details`;
+            : `No sites on the Master Site List for "${row.company || ''}": click for details`;
           return (
             <span
               style={{ fontWeight: n > 0 ? 700 : 400, color: n > 0 ? 'var(--color-accent)' : 'var(--color-text-muted)', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '2px' }}
@@ -3138,10 +3138,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           >
             <span style={{ fontSize: '1rem', lineHeight: 1 }}>&#9888;</span>
             <span>
-              <strong>Company mappings can&rsquo;t resolve — your Target Accounts list is empty.</strong>{' '}
+              <strong>Company mappings can&rsquo;t resolve: your Target Accounts list is empty.</strong>{' '}
               {dataLoaded
                 ? <>The list loaded, but no accounts matched your CDM{cdmName ? <> &ldquo;{cdmName}&rdquo;</> : ' (no CDM name set)'}. Check your CDM name in Settings, or the owner/CDM column on the Target Accounts sheet (Lists &rarr; Targets).</>
-                : <>The Target Accounts list didn&rsquo;t load. Open Lists &rarr; Targets to re-upload it — auto-mapped companies will repopulate once it&rsquo;s back.</>}
+                : <>The Target Accounts list didn&rsquo;t load. Open Lists &rarr; Targets to re-upload it: auto-mapped companies will repopulate once it&rsquo;s back.</>}
             </span>
           </div>
         );
@@ -3287,7 +3287,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         <button
           onClick={applyAllTierFlags}
           disabled={tierSyncRunning || tierFlagged.length === 0}
-          title="Set every flagged account's Tier to the tier its Target Accounts row specifies — applies all the ⚠ tier-mismatch flags in the Tier column at once."
+          title="Set every flagged account's Tier to the tier its Target Accounts row specifies: applies all the ⚠ tier-mismatch flags in the Tier column at once."
           style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: (tierSyncRunning || tierFlagged.length === 0) ? 'default' : 'pointer', fontFamily: 'inherit', color: tierFlagged.length === 0 ? 'var(--color-text-secondary)' : '#F59E0B', whiteSpace: 'nowrap', opacity: tierFlagged.length === 0 ? 0.6 : 1 }}
         >
           {tierSyncRunning ? 'Updating tiers…' : `⚠ Apply tier flags${tierFlagged.length ? ` (${tierFlagged.length})` : ''}`}
@@ -3469,7 +3469,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         if (notInMyAccounts.length === 0) return (
           <div className={styles.bucketList}>
             <div className={styles.bucketHeader}>
-              <span className={styles.bucketTitle}>{tierLabel} — Not in My Accounts</span>
+              <span className={styles.bucketTitle}>{tierLabel}: Not in My Accounts</span>
               <button className={styles.bucketClose} onClick={() => setExpandedBucket(null)}>&times;</button>
             </div>
             <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>All {tierLabel} companies are already in My Accounts</div>
@@ -3478,7 +3478,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return (
           <div className={styles.bucketList}>
             <div className={styles.bucketHeader}>
-              <span className={styles.bucketTitle}>{tierLabel} — {notInMyAccounts.length} Not in My Accounts</span>
+              <span className={styles.bucketTitle}>{tierLabel}: {notInMyAccounts.length} Not in My Accounts</span>
               <button className={styles.bucketClose} onClick={() => setExpandedBucket(null)}>&times;</button>
             </div>
             <div className={styles.bucketGrid}>
@@ -3559,7 +3559,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           toolbarActions={[{
             key: 'zoom-export',
             label: 'Zoom Export',
-            title: 'Download a CSV of the rows shown here whose status is Inside Sales — Company, Zoom Company ID, Zoom Company Name, Zoom Website',
+            title: 'Download a CSV of the rows shown here whose status is Inside Sales: Company, Zoom Company ID, Zoom Company Name, Zoom Website',
             onClick: downloadZoomExport,
           }]}
           columns={columnsWithSelect}
@@ -3602,7 +3602,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
                       }))}
                       style={{ flex: 1, padding: '0.35rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.78rem', fontFamily: 'inherit', background: detected ? '#DCFCE7' : '#FEF2F2', color: detected ? '#166534' : '#DC2626' }}
                     >
-                      <option value="">— Not mapped —</option>
+                      <option value="">(Not mapped)</option>
                       {zoomImportPreview.headers.map(h => (
                         <option key={h} value={h}>{h}</option>
                       ))}
@@ -3626,7 +3626,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           <div style={{ background: '#fff', borderRadius: '12px', padding: '1.25rem 1.5rem', width: '920px', maxWidth: '96vw', maxHeight: '88vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', gap: '1rem' }}>
               <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>
-                {sitesPopup.company} — Sites <span style={{ color: 'var(--color-text-muted)', fontWeight: 600 }}>({sitesPopup.rows.length})</span>
+                {sitesPopup.company}: Sites <span style={{ color: 'var(--color-text-muted)', fontWeight: 600 }}>({sitesPopup.rows.length})</span>
               </h3>
               <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
                 <button
@@ -3658,7 +3658,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
                         <td style={{ padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--color-border-light)', textAlign: 'right', color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>{i + 1}</td>
                         {MASTER_FIELDS.map(f => (
                           <td key={f.key} style={{ padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--color-border-light)', whiteSpace: 'nowrap', color: 'var(--color-text)' }}>
-                            {r[f.key] || <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
+                            {r[f.key] || <span style={{ color: 'var(--color-text-muted)' }}>-</span>}
                           </td>
                         ))}
                       </tr>

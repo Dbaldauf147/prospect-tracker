@@ -246,7 +246,7 @@ Columns MUST appear in this exact order:
 Address | Customer | Commodity | Supplier | Product Type | Contract Name / Notes | Price | Coverage Start | Coverage End | Term | Number of Accounts | Annual Consumption
 
 ----------------------------------------
-2) PRODUCT TYPE (NEW — REQUIRED)
+2) PRODUCT TYPE (NEW: REQUIRED)
 ----------------------------------------
 For each contract, classify the Product Type using the rules below:
 
@@ -273,7 +273,7 @@ If unclear:
 - If still unclear → "Other / Unspecified"
 
 ----------------------------------------
-3) FULL ACCOUNT EXTRACTION (MANDATORY — NO PARTIAL LISTS)
+3) FULL ACCOUNT EXTRACTION (MANDATORY: NO PARTIAL LISTS)
 ----------------------------------------
 For EACH contract, you MUST capture EVERY UNIQUE utility account number.
 
@@ -286,7 +286,7 @@ You must scan ALL sections of the document, including:
   "Account Number", "Utility Account", "UDC Account", "LDC Account"
 
 RULES:
-1) Scan the ENTIRE document (all pages — do not stop early)
+1) Scan the ENTIRE document (all pages: do not stop early)
 2) Extract account numbers exactly (preserve leading zeros)
 3) De-duplicate to UNIQUE account numbers
 4) Compute:
@@ -398,10 +398,10 @@ Buildings can be owned or rented.
 Ensure this is a global search. Please leverage the company website provided as well as other public sources of data about the company.
 Include every kind of site the company operates (headquarters, offices, manufacturing plants, R&D, warehouses, etc.).
 Include the zip / postal code for each site wherever it is available from public sources.
-Provide the final deliverable in Excel format — in the template attached to this project.
+Provide the final deliverable in Excel format: in the template attached to this project.
 Do this for {COMPANY_NAME}.
 Name the column that classifies each building "Property Type" (not "Site Type"), and fill it for every row.
-Property Type must match one of the following categories as closely as possible (controlled vocabulary — do not invent new categories):
+Property Type must match one of the following categories as closely as possible (controlled vocabulary: do not invent new categories):
 
 
 University / College Campus
@@ -931,9 +931,9 @@ function boundsForActivityWindow(iso) {
 }
 
 function fmtTime(ts) {
-  if (!ts) return '—';
+  if (!ts) return '-';
   const d = new Date(ts);
-  if (isNaN(d)) return '—';
+  if (isNaN(d)) return '-';
   return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
@@ -1110,7 +1110,7 @@ function OppPicker({ oppsCache, onSelect, triggerLabel = '+ Pick opportunity', c
       <input
         autoFocus
         className={styles.pickerInput}
-        placeholder={company ? `Showing ${company} — type to search all opps…` : 'Search opps by account, BFO link, or contact…'}
+        placeholder={company ? `Showing ${company}: type to search all opps…` : 'Search opps by account, BFO link, or contact…'}
         value={term}
         onChange={e => setTerm(e.target.value)}
         onKeyDown={e => { if (e.key === 'Escape') { setOpen(false); setTerm(''); } }}
@@ -1167,7 +1167,7 @@ function NewBfoCompanyNameCell({ prospect, value, onCommit }) {
       <td
         className={styles.muted}
         title="No Table View company matches this account. Add the company on the Table View first to store a BFO Company Name."
-      >—</td>
+      >-</td>
     );
   }
   const initial = String(value ?? '');
@@ -2178,7 +2178,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       const bfoOpp = String(r['BFO Link'] || '').trim();
       rows.push({
         id: r._id ?? `${account}|${bfoOpp}`,
-        company: account || '—',
+        company: account || '-',
         bfoOpp: (bfoOpp && bfoOpp !== '-' && bfoOpp !== '#N/A') ? bfoOpp : '',
         bfoUrl: detectBfoUrl(r),
         nextSteps,
@@ -2206,7 +2206,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       const bfoOpp = String(r['BFO Link'] || '').trim();
       rows.push({
         id: r._id ?? `${account}|${bfoOpp}`,
-        company: account || '—',
+        company: account || '-',
         bfoOpp: (bfoOpp && bfoOpp !== '-' && bfoOpp !== '#N/A') ? bfoOpp : '',
         bfoUrl: detectBfoUrl(r),
         markedOn,
@@ -2369,7 +2369,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
         rowKey: `call:${o.id}`, type: 'call', ts: null, endTs: null,
         title: o.nextSteps || (o.marked ? `Marked "Called" on the Opps tab (${o.markedOn})` : ''),
         to: '', rawTo: '', recipients: [],
-        company: (o.company && o.company !== '—') ? o.company : '', bfoOpp: o.bfoOpp, bfoUrl: o.bfoUrl,
+        company: (o.company && o.company !== '-') ? o.company : '', bfoOpp: o.bfoOpp, bfoUrl: o.bfoUrl,
         outcome: '', location: '', overrideKey: '', isManual: false, editable: false,
         marked: o.marked,
       });
@@ -2389,7 +2389,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       rows.push({
         rowKey: `meetingflag:${o.id}`, type: 'meeting', ts: null, endTs: null,
         title: `Marked "Meeting" on the Opps tab (${o.markedOn})`, to: '', rawTo: '', recipients: [],
-        company: (o.company && o.company !== '—') ? o.company : '', bfoOpp: o.bfoOpp, bfoUrl: o.bfoUrl,
+        company: (o.company && o.company !== '-') ? o.company : '', bfoOpp: o.bfoOpp, bfoUrl: o.bfoUrl,
         outcome: '', location: '', overrideKey: '', isManual: false, editable: false,
         marked: true,
       });
@@ -2966,7 +2966,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
               ? 'No run recorded yet.'
               : `Last run ${agentsLastRunLabel} (${agentsDaysSince} day${agentsDaysSince === 1 ? '' : 's'} ago).`}
             {' '}Work through the prompts below, then mark the run to clear this
-            alert — it comes back every {AGENTS_RUN_INTERVAL_DAYS} days.
+            alert: it comes back every {AGENTS_RUN_INTERVAL_DAYS} days.
           </div>
           <button
             type="button"
@@ -3060,7 +3060,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
           {newBfoMissingData.map((m, i) => (
             <span key={m.company + i}>
               {i > 0 && '; '}
-              <strong>{m.company}</strong> — {m.missing.join(', ')}
+              <strong>{m.company}</strong>: {m.missing.join(', ')}
             </span>
           ))}
           {' '}(BFO Company Name comes from the company&rsquo;s Table View record; Product Line / Type / Region / Local Project Name come from Dropdowns › Services for the opp&rsquo;s Scope.)
@@ -3073,7 +3073,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       )}
       {senderEmail ? (
         <p className={styles.subnote}>
-          The Activity table merges outbound emails from <strong>{senderEmail}</strong> (to non-SE recipients, past 2 business days), logged calls from the Opps tab, and meetings on {isToday ? 'today' : `${dateLabel}`}&rsquo;s calendar — the Type column marks each row as Email, Call, or Meeting. BFO Opportunity tagging walks each recipient&rsquo;s email against the Opps tab&rsquo;s Contact field first, then estimates by company name — fuzzy-matching the HubSpot company (or, when there&rsquo;s no HubSpot contact, the company guessed from the email domain) against the Opps tab&rsquo;s Account field. Use the inline picker to set or change any tag (it shows that company&rsquo;s opportunities first); your selection is remembered for that recipient on future emails. The BFO Company Name column is resolved from the Company. Use the Columns menu to choose which columns are shown.
+          The Activity table merges outbound emails from <strong>{senderEmail}</strong> (to non-SE recipients, past 2 business days), logged calls from the Opps tab, and meetings on {isToday ? 'today' : `${dateLabel}`}&rsquo;s calendar: the Type column marks each row as Email, Call, or Meeting. BFO Opportunity tagging walks each recipient&rsquo;s email against the Opps tab&rsquo;s Contact field first, then estimates by company name: fuzzy-matching the HubSpot company (or, when there&rsquo;s no HubSpot contact, the company guessed from the email domain) against the Opps tab&rsquo;s Account field. Use the inline picker to set or change any tag (it shows that company&rsquo;s opportunities first); your selection is remembered for that recipient on future emails. The BFO Company Name column is resolved from the Company. Use the Columns menu to choose which columns are shown.
         </p>
       ) : (
         <div className={styles.staleBanner}>
@@ -3167,12 +3167,12 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                 ) : null;
                 return (
                 <tr key={r.rowKey}>
-                  {isActivityColVisible('time') && <td className={r.ts ? '' : styles.muted}>{r.ts ? `${fmtTime(r.ts)}${r.endTs ? ` – ${fmtTime(r.endTs)}` : ''}` : '—'}</td>}
+                  {isActivityColVisible('time') && <td className={r.ts ? '' : styles.muted}>{r.ts ? `${fmtTime(r.ts)}${r.endTs ? ` – ${fmtTime(r.endTs)}` : ''}` : '-'}</td>}
                   {isActivityColVisible('type') && <td>{typeLabel}{markedChip}</td>}
-                  {isActivityColVisible('subject') && <td className={r.title ? '' : styles.muted} title={r.title}>{r.title || '—'}</td>}
-                  {isActivityColVisible('to') && <td title={r.rawTo}>{r.to || <span className={styles.muted}>—</span>}</td>}
-                  {isActivityColVisible('company') && <td className={r.company ? '' : styles.muted}>{r.company || '—'}</td>}
-                  {isActivityColVisible('bfoCompanyName') && <td className={bfoCompanyName ? '' : styles.muted}>{bfoCompanyName || '—'}</td>}
+                  {isActivityColVisible('subject') && <td className={r.title ? '' : styles.muted} title={r.title}>{r.title || '-'}</td>}
+                  {isActivityColVisible('to') && <td title={r.rawTo}>{r.to || <span className={styles.muted}>-</span>}</td>}
+                  {isActivityColVisible('company') && <td className={r.company ? '' : styles.muted}>{r.company || '-'}</td>}
+                  {isActivityColVisible('bfoCompanyName') && <td className={bfoCompanyName ? '' : styles.muted}>{bfoCompanyName || '-'}</td>}
                   {isActivityColVisible('bfoOpp') && (
                     <td>
                       {r.editable ? (
@@ -3198,11 +3198,11 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                           />
                         </div>
                       ) : (
-                        <span className={r.bfoOpp ? '' : styles.muted} title={r.title}>{r.bfoOpp || '—'}</span>
+                        <span className={r.bfoOpp ? '' : styles.muted} title={r.title}>{r.bfoOpp || '-'}</span>
                       )}
                     </td>
                   )}
-                  {isActivityColVisible('lastActivity') && <td className={lastActivity ? '' : styles.muted}>{lastActivity || '—'}</td>}
+                  {isActivityColVisible('lastActivity') && <td className={lastActivity ? '' : styles.muted}>{lastActivity || '-'}</td>}
                   {isActivityColVisible('bfoLink') && (
                     <td>
                       {(r.bfoUrl || r.leadSfUrl) ? (
@@ -3226,12 +3226,12 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                           )}
                         </span>
                       ) : (
-                        <span className={styles.muted}>—</span>
+                        <span className={styles.muted}>-</span>
                       )}
                     </td>
                   )}
-                  {isActivityColVisible('outcome') && <td className={r.outcome ? '' : styles.muted}>{r.outcome || '—'}</td>}
-                  {isActivityColVisible('location') && <td className={r.location ? '' : styles.muted}>{r.location || '—'}</td>}
+                  {isActivityColVisible('outcome') && <td className={r.outcome ? '' : styles.muted}>{r.outcome || '-'}</td>}
+                  {isActivityColVisible('location') && <td className={r.location ? '' : styles.muted}>{r.location || '-'}</td>}
                   <td className={styles.actionsCell}>
                     {r.type === 'email' && (
                       <>
@@ -3288,7 +3288,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
           <span className={styles.sectionCount}>{bfoPrepOpps.length}</span>
         </h2>
         <p className={styles.subnote}>
-          Live Opps opps (Stage not Sold / Not Sold) with a Call In number that have a BFO Opportunity Name but no BFO Address yet. Copy the prompt to have your AI assistant look up each opp&rsquo;s BFO website address, then paste it into the BFO Address column below — it saves straight to Opps and the row drops off once set.
+          Live Opps opps (Stage not Sold / Not Sold) with a Call In number that have a BFO Opportunity Name but no BFO Address yet. Copy the prompt to have your AI assistant look up each opp&rsquo;s BFO website address, then paste it into the BFO Address column below: it saves straight to Opps and the row drops off once set.
         </p>
         {revealedPrompts.bfoPrep && (
           <textarea
@@ -3340,7 +3340,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                 </tr>
               ) : bfoPrepOpps.map(o => (
                 <tr key={o.id}>
-                  <td className={o.account ? '' : styles.muted}>{o.account || '—'}</td>
+                  <td className={o.account ? '' : styles.muted}>{o.account || '-'}</td>
                   <td>{o.name}</td>
                   <td>
                     <BfoAddressCell
@@ -3361,7 +3361,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
           <span className={styles.sectionCount}>{marketingLeadsMissing.length}</span>
         </h2>
         <p className={styles.subnote}>
-          Leads from the Marketing Leads subtab on the Contacts page that don&rsquo;t have a Salesforce Link yet. Copy the prompt to have your AI assistant open each lead in Salesforce and grab its record URL, then paste it into the Salesforce Link column below &mdash; it saves straight to the Marketing Leads page and the row drops off this list once set.
+          Leads from the Marketing Leads subtab on the Contacts page that don&rsquo;t have a Salesforce Link yet. Copy the prompt to have your AI assistant open each lead in Salesforce and grab its record URL, then paste it into the Salesforce Link column below: it saves straight to the Marketing Leads page and the row drops off this list once set.
         </p>
         {revealedPrompts.marketingLeads && (
           <textarea
@@ -3415,8 +3415,8 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                 </tr>
               ) : marketingLeadsMissing.map((l, i) => (
                 <tr key={l.id || `${l.name}-${i}`}>
-                  <td>{l.name || '—'}</td>
-                  <td className={l.company ? '' : styles.muted}>{l.company || '—'}</td>
+                  <td>{l.name || '-'}</td>
+                  <td className={l.company ? '' : styles.muted}>{l.company || '-'}</td>
                   <td>
                     <MarketingLeadSfCell
                       value={l.sfUrl}
@@ -3436,7 +3436,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
           <span className={styles.sectionCount}>{marketingLeadStatusRows.length}</span>
         </h2>
         <p className={styles.subnote}>
-          Only lists leads whose Marketing Leads Status (the source of truth on the Contacts page) differs from that lead&rsquo;s status on the BFO Activity page&rsquo;s <strong>Leads</strong> subtab &mdash; the ones that actually need updating. Leads that match, or that aren&rsquo;t on the Leads subtab, are hidden. Copy the prompt to have your AI assistant open each lead by name, go to the Assessment tab, and update the status to the Marketing Leads Status. Paste the Salesforce Leads printable view into the BFO Activity page&rsquo;s Leads subtab to feed this comparison. The prompt is always part of &ldquo;Copy all prompts.&rdquo;
+          Only lists leads whose Marketing Leads Status (the source of truth on the Contacts page) differs from that lead&rsquo;s status on the BFO Activity page&rsquo;s <strong>Leads</strong> subtab: the ones that actually need updating. Leads that match, or that aren&rsquo;t on the Leads subtab, are hidden. Copy the prompt to have your AI assistant open each lead by name, go to the Assessment tab, and update the status to the Marketing Leads Status. Paste the Salesforce Leads printable view into the BFO Activity page&rsquo;s Leads subtab to feed this comparison. The prompt is always part of &ldquo;Copy all prompts.&rdquo;
         </p>
         {revealedPrompts.marketingLeadStatusUpdate && (
           <textarea
@@ -3490,15 +3490,15 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                   <td colSpan={4}>
                     {leadsSubtabStatusByName.size === 0
                       ? 'Paste the Salesforce Leads printable view into the BFO Activity page’s Leads subtab to compare statuses.'
-                      : 'No status discrepancies — every matched lead already agrees with the Leads subtab.'}
+                      : 'No status discrepancies: every matched lead already agrees with the Leads subtab.'}
                   </td>
                 </tr>
               ) : marketingLeadStatusRows.map((l, i) => (
                 <tr key={l.id || `${l.name}-${i}`}>
-                  <td>{l.name || '—'}</td>
-                  <td className={l.company ? '' : styles.muted}>{l.company || '—'}</td>
-                  <td className={l.bfoStatus ? '' : styles.muted}>{l.bfoStatus || '—'}</td>
-                  <td className={l.status ? '' : styles.muted}>{l.status || '—'}</td>
+                  <td>{l.name || '-'}</td>
+                  <td className={l.company ? '' : styles.muted}>{l.company || '-'}</td>
+                  <td className={l.bfoStatus ? '' : styles.muted}>{l.bfoStatus || '-'}</td>
+                  <td className={l.status ? '' : styles.muted}>{l.status || '-'}</td>
                 </tr>
               ))}
             </tbody>
@@ -3680,13 +3680,13 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                           >i</button>
                         )}
                       </td>
-                      <td className={o.company && o.company !== '—' ? '' : styles.muted}>{o.company || '—'}</td>
+                      <td className={o.company && o.company !== '-' ? '' : styles.muted}>{o.company || '-'}</td>
                       <NewBfoCompanyNameCell
                         prospect={matchedProspect}
                         value={o.bfoCompanyName}
                         onCommit={(v) => updateProspect && matchedProspect && updateProspect(matchedProspect.id, { bfoCompanyName: v })}
                       />
-                      <td className={o.leadSource && o.leadSource !== '—' ? '' : styles.muted}>{o.leadSource || '—'}</td>
+                      <td className={o.leadSource && o.leadSource !== '-' ? '' : styles.muted}>{o.leadSource || '-'}</td>
                       <td>
                         <span style={{
                           padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700,
@@ -3695,15 +3695,15 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                           border: `1px solid ${o.currentCustomer ? '#86EFAC' : '#CBD5E1'}`,
                         }}>{o.currentCustomer ? 'Yes' : 'No'}</span>
                       </td>
-                      <td className={o.scope && o.scope !== '—' ? '' : styles.muted}>{o.scope || '—'}</td>
-                      <td className={o.stage ? '' : styles.muted}>{o.stage || '—'}</td>
-                      <td className={o.projectName ? '' : styles.muted}>{o.projectName || '—'}</td>
-                      <td className={o.productLine ? '' : styles.muted}>{o.productLine || '—'}</td>
-                      <td className={o.localProjectName ? '' : styles.muted}>{o.localProjectName || '—'}</td>
-                      <td className={o.type ? '' : styles.muted}>{o.type || '—'}</td>
-                      <td className={o.region ? '' : styles.muted}>{o.region || '—'}</td>
-                      <td className={o.class ? '' : styles.muted}>{o.class || '—'}</td>
-                      <td className={o.years ? '' : styles.muted}>{o.years || '—'}</td>
+                      <td className={o.scope && o.scope !== '-' ? '' : styles.muted}>{o.scope || '-'}</td>
+                      <td className={o.stage ? '' : styles.muted}>{o.stage || '-'}</td>
+                      <td className={o.projectName ? '' : styles.muted}>{o.projectName || '-'}</td>
+                      <td className={o.productLine ? '' : styles.muted}>{o.productLine || '-'}</td>
+                      <td className={o.localProjectName ? '' : styles.muted}>{o.localProjectName || '-'}</td>
+                      <td className={o.type ? '' : styles.muted}>{o.type || '-'}</td>
+                      <td className={o.region ? '' : styles.muted}>{o.region || '-'}</td>
+                      <td className={o.class ? '' : styles.muted}>{o.class || '-'}</td>
+                      <td className={o.years ? '' : styles.muted}>{o.years || '-'}</td>
                     </tr>
                     );
                   })}
@@ -3747,7 +3747,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
               <span className={styles.sectionCount}>{closeDateOpps.length}</span>
             </h2>
             <p className={styles.subnote}>
-              BFO opps that should slip 30 days: Stage ≤ 4 with under 100 days to close, Stage 5 under 60 days, Stage 6 under 30 days. Stages come from the BFO Activity tab — paste fresh rows there if the list looks stale.
+              BFO opps that should slip 30 days: Stage ≤ 4 with under 100 days to close, Stage 5 under 60 days, Stage 6 under 30 days. Stages come from the BFO Activity tab: paste fresh rows there if the list looks stale.
             </p>
             {revealedPrompts.closeDates && (
               <textarea
@@ -3827,7 +3827,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
               <span className={styles.sectionCount}>{amountUpdateOpps.length}</span>
             </h2>
             <p className={styles.subnote}>
-              Opps whose BFO Amount disagrees with the Opps tab&rsquo;s Quoted Amount. Join key is BFO Opportunity Name. BFO amounts come from the BFO Activity tab — paste fresh rows there if the list looks stale.
+              Opps whose BFO Amount disagrees with the Opps tab&rsquo;s Quoted Amount. Join key is BFO Opportunity Name. BFO amounts come from the BFO Activity tab: paste fresh rows there if the list looks stale.
             </p>
             {revealedPrompts.amountUpdates && (
               <textarea
@@ -3863,13 +3863,13 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                 <tbody>
                   {amountUpdateOpps.length === 0 ? (
                     <tr className={styles.emptyRow}>
-                      <td colSpan={6}>No discrepancies — every BFO opp matched against the Opps tab has the same amount. Confirm the BFO Activity tab has fresh data if you expected mismatches.</td>
+                      <td colSpan={6}>No discrepancies: every BFO opp matched against the Opps tab has the same amount. Confirm the BFO Activity tab has fresh data if you expected mismatches.</td>
                     </tr>
                   ) : amountUpdateOpps.map(o => (
                     <tr key={o.id}>
                       <td>{o.name}</td>
-                      <td className={o.account ? '' : styles.muted}>{o.account || '—'}</td>
-                      <td className={o.stage ? '' : styles.muted}>{o.stage || '—'}</td>
+                      <td className={o.account ? '' : styles.muted}>{o.account || '-'}</td>
+                      <td className={o.stage ? '' : styles.muted}>{o.stage || '-'}</td>
                       <td>{fmtMoney(o.bfoAmount)}</td>
                       <td>{o.quotedAmountFmt}</td>
                       <td>
@@ -3910,7 +3910,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
               <span className={styles.sectionCount}>{stageChangeOpps.length}</span>
             </h2>
             <p className={styles.subnote}>
-              Opps whose BFO Sales Stage doesn&rsquo;t match what their Opps Stage implies. Join key is BFO Opportunity Name. BFO stages come from the BFO Activity tab — paste fresh rows there if the list looks stale.
+              Opps whose BFO Sales Stage doesn&rsquo;t match what their Opps Stage implies. Join key is BFO Opportunity Name. BFO stages come from the BFO Activity tab: paste fresh rows there if the list looks stale.
             </p>
             {revealedPrompts.stageChange && (
               <textarea
@@ -3946,12 +3946,12 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                 <tbody>
                   {stageChangeOpps.length === 0 ? (
                     <tr className={styles.emptyRow}>
-                      <td colSpan={6}>No stage mismatches — every BFO opp matched against the Opps tab is on the BFO stage its Opps Stage maps to.</td>
+                      <td colSpan={6}>No stage mismatches: every BFO opp matched against the Opps tab is on the BFO stage its Opps Stage maps to.</td>
                     </tr>
                   ) : stageChangeOpps.map(o => (
                     <tr key={o.id}>
                       <td>{o.name}</td>
-                      <td className={o.account ? '' : styles.muted}>{o.account || '—'}</td>
+                      <td className={o.account ? '' : styles.muted}>{o.account || '-'}</td>
                       <td>{o.oppsStage}</td>
                       <td>{o.bfoStage}</td>
                       <td>{o.expectedBfoStage}</td>

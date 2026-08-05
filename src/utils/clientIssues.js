@@ -92,7 +92,7 @@ function detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedM
       id: `neg-days:${p.id}`,
       source: 'Clients',
       type: 'Contract expired',
-      company: p.company || '—',
+      company: p.company || '-',
       prospectId: p.id,
       daysUntil: next.days,
       expirationDate: next.date,
@@ -113,7 +113,7 @@ const RENEWAL_WARNING_DAYS = 270;
 // dash placeholder. Matches the noStatus check in ClientsView.
 function hasNoClientStatus(statusMap, clientKey) {
   const s = String(statusMap?.[clientKey] || '').trim();
-  return s === '' || s === '-' || s === '—' || s === '–';
+  return s === '' || s === '-' || s === '-' || s === '–';
 }
 
 // Issue #4: a client whose soonest active contract renews within
@@ -135,8 +135,8 @@ function detectRenewalNoStatus({ prospects, cdmName, dealsByClient, untrackedMap
     issues.push({
       id: `renewal-no-status:${p.id}`,
       source: 'Clients',
-      type: 'Renewal — no status',
-      company: p.company || '—',
+      type: 'Renewal: no status',
+      company: p.company || '-',
       prospectId: p.id,
       daysUntil: next.days,
       expirationDate: next.date,
@@ -166,11 +166,11 @@ function detectMissingExpiration({ prospects, cdmName, dealsByClient, untrackedM
       id: `no-expiration:${p.id}`,
       source: 'Clients',
       type: 'No expiration date',
-      company: p.company || '—',
+      company: p.company || '-',
       prospectId: p.id,
       daysUntil: null,
       expirationDate: null,
-      detail: 'No contract End Date on file — add a contract (or check Don\'t Track on the Clients tab) so its renewal can be tracked',
+      detail: 'No contract End Date on file: add a contract (or check Don\'t Track on the Clients tab) so its renewal can be tracked',
     });
   }
   return issues;
@@ -226,8 +226,8 @@ function detectMyAccountsFlags({ myAccountsFlags = [], prospects = [] }) {
     }
 
     // Prefer live company/status so the row never shows a stale copy.
-    const company = (live && live.company) || f.company || '—';
-    const liveStatus = live ? (live.status || '—') : (f.status || '—');
+    const company = (live && live.company) || f.company || '-';
+    const liveStatus = live ? (live.status || '-') : (f.status || '-');
     if (f.kind === 'tier') {
       issues.push({
         id: `tier-mismatch:${f.id}`,
@@ -237,7 +237,7 @@ function detectMyAccountsFlags({ myAccountsFlags = [], prospects = [] }) {
         prospectId: f.id,
         daysUntil: null,
         expirationDate: null,
-        detail: `Your tier "${f.myTier || '—'}" doesn't match Target Accounts tier "${f.targetTier || '—'}"`,
+        detail: `Your tier "${f.myTier || '-'}" doesn't match Target Accounts tier "${f.targetTier || '-'}"`,
       });
     } else if (f.kind === 'status') {
       issues.push({
@@ -248,7 +248,7 @@ function detectMyAccountsFlags({ myAccountsFlags = [], prospects = [] }) {
         prospectId: f.id,
         daysUntil: null,
         expirationDate: null,
-        detail: `Status "${liveStatus}" doesn't match Opps-suggested status "${f.suggestedStatus || '—'}"`,
+        detail: `Status "${liveStatus}" doesn't match Opps-suggested status "${f.suggestedStatus || '-'}"`,
       });
     } else if (f.kind === 'hqRegion') {
       issues.push({
@@ -294,11 +294,11 @@ function detectMarketingLeadStatuses({ marketingLeads = [] }) {
       id: `marketing-lead-status:${idPart}`,
       source: 'Marketing Leads',
       type: 'Lead not closed out',
-      company: lead.company || '—',
+      company: lead.company || '-',
       prospectId: null,
       daysUntil: null,
       expirationDate: null,
-      detail: `${name} — status "${status}" (not Closed-Converted or Closed-Recycle)`,
+      detail: `${name}: status "${status}" (not Closed-Converted or Closed-Recycle)`,
     });
   }
   return issues;
@@ -363,7 +363,7 @@ function detectUntaggedBfoOppNames({ bfoActivity, oppsCache }) {
       prospectId: null,
       daysUntil: null,
       expirationDate: null,
-      detail: `BFO Opportunity Name "${raw}" is not tagged to an opp on Opps${account ? ` — from ${account}` : ''}`,
+      detail: `BFO Opportunity Name "${raw}" is not tagged to an opp on Opps${account ? `: from ${account}` : ''}`,
     });
   }
   return issues;
@@ -425,7 +425,7 @@ function detectOppBfoNameNotInActivity({ bfoActivity, oppsCache, prospects = [] 
       prospectId: prospectIdByNorm.get(normalizeBfoCompany(account)) || null,
       daysUntil: null,
       expirationDate: null,
-      detail: `Active opp${context ? ` (${context})` : ''} is tagged to BFO Opportunity Name "${name}", which isn't on the BFO Activity tab — re-paste the latest BFO Activity export, or fix the name on Opps.`,
+      detail: `Active opp${context ? ` (${context})` : ''} is tagged to BFO Opportunity Name "${name}", which isn't on the BFO Activity tab: re-paste the latest BFO Activity export, or fix the name on Opps.`,
     });
   }
   return issues;
@@ -458,11 +458,11 @@ function detectNewBfoMissingData({ prospects = [], oppsCache = null, serviceOver
     id: `new-bfo-missing:${m.id}`,
     source: 'Agents',
     type: 'New BFO Opp missing data',
-    company: m.company || '—',
+    company: m.company || '-',
     prospectId: prospectIdByNorm.get(normalizeBfoCompany(m.company)) || null,
     daysUntil: null,
     expirationDate: null,
-    detail: `New BFO Opp prompt is missing ${m.missing.join(', ')} — BFO Company Name comes from the company's Table View record; Product Line / Type / Region / Local Project Name come from Dropdowns › Services for the opp's Scope.`,
+    detail: `New BFO Opp prompt is missing ${m.missing.join(', ')}: BFO Company Name comes from the company's Table View record; Product Line / Type / Region / Local Project Name come from Dropdowns › Services for the opp's Scope.`,
   }));
 }
 
@@ -495,7 +495,7 @@ function detectServiceCoverageGaps({ prospects = [], cdmName, coverageServices =
     const cov = computeServiceCoverage(clients, key, oppStagesByClient);
     if (cov.pct >= 100 && cov.notExplored.length === 0) continue;
     const label = labels.get(key) || key;
-    const names = cov.notExplored.map(({ p }) => p.company || '—');
+    const names = cov.notExplored.map(({ p }) => p.company || '-');
     const shown = names.slice(0, COVERAGE_DETAIL_NAMES).join(', ');
     const extra = names.length - COVERAGE_DETAIL_NAMES;
     issues.push({
@@ -506,7 +506,7 @@ function detectServiceCoverageGaps({ prospects = [], cdmName, coverageServices =
       prospectId: null,
       daysUntil: null,
       expirationDate: null,
-      detail: `${cov.explored.length} of ${cov.total} client${cov.total === 1 ? '' : 's'} (${cov.pct}%) have explored ${label} — not yet explored: ${shown}${extra > 0 ? ` +${extra} more` : ''}`,
+      detail: `${cov.explored.length} of ${cov.total} client${cov.total === 1 ? '' : 's'} (${cov.pct}%) have explored ${label}: not yet explored: ${shown}${extra > 0 ? ` +${extra} more` : ''}`,
     });
   }
   return issues;
@@ -531,7 +531,7 @@ export function computeExpiringClients({ prospects = [], cdmName, dealsList = []
     if (next.days == null || next.days >= withinDays) continue;
     out.push({
       id: p.id,
-      company: p.company || '—',
+      company: p.company || '-',
       clientManager: managerMap?.[ck] || '',
       daysUntil: next.days,
       expiration: next.date,

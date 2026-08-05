@@ -68,7 +68,7 @@ export async function probeGranola() {
       configured: true,
       ok: false,
       error: isTimeout(err)
-        ? 'The check for Granola timed out. Calls already synced still show below — use Sync calls to retry.'
+        ? 'The check for Granola timed out. Calls already synced still show below: use Sync calls to retry.'
         : (err?.message || String(err)),
     };
   }
@@ -96,10 +96,10 @@ export function describeMissingKey(hint) {
     // The two names sit next to each other in .env.example, so this is
     // usually the key pasted into the wrong row rather than a deliberate
     // host override.
-    return `${where}${build} can see GRANOLA_API_BASE but no GRANOLA_API_KEY. GRANOLA_API_BASE is an optional override for the API's address, not the key — if you pasted the key into it, delete that variable and add the key as GRANOLA_API_KEY instead.`;
+    return `${where}${build} can see GRANOLA_API_BASE but no GRANOLA_API_KEY. GRANOLA_API_BASE is an optional override for the API's address, not the key: if you pasted the key into it, delete that variable and add the key as GRANOLA_API_KEY instead.`;
   }
   if (named.length > 0) {
-    return `${where}${build} can see ${named.join(', ')} but no GRANOLA_API_KEY — check the variable's name.`;
+    return `${where}${build} can see ${named.join(', ')} but no GRANOLA_API_KEY: check the variable's name.`;
   }
   return `${where}${build} has no environment variable mentioning Granola at all. The most common cause is the variable being saved for a different environment than this one, or against a different Vercel project.`;
 }

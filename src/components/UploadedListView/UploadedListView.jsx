@@ -135,7 +135,7 @@ function renderMappingCell({ row, scope, mapping, dismissed, suggestionFor, pros
       onClick={handleClick}
       style={{ background: 'transparent', border: '1px dashed #CBD5E1', borderRadius: 999, padding: '1px 8px', fontSize: '0.7rem', color: '#64748B', fontWeight: 400, cursor: 'pointer', fontFamily: 'inherit' }}
       title={emptyTitle}
-    >— Map —</button>
+    >(Map)</button>
   );
 }
 
@@ -175,7 +175,7 @@ function TextEditCell({ value, onChange, placeholder }) {
       onMouseEnter={e => e.currentTarget.style.background = '#F8FAFC'}
       onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
     >
-      {value || placeholder || '—'}
+      {value || placeholder || '-'}
     </span>
   );
 }
@@ -195,7 +195,7 @@ function MatchPctCell({ row, myAccountMapping, myAccountDismissed, portfolioMapp
   // surfaces the best match available to the row regardless of where
   // it ends up getting mapped.
   const best = [ma, pc].filter(Boolean).reduce((acc, s) => (acc && acc.score >= s.score ? acc : s), null);
-  if (!best) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
+  if (!best) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>-</span>;
   const pct = Math.round((best.score || 0) * 100);
   // Color tracks confidence: green ≥80%, amber 60–79%, red <60%.
   const bg = pct >= 80 ? '#DCFCE7' : pct >= 60 ? '#FEF3C7' : '#FEE2E2';
@@ -246,7 +246,7 @@ function ProspectFillCell({ row, mapping, dismissed, prospectSuggestionFor, pros
     const s = raw ? prospectSuggestionFor(raw) : null;
     prospect = s?.prospect || null;
   }
-  if (!prospect) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
+  if (!prospect) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>-</span>;
   const current = prospect[field];
   if (current != null && String(current).trim() !== '') {
     // Already populated in Table View — show the looked-up value.
@@ -256,7 +256,7 @@ function ProspectFillCell({ row, mapping, dismissed, prospectSuggestionFor, pros
       </span>
     );
   }
-  if (!fillValue) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
+  if (!fillValue) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>-</span>;
   // Blank in Table View — offer to set it to this row's fill value.
   return (
     <button
@@ -377,24 +377,24 @@ function buildColumns(data, ctx) {
     render: (row) => {
       const mapped = myAccountMapping[row.__matchKey__];
       const prospect = mapped ? myAccountsByNorm.get(normalizeCompany(mapped)) : null;
-      if (!prospect) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
+      if (!prospect) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>-</span>;
       const tierStyle = TIER_COLORS[prospect.tier] || { bg: '#F1F5F9', border: '#CBD5E1', text: '#334155' };
       return (
         <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
           {prospect.tier && (
             <span
               style={{ background: tierStyle.bg, border: `1px solid ${tierStyle.border}`, color: tierStyle.text, borderRadius: 999, padding: '1px 8px', fontSize: '0.65rem', fontWeight: 700, whiteSpace: 'nowrap' }}
-              title={`${prospect.company} — ${prospect.tier}`}
+              title={`${prospect.company} · ${prospect.tier}`}
             >{prospect.tier}</span>
           )}
           {prospect.status && (
             <span
               style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', color: '#475569', borderRadius: 999, padding: '1px 8px', fontSize: '0.65rem', fontWeight: 600, whiteSpace: 'nowrap' }}
-              title={`${prospect.company} — ${prospect.status}`}
+              title={`${prospect.company} · ${prospect.status}`}
             >{prospect.status}</span>
           )}
           {!prospect.tier && !prospect.status && (
-            <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>
+            <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>-</span>
           )}
         </span>
       );
@@ -419,10 +419,10 @@ function buildColumns(data, ctx) {
     getFilterValue: (row) => resolveAccountEntry(row).entry?.cdm || '',
     render: (row) => {
       const { entry, fromSuggestion } = resolveAccountEntry(row);
-      if (!entry || !entry.cdm) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
+      if (!entry || !entry.cdm) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>-</span>;
       return (
         <span
-          title={fromSuggestion ? `CDM for suggested match "${entry.company}" — confirm to lock it in` : `CDM for ${entry.company}`}
+          title={fromSuggestion ? `CDM for suggested match "${entry.company}": confirm to lock it in` : `CDM for ${entry.company}`}
           style={{ fontSize: '0.72rem', color: fromSuggestion ? '#92400E' : 'var(--color-text-secondary)', fontStyle: fromSuggestion ? 'italic' : 'normal' }}
         >{entry.cdm}</span>
       );
@@ -482,11 +482,11 @@ function buildColumns(data, ctx) {
         entry = s ? s.prospect : null;
         fromSuggestion = !!entry;
       }
-      if (!entry || !entry.parent) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
+      if (!entry || !entry.parent) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>-</span>;
       return (
         <span
           title={fromSuggestion
-            ? `Owner of suggested match "${entry.company}" — confirm the mapping to lock it in`
+            ? `Owner of suggested match "${entry.company}": confirm the mapping to lock it in`
             : `Owner of ${entry.company}`}
           style={{ fontSize: '0.72rem', color: fromSuggestion ? '#92400E' : 'var(--color-text-secondary)', fontStyle: fromSuggestion ? 'italic' : 'normal' }}
         >{entry.parent}</span>
@@ -1827,7 +1827,7 @@ export function UploadedListView({
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            title={`Upload an Excel or CSV of ${title}. Existing My Accounts / Table View mappings are preserved across re-uploads — rows whose company name matches an earlier mapping pick it up automatically.`}
+            title={`Upload an Excel or CSV of ${title}. Existing My Accounts / Table View mappings are preserved across re-uploads: rows whose company name matches an earlier mapping pick it up automatically.`}
             style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
           >
             Upload Excel
@@ -1890,7 +1890,7 @@ export function UploadedListView({
         <button
           type="button"
           onClick={() => setSuggestedOnly(v => !v)}
-          title="Show only list rows that match a company on My Accounts (live — based on current prospect data)"
+          title="Show only list rows that match a company on My Accounts (live: based on current prospect data)"
           style={{
             padding: '0.35rem 0.7rem',
             border: `1px solid ${suggestedOnly ? '#3B82F6' : 'var(--color-border)'}`,
@@ -1914,7 +1914,7 @@ export function UploadedListView({
         <button
           type="button"
           onClick={() => setPortfolioOnly(v => !v)}
-          title="Show only list rows that match a company on Portfolio Companies (live — across every prospect)"
+          title="Show only list rows that match a company on Portfolio Companies (live: across every prospect)"
           style={{
             padding: '0.35rem 0.7rem',
             border: `1px solid ${portfolioOnly ? '#8B5CF6' : 'var(--color-border)'}`,
@@ -2064,8 +2064,8 @@ export function UploadedListView({
               type="button"
               onClick={toggle}
               title={isActive
-                ? 'Deselect — clears the entire selection'
-                : 'Replace the current selection with every row currently visible after filters and search — bulk actions will only touch these rows'}
+                ? 'Deselect: clears the entire selection'
+                : 'Replace the current selection with every row currently visible after filters and search: bulk actions will only touch these rows'}
               style={{
                 padding: '0.35rem 0.7rem',
                 border: `1px solid ${isActive ? '#3B82F6' : 'var(--color-border)'}`,
@@ -2164,7 +2164,7 @@ export function UploadedListView({
               };
               return (
                 <span
-                  title="These selected rows aren't visible after the current filter/search. Bulk actions will still hit them — click to drop them from the selection."
+                  title="These selected rows aren't visible after the current filter/search. Bulk actions will still hit them: click to drop them from the selection."
                   style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.2rem 0.55rem', background: '#FEF3C7', border: '1px solid #F59E0B', borderRadius: 999, fontSize: '0.7rem', color: '#92400E', fontWeight: 600 }}
                 >
                   ⚠ {hidden} hidden by filter

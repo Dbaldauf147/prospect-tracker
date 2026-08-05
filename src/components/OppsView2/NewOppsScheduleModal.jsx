@@ -202,11 +202,11 @@ export function NewOppsScheduleModal({ open, onClose, uid, email, oppsRows }) {
                       </div>
                       <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>{describeSchedule(s)} · {tzLabel}</div>
                       <div style={{ fontSize: '0.72rem', color: '#475569', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        To: {(s.recipients || []).join(', ') || '—'}
+                        To: {(s.recipients || []).join(', ') || '-'}
                       </div>
                       {s.lastStatus && (
                         <div style={{ fontSize: '0.68rem', marginTop: 3, color: s.lastStatus === 'error' ? '#B91C1C' : '#64748B' }}>
-                          Last: {s.lastStatus}{s.lastSentAt ? ` · ${new Date(s.lastSentAt).toLocaleString()}` : ''}{s.lastStatus === 'error' && s.lastError ? ` — ${s.lastError}` : ''}
+                          Last: {s.lastStatus}{s.lastSentAt ? ` · ${new Date(s.lastSentAt).toLocaleString()}` : ''}{s.lastStatus === 'error' && s.lastError ? `: ${s.lastError}` : ''}
                         </div>
                       )}
                     </div>

@@ -46,11 +46,11 @@ export function ChangedJobsContactsView({ prospects = [], onSelectProspect, sett
       showNewCompanyEmail
       showReachedOut
       pageSubtitle={
-        <>HubSpot contacts who have changed jobs — either tagged <code>Left</code> or with their Company set to <code>Changed Jobs</code>. Use this to find people you want to chase down at their new employer. Map their <strong>New Company</strong> and — if that company's email format is known — the <strong>Expected Email</strong> column predicts their new address. Use the <strong>Reached Out</strong> toggle to track who you've contacted, and <strong>Hide</strong> (far right of each row) to drop anyone you're done with. Toggle <strong>All Contacts</strong> for a flat name-by-name table or <strong>By Company</strong> to roll them up.</>
+        <>HubSpot contacts who have changed jobs: either tagged <code>Left</code> or with their Company set to <code>Changed Jobs</code>. Use this to find people you want to chase down at their new employer. Map their <strong>New Company</strong> and (if that company's email format is known), the <strong>Expected Email</strong> column predicts their new address. Use the <strong>Reached Out</strong> toggle to track who you've contacted, and <strong>Hide</strong> (far right of each row) to drop anyone you're done with. Toggle <strong>All Contacts</strong> for a flat name-by-name table or <strong>By Company</strong> to roll them up.</>
       }
       emptyTitle="No Changed Jobs contacts found"
       emptyDetail={
-        <>Nobody currently has the <code>Left</code> tag or a Company of <code>Changed Jobs</code>. Mark a contact's <code>Left</code> tag in the contact modal — the app will automatically set their Company to <code>Changed Jobs</code> so they show up here.</>
+        <>Nobody currently has the <code>Left</code> tag or a Company of <code>Changed Jobs</code>. Mark a contact's <code>Left</code> tag in the contact modal: the app will automatically set their Company to <code>Changed Jobs</code> so they show up here.</>
       }
       contactSelector={selector}
     />

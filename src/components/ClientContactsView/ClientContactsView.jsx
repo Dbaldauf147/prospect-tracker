@@ -240,7 +240,7 @@ export function ClientContactsView({ prospects = [], onSelectProspect, settings,
       pageSubtitle={subtitle}
       emptyTitle="No client contacts found"
       emptyDetail={
-        <>None of your <code>Client</code>-status prospects (CDM = {cdmName || '—'}) have HubSpot contacts yet. Set a prospect's Status to <code>Client</code> and CDM to your name on the Table View, then add HubSpot contacts at that company.</>
+        <>None of your <code>Client</code>-status prospects (CDM = {cdmName || '-'}) have HubSpot contacts yet. Set a prospect's Status to <code>Client</code> and CDM to your name on the Table View, then add HubSpot contacts at that company.</>
       }
       contactSelector={selector}
     />

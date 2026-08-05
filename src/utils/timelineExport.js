@@ -45,7 +45,7 @@ function stageTable(stages) {
       <td class="num">${i + 1}</td>
       <td class="stage">${esc(stage.name || 'Untitled stage')}</td>
       <td><span class="ownerPill" style="border-color:${ownerColor(stage.owner)};color:${ownerColor(stage.owner)}">${esc(stage.owner || '')}</span></td>
-      <td class="timing">${esc(stage.timing || '—')}</td>
+      <td class="timing">${esc(stage.timing || '-')}</td>
       <td class="desc">${esc(stage.description || '')}</td>
     </tr>`).join('');
   return `<table class="stages">
@@ -66,7 +66,7 @@ export function buildTimelineReportHtml(template, meta = {}) {
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>${esc(title)} — Schneider Electric</title>
+<title>${esc(title)}: Schneider Electric</title>
 <style>
   @page { size: landscape; margin: 12mm; }
   * { box-sizing: border-box; }
@@ -138,7 +138,7 @@ export function buildTimelineReportHtml(template, meta = {}) {
     <div class="band">
       <div>
         <div class="bandTitle">${esc(title)}</div>
-        <div class="bandSub">Engagement timeline${services.length ? ` — ${esc(services.join(' · '))}` : ''}</div>
+        <div class="bandSub">Engagement timeline${services.length ? `: ${esc(services.join(' · '))}` : ''}</div>
       </div>
       ${schneiderLogoSvg({ onDark: true, width: 190 })}
     </div>
@@ -148,7 +148,7 @@ export function buildTimelineReportHtml(template, meta = {}) {
       ${stages.length ? stageTable(stages) : ''}
       ${services.length ? `<h2>Applies to</h2><div class="chips">${services.map(s => `<span class="chip">${esc(s)}</span>`).join('')}</div>` : ''}
       <div class="foot">
-        <span>Schneider Electric — Life Is On</span>
+        <span>Schneider Electric: Life Is On</span>
         <span>${generatedAt ? `Generated ${esc(generatedAt)}` : ''}</span>
       </div>
     </div>

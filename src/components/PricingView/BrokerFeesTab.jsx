@@ -280,7 +280,7 @@ export function BrokerFeesTab({ rows, setRows }) {
     className,
     onClick: () => toggleSort(key),
     style: { cursor: 'pointer', userSelect: 'none' },
-    title: 'Click to sort — click again to reverse, third click clears the sort',
+    title: 'Click to sort: click again to reverse, third click clears the sort',
   });
 
   return (
@@ -310,8 +310,8 @@ export function BrokerFeesTab({ rows, setRows }) {
         <div className={styles.pasteBox}>
           <div className={styles.pasteHint}>
             Tab-separated rows: Company · Annual Load EP (kWh) · Fee EP ($/kWh) · RFPs ·
-            (Total Fee EP — ignored, recomputed) · Annual Load NG (Dth) · Fee NG ($/Dth) ·
-            (Total Fee NG — ignored).
+            (Total Fee EP: ignored, recomputed) · Annual Load NG (Dth) · Fee NG ($/Dth) ·
+            (Total Fee NG: ignored).
           </div>
           <textarea
             className={styles.pasteArea}

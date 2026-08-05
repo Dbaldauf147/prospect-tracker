@@ -178,7 +178,7 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
     const flaggedNames = (s.flaggedNames || []).join(', ');
     const flagged = s.flaggedCount
       ? (s.flaggedLabel ? `${s.flaggedLabel}: ${flaggedNames}` : flaggedNames)
-      : '—';
+      : '-';
     // Numeric metric values are centered so they line up under their
     // centered group headers. The Stage row-label and the Flagged Opps
     // list stay left — the latter is variable-length overflow text that
@@ -246,12 +246,12 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
   put(r, 1, r, 4, 'Current client', { bold: true });
   put(r, 5, r, 7, num(cg.clientCount), { align: 'left', numFmt: INT });
   put(r, 8, r, 10, num(cg.clientAmt), { align: 'left', numFmt: MONEY });
-  put(r, 11, r, 13, cg.clientGoalPct != null ? `Goal ${Math.round(cg.clientGoalPct * 100)}%` : '—', { align: 'left' });
+  put(r, 11, r, 13, cg.clientGoalPct != null ? `Goal ${Math.round(cg.clientGoalPct * 100)}%` : '-', { align: 'left' });
   r++;
   put(r, 1, r, 4, 'Greenfield', { bold: true });
   put(r, 5, r, 7, num(cg.greenfieldCount), { align: 'left', numFmt: INT });
   put(r, 8, r, 10, num(cg.greenfieldAmt), { align: 'left', numFmt: MONEY });
-  put(r, 11, r, 13, cg.clientActualPct != null ? `Actual ${Math.round(cg.clientActualPct * 100)}%` : '—', { align: 'left', ...(cmpTint(cg.clientActualPct, cg.clientGoalPct, 'lower') || {}) });
+  put(r, 11, r, 13, cg.clientActualPct != null ? `Actual ${Math.round(cg.clientActualPct * 100)}%` : '-', { align: 'left', ...(cmpTint(cg.clientActualPct, cg.clientGoalPct, 'lower') || {}) });
   r++;
 
   // ── Largest Stage 5 & 6 Deals (above $100k) ──
@@ -261,7 +261,7 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
     const bd = p.largeDeals || {};
     const minAmt = bd.minAmount || 100000;
     gap();
-    title(bd.title || 'Largest Stage 5 & 6 Deals — Above $100k');
+    title(bd.title || 'Largest Stage 5 & 6 Deals: Above $100k');
     const bdCols = [[1, 6], [7, 9], [10, 11], [12, 13]]; // Account | Opportunity | Stage | Amount
     const bdHdr = bd.headers || ['Account', 'Opportunity', 'Stage', 'Amount'];
     bdHdr.forEach((h, i) => put(r, bdCols[i][0], r, bdCols[i][1], h, { ...HEAD, align: i === 3 ? 'center' : 'left' }));
@@ -273,9 +273,9 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
     } else {
       bdRows.forEach((row, idx) => {
         const zebra = idx % 2 === 1 ? { zebra: true } : {};
-        put(r, bdCols[0][0], r, bdCols[0][1], row.account || '—', { align: 'left', wrap: true, ...zebra });
-        put(r, bdCols[1][0], r, bdCols[1][1], row.oppName || '—', { align: 'left', wrap: true, ...zebra });
-        put(r, bdCols[2][0], r, bdCols[2][1], row.stage || '—', { align: 'left', ...zebra });
+        put(r, bdCols[0][0], r, bdCols[0][1], row.account || '-', { align: 'left', wrap: true, ...zebra });
+        put(r, bdCols[1][0], r, bdCols[1][1], row.oppName || '-', { align: 'left', wrap: true, ...zebra });
+        put(r, bdCols[2][0], r, bdCols[2][1], row.stage || '-', { align: 'left', ...zebra });
         put(r, bdCols[3][0], r, bdCols[3][1], num(row.amount), { align: 'center', numFmt: MONEY, bold: true, ...zebra });
         r++;
       });
@@ -311,7 +311,7 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
       r++;
       scRows.forEach((row, idx) => {
         const zebra = idx % 2 === 1 ? { zebra: true } : {};
-        put(r, scCols[0][0], r, scCols[0][1], row.service || '—', { align: 'left', wrap: true, ...zebra });
+        put(r, scCols[0][0], r, scCols[0][1], row.service || '-', { align: 'left', wrap: true, ...zebra });
         put(r, scCols[1][0], r, scCols[1][1], num(row.explored), { align: 'left', numFmt: INT, ...zebra });
         put(r, scCols[2][0], r, scCols[2][1], num(row.total), { align: 'left', numFmt: INT, ...zebra });
         put(r, scCols[3][0], r, scCols[3][1], num(row.pct), { align: 'left', numFmt: PCT, bold: true, ...zebra });
@@ -322,7 +322,7 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
 
   // ── Client Renewals ──
   gap();
-  title(lbl('ren-title', `Client Renewals — Contracts Expiring Within ${p.renewals.windowDays} Days`));
+  title(lbl('ren-title', `Client Renewals: Contracts Expiring Within ${p.renewals.windowDays} Days`));
   const renCols = [[1, 2], [3, 4], [5, 6], [7, 9], [10, 13]];
   const renHdr = [lbl('ren-client', 'Client'), lbl('ren-status', 'Renewal Status'), lbl('ren-client-manager', 'Client Manager'), lbl('ren-decision-maker', 'Decision Maker'), lbl('ren-days-until', 'Days Until Expiration')];
   renHdr.forEach((h, i) => put(r, renCols[i][0], r, renCols[i][1], h, { ...HEAD, align: 'left' }));
@@ -335,7 +335,7 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
     renRows.forEach((row, idx) => {
       const zebra = idx % 2 === 1;
       const overdue = num(row.daysUntil) != null && row.daysUntil < 0;
-      const vals = [row.company || '—', row.renewalStatus || '—', row.clientManager || '—', row.decisionMaker || '—', num(row.daysUntil)];
+      const vals = [row.company || '-', row.renewalStatus || '-', row.clientManager || '-', row.decisionMaker || '-', num(row.daysUntil)];
       vals.forEach((v, i) => {
         const isDays = i === 4;
         put(r, renCols[i][0], r, renCols[i][1], v === '' || v == null ? null : v, {
@@ -353,9 +353,9 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
   {
     const ps = p.postSaleFollowUp || {};
     gap();
-    title(ps.title || 'Post-Sale Follow-Up — Deals Missing Follow Up On Sale');
+    title(ps.title || 'Post-Sale Follow-Up: Deals Missing Follow Up On Sale');
     const psCols = [[1, 3], [4, 8], [9, 11], [12, 13]]; // Client | Agreement | Date Closed/Sold | 60 Day Goal
-    const psHdr = ps.headers || ['Client', 'Agreement Name', 'Date Closed / Sold', 'Days Since Sold — 60 Day Goal'];
+    const psHdr = ps.headers || ['Client', 'Agreement Name', 'Date Closed / Sold', 'Days Since Sold: 60 Day Goal'];
     psHdr.forEach((h, i) => put(r, psCols[i][0], r, psCols[i][1], h, { ...HEAD, align: 'left' }));
     r++;
     const psRows = ps.rows || [];
@@ -365,7 +365,7 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
     } else {
       psRows.forEach((row, idx) => {
         const zebra = idx % 2 === 1 ? { zebra: true } : {};
-        const vals = [row.client || '—', row.agreement || '—', row.soldDate || '—', row.goal || '—'];
+        const vals = [row.client || '-', row.agreement || '-', row.soldDate || '-', row.goal || '-'];
         vals.forEach((v, i) => put(r, psCols[i][0], r, psCols[i][1], v, { align: 'left', wrap: i === 1, ...zebra }));
         r++;
       });
@@ -376,7 +376,7 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
   {
     const sa = p.strategicAccounts || {};
     gap();
-    title(sa.title || 'Strategic Accounts — My Accounts');
+    title(sa.title || 'Strategic Accounts: My Accounts');
     const saCols = [[1, 6], [7, 10], [11, 13]]; // Account | Account Owner | Type
     const saHdr = sa.headers || ['Account', 'Account Owner', 'Type'];
     saHdr.forEach((h, i) => put(r, saCols[i][0], r, saCols[i][1], h, { ...HEAD, align: 'left' }));
@@ -388,7 +388,7 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
     } else {
       saRows.forEach((row, idx) => {
         const zebra = idx % 2 === 1;
-        const vals = [row.account || '—', row.owner || '—', row.type || '—'];
+        const vals = [row.account || '-', row.owner || '-', row.type || '-'];
         vals.forEach((v, i) => put(r, saCols[i][0], r, saCols[i][1], v, { align: 'left', wrap: i === 0, ...(zebra ? { zebra: true } : {}) }));
         r++;
       });
@@ -514,7 +514,7 @@ export async function downloadPipelineWorkbook(p) {
         [num(s.targetProjGoal), 'right', MONEY],
         [num(s.lifeGoal), 'right', INT],
         [num(s.lifeActual), 'right', INT, cmpTint(s.lifeActual, s.lifeGoal, 'lower')],
-        [s.flaggedLabel && s.flaggedCount ? `${s.flaggedLabel}: ${s.flaggedCount}` : (s.flaggedCount ? String(s.flaggedCount) : '—'), 'left', null,
+        [s.flaggedLabel && s.flaggedCount ? `${s.flaggedLabel}: ${s.flaggedCount}` : (s.flaggedCount ? String(s.flaggedCount) : '-'), 'left', null,
           s.flaggedCount ? { fill: WARN_FILL, fg: WARN_FG } : null],
       ];
       cells.forEach(([v, align, numFmt, tint], i) => {
@@ -591,17 +591,17 @@ export async function downloadPipelineWorkbook(p) {
       views: [{ state: 'frozen', ySplit: 3, xSplit: 1 }],
     });
     ws.columns = widths.map(w => ({ width: w }));
-    const hdrRow = brandBand(ws, headers.length, lbl('ren-title', `Client Renewals — Contracts Expiring Within ${p.renewals.windowDays} Days`));
+    const hdrRow = brandBand(ws, headers.length, lbl('ren-title', `Client Renewals: Contracts Expiring Within ${p.renewals.windowDays} Days`));
     headerRow(ws, hdrRow, headers, ['left', 'left', 'left', 'left', 'right']);
     let r = hdrRow + 1;
     (p.renewals.rows || []).forEach((row, idx) => {
       const zebra = idx % 2 === 1;
       const overdue = num(row.daysUntil) != null && row.daysUntil < 0;
       const vals = [
-        [row.company || '—', 'left', null],
-        [row.renewalStatus || '—', 'left', null],
-        [row.clientManager || '—', 'left', null],
-        [row.decisionMaker || '—', 'left', null],
+        [row.company || '-', 'left', null],
+        [row.renewalStatus || '-', 'left', null],
+        [row.clientManager || '-', 'left', null],
+        [row.decisionMaker || '-', 'left', null],
         [num(row.daysUntil), 'right', INT, overdue ? { fill: BAD_FILL, fg: BAD_FG } : null],
       ];
       vals.forEach(([v, align, numFmt, tint], i) => {
@@ -657,7 +657,7 @@ export async function downloadPipelineWorkbook(p) {
   const a = document.createElement('a');
   const stamp = (p.generatedAt || new Date()).toISOString().slice(0, 10);
   a.href = url;
-  a.download = stripDashes(`Pipeline Report${p.layout === 'single' ? ' (1 page)' : ''} — ${stamp}.xlsx`);
+  a.download = stripDashes(`Pipeline Report${p.layout === 'single' ? ' (1 page)' : ''} · ${stamp}.xlsx`);
   document.body.appendChild(a);
   a.click();
   a.remove();

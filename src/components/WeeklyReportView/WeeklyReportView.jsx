@@ -94,7 +94,7 @@ const fmtMoney = (n) => (Number.isFinite(n) && n > 0 ? `$${Math.round(n).toLocal
 // A named change list with the account/scope + a per-row suffix.
 function ChangeList({ title, items, suffix }) {
   if (!items || !items.length) return null;
-  const who = (x) => [x.account, x.scope].filter(Boolean).join(' — ') || `Opp ${x.id}`;
+  const who = (x) => [x.account, x.scope].filter(Boolean).join(': ') || `Opp ${x.id}`;
   return (
     <div className={styles.changeGroup}>
       <div className={styles.changeTitle}>{title} <span className={styles.changeCount}>{items.length}</span></div>
@@ -113,7 +113,7 @@ function ChangeList({ title, items, suffix }) {
 
 const fmtMoneySigned = (n) => (Number.isFinite(n)
   ? `${n < 0 ? '−' : ''}$${Math.abs(Math.round(n)).toLocaleString('en-US')}`
-  : '—');
+  : '-');
 
 // One stored week in the review history. Collapsed it's a row of the headline
 // numbers; expanded it shows the full review the way the current week renders.
@@ -367,7 +367,7 @@ export function WeeklyReportView({ settings, cdmName = '' }) {
       await navigator.clipboard.writeText(text);
       setCopyFlash('Copied review to clipboard.');
     } catch {
-      setCopyFlash('Copy failed — select and copy manually.');
+      setCopyFlash('Copy failed: select and copy manually.');
     }
     window.setTimeout(() => setCopyFlash(''), 2500);
   }
@@ -418,7 +418,7 @@ export function WeeklyReportView({ settings, cdmName = '' }) {
       await navigator.clipboard.writeText(text);
       setCopyFlash('Copied report to clipboard.');
     } catch {
-      setCopyFlash('Copy failed — select and copy manually.');
+      setCopyFlash('Copy failed: select and copy manually.');
     }
     window.setTimeout(() => setCopyFlash(''), 2500);
   }
@@ -489,7 +489,7 @@ export function WeeklyReportView({ settings, cdmName = '' }) {
       <section className={styles.reviewSection}>
         <div className={styles.reviewHead}>
           <div>
-            <h2 className={styles.sectionHead}>Weekly review — what&rsquo;s holding you back</h2>
+            <h2 className={styles.sectionHead}>Weekly review: what&rsquo;s holding you back</h2>
             <div className={styles.reviewSub}>
               Reads your YOY, Pipeline and Progress numbers for {reviewSnapshot.weekLabel} and records the verdict each week.
             </div>
@@ -564,19 +564,19 @@ export function WeeklyReportView({ settings, cdmName = '' }) {
                         title="Click to show the full review"
                       >
                         <td>{entry.weekLabel || weekRangeLabel(entry.week)}</td>
-                        <td className={styles.numCol}>{m.pctOfQuota == null ? '—' : `${m.pctOfQuota}%`}</td>
+                        <td className={styles.numCol}>{m.pctOfQuota == null ? '-' : `${m.pctOfQuota}%`}</td>
                         <td className={styles.numCol}>{fmtMoneySigned(m.gapToTarget)}</td>
                         <td className={styles.numCol}>
-                          {m.coverageActual == null ? '—' : `${m.coverageActual}${m.coverageGoal != null ? ` / ${m.coverageGoal}` : ''}`}
+                          {m.coverageActual == null ? '-' : `${m.coverageActual}${m.coverageGoal != null ? ` / ${m.coverageGoal}` : ''}`}
                         </td>
-                        <td className={styles.numCol}>{m.stalledOpps == null ? '—' : m.stalledOpps}</td>
+                        <td className={styles.numCol}>{m.stalledOpps == null ? '-' : m.stalledOpps}</td>
                         <td>
                           {top ? (
                             <>
                               <span className={styles.areaChip} data-area={top.area}>{top.area}</span>
                               {top.title}
                             </>
-                          ) : '—'}
+                          ) : '-'}
                         </td>
                         <td className={styles.numCol}>{entry.review?.blockers?.length ?? 0}</td>
                       </tr>
@@ -596,7 +596,7 @@ export function WeeklyReportView({ settings, cdmName = '' }) {
         )}
 
         {reviewsLoaded && reviewHistory.length === 0 && !reviewLoading && reviewReady && (
-          <div className={styles.mutedRow}>No reviews recorded yet — the first one runs automatically.</div>
+          <div className={styles.mutedRow}>No reviews recorded yet: the first one runs automatically.</div>
         )}
       </section>
 
@@ -607,7 +607,7 @@ export function WeeklyReportView({ settings, cdmName = '' }) {
           {narrative && !genLoading && (
             <>
               {narrativeStale && (
-                <div className={styles.staleTag}>This recap was written for a different period — regenerate to refresh.</div>
+                <div className={styles.staleTag}>This recap was written for a different period: regenerate to refresh.</div>
               )}
               <div className={styles.narBody}>{renderNarrative(narrative)}</div>
             </>
@@ -636,7 +636,7 @@ export function WeeklyReportView({ settings, cdmName = '' }) {
               <ChangeList title="Amount updates" items={oppChanges.amountUpdates} suffix={x => (x.amount ? ` → ${x.amount}` : '')} />
               <ChangeList title="BFO Opportunity Names tagged" items={oppChanges.bfoTags} suffix={x => (x.bfo ? ` → ${x.bfo}` : '')} />
               <div className={styles.caveat}>
-                “New opps” is a best-effort estimate — opps first edited in the tool this period may appear here even if created earlier, since the data carries no dedicated creation date.
+                “New opps” is a best-effort estimate: opps first edited in the tool this period may appear here even if created earlier, since the data carries no dedicated creation date.
               </div>
             </>
           )}

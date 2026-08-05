@@ -285,7 +285,7 @@ function OptionPanel({ opt, onChange, savedToLabel, onClickSave, onClearSave }) 
         <div className={styles.pasteBox}>
           <div className={styles.pasteHint}>
             Tab-separated rows: Fee Schedule · Type · Fee · Unit · Est. Unit Count · Fee Start Month.
-            You can also just click into the table and paste — multi-row clipboard data is auto-detected.
+            You can also just click into the table and paste: multi-row clipboard data is auto-detected.
           </div>
           <textarea
             className={styles.pasteArea}
@@ -402,7 +402,7 @@ function OptionPanel({ opt, onChange, savedToLabel, onClickSave, onClearSave }) 
                       value={row.type || ''}
                       onChange={(e) => updateRow(idx, 'type', e.target.value)}
                     >
-                      <option value="">—</option>
+                      <option value="">-</option>
                       {TYPE_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
                     </select>
                   </td>
@@ -421,7 +421,7 @@ function OptionPanel({ opt, onChange, savedToLabel, onClickSave, onClearSave }) 
                       value={row.unit || ''}
                       onChange={(e) => updateRow(idx, 'unit', e.target.value)}
                     >
-                      <option value="">—</option>
+                      <option value="">-</option>
                       {UNIT_OPTIONS.map(u => <option key={u} value={u}>{u}</option>)}
                       {row.unit && !UNIT_OPTIONS.includes(row.unit) && (
                         <option value={row.unit}>{row.unit}</option>
@@ -631,7 +631,7 @@ export function OptionsTab({ options, setOptions }) {
     <div className={styles.wrapper}>
       <div className={styles.intro}>
         Build pricing scenarios in an Excel-style grid. Edit the tan input cells, or paste a
-        block from Excel — Year 1–{MAX_YEARS} revenue, Total Contract Value, and the Setup /
+        block from Excel: Year 1–{MAX_YEARS} revenue, Total Contract Value, and the Setup /
         Year breakdown all recompute automatically.
       </div>
       <div className={styles.optTabStrip}>
@@ -756,12 +756,12 @@ export function OppPickerModal({ opps, optionName, onPick, onClose }) {
                 cursor: 'pointer', fontFamily: 'inherit',
               }}
             >
-              <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{r.Account || '—'}</span>
+              <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{r.Account || '-'}</span>
               <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
                 {(() => {
                   const iso = callInDateISO(r);
                   const days = resolveCallIn(r);
-                  if (!iso) return 'Call in: —';
+                  if (!iso) return 'Call in: -';
                   const when = typeof days === 'number' && Number.isFinite(days)
                     ? ` (${days === 0 ? 'today' : days > 0 ? `in ${days}d` : `${-days}d ago`})`
                     : '';

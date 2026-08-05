@@ -94,7 +94,7 @@ export function UtilityPasteImportModal({
     setParseError('');
     const { headers: h, rows } = parseTSV(paste);
     if (h.length === 0 || rows.length === 0) {
-      setParseError('Nothing to import — paste tab-separated cells copied from Excel or Google Sheets (include the header row).');
+      setParseError('Nothing to import: paste tab-separated cells copied from Excel or Google Sheets (include the header row).');
       return;
     }
     const m = {};
@@ -169,7 +169,7 @@ export function UtilityPasteImportModal({
       <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 8, width: 'min(960px, 96vw)', maxHeight: '92vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 10px 40px rgba(15, 23, 42, 0.3)' }}>
         <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <strong style={{ fontSize: '0.9rem', color: '#1E293B' }}>
-            {stage === 'paste' ? title : `Map columns — ${rawRows.length} rows`}
+            {stage === 'paste' ? title : `Map columns: ${rawRows.length} rows`}
           </strong>
           <button onClick={onClose} aria-label="Close" style={{ background: 'transparent', border: 'none', fontSize: '1.2rem', color: '#64748B', cursor: 'pointer', lineHeight: 1, padding: '0 4px' }}>×</button>
         </div>
@@ -177,7 +177,7 @@ export function UtilityPasteImportModal({
         {stage === 'paste' && (
           <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', overflowY: 'auto' }}>
             <div style={{ fontSize: '0.75rem', color: '#475569', lineHeight: 1.4 }}>
-              In Excel (or Google Sheets), select the cells you want — <strong>including the header row</strong> — and copy with <strong>Cmd+C</strong> / <strong>Ctrl+C</strong>. Then click in the box below and paste. The next step lets you confirm which pasted column maps to each field: {destinations.join(', ')}.
+              In Excel (or Google Sheets), select the cells you want: <strong>including the header row</strong>: and copy with <strong>Cmd+C</strong> / <strong>Ctrl+C</strong>. Then click in the box below and paste. The next step lets you confirm which pasted column maps to each field: {destinations.join(', ')}.
             </div>
             <textarea
               value={paste}
@@ -200,7 +200,7 @@ export function UtilityPasteImportModal({
           <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: 1, minHeight: 0 }}>
             <div style={{ fontSize: '0.72rem', color: '#475569' }}>
               {rawRows.length} rows · {fields.map(f => (
-                <span key={f.label}>{f.label} from <strong>{srcByDest[f.label] || '—'}</strong>{' '}</span>
+                <span key={f.label}>{f.label} from <strong>{srcByDest[f.label] || '-'}</strong>{' '}</span>
               ))}
             </div>
             <div style={{ overflow: 'auto', border: '1px solid #E2E8F0', borderRadius: 6, flex: 1, minHeight: 0 }}>
@@ -226,14 +226,14 @@ export function UtilityPasteImportModal({
                             onChange={e => setDestForSource(src, e.target.value)}
                             style={{ padding: '0.25rem 0.4rem', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.72rem', fontFamily: 'inherit', minWidth: 220, background: '#fff' }}
                           >
-                            <option value="">— Skip —</option>
+                            <option value="">(Skip)</option>
                             {destinations.map(c => <option key={c} value={c}>{c}</option>)}
                           </select>
                         </td>
                         <td style={{ padding: '0.35rem 0.5rem', borderBottom: '1px solid #E2E8F0', color: '#64748B', maxWidth: 360 }}>
                           {preview.map((cells, pi) => (
                             <div key={pi} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={cells[i] ?? ''}>
-                              {cells[i] || <span style={{ color: '#CBD5E1' }}>—</span>}
+                              {cells[i] || <span style={{ color: '#CBD5E1' }}>-</span>}
                             </div>
                           ))}
                         </td>

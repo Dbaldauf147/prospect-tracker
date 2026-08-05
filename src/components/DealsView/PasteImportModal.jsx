@@ -109,7 +109,7 @@ export function PasteImportModal({ onClose, onImport }) {
     setParseError('');
     const { headers: h, rows } = parseTSV(paste);
     if (h.length === 0 || rows.length === 0) {
-      setParseError('Nothing to import — paste tab-separated data copied from Google Sheets.');
+      setParseError('Nothing to import: paste tab-separated data copied from Google Sheets.');
       return;
     }
     const m = {};
@@ -135,7 +135,7 @@ export function PasteImportModal({ onClose, onImport }) {
       })
       .filter(r => Object.keys(r).length > 0);
     if (records.length === 0) {
-      setParseError('No mapped columns — pick at least one destination column.');
+      setParseError('No mapped columns: pick at least one destination column.');
       return;
     }
     onImport(records);
@@ -165,7 +165,7 @@ export function PasteImportModal({ onClose, onImport }) {
       <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 8, width: 'min(960px, 96vw)', maxHeight: '92vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 10px 40px rgba(15, 23, 42, 0.3)' }}>
         <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <strong style={{ fontSize: '0.9rem', color: '#1E293B' }}>
-            {stage === 'paste' ? 'Paste deals from Google Sheets' : `Map columns — ${rawRows.length} rows`}
+            {stage === 'paste' ? 'Paste deals from Google Sheets' : `Map columns: ${rawRows.length} rows`}
           </strong>
           <button onClick={onClose} aria-label="Close" style={{ background: 'transparent', border: 'none', fontSize: '1.2rem', color: '#64748B', cursor: 'pointer', lineHeight: 1, padding: '0 4px' }}>×</button>
         </div>
@@ -221,14 +221,14 @@ export function PasteImportModal({ onClose, onImport }) {
                             onChange={e => setMapping(m => ({ ...m, [src]: e.target.value }))}
                             style={{ padding: '0.25rem 0.4rem', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.72rem', fontFamily: 'inherit', minWidth: 240, background: '#fff' }}
                           >
-                            <option value="">— Skip —</option>
+                            <option value="">(Skip)</option>
                             {CANONICAL.map(c => <option key={c} value={c}>{c}</option>)}
                           </select>
                         </td>
                         <td style={{ padding: '0.35rem 0.5rem', borderBottom: '1px solid #E2E8F0', color: '#64748B', maxWidth: 360 }}>
                           {preview.map((cells, pi) => (
                             <div key={pi} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={cells[i] ?? ''}>
-                              {cells[i] || <span style={{ color: '#CBD5E1' }}>—</span>}
+                              {cells[i] || <span style={{ color: '#CBD5E1' }}>-</span>}
                             </div>
                           ))}
                         </td>

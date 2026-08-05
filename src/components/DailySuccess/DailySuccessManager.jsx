@@ -100,13 +100,13 @@ async function buildPipelineSummary() {
           const ca = Number(st.closeActual);
           const cg = Number(st.closeGoal);
           if (!Number.isFinite(ca) && !Number.isFinite(cg)) continue;
-          const fmtPct = (v) => Number.isFinite(v) ? `${(v * 100).toFixed(0)}%` : '—';
+          const fmtPct = (v) => Number.isFinite(v) ? `${(v * 100).toFixed(0)}%` : '-';
           const gap = (Number.isFinite(ca) && Number.isFinite(cg)) ? (ca - cg) : null;
           const flag = gap !== null && gap <= -0.10 ? ' ⚠ gap' : '';
           closeBits.push(`${st.label || st.key}: actual ${fmtPct(ca)} vs goal ${fmtPct(cg)}${flag}`);
         }
         if (closeBits.length) {
-          lines.push(`Close rates by stage — ${closeBits.join('; ')}.`);
+          lines.push(`Close rates by stage: ${closeBits.join('; ')}.`);
         }
         const lifeBits = [];
         for (const st of pipeline.stages) {
@@ -114,10 +114,10 @@ async function buildPipelineSummary() {
           const lg = Number(st.lifeGoal);
           if (!Number.isFinite(la) && !Number.isFinite(lg)) continue;
           const flag = (Number.isFinite(la) && Number.isFinite(lg) && la > lg * 1.5) ? ' ⚠ slow' : '';
-          lifeBits.push(`${st.label || st.key}: ${Number.isFinite(la) ? la : '—'}d vs goal ${Number.isFinite(lg) ? lg : '—'}d${flag}`);
+          lifeBits.push(`${st.label || st.key}: ${Number.isFinite(la) ? la : '-'}d vs goal ${Number.isFinite(lg) ? lg : '-'}d${flag}`);
         }
         if (lifeBits.length) {
-          lines.push(`Avg opp life by stage — ${lifeBits.join('; ')}.`);
+          lines.push(`Avg opp life by stage: ${lifeBits.join('; ')}.`);
         }
       }
     }
@@ -176,7 +176,7 @@ async function buildPipelineSummary() {
             let next = '';
             if (o.nextStep) next = ` · next: "${String(o.nextStep).slice(0, 60)}"`;
             else if (o.oppsNextStep) next = ` · Opps ${o.oppsNextStep.field}: "${o.oppsNextStep.text.slice(0, 60)}"`;
-            lines.push(`  • ${o.account} — ${o.stage} — ${o.age}d${typeof o.amount === 'number' ? ` · ${fmt$(o.amount)}` : ''}${next}`);
+            lines.push(`  • ${o.account} · ${o.stage} · ${o.age}d${typeof o.amount === 'number' ? ` · ${fmt$(o.amount)}` : ''}${next}`);
           }
         }
 
@@ -196,13 +196,13 @@ async function buildPipelineSummary() {
           if (stuck.length) {
             lines.push(`Late-stage opps with no Next Step in BFO or Opps (action needed):`);
             for (const r of stuck) {
-              lines.push(`  • ${r[acctCol]} — ${r[stageCol]}${amtCol ? ` · ${fmt$(parseMoney(r[amtCol]))}` : ''}`);
+              lines.push(`  • ${r[acctCol]} · ${r[stageCol]}${amtCol ? ` · ${fmt$(parseMoney(r[amtCol]))}` : ''}`);
             }
           }
         }
       }
     } else {
-      lines.push('No BFO Activity data loaded — pipeline metrics are placeholder targets only.');
+      lines.push('No BFO Activity data loaded: pipeline metrics are placeholder targets only.');
     }
 
     // Opps tab — granular per-deal data with Stage / Scope / Quoted
@@ -259,7 +259,7 @@ async function buildPipelineSummary() {
         for (const s of stuck) {
           const days = s.lastHeard ? Math.round((today - s.lastHeard) / 86400000) : null;
           const heard = days !== null ? `${days}d since contact` : 'no contact recorded';
-          lines.push(`  • ${s.account} — ${s.stage} — ${s.scope || '(no scope)'}${typeof s.amount === 'number' ? ` · ${fmt$(s.amount)}` : ''} · ${heard}`);
+          lines.push(`  • ${s.account} · ${s.stage} · ${s.scope || '(no scope)'}${typeof s.amount === 'number' ? ` · ${fmt$(s.amount)}` : ''} · ${heard}`);
         }
       }
 
@@ -279,7 +279,7 @@ async function buildPipelineSummary() {
         lines.push('Overdue follow-ups (oldest first):');
         for (const o of overdue) {
           const dueDays = Math.round((today - o.followUp) / 86400000);
-          lines.push(`  • ${o.account} — ${o.stage} — ${o.scope || '(no scope)'}${typeof o.amount === 'number' ? ` · ${fmt$(o.amount)}` : ''} · ${dueDays}d overdue`);
+          lines.push(`  • ${o.account} · ${o.stage} · ${o.scope || '(no scope)'}${typeof o.amount === 'number' ? ` · ${fmt$(o.amount)}` : ''} · ${dueDays}d overdue`);
         }
       }
 
@@ -292,7 +292,7 @@ async function buildPipelineSummary() {
       if (topByAmount.length) {
         lines.push('Top 5 active opps by Quoted Amount:');
         for (const o of topByAmount) {
-          lines.push(`  • ${o.account} — ${o.stage} — ${o.scope || '(no scope)'} · ${fmt$(o.amount)}`);
+          lines.push(`  • ${o.account} · ${o.stage} · ${o.scope || '(no scope)'} · ${fmt$(o.amount)}`);
         }
       }
     } else {

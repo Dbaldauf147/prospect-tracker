@@ -231,14 +231,14 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
     const tsv = buildTsv();
     try {
       await navigator.clipboard.writeText(tsv);
-      setFlash(`Copied ${rows.length} row${rows.length === 1 ? '' : 's'} to clipboard — paste into Excel.`);
+      setFlash(`Copied ${rows.length} row${rows.length === 1 ? '' : 's'} to clipboard: paste into Excel.`);
     } catch {
       // Clipboard API blocked (insecure context, permissions). Fall
       // back to opening the paste box prefilled so the user can copy
       // the text manually.
       setPasteText(tsv);
       setPasteOpen(true);
-      setFlash('Clipboard blocked — copy the text below manually.');
+      setFlash('Clipboard blocked: copy the text below manually.');
     }
     window.setTimeout(() => setFlash(''), 2500);
   }
@@ -328,7 +328,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
                   value={row.type || ''}
                   onChange={(e) => onChange(idx, 'type', e.target.value)}
                 >
-                  <option value="">—</option>
+                  <option value="">-</option>
                   <option value="Setup">Setup</option>
                   <option value="One Time">One Time</option>
                   <option value="Recurring (monthly)">Recurring (monthly)</option>
@@ -366,7 +366,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
                   value={row.unit || ''}
                   onChange={(e) => handleUnitChange(idx, row, e.target.value)}
                 >
-                  <option value="">—</option>
+                  <option value="">-</option>
                   <option value="Fixed">Fixed</option>
                   <option value="Per Site">Per Site</option>
                   <option value="Per Account">Per Account</option>
@@ -421,14 +421,14 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
                       : (typeof globalGmPct === 'number' ? `${Math.round(globalGmPct * 100)}%` : '')));
                 const fmt = (n) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
                 const title = passThrough
-                  ? 'Pass-through fee — billed at face cost, contributes no margin.'
+                  ? 'Pass-through fee: billed at face cost, contributes no margin.'
                   : (computed
                     ? `Auto-margin for "${row.altItem}":
   • Total fee revenue: ${fmt(computed.totalFee)} (${computed.altRowCount} alt-fee row${computed.altRowCount === 1 ? '' : 's'} × unit count, recurring projected over term; total units = ${computed.totalUnits})
   • Total cost: ${fmt(computed.totalCost)} (${computed.matchCount} linked CTS row${computed.matchCount === 1 ? '' : 's'}, treated as totals; recurring/rolled projected over term)
   • Margin: (${fmt(computed.totalFee)} − ${fmt(computed.totalCost)}) ÷ ${fmt(computed.totalFee)} = ${(computed.marginPct * 100).toFixed(1)}%
 Type a value to override.`
-                    : 'No CTS items are linked to this Alt Fee item — falls back to the global GM%.');
+                    : 'No CTS items are linked to this Alt Fee item: falls back to the global GM%.');
                 return (
                   <td className={styles.numCell} title={title}>
                     <CellTextInput
@@ -824,8 +824,8 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
                       checked={ignored}
                       onChange={() => toggleIgnore(row.key)}
                       title={ignored
-                        ? 'Ignored — greyed out and excluded from the missing-mapping warning. Uncheck to track it again.'
-                        : 'Ignore this line item — greys it out and drops it from the missing-mapping warning.'}
+                        ? 'Ignored: greyed out and excluded from the missing-mapping warning. Uncheck to track it again.'
+                        : 'Ignore this line item: greys it out and drops it from the missing-mapping warning.'}
                       style={{ cursor: 'pointer' }}
                     />
                   </td>
@@ -1093,7 +1093,7 @@ function LinkedToPanel({
           </li>
           <li>
             The ☆ / ★ button next to the input <strong>promotes the current value to the default</strong> for
-            that (Line Item, Type) pair across every option — or clears it. Defaults persist with the page state.
+            that (Line Item, Type) pair across every option: or clears it. Defaults persist with the page state.
           </li>
           <li>
             Alt-fee margin: for each alt-fee tag, the page sums <em>fee × unit count</em> over alt-fee rows
@@ -1101,7 +1101,7 @@ function LinkedToPanel({
             CTS over upper-table rows whose resolved Linked To matches the tag. <code>margin% = (fee − cost) / fee</code>.
           </li>
           <li>
-            The bottom-of-page breakdown chart filters rows by the tag selected in its dropdown — only CTS rows
+            The bottom-of-page breakdown chart filters rows by the tag selected in its dropdown: only CTS rows
             whose resolved Linked To matches that tag contribute to the chart.
           </li>
           <li>
@@ -1136,10 +1136,10 @@ function LinkedToPanel({
                 return (
                   <tr key={d.key}>
                     <td>
-                      {d.lineItem || <span className={styles.linkedMuted}>—</span>}
+                      {d.lineItem || <span className={styles.linkedMuted}>-</span>}
                       {workbook && !d.reachable && <span className={styles.linkedMuted}> · not on this option</span>}
                     </td>
-                    <td>{d.type || <span className={styles.linkedMuted}>—</span>}</td>
+                    <td>{d.type || <span className={styles.linkedMuted}>-</span>}</td>
                     <td>
                       <select
                         value={d.overrideUnit}
@@ -1156,7 +1156,7 @@ function LinkedToPanel({
                           background: '#fff', color: 'var(--color-text)',
                         }}
                       >
-                        <option value="">{d.autoUnit ? `Auto: ${d.autoUnit}` : '—'}</option>
+                        <option value="">{d.autoUnit ? `Auto: ${d.autoUnit}` : '-'}</option>
                         <option value="Fixed">Fixed</option>
                         <option value="Per Site">Per Site</option>
                         <option value="Per Account">Per Account</option>
@@ -1168,7 +1168,7 @@ function LinkedToPanel({
                     </td>
                     <td><code>{d.value}</code></td>
                     <td title={d.overrideStartMonth != null
-                      ? `Override saved for this Line Item + Type. Auto would be ${d.autoStartMonth ?? '—'}. Clear to fall back to the CTS row's start month.`
+                      ? `Override saved for this Line Item + Type. Auto would be ${d.autoStartMonth ?? '-'}. Clear to fall back to the CTS row's start month.`
                       : (d.autoStartMonth != null
                         ? `Auto-derived from the CTS rows matching this Line Item + Type on the active option (month ${d.autoStartMonth}). Type a value to override; the override flows into the matching alt-fee row's Fee Start Month.`
                         : 'Type a value to set the Fee Start Month for any alt-fee row linked to this default.')}>
@@ -1254,11 +1254,11 @@ function LinkedToPanel({
                   {overrideRows.map(({ item, override, type }) => (
                     <tr key={item.id}>
                       <td>{item.description}</td>
-                      <td>{type || <span className={styles.linkedMuted}>—</span>}</td>
+                      <td>{type || <span className={styles.linkedMuted}>-</span>}</td>
                       <td>
                         {override
                           ? <code>{override}</code>
-                          : <span className={styles.linkedMuted}>(cleared — inherits nothing)</span>}
+                          : <span className={styles.linkedMuted}>(cleared: inherits nothing)</span>}
                       </td>
                     </tr>
                   ))}
@@ -1300,7 +1300,7 @@ function LinkedToPanel({
                           <td><code>{tag}</code></td>
                           <td>{sourceCell}</td>
                           <td colSpan={3}>
-                            <span className={styles.linkedMuted}>none — alt-fee tag with no CTS rows linked</span>
+                            <span className={styles.linkedMuted}>none: alt-fee tag with no CTS rows linked</span>
                           </td>
                         </tr>
                       );
@@ -1309,7 +1309,7 @@ function LinkedToPanel({
                       const sm = Number(it.startMonth);
                       const startMonthCell = Number.isFinite(sm) && sm > 0
                         ? sm
-                        : <span className={styles.linkedMuted}>—</span>;
+                        : <span className={styles.linkedMuted}>-</span>;
                       return (
                         <tr key={`${tag}-${it.id}`}>
                           {idx === 0 && (
@@ -1432,7 +1432,7 @@ function LinkedToOptionsModal({ autoTags = [], optionsList, onAdd, onRemove, onC
           </div>
           {visible.length === 0 ? (
             <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', fontStyle: 'italic', padding: '0.3rem 0' }}>
-              No dropdown options yet — add one above, or tag a row and they&apos;ll be suggested automatically.
+              No dropdown options yet: add one above, or tag a row and they&apos;ll be suggested automatically.
             </div>
           ) : visible.map(name => {
             const isCustom = customSet.has(name.toLowerCase());
@@ -3028,7 +3028,7 @@ export function PricingView({ settings } = {}) {
     };
     const json = JSON.stringify(snapshot);
     const CHUNK = 30000;
-    const stateRows = [['DO NOT EDIT — Pricing page round-trip payload. Drop this workbook back onto the Pricing page to restore state.']];
+    const stateRows = [['DO NOT EDIT: Pricing page round-trip payload. Drop this workbook back onto the Pricing page to restore state.']];
     for (let i = 0; i < json.length; i += CHUNK) stateRows.push([json.slice(i, i + CHUNK)]);
     const stateWs = XLSX.utils.aoa_to_sheet(stateRows);
     XLSX.utils.book_append_sheet(wb, stateWs, STATE_SHEET_NAME);
@@ -3077,7 +3077,7 @@ export function PricingView({ settings } = {}) {
     const term = Math.max(1, Math.min(360, termMonths || 36));
     const monthHeaders = Array.from({ length: term }, (_, i) => `M${i + 1}`);
     const rows = [];
-    rows.push([`Monthly Costs — ${opt.sheetName}`]);
+    rows.push([`Monthly Costs: ${opt.sheetName}`]);
     rows.push([`Term: ${term} months · Cost escalator: ${(costEscalator * 100).toFixed(2)}% / yr · Tech depreciation: ${(techDeprPct * 100).toFixed(2)}% (folded into each non-pass-through row's cost)`]);
     rows.push([]);
     rows.push(['Section', 'Line Item', 'Type', 'Start Month', 'Term Total', ...monthHeaders]);
@@ -3421,7 +3421,7 @@ export function PricingView({ settings } = {}) {
         const main = [item, feeTxt].filter(Boolean).join(': ');
         lines.push(type ? `${main} (${type})` : main);
       }
-      return lines.length > 0 ? lines.join('\n') : '—';
+      return lines.length > 0 ? lines.join('\n') : '-';
     };
 
     let row = 6;
@@ -3439,7 +3439,7 @@ export function PricingView({ settings } = {}) {
       // Row 2 — Services | (Fee Structure label) | (Fee Structure value, merged with row 3) | Margin label/value
       setLabel(ws.getCell(row + 1, 1), 'Services', { italic: true });
       const services = (pricingOptionServices?.[opt.sheetName] || []).filter(Boolean);
-      setValue(ws.getCell(row + 1, 2), services.length > 0 ? services.join('\n') : '—');
+      setValue(ws.getCell(row + 1, 2), services.length > 0 ? services.join('\n') : '-');
       setLabel(ws.getCell(row + 1, 3), 'Fee Structure', { italic: true });
       // Merge Fee Structure value across rows 2 and 3 of the block.
       ws.mergeCells(row + 1, 4, row + 2, 4);
@@ -3447,14 +3447,14 @@ export function PricingView({ settings } = {}) {
       setLabel(ws.getCell(row + 1, 5), 'Margin', { italic: true });
       const margin = computeOptionMargin(opt);
       if (margin == null) {
-        setValue(ws.getCell(row + 1, 6), '—', { align: 'right' });
+        setValue(ws.getCell(row + 1, 6), '-', { align: 'right' });
       } else {
         setValue(ws.getCell(row + 1, 6), Math.round(margin * 100) / 100, { align: 'right', numFmt: '0%' });
       }
 
       // Row 3 — Term | Term value | (Fee Structure value continues) | Escalator label/value
       setLabel(ws.getCell(row + 2, 1), 'Term', { italic: true });
-      setValue(ws.getCell(row + 2, 2), termYrs || '—', termYrs ? { numFmt: '0.##" yrs"' } : {});
+      setValue(ws.getCell(row + 2, 2), termYrs || '-', termYrs ? { numFmt: '0.##" yrs"' } : {});
       // Fee Structure label cell on row 3 stays empty (the value spans
       // from row 2). Tag it with the label-styled empty cell so the
       // border lines up with its row neighbours.
@@ -3532,7 +3532,7 @@ export function PricingView({ settings } = {}) {
             <span>%</span>
           </label>
 
-          <label className={styles.gmField} title="Number of months in the contract term — used to project recurring (monthly) totals.">
+          <label className={styles.gmField} title="Number of months in the contract term: used to project recurring (monthly) totals.">
             Term
             <input
               className={styles.gmInput}
@@ -3789,7 +3789,7 @@ export function PricingView({ settings } = {}) {
           <div className={styles.empty}>
             <div>No workbook loaded.</div>
             <div style={{ fontSize: 'var(--font-size-xs)' }}>
-              Click <strong>Upload workbook</strong> above. We'll read every sheet named "Option 1" through "Option 5" — including hidden ones — and pull line items from the section bounded by <strong>Delivery Team Inputs</strong> at the top and <strong>Cost Summary</strong> at the bottom. Set a global GM% (gross margin) to apply across all rows, or override individual line items.
+              Click <strong>Upload workbook</strong> above. We'll read every sheet named "Option 1" through "Option 5" (including hidden ones), and pull line items from the section bounded by <strong>Delivery Team Inputs</strong> at the top and <strong>Cost Summary</strong> at the bottom. Set a global GM% (gross margin) to apply across all rows, or override individual line items.
             </div>
           </div>
         )}
@@ -3885,7 +3885,7 @@ export function PricingView({ settings } = {}) {
                       type="button"
                       className={styles.actionBtn}
                       onClick={cloneActiveOption}
-                      title={`Clone "${opt.sheetName}" into a new Option on this workbook. The clone is temporary — it goes away when you remove or replace the file.`}
+                      title={`Clone "${opt.sheetName}" into a new Option on this workbook. The clone is temporary: it goes away when you remove or replace the file.`}
                     >Clone option</button>
                     {linkedLabel ? (
                       <span
@@ -4145,7 +4145,7 @@ export function PricingView({ settings } = {}) {
                                     || (col.key === 'siaFee' && feeMapBy === 'below')) && (
                                     <span
                                       className={styles.inUseDot}
-                                      title="In use — every total, margin and auto-fee on this page is calculated from this column. Switch with the Map by control above."
+                                      title="In use: every total, margin and auto-fee on this page is calculated from this column. Switch with the Map by control above."
                                     />
                                   )}
                                   {col.key === 'linkedTo' && (
@@ -4188,7 +4188,7 @@ export function PricingView({ settings } = {}) {
                                           title="Click to change type. 'Rolled' variants amortize the cost over the term but still bucket under Setup or One Time."
                                         >
                                           {t && !knownOptions.includes(t) && <option value={t}>{t}</option>}
-                                          <option value="">—</option>
+                                          <option value="">-</option>
                                           <option value="Setup">Setup</option>
                                           <option value="Setup Rolled">Setup Rolled</option>
                                           <option value="One Time">One Time</option>
@@ -4217,7 +4217,7 @@ export function PricingView({ settings } = {}) {
                                       disabled={passThrough}
                                       title={
                                         passThrough
-                                          ? 'Pass-through row — billed to the customer at cost. Untick Pass-through to apply markup.'
+                                          ? 'Pass-through row: billed to the customer at cost. Untick Pass-through to apply markup.'
                                           : source === 'override'
                                           ? 'Per-line override. Clear to revert to global GM%.'
                                           : source === 'global'
@@ -4322,15 +4322,15 @@ export function PricingView({ settings } = {}) {
                                           }}
                                           title={
                                             feeScheduleNames.length === 0
-                                              ? 'No fee rows in the Alternative Fee schedule below yet — add one and it shows up here.'
+                                              ? 'No fee rows in the Alternative Fee schedule below yet: add one and it shows up here.'
                                               : inherited
                                               ? `Following the Automated Fee Name "${tag}". Pick a fee row to pin this cost to it instead.`
                                               : stale
-                                              ? `"${current}" is not a row in the fee schedule below — this cost isn't tied to any fee.`
+                                              ? `"${current}" is not a row in the fee schedule below: this cost isn't tied to any fee.`
                                               : 'Which row of the Alternative Fee schedule below this cost is tied to.'
                                           }
                                         >
-                                          <option value="">—</option>
+                                          <option value="">-</option>
                                           {feeScheduleNames.map(n => <option key={n} value={n}>{n}</option>)}
                                           {stale && <option value="__stale__">{current} (not in schedule)</option>}
                                           {picked !== undefined && tag && (
@@ -4545,7 +4545,7 @@ export function PricingView({ settings } = {}) {
                         const fmtAbs = (n) => Math.abs(n).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
                         return (
                           <div className={styles.year1Warning} role="alert">
-                            ⚠ Negative cash flow in Year 1 — projected revenue {fmtAbs(y1Revenue)} vs cost {fmtAbs(y1Cost)} (shortfall {fmtAbs(y1CashFlow)}). Consider restructuring fees or shifting Setup costs.
+                            ⚠ Negative cash flow in Year 1: projected revenue {fmtAbs(y1Revenue)} vs cost {fmtAbs(y1Cost)} (shortfall {fmtAbs(y1CashFlow)}). Consider restructuring fees or shifting Setup costs.
                           </div>
                         );
                       })()}
@@ -4669,7 +4669,7 @@ export function PricingView({ settings } = {}) {
                               <strong>
                                 ⚠ {unlinkedCostItems.length} cost line item{unlinkedCostItems.length === 1 ? '' : 's'} not linked to any fee in this section
                               </strong>
-                              {' '}— their cost isn&apos;t captured in the Deal margin / Linked CTS totals. Set each row&apos;s{' '}
+                              {' '}- their cost isn&apos;t captured in the Deal margin / Linked CTS totals. Set each row&apos;s{' '}
                               {feeMapBy === 'automated' ? 'Automated Fee Name' : 'Fee Name Below'} to a fee from the schedule.
                               <ul>
                                 {unlinkedCostItems.map((u, i) => (
@@ -4678,7 +4678,7 @@ export function PricingView({ settings } = {}) {
                                     {u.type ? ` · ${u.type}` : ''}
                                     {' '}
                                     <span className={styles.unlinkedNote}>
-                                      ({u.tag ? <>mapped to &ldquo;<span className={styles.unlinkedTag}>{u.tag}</span>&rdquo; — no matching fee</> : 'no fee name set'}
+                                      ({u.tag ? <>mapped to &ldquo;<span className={styles.unlinkedTag}>{u.tag}</span>&rdquo;: no matching fee</> : 'no fee name set'}
                                       {`, cost ${fmtMoney(u.cost)}`})
                                     </span>
                                   </li>
@@ -4813,7 +4813,7 @@ export function PricingView({ settings } = {}) {
                                         className={styles.chartTagSelect}
                                         style={{ width: '5.5rem' }}
                                         value={target ? (chartUnitCounts[target] ?? '') : ''}
-                                        placeholder={autoUnits > 0 ? String(autoUnits) : '—'}
+                                        placeholder={autoUnits > 0 ? String(autoUnits) : '-'}
                                         disabled={!target}
                                         onChange={(e) => {
                                           const v = e.target.value;
@@ -4989,7 +4989,7 @@ export function PricingView({ settings } = {}) {
                   'Saved the link, but the Pricing snapshot failed to save to Firestore. ' +
                   'Year 1 fees and the saved details may not appear on the Opp.\n\n' +
                   (denied
-                    ? 'Firestore denied the write (permission error) — this is a security-rules issue, not your network. '
+                    ? 'Firestore denied the write (permission error): this is a security-rules issue, not your network. '
                       + 'The deployed rules need to allow the opps2Data document for your account.'
                     : 'Check your network and try again.') +
                   '\n\n' +

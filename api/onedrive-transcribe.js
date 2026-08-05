@@ -22,7 +22,7 @@ async function downloadUrlFor(itemId, accessToken) {
     + '?$select=id,name,@microsoft.graph.downloadUrl';
   const resp = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (resp.status === 401) {
-    return { error: 'OneDrive token expired or invalid — reconnect OneDrive.', status: 401 };
+    return { error: 'OneDrive token expired or invalid: reconnect OneDrive.', status: 401 };
   }
   if (!resp.ok) {
     return { error: `Microsoft Graph error: ${await resp.text()}`, status: resp.status };

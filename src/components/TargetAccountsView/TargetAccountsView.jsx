@@ -161,7 +161,7 @@ function InlineEditCell({ value, rowIndex, colKey, onSave }) {
       autoFocus
     />;
   }
-  return <span style={{ cursor: 'default', padding: '1px 3px', borderRadius: '4px' }} onDoubleClick={startEdit}>{value || '—'}</span>;
+  return <span style={{ cursor: 'default', padding: '1px 3px', borderRadius: '4px' }} onDoubleClick={startEdit}>{value || '-'}</span>;
 }
 
 export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdmName, onListUploaded }) {
@@ -330,10 +330,10 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
         let clearedNote = '';
         if (onListUploaded) {
           const cleared = onListUploaded();
-          if (cleared) clearedNote = ` — reset ${cleared} tier-mismatch dismissal${cleared > 1 ? 's' : ''}`;
+          if (cleared) clearedNote = `: reset ${cleared} tier-mismatch dismissal${cleared > 1 ? 's' : ''}`;
         }
         setActiveSheet(sheetNames[0]);
-        setStatus(`Uploaded "${file.name}" — ${sheetNames.length} sheet${sheetNames.length > 1 ? 's' : ''}, ${sheetNames.map(n => `${sheets[n].records.length} rows in ${n}`).join(', ')}${clearedNote}`);
+        setStatus(`Uploaded "${file.name}": ${sheetNames.length} sheet${sheetNames.length > 1 ? 's' : ''}, ${sheetNames.map(n => `${sheets[n].records.length} rows in ${n}`).join(', ')}${clearedNote}`);
       } catch (err) {
         setError(`Failed to parse file: ${err.message}`);
       } finally {
@@ -371,7 +371,7 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
     if (!record || !nameKey) return;
     const name = String(record[nameKey] || '').trim();
     const confirmText = name
-      ? `Delete "${name}" from the Target Accounts list? This removes it everywhere — including the suggested-name fuzzy match. The original Excel file is unchanged.`
+      ? `Delete "${name}" from the Target Accounts list? This removes it everywhere: including the suggested-name fuzzy match. The original Excel file is unchanged.`
       : 'Delete this row from the Target Accounts list?';
     if (!window.confirm(confirmText)) return;
     setData(prev => {
@@ -452,7 +452,7 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
             onChange={() => toggleBlockedAccount(accountName)}
             onClick={e => e.stopPropagation()}
             title={isBlocked
-              ? `"${accountName}" is blocked — uncheck to show in fuzzy-match suggestions again`
+              ? `"${accountName}" is blocked: uncheck to show in fuzzy-match suggestions again`
               : `Block "${accountName}" from appearing in fuzzy-match suggestions across every Lists subtab and picker`}
             style={{ cursor: accountName ? 'pointer' : 'not-allowed', accentColor: '#DC2626' }}
             aria-label={`Block ${accountName} from fuzzy lookups`}
@@ -472,7 +472,7 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
             onClick={(e) => { e.stopPropagation(); handleDeleteRow(row); }}
             disabled={!accountName}
             title={accountName
-              ? `Delete "${accountName}" from the Target Accounts list — removes it from every fuzzy-match suggestion across the app.`
+              ? `Delete "${accountName}" from the Target Accounts list: removes it from every fuzzy-match suggestion across the app.`
               : 'Delete row'}
             style={{
               border: 'none', background: 'transparent',
@@ -497,10 +497,10 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
       getFilterValue: (row) => activeOppsForCompany(nameKey ? row[nameKey] : '', oppsIndex).length > 0 ? 'Has active opps' : 'None',
       render: (row) => {
         const opps = activeOppsForCompany(nameKey ? row[nameKey] : '', oppsIndex);
-        if (opps.length === 0) return <span style={{ color: '#CBD5E1' }}>—</span>;
+        if (opps.length === 0) return <span style={{ color: '#CBD5E1' }}>-</span>;
         const tip = opps
           .slice(0, 12)
-          .map(o => `${o.account} — ${o.stage || 'No stage'}`)
+          .map(o => `${o.account} · ${o.stage || 'No stage'}`)
           .join('\n') + (opps.length > 12 ? `\n…and ${opps.length - 12} more` : '');
         return (
           <span
@@ -566,7 +566,7 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
           </div>
           {data?.uploadedAt && (
             <span className={styles.lastUpload}>
-              {data.fileName} — uploaded {new Date(data.uploadedAt).toLocaleString()}
+              {data.fileName}: uploaded {new Date(data.uploadedAt).toLocaleString()}
             </span>
           )}
         </div>
@@ -671,7 +671,7 @@ function UntiedOppsWarning({ untiedOpps, cdmName }) {
                         : <span style={{ color: '#B91C1C', fontWeight: 700 }}>Not on target list</span>}
                     </td>
                     <td style={{ padding: '0.3rem 0.6rem', textAlign: 'center', color: '#991B1B', fontWeight: 700, borderBottom: '1px solid #FEE2E2' }}>{g.count}</td>
-                    <td style={{ padding: '0.3rem 0.6rem', color: '#64748B', borderBottom: '1px solid #FEE2E2' }}>{g.stages.join(', ') || '—'}</td>
+                    <td style={{ padding: '0.3rem 0.6rem', color: '#64748B', borderBottom: '1px solid #FEE2E2' }}>{g.stages.join(', ') || '-'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -705,12 +705,12 @@ function ListSection({
             onClick={() => fileRef.current?.click()}
           >
             <div className={styles.dropTitle}>Drop your Excel or CSV file here</div>
-            <div className={styles.dropSub}>or click to browse — supports .xlsx, .xls, .csv</div>
+            <div className={styles.dropSub}>or click to browse: supports .xlsx, .xls, .csv</div>
           </div>
           <div style={{ marginTop: '1rem', padding: '1rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px' }}>
             <h3 style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-text)', marginTop: 0, marginBottom: '0.5rem' }}>Expected Format</h3>
             <p style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)', margin: '0 0 0.5rem 0' }}>
-              Your Excel file should have columns matching these names (flexible matching — exact names not required):
+              Your Excel file should have columns matching these names (flexible matching: exact names not required):
             </p>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
@@ -739,7 +739,7 @@ function ListSection({
               </table>
             </div>
             <p style={{ fontSize: '0.72rem', color: '#9CA3AF', margin: '0.5rem 0 0 0' }}>
-              Additional columns are preserved and displayed. Multiple sheets are supported — each sheet is shown as a separate tab.
+              Additional columns are preserved and displayed. Multiple sheets are supported: each sheet is shown as a separate tab.
             </p>
             <button
               onClick={async () => {
@@ -791,7 +791,7 @@ function ListSection({
               onChange={e => setSearch(e.target.value)}
             />
             <label
-              title="Pick which column holds the salesperson / CDM who owns each account. My Accounts (and the prospect modal, Agenda, and other pages) use this column to decide whose account a row is, instead of guessing by header name — leave on Auto to keep the keyword guess."
+              title="Pick which column holds the salesperson / CDM who owns each account. My Accounts (and the prospect modal, Agenda, and other pages) use this column to decide whose account a row is, instead of guessing by header name: leave on Auto to keep the keyword guess."
               style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}
             >
               Salesperson / CDM column

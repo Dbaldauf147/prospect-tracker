@@ -168,7 +168,7 @@ async function handler(req, res, auth) {
   // Prior weeks' headlines + blocker titles, so the review can say what has
   // and hasn't moved rather than repeating itself every week.
   const historyBlock = Array.isArray(priorReviews) && priorReviews.length
-    ? `Previous weeks' reviews (most recent first) — call out what has moved and what keeps recurring:\n${
+    ? `Previous weeks' reviews (most recent first): call out what has moved and what keeps recurring:\n${
       priorReviews.slice(0, 6).map(p => {
         const titles = Array.isArray(p?.blockers) ? p.blockers.map(b => b?.title).filter(Boolean).join('; ') : '';
         return `- ${p?.week || '?'}: ${p?.headline || '(no headline)'}${titles ? ` | blockers: ${titles}` : ''}`;
@@ -180,21 +180,21 @@ async function handler(req, res, auth) {
 
 You are given a deterministic stats block computed from their own tracker, covering three views:
 - YOY: sold dollars by year, close rates, average deal size, lead volume, and this year's pace against the annual target.
-- PIPELINE: the stage-by-stage metrics table — goal vs actual for active opportunity count, deal size, pipeline dollars, close rate, and average opportunity age, plus coverage ratio, client mix, not-quoted rate, and activity counts.
+- PIPELINE: the stage-by-stage metrics table: goal vs actual for active opportunity count, deal size, pipeline dollars, close rate, and average opportunity age, plus coverage ratio, client mix, not-quoted rate, and activity counts.
 - PROGRESS: weekly account-coverage snapshots (contacts, decision makers, connected accounts, inactive accounts, PE stages) with week-over-week and four-week changes.
 
 Your job is to identify what is holding this person back from hitting their annual target, and to be specific and honest about it.
 
 How to think about it:
-- Start from the gap. The target, the amount closed, the pace, and the run-rate projection are given — reason from those.
+- Start from the gap. The target, the amount closed, the pace, and the run-rate projection are given: reason from those.
 - Find the binding constraint. A funnel fails at a specific point: not enough opportunities entering, deals too small, conversion too low, deals aging out, or coverage too thin to survive normal loss rates. Use the goal-vs-actual columns and the target projection to locate it rather than listing everything that looks imperfect.
-- Connect leading to lagging indicators. Progress-tab coverage gaps (no decision maker, no contacts, accounts with no opportunities) are usually the upstream cause of a thin pipeline eight to twelve weeks later — say so when the numbers support it.
+- Connect leading to lagging indicators. Progress-tab coverage gaps (no decision maker, no contacts, accounts with no opportunities) are usually the upstream cause of a thin pipeline eight to twelve weeks later: say so when the numbers support it.
 - Quantify. When you can express a blocker in dollars or deals against the target using the numbers given, do it.
 - Distinguish a genuine problem from noise. A single week's move in one percentage point is not a trend; a four-week direction is.
 
 Rules:
 - Use only numbers present in the stats block. Never invent, extrapolate beyond what is stated, or infer figures that aren't given.
-- If a section is missing from the stats block, say what you cannot assess rather than guessing — do not treat missing data as zero.
+- If a section is missing from the stats block, say what you cannot assess rather than guessing: do not treat missing data as zero.
 - Be direct. Lead with the constraint, not with encouragement. Skip preamble and flattery.
 - Every blocker needs a concrete action that can start this week.
 - Return 3-5 blockers, most consequential first.`;
@@ -265,7 +265,7 @@ Identify what is holding this person back from hitting their target.`;
     } catch (err) {
       return send({
         error: controller.signal.aborted
-          ? 'The review took too long to generate — try again.'
+          ? 'The review took too long to generate: try again.'
           : `Claude stream failed: ${err?.message || err}`,
       });
     }
@@ -276,7 +276,7 @@ Identify what is holding this person back from hitting their target.`;
       return send({ error: 'Claude declined to write this review.' });
     }
     if (stopReason === 'max_tokens') {
-      return send({ error: 'Review was cut off before it finished — try again.' });
+      return send({ error: 'Review was cut off before it finished: try again.' });
     }
 
     text = text.trim();
@@ -295,7 +295,7 @@ Identify what is holding this person back from hitting their target.`;
     return send({ review });
   } catch (err) {
     const message = controller.signal.aborted
-      ? 'The review took too long to generate — try again.'
+      ? 'The review took too long to generate: try again.'
       : (err?.message || 'Unknown error');
     if (res.headersSent) {
       res.end(JSON.stringify({ error: message }));

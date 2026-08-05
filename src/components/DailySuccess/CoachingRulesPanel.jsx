@@ -38,7 +38,7 @@ export function CoachingRulesPanel({ user, onClose }) {
       <div className={styles.rulesHead}>
         <strong>Coaching rules</strong>
         <span className={styles.smallNote} style={{ flex: 1, marginLeft: 8 }}>
-          Saved to your account — Claude reads these every morning.
+          Saved to your account: Claude reads these every morning.
         </span>
         {onClose && (
           <button type="button" className={styles.btnGhost} onClick={onClose} title="Hide rules editor">×</button>

@@ -5,7 +5,7 @@
 
 const TIME_RE = /\b(\d{1,2})(?::(\d{2}))?\s*([APap][Mm])?\b/;
 // Matches a full range like "9:00 AM - 10:00 AM", "9–10 AM", "09:00-10:00"
-const RANGE_RE = /^\s*(\d{1,2})(?::(\d{2}))?\s*([APap][Mm])?\s*[-–—to]{1,2}\s*(\d{1,2})(?::(\d{2}))?\s*([APap][Mm])?\s*$/;
+const RANGE_RE = /^\s*(\d{1,2})(?::(\d{2}))?\s*([APap][Mm])?\s*[-–-to]{1,2}\s*(\d{1,2})(?::(\d{2}))?\s*([APap][Mm])?\s*$/;
 const EMAIL_RE = /[\w.+-]+@[\w-]+\.[\w.-]+/g;
 const ATTENDEE_LINE_HINT = /^(attendees?|required|optional|organizer|participants|invitees|with)\s*[:：]/i;
 const LOCATION_LINE_HINT = /^(location|where|room)\s*[:：]/i;

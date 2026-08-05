@@ -16,8 +16,8 @@ import EGRID_ZIP_SUBREGIONS from '../data/egridZipSubregions.js';
 // eGRID subregion code -> ISO / RTO market. Non-ISO areas map to a
 // descriptive "None (...)" string (a real, known answer — distinct from
 // null, which means "we couldn't resolve this ZIP").
-export const NONE_SOUTHEAST = 'None (Southeast — vertically integrated)';
-export const NONE_WECC = 'None (WECC — no ISO; CAISO WEIM participation is not full ISO membership)';
+export const NONE_SOUTHEAST = 'None (Southeast: vertically integrated)';
+export const NONE_WECC = 'None (WECC: no ISO; CAISO WEIM participation is not full ISO membership)';
 export const NONE_NON_INTERCONNECTED = 'None (non-interconnected)';
 
 export const SUBREGION_TO_ISO = {

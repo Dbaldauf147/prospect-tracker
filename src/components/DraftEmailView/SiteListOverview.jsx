@@ -192,9 +192,9 @@ export function SiteListOverview({ prospects, settings }) {
             onChange={e => setDraftKey(e.target.value)}
             style={{ padding: '0.35rem 0.5rem', borderRadius: 6, border: '1px solid var(--color-border)', fontSize: '0.8rem', fontFamily: 'inherit' }}
           >
-            <option value="__compose__">Current draft (composing) — {composeContacts.length} contact{composeContacts.length === 1 ? '' : 's'}</option>
+            <option value="__compose__">Current draft (composing): {composeContacts.length} contact{composeContacts.length === 1 ? '' : 's'}</option>
             {drafts.map(d => (
-              <option key={d.id} value={d.id}>{d.name || '(untitled)'} — {(d.contacts || []).length} contact{(d.contacts || []).length === 1 ? '' : 's'}</option>
+              <option key={d.id} value={d.id}>{d.name || '(untitled)'}: {(d.contacts || []).length} contact{(d.contacts || []).length === 1 ? '' : 's'}</option>
             ))}
           </select>
         </label>

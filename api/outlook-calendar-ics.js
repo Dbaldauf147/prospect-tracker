@@ -11,7 +11,7 @@ async function handler(req, res, auth) {
 
   const { icsUrl } = req.body || {};
   if (!icsUrl || typeof icsUrl !== 'string' || !icsUrl.startsWith('https://')) {
-    return res.status(400).json({ error: 'Missing or invalid icsUrl — must be an https:// link to an ICS feed.' });
+    return res.status(400).json({ error: 'Missing or invalid icsUrl: must be an https:// link to an ICS feed.' });
   }
 
   try {

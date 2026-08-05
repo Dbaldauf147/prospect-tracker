@@ -435,7 +435,7 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
       )}
       HubSpot contacts you've emailed back-and-forth with whose company
       also has at least one open / active opportunity in the Opps
-      tab — sent, opened, clicked, replied, or otherwise touched in the
+      tab: sent, opened, clicked, replied, or otherwise touched in the
       selected window. <em>Excludes</em> Dan Key Targets and current
       Client contacts (those live on the Key Contacts and Client
       Contacts tabs). Toggle <strong>All Contacts</strong> for a flat

@@ -71,7 +71,7 @@ async function buildPipelineSummary() {
         const stage = r['Stage'] || '';
         const amt = r['Quoted Amount'] || '';
         const next = r['Next Step'] || r['Notes'] || '';
-        lines.push(`  • ${acct} — Stage ${stage}${amt ? `, ${amt}` : ''}${next ? `, next: ${String(next).slice(0, 80)}` : ''}`);
+        lines.push(`  • ${acct}: Stage ${stage}${amt ? `, ${amt}` : ''}${next ? `, next: ${String(next).slice(0, 80)}` : ''}`);
       }
     }
     if (bfo?.summary) lines.push(`BFO summary: ${bfo.summary}`);
@@ -268,7 +268,7 @@ export function GoalsPanel({ user }) {
           value={draft}
           onChange={e => setDraft(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleAdd(); } }}
-          placeholder="Add a goal — long-running ambition you want Claude to help break down (⌘/Ctrl + Enter to save)"
+          placeholder="Add a goal: long-running ambition you want Claude to help break down (⌘/Ctrl + Enter to save)"
           style={{ flex: 1, minHeight: 48, fontFamily: 'inherit', fontSize: '0.85rem', padding: '0.4rem 0.5rem', border: '1px solid #CBD5E1', borderRadius: 6, resize: 'vertical' }}
         />
         <button type="button" className={styles.btnPrimary} onClick={handleAdd} disabled={!draft.trim()}>Add Goal</button>
@@ -330,7 +330,7 @@ export function GoalsPanel({ user }) {
       )}
 
       {visible.length === 0 && (
-        <p className={styles.smallNote}>No goals yet — add one above to get started.</p>
+        <p className={styles.smallNote}>No goals yet: add one above to get started.</p>
       )}
 
       {visible.length > 0 && (

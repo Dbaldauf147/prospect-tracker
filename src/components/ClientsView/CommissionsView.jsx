@@ -246,7 +246,7 @@ function paymentStatusFor(row) {
           return {
             state: 'active',
             label: 'Active',
-            title: `Last commission ${last.label} (${diffDays} day${diffDays === 1 ? '' : 's'} ago) — recent, so Active even though Comm End Date ${fmtDate(end)} has passed`,
+            title: `Last commission ${last.label} (${diffDays} day${diffDays === 1 ? '' : 's'} ago): recent, so Active even though Comm End Date ${fmtDate(end)} has passed`,
           };
         }
       }
@@ -273,18 +273,18 @@ function paymentStatusFor(row) {
   if (!start) {
     return {
       state: 'unknown',
-      label: '—',
+      label: '-',
       title: lastIdx === -1
         ? 'No Comm Start or End Date and no commission entries on file'
-        : `No Comm Start or End Date on file — not marked Active (most recent commission ${COMMISSION_MONTH_NAMES[lastIdx]})`,
+        : `No Comm Start or End Date on file: not marked Active (most recent commission ${COMMISSION_MONTH_NAMES[lastIdx]})`,
     };
   }
-  if (lastIdx === -1) return { state: 'unknown', label: '—', title: 'No Comm End Date and no commission entries on file' };
+  if (lastIdx === -1) return { state: 'unknown', label: '-', title: 'No Comm End Date and no commission entries on file' };
   const todayMonthIdx = new Date().getMonth();
   if (lastIdx >= todayMonthIdx - 1) {
     return { state: 'active', label: 'Active', title: `Most recent commission: ${COMMISSION_MONTH_NAMES[lastIdx]}` };
   }
-  return { state: 'stopped', label: 'Stopped', title: `Most recent commission: ${COMMISSION_MONTH_NAMES[lastIdx]} — no payments since` };
+  return { state: 'stopped', label: 'Stopped', title: `Most recent commission: ${COMMISSION_MONTH_NAMES[lastIdx]}: no payments since` };
 }
 
 // Date the last commission payment on a row, from every dated signal it
@@ -393,7 +393,7 @@ function PaymentStatusBadge({ state, label, title }) {
 
 // Plain-text cell used by Account Name / BFO Name / pasted Name fields.
 function plainTextRender(v) {
-  if (v == null || v === '') return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+  if (v == null || v === '') return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
   return <span>{String(v)}</span>;
 }
 
@@ -575,11 +575,11 @@ function buildFrontColumns(oppsCache) {
       },
       render: (row) => {
         const bfo = String(row[BFO_NAME_KEY] || '').trim();
-        if (!bfo) return <span style={{ color: 'var(--color-text-muted)' }} title="Paste a BFO Opportunity Name in the previous column to look up its Scope">—</span>;
+        if (!bfo) return <span style={{ color: 'var(--color-text-muted)' }} title="Paste a BFO Opportunity Name in the previous column to look up its Scope">-</span>;
         const opp = findOppByBfoLink(oppsCache, bfo);
         if (!opp) return <span style={{ color: '#B91C1C' }} title="No Opps row matches this BFO Opportunity Name">no match</span>;
         const scope = String(opp[SCOPE_KEY] || '').trim();
-        if (!scope) return <span style={{ color: 'var(--color-text-muted)' }} title="Matching Opps row has no Scope set">—</span>;
+        if (!scope) return <span style={{ color: 'var(--color-text-muted)' }} title="Matching Opps row has no Scope set">-</span>;
         return <span title={`From Opps row for "${bfo}"`}>{scope}</span>;
       },
       exportValue: (row) => {
@@ -594,7 +594,7 @@ function buildFrontColumns(oppsCache) {
 // Commission columns so they read as derived totals, not editable cells.
 function renderSumCell(total, emptyTitle, sumTitle) {
   if (total == null) {
-    return <span style={{ color: 'var(--color-text-muted)' }} title={emptyTitle}>—</span>;
+    return <span style={{ color: 'var(--color-text-muted)' }} title={emptyTitle}>-</span>;
   }
   return (
     <span
@@ -780,13 +780,13 @@ function buildColumns(oppsCache, selectCol) {
             if ((v == null || v === '' || n0 === 0) && isPendingFutureMonth(row, monthIndexForKey(k))) {
               return (
                 <span
-                  title="Hasn’t happened yet — upcoming month for this commission year"
+                  title="Hasn’t happened yet: upcoming month for this commission year"
                   style={{ display: 'block', textAlign: 'left', color: '#94A3B8', background: '#F1F5F9', borderRadius: 3, fontVariantNumeric: 'tabular-nums' }}
                 >-</span>
               );
             }
           }
-          if (v == null || v === '') return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+          if (v == null || v === '') return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
           if (isCurrency) return <span style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>{fmtCurrency(v)}</span>;
           if (isPercent) return <span style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>{fmtPercent(v)}</span>;
           if (isDate) return <span style={{ color: '#334155' }}>{fmtDate(v)}</span>;
@@ -850,7 +850,7 @@ function buildColumns(oppsCache, selectCol) {
     getSortValue: (row) => { const r = lastPaymentDate(row); return r ? r.date.getTime() : null; },
     render: (row) => {
       const r = lastPaymentDate(row);
-      if (!r) return <span style={{ color: 'var(--color-text-muted)' }} title="No monthly commission entries or commission dates to derive a last payment date from">—</span>;
+      if (!r) return <span style={{ color: 'var(--color-text-muted)' }} title="No monthly commission entries or commission dates to derive a last payment date from">-</span>;
       return <span style={{ color: '#334155' }} title={`Derived from ${r.label}`}>{fmtDate(r.date)}</span>;
     },
     exportValue: (row) => { const r = lastPaymentDate(row); return r ? fmtDate(r.date) : ''; },
@@ -866,14 +866,14 @@ function buildColumns(oppsCache, selectCol) {
     getSortValue: (row) => { const r = daysSinceLastPayment(row); return r ? r.days : null; },
     render: (row) => {
       const r = daysSinceLastPayment(row);
-      if (!r) return <span style={{ color: 'var(--color-text-muted)' }} title="No monthly commission entries or commission dates to date the last payment from">—</span>;
+      if (!r) return <span style={{ color: 'var(--color-text-muted)' }} title="No monthly commission entries or commission dates to date the last payment from">-</span>;
       // Rows with no commission window carry the fixed sentinel — render it
       // muted (not the red "overdue" scale) and explain the placeholder, so
       // it doesn't read as a genuine 1000-day-old payment.
       if (r.info.source === 'none') {
         return (
           <span
-            title={`No Comm Start or End Date on file — treated as ${r.days.toLocaleString('en-US')} days so it sorts to the bottom`}
+            title={`No Comm Start or End Date on file: treated as ${r.days.toLocaleString('en-US')} days so it sorts to the bottom`}
             style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-muted)' }}
           >
             {r.days.toLocaleString('en-US')}
@@ -908,7 +908,7 @@ function buildColumns(oppsCache, selectCol) {
     render: (row) => {
       const raw = row[UPDATED_AT_KEY];
       const d = asDate(raw);
-      if (!d) return <span style={{ color: 'var(--color-text-muted)' }} title="No edits recorded yet — this row hasn't been changed since the Last Updated column was added">—</span>;
+      if (!d) return <span style={{ color: 'var(--color-text-muted)' }} title="No edits recorded yet: this row hasn't been changed since the Last Updated column was added">-</span>;
       return <span style={{ color: '#334155' }} title={`Last updated ${d.toLocaleString('en-US')}`}>{fmtDate(d)}</span>;
     },
     exportValue: (row) => { const d = asDate(row[UPDATED_AT_KEY]); return d ? fmtDate(d) : ''; },
@@ -956,7 +956,7 @@ function buildColumns(oppsCache, selectCol) {
             e.stopPropagation();
             row.__onToggleIgnore?.(row.id);
           }}
-          title={on ? 'Row is ignored — click to restore.' : 'Mark this row as ignored (greys it out).'}
+          title={on ? 'Row is ignored: click to restore.' : 'Mark this row as ignored (greys it out).'}
           style={{
             background: on ? '#E2E8F0' : 'transparent',
             border: '1px solid var(--color-border)',
@@ -992,7 +992,7 @@ function buildColumns(oppsCache, selectCol) {
             row.__onToggleDupeOk?.(row.id);
           }}
           title={on
-            ? 'Duplicate warning dismissed — this row is kept as a distinct deal. Click to flag it again.'
+            ? 'Duplicate warning dismissed: this row is kept as a distinct deal. Click to flag it again.'
             : 'Keep this row as a distinct deal and dismiss the duplicate Project Name warning.'}
           style={{
             background: on ? '#F5D0FE' : 'transparent',
@@ -1490,7 +1490,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
   // never overwritten. Reports a short summary of what happened.
   function fillAccountNamesFromBfo() {
     if (!oppsCache?.records?.length) {
-      setFillStatus('Opps data isn’t loaded yet — open the Opps tab once so the BFO → Account lookup has data, then try again.');
+      setFillStatus('Opps data isn’t loaded yet: open the Opps tab once so the BFO → Account lookup has data, then try again.');
       return;
     }
     let filled = 0, alreadySet = 0, noMatch = 0;
@@ -1536,7 +1536,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#1E293B' }}>Commissions</h2>
           <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: '0.15rem' }}>
             {rows.length === 0
-              ? 'Paste your monthly commission roster from Excel — the next step maps each pasted column to a destination.'
+              ? 'Paste your monthly commission roster from Excel: the next step maps each pasted column to a destination.'
               : `${rows.length} commission row${rows.length === 1 ? '' : 's'} on file.`}
           </div>
         </div>
@@ -1590,7 +1590,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
                 type="button"
                 onClick={() => setSubtab(t.key)}
                 title={t.key === 'activelyPaid'
-                  ? 'Commissions still paying out (Payment Status: Active) — the same set as the green Active only button'
+                  ? 'Commissions still paying out (Payment Status: Active): the same set as the green Active only button'
                   : 'Every commission row on file'}
                 style={{
                   background: 'none',
@@ -1635,7 +1635,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           onClick={() => setShowActiveOnly(v => !v)}
           aria-pressed={showActiveOnly}
           title={showActiveOnly
-            ? 'Showing only commissions still paying out — click to show all rows'
+            ? 'Showing only commissions still paying out: click to show all rows'
             : 'Show only commissions still paying out (Payment Status: Active), hiding stopped ones'}
           style={{
             padding: '0.35rem 0.7rem', border: '1px solid #16A34A', borderRadius: 6,
@@ -1712,7 +1712,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
         >
           <span aria-hidden="true" style={{ fontSize: '0.9rem' }}>⧉</span>
           <span>
-            <strong>{duplicateCount}</strong> row{duplicateCount === 1 ? '' : 's'} {duplicateCount === 1 ? 'shares' : 'share'} a <strong>Project Name</strong> with another row — imported and kept as {duplicateCount === 1 ? 'a separate row' : 'separate rows'}, not merged.
+            <strong>{duplicateCount}</strong> row{duplicateCount === 1 ? '' : 's'} {duplicateCount === 1 ? 'shares' : 'share'} a <strong>Project Name</strong> with another row: imported and kept as {duplicateCount === 1 ? 'a separate row' : 'separate rows'}, not merged.
           </span>
           <span style={{ color: '#A21CAF' }}>Edit the Project Name, or delete the row, if it isn’t really a distinct deal. Or hit <strong>Keep</strong> to dismiss the warning for a genuine deal.</span>
           <span style={{ flex: 1 }} />

@@ -25,7 +25,7 @@ const KNOWN_COLUMN_META = {
   'Average Site Cost': { label: 'Avg Site Cost', defaultWidth: 120,
     render: (row) => {
       const v = row['Average Site Cost'];
-      if (v == null || v === '' || v === '-') return '—';
+      if (v == null || v === '' || v === '-') return '-';
       return '$' + Number(v).toLocaleString();
     },
   },

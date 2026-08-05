@@ -199,7 +199,7 @@ export function OppsView({ settings, updateSettings } = {}) {
           // raw value as text — no hyperlink — so users can read /
           // copy the opportunity name directly.
           const value = row[h];
-          if (!value || value === '-' || value === '#N/A') return '—';
+          if (!value || value === '-' || value === '#N/A') return '-';
           return <span style={{ fontSize: 'var(--font-size-xs)' }}>{value}</span>;
         } : undefined,
       }));
@@ -361,7 +361,7 @@ export function OppsView({ settings, updateSettings } = {}) {
       defaultWidth: 110,
       render: (row) => (
         <div style={{ textAlign: 'right' }}>
-          {row.winRate == null ? '—' : `${row.winRate.toFixed(1)}%`}
+          {row.winRate == null ? '-' : `${row.winRate.toFixed(1)}%`}
         </div>
       ),
     },

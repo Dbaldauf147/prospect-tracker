@@ -7,7 +7,7 @@
 // strings added upstream later are covered automatically. Mirrors the
 // long-standing dashFix used by the Indicative Site Analysis export.
 
-const EM_DASH = /—/g;
+const EM_DASH = /-/g;
 
 // Plain string → em dashes replaced with hyphens. Non-strings pass through
 // untouched so callers can pipe cell values / filenames of any type.

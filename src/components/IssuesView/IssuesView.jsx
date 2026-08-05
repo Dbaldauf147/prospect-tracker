@@ -86,14 +86,14 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
         const name = managerMap[normClientName(row.company)] || '';
         return name
           ? <span style={{ color: '#334155' }}>{name}</span>
-          : <span style={{ color: '#94A3B8' }}>—</span>;
+          : <span style={{ color: '#94A3B8' }}>-</span>;
       },
     },
     {
       key: 'daysUntil', label: 'Days Until', defaultWidth: 110,
       getSortValue: (row) => row.daysUntil == null ? null : row.daysUntil,
       render: (row) => {
-        if (row.daysUntil == null) return <span style={{ color: '#94A3B8' }}>—</span>;
+        if (row.daysUntil == null) return <span style={{ color: '#94A3B8' }}>-</span>;
         return (
           <span style={{ color: '#B91C1C', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
             {row.daysUntil}
@@ -106,7 +106,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
       getSortValue: (row) => row.expirationDate ? row.expirationDate.getTime() : null,
       render: (row) => (
         <span style={{ color: row.expirationDate ? '#334155' : '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>
-          {row.expirationDate ? fmtDate(row.expirationDate) : '—'}
+          {row.expirationDate ? fmtDate(row.expirationDate) : '-'}
         </span>
       ),
     },
@@ -126,7 +126,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
             e.stopPropagation();
             setIssueSnoozed(row.id, !row.snoozed);
           }}
-          title={row.snoozed ? 'Snoozed — not counted on the menu. Click to un-snooze.' : 'Snooze this issue so it stops counting on the menu'}
+          title={row.snoozed ? 'Snoozed: not counted on the menu. Click to un-snooze.' : 'Snooze this issue so it stops counting on the menu'}
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 4,
             padding: '2px 10px', borderRadius: 999, cursor: 'pointer',

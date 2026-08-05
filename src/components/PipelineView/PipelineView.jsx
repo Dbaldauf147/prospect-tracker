@@ -87,7 +87,7 @@ function oppOpenTs(r, ageRef) {
 function isBlankFollowUp(row) {
   const v = String(row?.['Follow Up On Sale'] ?? '').trim();
   if (!v) return true;
-  return ['-', '—', '#n/a'].includes(v.toLowerCase());
+  return ['-', '-', '#n/a'].includes(v.toLowerCase());
 }
 
 // The date a deal closed/sold, used to sort the Post-Sale Follow-Up table.
@@ -130,7 +130,7 @@ function followUpGoalLabel(left) {
 // the 60-day deadline has passed. Undated rows render an em dash.
 function renderDaysToGoal(soldRaw) {
   const left = daysToFollowUpGoal(soldRaw);
-  if (left == null) return <span style={{ color: '#94a3b8' }}>—</span>;
+  if (left == null) return <span style={{ color: '#94a3b8' }}>-</span>;
   const color = left < 0 ? '#b91c1c'
     : left <= 7 ? '#92400e'
     : '#166534';
@@ -155,7 +155,7 @@ const CLOSE_RATE_PULL_THROUGH = /pull[\s-]?through/i;
 // A value that's present and isn't one of the spreadsheet's null markers.
 const filledCell = (v) => {
   const s = String(v ?? '').trim();
-  return !!s && s !== '-' && s !== '—' && s !== 'N/A' && s !== '#N/A';
+  return !!s && s !== '-' && s !== '-' && s !== 'N/A' && s !== '#N/A';
 };
 const hasBfoOpportunity = (r) => filledCell(r['BFO Link']);
 const isAemScope = (r) => /\baem\b/i.test(String(r.Scope || ''));
@@ -169,25 +169,25 @@ const hasQuotedOn = (r) => {
 const CLOSE_RATE_STAGES = [
   {
     num: 6,
-    label: 'Stage 6 — Negotiate to Win',
+    label: 'Stage 6: Negotiate to Win',
     signal: 'a non-empty Entity Outside the US Approval value',
     test: (r) => filledCell(r['Entity Outside the US Approval']),
   },
   {
     num: 5,
-    label: 'Stage 5 — Prepare & Bid',
+    label: 'Stage 5: Prepare & Bid',
     signal: 'a Quoted On date',
     test: hasQuotedOn,
   },
   {
     num: 4,
-    label: 'Stage 4 — Influence and Develop',
+    label: 'Stage 4: Influence and Develop',
     signal: 'a BFO opportunity value (non-empty BFO Link), excluding AEM scope and "Never connected" status',
     test: (r) => hasBfoOpportunity(r) && !isAemScope(r) && !isNeverConnected(r),
   },
   {
     num: 3,
-    label: 'Stage 3 — Qualify Opportunity',
+    label: 'Stage 3: Qualify Opportunity',
     signal: 'a BFO opportunity value (non-empty BFO Link)',
     test: hasBfoOpportunity,
   },
@@ -412,7 +412,7 @@ class PipelineRootBoundary extends Component {
           <p style={{ color: '#475569', fontSize: 14 }}>
             Something in your saved Pipeline state crashed the page. The fix wipes
             the saved <code>pipeline-dashboard</code> record from this browser and
-            reloads — your BFO Activity, Opps, and column prefs are not affected.
+            reloads: your BFO Activity, Opps, and column prefs are not affected.
           </p>
           <div style={{ display: 'flex', gap: '0.5rem', margin: '0.75rem 0' }}>
             <button
@@ -678,7 +678,7 @@ function closeRateRows(included, head) {
       o.stage,
       o.account || '(no account)',
       fmtShortDate(o.closeDate),
-      o.amount > 0 ? fmtMoney(Math.round(o.amount)) : '—',
+      o.amount > 0 ? fmtMoney(Math.round(o.amount)) : '-',
     ], {
       exportColumns: ['Result', 'Account', 'BFO Opportunity Name', 'Scope', 'Close', 'Amount'],
       exportMapFn: o => [
@@ -687,7 +687,7 @@ function closeRateRows(included, head) {
         o.bfoName || '',
         o.scope || '',
         fmtShortDate(o.closeDate),
-        o.amount > 0 ? fmtMoney(Math.round(o.amount)) : '—',
+        o.amount > 0 ? fmtMoney(Math.round(o.amount)) : '-',
       ],
     }),
   };
@@ -706,7 +706,7 @@ function notQuotedRows(deals, head) {
       o.account,
       o.stage,
       fmtShortDate(o.closeDate),
-      o.quoted ? `${o.quotedDays}d` : '—',
+      o.quoted ? `${o.quotedDays}d` : '-',
     ], {
       // Excel export drops deals with no BFO Opportunity Name and adds
       // Quoted Amount / Quoted Date and a Reason Not Sold column; the
@@ -758,7 +758,7 @@ async function exportBreakdown(data) {
   XLSX.writeFile(wb, `pipeline-${slug}-${stamp}.xlsx`);
   } catch (err) {
     console.error('Pipeline breakdown export failed', err);
-    if (typeof window !== 'undefined') window.alert('Sorry — the Excel export failed to generate.');
+    if (typeof window !== 'undefined') window.alert('Sorry: the Excel export failed to generate.');
   }
 }
 
@@ -833,7 +833,7 @@ function CalcContent({ data, pinned, onClose }) {
           {pinned ? (
             <button type="button" className={styles.calcPinBtn} onClick={onClose} title="Unpin this panel">📌 Pinned ✕</button>
           ) : (
-            <span className={styles.calcBadge} title="Recomputed live — not a stored value. Click to pin.">∑ live</span>
+            <span className={styles.calcBadge} title="Recomputed live: not a stored value. Click to pin.">∑ live</span>
           )}
         </div>
       </div>
@@ -1032,7 +1032,7 @@ function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, o
               {services.length === 0 ? (
                 <tr>
                   <td colSpan={4} className={styles.svcCovTableEmpty}>
-                    No services tracked yet — add one below to see how many of your clients have explored it.
+                    No services tracked yet: add one below to see how many of your clients have explored it.
                   </td>
                 </tr>
               ) : services.map(key => {
@@ -1079,7 +1079,7 @@ function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, o
                                     key={p.id}
                                     className={`${styles.svcCovChip} ${styles.svcCovChipYes}`}
                                     onClick={(e) => { e.stopPropagation(); openProspect(p); }}
-                                    title={`${p.company} — ${status}`}
+                                    title={`${p.company} · ${status}`}
                                   >
                                     {p.company}
                                     <span className={styles.svcCovChipStatus}>{status}</span>
@@ -1095,7 +1095,7 @@ function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, o
                                     key={p.id}
                                     className={`${styles.svcCovChip} ${styles.svcCovChipNo}`}
                                     onClick={(e) => { e.stopPropagation(); openProspect(p); }}
-                                    title={`${p.company} — not explored`}
+                                    title={`${p.company}: not explored`}
                                   >
                                     {p.company}
                                   </span>
@@ -1290,7 +1290,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       const key = normClientName(company);
       if (!key) continue;
       const name = [c.firstname, c.lastname].filter(Boolean).join(' ').trim()
-        || c.name || c.email || '—';
+        || c.name || c.email || '-';
       const isPrimary = tags.includes('primary point of contact');
       if (!map.has(key)) map.set(key, []);
       map.get(key).push({ contact: c, name, invited: cid != null ? !!invitedMap[cid] : false, isPrimary });
@@ -1617,7 +1617,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       .filter(row => Number(row.amount) > LARGE_DEAL_MIN)
       .map(row => ({
         account: String(row.account || '').trim() || row.oppName || '(no account)',
-        oppName: String(row.oppName || '').trim() || '—',
+        oppName: String(row.oppName || '').trim() || '-',
         stage: `Stage ${n}`,
         amount: Number(row.amount),
       }));
@@ -1837,7 +1837,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       // first). Same rows shown on-screen (largeStage56Deals); empty when
       // BFO isn't loaded or nothing clears the threshold.
       largeDeals: {
-        title: lbl('bigdeals-title', 'Largest Stage 5 & 6 Deals — Above $100k'),
+        title: lbl('bigdeals-title', 'Largest Stage 5 & 6 Deals: Above $100k'),
         headers: [
           lbl('bigdeals-account', 'Account'),
           lbl('bigdeals-opp', 'Opportunity'),
@@ -1893,16 +1893,16 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       // Post-Sale Follow-Up: deals missing a Follow Up On Sale value, sorted
       // by date closed/sold (most recent first) — same rows as on screen.
       postSaleFollowUp: {
-        title: lbl('postsale-title', 'Post-Sale Follow-Up — Deals Missing Follow Up On Sale'),
+        title: lbl('postsale-title', 'Post-Sale Follow-Up: Deals Missing Follow Up On Sale'),
         headers: [
           lbl('postsale-client', 'Client'),
           lbl('postsale-agreement', 'Agreement Name'),
           lbl('postsale-sold', 'Date Closed / Sold'),
-          lbl('postsale-goal', 'Days Since Sold — 60 Day Goal'),
+          lbl('postsale-goal', 'Days Since Sold: 60 Day Goal'),
         ],
         rows: postSaleFollowUps.map((d) => ({
-          client: String(d['Client Name'] ?? d['Client Name '] ?? '').trim() || '—',
-          agreement: String(d['Agreement Name'] ?? '').trim() || '—',
+          client: String(d['Client Name'] ?? d['Client Name '] ?? '').trim() || '-',
+          agreement: String(d['Agreement Name'] ?? '').trim() || '-',
           soldDate: Number.isNaN(dealSoldTs(d)) ? '' : fmtDate(d['Original Contract Start']),
           goal: followUpGoalLabel(daysToFollowUpGoal(d['Original Contract Start'])),
         })),
@@ -1910,7 +1910,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       // Strategic Accounts — My Accounts: the same on-screen table
       // (My Accounts mapped to the uploaded Strategic Accounts list), verbatim.
       strategicAccounts: {
-        title: lbl('strat-title', 'Strategic Accounts — My Accounts'),
+        title: lbl('strat-title', 'Strategic Accounts: My Accounts'),
         headers: [lbl('strat-account', 'Account'), lbl('strat-owner', 'Account Owner'), lbl('strat-type', 'Type')],
         rows: strategicMyAccounts.map(s => ({ account: s.account, owner: s.owner, type: s.type })),
       },
@@ -1952,7 +1952,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
             type="button"
             onClick={() => handleExportExcel('multi')}
             disabled={!!exporting}
-            title="Download the Pipeline tab as a Schneider-formatted Excel report — one sheet per section"
+            title="Download the Pipeline tab as a Schneider-formatted Excel report: one sheet per section"
             style={{
               display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
               padding: '0.4rem 0.8rem', border: 'none', borderRadius: 6,
@@ -2107,20 +2107,20 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                   columns: ['Account', 'Opportunity', includeAge ? 'Age' : 'Amount'],
                   aligns: ['', '', 'num'],
                   ...mapRows(m?.rows || [], r => [
-                    r.account || '—',
-                    r.oppName || '—',
+                    r.account || '-',
+                    r.oppName || '-',
                     includeAge
-                      ? (r.age ?? '—')
-                      : (r.amount == null ? '—' : `${fmtMoney(Math.round(r.amount))}${r.excludedFromAvg ? ' *' : ''}`),
+                      ? (r.age ?? '-')
+                      : (r.amount == null ? '-' : `${fmtMoney(Math.round(r.amount))}${r.excludedFromAvg ? ' *' : ''}`),
                   ], {
                     exportColumns: ['Account', 'Opportunity', 'Scope', includeAge ? 'Age' : 'Amount'],
                     exportMapFn: r => [
-                      r.account || '—',
-                      r.oppName || '—',
+                      r.account || '-',
+                      r.oppName || '-',
                       r.scope || '',
                       includeAge
-                        ? (r.age ?? '—')
-                        : (r.amount == null ? '—' : `${fmtMoney(Math.round(r.amount))}${r.excludedFromAvg ? ' *' : ''}`),
+                        ? (r.age ?? '-')
+                        : (r.amount == null ? '-' : `${fmtMoney(Math.round(r.amount))}${r.excludedFromAvg ? ' *' : ''}`),
                     ],
                   }),
                 });
@@ -2134,7 +2134,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                             id={`active-${stageNum}`}
                             className={styles.liveCell}
                             breakdown={{
-                              title: `${st.label} — Active Opportunities`,
+                              title: `${st.label}: Active Opportunities`,
                               value: String(activeActual),
                               formula: `COUNT of BFO Activity rows whose Sales Stage matches "${st.label}".`,
                               inputs: [{ label: 'Matching rows', value: m.count }],
@@ -2151,7 +2151,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                             id={`dealsize-${stageNum}`}
                             className={styles.liveCell}
                             breakdown={{
-                              title: `${st.label} — Deal Size (Actual)`,
+                              title: `${st.label}: Deal Size (Actual)`,
                               value: fmtMoney(Math.round(dealSizeActual)),
                               formula: stageNum === 6
                                 ? 'AVERAGE(Amount) across matching BFO rows, excluding the $80k template placeholder (marked *).'
@@ -2174,7 +2174,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                         id={`pipelinegoal-${stageNum}`}
                         className={styles.liveCell}
                         breakdown={{
-                          title: `${st.label} — Pipeline (Goal)`,
+                          title: `${st.label}: Pipeline (Goal)`,
                           value: fmtMoney(st.pipelineGoal),
                           formula: 'Active Opportunities Goal × Deal Size Goal.',
                           inputs: [
@@ -2182,7 +2182,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                             { label: 'Deal size goal', value: fmtMoney(Number(st.dealSizeGoal) || 0) },
                             { label: 'Pipeline goal', value: fmtMoney(st.pipelineGoal) },
                           ],
-                          note: 'Calculated — edit the Active Opportunities or Deal Size goal to change it.',
+                          note: 'Calculated: edit the Active Opportunities or Deal Size goal to change it.',
                         }}
                       >{st.pipelineGoal ? fmtMoney(st.pipelineGoal) : ''}</LiveValue>
                     </td>
@@ -2192,7 +2192,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                             id={`pipeline-${stageNum}`}
                             className={styles.liveCell}
                             breakdown={{
-                              title: `${st.label} — Pipeline (Actual)`,
+                              title: `${st.label}: Pipeline (Actual)`,
                               value: fmtMoney(Math.round(pipelineActual)),
                               formula: 'SUM(Amount) across matching BFO rows.',
                               inputs: [
@@ -2228,7 +2228,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                               className={styles.liveCell}
                               style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', lineHeight: 1.15 }}
                               breakdown={{
-                                title: `${st.label} — Close Rate (rolling 365 days)`,
+                                title: `${st.label}: Close Rate (rolling 365 days)`,
                                 value: `${(liveRate * 100).toFixed(0)}%  (${live.sold}/${live.sold + live.notSold})`,
                                 formula: `Sold ÷ (Sold + Not Sold), over Opps closed in the last 365 days that reached this stage (signal: ${signal}) with a Scope without "pull through".`,
                                 inputs: [
@@ -2274,7 +2274,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                             id={`life-${stageNum}`}
                             className={styles.liveCell}
                             breakdown={{
-                              title: `${st.label} — Avg Opp Life`,
+                              title: `${st.label}: Avg Opp Life`,
                               value: `${lifeActual}`,
                               formula: 'AVERAGE(Age, in days) across matching BFO rows that carry an Age.',
                               inputs: [
@@ -2301,15 +2301,15 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                         <td
                           style={{ textAlign: 'left', padding: '0.3rem 0.5rem', fontSize: '0.72rem' }}
                           title={killFlag && flaggedOpps.length
-                            ? `${killFlag} — age > ${st.lifeGoal}d:\n` + flaggedOpps.map(r => `• ${label(r)} — ${r.age}d`).join('\n')
+                            ? `${killFlag}: age > ${st.lifeGoal}d:\n` + flaggedOpps.map(r => `• ${label(r)} · ${r.age}d`).join('\n')
                             : killFlag
-                              ? `No ${st.label} opps past their ${st.lifeGoal ?? '—'}-day target.`
+                              ? `No ${st.label} opps past their ${st.lifeGoal ?? '-'}-day target.`
                               : 'No kill move for this stage.'}
                         >
                           <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {killFlag && flaggedOpps.length
                               ? <span style={{ color: '#B45309', fontWeight: 600 }}>{killFlag}: {flaggedOpps.map(label).join(', ')}</span>
-                              : <span style={{ color: '#94A3B8' }}>—</span>}
+                              : <span style={{ color: '#94A3B8' }}>-</span>}
                           </div>
                         </td>
                       );
@@ -2352,7 +2352,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                   ) : ''}
                 </td>
                 <td className={styles.numCell} title="Sum of stage Target Projection Goals (Active Goal × Deal Size Goal × Close Rate Goal).">{fmtMoney(Math.round(stageTotals.targetProjGoal))}</td>
-                <td className={styles.numCell} title="Stage goals weighted by Active Opp Goal — SUMPRODUCT(lifeGoal, activeGoal) ÷ SUM(activeGoal). Less is better.">{lifeGoalAvg ?? ''}</td>
+                <td className={styles.numCell} title="Stage goals weighted by Active Opp Goal: SUMPRODUCT(lifeGoal, activeGoal) ÷ SUM(activeGoal). Less is better.">{lifeGoalAvg ?? ''}</td>
                 <td className={`${styles.numCell} ${compareClass(lifeActualAvg, lifeGoalAvg, 'lower-better')}`.trim()} title="Stage actuals weighted by Active Opp Actual (live BFO count when loaded). SUMPRODUCT(lifeActual, activeActual) ÷ SUM(activeActual).">{lifeActualAvg ?? ''}</td>
                 <td />
               </tr>
@@ -2386,9 +2386,9 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                     head,
                     columns: ['Opportunity', 'Lead Source', 'Amount'],
                     aligns: ['', '', 'num'],
-                    ...mapRows(arr || [], r => [r.oppName, r.source, r.amount == null ? '—' : fmtMoney(Math.round(r.amount))], {
+                    ...mapRows(arr || [], r => [r.oppName, r.source, r.amount == null ? '-' : fmtMoney(Math.round(r.amount))], {
                       exportColumns: ['Opportunity', 'Lead Source', 'Scope', 'Amount'],
-                      exportMapFn: r => [r.oppName, r.source, r.scope || '', r.amount == null ? '—' : fmtMoney(Math.round(r.amount))],
+                      exportMapFn: r => [r.oppName, r.source, r.scope || '', r.amount == null ? '-' : fmtMoney(Math.round(r.amount))],
                     }),
                   });
                   const liveActualPct = cg && cg.clientActualPct !== null
@@ -2527,7 +2527,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                             }}
                           >{computedCoverage.toFixed(2)}</LiveValue>
                         ) : (
-                          <span className={styles.noBfoCell}>—</span>
+                          <span className={styles.noBfoCell}>-</span>
                         )}
                       </td>
                     );
@@ -2553,7 +2553,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                             id="notQuotedYear"
                             className={styles.liveCell}
                             breakdown={{
-                              title: `% Not Quoted — Actual Year (${oppsNotQuoted.thisYear})`,
+                              title: `% Not Quoted: Actual Year (${oppsNotQuoted.thisYear})`,
                               value: `${Math.round(oppsNotQuoted.year.pct * 100)}%  (${oppsNotQuoted.year.notQuoted}/${oppsNotQuoted.year.total})`,
                               formula: "Closed deals (Sold or Not Sold) that closed this calendar year with no days logged in the Quoted or Agreement Sent stages, ÷ all closed deals this year.",
                               inputs: [
@@ -2575,7 +2575,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                             id="notQuotedMonth"
                             className={styles.liveCell}
                             breakdown={{
-                              title: '% Not Quoted — Actual Month',
+                              title: '% Not Quoted: Actual Month',
                               value: `${Math.round(oppsNotQuoted.month.pct * 100)}%  (${oppsNotQuoted.month.notQuoted}/${oppsNotQuoted.month.total})`,
                               formula: "Closed deals (Sold or Not Sold) that closed this calendar month with no days logged in the Quoted or Agreement Sent stages, ÷ all closed deals this month.",
                               inputs: [
@@ -2602,7 +2602,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
             above New Opps by Month. */}
         <div className={styles.section}>
           <div className={styles.sectionTitle}>
-            <EL id="bigdeals-title">Largest Stage 5 &amp; 6 Deals — Above $100k</EL>
+            <EL id="bigdeals-title">Largest Stage 5 &amp; 6 Deals: Above $100k</EL>
           </div>
           <div className={styles.scrollX}>
           <table className={styles.grid}>
@@ -2661,7 +2661,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                         className={styles.liveCell}
                         style={{ color, borderBottomColor: color, fontWeight: 700 }}
                         breakdown={{
-                          title: `New Opps — ${m.label}`,
+                          title: `New Opps: ${m.label}`,
                           value: String(m.count),
                           formula: 'COUNT of Opps with a BFO Opportunity Name created in this month. Open date prefers Start Date, else fetchedAt − Age.',
                           inputs: [{ label: 'New opps', value: m.count }],
@@ -2704,8 +2704,8 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
         {/* Client renewals — active clients whose soonest contract End Date
             is within the renewal window. Pulled from the Clients tab. */}
         <div className={styles.section}>
-          <div className={styles.sectionTitle}><EL id="ren-title">{`Client Renewals — Contracts Expiring Within ${RENEWAL_WINDOW_DAYS} Days`}</EL></div>
-          <table className={styles.tinyTable} title={`Auto-fed from the Clients tab — active clients (CDM = ${cdmName || 'your CDM'} and Status = Client) whose soonest contract End Date is within ${RENEWAL_WINDOW_DAYS} days. Sorted soonest first; negative = already overdue.`}>
+          <div className={styles.sectionTitle}><EL id="ren-title">{`Client Renewals: Contracts Expiring Within ${RENEWAL_WINDOW_DAYS} Days`}</EL></div>
+          <table className={styles.tinyTable} title={`Auto-fed from the Clients tab: active clients (CDM = ${cdmName || 'your CDM'} and Status = Client) whose soonest contract End Date is within ${RENEWAL_WINDOW_DAYS} days. Sorted soonest first; negative = already overdue.`}>
             <thead>
               <tr>
                 <th><EL id="ren-client">Client</EL></th>
@@ -2731,8 +2731,8 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                         <span className={styles.linkCell} onClick={() => openClientModal(c)}>{c.company}</span>
                       ) : c.company}
                     </td>
-                    <td>{c.renewalStatus || '—'}</td>
-                    <td>{c.clientManager || '—'}</td>
+                    <td>{c.renewalStatus || '-'}</td>
+                    <td>{c.clientManager || '-'}</td>
                     <td>
                       {dms.length > 0 ? dms.map((dm, i) => (
                         <div key={i}>
@@ -2740,14 +2740,14 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                             <span className={styles.linkCell} onClick={() => openClientModal(c, dm.contact)}>{dm.name}</span>
                           ) : dm.name}
                         </div>
-                      )) : '—'}
+                      )) : '-'}
                     </td>
                     <td>
                       {dms.length > 0 ? dms.map((dm, i) => (
                         <div key={i} style={{ color: dm.invited ? '#16a34a' : '#94a3b8' }}>
                           {dm.invited ? 'Yes' : 'No'}
                         </div>
-                      )) : '—'}
+                      )) : '-'}
                     </td>
                     <td style={{ fontVariantNumeric: 'tabular-nums', color: c.daysUntil < 0 ? '#dc2626' : undefined }}>
                       {c.daysUntil < 0 ? `${c.daysUntil} (overdue)` : c.daysUntil}
@@ -2770,23 +2770,23 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
             Up On Sale" value, sorted by date closed/sold (most recent first).
             Mirrors the Clients tab's Post-Sale Follow-Up subtab. */}
         <div className={styles.section}>
-          <div className={styles.sectionTitle}><EL id="postsale-title">Post-Sale Follow-Up — Deals Missing Follow Up On Sale</EL></div>
-          <table className={styles.tinyTable} title="Deals from the Clients → Deals subtab with no Follow Up On Sale value. Sorted by how long it's been since the deal was sold (Original Contract Start) — longest since sold first.">
+          <div className={styles.sectionTitle}><EL id="postsale-title">Post-Sale Follow-Up: Deals Missing Follow Up On Sale</EL></div>
+          <table className={styles.tinyTable} title="Deals from the Clients → Deals subtab with no Follow Up On Sale value. Sorted by how long it's been since the deal was sold (Original Contract Start): longest since sold first.">
             <thead>
               <tr>
                 <th><EL id="postsale-client">Client</EL></th>
                 <th><EL id="postsale-agreement">Agreement Name</EL></th>
                 <th><EL id="postsale-sold">Date Closed / Sold</EL></th>
-                <th><EL id="postsale-goal">Days Since Sold — 60 Day Goal</EL></th>
+                <th><EL id="postsale-goal">Days Since Sold: 60 Day Goal</EL></th>
               </tr>
             </thead>
             <tbody>
               {postSaleFollowUps.length > 0 ? (
                 postSaleFollowUps.map((d, i) => (
                   <tr key={i}>
-                    <td>{String(d['Client Name'] ?? d['Client Name '] ?? '').trim() || '—'}</td>
-                    <td>{String(d['Agreement Name'] ?? '').trim() || '—'}</td>
-                    <td style={{ fontVariantNumeric: 'tabular-nums' }}>{Number.isNaN(dealSoldTs(d)) ? '—' : fmtDate(d['Original Contract Start'])}</td>
+                    <td>{String(d['Client Name'] ?? d['Client Name '] ?? '').trim() || '-'}</td>
+                    <td>{String(d['Agreement Name'] ?? '').trim() || '-'}</td>
+                    <td style={{ fontVariantNumeric: 'tabular-nums' }}>{Number.isNaN(dealSoldTs(d)) ? '-' : fmtDate(d['Original Contract Start'])}</td>
                     <td>{renderDaysToGoal(d['Original Contract Start'])}</td>
                   </tr>
                 ))
@@ -2794,7 +2794,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                 <tr>
                   <td colSpan={4} style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '0.6rem' }}>
                     {(clientStores.deals && clientStores.deals.length)
-                      ? 'Every uploaded deal has a Follow Up On Sale value — nothing to follow up on.'
+                      ? 'Every uploaded deal has a Follow Up On Sale value: nothing to follow up on.'
                       : 'No deals uploaded yet. Upload contract data on the Clients → Deals subtab.'}
                   </td>
                 </tr>
@@ -2808,7 +2808,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
             mapped so the section doesn't show an empty shell. */}
         {strategicMyAccounts.length > 0 && (
           <div className={styles.section}>
-            <div className={styles.sectionTitle}><EL id="strat-title">Strategic Accounts — My Accounts</EL></div>
+            <div className={styles.sectionTitle}><EL id="strat-title">Strategic Accounts: My Accounts</EL></div>
             <table className={styles.tinyTable} title="Your accounts mapped to the uploaded Strategic Accounts list (from the Lists tab), with each mapped row's Account Owner and Type.">
               <thead>
                 <tr>
@@ -2825,8 +2825,8 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
                         <span className={styles.linkCell} onClick={() => openStrategicAccount(s.account)}>{s.account}</span>
                       ) : s.account}
                     </td>
-                    <td>{s.owner || '—'}</td>
-                    <td>{s.type || '—'}</td>
+                    <td>{s.owner || '-'}</td>
+                    <td>{s.type || '-'}</td>
                   </tr>
                 ))}
               </tbody>

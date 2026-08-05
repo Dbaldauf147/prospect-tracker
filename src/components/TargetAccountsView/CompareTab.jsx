@@ -203,7 +203,7 @@ export function CompareTab({ currentData, cdmName }) {
     <div style={{ padding: '0.75rem 1.25rem 1.25rem', overflowY: 'auto', flex: 1, minHeight: 0 }}>
       <div style={{ padding: '0.75rem 1rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 8, marginBottom: '0.75rem', fontSize: '0.78rem', color: 'var(--color-text-secondary)' }}>
         Upload a Target Accounts list to diff against the one currently loaded.
-        Both sides are filtered to {cdmLabel} — any row whose CDM column doesn't match is ignored.
+        Both sides are filtered to {cdmLabel}: any row whose CDM column doesn't match is ignored.
         Names are normalized (case + corp suffixes) before comparing.
       </div>
 

@@ -47,12 +47,12 @@ function computePaymentStatus(info) {
   }
   let lastIdx = -1;
   for (let m = 0; m < 12; m++) if (info.monthlyComm[m] !== 0) lastIdx = m;
-  if (lastIdx === -1) return { state: 'unknown', label: '—', title: 'No Comm End Date and no commission entries on file' };
+  if (lastIdx === -1) return { state: 'unknown', label: '-', title: 'No Comm End Date and no commission entries on file' };
   const todayMonthIdx = new Date().getMonth();
   if (lastIdx >= todayMonthIdx - 1) {
     return { state: 'active', label: 'Active', title: `Most recent commission: ${COMMISSION_MONTH_NAMES[lastIdx]}` };
   }
-  return { state: 'stopped', label: 'Stopped', title: `Most recent commission: ${COMMISSION_MONTH_NAMES[lastIdx]} — no payments since` };
+  return { state: 'stopped', label: 'Stopped', title: `Most recent commission: ${COMMISSION_MONTH_NAMES[lastIdx]}: no payments since` };
 }
 
 // Roll the Commissions roster into a map keyed by normalized BFO Name,

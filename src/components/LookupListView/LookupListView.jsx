@@ -172,19 +172,19 @@ export function LookupListView({
         defaultWidth: 90,
         render: (row) => row.tier
           ? <span style={{ fontSize: '0.7rem', fontWeight: 600, color: row.tier === 'Tier 1' ? '#991B1B' : row.tier === 'Tier 2' ? '#1E3A8A' : '#475569' }}>{row.tier}</span>
-          : <span style={{ color: 'var(--color-text-muted)' }}>—</span>,
+          : <span style={{ color: 'var(--color-text-muted)' }}>-</span>,
       },
       {
         key: 'status',
         label: 'Status',
         defaultWidth: 120,
-        render: (row) => row.status || <span style={{ color: 'var(--color-text-muted)' }}>—</span>,
+        render: (row) => row.status || <span style={{ color: 'var(--color-text-muted)' }}>-</span>,
       },
       {
         key: 'cdm',
         label: 'CDM',
         defaultWidth: 120,
-        render: (row) => row.cdm || <span style={{ color: 'var(--color-text-muted)' }}>—</span>,
+        render: (row) => row.cdm || <span style={{ color: 'var(--color-text-muted)' }}>-</span>,
       },
       {
         key: '__matchIndicator__',
@@ -192,7 +192,7 @@ export function LookupListView({
         defaultWidth: 90,
         render: (row) => row.__matched__
           ? <span style={{ background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534', fontWeight: 700, fontSize: '0.7rem', padding: '1px 8px', borderRadius: 999 }}>✓ Yes</span>
-          : <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>,
+          : <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>-</span>,
       },
     ];
     const extras = previewKeys.map(k => ({
@@ -200,9 +200,9 @@ export function LookupListView({
       label: k,
       defaultWidth: 160,
       render: (row) => {
-        if (!row.__match__) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
+        if (!row.__match__) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>-</span>;
         const val = row.__match__[k];
-        if (val == null || val === '') return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
+        if (val == null || val === '') return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>-</span>;
         return <span style={{ fontSize: '0.72rem' }}>{String(val)}</span>;
       },
     }));

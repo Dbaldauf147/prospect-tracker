@@ -387,7 +387,7 @@ export function buildGanttSvg(template, { branded = true } = {}) {
   // window's doing, so the page's out-of-range warning wouldn't cover it.
   const notes = [];
   if (undated.length) {
-    notes.push(`Not shown — no readable dates: ${undated.map(s => s.name || 'Untitled stage').join(', ')}`);
+    notes.push(`Not shown: no readable dates: ${undated.map(s => s.name || 'Untitled stage').join(', ')}`);
   }
   notes.forEach((line, i) => {
     body += `<text x="${GANTT.padX}" y="${noteY + 26 + i * 16}" font-size="11.5" fill="${SE_MUTE}">${esc(line)}</text>`;
@@ -787,7 +787,7 @@ export function buildMilestoneSvg(template, { branded = true } = {}) {
 // every consumer (preview, SVG, PNG, report) goes through buildTimelineSvg so
 // they can never disagree about which one is current.
 export const TIMELINE_FORMATS = [
-  { key: 'gantt', label: 'Gantt', hint: 'Calendar-scaled — shows duration and overlap' },
+  { key: 'gantt', label: 'Gantt', hint: 'Calendar-scaled: shows duration and overlap' },
   { key: 'phased', label: 'Implementation', hint: 'Months from kickoff, phase bands, numbered workstream steps' },
   { key: 'milestone', label: 'Milestone', hint: 'Evenly spaced markers above and below one line' },
 ];

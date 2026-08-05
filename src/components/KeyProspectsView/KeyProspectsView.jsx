@@ -250,7 +250,7 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
                   title={onSelectProspect ? `Open ${p.company} on the Table View` : p.company}
                 >
                   <div style={{ color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.company || '(unnamed prospect)'}</div>
-                  <div style={{ textAlign: 'right', fontWeight: 600, color: '#7C2D12' }}>{p.tier || '—'}</div>
+                  <div style={{ textAlign: 'right', fontWeight: 600, color: '#7C2D12' }}>{p.tier || '-'}</div>
                   <div style={{ textAlign: 'right', fontWeight: 700, fontSize: '0.66rem', color: p._hasOpp ? '#166534' : '#94A3B8' }}>{p._hasOpp ? 'Yes' : 'No'}</div>
                 </div>
               ))}
@@ -282,14 +282,14 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
                   title={onSelectProspect ? `Open ${p.company} on the Table View` : p.company}
                 >
                   <div style={{ color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.company || '(unnamed prospect)'}</div>
-                  <div style={{ textAlign: 'right', fontWeight: 600, color: '#7C2D12' }}>{p.tier || '—'}</div>
+                  <div style={{ textAlign: 'right', fontWeight: 600, color: '#7C2D12' }}>{p.tier || '-'}</div>
                 </div>
               ))}
             </div>
           )}
         </div>
       )}
-      HubSpot contacts tagged <strong>Decision Maker</strong> at <strong>Tier 1</strong> / <strong>Tier 2</strong> accounts on your Table View (CDM = <strong>{cdmName || '(set your CDM in Settings)'}</strong>) whose company has <strong>no opps yet</strong> on the Opps tab — your warm-but-untouched list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>By Company</strong> to see decision makers grouped by account.
+      HubSpot contacts tagged <strong>Decision Maker</strong> at <strong>Tier 1</strong> / <strong>Tier 2</strong> accounts on your Table View (CDM = <strong>{cdmName || '(set your CDM in Settings)'}</strong>) whose company has <strong>no opps yet</strong> on the Opps tab: your warm-but-untouched list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>By Company</strong> to see decision makers grouped by account.
     </>
   );
 

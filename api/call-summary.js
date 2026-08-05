@@ -43,8 +43,8 @@ Return ONLY a JSON object, no prose, no markdown fences:
 }
 
 Rules:
-- "key_items" — 3-8 items. Specifics only: scope, sites, timing, budget, incumbent vendors, decision process. No filler like "they were interested".
-- "follow_ups" — only actions someone actually committed to. "owner" is the person's name or role as spoken ("Dan", "their facilities lead"); null if unclear. "due" is null unless a date or timeframe was stated.
+- "key_items": 3-8 items. Specifics only: scope, sites, timing, budget, incumbent vendors, decision process. No filler like "they were interested".
+- "follow_ups": only actions someone actually committed to. "owner" is the person's name or role as spoken ("Dan", "their facilities lead"); null if unclear. "due" is null unless a date or timeframe was stated.
 - "risks" can be empty. Don't manufacture concerns.
 - If the transcript is too short, garbled, or clearly not a sales call, say so plainly in "summary" and return empty arrays.`;
 

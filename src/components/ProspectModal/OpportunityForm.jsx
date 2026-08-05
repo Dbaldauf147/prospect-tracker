@@ -1248,7 +1248,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                       <button
                         type="button"
                         onClick={() => toggleRowStar(t.key, rIdx)}
-                        title={row?.starred ? 'Unstar — remove priority' : 'Star as the top issue (moves to top)'}
+                        title={row?.starred ? 'Unstar: remove priority' : 'Star as the top issue (moves to top)'}
                         style={{
                           background: 'transparent', border: 'none', cursor: 'pointer',
                           padding: '0 2px', lineHeight: 1, fontSize: '1rem',
@@ -1299,7 +1299,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                                     value={slotVal}
                                     onChange={e => updateSlot(idx, e.target.value)}
                                   >
-                                    <option value="">—</option>
+                                    <option value="">-</option>
                                     {agendaSpeakerGroups.map(g => (
                                       <optgroup key={g.label} label={g.label}>
                                         {g.items.map(name => <option key={name} value={name}>{name}</option>)}
@@ -1321,7 +1321,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                             value={val}
                             onChange={e => updateTableCell(t.key, rIdx, c.key, e.target.value)}
                           >
-                            <option value="">—</option>
+                            <option value="">-</option>
                             {agendaSpeakerGroups.map(g => (
                               <optgroup key={g.label} label={g.label}>
                                 {g.items.map(name => <option key={name} value={name}>{name}</option>)}
@@ -1336,7 +1336,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                       const computed = computeAgendaStartTime(rIdx);
                       return (
                         <td key={c.key} style={{ ...sx.td, padding: '0.4rem 0.5rem', color: '#334155', background: '#F8FAFC', fontVariantNumeric: 'tabular-nums' }}>
-                          {computed || <span style={{ color: '#94A3B8' }}>—</span>}
+                          {computed || <span style={{ color: '#94A3B8' }}>-</span>}
                         </td>
                       );
                     }
@@ -1433,7 +1433,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                       if (i === timeColIndex) {
                         return (
                           <td key={c.key} style={{ ...sx.td, padding: '0.4rem 0.5rem', background: mismatch ? '#FEF2F2' : '#F0FDF4', color: mismatch ? '#B91C1C' : '#15803D', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
-                            {endText || '—'}
+                            {endText || '-'}
                             {mismatch && <div style={{ fontSize: '0.65rem', fontWeight: 500, color: '#B91C1C', marginTop: 1 }}>invite: {scheduledEnd}</div>}
                           </td>
                         );
@@ -1569,7 +1569,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     // hyperlink anchor text. Prefer Account + first service from Scope.
     const scopeStr = String(opp?.['Scope'] || '').trim();
     const firstScope = scopeStr.split(',').map(s => s.trim()).filter(Boolean)[0] || '';
-    const linkedOppName = [opp?.['Account'] || '', firstScope].filter(Boolean).join(' — ');
+    const linkedOppName = [opp?.['Account'] || '', firstScope].filter(Boolean).join(': ');
 
     const nextFormData = {
       ...formData,
@@ -1656,7 +1656,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     }
 
     if (!name.endsWith('.ics')) {
-      setMeetingError(`${file.name || 'File'} is not a recognized meeting file. Drag an .ics export from Outlook (or a .msg) — or use "Add attendees manually" below.`);
+      setMeetingError(`${file.name || 'File'} is not a recognized meeting file. Drag an .ics export from Outlook (or a .msg): or use "Add attendees manually" below.`);
       return;
     }
     try {
@@ -1761,7 +1761,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       const lines = String(data.body).split(/\r?\n/);
       for (const line of lines) {
         if (!out.start) {
-          const m = line.match(/^\s*(?:When|Time|Start)\s*[:–—-]\s*(.+)$/i);
+          const m = line.match(/^\s*(?:When|Time|Start)\s*[:–--]\s*(.+)$/i);
           if (m) {
             const cleaned = m[1].replace(/\s+\([^)]+\)\s*$/, '').trim();
             const d = new Date(cleaned);
@@ -1769,7 +1769,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           }
         }
         if (!out.location) {
-          const m = line.match(/^\s*(?:Where|Location)\s*[:–—-]\s*(.+)$/i);
+          const m = line.match(/^\s*(?:Where|Location)\s*[:–--]\s*(.+)$/i);
           if (m) out.location = m[1].trim();
         }
       }
@@ -1919,7 +1919,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       set({ meeting: partial });
       setMeetingError(
         partial.attendees.length === 0 && !partial.start
-          ? 'Imported subject only — Outlook didn\'t include attendees or time in the drag. Fill in the missing pieces, or save the meeting as .ics for full attendee/time import.'
+          ? 'Imported subject only: Outlook didn\'t include attendees or time in the drag. Fill in the missing pieces, or save the meeting as .ics for full attendee/time import.'
           : ''
       );
       return;
@@ -3005,7 +3005,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
                     {[r['Contact'], r['Stage'], r['Scope']].filter(Boolean).join(' · ')}
                   </div>
-                  <div style={{ fontSize: '0.68rem', color: '#94A3B8' }}>BFO Opp: {r['BFO Link'] || '—'}</div>
+                  <div style={{ fontSize: '0.68rem', color: '#94A3B8' }}>BFO Opp: {r['BFO Link'] || '-'}</div>
                 </div>
               ))}
             </div>
@@ -3054,7 +3054,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 key={opp._id || i}
                 type="button"
                 onClick={() => linkOpp(opp)}
-                title={`Link ${opp['Account'] || ''}${stage ? ' — ' + stage : ''}${scope ? ' · ' + scope : ''}`}
+                title={`Link ${opp['Account'] || ''}${stage ? ': ' + stage : ''}${scope ? ' · ' + scope : ''}`}
                 style={{
                   padding: '0.25rem 0.6rem',
                   border: '1px solid #93C5FD',
@@ -3171,10 +3171,10 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               <button type="button" style={sx.btn} onClick={clearMeeting}>Clear</button>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.35rem 0.75rem', fontSize: '0.78rem', color: '#475569', marginBottom: '0.5rem' }}>
-              <div><strong>When:</strong> {formatDateTime(formData.meeting.start) || '—'}</div>
-              <div><strong>Duration:</strong> {formatDuration(formData.meeting.durationMinutes) || '—'}</div>
-              <div><strong>Ends:</strong> {formatDateTime(formData.meeting.end) || '—'}</div>
-              <div><strong>Location:</strong> {formData.meeting.location || '—'}</div>
+              <div><strong>When:</strong> {formatDateTime(formData.meeting.start) || '-'}</div>
+              <div><strong>Duration:</strong> {formatDuration(formData.meeting.durationMinutes) || '-'}</div>
+              <div><strong>Ends:</strong> {formatDateTime(formData.meeting.end) || '-'}</div>
+              <div><strong>Location:</strong> {formData.meeting.location || '-'}</div>
               {formData.meeting.sourceTimeZone && (
                 <div style={{ gridColumn: 'span 2', fontSize: '0.72rem', color: '#64748B', fontStyle: 'italic' }}>
                   Original timezone: {formData.meeting.sourceTimeZone}. Times shown above are in Eastern (America/New_York).
@@ -3309,7 +3309,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                         return (
                           <span
                             style={{ flexBasis: '100%', fontSize: '0.68rem', color: '#0F766E', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 3 }}
-                            title={`Reports to ${mgrs.join(', ')} — also on this attendee list`}
+                            title={`Reports to ${mgrs.join(', ')}: also on this attendee list`}
                           >
                             <span aria-hidden="true">↳</span> Reports to {mgrs.join(', ')}
                           </span>
@@ -3317,16 +3317,16 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                       })()}
                     </div>
                     <div style={{ fontSize: '0.72rem', color: '#475569', paddingTop: 3, ...wrap }}>
-                      {company || <span style={{ color: '#94A3B8' }}>—</span>}
+                      {company || <span style={{ color: '#94A3B8' }}>-</span>}
                     </div>
                     <div style={{ fontSize: '0.72rem', color: '#475569', paddingTop: 3, ...wrap }}>
-                      {title || <span style={{ fontStyle: 'italic', color: '#94A3B8' }}>{matched ? '—' : 'not in HubSpot'}</span>}
+                      {title || <span style={{ fontStyle: 'italic', color: '#94A3B8' }}>{matched ? '-' : 'not in HubSpot'}</span>}
                     </div>
                     <div style={{ fontSize: '0.72rem', color: '#475569', paddingTop: 3, ...wrap }}>
-                      {cityCountry || <span style={{ color: '#94A3B8' }}>—</span>}
+                      {cityCountry || <span style={{ color: '#94A3B8' }}>-</span>}
                     </div>
                     <div style={{ fontSize: '0.72rem', color: '#334155', paddingTop: 3, ...wrap }}>
-                      {contactNote || <span style={{ color: '#94A3B8' }}>—</span>}
+                      {contactNote || <span style={{ color: '#94A3B8' }}>-</span>}
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
                       {!matched && a.email && onCreateContact && (
@@ -3931,7 +3931,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           style={{ ...sx.textarea, minHeight: '90px' }}
           value={formData.fieldValues.context || ''}
           onCommit={v => updateField('context', v)}
-          placeholder="Background and context for this meeting — what led up to it, who introduced us, relevant history, recent news about the account, etc."
+          placeholder="Background and context for this meeting: what led up to it, who introduced us, relevant history, recent news about the account, etc."
         />
       </div>
 
@@ -4073,7 +4073,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                         services={SCOPING_SERVICE_OPTIONS}
                         competitors={competitorOptions}
                         onMentionCompetitor={onMentionCompetitor}
-                        placeholder="Capture scoping notes. Type @ to tag a service or competitor — e.g. @strategic, @engie."
+                        placeholder="Capture scoping notes. Type @ to tag a service or competitor: e.g. @strategic, @engie."
                       />
                     </div>
                   </div>
@@ -4094,7 +4094,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   value={formData.fieldValues[f.key] || ''}
                   onCommit={v => updateField(f.key, v)}
                   services={SCOPING_SERVICE_OPTIONS}
-                  placeholder="Capture scoping notes. Type @ to tag a service from the Services Explored list — e.g. @strategic → Strategic sourcing."
+                  placeholder="Capture scoping notes. Type @ to tag a service from the Services Explored list: e.g. @strategic → Strategic sourcing."
                 />
               ) : f.type === 'select' ? (
                 <select
@@ -4102,7 +4102,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   value={formData.fieldValues[f.key] || ''}
                   onChange={e => updateField(f.key, e.target.value)}
                 >
-                  <option value="">—</option>
+                  <option value="">-</option>
                   {(f.options || []).map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
               ) : (

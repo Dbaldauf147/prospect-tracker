@@ -76,7 +76,7 @@ function TagsCell({ value, prospect, colDef, onUpdate }) {
     return () => document.removeEventListener('mousedown', handleClick);
   }, [expanded]);
 
-  if (arr.length === 0) return <span className={styles.cellText}>—</span>;
+  if (arr.length === 0) return <span className={styles.cellText}>-</span>;
   const summary = arr.length <= 2 ? arr.join(', ') : `${arr[0]} +${arr.length - 1}`;
 
   return (
@@ -183,7 +183,7 @@ export function InlineCell({ value, prospect, colDef, onUpdate, onAddOption, onE
         }}
         autoFocus
       >
-        <option value="">—</option>
+        <option value="">-</option>
         {colDef.options.map(o => <option key={o} value={o}>{o}</option>)}
         {colDef.allowAddNew && (
           <option value={ADD_NEW_OPTION}>+ Add new {colDef.label}…</option>
@@ -220,8 +220,8 @@ export function InlineCell({ value, prospect, colDef, onUpdate, onAddOption, onE
   }
   if (colDef.format === 'aum') return <span className={styles.cellEditable} style={{ position: 'relative' }} onDoubleClick={startEdit}>{savedBadge}{formatAum(value)}</span>;
   if (colDef.type === 'number') return <span className={styles.cellEditable} style={{ position: 'relative' }} onDoubleClick={startEdit}>{savedBadge}{formatNumber(value)}</span>;
-  if (colDef.type === 'notes') return <span className={`${styles.notesCell} ${styles.cellEditable}`} style={{ position: 'relative' }} onDoubleClick={startEdit} title={value || ''}>{savedBadge}{value || '—'}</span>;
-  return <span className={styles.cellEditable} style={{ position: 'relative' }} onDoubleClick={startEdit}>{savedBadge}{value || '—'}</span>;
+  if (colDef.type === 'notes') return <span className={`${styles.notesCell} ${styles.cellEditable}`} style={{ position: 'relative' }} onDoubleClick={startEdit} title={value || ''}>{savedBadge}{value || '-'}</span>;
+  return <span className={styles.cellEditable} style={{ position: 'relative' }} onDoubleClick={startEdit}>{savedBadge}{value || '-'}</span>;
 }
 
 // Column visibility toggle dropdown with remove option
@@ -375,7 +375,7 @@ function EditOptionsModal({ colKey, options, allProspects, onUpdate, settings, u
   async function remove(name) {
     const used = counts.get(name) || 0;
     const msg = used > 0
-      ? `Remove "${name}"? It's currently set on ${used} prospect${used === 1 ? '' : 's'} — those will be cleared.`
+      ? `Remove "${name}"? It's currently set on ${used} prospect${used === 1 ? '' : 's'}: those will be cleared.`
       : `Remove "${name}" from the list?`;
     if (!window.confirm(msg)) return;
     setBusy(true);
@@ -528,7 +528,7 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
         message: `Added ${added} compan${added === 1 ? 'y' : 'ies'}.${skips.length ? ` Skipped: ${skips.join(', ')}.` : ''}`,
       });
       if (failed.length) {
-        window.alert(`These rows failed to save — try them again:\n  ${failed.join('\n  ')}`);
+        window.alert(`These rows failed to save: try them again:\n  ${failed.join('\n  ')}`);
       }
     } finally {
       setUploading(false);
@@ -747,7 +747,7 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
           style={{ padding: '0.3rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', fontSize: 'var(--font-size-xs)', fontWeight: 500, color: 'var(--color-text-secondary)', background: 'var(--color-surface)', cursor: 'pointer', fontFamily: 'inherit' }}
           onClick={() => setPasteOpen(true)}
           disabled={uploading}
-          title="Copy rows from Excel (with the header row) and paste them in to mass-add companies — existing companies are skipped"
+          title="Copy rows from Excel (with the header row) and paste them in to mass-add companies: existing companies are skipped"
         >Paste from Excel</button>
         <label style={{ padding: '0.3rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', fontSize: 'var(--font-size-xs)', fontWeight: 500, color: 'var(--color-text-secondary)', cursor: 'pointer', transition: 'border-color 0.15s' }}>
           {uploading ? 'Uploading...' : 'Upload Excel'}
@@ -781,7 +781,7 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setUploadPreview(null)}>
           <div style={{ background: '#fff', borderRadius: '12px', padding: '1.5rem', maxWidth: '600px', width: '90%', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h3 style={{ margin: 0, fontSize: '1rem', color: '#1E2A36' }}>Column Mapping — {uploadPreview.fileName}</h3>
+              <h3 style={{ margin: 0, fontSize: '1rem', color: '#1E2A36' }}>Column Mapping: {uploadPreview.fileName}</h3>
               <button style={{ border: 'none', background: 'none', fontSize: '1.2rem', cursor: 'pointer', color: '#6B7280' }} onClick={() => setUploadPreview(null)}>&times;</button>
             </div>
             <p style={{ fontSize: '0.8rem', color: '#5A6B7E', margin: '0 0 0.75rem' }}>

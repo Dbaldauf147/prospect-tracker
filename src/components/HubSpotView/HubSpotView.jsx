@@ -159,7 +159,7 @@ function HubSpotInlineCell({ contact, field, value, onSave, suggestions }) {
 
   return (
     <span className={saving ? styles.cellSaving : styles.cellEditable} onClick={startEdit}>
-      {saving ? 'Saving...' : (value || '—')}
+      {saving ? 'Saving...' : (value || '-')}
     </span>
   );
 }
@@ -240,7 +240,7 @@ function HubSpotNotesCell({ contact, savedNote, onSave }) {
         lineHeight: 1.3, fontSize: '0.74rem',
       }}
     >
-      {saving ? 'Saving…' : (display || <span style={{ color: '#CBD5E1', fontStyle: 'italic' }}>—</span>)}
+      {saving ? 'Saving…' : (display || <span style={{ color: '#CBD5E1', fontStyle: 'italic' }}>-</span>)}
     </span>
   );
 }
@@ -313,7 +313,7 @@ function HubSpotCustomFieldCell({ contact, savedValue, onSave }) {
         lineHeight: 1.3, fontSize: '0.74rem',
       }}
     >
-      {saving ? 'Saving…' : (display || <span style={{ color: '#CBD5E1', fontStyle: 'italic' }}>—</span>)}
+      {saving ? 'Saving…' : (display || <span style={{ color: '#CBD5E1', fontStyle: 'italic' }}>-</span>)}
     </span>
   );
 }
@@ -332,16 +332,16 @@ async function saveCacheAwait(data) {
 }
 
 function fmtDate(dateStr) {
-  if (!dateStr) return '—';
+  if (!dateStr) return '-';
   const d = new Date(dateStr);
-  if (isNaN(d)) return '—';
+  if (isNaN(d)) return '-';
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function fmtDateTime(dateStr) {
-  if (!dateStr) return '—';
+  if (!dateStr) return '-';
   const d = new Date(dateStr);
-  if (isNaN(d)) return '—';
+  if (isNaN(d)) return '-';
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' +
     d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
@@ -540,7 +540,7 @@ function TagsMultiSelect({ contact, field, value, options, onSave }) {
   }
 
   const shown = search.trim() ? allOptions.filter(o => o.toLowerCase().includes(search.toLowerCase())) : allOptions;
-  const summary = selected.length === 0 ? '—' : selected.length <= 2 ? selected.join(', ') : `${selected[0]} +${selected.length - 1}`;
+  const summary = selected.length === 0 ? '-' : selected.length <= 2 ? selected.join(', ') : `${selected[0]} +${selected.length - 1}`;
 
   return (
     <div className={styles.tagsMultiWrap} ref={ref} onClick={e => e.stopPropagation()}>
@@ -570,7 +570,7 @@ function TagsMultiSelect({ contact, field, value, options, onSave }) {
             </label>
           ))}
           {allOptions.length === 0 && !newTag.trim() && (
-            <div className={styles.tagsMultiEmpty}>No tags yet — type above to create one</div>
+            <div className={styles.tagsMultiEmpty}>No tags yet: type above to create one</div>
           )}
         </div>,
         document.body
@@ -671,16 +671,16 @@ function BulkUploadModal({ onUpload, onClose, uploading, progress }) {
                 <tbody>
                   {parsed.slice(0, 50).map((c, i) => (
                     <tr key={i}>
-                      <td>{c.firstname || '—'}</td>
-                      <td>{c.lastname || '—'}</td>
-                      <td>{c.email || '—'}</td>
-                      <td>{c.phone || '—'}</td>
-                      <td>{c.company || '—'}</td>
-                      <td>{c.jobtitle || '—'}</td>
-                      <td>{c.hs_linkedin_url || '—'}</td>
-                      <td>{c.city || '—'}</td>
-                      <td>{c.state || '—'}</td>
-                      <td>{c.country || '—'}</td>
+                      <td>{c.firstname || '-'}</td>
+                      <td>{c.lastname || '-'}</td>
+                      <td>{c.email || '-'}</td>
+                      <td>{c.phone || '-'}</td>
+                      <td>{c.company || '-'}</td>
+                      <td>{c.jobtitle || '-'}</td>
+                      <td>{c.hs_linkedin_url || '-'}</td>
+                      <td>{c.city || '-'}</td>
+                      <td>{c.state || '-'}</td>
+                      <td>{c.country || '-'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -694,7 +694,7 @@ function BulkUploadModal({ onUpload, onClose, uploading, progress }) {
           <div className={styles.progressBar}>
             <div className={styles.progressFill} style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} />
             <span className={styles.progressText}>
-              {progress.done} of {progress.total} — {progress.created} created, {progress.errors} errors
+              {progress.done} of {progress.total}: {progress.created} created, {progress.errors} errors
             </span>
           </div>
         )}
@@ -1431,13 +1431,13 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
             const what = ca.mode === 'rename-failed' ? 'rename the Company record' : 'pin the Company association';
             setPushStatus({
               type: 'success',
-              message: `Saved "${hubspotProps.company}" locally. HubSpot couldn't ${what}${ca.status ? ` (HTTP ${ca.status})` : ''}${detail} — Prospect Tracker will keep your value through future syncs.`,
+              message: `Saved "${hubspotProps.company}" locally. HubSpot couldn't ${what}${ca.status ? ` (HTTP ${ca.status})` : ''}${detail}: Prospect Tracker will keep your value through future syncs.`,
             });
           } else if (ca && ca.ok === true) {
             if (ca.mode === 'renamed') {
               setPushStatus({
                 type: 'success',
-                message: `Renamed the HubSpot Company "${ca.oldName || '—'}" → "${hubspotProps.company}". This updates it for every contact linked to that company.`,
+                message: `Renamed the HubSpot Company "${ca.oldName || '-'}" → "${hubspotProps.company}". This updates it for every contact linked to that company.`,
               });
             } else if (ca.nameDiffers && ca.matchedName) {
               // Fallback (contact had no linked company): HubSpot linked it
@@ -1509,7 +1509,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
   const handleReassignCompany = useCallback(async (contactId, companyName) => {
     const name = (companyName || '').trim();
     if (!name) {
-      setPushStatus({ type: 'error', message: 'No company name to reassign — set a company first.' });
+      setPushStatus({ type: 'error', message: 'No company name to reassign: set a company first.' });
       return;
     }
     setReassigningId(contactId);
@@ -1534,7 +1534,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
         const detail = ca.errorText ? ` · ${ca.errorText}` : '';
         setPushStatus({
           type: 'success',
-          message: `Saved "${name}" locally. HubSpot reassign still failed${ca.status ? ` (HTTP ${ca.status})` : ''}${detail} — Prospect Tracker will keep your value through future syncs.`,
+          message: `Saved "${name}" locally. HubSpot reassign still failed${ca.status ? ` (HTTP ${ca.status})` : ''}${detail}: Prospect Tracker will keep your value through future syncs.`,
         });
       } else {
         // Reassign worked — clear any prior local override.
@@ -1733,7 +1733,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               to: user?.email,
-              subject: `Bulk Upload Report — ${totalErrors} Failed out of ${contacts.length}`,
+              subject: `Bulk Upload Report: ${totalErrors} Failed out of ${contacts.length}`,
               errors: allErrors,
               totalUploaded: contacts.length,
               totalCreated,
@@ -2271,7 +2271,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
       const splitSemi = SEMICOLON_SPLIT_KEYS.has(key);
       for (const c of enrichedContacts) {
         let v = c[key];
-        if (v == null || v === '' || v === '—' || typeof v === 'object') continue;
+        if (v == null || v === '' || v === '-' || typeof v === 'object') continue;
         v = String(v).trim();
         if (!v) continue;
         if (splitSemi) {
@@ -2656,7 +2656,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
         <button
           className={`${styles.summaryCard} ${cardFilter === 'suggestedCompany' ? styles.summaryCardActive : ''}`}
           onClick={() => setCardFilter(cardFilter === 'suggestedCompany' ? null : 'suggestedCompany')}
-          title="Show every contact whose Guessed Company column would render a suggestion — both blank-company rows with a guess AND rows whose typed Company differs from the canonical Table View name."
+          title="Show every contact whose Guessed Company column would render a suggestion: both blank-company rows with a guess AND rows whose typed Company differs from the canonical Table View name."
         >
           <div className={styles.summaryLabel}>Suggested Companies</div>
           <div className={styles.summaryValue}>{enrichedContacts.filter(c => hasActionableGuessedCompany(c)).length}</div>
@@ -2791,7 +2791,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
                   return (
                     <button
                       type="button"
-                      title={has ? `Partner: ${fam.partner || '—'} · Kids: ${fam.kids || '—'}` : 'Add partner / kids names'}
+                      title={has ? `Partner: ${fam.partner || '-'} · Kids: ${fam.kids || '-'}` : 'Add partner / kids names'}
                       onClick={(e) => { e.stopPropagation(); setEditContact(c); }}
                       style={{
                         background: has ? '#ECFDF5' : '#F8FAFC',
@@ -2949,13 +2949,13 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
                     </span>
                   );
                 }
-                return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+                return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
               }},
               { key: 'guessedName', label: 'Guessed Name', defaultWidth: 160, render: (c) => {
-                if (dismissedGuesses[`${c.id}_name`]) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+                if (dismissedGuesses[`${c.id}_name`]) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
                 const hasReal = c.firstname && c.lastname;
                 const val = hasReal ? `${c.firstname} ${c.lastname}`.trim() : c.guessedName;
-                if (!val) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+                if (!val) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
                 return <HubSpotInlineCell contact={c} field={!c.firstname ? 'firstname' : 'lastname'} value={val} onSave={async (id, updates) => {
                   const rawVal = (Object.values(updates)[0] || '').trim();
                   if (!rawVal) { dismissGuess(c.id, 'name'); return; }
@@ -2981,9 +2981,9 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
               { key: 'state', label: 'State', defaultWidth: 80, render: (c) => <HubSpotInlineCell contact={c} field="state" value={c.state} onSave={handleInlineUpdate} /> },
               { key: 'country', label: 'Country', defaultWidth: 90, render: (c) => <HubSpotInlineCell contact={c} field="country" value={c.country} onSave={handleInlineUpdate} /> },
               { key: 'lastmodifieddate', label: 'Last Edited', defaultWidth: 130, render: (c) => {
-                if (!c.lastmodifieddate) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+                if (!c.lastmodifieddate) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
                 const d = new Date(c.lastmodifieddate);
-                if (isNaN(d)) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+                if (isNaN(d)) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
                 const now = Date.now();
                 const diff = now - d.getTime();
                 const mins = Math.floor(diff / 60000);

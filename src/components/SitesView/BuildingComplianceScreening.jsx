@@ -24,11 +24,11 @@ const FEED_CARDS = [
   { key: 'electric', abbr: 'EP', label: 'Electric Power (EP)', color: '#F2B705' },
   { key: 'gas', abbr: 'NG', label: 'Natural Gas (NG)', color: '#B5179E' },
 ];
-const mdY = (iso) => { if (!iso) return '—'; const [y, m, d] = String(iso).split('-'); return `${Number(m)}/${Number(d)}/${y}`; };
+const mdY = (iso) => { if (!iso) return '-'; const [y, m, d] = String(iso).split('-'); return `${Number(m)}/${Number(d)}/${y}`; };
 // Same date with a two-digit year, for the timeline labels — the century is
 // never in question there, and the four characters it costs are the difference
 // between two neighbouring labels fitting on one tier and colliding.
-const mdYY = (iso) => { if (!iso) return '—'; const [y, m, d] = String(iso).split('-'); return `${Number(m)}/${Number(d)}/${String(y).slice(-2)}`; };
+const mdYY = (iso) => { if (!iso) return '-'; const [y, m, d] = String(iso).split('-'); return `${Number(m)}/${Number(d)}/${String(y).slice(-2)}`; };
 // Property-type buckets the size requirements are published against, for the
 // lines that have to name the bucket a building fell into.
 const PT_CLASS_LABEL = { multifamily: 'multifamily', public: 'public / institutional', nonresidential: 'non-residential' };
@@ -243,7 +243,7 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
                     strokeWidth={p.projected ? 2 : 1.5}
                   >
                     <title>
-                      {`${lane.label} — ${mdY(p.date)}: ${p.count} site${p.count === 1 ? '' : 's'}`
+                      {`${lane.label} · ${mdY(p.date)}: ${p.count} site${p.count === 1 ? '' : 's'}`
                         + (p.projected ? ' (projected from the ordinance\u2019s compliance cycle)' : '')}
                     </title>
                   </circle>
@@ -274,15 +274,15 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
 // printed under the pill — it's the number the conversation turns on, and it
 // shouldn't need a hover to find.
 function CatCell({ res }) {
-  if (!res || !res.active) return <span className={styles.dash}>—</span>;
+  if (!res || !res.active) return <span className={styles.dash}>-</span>;
   // The ft² threshold gates applicability: the building is over the size
   // requirement (applicable) or under it (not required to report). A site with
   // no square footage is taken as meeting it, and says so.
   const thr = res.threshold != null
     ? `Size requirement ${res.threshold.toLocaleString()} ft²`
-      + (res.sizeAssumed ? ' — this site has no square footage, so it is taken as meeting it'
-        : res.meetsThreshold === true ? ' — building meets it'
-        : res.meetsThreshold === false ? ' — building is below it, so it does not have to report'
+      + (res.sizeAssumed ? ': this site has no square footage, so it is taken as meeting it'
+        : res.meetsThreshold === true ? ': building meets it'
+        : res.meetsThreshold === false ? ': building is below it, so it does not have to report'
         : '')
     : null;
   const tip = [
@@ -354,7 +354,7 @@ function CatCell({ res }) {
       ) : res.penaltyUnsized ? (
         <span
           className={styles.catFineNone}
-          title={`${usd(res.penaltyRate)} per ft²/yr — this site has no square footage, so the yearly figure can't be worked out`}
+          title={`${usd(res.penaltyRate)} per ft²/yr: this site has no square footage, so the yearly figure can't be worked out`}
         >{usd(res.penaltyRate)}/ft²/yr · needs sq ft</span>
       ) : (
         <span className={styles.catFineNone} title="This ordinance publishes no maximum penalty">no fine on file</span>
@@ -375,7 +375,7 @@ function CatCell({ res }) {
 const REQ_CLASS = { required: 'reqRequired', conditional: 'reqConditional', optional: 'reqOptional' };
 const REQ_LEVEL_ONLY = /^(mandatory|required|may\s+be\s+required|optional|conditional)$/i;
 function AuditTypeCell({ res }) {
-  if (!res || res.eligible !== true) return <span className={styles.dash}>—</span>;
+  if (!res || res.eligible !== true) return <span className={styles.dash}>-</span>;
   const reqs = res.requirements || [];
   if (!reqs.length) {
     return (
@@ -387,7 +387,7 @@ function AuditTypeCell({ res }) {
   return (
     <span className={styles.reqList}>
       {reqs.map(rq => (
-        <span key={rq.key} className={styles.reqRow} title={`${rq.label} — ${rq.value}`}>
+        <span key={rq.key} className={styles.reqRow} title={`${rq.label} · ${rq.value}`}>
           <span className={styles[REQ_CLASS[rq.level]]}>{rq.label}</span>
           {!REQ_LEVEL_ONLY.test(rq.value) && <span className={styles.reqSpec}>{rq.value}</span>}
           {rq.level !== 'required' && (
@@ -411,7 +411,7 @@ function MandateDetail({ res, mandate, sqft }) {
         <div className={styles.mdHead} style={{ background: '#94A3B8' }}>{CATEGORY_LABEL[cat]}</div>
         <div className={styles.mdBody}>
           <div className={styles.mdNot}>
-            Not applicable{m.status ? ` — the ordinance on file is "${m.status}"` : ' — no active ordinance for this jurisdiction'}.
+            Not applicable{m.status ? `: the ordinance on file is "${m.status}"` : ': no active ordinance for this jurisdiction'}.
           </div>
         </div>
       </div>
@@ -423,7 +423,7 @@ function MandateDetail({ res, mandate, sqft }) {
   const fineLine = res.penalty != null && res.penaltyPerSqft
     ? `${usd(res.penaltyRate)} per ft²/yr × ${sqft.toLocaleString('en-US')} ft² = ${usd(res.penalty)}/yr`
     : res.penaltyUnsized
-      ? `${usd(res.penaltyRate)} per ft²/yr — add this site's square footage to size it`
+      ? `${usd(res.penaltyRate)} per ft²/yr: add this site's square footage to size it`
       : res.penalty != null
         ? `${usd(res.penalty)}/yr, as published`
         : 'This ordinance publishes no maximum penalty.';
@@ -433,38 +433,38 @@ function MandateDetail({ res, mandate, sqft }) {
   // Header and note follow the result: covered (measured or assumed) or under
   // the size requirement.
   const headLabel = res.eligible !== true ? 'Not required to report'
-    : res.sizeAssumed ? 'Applicable — sq ft assumed'
+    : res.sizeAssumed ? 'Applicable: sq ft assumed'
     : 'Applicable';
   const headColor = res.eligible !== true ? '#94A3B8'
     : res.sizeAssumed ? '#D97706'
     : CATEGORY_COLOR[cat];
   return (
     <div className={styles.mdBlock}>
-      <div className={styles.mdHead} style={{ background: headColor }}>{CATEGORY_LABEL[cat]} — {headLabel}</div>
+      <div className={styles.mdHead} style={{ background: headColor }}>{CATEGORY_LABEL[cat]}: {headLabel}</div>
       <div className={styles.mdBody}>
-        {row('Policy', res.policyName || '—')}
-        {row('Status', res.status || '—')}
-        {row('Deadline', res.deadline ? mdY(res.deadline) : (res.deadlineRaw || '—'))}
+        {row('Policy', res.policyName || '-')}
+        {row('Status', res.status || '-')}
+        {row('Deadline', res.deadline ? mdY(res.deadline) : (res.deadlineRaw || '-'))}
         {row('Compliance cycle', m.complianceCycle)}
         {row('Size requirement', res.coveredType === false
-          ? `None for ${PT_CLASS_LABEL[res.ptClass] || 'this'} buildings — the ordinance publishes requirements for other building types only`
+          ? `None for ${PT_CLASS_LABEL[res.ptClass] || 'this'} buildings: the ordinance publishes requirements for other building types only`
           : res.threshold != null
             ? `${res.threshold.toLocaleString('en-US')} ft² (${res.thresholdKey || res.ptClass})`
-              + (res.sizeAssumed ? ' — square footage unknown, taken as meeting it'
-                : res.meetsThreshold === true ? ` — this building's ${sqft != null ? `${sqft.toLocaleString('en-US')} ft² ` : ''}meets it`
-                : res.meetsThreshold === false ? ` — this building's ${sqft != null ? `${sqft.toLocaleString('en-US')} ft² ` : ''}is below it`
+              + (res.sizeAssumed ? ': square footage unknown, taken as meeting it'
+                : res.meetsThreshold === true ? `: this building's ${sqft != null ? `${sqft.toLocaleString('en-US')} ft² ` : ''}meets it`
+                : res.meetsThreshold === false ? `: this building's ${sqft != null ? `${sqft.toLocaleString('en-US')} ft² ` : ''}is below it`
                 : '')
             : 'None published')}
         {res.noDeadline ? (
           <div className={styles.mdNote}>
-            The ordinance is in force in this jurisdiction, but publishes no compliance deadline —
-            there is nothing due and nothing to plan against, so this site isn&apos;t counted as
+            The ordinance is in force in this jurisdiction, but publishes no compliance deadline.
+            There is nothing due and nothing to plan against, so this site isn&apos;t counted as
             needing an audit and carries no penalty here.
           </div>
         ) : res.coveredType === false ? (
           <div className={styles.mdNote}>
             The ordinance is in force in this jurisdiction, but it scopes itself to building types
-            this site isn&apos;t one of — it publishes no requirement for {PT_CLASS_LABEL[res.ptClass] || 'this type of'} buildings,
+            this site isn&apos;t one of. It publishes no requirement for {PT_CLASS_LABEL[res.ptClass] || 'this type of'} buildings,
             so this site isn&apos;t counted as needing to report and carries no penalty here.
           </div>
         ) : res.eligible === false && (
@@ -476,7 +476,7 @@ function MandateDetail({ res, mandate, sqft }) {
         {res.sizeAssumed && (
           <div className={styles.mdNote}>
             This site has no square footage, so it can&apos;t be measured against the size
-            requirement — it&apos;s counted as meeting it. Map a Sq Ft column on the Utility Lookup
+            requirement: it&apos;s counted as meeting it. Map a Sq Ft column on the Utility Lookup
             subtab to screen it for real.
           </div>
         )}
@@ -485,13 +485,13 @@ function MandateDetail({ res, mandate, sqft }) {
         {res.requirements?.length > 0 && (
           <>
             <div className={styles.mdSubhead}>What this ordinance requires</div>
-            {res.requirements.map(rq => row(rq.label, `${rq.value}${rq.level === 'conditional' ? ' — conditional' : rq.level === 'optional' ? ' — not required' : ''}`))}
+            {res.requirements.map(rq => row(rq.label, `${rq.value}${rq.level === 'conditional' ? ': conditional' : rq.level === 'optional' ? ': not required' : ''}`))}
           </>
         )}
         {res.active && cat === 'audits' && !res.requirements?.length && (
           <div className={styles.mdNote}>
             The reference records no energy-audit, water-audit, retro-commissioning or tune-up
-            detail for this ordinance — check the jurisdiction&apos;s own guidance for what it asks for.
+            detail for this ordinance: check the jurisdiction&apos;s own guidance for what it asks for.
           </div>
         )}
 
@@ -499,10 +499,10 @@ function MandateDetail({ res, mandate, sqft }) {
         <div className={styles.mdFine}>{
           res.eligible === true ? fineLine
             : res.noDeadline
-              ? 'No fine — the ordinance publishes no deadline, so nothing is due here yet.'
+              ? 'No fine: the ordinance publishes no deadline, so nothing is due here yet.'
               : res.coveredType === false
-                ? 'No fine — the mandate does not cover this building type.'
-                : 'No fine — this building is under the size requirement, so the mandate does not reach it.'
+                ? 'No fine: the mandate does not cover this building type.'
+                : 'No fine: this building is under the size requirement, so the mandate does not reach it.'
         }</div>
         {basis && (
           <>
@@ -554,8 +554,8 @@ function SiteDetailModal({ site, onClose }) {
         </div>
         <div className={styles.modalBody}>
           <div className={styles.mdFacts}>
-            <span><strong>{site.sqft != null ? site.sqft.toLocaleString('en-US') : '—'}</strong> ft²</span>
-            <span><strong>{site.propertyType || '—'}</strong></span>
+            <span><strong>{site.sqft != null ? site.sqft.toLocaleString('en-US') : '-'}</strong> ft²</span>
+            <span><strong>{site.propertyType || '-'}</strong></span>
             <span>Est. exposure <strong>{usd(total)}</strong>/yr{anyUnsized ? ' + unsized' : ''}</span>
           </div>
           {!site.matched ? (
@@ -603,7 +603,7 @@ function JurisdictionSitesModal({ category, government, rows, onExport, onSiteCl
         <div className={styles.modalHead} style={{ background: CATEGORY_COLOR[category] }}>
           <div>
             <div className={styles.modalTitle}>
-              {allJurisdictions ? `${label} — all applicable sites` : `${government} — ${label}`}
+              {allJurisdictions ? `${label}: all applicable sites` : `${government} · ${label}`}
             </div>
             <div className={styles.modalSub}>
               {rows.length.toLocaleString('en-US')} applicable site{rows.length === 1 ? '' : 's'}
@@ -648,14 +648,14 @@ function JurisdictionSitesModal({ category, government, rows, onExport, onSiteCl
                       onClick={() => onSiteClick(r)}
                       title="Open the full screening detail for this site"
                     >
-                      <td className={styles.siteCell}>{r.siteName || '—'}</td>
-                      {allJurisdictions && <td><strong>{r.government || '—'}</strong></td>}
-                      <td>{r.city || '—'}</td>
-                      <td>{r.state || '—'}</td>
-                      <td style={{ textAlign: 'right' }}>{r.sqft != null ? r.sqft.toLocaleString('en-US') : '—'}</td>
-                      <td>{r.propertyType || '—'}</td>
-                      <td>{e.policyName || '—'}</td>
-                      <td>{e.deadline ? mdY(e.deadline) : (e.deadlineRaw || '—')}</td>
+                      <td className={styles.siteCell}>{r.siteName || '-'}</td>
+                      {allJurisdictions && <td><strong>{r.government || '-'}</strong></td>}
+                      <td>{r.city || '-'}</td>
+                      <td>{r.state || '-'}</td>
+                      <td style={{ textAlign: 'right' }}>{r.sqft != null ? r.sqft.toLocaleString('en-US') : '-'}</td>
+                      <td>{r.propertyType || '-'}</td>
+                      <td>{e.policyName || '-'}</td>
+                      <td>{e.deadline ? mdY(e.deadline) : (e.deadlineRaw || '-')}</td>
                       <td style={{ textAlign: 'right' }}>
                         {e.penalty != null
                           ? usd(e.penalty)
@@ -695,8 +695,8 @@ function UtilityFeedSitesModal({ label, color, state, utility, rows, onExport, o
   const utilCount = new Set(rows.map(r => `${r.feedState}||${r.feedUtility}`)).size;
   const stateCount = new Set(rows.map(r => r.feedState)).size;
   const title = oneUtility
-    ? `${state ? `${state} · ` : ''}${utility} — ${label}`
-    : `${label} — all eligible sites`;
+    ? `${state ? `${state} · ` : ''}${utility} · ${label}`
+    : `${label}: all eligible sites`;
   return (
     <div className={styles.modalBackdrop} onClick={onClose} role="presentation">
       <div
@@ -748,19 +748,19 @@ function UtilityFeedSitesModal({ label, color, state, utility, rows, onExport, o
                     onClick={() => onSiteClick(r)}
                     title="Open the full screening detail for this site"
                   >
-                    <td className={styles.siteCell}>{r.siteName || '—'}</td>
-                    <td>{r.city || '—'}</td>
-                    <td>{r.feedState || r.state || '—'}</td>
-                    <td>{r.government || '—'}</td>
-                    <td style={{ textAlign: 'right' }}>{r.sqft != null ? r.sqft.toLocaleString('en-US') : '—'}</td>
-                    <td>{r.electricUtility || <span className={styles.dash}>—</span>}</td>
-                    <td>{r.gasUtility || <span className={styles.dash}>—</span>}</td>
+                    <td className={styles.siteCell}>{r.siteName || '-'}</td>
+                    <td>{r.city || '-'}</td>
+                    <td>{r.feedState || r.state || '-'}</td>
+                    <td>{r.government || '-'}</td>
+                    <td style={{ textAlign: 'right' }}>{r.sqft != null ? r.sqft.toLocaleString('en-US') : '-'}</td>
+                    <td>{r.electricUtility || <span className={styles.dash}>-</span>}</td>
+                    <td>{r.gasUtility || <span className={styles.dash}>-</span>}</td>
                     <td>{r.bbs?.eligible === true
                       ? <span className={styles.pillEligible}>Applicable</span>
-                      : <span className={styles.dash}>—</span>}</td>
+                      : <span className={styles.dash}>-</span>}</td>
                     <td>{r.bps?.eligible === true
                       ? <span className={styles.pillEligible}>Applicable</span>
-                      : <span className={styles.dash}>—</span>}</td>
+                      : <span className={styles.dash}>-</span>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1037,18 +1037,18 @@ export function BuildingComplianceScreening({
       for (const c of CATEGORIES) {
         const e = r[c];
         row[`${CATEGORY_LABEL[c]} Applicable`] = !e?.active ? 'No'
-          : e.noDeadline ? 'No — no deadline published'
-          : e.coveredType === false ? 'No — building type not covered'
-          : e.eligible !== true ? 'No — below size requirement'
-          : e.sizeAssumed ? 'Yes — sq ft assumed'
+          : e.noDeadline ? 'No: no deadline published'
+          : e.coveredType === false ? 'No: building type not covered'
+          : e.eligible !== true ? 'No: below size requirement'
+          : e.sizeAssumed ? 'Yes: sq ft assumed'
           : 'Yes';
         row[`${CATEGORY_LABEL[c]} Ordinance In Force`] = e?.active ? 'Yes' : 'No';
         row[`${CATEGORY_LABEL[c]} Policy`] = e?.policyName || '';
         row[`${CATEGORY_LABEL[c]} Deadline`] = e?.eligible === true ? (e.deadline ? mdY(e.deadline) : (e.deadlineRaw || '')) : '';
         row[`${CATEGORY_LABEL[c]} Size Requirement (ft²)`] = e?.threshold ?? '';
         row[`${CATEGORY_LABEL[c]} Meets Requirement`] = !e?.active ? ''
-          : e.noDeadline ? 'n/a — no deadline published'
-          : e.coveredType === false ? 'n/a — building type not covered'
+          : e.noDeadline ? 'n/a: no deadline published'
+          : e.coveredType === false ? 'n/a: building type not covered'
           : e.sizeAssumed ? 'Assumed (no sq ft)'
           : e.meetsThreshold === true ? 'Yes'
           : e.meetsThreshold === false ? 'No'
@@ -1168,7 +1168,7 @@ export function BuildingComplianceScreening({
     };
     for (const c of ['bbs', 'bps']) {
       const e = r[c];
-      row[`${CATEGORY_LABEL[c]} Applicable`] = e?.eligible === true ? (e.sizeAssumed ? 'Yes — sq ft assumed' : 'Yes') : 'No';
+      row[`${CATEGORY_LABEL[c]} Applicable`] = e?.eligible === true ? (e.sizeAssumed ? 'Yes: sq ft assumed' : 'Yes') : 'No';
       row[`${CATEGORY_LABEL[c]} Deadline`] = e?.eligible === true ? (e.deadline ? mdY(e.deadline) : (e.deadlineRaw || '')) : '';
       row[`${CATEGORY_LABEL[c]} Max Yearly Penalty`] = e?.eligible === true ? (e.penalty ?? '') : '';
     }
@@ -1239,7 +1239,7 @@ export function BuildingComplianceScreening({
           </div>
         </div>
         <div className={styles.actions}>
-          <button type="button" className={styles.btn} onClick={downloadCityLookup} title={`Download the City Lookup table — ${CITY_ROWS.length.toLocaleString('en-US')} cities, each with the Government ID it screens against`}>City Lookup</button>
+          <button type="button" className={styles.btn} onClick={downloadCityLookup} title={`Download the City Lookup table: ${CITY_ROWS.length.toLocaleString('en-US')} cities, each with the Government ID it screens against`}>City Lookup</button>
           <button type="button" className={styles.btn} onClick={downloadMasterOrdinances} title="Download the Master Ordinances Database (Government ID → BBS/Audits/BPS)">Master Ordinances</button>
           <button type="button" className={styles.btnPrimary} onClick={exportReport} title="Open the branded report (print / Save as PDF) and download the accompanying raw-data Excel">Export report (PDF)</button>
           <button type="button" className={styles.btnPrimary} onClick={exportExcelReport} disabled={sites.length === 0} title="Download the branded report as a formatted Excel workbook (KPI tiles, roadmap + penalty tables, charts)">Export report (Excel)</button>
@@ -1256,7 +1256,7 @@ export function BuildingComplianceScreening({
           <div className={styles.noMatch}>
             <strong>No site list loaded.</strong>
             <div className={styles.noMatchSub}>
-              Upload a site list on the <strong>Utility Lookup</strong> subtab (with City, State, and — for eligibility — a
+              Upload a site list on the <strong>Utility Lookup</strong> subtab (with City, State, and, for eligibility, a
               square-footage / property-type column) and every site is screened here automatically.
             </div>
           </div>
@@ -1335,7 +1335,7 @@ export function BuildingComplianceScreening({
                 {sizeScreened.assumed > 0 && (
                   <> <strong>{sizeScreened.assumed.toLocaleString()}</strong> carr
                     {sizeScreened.assumed === 1 ? 'ies' : 'y'} no square footage and
-                    {sizeScreened.assumed === 1 ? ' is' : ' are'} counted as meeting it — map a
+                    {sizeScreened.assumed === 1 ? ' is' : ' are'} counted as meeting it: map a
                     Sq Ft column on the <strong>Utility Lookup</strong> subtab to screen
                     {sizeScreened.assumed === 1 ? ' it' : ' them'} for real.</>
                 )}
@@ -1362,7 +1362,7 @@ export function BuildingComplianceScreening({
                   </>
                 ) : (
                   <>
-                    <div className={styles.rmSumVal}>—</div>
+                    <div className={styles.rmSumVal}>-</div>
                     <div className={styles.rmSumSub}>{roadmap.length ? 'every dated deadline has passed' : 'no dated deadlines'}</div>
                   </>
                 )}
@@ -1383,7 +1383,7 @@ export function BuildingComplianceScreening({
               </div>
               <div className={styles.rmSumTile}>
                 <div className={styles.rmSumLbl}>Busiest deadline</div>
-                <div className={styles.rmSumVal}>{roadmapSummary.busiest ? mdY(roadmapSummary.busiest.date) : '—'}</div>
+                <div className={styles.rmSumVal}>{roadmapSummary.busiest ? mdY(roadmapSummary.busiest.date) : '-'}</div>
                 <div className={styles.rmSumSub}>
                   {roadmapSummary.busiest ? `${roadmapSummary.busiest.total} sites land on one date` : 'nothing scheduled'}
                 </div>
@@ -1397,7 +1397,7 @@ export function BuildingComplianceScreening({
                 <span className={styles.tlHeadTitle}>
                   Key compliance deadlines
                   <span className={styles.tlHeadSub}>
-                    {' '}— one lane per mandate; solid dots are published deadlines, hollow dots the ordinance&apos;s
+                    {': '}one lane per mandate; solid dots are published deadlines, hollow dots the ordinance&apos;s
                     recurring cycle carried {PROJECT_YEARS} years forward
                   </span>
                 </span>
@@ -1412,7 +1412,7 @@ export function BuildingComplianceScreening({
               <div className={styles.rmFootnote}>
                 <strong>{roadmapSummary.undated}</strong> applicable mandate{roadmapSummary.undated === 1 ? '' : 's'} publish
                 {roadmapSummary.undated === 1 ? 'es' : ''} no compliance deadline, so {roadmapSummary.undated === 1 ? 'it isn’t' : 'they aren’t'} on
-                the timeline — there is nothing due and nothing to plan against.
+                the timeline: there is nothing due and nothing to plan against.
               </div>
             )}
 
@@ -1506,7 +1506,7 @@ export function BuildingComplianceScreening({
                 Master Analysis overview. */}
             {bpsRows.length > 0 && (
               <div className={styles.bpsSection}>
-                <div className={styles.bpsTitle}>BPS — Prioritization</div>
+                <div className={styles.bpsTitle}>BPS Prioritization</div>
                 <div className={styles.tableScroll}>
                   <table className={styles.siteTable}>
                     <thead>
@@ -1522,11 +1522,11 @@ export function BuildingComplianceScreening({
                     <tbody>
                       {bpsRows.map((g, i) => (
                         <tr key={i}>
-                          <td>{g.deadline ? mdY(g.deadline) : '—'}</td>
-                          <td><strong>{g.government || '—'}</strong></td>
+                          <td>{g.deadline ? mdY(g.deadline) : '-'}</td>
+                          <td><strong>{g.government || '-'}</strong></td>
                           <td>{g.fine}</td>
                           <td style={{ textAlign: 'right' }}>{g.sites.toLocaleString('en-US')}</td>
-                          <td style={{ textAlign: 'right' }}>{g.penaltyKnown ? usd(g.penalty) : '—'}</td>
+                          <td style={{ textAlign: 'right' }}>{g.penaltyKnown ? usd(g.penalty) : '-'}</td>
                           <td style={{ color: 'var(--color-text-muted)', fontStyle: 'italic' }}>{g.feeExceeding}</td>
                         </tr>
                       ))}
@@ -1547,7 +1547,7 @@ export function BuildingComplianceScreening({
                 className={`${styles.btn} ${styles.sectionAction}`}
                 onClick={exportUtilityFeeds}
                 disabled={!utilityFeeds.electric.total && !utilityFeeds.gas.total}
-                title="Download both utility feeds — the per-utility counts and the sites behind them — as an Excel workbook"
+                title="Download both utility feeds (the per-utility counts and the sites behind them) as an Excel workbook"
               >Export utility feeds</button>
             </div>
             <div className={styles.wbudcNote}>
@@ -1628,12 +1628,12 @@ export function BuildingComplianceScreening({
                       role="button"
                       title="Open the mandate detail for this site"
                     >
-                      <td className={styles.siteCell}>{r.siteName || <span className={styles.dash}>—</span>}</td>
-                      <td>{r.city || <span className={styles.dash}>—</span>}</td>
-                      <td>{r.state || <span className={styles.dash}>—</span>}</td>
+                      <td className={styles.siteCell}>{r.siteName || <span className={styles.dash}>-</span>}</td>
+                      <td>{r.city || <span className={styles.dash}>-</span>}</td>
+                      <td>{r.state || <span className={styles.dash}>-</span>}</td>
                       <td>{r.matched ? r.government : <span className={styles.dash}>no match</span>}</td>
-                      <td>{r.govId ? <span className={styles.govIdCell}>{r.govId}</span> : <span className={styles.dash}>—</span>}</td>
-                      <td>{r.sqft != null ? r.sqft.toLocaleString() : <span className={styles.dash}>—</span>}</td>
+                      <td>{r.govId ? <span className={styles.govIdCell}>{r.govId}</span> : <span className={styles.dash}>-</span>}</td>
+                      <td>{r.sqft != null ? r.sqft.toLocaleString() : <span className={styles.dash}>-</span>}</td>
                       <td><CatCell res={r.bbs} /></td>
                       <td><CatCell res={r.audits} /></td>
                       <td><AuditTypeCell res={r.audits} /></td>
@@ -1687,7 +1687,7 @@ export function BuildingComplianceScreening({
           ) : !manual?.mandate ? (
             <div className={styles.noMatch}>
               <strong>No jurisdiction found</strong> for “{city.trim()}{state.trim() ? `, ${state.trim()}` : ''}”.
-              <div className={styles.noMatchSub}>The City Lookup has no benchmarking or performance ordinance covering this city+state. A city name with no state is only resolved when one jurisdiction carries it — “Portland” could be Maine or Oregon.</div>
+              <div className={styles.noMatchSub}>The City Lookup has no benchmarking or performance ordinance covering this city+state. A city name with no state is only resolved when one jurisdiction carries it: “Portland” could be Maine or Oregon.</div>
             </div>
           ) : (
             <div className={styles.manualResult}>
@@ -1699,10 +1699,10 @@ export function BuildingComplianceScreening({
                     <div key={c} className={styles.dashCard}>
                       <div className={styles.dashHead} style={{ background: CATEGORY_COLOR[c] }}>{CATEGORY_LABEL[c]}</div>
                       <div className={styles.manualBody}>
-                        <div><strong>{cat.policyName || cat.ordinanceName || '—'}</strong></div>
-                        <div className={styles.manualMeta}>Status: {cat.status || '—'}</div>
-                        <div className={styles.manualMeta}>Deadline: {cat.deadline ? mdY(cat.deadline) : (cat.deadlineRaw || '—')}</div>
-                        <div className={styles.manualMeta}>Max penalty: {cat.maxPenalty != null ? `${usd(cat.maxPenalty)}/yr` : '—'}</div>
+                        <div><strong>{cat.policyName || cat.ordinanceName || '-'}</strong></div>
+                        <div className={styles.manualMeta}>Status: {cat.status || '-'}</div>
+                        <div className={styles.manualMeta}>Deadline: {cat.deadline ? mdY(cat.deadline) : (cat.deadlineRaw || '-')}</div>
+                        <div className={styles.manualMeta}>Max penalty: {cat.maxPenalty != null ? `${usd(cat.maxPenalty)}/yr` : '-'}</div>
                         {c === 'audits' && cat.active && auditRequirements(manual.mandate).map(rq => (
                           <div key={rq.key} className={styles.manualMeta}>{rq.label}: {rq.value}</div>
                         ))}

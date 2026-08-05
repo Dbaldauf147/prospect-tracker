@@ -126,7 +126,7 @@ export function LinkedCalls({ oppId }) {
                       {c.followUps.map((f, i) => (
                         <li key={i}>
                           {f.text}
-                          {f.owner && <span style={{ color: 'var(--color-text-muted)' }}> — {f.owner}</span>}
+                          {f.owner && <span style={{ color: 'var(--color-text-muted)' }}>: {f.owner}</span>}
                           {f.due && <span style={{ color: 'var(--color-text-muted)' }}> ({f.due})</span>}
                         </li>
                       ))}
@@ -135,7 +135,7 @@ export function LinkedCalls({ oppId }) {
                 )}
                 {!c.summary && c.transcript && (
                   <p style={{ margin: '0.4rem 0 0', fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
-                    Transcribed, but not summarized yet — run Summarize on the Call Recordings page.
+                    Transcribed, but not summarized yet: run Summarize on the Call Recordings page.
                   </p>
                 )}
               </>

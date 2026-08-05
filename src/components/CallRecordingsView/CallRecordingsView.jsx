@@ -168,7 +168,7 @@ function OppPicker({ oppsIndex, company, onPick, onClose }) {
         <div className={styles.pickerBody}>
           {noOppsAtAll ? (
             <div className={styles.transcriptStatus}>
-              No opps are loaded in this browser yet. Open the Opps 2 tab once and come back —
+              No opps are loaded in this browser yet. Open the Opps 2 tab once and come back,
               that's what fills the local cache this picker reads.
             </div>
           ) : (
@@ -713,7 +713,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
       ].filter(Boolean).join(', ');
       setSyncNote(
         counts
-          ? `Synced ${counts} from Granola.${result.truncated ? ' More remain — sync again to continue.' : ''}`
+          ? `Synced ${counts} from Granola.${result.truncated ? ' More remain: sync again to continue.' : ''}`
           : 'Already up to date with Granola.',
       );
       if (result.errors.length > 0) {
@@ -820,13 +820,13 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     const oppId = record?.oppId;
     if (!oppId) throw new Error('Tag this call to an opportunity first.');
     const block = summaryForOpp(record);
-    if (!block) throw new Error('Nothing to push — summarize the call first.');
+    if (!block) throw new Error('Nothing to push: summarize the call first.');
 
     // Read the opp's current Notes so the summary is appended to the
     // user's own text rather than replacing it.
     const cache = await loadOppsFromCache();
     const opp = (cache?.records || []).find(r => String(r?._id) === String(oppId));
-    if (!opp) throw new Error('That opp is no longer in the Opps cache — open the Opps 2 tab and try again.');
+    if (!opp) throw new Error('That opp is no longer in the Opps cache: open the Opps 2 tab and try again.');
 
     await setOppField(uid, oppId, 'Notes', mergeIntoNotes(opp['Notes'], block, recordingId));
     // "Last Spoke" is the date the call happened, not today — a call
@@ -845,7 +845,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     const live = transcripts[id];
     const transcript = (live?.status === 'completed' ? live.text : '') || stored.transcript || '';
     if (!transcript.trim()) {
-      setErrorFor(id, 'Transcribe this recording first — there is nothing to summarize.');
+      setErrorFor(id, 'Transcribe this recording first: there is nothing to summarize.');
       return;
     }
     setErrorFor(id, '');
@@ -1012,7 +1012,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     const token = await getToken();
     if (!token) {
       setConnected(false);
-      setTranscripts(t => ({ ...t, [recording.id]: { status: 'error', error: 'OneDrive connection expired — reconnect and try again.' } }));
+      setTranscripts(t => ({ ...t, [recording.id]: { status: 'error', error: 'OneDrive connection expired: reconnect and try again.' } }));
       return;
     }
     try {
@@ -1059,7 +1059,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
           <div className={styles.empty}>
             <span className={styles.emptyTitle}>Granola isn’t connected yet</span>
             Granola is the notetaker this page ingests calls from. Create an API key in Granola
-            (Settings → API — it needs note and transcript access, which is a Business or Enterprise
+            (Settings → API: it needs note and transcript access, which is a Business or Enterprise
             plan) and set it as <code>GRANOLA_API_KEY</code> in the deployment environment. Every call
             Granola has taken notes on then lands here, already transcribed.
             {/* Which deployment answered and what it could see. The three
@@ -1090,11 +1090,11 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
         return (
           <div className={styles.empty}>
             <span className={styles.emptyTitle}>Pick the folder your recordings are in</span>
-            Anything on this machine works — Desktop, Documents, or the OneDrive folder your PC already syncs.
+            Anything on this machine works: Desktop, Documents, or the OneDrive folder your PC already syncs.
             The files are read straight from disk and played here; nothing is uploaded and nothing is copied.
             {supportsDirectoryPicker()
               ? ' Chrome and Edge remember the folder, so you only pick it once.'
-              : ' This browser can’t remember the folder, so you’ll pick it each visit — Chrome or Edge can remember it.'}
+              : ' This browser can’t remember the folder, so you’ll pick it each visit: Chrome or Edge can remember it.'}
           </div>
         );
       }
@@ -1113,8 +1113,8 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
         <div className={styles.empty}>
           <span className={styles.emptyTitle}>Connect your personal OneDrive</span>
           You’ll be asked to sign in with Microsoft and grant read-only access to your files
-          (<code>Files.Read</code>). Pick your <strong>personal</strong> account on the sign-in screen —
-          the work account is the one Outlook already uses.
+          (<code>Files.Read</code>). Pick your <strong>personal</strong> account on the sign-in screen.
+          The work account is the one Outlook already uses.
         </div>
       ) : null;
     }
@@ -1124,7 +1124,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
         <span className={styles.emptyTitle}>Nothing to play in {folder}</span>
         {skipped > 0
           ? `The folder exists and holds ${skipped} file${skipped === 1 ? '' : 's'}, but none are audio or video.`
-          : 'The folder is empty. Check the path above — it’s case-sensitive and relative to your OneDrive root.'}
+          : 'The folder is empty. Check the path above: it’s case-sensitive and relative to your OneDrive root.'}
       </div>
     );
   })();
@@ -1138,8 +1138,8 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
             {source === 'granola'
               ? 'Calls from Granola, already transcribed and with Granola’s own notes attached. Tag one to a company and an opportunity, and its summary can be pushed straight onto the deal.'
               : source === 'local'
-                ? 'Recordings from a folder on this computer. Nothing is uploaded — the files are read and played locally, and only the company link is saved.'
-                : 'Recordings from a folder in your personal OneDrive. This connection is separate from the work Outlook one — signing in here doesn’t touch your calendar or mail integration.'}
+                ? 'Recordings from a folder on this computer. Nothing is uploaded: the files are read and played locally, and only the company link is saved.'
+                : 'Recordings from a folder in your personal OneDrive. This connection is separate from the work Outlook one: signing in here doesn’t touch your calendar or mail integration.'}
           </div>
         </div>
         <div className={styles.toolbar}>
@@ -1159,7 +1159,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
               type="button"
               className={source === 'granola' ? styles.sourceOn : styles.sourceOff}
               onClick={() => switchSource('granola')}
-              title="Calls Granola took notes on — the primary source"
+              title="Calls Granola took notes on: the primary source"
             >Granola</button>
             <button
               type="button"
@@ -1235,7 +1235,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
             {syncNote
               || (settings.granolaSyncedThrough
                 ? `Synced up to ${fmtWhen(settings.granolaSyncedThrough)}. New calls appear when you open this tab.`
-                : 'Calls arrive already transcribed — there is nothing to upload or transcribe here.')}
+                : 'Calls arrive already transcribed: there is nothing to upload or transcribe here.')}
           </span>
         </div>
       ) : source === 'onedrive' ? (
@@ -1270,7 +1270,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
               </button>
               {folderHandle && (
                 <>
-                  <span className={styles.connected} title="Remembered — this folder reopens next time you visit">
+                  <span className={styles.connected} title="Remembered: this folder reopens next time you visit">
                     📁 {folderName}
                   </span>
                   <button type="button" className={styles.btn} onClick={forgetFolder}>Forget folder</button>
@@ -1297,7 +1297,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
             </>
           )}
           <span className={styles.transcriptStatus}>
-            Any folder on this machine — Desktop, Documents, a synced OneDrive folder. Subfolders are included.
+            Any folder on this machine: Desktop, Documents, a synced OneDrive folder. Subfolders are included.
           </span>
         </div>
       )}
@@ -1360,7 +1360,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                   {company && (
                     <span
                       className={styles.linkChip}
-                      title={`Linked to ${company} — click to open the company`}
+                      title={`Linked to ${company}: click to open the company`}
                       onClick={() => {
                         const p = prospects.find(x => x?.id === stored.prospectId);
                         if (p) onSelectProspect?.(p);
@@ -1510,7 +1510,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                     </div>
                     {stored.summaryClipped && (
                       <div className={styles.notice} style={{ margin: '0 0 0.5rem' }}>
-                        This call was long enough that the middle was left out of the summary — the opening and
+                        This call was long enough that the middle was left out of the summary: the opening and
                         the close were both included.
                       </div>
                     )}
@@ -1533,7 +1533,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                           {stored.followUps.map((f, i) => (
                             <li key={i}>
                               {f.text}
-                              {f.owner && <span className={styles.followMeta}> — {f.owner}</span>}
+                              {f.owner && <span className={styles.followMeta}>: {f.owner}</span>}
                               {f.due && <span className={styles.followMeta}> ({f.due})</span>}
                             </li>
                           ))}
@@ -1557,7 +1557,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                 {rec.isGranola && stored?.syncedAt && !hasTranscript && (
                   <div className={styles.transcriptStatus} style={{ marginBottom: '0.5rem' }}>
                     Granola sent its notes for this call but no transcript. Transcript access is a
-                    Business/Enterprise feature — without it, Summarize and call search have nothing to read.
+                    Business/Enterprise feature: without it, Summarize and call search have nothing to read.
                   </div>
                 )}
 
@@ -1575,7 +1575,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                         className={styles.input}
                         name="q"
                         type="text"
-                        placeholder="Ask this call a question — “what did they say about pricing?”"
+                        placeholder="Ask this call a question: “what did they say about pricing?”"
                         defaultValue={found?.question || ''}
                       />
                       <button type="submit" className={styles.btn} disabled={found?.loading}>
@@ -1618,7 +1618,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                     ) : inFlight ? (
                       <div className={styles.transcriptStatus}>
                         {tr.status === 'starting' ? 'Sending to the transcription service…'
-                          : tr.status === 'queued' ? 'Queued — transcription usually takes a fraction of the recording’s length.'
+                          : tr.status === 'queued' ? 'Queued: transcription usually takes a fraction of the recording’s length.'
                           : 'Transcribing…'}
                       </div>
                     ) : utterances.length ? (
@@ -1631,11 +1631,11 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                     ) : transcriptText ? (
                       <div>{transcriptText}</div>
                     ) : (
-                      <div className={styles.transcriptStatus}>The transcription came back empty — there may be no speech in this file.</div>
+                      <div className={styles.transcriptStatus}>The transcription came back empty: there may be no speech in this file.</div>
                     )}
                     {stored?.utterancesDropped && utterances.length === 0 && transcriptText && (
                       <div className={styles.transcriptStatus}>
-                        This transcript was too long to store its speaker turns — the text above is the whole
+                        This transcript was too long to store its speaker turns: the text above is the whole
                         call, but jump-to-moment links aren’t available for it.
                       </div>
                     )}

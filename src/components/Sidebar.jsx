@@ -218,7 +218,7 @@ function CompanySearch({ prospects = [], contacts = [], onSelectProspect, onSele
                   className={activeCls}
                   onMouseEnter={() => setActive(i)}
                   onClick={() => choose(item)}
-                  title={sub ? `${name} — ${sub}` : name}
+                  title={sub ? `${name} · ${sub}` : name}
                 >
                   {name}
                   {sub ? <span className={styles.searchItemSub}>{sub}</span> : null}
@@ -359,7 +359,7 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
           className={view === 'agents' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('agents')}
           title={agentsRunDue
-            ? `The agent prompts haven't been run in ${AGENTS_RUN_INTERVAL_DAYS}+ days — open Agents, run them, then hit "Agents Ran".`
+            ? `The agent prompts haven't been run in ${AGENTS_RUN_INTERVAL_DAYS}+ days: open Agents, run them, then hit "Agents Ran".`
             : undefined}
         >
           <span className={styles.navIcon}>&#129302;</span>

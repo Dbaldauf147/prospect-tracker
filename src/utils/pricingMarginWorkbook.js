@@ -324,7 +324,7 @@ export async function downloadPricingMarginWorkbook(p) {
   const a = document.createElement('a');
   const stamp = generatedAt.toISOString().slice(0, 10);
   a.href = url;
-  a.download = stripDashes(`Fee Margin — ${p.optionName || 'Option'} — ${stamp}.xlsx`);
+  a.download = stripDashes(`Fee Margin: ${p.optionName || 'Option'} · ${stamp}.xlsx`);
   document.body.appendChild(a);
   a.click();
   a.remove();
