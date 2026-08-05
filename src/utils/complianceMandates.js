@@ -487,6 +487,92 @@ export function deadlinesByDate(results, category) {
   return [...m.entries()].map(([date, count]) => ({ date, count })).sort((a, b) => a.date.localeCompare(b.date));
 }
 
+// ---- Recurring obligations ------------------------------------------------
+// A published deadline is the FIRST filing, not the only one: benchmarking
+// repeats every year, BPS every year once its programme starts, and an audit
+// on whatever multi-year cycle its ordinance sets. A roadmap that stops at the
+// first date understates the work by everything that follows it.
+//
+// Where the reference publishes a cycle it is used as written; these are the
+// fallbacks for the ordinances that don't.
+export const DEFAULT_CYCLE_YEARS = { bbs: 1, audits: 5, bps: 1 };
+
+// "Every 5 years" / "Annual" / "2024, 2027 & 2030" — the three shapes the
+// Compliance Cycle column actually takes. An explicit year list is a schedule
+// and is used as one; anything unrecognised falls back to the category default
+// rather than being silently treated as one-off.
+export function parseCycle(text, fallbackYears) {
+  const s = String(text || '').trim();
+  if (s) {
+    const listed = [...s.matchAll(/\b(20\d{2})\b/g)].map(m => Number(m[1]));
+    if (listed.length >= 2) return { years: [...new Set(listed)].sort((a, b) => a - b) };
+    const every = /every\s+(\d+)\s*\+?\s*year/i.exec(s);
+    if (every && Number(every[1]) > 0) return { every: Number(every[1]) };
+    if (/\b(annual|annually|yearly|each\s+year|every\s+year)\b/i.test(s)) return { every: 1 };
+  }
+  return { every: fallbackYears };
+}
+
+// Same month and day, n years on. A 29 February deadline lands on the 28th in
+// the years that don't have one.
+function isoPlusYears(iso, n) {
+  const [y, m, d] = String(iso).split('-').map(Number);
+  const day = (m === 2 && d === 29) ? 28 : d;
+  return `${y + n}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function occurrencesAfter(deadline, cycle, horizonISO) {
+  const out = [];
+  if (cycle.years) {
+    const y0 = Number(String(deadline).slice(0, 4));
+    for (const y of cycle.years) {
+      if (y <= y0) continue;
+      const iso = `${y}${String(deadline).slice(4)}`;
+      if (iso <= horizonISO) out.push(iso);
+    }
+    return out;
+  }
+  // Bounded by the horizon, with a hard stop so a zero-length cycle from bad
+  // reference data can't spin.
+  for (let k = 1; k <= 120; k++) {
+    const iso = isoPlusYears(deadline, k * cycle.every);
+    if (iso > horizonISO) break;
+    out.push(iso);
+  }
+  return out;
+}
+
+// Every filing date for a category — the published deadline plus the
+// recurrences that follow it — as { date, count, projected }. The horizon runs
+// `horizonYears` past the later of the published deadline and today, so a
+// portfolio whose deadlines have all passed still shows the years of filing
+// ahead of it rather than an empty lane.
+export function deadlinesWithRecurrence(results, category, {
+  todayISO, horizonYears = 5, ordinances = MASTER_ORDINANCES,
+} = {}) {
+  const published = new Map();
+  const projected = new Map();
+  for (const r of results) {
+    if (!isEligible(r, category)) continue;
+    const deadline = r[category].deadline;
+    if (!deadline) continue;
+    published.set(deadline, (published.get(deadline) || 0) + 1);
+    if (!todayISO) continue;
+    const cycle = parseCycle(getMandates(r.govId, ordinances)?.[category]?.complianceCycle, DEFAULT_CYCLE_YEARS[category]);
+    const horizon = isoPlusYears(deadline > todayISO ? deadline : todayISO, horizonYears);
+    for (const iso of occurrencesAfter(deadline, cycle, horizon)) {
+      projected.set(iso, (projected.get(iso) || 0) + 1);
+    }
+  }
+  const rows = [...published.entries()].map(([date, count]) => ({ date, count, projected: false }));
+  for (const [date, count] of projected) {
+    // A projected filing that lands on a published deadline is already on the
+    // roadmap under that date.
+    if (!published.has(date)) rows.push({ date, count, projected: true });
+  }
+  return rows.sort((a, b) => a.date.localeCompare(b.date));
+}
+
 // Estimated max yearly penalty summed over eligible sites, grouped by
 // jurisdiction (per-site penalty × eligible sites in that jurisdiction).
 export function penaltyByOrdinance(results, category) {
