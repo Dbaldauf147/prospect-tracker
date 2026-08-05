@@ -40,7 +40,7 @@ import {
   folderPermission, listFolderRecordings, recordsFromFileList,
 } from '../../utils/localRecordings';
 import {
-  loadCallRecords, loadCallRecordsResult, saveCallRecord, deleteCallRecord, migrateSettingsLinks,
+  loadCallRecords, loadCallRecordsResult, saveCallRecordResult, deleteCallRecordResult, migrateSettingsLinks,
   oppLabel, summaryForOpp, mergeIntoNotes,
 } from '../../utils/callRecordingsStore';
 import {
@@ -53,7 +53,7 @@ import {
   cacheableHistoryRows, shouldReplaceCache,
 } from '../../utils/callHistory';
 import { loadCallHistoryCache, saveCallHistoryCache } from '../../utils/callHistoryCache';
-import { describeReadFailure } from '../../utils/callReadError';
+import { describeReadFailure, describeWriteFailure, describeDeleteFailure } from '../../utils/callStoreError';
 import {
   callBreakdownRows, filterBreakdownRows, breakdownAverages,
 } from '../../utils/callBreakdown';
@@ -457,6 +457,11 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   // Firestore's own code for that failure, kept beside the message
   // because it — not the prose — decides whether reloading can help.
   const [recordsReadCode, setRecordsReadCode] = useState('');
+  // recordingId -> { error, code } for calls whose last write did NOT
+  // reach Firestore. The change stays on screen (see `persist`), so this
+  // is what stops it reading as saved. Not persisted anywhere: a reload
+  // re-reads Firestore, and what it comes back with is the truth.
+  const [unsaved, setUnsaved] = useState({});
   // The last history this browser drew, read back from IndexedDB. It is
   // what makes the tab fill in on refresh: it paints before Firestore
   // answers, and stands in for it when it doesn't.
@@ -824,13 +829,30 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   // Merge a patch into one stored record and save it. Updates state
   // optimistically so the UI never waits on Firestore, then reconciles
   // with what was actually written.
+  //
+  // A failed write keeps the optimistic state rather than rolling it
+  // back: the change is often expensive to recreate — an AI summary costs
+  // a real API call — and throwing the user's work away on top of not
+  // storing it would be the worse of the two failures. What it must NOT
+  // do is let that state read as saved, so the id is recorded as unsaved
+  // and the page says so until a later write for the same call succeeds.
   const persist = useCallback(async (recordingId, patch) => {
     const id = String(recordingId);
     const base = recordsRef.current[id] || null;
     setRecords(r => ({ ...r, [id]: { ...(r[id] || {}), ...patch, id } }));
-    const saved = await saveCallRecord(uid, id, patch, base);
-    if (saved) setRecords(r => ({ ...r, [id]: saved }));
-    return saved;
+    const { record, ok, error, code } = await saveCallRecordResult(uid, id, patch, base);
+    if (ok) {
+      setRecords(r => ({ ...r, [id]: record }));
+      setUnsaved((u) => {
+        if (!u[id]) return u;
+        const next = { ...u };
+        delete next[id];
+        return next;
+      });
+    } else {
+      setUnsaved(u => ({ ...u, [id]: { error, code } }));
+    }
+    return ok ? record : null;
   }, [uid]);
 
   function setBusyFor(id, value) {
@@ -875,11 +897,22 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   // a refresh without a Granola sync: nothing here waits on one.
   // What to tell the user about a failed read. A denied read and a
   // dropped connection both land here, and only one of them is fixed by
-  // reloading — see utils/callReadError.js.
+  // reloading — see utils/callStoreError.js.
   const readFailure = useMemo(
     () => describeReadFailure({ ok: recordsReadOk, code: recordsReadCode, error: recordsReadError }),
     [recordsReadOk, recordsReadCode, recordsReadError],
   );
+
+  // Calls whose last write didn't land. They all failed for the same
+  // reason in practice — the database is either refusing writes or it
+  // isn't — so the banner takes its advice from one of them rather than
+  // repeating the same sentence per call.
+  const unsavedIds = useMemo(() => Object.keys(unsaved), [unsaved]);
+  const unsavedCount = unsavedIds.length;
+  const unsavedAdvice = useMemo(() => {
+    const first = unsavedIds.length ? unsaved[unsavedIds[0]] : null;
+    return describeWriteFailure(first ? { ok: false, ...first } : null);
+  }, [unsaved, unsavedIds]);
 
   const usingCachedHistory = !recordsLoaded || !recordsReadOk;
   const historyRows = usingCachedHistory && historyCache?.rows?.length
@@ -1169,10 +1202,18 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
         },
         onCall: async (call) => {
           const stored = recordsRef.current[call.id] || null;
-          await persist(call.id, {
+          const saved = await persist(call.id, {
             ...recordPatchFor(call),
             ...(autoLink(call, stored, idx) || {}),
           });
+          // Throwing is what keeps the watermark honest. A call that
+          // wasn't stored has to land in result.errors, because a sync
+          // with no errors banks its position — and banking a position
+          // over calls that were never written puts them permanently
+          // behind the cursor, where only a full re-sync would find them
+          // again. Counting this as "imported" was how a wholly failed
+          // sync reported success.
+          if (!saved) throw new Error('could not be saved');
           return stored ? 'updated' : 'imported';
         },
         onProgress: (p) => setSyncNote(`Syncing… ${p.imported + p.updated} call${p.imported + p.updated === 1 ? '' : 's'} so far`),
@@ -1315,7 +1356,17 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
       ? 'Delete the stored transcript, summary, and tags for this call? The note stays in Granola, and the next sync will pull it back in without its tags.'
       : 'Delete the stored transcript, summary, and tags for this recording? The recording file itself is not touched.';
     if (!window.confirm(message)) return;
-    await deleteCallRecord(uid, recordingId);
+    const { ok, error, code } = await deleteCallRecordResult(uid, recordingId);
+    // Dropping it from state on a failed delete would make the call
+    // vanish from the page and reappear on the next refresh — the same
+    // lie a failed save used to tell, in the other direction. The card
+    // stays, carrying why it's still there.
+    if (!ok) {
+      const failure = describeDeleteFailure({ ok, error, code });
+      setErrorFor(recordingId, `Couldn’t delete this call: ${error}${failure ? ` ${failure.advice}` : ''}`);
+      return;
+    }
+    setErrorFor(recordingId, '');
     setRecords(r => {
       const next = { ...r };
       delete next[recordingId];
@@ -1769,6 +1820,20 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
         ))}
       </div>
 
+      {/* Above the subtab content rather than inside it: a write can fail
+          from a bulk sync as easily as from one button, and the user may
+          well be on another tab when it does. One line, whatever the
+          count — the per-call detail is on the cards. */}
+      {unsavedCount > 0 && (
+        <div className={styles.error} style={{ margin: '0 1.25rem 0.75rem' }}>
+          <strong>{unsavedCount === 1 ? '1 call has changes' : `${unsavedCount} calls have changes`} that
+          couldn’t be saved.</strong>{' '}
+          They’re showing in this browser only and a refresh will lose them.
+          {unsavedAdvice && ` ${unsavedAdvice.advice}`}
+          {tab !== 'calls' && ' The Calls tab says which.'}
+        </div>
+      )}
+
       {tab === 'calls' && (source === 'granola' ? (
         <div className={styles.controls}>
           <span className={styles.fieldLabel}>Granola</span>
@@ -2089,6 +2154,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
             const inFlight = tr && (tr.status === 'starting' || tr.status === 'queued' || tr.status === 'processing');
             const state = busy[rec.id] || '';
             const problem = actionError[rec.id] || '';
+            const notStored = unsaved[rec.id] || null;
             const found = search[rec.id];
             const company = stored?.company || '';
 
@@ -2195,6 +2261,19 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                 </div>
 
                 {problem && <div className={styles.error} style={{ margin: '0 0 0.5rem' }}>{problem}</div>}
+                {/* This call is showing changes that never reached
+                    Firestore. Said on the card itself because the card is
+                    what looks up to date and isn't. */}
+                {/* The fact only. The remedy is in the banner above the
+                    list, which doesn't scroll away with the cards — and
+                    the same long sentence on every affected card would
+                    bury the one thing this line is for. */}
+                {notStored && (
+                  <div className={styles.error} style={{ margin: '0 0 0.5rem' }}>
+                    <strong>Not saved.</strong> What you see here for this call is in this browser only —
+                    a refresh will lose it. {notStored.error}
+                  </div>
+                )}
                 {stored?.pushedToOppAt && (
                   <div className={styles.pushedNote}>
                     Pushed to {stored.oppLabel || 'the opp'} on {fmtWhen(stored.pushedToOppAt)}.
