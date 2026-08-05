@@ -11714,6 +11714,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     const allUtilities = new Set(); // distinct electric utilities portfolio-wide (for the State Breakdown total row)
     let totMapped = 0, totUnmapped = 0, totNotInList = 0;
     let totIntervalYes = 0, totIntervalNo = 0;
+    let totMappedInterval = 0;
     for (const r of rows) {
       const siteName = siteNameColumn ? String(r[siteNameColumn] || '').trim() : '';
       const electricUtility = String(r.__electric__ || '').trim();
@@ -11742,6 +11743,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const interval = statusHasIntervalData(cls.rowStatus);
       if (interval === true) totIntervalYes++;
       else if (interval === false) totIntervalNo++;
+      // Sites that are BOTH mapped to a known utility and confirmed for
+      // interval data. Not derivable from the two counts above: the Status a
+      // site's interval answer comes from is read off the mapping table row,
+      // which exists for any utility found in that table — including one whose
+      // mapped value isn't a known utility, and which therefore counts as
+      // unmapped. So a site can be "has interval data" and "unmapped" at once,
+      // and intervalYes is not a subset of mapped. This is the intersection,
+      // counted rather than inferred.
+      if (cls.status === 'mapped' && interval === true) totMappedInterval++;
       // State / province breakdown across the whole portfolio (NAM + intl).
       {
         const sKey = `${rawCountry}|||${stateDisplay}`;
@@ -12125,7 +12135,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
     // Embedded in another workbook (Master Analysis): the caller writes and
     // downloads the merged file, so stop here.
-    if (targetWb) return { totalSites, mapped: totMapped, intervalYes: totIntervalYes, coverageLine };
+    if (targetWb) return {
+      totalSites, mapped: totMapped, intervalYes: totIntervalYes,
+      mappedInterval: totMappedInterval, coverageLine,
+    };
 
     sanitizeExcelWorkbook(wb);
     const buf = await wb.xlsx.writeBuffer();
