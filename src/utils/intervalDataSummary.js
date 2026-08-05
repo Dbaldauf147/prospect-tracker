@@ -22,7 +22,7 @@ export function appendIntervalDataSummary(ws, coverage) {
   const SE_GREEN_LIGHT = 'FFE6F7EC';
   const SE_SLATE = 'FF475569';
   const NCOLS = 8;
-  const { totalSites, mapped = 0, intervalYes = 0 } = coverage;
+  const { totalSites, mapped = 0, intervalYes = 0, mappedInterval = null } = coverage;
 
   // Below whatever the Summary already ended on — the sections above vary in
   // length (the top-states table has a row per state), so there is no row
@@ -46,6 +46,27 @@ export function appendIntervalDataSummary(ws, coverage) {
     { label: 'Sites mapped to a known utility', n: mapped },
     { label: 'Sites with utility interval data', n: intervalYes },
   ];
+
+  // The intersection — sites that are BOTH. It cannot be read off the two
+  // figures above by multiplying them: each is already a share of ALL sites,
+  // so 93% of 97% would apply the mapped filter twice. Nor are the two nested,
+  // which is the less obvious half: a site's interval answer comes from its
+  // row in the mapping table, and that row exists for any utility found there
+  // — including one whose mapped value is not a known utility, which counts as
+  // unmapped. So this is counted at source and passed in.
+  //
+  // Null (an older caller that doesn't supply it) omits the line rather than
+  // showing a figure derived the wrong way.
+  if (mappedInterval != null) {
+    kpis.push({
+      label: 'Sites both mapped and with interval data',
+      n: mappedInterval,
+      // The share of MAPPED sites, alongside the share of all sites. This is
+      // the "of the ones we could map, how many can we actually meter" read,
+      // and it is the number that says whether the mapping work paid off.
+      ofMapped: mapped > 0 ? Math.round((mappedInterval / mapped) * 100) : null,
+    });
+  }
 
   for (const k of kpis) {
     const pct = Math.round((k.n / totalSites) * 100);
@@ -78,7 +99,8 @@ export function appendIntervalDataSummary(ws, coverage) {
 
     ws.mergeCells(row, 1, row, NCOLS);
     const cell = ws.getCell(row, 1);
-    cell.value = `${k.label}:  ${pct}%   (${k.n.toLocaleString()} of ${totalSites.toLocaleString()} sites)`;
+    cell.value = `${k.label}:  ${pct}%   (${k.n.toLocaleString()} of ${totalSites.toLocaleString()} sites`
+      + `${k.ofMapped != null ? ` · ${k.ofMapped}% of mapped sites` : ''})`;
     cell.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_GREEN_DARK } };
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
     cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -91,9 +113,16 @@ export function appendIntervalDataSummary(ws, coverage) {
   const note = ws.getCell(row, 1);
   // The caption asked for, with the definition kept after it: without saying
   // what counts as interval data, "93%" is a number nobody can check.
+  // The old wording said interval data required being mapped to a known
+  // utility. It doesn't: the Status is read off the utility's row in the
+  // mapping table, and that row exists whether or not the mapped value is a
+  // known utility. Saying otherwise made the first two figures look nested
+  // when they are not, which is exactly what the third line now settles.
   note.value = 'How many sites % are mapped and have interval data. A site counts as having interval data when '
-    + 'its electric utility is mapped to a known utility whose Status reports interval data available. '
-    + 'Full breakdown on the Utility Mapping tabs.';
+    + 'its electric utility is found in the Utility Name Mapping table and that row\'s Status reports interval '
+    + 'data available — which can be true of a utility that has not been mapped to a known utility, so the first '
+    + 'two figures are separate shares of all sites rather than one inside the other. The third counts the sites '
+    + 'that are both. Full breakdown on the Utility Mapping tabs.';
   note.font = { name: 'Nunito Sans', italic: true, size: 9.5, color: { argb: SE_SLATE } };
   note.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
   ws.getRow(row).height = 18;
