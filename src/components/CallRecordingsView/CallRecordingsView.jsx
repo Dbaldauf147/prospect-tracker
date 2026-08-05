@@ -244,8 +244,14 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   const [source, setSource] = useState(settings.callRecordingsSource || 'granola');
   const [connected, setConnected] = useState(false);
   const [checkedConnection, setCheckedConnection] = useState(false);
-  // Granola: { configured, ok, error } from the probe, plus sync state.
+  // Granola: { configured, ok, error, timedOut } from the probe, plus
+  // sync state. `checking` is the probe being in flight — including a
+  // re-check after one failed, which is why it isn't just
+  // !checkedConnection. `probeRun` discards a probe whose answer arrived
+  // after the source moved on, since `connected` is shared with OneDrive.
   const [granolaStatus, setGranolaStatus] = useState(null);
+  const [checking, setChecking] = useState(false);
+  const probeRun = useRef(0);
   const [syncing, setSyncing] = useState(false);
   const [syncNote, setSyncNote] = useState('');
   const autoSynced = useRef(false);
@@ -434,22 +440,39 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     setSyncNote('');
   }
 
-  // Initial load. Granola: ask the API whether it's configured and the
-  // key is live (the calls themselves come from the stored records, so
-  // the list is already on screen). OneDrive: check for a live token and
-  // pull the configured folder. Local: restore the remembered folder
-  // handle, and list it straight away when permission survived.
+  // Ask the API whether Granola is configured and the key is live. Also
+  // the handler behind "Check again": a probe that timed out says nothing
+  // about Granola, so re-running it is the first thing to try.
+  const checkGranola = useCallback(async () => {
+    const run = probeRun.current + 1;
+    probeRun.current = run;
+    setChecking(true);
+    const status = await probeGranola();
+    // A newer probe (or a switch to another source) has taken over.
+    if (probeRun.current !== run) return status;
+    setGranolaStatus(status);
+    setConnected(!!(status.configured && status.ok));
+    setCheckedConnection(true);
+    setChecking(false);
+    return status;
+  }, []);
+
+  // Initial load. Granola: probe the API (the calls themselves come from
+  // the stored records, so the list is already on screen). OneDrive:
+  // check for a live token and pull the configured folder. Local: restore
+  // the remembered folder handle, and list it straight away when
+  // permission survived.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       if (source === 'granola') {
-        const status = await probeGranola();
-        if (cancelled) return;
-        setGranolaStatus(status);
-        setConnected(!!(status.configured && status.ok));
-        setCheckedConnection(true);
+        checkGranola();
         return;
       }
+      // Leaving Granola: drop any probe still in flight, so its answer
+      // can't overwrite this source's connection state.
+      probeRun.current += 1;
+      setChecking(false);
       if (source === 'local') {
         setCheckedConnection(true);
         if (!supportsDirectoryPicker()) return;
@@ -473,7 +496,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     return () => { cancelled = true; };
     // Folder changes go through applyFolder, which reloads explicitly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [getToken, source, readLocalFolder]);
+  }, [getToken, source, readLocalFolder, checkGranola]);
 
   // Release every object URL on unmount.
   useEffect(() => {
@@ -649,6 +672,12 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   // media sources from whatever the last listing returned.
   const visible = source === 'granola' ? granolaRecordings : recordings;
 
+  // Syncing needs the probe to have come back healthy — or to have told
+  // us nothing at all. A check that timed out leaves the integration's
+  // state unknown, and the sync is a better test of it than another
+  // probe: it reports its own errors, and it is what the user came for.
+  const canSync = !!granolaStatus && (granolaStatus.ok || granolaStatus.timedOut);
+
   // Which company a call was with, from who was on it. Only ever fills a
   // blank — a company the user set by hand is never overwritten by a
   // guess, on this sync or any later one.
@@ -668,6 +697,11 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
    */
   const syncGranola = useCallback(async ({ full = false } = {}) => {
     if (!uid || syncing) return;
+    // Any sync satisfies the once-per-session pull, including one the
+    // user started by hand. Without this, a manual sync that clears a
+    // timed-out status would let the auto-sync effect fire straight
+    // after it and walk the same window twice.
+    autoSynced.current = true;
     setSyncing(true);
     setError('');
     setSyncNote('Checking Granola for new calls…');
@@ -737,6 +771,10 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
       // last one had already done, so the counts read higher than the
       // number of genuinely new calls.
       const again = result.restarted ? ' The saved position had expired, so this read the window from the start.' : '';
+      // The sync just did what the probe couldn't, so a status left
+      // unknown by a timed-out check is now answered. Clearing it takes
+      // the stale warning off a page that has visibly just worked.
+      setGranolaStatus(prev => (prev?.timedOut ? { configured: true, ok: true, error: '' } : prev));
       setSyncNote(
         counts
           ? `Synced ${counts} from Granola.${more}${again}`
@@ -1202,16 +1240,28 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
           {source === 'granola' ? (
             <>
               <span className={granolaStatus?.ok ? styles.connected : styles.disconnected}>
-                {!checkedConnection ? '○ Checking Granola…'
+                {checking || !checkedConnection ? '○ Checking Granola…'
                   : granolaStatus?.ok ? '● Granola connected'
                   : granolaStatus?.configured === false ? '○ Granola not configured'
+                  : granolaStatus?.timedOut ? '○ Granola check timed out'
                   : '○ Granola unavailable'}
               </span>
+              {/* A failed check is not a dead end: it is usually the check
+                  itself that failed, so offer the retry rather than
+                  leaving the tab with nothing to press. */}
+              {checkedConnection && !checking && !granolaStatus?.ok && (
+                <button
+                  type="button"
+                  className={styles.btn}
+                  onClick={() => checkGranola()}
+                  title="Run the Granola connection check again"
+                >Check again</button>
+              )}
               <button
                 type="button"
                 className={styles.btnPrimary}
                 onClick={() => syncGranola({})}
-                disabled={syncing || !granolaStatus?.ok}
+                disabled={syncing || !canSync}
                 title="Pull calls Granola has notes for that aren't here yet"
               >{syncing ? 'Syncing…' : '⟲ Sync calls'}</button>
             </>
@@ -1248,7 +1298,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
             type="button"
             className={styles.btn}
             onClick={() => syncGranola({ full: true })}
-            disabled={syncing || !granolaStatus?.ok}
+            disabled={syncing || !canSync}
             title={`Re-read every Granola note from the last ${DEFAULT_BACKFILL_DAYS} days, not just what changed since the last sync`}
           >Re-sync everything</button>
           <button
