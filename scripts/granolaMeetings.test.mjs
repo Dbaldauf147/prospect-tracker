@@ -9,7 +9,7 @@
 // a meeting, so the rules are pinned rather than left to the UI.
 import {
   meetingFromRecord, granolaMeetingsFromRecords, isSameMeeting, mergeMeetings, meetingsOnDay,
-  rangeForDays, meetingsInRange, groupMeetingsByDay,
+  rangeForDays, meetingsInRange, groupMeetingsByDay, undatedGranolaRecords,
 } from '../src/utils/granolaMeetings.js';
 
 let passed = 0, failed = 0;
@@ -282,6 +282,42 @@ function record(overrides = {}) {
   const late = new Date(2026, 7, 5, 23, 30, 0);
   const groups = groupMeetingsByDay([{ _subject: 'Late call', _meetingStart: late.toISOString() }]);
   eq(groups[0].dayStart, new Date(2026, 7, 5).getTime(), 'a late-evening meeting stays on its own local day');
+}
+
+// --- undatedGranolaRecords -----------------------------------------------
+// The counterpart to granolaMeetingsFromRecords: the records it dropped.
+// Rendering wants them gone, explaining wants them counted — a panel
+// emptied by unreadable dates is indistinguishable from an empty
+// calendar until something says otherwise.
+{
+  const records = {
+    a: { id: 'granola:a', source: 'granola', recordedAt: '2026-08-05T14:00:00.000Z' },
+    b: { id: 'granola:b', source: 'granola', calendarEvent: { start: '2026-08-05T15:00:00.000Z' } },
+    // What an un-normalised recordedAt produces: an epoch that never
+    // became an instant, so nothing here parses as a date.
+    c: { id: 'granola:c', source: 'granola', recordedAt: '1785938400' },
+    d: { id: 'granola:d', source: 'granola', recordedAt: null },
+    e: { id: 'granola:e', source: 'granola', recordedAt: 'not a date' },
+    // Not a Granola record at all: neither list should claim it.
+    f: { id: 'local:x', source: 'local', recordedAt: null },
+  };
+
+  eq(undatedGranolaRecords(records).map(r => r.id), ['granola:c', 'granola:d', 'granola:e'], 'records with no readable date are the undated ones');
+  eq(granolaMeetingsFromRecords(records).map(r => r.id), ['granola:b', 'granola:a'], 'the datable records still become rows, newest first');
+
+  // The two halves partition the Granola records exactly — nothing is
+  // counted twice, and nothing goes missing from both.
+  const granolaCount = Object.values(records).filter(r => r.source === 'granola').length;
+  eq(
+    granolaMeetingsFromRecords(records).length + undatedGranolaRecords(records).length,
+    granolaCount,
+    'rows plus undated accounts for every Granola record',
+  );
+
+  eq(undatedGranolaRecords({}), [], 'no records means nothing undated');
+  eq(undatedGranolaRecords(null), [], 'a null record map is handled');
+  eq(undatedGranolaRecords([records.c]), [records.c], 'an array of records works like a map');
+  eq(undatedGranolaRecords({ f: records.f }), [], 'non-Granola records are never reported as undated');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
