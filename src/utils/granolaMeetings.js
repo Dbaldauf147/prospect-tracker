@@ -1,0 +1,207 @@
+// Granola notes → meetings on the Activity page.
+//
+// Granola sits in the meetings on the user's calendar and writes a note
+// for each one, which makes the notes it has synced a usable mirror of
+// that calendar — and one we already hold, since the Call Recordings
+// page stores every note as a `callRecordings` record. This module turns
+// those records into the meeting rows the Activity page renders, and
+// reconciles them with the meetings the page already gets from HubSpot
+// and from the Outlook webhook.
+//
+// Everything here is pure: no fetch, no Firestore, no React. The record
+// goes in, a row comes out. That keeps the reconciliation rules — the
+// part most likely to be wrong about somebody's real calendar — testable
+// on their own (scripts/granolaMeetings.test.mjs).
+
+// Sources ranked by how authoritative they are about the CALENDAR. The
+// Outlook webhook is the calendar itself; HubSpot holds meetings logged
+// against a deal; Granola is a notetaker that happened to be invited. So
+// when the same meeting arrives from more than one, the calendar's copy
+// is the row and the others fill in its blanks.
+const SOURCE_RANK = { outlook: 0, hubspot: 1, granola: 2 };
+
+// How far apart two copies of "the same meeting" may start. Calendar
+// sources stamp the scheduled start; Granola stamps the event it joined,
+// which can be a few minutes off when a meeting is moved in place or the
+// note is created after the fact.
+const SAME_MEETING_WINDOW_MS = 15 * 60 * 1000;
+
+function domainOf(email) {
+  const at = String(email || '').lastIndexOf('@');
+  return at >= 0 ? String(email).slice(at + 1).toLowerCase().trim() : '';
+}
+
+function msOf(value) {
+  const t = new Date(value || 0).getTime();
+  return Number.isFinite(t) && t > 0 ? t : null;
+}
+
+/** End of a meeting from its start plus a duration, when it has one. */
+function endFromDuration(start, durationSeconds) {
+  const startMs = msOf(start);
+  const secs = Number(durationSeconds);
+  if (startMs == null || !Number.isFinite(secs) || secs <= 0) return null;
+  return new Date(startMs + secs * 1000).toISOString();
+}
+
+/**
+ * One stored Granola record → an Activity meeting row, or null when the
+ * record has no usable time on it.
+ *
+ * A note with no calendar event behind it (an ad-hoc call, a voice memo)
+ * still becomes a row: it happened, it has attendees, and it belongs on
+ * an activity feed. What it doesn't get is an invented end time.
+ */
+export function meetingFromRecord(record) {
+  if (!record) return null;
+  const event = record.calendarEvent || null;
+  const start = event?.start || record.recordedAt || null;
+  if (msOf(start) == null) return null;
+
+  const end = event?.end || endFromDuration(start, record.durationSeconds);
+  const attendees = Array.isArray(record.attendees) ? record.attendees : [];
+
+  // Colleagues aren't who the meeting was WITH. The note's owner tells
+  // us which domain is "us" without hard-coding one; with no owner on
+  // the record every attendee stays, which is the safe way round.
+  const ownDomain = domainOf(record.owner?.email);
+  const external = ownDomain
+    ? attendees.filter(a => domainOf(a?.email) !== ownDomain)
+    : attendees;
+
+  const durationSeconds = Number(record.durationSeconds);
+  const startMs = msOf(start);
+  const endMs = msOf(end);
+  const durationMs = Number.isFinite(durationSeconds) && durationSeconds > 0
+    ? durationSeconds * 1000
+    : (startMs != null && endMs != null && endMs > startMs ? endMs - startMs : null);
+
+  return {
+    id: record.id || (record.granolaNoteId ? `granola:${record.granolaNoteId}` : ''),
+    _type: 'meeting',
+    _source: 'granola',
+    _subject: event?.title || record.name || 'Granola call',
+    _timestamp: start,
+    _meetingStart: start,
+    _meetingEnd: end,
+    _location: event?.location || event?.conferenceUrl || '',
+    _attendees: external.map(a => a?.name || a?.email).filter(Boolean).join(', '),
+    _attendeeDetails: external,
+    _attendeeCount: external.length,
+    // An internal meeting, not a meeting nobody was in. The page says so
+    // rather than showing "No attendees" over a room full of colleagues.
+    _internalOnly: attendees.length > 0 && external.length === 0,
+    _externalEmails: external.map(a => String(a?.email || '').toLowerCase()).filter(Boolean),
+    // Whatever the Call Recordings page matched this call to. Blank when
+    // it never matched, which the Activity page fills from its own
+    // domain → company index.
+    _company: record.company || '',
+    _granolaUrl: record.granolaUrl || '',
+    _granolaSummary: record.granolaSummary || '',
+    _organizer: event?.organizer || record.owner || null,
+    _duration: durationMs,
+    _direction: '',
+    _status: '',
+    _to: external.map(a => a?.email).filter(Boolean).join(', '),
+    _toName: '',
+    _from: '',
+    _fromName: '',
+    _cc: '',
+  };
+}
+
+/** Every stored Granola record that describes a meeting, newest first. */
+export function granolaMeetingsFromRecords(records) {
+  const list = Array.isArray(records) ? records : Object.values(records || {});
+  return list
+    .filter(r => r?.source === 'granola')
+    .map(meetingFromRecord)
+    .filter(Boolean)
+    .sort((a, b) => msOf(b._meetingStart) - msOf(a._meetingStart));
+}
+
+// Titles are compared with the noise stripped: calendar clients prepend
+// their own markers, and Granola drops them. What's left has to match
+// exactly or contain the other, so two genuinely different meetings that
+// start at the same minute stay two rows.
+function titleKey(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/^(canceled|cancelled|updated|fw|fwd|re|accepted|declined|tentative):\s*/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function titlesMatch(a, b) {
+  const ka = titleKey(a);
+  const kb = titleKey(b);
+  if (!ka || !kb) return false;
+  if (ka === kb) return true;
+  const [longer, shorter] = ka.length >= kb.length ? [ka, kb] : [kb, ka];
+  return shorter.length >= 6 && longer.includes(shorter);
+}
+
+/** Are these two rows the same real-world meeting seen from two sources? */
+export function isSameMeeting(a, b) {
+  if (a?._source === b?._source) return false;
+  const ta = msOf(a?._meetingStart);
+  const tb = msOf(b?._meetingStart);
+  if (ta == null || tb == null) return false;
+  if (Math.abs(ta - tb) > SAME_MEETING_WINDOW_MS) return false;
+  return titlesMatch(a._subject, b._subject);
+}
+
+// Fields a lower-ranked source may fill in on the surviving row, but
+// never overwrite. Granola's note link is the reason this merge exists:
+// without it the calendar row and the notes for that meeting would sit
+// on the page as two separate things.
+const FILLABLE = [
+  '_location', '_company', '_granolaUrl', '_granolaSummary',
+  '_meetingEnd', '_duration', '_organizer',
+];
+
+/**
+ * Collapse the same meeting seen from several sources into one row.
+ *
+ * The highest-ranked source keeps the row (it is the one the user's
+ * calendar agrees with); every other copy donates whatever the row is
+ * missing and is dropped. `_sources` records who contributed, so the
+ * page can badge a row as coming from more than one place.
+ *
+ * A meeting only one source knows about passes through untouched — this
+ * never drops anything, it only ever merges duplicates.
+ */
+export function mergeMeetings(rows) {
+  const byRank = [...(rows || [])].filter(Boolean).sort(
+    (a, b) => (SOURCE_RANK[a._source] ?? 99) - (SOURCE_RANK[b._source] ?? 99),
+  );
+
+  const merged = [];
+  for (const row of byRank) {
+    const target = merged.find(m => isSameMeeting(m, row));
+    if (!target) {
+      merged.push({ ...row, _sources: [row._source].filter(Boolean) });
+      continue;
+    }
+    if (row._source && !target._sources.includes(row._source)) target._sources.push(row._source);
+    for (const field of FILLABLE) {
+      if (!target[field] && row[field]) target[field] = row[field];
+    }
+    if (!target._attendeeDetails?.length && row._attendeeDetails?.length) {
+      target._attendeeDetails = row._attendeeDetails;
+    }
+    if (!target._attendees && row._attendees) target._attendees = row._attendees;
+  }
+
+  return merged.sort((a, b) => (msOf(a._meetingStart) ?? 0) - (msOf(b._meetingStart) ?? 0));
+}
+
+/** The rows that start inside the local day containing `now`. */
+export function meetingsOnDay(rows, now = new Date()) {
+  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const dayEnd = dayStart + 24 * 60 * 60 * 1000;
+  return (rows || []).filter((r) => {
+    const t = msOf(r?._meetingStart);
+    return t != null && t >= dayStart && t < dayEnd;
+  });
+}
