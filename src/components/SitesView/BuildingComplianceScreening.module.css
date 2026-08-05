@@ -953,27 +953,6 @@
   overflow: hidden;
   background: var(--color-surface, #fff);
 }
-.rmTable { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
-.rmTable thead th {
-  background: #009530;
-  color: #fff;
-  font-weight: 800;
-  text-align: center;
-  padding: 0.5rem 0.7rem;
-  font-size: 0.66rem;
-  letter-spacing: 0.03em;
-}
-.rmTable thead th:first-child { text-align: left; }
-.rmTable tbody td {
-  padding: 0.45rem 0.7rem;
-  border-bottom: 1px solid var(--color-border-light, #F1F5F9);
-  text-align: center;
-  color: var(--color-text-secondary, #475569);
-  font-variant-numeric: tabular-nums;
-}
-.rmTable tbody tr:nth-child(even) td { background: #FAFCFB; }
-.rmTable td.rmDate { text-align: left; font-weight: 800; color: var(--color-text, #0F172A); white-space: nowrap; }
-.rmTable td.rmTotal { font-weight: 900; color: var(--color-text, #0F172A); }
 .rmChip {
   display: inline-block;
   min-width: 24px;
@@ -983,14 +962,6 @@
   font-weight: 800;
   font-size: 0.72rem;
 }
-.rmSum td {
-  background: #E6F7EC;
-  font-weight: 900;
-  color: var(--color-text, #0F172A);
-  border-top: 2px solid #3DCD58;
-}
-.rmSum td:first-child { text-align: left; }
-
 /* Utility feeds (WBUDC). */
 .wbudcNote {
   font-size: 0.7rem;
@@ -1109,17 +1080,13 @@
   .reqRequired,
   .reqConditional,
   .reqOptional { white-space: normal !important; }
-  .rmTable { font-size: 0.68rem; }
-  .rmTable thead th,
-  .rmTable tbody td { padding: 0.35rem 0.5rem; }
   .catDue,
   .catFine,
   .catFineNone,
   .govIdCell { white-space: normal !important; }
 
   /* Repeat table headers on every sheet a long table spans. */
-  .siteTable thead,
-  .rmTable thead {
+  .siteTable thead {
     display: table-header-group;
   }
 
@@ -1135,8 +1102,7 @@
   .tlChart,
   .disclaimerBox,
   .sizeNote,
-  .siteTable tr,
-  .rmTable tr {
+  .siteTable tr {
     break-inside: avoid;
   }
 

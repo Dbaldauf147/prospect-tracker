@@ -914,26 +914,6 @@ export function BuildingComplianceScreening({
       undated,
     };
   }, [roadmap, results, todayTime]);
-  // Per-jurisdiction fine exposure merged across the three categories, worst
-  // first. The dashboard's bars say what each mandate is worth on its own;
-  // this says what a city is worth in total, which is the figure a portfolio
-  // conversation actually opens on.
-  const penaltyRows = useMemo(() => {
-    const map = new Map();
-    for (const c of CATEGORIES) {
-      for (const { government, penalty } of penaltyByOrdinance(results, c)) {
-        if (!map.has(government)) map.set(government, { bbs: 0, audits: 0, bps: 0 });
-        map.get(government)[c] = penalty;
-      }
-    }
-    const rows = [...map.entries()]
-      .map(([government, v]) => ({ government, ...v, total: v.bbs + v.audits + v.bps }))
-      .sort((a, b) => b.total - a.total);
-    const totals = rows.reduce((s, r) => ({
-      bbs: s.bbs + r.bbs, audits: s.audits + r.audits, bps: s.bps + r.bps, total: s.total + r.total,
-    }), { bbs: 0, audits: 0, bps: 0, total: 0 });
-    return { rows, totals };
-  }, [results]);
   // Whole Building Utility Data Collection reach: of the sites carrying a BBS
   // or BPS obligation, which utilities serve them.
   const utilityFeeds = useMemo(() => ({
@@ -1474,39 +1454,6 @@ export function BuildingComplianceScreening({
                 </div>
               ))}
             </div>
-
-            {/* What each jurisdiction is worth in fines across all three
-                mandates, worst first. */}
-            {penaltyRows.rows.length > 0 && (
-              <>
-                <div className={styles.sectionTitle}>Penalty Exposure by Jurisdiction</div>
-                <div className={styles.panelWrap}>
-                  <table className={styles.rmTable}>
-                    <thead>
-                      <tr><th>Jurisdiction</th><th>BBS</th><th>Energy Audits</th><th>BPS</th><th>Total / yr</th></tr>
-                    </thead>
-                    <tbody>
-                      {penaltyRows.rows.map(r => (
-                        <tr key={r.government}>
-                          <td className={styles.rmDate}>{r.government}</td>
-                          <td>{r.bbs ? usd(r.bbs) : ''}</td>
-                          <td>{r.audits ? usd(r.audits) : ''}</td>
-                          <td>{r.bps ? usd(r.bps) : ''}</td>
-                          <td className={styles.rmTotal}>{usd(r.total)}</td>
-                        </tr>
-                      ))}
-                      <tr className={styles.rmSum}>
-                        <td>All jurisdictions</td>
-                        <td>{usd(penaltyRows.totals.bbs)}</td>
-                        <td>{usd(penaltyRows.totals.audits)}</td>
-                        <td>{usd(penaltyRows.totals.bps)}</td>
-                        <td className={styles.rmTotal}>{usd(penaltyRows.totals.total)}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
 
             {/* BPS — Prioritization: one row per (deadline, jurisdiction) over
                 the BPS-eligible sites. Mirrors the compliance exports and the
