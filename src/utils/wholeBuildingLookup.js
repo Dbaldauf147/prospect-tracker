@@ -166,15 +166,37 @@ export async function loadWholeBuildingLookup() {
   // included and Xcel's say it isn't), so picking one would not be a near miss,
   // it would be the wrong answer stated as fact.
   function terms(zip, utilityName) {
-    const rows = rowsAt(zip);
-    if (!rows.length) return blanks();
+    return values2(zip, utilityName).values;
+  }
 
-    if (utilityKey(utilityName)) {
-      const hits = rows.filter(r => sameUtility(utilityName, nameOf(r)));
-      if (hits.length) return values(hits.find(r => r.predominant) || hits[0]);
+  // terms(), plus how it got there. Blank whole-building columns are otherwise
+  // unreadable: the reference itself writes "Not Available" all over these
+  // fields, so a row of blanks could be a utility it has nothing to say about,
+  // one it has never heard of, or a zip it doesn't cover — three different
+  // things, only one of which is a data problem worth chasing.
+  //
+  // `status` is one of:
+  //   'matched'   — the utility is in the file at this zip, by name.
+  //   'sole'      — no name match, but the zip is served by one utility, so
+  //                 that one answered. Right, but on the zip rather than the name.
+  //   'no-utility'— the zip is in the file and this utility isn't one of its.
+  //   'no-zip'    — the file doesn't cover this zip at all.
+  //   'unnamed'   — nothing on the site to match with.
+  function values2(zip, utilityName) {
+    const rows = rowsAt(zip);
+    if (!rows.length) return { values: blanks(), status: 'no-zip', matchedName: '' };
+    if (!utilityKey(utilityName)) {
+      return rows.length === 1
+        ? { values: values(rows[0]), status: 'sole', matchedName: nameOf(rows[0]) }
+        : { values: blanks(), status: 'unnamed', matchedName: '' };
     }
-    if (rows.length === 1) return values(rows[0]);
-    return blanks();
+    const hits = rows.filter(r => sameUtility(utilityName, nameOf(r)));
+    if (hits.length) {
+      const hit = hits.find(r => r.predominant) || hits[0];
+      return { values: values(hit), status: 'matched', matchedName: nameOf(hit) };
+    }
+    if (rows.length === 1) return { values: values(rows[0]), status: 'sole', matchedName: nameOf(rows[0]) };
+    return { values: blanks(), status: 'no-utility', matchedName: '' };
   }
 
   // The utility serving `zip` for a commodity ('electric' | 'gas' | 'water'),
@@ -219,8 +241,17 @@ export async function loadWholeBuildingLookup() {
     return { name: nameOf(hit) || recorded, state: hit.state, predominant: hit.predominant, source: 'reference' };
   }
 
-  return { terms, utility };
+  return { terms, termsWithMatch: values2, utility };
 }
+
+// How a row's whole-building match reads in an export.
+export const MATCH_LABEL = {
+  matched: 'Matched',
+  sole: 'Matched on zip — only utility there',
+  'no-utility': 'Utility not in file',
+  'no-zip': 'Zip not in file',
+  unnamed: 'No utility on site',
+};
 
 // Re-source a screened site's utilities from the reference, for the callers
 // that read them off the site rather than out of the workbook — the WBUDC
