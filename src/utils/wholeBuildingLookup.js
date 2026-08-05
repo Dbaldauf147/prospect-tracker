@@ -43,6 +43,78 @@ const meters = (v) => {
   return s === 'yes' ? 'yes' : s === 'no' ? 'no' : '';
 };
 
+// The commodities in the order the site table shows them, with the label for
+// each column head. Steam is on the reference but not here: no site field
+// carries a steam utility, so there would be nothing to resolve against.
+export const WB_COMMODITIES = [
+  { key: 'electric', label: 'Electric' },
+  { key: 'gas', label: 'Gas' },
+  { key: 'water', label: 'Water' },
+];
+
+// `meters` collapses everything it doesn't recognise to '', which is right for
+// deciding whether a utility carries a commodity. Displaying the answer needs
+// one more distinction: the reference occasionally writes a qualified yes
+// ("Yes (4/50)", "Yes(5)") or something else entirely, and flattening those to
+// "unknown" would throw away the only detail on the row.
+function verdictFrom(value) {
+  const metered = meters(value);
+  if (metered) return metered;
+  const s = String(value || '').trim().toLowerCase();
+  if (!s || s === 'not available' || s === 'n/a') return 'unknown';
+  if (s.startsWith('y')) return 'yes';
+  if (s.startsWith('n')) return 'no';
+  return 'other';
+}
+
+/**
+ * Whether the utilities serving one site release aggregated whole-building
+ * data, per commodity — for the columns on the site-by-site table.
+ *
+ * Each commodity is answered by its OWN utility. Electric and gas are usually
+ * different companies, and the DC sites show why that matters: Pepco says yes
+ * to electric and no to gas, Washington Gas says yes to gas. A single lookup
+ * per site would get half of every such row wrong.
+ *
+ * `lookup` is what loadWholeBuildingLookup resolves to, or null while it is
+ * still loading — in which case every commodity comes back 'unknown' rather
+ * than throwing, and the table renders placeholders.
+ *
+ * Returns { electric, gas, water } of { verdict, value, utility }, where
+ * verdict is 'yes' | 'no' | 'other' | 'unknown'. 'unknown' is NOT 'no': the
+ * reference says "Not Available" for 2,024 of its 2,137 utilities, and
+ * rendering that as a refusal would turn an open question into a closed door.
+ */
+export function wholeBuildingForSite(lookup, site) {
+  const out = {};
+  const blank = { verdict: 'unknown', value: '', utility: '' };
+  if (!lookup || typeof lookup.terms !== 'function' || !site) {
+    for (const c of WB_COMMODITIES) out[c.key] = { ...blank };
+    return out;
+  }
+
+  // One resolve per distinct utility name rather than one per commodity: a
+  // site whose electric and gas are the same company is the common case, and
+  // terms() walks the zip map on every call.
+  const cache = new Map();
+  const termsFor = (name) => {
+    const k = String(name || '');
+    if (!cache.has(k)) cache.set(k, lookup.terms(site.zip, k) || {});
+    return cache.get(k);
+  };
+
+  for (const c of WB_COMMODITIES) {
+    const utility = String(site[COMMODITY_FIELD[c.key]] || '').trim();
+    // With no utility recorded for this commodity there is nothing to ask
+    // about. The zip alone would answer for whichever utility happens to
+    // serve it, which is a different question than the column is asking.
+    if (!utility) { out[c.key] = { ...blank }; continue; }
+    const value = termsFor(utility)[COMMODITY_COLUMN[c.key]] || '';
+    out[c.key] = { verdict: verdictFrom(value), value, utility };
+  }
+  return out;
+}
+
 // Words that describe what a utility does rather than which one it is. Dropped
 // from both sides before comparing — "Fort Collins Utilities" and "City of
 // Fort Collins" are the same company, and only "fort collins" says so.
