@@ -863,21 +863,130 @@
   line-height: 1.5;
 }
 
-/* Roadmap: the deadline table beside the per-category column charts. */
-.roadmapGrid {
+/* Roadmap — summary tiles, one time-proportional timeline, then the
+   deadlines as milestones. */
+.rmSummary {
   display: grid;
-  grid-template-columns: 1.05fr 1fr;
-  gap: 0.9rem;
-  align-items: start;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
 }
-.tlGrid { display: grid; grid-template-columns: 1fr; gap: 0.6rem; }
-.tlCard {
+.rmSumTile {
   border: 1px solid var(--color-border, #E2E8F0);
+  border-left: 3px solid #CBD5E1;
   border-radius: 8px;
-  padding: 0.4rem 0.6rem;
   background: var(--color-surface, #fff);
+  padding: 0.45rem 0.7rem 0.5rem;
 }
-.tlTitle { font-size: 0.7rem; font-weight: 800; margin-bottom: 0.1rem; }
+/* The one tile anyone looks at first. */
+.rmSumNext {
+  border-left-color: #3DCD58;
+  background: linear-gradient(90deg, #F2FCF5 0%, var(--color-surface, #fff) 60%);
+}
+.rmSumLbl {
+  font-size: 0.58rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted, #94A3B8);
+}
+.rmSumVal {
+  font-size: 1.15rem;
+  font-weight: 900;
+  letter-spacing: -0.3px;
+  color: var(--color-text, #0F172A);
+  line-height: 1.25;
+}
+.rmSumSub { font-size: 0.64rem; color: var(--color-text-secondary, #5A6B7E); }
+
+.tlHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0.75rem 0;
+}
+.tlHeadTitle {
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted, #64748B);
+}
+.tlLegend { display: flex; gap: 0.7rem; }
+.tlKey {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.64rem;
+  font-weight: 700;
+  color: var(--color-text-secondary, #5A6B7E);
+}
+.tlSwatch { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.tlChart { padding: 0.1rem 0.75rem 0.2rem; }
+
+/* Milestones: one row per deadline, hung off a spine so the list reads as a
+   sequence rather than as a table that happens to be sorted by date. */
+.mileList {
+  list-style: none;
+  margin: 0;
+  padding: 0.3rem 0.75rem 0.7rem;
+  position: relative;
+  border-top: 1px solid var(--color-border-light, #F1F5F9);
+}
+.mileList::before {
+  content: '';
+  position: absolute;
+  left: calc(0.75rem + 4px);
+  top: 1rem;
+  bottom: 1.1rem;
+  width: 2px;
+  background: var(--color-border, #E2E8F0);
+}
+.mileRow {
+  display: grid;
+  /* The bar is capped rather than stretched across the row: at full width a
+     single busy deadline turned into a 1000px stripe that said less than a
+     short one would. */
+  grid-template-columns: 10px 74px 88px minmax(70px, 200px) 1fr 62px;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.32rem 0;
+  position: relative;
+}
+.mileDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #3DCD58;
+  box-shadow: 0 0 0 3px var(--color-surface, #fff);
+  z-index: 1;
+}
+.mileDate { font-size: 0.74rem; font-weight: 800; color: var(--color-text, #0F172A); white-space: nowrap; }
+.mileWhen { font-size: 0.66rem; color: var(--color-text-secondary, #5A6B7E); white-space: nowrap; }
+.mileBar { display: flex; gap: 2px; height: 10px; align-items: center; }
+.mileSeg { height: 10px; border-radius: 2px; min-width: 3px; }
+/* Chips sit against the bar, not against the far edge — the two are one
+   reading of the same date. */
+.mileChips { display: flex; gap: 0.3rem; flex-wrap: wrap; justify-content: flex-start; }
+.mileTotal { font-size: 0.76rem; font-weight: 900; color: var(--color-text, #0F172A); text-align: right; white-space: nowrap; }
+.mileTotalUnit { font-size: 0.6rem; font-weight: 700; color: var(--color-text-muted, #94A3B8); }
+
+/* Passed: still on the roadmap — a missed deadline doesn't stop mattering —
+   but quietened so the eye lands on what's ahead. */
+.milePast { opacity: 0.62; }
+.milePast .mileDot { background: var(--color-text-muted, #94A3B8); }
+/* The next one up, marked on the row as well as in the summary tile. */
+.mileNext { background: #F2FCF5; border-radius: 6px; }
+.mileNext .mileDot { box-shadow: 0 0 0 3px #F2FCF5, 0 0 0 5px #3DCD5855; }
+
+.rmFootnote {
+  font-size: 0.66rem;
+  color: var(--color-text-secondary, #5A6B7E);
+  margin-top: 0.35rem;
+  line-height: 1.5;
+}
 
 /* Shared shell for the report's standalone tables. */
 .panelWrap {
@@ -1043,11 +1152,15 @@
 
   .wrapper { gap: 0.6rem; }
 
-  /* Cards, panels and rows survive whole or move to the next sheet. */
+  /* Cards, charts and rows survive whole or move to the next sheet. The
+     panels themselves are free to flow: the roadmap panel carries a
+     deadline-per-row list that can outrun a sheet on its own, and holding it
+     together would only push a mostly-empty page ahead of it. */
   .kpiTile,
   .dashCard,
-  .tlCard,
-  .panelWrap,
+  .rmSumTile,
+  .tlChart,
+  .mileRow,
   .disclaimerBox,
   .sizeNote,
   .siteTable tr,
@@ -1055,11 +1168,16 @@
     break-inside: avoid;
   }
 
-  /* A heading never prints as the last line on a sheet. */
+  /* A heading never prints as the last line on a sheet. The timeline's own
+     header and legend go with the chart they label — a sheet ending on
+     "Sites falling due over time" above an empty box is worse than a page
+     break one element earlier. */
   .sectionTitle,
-  .bpsTitle {
+  .bpsTitle,
+  .tlHead {
     break-after: avoid;
   }
+  .tlChart { break-before: avoid; }
 
   /* Hover-only affordances read as noise on paper. */
   .siteTable tbody tr:hover td { background: inherit; }
