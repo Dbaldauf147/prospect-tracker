@@ -239,25 +239,49 @@ export function recordingFromStored(record) {
  * Detail (the transcript) is fetched only for notes that are new or have
  * changed since they were last stored, so a routine sync of a workspace
  * with hundreds of notes costs a handful of requests rather than one per
- * note. `shouldFetchDetail` decides that; returning false still reports
- * the note so its metadata stays current.
+ * note. `shouldFetchDetail` decides that; returning false skips the note
+ * entirely and counts it in `skipped`. That only happens when nothing
+ * about the note has changed, so there is no metadata to refresh either.
  *
- * Returns { imported, updated, skipped, errors, latest } where `latest`
- * is the newest updated_at seen — the watermark for the next sync.
+ * `startCursor` resumes a walk that ran into MAX_PAGES last time. Without
+ * it a workspace with more notes than MAX_PAGES pages can hold could
+ * never finish: the watermark only advances on a complete sync, so every
+ * retry re-walked the same first pages and stopped in the same place.
+ *
+ * Returns { imported, updated, skipped, errors, latest, truncated,
+ * nextCursor, restarted }. `latest` is the newest updated_at seen — the
+ * watermark for the next sync — and `nextCursor` is where to pick up when
+ * `truncated` is set.
  */
 export async function syncGranolaCalls({
   updatedAfter = '',
   createdAfter = '',
+  startCursor = '',
   shouldFetchDetail = () => true,
   onCall,
   onProgress,
 } = {}) {
   const result = { imported: 0, updated: 0, skipped: 0, errors: [], latest: updatedAfter || '' };
-  let cursor = '';
+  let cursor = startCursor;
   let pages = 0;
+  // Set when a stored cursor turned out to be stale and the window had to
+  // be walked from the start instead.
+  let restarted = false;
 
   do {
-    const page = await fetchGranolaPage({ cursor, updatedAfter, createdAfter });
+    let page;
+    try {
+      page = await fetchGranolaPage({ cursor, updatedAfter, createdAfter });
+    } catch (err) {
+      // Granola's cursors do not live forever. A stored one that has gone
+      // stale would wedge every future sync on the same error, so give up
+      // on it once and walk the window from the beginning — re-covering
+      // ground is cheap next to a sync that can never run again.
+      if (pages > 0 || !cursor) throw err;
+      cursor = '';
+      restarted = true;
+      page = await fetchGranolaPage({ cursor, updatedAfter, createdAfter });
+    }
     pages += 1;
     for (const summary of page.calls) {
       if (!summary.noteId) continue;
@@ -282,6 +306,8 @@ export async function syncGranolaCalls({
   } while (cursor && pages < MAX_PAGES);
 
   result.truncated = !!cursor;
+  result.nextCursor = cursor;
+  result.restarted = restarted;
   return result;
 }
 
