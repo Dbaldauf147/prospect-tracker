@@ -47,12 +47,15 @@ import {
   probeGranola, syncGranolaCalls, recordPatchFor, recordingFromStored,
   matchCompanyForCall, daysAgoIso, describeMissingKey, diagnoseEmptySync, DEFAULT_BACKFILL_DAYS,
 } from '../../utils/granolaCalls';
-import { talkTimeSplit, formatShare } from '../../utils/talkTime';
+import { talkTimeSplit, talkTimeSides, formatShare, formatTalkValue } from '../../utils/talkTime';
 import {
   callHistoryRows, filterHistoryRows, historyTotals, STAGE_LABELS,
   cacheableHistoryRows, shouldReplaceCache,
 } from '../../utils/callHistory';
 import { loadCallHistoryCache, saveCallHistoryCache } from '../../utils/callHistoryCache';
+import {
+  callBreakdownRows, filterBreakdownRows, breakdownAverages,
+} from '../../utils/callBreakdown';
 import { DataTable } from '../common/DataTable';
 import { buildCompanyGuessIndex } from '../../utils/companyGuess';
 import { loadOppsFromCache } from '../../utils/oppsCache';
@@ -64,6 +67,10 @@ const TOKEN_KEY = 'onedrive-access-token';
 const REFRESH_KEY = 'onedrive-refresh-token';
 const EXPIRY_KEY = 'onedrive-token-expiry';
 const DEFAULT_FOLDER = '/Recordings';
+// The subtabs, as a guard on the persisted setting: a value from an older
+// build (or a hand-edited settings doc) must fall back to the card list
+// rather than leaving the page rendering nothing.
+const SUBTABS = new Set(['calls', 'history', 'breakdown']);
 // Refresh a little early so a long page session doesn't hit a 401 mid-click.
 const EXPIRY_SKEW_MS = 120000;
 const POLL_MS = 5000;
@@ -240,6 +247,140 @@ function speakerName(label) {
   return /^[A-Za-z0-9]$/.test(s) ? `Speaker ${s}` : s;
 }
 
+// One call's talk-time breakdown, for the Breakdown subtab.
+//
+// The headline is deliberately two numbers and not a chart: "was that
+// call me or them" is a single comparison, and a per-speaker chart makes
+// the reader do the summing that the question is about. The speaker list
+// under it is the detail behind those two numbers, in the same order the
+// bar draws them.
+function BreakdownDetail({ row }) {
+  // Null whenever the transcript can't say which turns were the user's —
+  // then the notice explains why instead of a bar implying it can.
+  const sides = talkTimeSides(row.split);
+  const speakers = row.split?.speakers || [];
+  const basis = row.basis;
+  const total = row.split?.total || 0;
+  const meta = [fmtWhen(row.recordedAt), fmtDuration(row.durationSeconds), row.sourceLabel]
+    .filter(Boolean).join(' · ');
+  // "3:58 of 20:00", or "17 of 19 words" — the unit is said once, on the
+  // total, so a words split still can't be mistaken for a clock.
+  const ofTotal = value => (basis === 'words'
+    ? `${Math.round(value).toLocaleString()} of ${formatTalkValue(total, basis)}`
+    : `${formatTalkValue(value, basis)} of ${formatTalkValue(total, basis)}`);
+
+  return (
+    <>
+      <div className={styles.breakdownHead}>
+        <span className={styles.breakdownTitle} title={row.name}>{row.name}</span>
+        {meta && <span className={styles.meta}>{meta}</span>}
+      </div>
+      <div className={styles.breakdownChips}>
+        {row.company && <span className={styles.linkChip} data-static="true">{row.company}</span>}
+        {/* Titled because the chip truncates a long opp name. */}
+        {row.oppLabel && <span className={styles.oppChip} title={row.oppLabel}>◆ {row.oppLabel}</span>}
+        {row.attendees && (
+          <span className={styles.meta} title={row.attendees}>with {row.attendees}</span>
+        )}
+        {row.granolaUrl && (
+          <a className={styles.historyLink} href={row.granolaUrl} target="_blank" rel="noopener noreferrer">
+            Open in Granola ↗
+          </a>
+        )}
+      </div>
+
+      {sides ? (
+        <>
+          <div className={styles.tiles}>
+            <div className={styles.tile} data-you="true">
+              <span className={styles.tileLabel}>You spoke</span>
+              <span className={styles.tileValue}>{formatShare(sides.you.share)}</span>
+              <span className={styles.tileSub}>
+                {ofTotal(sides.you.value)}
+                {sides.you.turns > 0 && ` · ${sides.you.turns} turn${sides.you.turns === 1 ? '' : 's'}`}
+              </span>
+            </div>
+            <div className={styles.tile}>
+              <span className={styles.tileLabel}>
+                {sides.others.speakers === 1 ? 'They spoke' : 'Everyone else'}
+              </span>
+              <span className={styles.tileValue}>{formatShare(sides.others.share)}</span>
+              <span className={styles.tileSub}>
+                {sides.others.speakers === 0
+                  ? 'Nobody else spoke on this transcript'
+                  : <>
+                      {ofTotal(sides.others.value)}
+                      {` · ${sides.others.speakers} ${sides.others.speakers === 1 ? 'person' : 'people'}`}
+                    </>}
+              </span>
+            </div>
+          </div>
+
+          {/* Two segments, not a stack of speakers: the bar is the same
+              comparison the tiles state, drawn to scale. */}
+          <div className={styles.sidesBar}>
+            <div
+              className={styles.sidesSegment}
+              data-you="true"
+              style={{ flexGrow: sides.you.share }}
+              title={`You: ${formatShare(sides.you.share)}`}
+            />
+            <div
+              className={styles.sidesSegment}
+              style={{ flexGrow: sides.others.share }}
+              title={`Everyone else: ${formatShare(sides.others.share)}`}
+            />
+          </div>
+        </>
+      ) : (
+        <div className={styles.notice}>{row.blockedReason}</div>
+      )}
+
+      {/* Shown even when the user's own share is unknown: who spoke is
+          still worth reading, and it is the evidence for the notice
+          above it. */}
+      {speakers.length > 0 && (
+        <div className={styles.speakerList}>
+          <div className={styles.breakdownLabel}>
+            Speaker by speaker
+            {basis === 'words'
+              ? ' — share of words spoken'
+              : ' — share of talking time'}
+          </div>
+          {speakers.map(s => (
+            <div key={s.name} className={styles.speakerRow}>
+              <span className={styles.speakerName} data-you={s.isYou ? 'true' : 'false'}>{s.name}</span>
+              <span
+                className={styles.speakerTrack}
+                title={`${s.name}: ${formatShare(s.share)} of the call`}
+              >
+                <span
+                  className={styles.speakerFill}
+                  data-you={s.isYou ? 'true' : 'false'}
+                  style={{ width: `${Math.max(s.share * 100, 0.6)}%` }}
+                />
+              </span>
+              <span className={styles.speakerPct}>{formatShare(s.share)}</span>
+              <span className={styles.speakerValue}>{formatTalkValue(s.value, basis)}</span>
+              <span className={styles.speakerTurns}>
+                {s.turns} turn{s.turns === 1 ? '' : 's'} · longest {formatTalkValue(s.longest, basis)}
+              </span>
+            </div>
+          ))}
+          {/* A words split is a different measurement, so it never passes
+              silently as talk time. */}
+          {basis === 'words' && (
+            <div className={styles.breakdownCaveat}>
+              This transcript carried no timings, so every share here is a share of words — someone who
+              talks fast and says little will look quieter than they were.
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
 // Seconds → m:ss, for the jump-to links on transcript search results.
 function fmtClock(sec) {
   if (sec == null || !Number.isFinite(Number(sec))) return '';
@@ -256,9 +397,15 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   const [source, setSource] = useState(settings.callRecordingsSource || 'granola');
   // 'calls' is the card list, which shows what the ACTIVE source can see
   // right now. 'history' is every call ever stored, whatever it came from
-  // and whether or not that source is still reachable.
-  const [tab, setTab] = useState(settings.callRecordingsTab === 'history' ? 'history' : 'calls');
+  // and whether or not that source is still reachable. 'breakdown' picks
+  // one stored call and reports who did the talking on it.
+  const [tab, setTab] = useState(SUBTABS.has(settings.callRecordingsTab) ? settings.callRecordingsTab : 'calls');
   const [historyQuery, setHistoryQuery] = useState('');
+  const [breakdownQuery, setBreakdownQuery] = useState('');
+  // Which call the Breakdown subtab is showing. Empty means "the newest
+  // one", resolved below against the filtered list rather than stored, so
+  // a filter that hides the pick lands on a call that is actually there.
+  const [breakdownPick, setBreakdownPick] = useState('');
   const [connected, setConnected] = useState(false);
   const [checkedConnection, setCheckedConnection] = useState(false);
   // Granola: { configured, ok, error, timedOut } from the probe, plus
@@ -763,6 +910,27 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     });
   }, [uid, recordsLoaded, recordsReadOk, historyCacheLoaded, liveHistoryRows, historyCache]);
   const [expandedHistory, setExpandedHistory] = useState([]);
+
+  // ---- Breakdown -------------------------------------------------------
+  // One call at a time: how much of it was the user talking, and how much
+  // was everyone else. Every number is derived from the turns already
+  // stored, so nothing is fetched and nothing can go stale against the
+  // transcript it describes.
+  const breakdownRows = useMemo(() => callBreakdownRows(records), [records]);
+  const filteredBreakdown = useMemo(
+    () => filterBreakdownRows(breakdownRows, breakdownQuery),
+    [breakdownRows, breakdownQuery],
+  );
+  // The average is over everything transcribed, not the filtered list: it
+  // is what the picked call is being compared against, and a mean that
+  // moved with the search box would compare it against a moving target.
+  const breakdownStats = useMemo(() => breakdownAverages(breakdownRows), [breakdownRows]);
+  // Falls back to the newest match so the panel is never blank while
+  // there is something to show — including right after a filter drops
+  // whatever was picked.
+  const pickedBreakdown = useMemo(() => (
+    filteredBreakdown.find(r => r.id === breakdownPick) || filteredBreakdown[0] || null
+  ), [filteredBreakdown, breakdownPick]);
 
   function toggleHistoryRow(row) {
     setExpandedHistory(ids => (
@@ -1569,6 +1737,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
         {[
           { key: 'calls', label: 'Calls', count: visible.length },
           { key: 'history', label: 'History', count: historyRows.length },
+          { key: 'breakdown', label: 'Call breakdown', count: breakdownRows.length },
         ].map(t => (
           <button
             key={t.key}
@@ -1577,7 +1746,9 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
             onClick={() => chooseTab(t.key)}
             title={t.key === 'calls'
               ? 'The calls this source can see right now'
-              : 'Every call ever stored, whatever it came from'}
+              : t.key === 'history'
+                ? 'Every call ever stored, whatever it came from'
+                : 'Pick a call and see how much of it was you talking'}
           >
             {t.label}
             <span className={styles.subtabCount}>{t.count}</span>
@@ -1733,10 +1904,118 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
         </div>
       )}
 
+      {tab === 'breakdown' && (
+        <div className={styles.breakdownBody}>
+          <div className={styles.breakdownPicker}>
+            <input
+              className={styles.input}
+              style={{ minWidth: 0, width: '100%' }}
+              type="search"
+              placeholder="Search calls, companies, attendees…"
+              value={breakdownQuery}
+              onChange={e => setBreakdownQuery(e.target.value)}
+            />
+            <div className={styles.breakdownSummary}>
+              {/* Silent when the read failed: a count of nothing would
+                  state as fact the very thing that isn't known. */}
+              {recordsReadError ? null : breakdownStats.avgYouShare == null ? (
+                <>{breakdownStats.calls} transcribed call{breakdownStats.calls === 1 ? '' : 's'}</>
+              ) : (
+                <>
+                  You averaged <strong>{formatShare(breakdownStats.avgYouShare)}</strong> across{' '}
+                  {breakdownStats.averaged} measured call{breakdownStats.averaged === 1 ? '' : 's'}
+                  {breakdownStats.basis === 'words' && ' (by word count)'}
+                  {/* Time and words are different measurements, so calls
+                      measured the other way are named, not folded in. */}
+                  {breakdownStats.otherBasis > 0 && (
+                    <span className={styles.transcriptStatus}>
+                      {' '}· {breakdownStats.otherBasis} more measured by word count, kept out of the average
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+            {/* A failed read comes back empty, which would otherwise draw
+                as "you have no transcribed calls". The History tab can
+                fall back to this browser's saved copy; a breakdown can't,
+                because the cache drops the speaker turns it is computed
+                from — so this says so instead of standing in. */}
+            {recordsReadError && (
+              <div className={styles.error}>
+                Couldn’t read your saved calls: {recordsReadError} A breakdown needs each call’s stored speaker
+                turns, which the browser’s saved copy of your history doesn’t keep. Reload to try again.
+              </div>
+            )}
+            <div className={styles.breakdownScroll}>
+              {/* Nothing to add when the read failed — the notice above
+                  already says why the list is empty, and a second line
+                  would read as a second problem. */}
+              {recordsReadError ? null : uid && !recordsLoaded ? (
+                <div className={styles.transcriptStatus}>Loading your saved calls…</div>
+              ) : filteredBreakdown.length === 0 ? (
+                <div className={styles.transcriptStatus}>
+                  {breakdownQuery
+                    ? `No transcribed call matches “${breakdownQuery}”.`
+                    : 'No transcribed calls yet. Sync from Granola, or transcribe a recording, and it can be broken down here.'}
+                </div>
+              ) : filteredBreakdown.map(r => (
+                <button
+                  key={r.id}
+                  type="button"
+                  className={pickedBreakdown?.id === r.id ? styles.pickOn : styles.pick}
+                  onClick={() => setBreakdownPick(r.id)}
+                  title={r.measurable
+                    ? `You spoke ${formatShare(r.youShare)} of this call`
+                    : r.blockedReason}
+                >
+                  <span className={styles.pickTop}>
+                    <span className={styles.pickName}>{r.name}</span>
+                    <span className={styles.pickShare} data-measured={r.measurable ? 'true' : 'false'}>
+                      {r.measurable ? formatShare(r.youShare) : '—'}
+                    </span>
+                  </span>
+                  <span className={styles.pickMeta}>
+                    {[fmtWhen(r.recordedAt) || 'No date', r.company].filter(Boolean).join(' · ')}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className={styles.breakdownDetail}>
+            {pickedBreakdown ? (
+              <BreakdownDetail row={pickedBreakdown} />
+            ) : breakdownRows.length > 0 ? (
+              /* There ARE calls to break down — the search just hid them,
+                 and blaming a missing transcript would send the user off
+                 to fix a problem they don't have. */
+              <div className={styles.empty}>
+                <span className={styles.emptyTitle}>Nothing matches that search</span>
+                None of your {breakdownRows.length} transcribed call{breakdownRows.length === 1 ? '' : 's'} match
+                {' '}“{breakdownQuery}”. Clear the search to pick one.
+              </div>
+            ) : recordsReadError ? (
+              /* The panel stays quiet about why: the notice beside the
+                 list already says the read failed, and repeating it here
+                 would read as two separate problems. */
+              <div className={styles.empty}>
+                <span className={styles.emptyTitle}>Nothing to show yet</span>
+                Your saved calls haven’t loaded, so there is nothing to pick.
+              </div>
+            ) : (
+              <div className={styles.empty}>
+                <span className={styles.emptyTitle}>Nothing to break down yet</span>
+                A call needs a transcript with speaker turns before its talking can be split up. Granola calls
+                arrive that way; a OneDrive or local recording gets there once it’s transcribed on the Calls tab.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Hidden rather than unmounted: a recording mid-playback and a
           transcription still running both live in this subtree, and
-          tearing them down to glance at the history would lose them. */}
-      <div className={styles.body} style={tab === 'history' ? { display: 'none' } : undefined}>
+          tearing them down to glance at another subtab would lose them. */}
+      <div className={styles.body} style={tab !== 'calls' ? { display: 'none' } : undefined}>
         {error && <div className={styles.error}>{error}</div>}
         {/* A dead key or a plan without transcript access stops new calls
             arriving, but everything already synced still reads — so this

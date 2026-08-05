@@ -851,3 +851,353 @@
   font-size: var(--font-size-sm);
   line-height: 1.5;
 }
+
+/* ---- Call breakdown --------------------------------------------------- */
+
+/* A picker beside the thing it picks: the list is what you scan, the panel
+   is what you read. Both scroll on their own so choosing the next call
+   never means scrolling the last one back up. */
+.breakdownBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 1rem;
+  overflow: hidden;
+  padding: 0 1.25rem 1rem;
+}
+
+.breakdownPicker {
+  flex: 0 0 300px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 0;
+}
+
+.breakdownSummary {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
+.breakdownScroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 2px;
+}
+
+.pick,
+.pickOn {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.pick:hover {
+  background: var(--color-surface-alt, #f0f3f7);
+}
+
+.pickOn {
+  background: var(--color-surface, #fff);
+  border-color: #009530;
+}
+
+.pickTop {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.pickName {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tabular so the column of percentages reads down the list as numbers
+   rather than as ragged text. */
+.pickShare {
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #7c3aed;
+}
+
+/* An unmeasurable call keeps its row — it is a call the user may be
+   looking for — but its dash must not read as a share of zero. */
+.pickShare[data-measured='false'] {
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.pickMeta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.breakdownDetail {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  /* Hugs its content rather than stretching: a short breakdown in a
+     full-height card reads as a panel that failed to load the rest. */
+  align-self: flex-start;
+  max-height: 100%;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface, #fff);
+  padding: 0.9rem 1rem 1.2rem;
+}
+
+.breakdownHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.breakdownTitle {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.breakdownChips {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.4rem;
+}
+
+/* The company chip is clickable on a card; here it is only a label. */
+.linkChip[data-static='true'] {
+  cursor: default;
+}
+
+.breakdownLabel {
+  margin-top: 1rem;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+/* Two numbers, side by side: the whole question is one comparison, and a
+   chart of it would make the reader do the summing instead. */
+.tiles {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+}
+
+.tile {
+  flex: 1 1 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid #0d9488;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+}
+
+.tile[data-you='true'] {
+  border-left-color: #7c3aed;
+}
+
+/* A dot beside the label carries the colour, so the bar below can be
+   matched to a side without the number itself wearing a series colour. */
+.tileLabel::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #0d9488;
+  margin-right: 0.35rem;
+}
+
+.tile[data-you='true'] .tileLabel::before {
+  background: #7c3aed;
+}
+
+.tileLabel {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.tileValue {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.tileSub {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary, #5a6b7e);
+}
+
+/* The same comparison the tiles state, drawn to scale. Segments grow in
+   proportion, with a surface gap between them so the two sides stay
+   countable where one is very small. */
+.sidesBar {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  margin-top: 0.7rem;
+}
+
+.sidesSegment {
+  flex-basis: 0;
+  min-width: 0;
+  border-radius: 999px;
+  background: #0d9488;
+}
+
+.sidesSegment[data-you='true'] {
+  background: #7c3aed;
+}
+
+.speakerList {
+  display: flex;
+  flex-direction: column;
+}
+
+/* A caveat about the measurement, not a finding about the call: it has to
+   be readable without competing with the numbers above it. */
+.breakdownCaveat {
+  margin-top: 0.5rem;
+  font-size: var(--font-size-xs);
+  font-style: italic;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+/* Name, bar, then the numbers: every row is labelled with who it is, so
+   identity never rests on the colour of the fill. */
+.speakerRow {
+  display: grid;
+  grid-template-columns: minmax(80px, 1fr) minmax(60px, 2fr) 3.2rem 5rem auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--color-border-light, #edf2f7);
+  font-size: var(--font-size-sm);
+}
+
+.speakerName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-secondary, #5a6b7e);
+}
+
+.speakerName[data-you='true'] {
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.speakerTrack {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--color-surface-alt, #f0f3f7);
+  overflow: hidden;
+}
+
+.speakerFill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: #0d9488;
+}
+
+.speakerFill[data-you='true'] {
+  background: #7c3aed;
+}
+
+.speakerPct {
+  text-align: right;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+
+.speakerValue {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary, #5a6b7e);
+}
+
+/* The turn detail is the first thing to go when the panel is narrow: it
+   is context for the share, not the share itself. */
+.speakerTurns {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .speakerRow {
+    grid-template-columns: minmax(80px, 1fr) minmax(50px, 1.5fr) 3.2rem 5rem;
+  }
+
+  .speakerTurns {
+    display: none;
+  }
+}
+
+/* Narrow enough that two columns would leave neither readable: the picker
+   goes back to being a list above what it picks. */
+@media (max-width: 820px) {
+  .breakdownBody {
+    flex-direction: column;
+    overflow: auto;
+  }
+
+  .breakdownPicker {
+    flex: 0 0 auto;
+  }
+
+  .breakdownScroll {
+    max-height: 220px;
+  }
+
+  /* Stacked, the cross axis is width — hugging it would leave the panel
+     narrower than the list above it. */
+  .breakdownDetail {
+    align-self: stretch;
+    max-height: none;
+    overflow: visible;
+  }
+}

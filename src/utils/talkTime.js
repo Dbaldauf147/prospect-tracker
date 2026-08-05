@@ -60,8 +60,12 @@ function displaySpeaker(label) {
  *     basis: 'time' | 'words',
  *     total: number,                 // ms, or words
  *     youShare: number | null,       // 0..1, null when nobody is labelled "You"
- *     speakers: [{ name, value, share, isYou }],   // largest first
+ *     speakers: [{ name, value, share, turns, longest, isYou }],  // largest first
  *   }
+ *
+ * `turns` and `longest` count only the turns that contributed — a turn
+ * with no measurable value is not evidence anyone spoke, so it is left
+ * out of the count as well as out of the total.
  */
 export function talkTimeSplit(utterances) {
   const turns = Array.isArray(utterances) ? utterances.filter(u => u && (u.text || u.start != null)) : [];
@@ -82,17 +86,24 @@ export function talkTimeSplit(utterances) {
     const value = valueOf(u, i);
     if (!Number.isFinite(value) || value <= 0) return;
     const name = displaySpeaker(u.speaker);
-    byName.set(name, (byName.get(name) || 0) + value);
+    const prev = byName.get(name) || { value: 0, turns: 0, longest: 0 };
+    byName.set(name, {
+      value: prev.value + value,
+      turns: prev.turns + 1,
+      longest: Math.max(prev.longest, value),
+    });
     total += value;
   });
 
   if (total <= 0) return null;
 
   const speakers = [...byName.entries()]
-    .map(([name, value]) => ({
+    .map(([name, agg]) => ({
       name,
-      value,
-      share: value / total,
+      value: agg.value,
+      share: agg.value / total,
+      turns: agg.turns,
+      longest: agg.longest,
       isYou: name === YOU,
     }))
     .sort((a, b) => b.value - a.value);
@@ -107,6 +118,68 @@ export function talkTimeSplit(utterances) {
     youShare: you ? you.share : null,
     speakers,
   };
+}
+
+/**
+ * The split reduced to the two sides the question is actually about:
+ * you, and everyone else together.
+ *
+ * Null when the split cannot name the user's own turns — "we could not
+ * tell which turns were yours" makes a me-versus-them number impossible,
+ * and 0% would be a lie about the call rather than about the transcript.
+ * A call the user was the only speaker on is NOT null: 100%/0% is the
+ * honest answer there, and `others.speakers` being 0 says why.
+ *
+ *   {
+ *     basis, total,
+ *     you:    { share, value, turns, longest },
+ *     others: { share, value, turns, longest, speakers },
+ *   }
+ *
+ * The two shares sum to exactly 1: `others` is the summed remainder of
+ * the same total, not one minus a rounded percentage.
+ */
+export function talkTimeSides(split) {
+  if (!split) return null;
+  const you = split.speakers.find(s => s.isYou);
+  if (!you) return null;
+
+  const others = split.speakers.filter(s => !s.isYou);
+  const value = others.reduce((t, s) => t + s.value, 0);
+  return {
+    basis: split.basis,
+    total: split.total,
+    you: { share: you.share, value: you.value, turns: you.turns, longest: you.longest },
+    others: {
+      share: split.total > 0 ? value / split.total : 0,
+      value,
+      turns: others.reduce((t, s) => t + s.turns, 0),
+      longest: others.reduce((m, s) => Math.max(m, s.longest), 0),
+      speakers: others.length,
+    },
+  };
+}
+
+/**
+ * A raw split value as text, in whatever the split was measured in.
+ *
+ * Time reads as a clock ("12:34"), words say the word "words" — so a
+ * number lifted out of the breakdown can never be mistaken for the other
+ * measurement.
+ */
+export function formatTalkValue(value, basis) {
+  if (!Number.isFinite(value) || value <= 0) return '';
+  if (basis === 'words') {
+    const words = Math.round(value);
+    return `${words.toLocaleString()} word${words === 1 ? '' : 's'}`;
+  }
+  const seconds = Math.round(value / 1000);
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+    : `${m}:${String(s).padStart(2, '0')}`;
 }
 
 /** "62%" — shares are only ever shown to whole percentage points. */
