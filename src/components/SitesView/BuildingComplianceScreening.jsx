@@ -157,7 +157,8 @@ function TodayMark({ ax, todayTime, y1, y2, label = true }) {
 // Labels are the hard part. Deadlines cluster (a jurisdiction's dates land
 // within weeks, then nothing for two years), so a label is dropped to a second
 // tier when it would collide with its neighbour rather than being drawn on top
-// of it — the dots stay exactly on their true dates either way.
+// of it, and slid sideways off its dot when even that isn't enough — the dots
+// stay exactly on their true dates either way.
 function DeadlineLanes({ lanes, ax, todayTime }) {
   const padT = 26, padB = 6;
   const ticks = axisTicks(ax);
@@ -168,30 +169,34 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
   // drop to a lower tier (or off the chart) for a collision that wouldn't have
   // happened.
   const HALF = 10;
-  const DOT_SEP = 15;    // dots at least this far apart, so none hides another
+  const LBL_SEP = 12;    // labels at least this far apart, so none hides another
   const TIER_H = 19;     // vertical pitch between label tiers
   const TIERS = 3;
   // Placement is worked out up front rather than while mapping to JSX — the
   // tier bookkeeping is a running decision and doesn't belong in render.
   const placed = lanes.map(lane => {
     // Two dates a fortnight apart are the same pixel on a five-year axis, so
-    // dots are nudged to a minimum separation, in order, and clamped back
-    // inside the axis. The date under each dot is the real one.
+    // the *labels* are nudged to a minimum separation, in order, and clamped
+    // back inside the axis. The dot itself never moves: nudging it reads as a
+    // different date, and a spring cluster shunted right of its true position
+    // ended up on the wrong side of the TODAY rule. A leader line ties a label
+    // back to the dot it belongs to.
     const cxs = lane.points.map(p => tlX(isoTime(p.date), ax));
-    for (let i = 1; i < cxs.length; i++) cxs[i] = Math.max(cxs[i], cxs[i - 1] + DOT_SEP);
-    for (let i = cxs.length - 1; i >= 0; i--) {
-      cxs[i] = Math.min(cxs[i], i === cxs.length - 1 ? TL.W - TL.padR : cxs[i + 1] - DOT_SEP);
-      cxs[i] = Math.max(cxs[i], TL.padL);
+    const lxs = cxs.slice();
+    for (let i = 1; i < lxs.length; i++) lxs[i] = Math.max(lxs[i], lxs[i - 1] + LBL_SEP);
+    for (let i = lxs.length - 1; i >= 0; i--) {
+      lxs[i] = Math.min(lxs[i], i === lxs.length - 1 ? TL.W - TL.padR : lxs[i + 1] - LBL_SEP);
+      lxs[i] = Math.max(lxs[i], TL.padL);
     }
     // Labels drop to a lower tier rather than print over their neighbour. A
     // label with no free tier is left off entirely — the dot keeps its
     // tooltip, and an unreadable overprint helps nobody.
     const tierRight = Array(TIERS).fill(-Infinity);
     return lane.points.map((p, i) => {
-      const cx = cxs[i];
-      const tier = tierRight.findIndex(right => cx - HALF >= right + 5);
-      if (tier >= 0) tierRight[tier] = cx + HALF;
-      return { ...p, cx, tier };
+      const lx = lxs[i];
+      const tier = tierRight.findIndex(right => lx - HALF >= right + 5);
+      if (tier >= 0) tierRight[tier] = lx + HALF;
+      return { ...p, cx: cxs[i], lx, tier };
     });
   });
   // Each lane is only as tall as its own labels need. A fixed height sized
@@ -236,19 +241,23 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
                 : 'no dated deadlines'}
             </text>
             <line x1={TL.padL} y1={dotY} x2={TL.W - TL.padR} y2={dotY} stroke="#E2E8F0" strokeWidth="1" />
-            {placed[i].map(({ cx, tier, ...p }) => {
+            {placed[i].map(({ cx, lx, tier, ...p }) => {
               const ly = dotY + 14 + tier * TIER_H;
               return (
                 <g key={p.date}>
-                  {tier > 0 && <line x1={cx} y1={dotY + 7} x2={cx} y2={ly - 9} stroke={lane.color} strokeWidth="1" opacity="0.45" />}
+                  {tier >= 0 && (tier > 0 || Math.abs(lx - cx) > 1.5) && (
+                    <line x1={cx} y1={dotY + 6} x2={lx} y2={ly - 9} stroke={lane.color} strokeWidth="1" opacity="0.45" />
+                  )}
                   {/* Hollow for a projected filing — it's the ordinance's
                       cycle carried forward, not a date the jurisdiction has
-                      published, and the two shouldn't read alike. */}
+                      published, and the two shouldn't read alike. Kept small:
+                      dots sit on their true dates, so deadlines a fortnight
+                      apart land on top of each other unless they're tight. */}
                   <circle
-                    cx={cx} cy={dotY} r={p.projected ? 5 : 6}
+                    cx={cx} cy={dotY} r={p.projected ? 4 : 4.5}
                     fill={p.projected ? '#fff' : lane.color}
                     stroke={p.projected ? lane.color : '#fff'}
-                    strokeWidth={p.projected ? 2 : 1.5}
+                    strokeWidth={p.projected ? 1.75 : 1.25}
                   >
                     <title>
                       {`${lane.label} · ${mdY(p.date)}: ${p.count} site${p.count === 1 ? '' : 's'}`
@@ -257,11 +266,11 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
                   </circle>
                   {tier >= 0 && (
                     <>
-                      <text x={cx} y={ly} textAnchor="middle" fontSize="9.5" fontWeight={p.projected ? 700 : 800}
+                      <text x={lx} y={ly} textAnchor="middle" fontSize="9.5" fontWeight={p.projected ? 700 : 800}
                         fill={p.projected ? '#64748B' : '#0F172A'} stroke="#fff" strokeWidth="3" paintOrder="stroke">
                         {p.count}
                       </text>
-                      <text x={cx} y={ly + 8} textAnchor="middle" fontSize="7"
+                      <text x={lx} y={ly + 8} textAnchor="middle" fontSize="7"
                         fill={p.projected ? '#94A3B8' : '#475569'} stroke="#fff" strokeWidth="3" paintOrder="stroke">
                         {md(p.date)}
                       </text>
