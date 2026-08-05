@@ -34,19 +34,47 @@ async function readJson(response) {
 
 /**
  * Is Granola configured and is the key live? Resolves to
- * { configured, ok, error } and never throws — the page shows a setup
- * message rather than an error banner when it comes back unconfigured.
+ * { configured, ok, error, hint } and never throws — the page shows a
+ * setup message rather than an error banner when it comes back
+ * unconfigured. `hint` carries which deployment answered and what it
+ * could see, so "not configured" can name its own cause.
  */
 export async function probeGranola() {
   try {
     const r = await apiFetch('/api/granola-calls?probe=1');
     const data = await readJson(r);
-    if (r.status === 501) return { configured: false, ok: false, error: data.error || '' };
+    if (r.status === 501) {
+      return { configured: false, ok: false, error: data.error || '', hint: data.hint || null };
+    }
     if (!r.ok) return { configured: true, ok: false, error: data.error || `HTTP ${r.status}` };
     return { configured: true, ok: true, error: '' };
   } catch (err) {
     return { configured: true, ok: false, error: err?.message || String(err) };
   }
+}
+
+/**
+ * Turn the probe's hint into the sentence shown under the setup message.
+ * Each case points at a different fix, which is the whole reason the
+ * hint exists.
+ */
+export function describeMissingKey(hint) {
+  if (!hint) return '';
+  const where = hint.environment && hint.environment !== 'unknown'
+    ? `The ${hint.environment} deployment`
+    : 'This deployment';
+  const build = hint.commit ? ` (build ${hint.commit})` : '';
+  const named = (hint.granolaVars || []).filter(n => n !== 'GRANOLA_API_KEY');
+
+  if ((hint.granolaVars || []).includes('GRANOLA_API_KEY')) {
+    // Present but empty: the variable exists with a blank or
+    // whitespace-only value, which is a re-paste rather than a re-scope.
+    return `${where}${build} has a GRANOLA_API_KEY, but it is empty. Re-paste the key value and redeploy.`;
+  }
+  if (named.length > 0) {
+    return `${where}${build} can see ${named.join(', ')} but no GRANOLA_API_KEY — check the variable's name.`;
+  }
+  return `${where}${build} has no environment variable mentioning Granola at all. The most common cause is the variable being saved for a different environment than this one, or against a different Vercel project.`;
 }
 
 /** One page of note metadata. Throws with the API's own message. */

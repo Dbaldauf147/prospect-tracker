@@ -252,6 +252,27 @@ export function normalizeNote(note, { withTranscript = false } = {}) {
   };
 }
 
+// "Not configured" has several causes that look identical from the
+// browser: the variable saved against Preview but not Production, a
+// near-miss on the name, or the wrong project entirely. This reports
+// enough for the page to say which — the NAMES of the variables that
+// mention Granola, never a value, plus which deployment answered.
+function missingKeyHint() {
+  let names = [];
+  try {
+    names = Object.keys(process.env).filter(k => /granola/i.test(k)).sort();
+  } catch {
+    names = [];
+  }
+  return {
+    environment: str(process.env.VERCEL_ENV) || 'unknown',
+    commit: str(process.env.VERCEL_GIT_COMMIT_SHA).slice(0, 7),
+    // GRANOLA_API_BASE is ours and optional, so seeing only that still
+    // means the key itself never arrived.
+    granolaVars: names,
+  };
+}
+
 // ---- Granola calls ----------------------------------------------------------
 
 async function granolaFetch(path) {
@@ -333,6 +354,7 @@ async function handler(req, res, auth) {
     return res.status(501).json({
       error: 'Granola is not configured. Set GRANOLA_API_KEY in the deployment environment to ingest calls from Granola.',
       configured: false,
+      hint: missingKeyHint(),
     });
   }
   if (!(await enforceRateLimit(res, auth.uid, 'granola-calls', RATE_LIMIT, RATE_WINDOW_MS))) return undefined;

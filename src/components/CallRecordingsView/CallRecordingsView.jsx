@@ -45,7 +45,7 @@ import {
 } from '../../utils/callRecordingsStore';
 import {
   probeGranola, syncGranolaCalls, recordPatchFor, recordingFromStored,
-  matchCompanyForCall, daysAgoIso, DEFAULT_BACKFILL_DAYS,
+  matchCompanyForCall, daysAgoIso, describeMissingKey, DEFAULT_BACKFILL_DAYS,
 } from '../../utils/granolaCalls';
 import { buildCompanyGuessIndex } from '../../utils/companyGuess';
 import { loadOppsFromCache } from '../../utils/oppsCache';
@@ -1062,6 +1062,16 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
             (Settings → API — it needs note and transcript access, which is a Business or Enterprise
             plan) and set it as <code>GRANOLA_API_KEY</code> in the deployment environment. Every call
             Granola has taken notes on then lands here, already transcribed.
+            {/* Which deployment answered and what it could see. The three
+                causes of "not configured" need three different fixes, so
+                guessing between them is worth a line of diagnostics. */}
+            {describeMissingKey(granolaStatus.hint) && (
+              <div className={styles.notice} style={{ marginTop: '0.9rem', textAlign: 'left' }}>
+                {describeMissingKey(granolaStatus.hint)}
+                {' '}Vercel only injects environment variables at build time, so a redeploy is needed
+                after saving one.
+              </div>
+            )}
           </div>
         );
       }
