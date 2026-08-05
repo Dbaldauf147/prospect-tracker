@@ -463,6 +463,20 @@
 .sentiment[data-tone='cautious'] { background: #fef3c7; border-color: #fcd34d; color: #92400e; }
 .sentiment[data-tone='negative'] { background: #fee2e2; border-color: #fca5a5; color: #991b1b; }
 
+/* What the summary was written AS. Deliberately quieter than the
+   sentiment chip next to it: sentiment is a finding about the deal,
+   the meeting type is only the shape of the write-up. */
+.meetingType {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  text-transform: capitalize;
+  background: transparent;
+  border: 1px dashed var(--color-border);
+  color: var(--color-text-muted);
+}
+
 .summaryBody {
   margin: 0 0 0.5rem;
   font-size: var(--font-size-sm);

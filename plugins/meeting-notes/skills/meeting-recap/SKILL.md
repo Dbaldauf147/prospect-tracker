@@ -166,6 +166,7 @@ so the names line up:
 
 | Recap section | Record field |
 |---|---|
+| Meeting type | `meetingType` |
 | Summary | `summary` |
 | Key items | `keyItems[]` |
 | Follow-ups | `followUps[{ text, owner, due }]` |
@@ -176,6 +177,13 @@ so the names line up:
 `owner` and `due` are **null** when unstated — not empty strings. That is what
 the app's own summarise route writes, and it is what the page checks before
 rendering them.
+
+`meetingType` is one of `sales`, `client`, `internal`, or `''` when it could
+not be determined. The app's summarise route (`api/call-summary.js`) uses the
+same three types and the same per-type section guidance, so a recap filed here
+and one produced by the page's Summarize button read as the same document.
+**If you change the taxonomy or the sections above, change it there too** — the
+two are kept in step by hand.
 
 Granola's own notes stay in `granolaSummary`, separate from `summary`. Yours
 is what gets pushed onto the deal; theirs is reference. Never overwrite one

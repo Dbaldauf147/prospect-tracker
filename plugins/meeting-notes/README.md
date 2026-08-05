@@ -118,7 +118,17 @@ Prospect Tracker already syncs Granola notes on the Call Recordings page,
 where you can tag, summarise, and push to an opp by clicking. That path is
 better when you are working through several calls at once.
 
-This plugin is the conversational path for one meeting: it adapts the recap
-to the meeting type, which the app's fixed summarise prompt does not, and it
-asks about the tag rather than guessing from attendee domains. The two write
-the same record, so they can be used interchangeably on the same meeting.
+This plugin is the conversational path for one meeting. Both paths now adapt
+the write-up to the meeting type — `api/call-summary.js` classifies from the
+transcript and the attendee domains, using the same three types and the same
+section guidance as `skills/meeting-recap/SKILL.md`, and both store the result
+in `meetingType`. Keep the two in step when you edit either.
+
+What is still only here: the tag is **asked about** rather than inferred from
+attendee domains, and you can correct the meeting type, the recap, or the deal
+in conversation before anything is written. The page's Summarize button does
+it in one shot.
+
+The two write the same record, so they can be used interchangeably on the same
+meeting — including summarising on the page and then re-filing through the
+plugin, or the reverse.

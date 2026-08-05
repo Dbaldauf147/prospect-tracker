@@ -91,6 +91,11 @@ export function emptyRecord(recordingId) {
     transcriptError: '',
     transcribedAt: null,
     // --- AI summary ---
+    // What kind of meeting the summariser decided this was — 'sales' |
+    // 'client' | 'internal', or '' when it could not tell. It drives
+    // which sections the summary fills, so it is stored alongside them:
+    // a recap read months later should say what it was written as.
+    meetingType: '',
     summary: '',
     keyItems: [],
     followUps: [],
