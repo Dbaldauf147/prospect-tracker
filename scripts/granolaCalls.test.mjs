@@ -139,6 +139,81 @@ function ok(value, name) { eq(!!value, true, name); }
   eq(out.transcript, 'You: Morning.\nThem: Morning to you.\nDana Reid: Named wins.', 'flat transcript is speaker-prefixed');
 }
 
+// The shape the public API actually serves: `speaker` is an OBJECT
+// carrying the audio stream and the anonymous diarization bucket, not a
+// name. Reading it as a name left every turn "?", which is what a
+// talk-time split of one unnamed speaker holding 100% was made of.
+{
+  const out = normalizeNote({
+    id: 'not_t1a',
+    transcript: [
+      { speaker: { source: 'microphone', diarization_label: 'A' }, text: 'Mine.', start_timestamp: 0, end_timestamp: 2 },
+      { speaker: { source: 'speaker', diarization_label: 'B' }, text: 'Theirs.', start_timestamp: 2, end_timestamp: 5 },
+      { speaker: { source: 'speaker', diarization_label: 'C' }, text: 'Also theirs.', start_timestamp: 5, end_timestamp: 7 },
+      { speaker: { source: 'speaker' }, text: 'Unbucketed.', start_timestamp: 7, end_timestamp: 8 },
+    ],
+  }, { withTranscript: true });
+  eq(out.utterances.map(u => u.speaker), ['You', 'Speaker B', 'Speaker C', 'Them'],
+    'a nested speaker object gives You for the mic and a bucket per other voice');
+}
+
+// A diarization bucket heard on the user's own microphone is not one of
+// "them", even when it turns up on the other stream too.
+{
+  const out = normalizeNote({
+    id: 'not_t1b',
+    transcript: [
+      { speaker: { source: 'microphone', diarization_label: 'A' }, text: 'Mine.', start: 0, end: 2 },
+      { speaker: { source: 'system', diarization_label: 'A' }, text: 'Me, bleeding through.', start: 2, end: 3 },
+      { speaker: { source: 'system', diarization_label: 'B' }, text: 'Genuinely them.', start: 3, end: 5 },
+    ],
+  }, { withTranscript: true });
+  eq(out.utterances.map(u => u.speaker), ['You', 'Them', 'Speaker B'],
+    'a bucket also heard on the mic is not attributed to the other side');
+}
+
+// A single-stream capture (Granola on iOS, an in-person meeting) stamps
+// every line "microphone". Reading that as the user would hand them 100%
+// of a call they may barely have spoken on.
+{
+  const labelled = normalizeNote({
+    id: 'not_t1c',
+    transcript: [
+      { speaker: { source: 'microphone', diarization_label: 'A' }, text: 'One.', start: 0, end: 2 },
+      { speaker: { source: 'microphone', diarization_label: 'B' }, text: 'Two.', start: 2, end: 4 },
+    ],
+  }, { withTranscript: true });
+  eq(labelled.utterances.map(u => u.speaker), ['Speaker A', 'Speaker B'],
+    'one stream with buckets splits by bucket and claims nobody is You');
+
+  const bare = normalizeNote({
+    id: 'not_t1d',
+    transcript: [
+      { speaker: { source: 'microphone' }, text: 'One.', start: 0, end: 2 },
+      { speaker: { source: 'microphone' }, text: 'Two.', start: 2, end: 4 },
+    ],
+  }, { withTranscript: true });
+  eq(bare.utterances.map(u => u.speaker), ['?', '?'],
+    'one stream with nothing to tell voices apart stays unattributed');
+}
+
+// A person object still wins over the stream, and the note's owner still
+// reads as "You" however they were identified.
+{
+  const out = normalizeNote({
+    id: 'not_t1e',
+    owner: { name: 'Daniel Baldauf', email: 'dan@schneider.com' },
+    transcript: [
+      { speaker: { name: 'Daniel Baldauf', email: 'DAN@schneider.com' }, source: 'system', text: 'Owner by email.', start: 0, end: 1 },
+      { speaker: { name: 'Dana Reid', email: 'dana@acme.com' }, source: 'microphone', text: 'Named, not me.', start: 1, end: 2 },
+      { speaker: 'microphone', text: 'Stream in the speaker field.', start: 2, end: 3 },
+      { speaker: 'system', text: 'The other one.', start: 3, end: 4 },
+    ],
+  }, { withTranscript: true });
+  eq(out.utterances.map(u => u.speaker), ['You', 'Dana Reid', 'You', 'Them'],
+    'names beat streams, the owner reads as You, and a stream word in the speaker field is not a name');
+}
+
 // Empty text is dropped rather than rendered as a blank turn.
 {
   const out = normalizeNote({

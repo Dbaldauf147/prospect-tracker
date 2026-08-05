@@ -65,6 +65,15 @@ export function breakdownRowFromRecord(record) {
       ? 'turns-dropped'
       : utterances.length > 0 ? 'unmeasurable' : 'no-turns';
 
+  // Granola serves a turn's speaker as an object carrying the audio
+  // stream it came off, and the ingest read that object as a name — so
+  // every turn synced before the fix was stored unattributed, and the
+  // whole call reads as one unnamed speaker. The ingest is fixed, but the
+  // turns already stored stay that way until the note is read again.
+  const resync = blocked === 'you-unknown' && record.source === 'granola'
+    ? ' If it was synced before speaker attribution was fixed, “Re-sync everything” on the Calls tab re-reads it from Granola.'
+    : '';
+
   const external = externalAttendees(record);
   const recordedAt = record.recordedAt || null;
 
@@ -88,7 +97,7 @@ export function breakdownRowFromRecord(record) {
     // The me-versus-them question can be answered for this call.
     measurable: !!split && split.youShare != null,
     blocked,
-    blockedReason: blocked ? BLOCKED_REASONS[blocked] : '',
+    blockedReason: blocked ? `${BLOCKED_REASONS[blocked]}${resync}` : '',
   };
 }
 

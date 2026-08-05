@@ -153,33 +153,118 @@ function isOwnerSpeaker(person, named, owner) {
   return !!name && !!ownerName && name === ownerName;
 }
 
-// Who said a line.
+// ---- who said a line --------------------------------------------------------
 //
-// Granola identifies a speaker two ways, and which one a note carries
-// depends on the call. Sometimes it names them — as a string, or as a
-// person object, which is why the object is unpacked rather than
-// stringified. Otherwise it says only where the audio came from:
-// "microphone" is the person running Granola, anything else is the other
-// side of the call.
+// Granola labels a turn in up to three ways, and which of them a call
+// carries depends on how it was captured:
 //
-// A named speaker is kept as their name, since that is what distinguishes
-// three people on a call from each other — except for the note's own
-// owner, who reads as "You". Knowing which voice is yours is most of what
-// a transcript is skimmed for, and "Daniel Baldauf" only answers that if
-// you already know whose account synced the call.
-function speakerLabel(segment, owner) {
-  const raw = pick(segment, 'speaker', 'speaker_name', 'speaker_label', 'participant');
-  // A person object ({ name, email }) rather than a bare name.
-  const person = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? normalizePerson(raw) : null;
-  const named = person ? (person.name || person.email) : str(raw);
+//   speaker: "Dana Reid"                      a name (rare)
+//   speaker: { name, email }                  a person
+//   speaker: { source, diarization_label }    an audio stream, plus the
+//                                             anonymous voice bucket
+//   source:  "microphone" | "system"          the stream, at the top level
+//
+// The third is what the public API actually serves for most calls, and it
+// is the one this route used to miss: `speaker` was read as a name (an
+// object with no name in it yields nothing) and `source` was only looked
+// for at the top level of the segment, so every turn came out "?" and the
+// talk-time split showed one unnamed speaker holding 100% of the call.
+//
+// `source` is the real signal for "was this me": Granola captures the
+// user's microphone and the rest of the meeting as separate streams, so
+// "microphone" is the person running Granola and the other stream is the
+// room. `diarization_label` splits that other stream into individual
+// voices when Granola could tell them apart.
 
-  if (named && !/^(microphone|system|speaker)$/i.test(named)) {
-    return isOwnerSpeaker(person, named, owner) ? 'You' : named;
-  }
-  const source = str(pick(segment, 'source', 'audio_source', 'channel')).toLowerCase();
-  if (source === 'microphone' || source === 'mic') return 'You';
-  if (source) return 'Them';
-  return named || '?';
+const YOU = 'You';
+const THEM = 'Them';
+const UNKNOWN = '?';
+
+// Which stream a line came off, as 'mic' | 'other' | ''. Granola has used
+// "speaker" (macOS) and "system" (the reverse-engineered desktop shape)
+// for the same not-the-microphone stream, so both are read.
+function streamOf(value) {
+  const s = str(value).toLowerCase();
+  if (!s) return '';
+  if (/^(microphone|mic|me|local|local_audio)$/.test(s)) return 'mic';
+  if (/^(system|system_audio|speaker|speakers|other|remote|them)$/.test(s)) return 'other';
+  return '';
+}
+
+// An anonymous diarization bucket as something readable. Granola hands
+// these back bare ("A") or spelled out ("Speaker A") depending on the
+// call, and a lone "A" in a speaker column reads as a typo.
+function diarizationLabel(value) {
+  const s = str(value);
+  if (!s) return '';
+  return /^[A-Za-z0-9]$/.test(s) ? `Speaker ${s}` : s;
+}
+
+// One segment's speaker, unpacked into the three things it can carry.
+// Nothing is decided here: what a stream means depends on what the REST
+// of the transcript carries, which only speakerLabels can see.
+function speakerParts(segment, owner) {
+  const raw = pick(segment, 'speaker', 'speaker_name', 'speaker_label', 'participant');
+  // A person object ({ name, email }) or a stream object ({ source,
+  // diarization_label }) rather than a bare name — either way it is
+  // unpacked rather than stringified.
+  const obj = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : null;
+  const person = obj ? normalizePerson(obj) : null;
+  const bare = obj ? '' : str(raw);
+
+  // A bare "microphone" / "system" in the speaker field names the stream,
+  // not a person.
+  const bareStream = streamOf(bare);
+  const named = bareStream ? '' : (person ? (person.name || person.email) : bare);
+
+  return {
+    // A named speaker keeps their name, since that is what distinguishes
+    // three people on a call from each other — except for the note's own
+    // owner, who reads as "You". Knowing which voice is yours is most of
+    // what a transcript is skimmed for, and "Daniel Baldauf" only answers
+    // that if you already know whose account synced the call.
+    name: named ? (isOwnerSpeaker(person, named, owner) ? YOU : named) : '',
+    stream: bareStream
+      || streamOf(pick(obj || {}, 'source', 'audio_source', 'channel', 'stream'))
+      || streamOf(pick(segment, 'source', 'audio_source', 'channel', 'stream')),
+    label: diarizationLabel(
+      pick(obj || {}, 'diarization_label', 'diarizationLabel', 'label', 'speaker_id', 'speakerId')
+      ?? pick(segment, 'diarization_label', 'diarizationLabel', 'speaker_id', 'speakerId'),
+    ),
+  };
+}
+
+// Every turn's speaker, decided across the whole transcript.
+//
+// Whole-transcript rather than per-segment because the mic/room split
+// only means "me/them" when the transcript actually carries both sides.
+// A single-stream capture — Granola on iOS, an in-person meeting —
+// stamps every line "microphone", and reading that as the user would
+// hand them 100% of a call they may have barely spoken on. That is a
+// more confident lie than admitting the transcript doesn't say.
+function speakerLabels(list, owner) {
+  const parts = list.map(s => speakerParts(s, owner));
+  const twoStreams = parts.some(p => p.stream === 'mic') && parts.some(p => p.stream === 'other');
+  // Buckets heard on the user's own microphone. Where diarization runs
+  // across both streams the same bucket can appear on either side, and a
+  // voice that is partly the user must not become one of "them".
+  const micLabels = new Set(parts.filter(p => p.stream === 'mic' && p.label).map(p => p.label));
+
+  return parts.map((p) => {
+    if (p.name) return p.name;
+    if (twoStreams && p.stream === 'mic') return YOU;
+    if (twoStreams && p.stream === 'other') {
+      return (p.label && !micLabels.has(p.label)) ? p.label : THEM;
+    }
+    // One stream, or none. The diarization buckets still say who-from-whom
+    // even when nothing says which of them is the user, so they are worth
+    // keeping: a split across "Speaker A" and "Speaker B" is a real
+    // finding about the call, and the page says plainly that it can't pick
+    // the user out of it.
+    if (p.label) return p.label;
+    if (p.stream === 'other') return THEM;
+    return UNKNOWN;
+  });
 }
 
 // Turn whatever shape the transcript came back in into the
@@ -202,8 +287,9 @@ function normalizeTranscript(raw, owner) {
     list.map(s => toMillis(pick(s, 'end_timestamp', 'end', 'end_time'))),
   );
 
+  const labels = speakerLabels(list, owner);
   const utterances = list.map((segment, i) => ({
-    speaker: speakerLabel(segment, owner),
+    speaker: labels[i],
     text: str(pick(segment, 'text', 'content', 'value')),
     start: starts[i] ?? null,
     end: ends[i] ?? null,
