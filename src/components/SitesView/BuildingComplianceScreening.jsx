@@ -25,10 +25,12 @@ const FEED_CARDS = [
   { key: 'gas', abbr: 'NG', label: 'Natural Gas (NG)', color: '#B5179E' },
 ];
 const mdY = (iso) => { if (!iso) return '-'; const [y, m, d] = String(iso).split('-'); return `${Number(m)}/${Number(d)}/${y}`; };
-// Same date with a two-digit year, for the timeline labels — the century is
-// never in question there, and the four characters it costs are the difference
-// between two neighbouring labels fitting on one tier and colliding.
-const mdYY = (iso) => { if (!iso) return '-'; const [y, m, d] = String(iso).split('-'); return `${Number(m)}/${Number(d)}/${String(y).slice(-2)}`; };
+// Day and month only, for the timeline labels. The year is already the axis's
+// job — the ticks are years, so a label's own year is a third statement of
+// something its position has said twice. Dropping it is what keeps
+// neighbouring labels on one tier instead of colliding. The dot's tooltip
+// still carries the full date for anyone who wants it spelled out.
+const md = (iso) => { if (!iso) return '-'; const [, m, d] = String(iso).split('-'); return `${Number(m)}/${Number(d)}`; };
 // Property-type buckets the size requirements are published against, for the
 // lines that have to name the bucket a building fell into.
 const PT_CLASS_LABEL = { multifamily: 'multifamily', public: 'public / institutional', nonresidential: 'non-residential' };
@@ -159,7 +161,12 @@ function TodayMark({ ax, todayTime, y1, y2, label = true }) {
 function DeadlineLanes({ lanes, ax, todayTime }) {
   const padT = 26, padB = 6;
   const ticks = axisTicks(ax);
-  const HALF = 21;       // half the width a two-line label needs
+  // Half the width a two-line label needs. Set by the wider of the two lines,
+  // which is always the "N sites" one — the date below it is now just M/D.
+  // Tied to that line's font size: shrink the text and this has to come down
+  // with it, or labels reserve room they no longer occupy and drop to a lower
+  // tier (or off the chart) for a collision that wouldn't have happened.
+  const HALF = 19;
   const DOT_SEP = 15;    // dots at least this far apart, so none hides another
   const TIER_H = 19;     // vertical pitch between label tiers
   const TIERS = 3;
@@ -249,13 +256,13 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
                   </circle>
                   {tier >= 0 && (
                     <>
-                      <text x={cx} y={ly} textAnchor="middle" fontSize="9" fontWeight={p.projected ? 700 : 800}
+                      <text x={cx} y={ly} textAnchor="middle" fontSize="8" fontWeight={p.projected ? 700 : 800}
                         fill={p.projected ? '#64748B' : '#0F172A'} stroke="#fff" strokeWidth="3" paintOrder="stroke">
                         {p.count} site{p.count === 1 ? '' : 's'}
                       </text>
-                      <text x={cx} y={ly + 9} textAnchor="middle" fontSize="7.5"
+                      <text x={cx} y={ly + 8} textAnchor="middle" fontSize="7"
                         fill={p.projected ? '#94A3B8' : '#475569'} stroke="#fff" strokeWidth="3" paintOrder="stroke">
-                        {mdYY(p.date)}
+                        {md(p.date)}
                       </text>
                     </>
                   )}
