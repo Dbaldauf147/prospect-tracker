@@ -13,6 +13,7 @@ import {
   deadlinesWithRecurrence, utilityFeedEligibility, utilityFeedSites,
 } from '../../utils/complianceMandates';
 import { exportComplianceReportXlsx } from '../../utils/complianceReportXlsx';
+import { loadWholeBuildingLookup } from '../../utils/wholeBuildingLookup';
 import { schneiderLogoSvg } from '../../utils/schneiderLogo';
 import { OwnershipScopeBar } from './OwnershipScopeBar.jsx';
 import styles from './BuildingComplianceScreening.module.css';
@@ -1219,8 +1220,20 @@ export function BuildingComplianceScreening({
   // the workbook and the modal carry the same columns. No BBS / BPS columns —
   // this sheet is the utility mapping, and the screening export is where the
   // eligibility read belongs.
-  function feedSiteRow(r) {
-    return {
+  //
+  // `wholeBuildingFor` adds the reference's terms for the utility this sheet
+  // is about: what it meters, how it releases data, and whether that release
+  // covers multifamily.
+  //
+  // Which utility that is has to be pinned down, because there is one set of
+  // these columns and a site's utilities disagree — at 80525 the city
+  // (electric, water) includes multifamily and Xcel (gas) doesn't. So the
+  // sheet's own commodity decides: `feedUtility` is the electric utility on
+  // the electric sheet and the gas utility on the gas sheet, which is the only
+  // reading where a row describes the feed it was listed for. Blank when the
+  // reference can't place the utility, rather than answering about another one.
+  function feedSiteRow(r, wholeBuildingFor) {
+    const row = {
       Site: r.siteName || '',
       City: r.city || '',
       State: r.feedState || r.mandateState || r.state || '',
@@ -1229,6 +1242,7 @@ export function BuildingComplianceScreening({
       'Natural Gas Utility': r.gasUtility || '',
       'Water Utility': r.waterUtility || '',
     };
+    return wholeBuildingFor ? { ...row, ...wholeBuildingFor(r.zip, r.feedUtility || r.electricUtility) } : row;
   }
   // The card's bars as rows — the counts on screen, so the workbook opens on
   // the same summary the reader clicked from.
@@ -1245,24 +1259,26 @@ export function BuildingComplianceScreening({
 
   // Both utility-feed cards in one workbook: the per-utility counts and the
   // sites behind them, for each commodity.
-  function exportUtilityFeeds() {
+  async function exportUtilityFeeds() {
+    const wholeBuildingFor = await loadWholeBuildingLookup();
     const sheets = [];
     for (const { key, feed, label } of FEED_CARDS.map(f => ({ ...f, feed: utilityFeeds[f.key] }))) {
       if (!feed.total) continue;
       sheets.push([`${label} Summary`, feedSummaryRows(feed)]);
-      sheets.push([`${label} Sites`, utilityFeedSites(results, key).map(feedSiteRow)]);
+      sheets.push([`${label} Sites`, utilityFeedSites(results, key).map(r => feedSiteRow(r, wholeBuildingFor))]);
     }
     if (!sheets.length) { alert('No utility feed data to export.'); return; }
     writeSheets(sheets, 'Utility-Feed-Eligibility.xlsx');
   }
 
-  function exportFeedDrill() {
+  async function exportFeedDrill() {
     if (!feedDrillRows.length) return;
     const card = FEED_CARDS.find(f => f.key === feedDrill.commodity);
     const name = feedDrill.utility
       ? `${slug(feedDrill.state)}-${slug(feedDrill.utility)}-${card.abbr}-Sites.xlsx`
       : `${card.abbr}-Utility-Feed-Sites.xlsx`;
-    writeSheets([[`${card.label} Sites`, feedDrillRows.map(feedSiteRow)]], name.replace(/^-+/, ''));
+    const wholeBuildingFor = await loadWholeBuildingLookup();
+    writeSheets([[`${card.label} Sites`, feedDrillRows.map(r => feedSiteRow(r, wholeBuildingFor))]], name.replace(/^-+/, ''));
   }
 
   // Owned / All-sites control. Only rendered when the parent owns the
