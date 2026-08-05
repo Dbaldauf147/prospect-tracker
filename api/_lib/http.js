@@ -2,8 +2,15 @@
 // Firebase ID-token verification with the same email-domain allowlist
 // the client enforces (defense in depth).
 import { adminAuth } from './firebaseAdmin.js';
+import { withDeadline, isDeadline } from './deadline.js';
 
 const ADMIN_EMAIL = 'baldaufdan@gmail.com';
+
+// Verifying a token is a network call: on a cold start firebase-admin
+// also fetches Google's signing keys first. Generous for that, short
+// enough that the browser hears a reason rather than hitting its own
+// timeout on a function still waiting.
+const VERIFY_TIMEOUT_MS = 10000;
 
 function allowedDomains() {
   return String(process.env.ALLOWED_EMAIL_DOMAINS || '')
@@ -67,8 +74,20 @@ export async function requireAuth(req, res) {
   }
   let decoded;
   try {
-    decoded = await adminAuthInstance.verifyIdToken(token);
+    decoded = await withDeadline(
+      adminAuthInstance.verifyIdToken(token),
+      VERIFY_TIMEOUT_MS,
+      'Verifying your sign-in',
+    );
   } catch (err) {
+    // A stalled verification is not a bad token: answering 401 would send
+    // the user off to re-authenticate over what is really Google being
+    // unreachable from this function.
+    if (isDeadline(err)) {
+      console.error('requireAuth: verifyIdToken timed out');
+      res.status(504).json({ error: `${err.message} That's this server reaching Google, not your session: try again shortly.` });
+      return null;
+    }
     // err.code distinguishes the common cases: auth/id-token-expired,
     // auth/argument-error (malformed / wrong project), etc.
     console.error('requireAuth: verifyIdToken failed:', err?.code || err?.message || err);

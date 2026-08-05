@@ -11,7 +11,7 @@
 // normalised Granola's payloads; this module turns them into the record
 // shape callRecordingsStore.js persists, and works out the company link.
 
-import { apiFetch } from './apiFetch';
+import { apiFetch, isStalled } from './apiFetch';
 import {
   buildCompanyGuessIndex, guessCompanyForContact, FREE_MAIL_DOMAINS,
 } from './companyGuess';
@@ -125,6 +125,10 @@ async function runProbe(signal) {
     return { configured: true, ok: true, error: '' };
   } catch (err) {
     if (isTimeout(err)) return PROBE_TIMED_OUT;
+    // A stall on our side of the wire says nothing about Granola either,
+    // so it keeps the retry and the sync buttons live — but it carries
+    // its own message, which names the layer that didn't answer.
+    if (isStalled(err)) return { configured: true, ok: false, timedOut: true, error: err.message };
     return { configured: true, ok: false, error: err?.message || String(err) };
   }
 }
