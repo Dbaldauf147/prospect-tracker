@@ -7,7 +7,7 @@ import {
   CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
   totalEligible, eligibilityByOrdinance, totalPenalty, penaltyByOrdinance, sitesCompanyLabel,
   bpsPrioritization, penaltyBasis, auditRequirements, auditRequirementsLabel, categoryColumns,
-  deadlinesWithRecurrence, utilityFeedEligibility,
+  deadlinesWithRecurrence, utilityFeedEligibility, utilityFeedSites,
 } from '../../utils/complianceMandates';
 import { exportComplianceReportXlsx } from '../../utils/complianceReportXlsx';
 import { schneiderLogoSvg } from '../../utils/schneiderLogo';
@@ -25,6 +25,14 @@ const usdShort = (n) => {
   return '$' + Math.round(n);
 };
 const isUrl = (v) => /^https?:\/\//i.test(String(v).trim());
+// Filename-safe form of a jurisdiction / utility name.
+const slug = (s) => String(s || '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '');
+// The two Whole Building Utility Data Collection cards, in render order. Named
+// once so the cards, their drill-downs and the exported workbook agree.
+const FEED_CARDS = [
+  { key: 'electric', abbr: 'EP', label: 'Electric Power (EP)', color: '#F2B705' },
+  { key: 'gas', abbr: 'NG', label: 'Natural Gas (NG)', color: '#B5179E' },
+];
 const mdY = (iso) => { if (!iso) return '—'; const [y, m, d] = String(iso).split('-'); return `${Number(m)}/${Number(d)}/${y}`; };
 // Property-type buckets the size requirements are published against, for the
 // lines that have to name the bucket a building fell into.
@@ -749,6 +757,97 @@ function JurisdictionSitesModal({ category, government, rows, onExport, onSiteCl
   );
 }
 
+// The sites behind a figure on a utility-feed card: either one utility's bar
+// (`utility` set) or the card's whole eligible-sites total. WBUDC only works
+// where the serving utility publishes whole-building data, so the list names
+// both utilities on every site and which of BBS / BPS put it in scope.
+function UtilityFeedSitesModal({ label, color, state, utility, rows, onExport, onSiteClick, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const oneUtility = Boolean(utility);
+  const utilCount = new Set(rows.map(r => `${r.feedState}||${r.feedUtility}`)).size;
+  const stateCount = new Set(rows.map(r => r.feedState)).size;
+  const title = oneUtility
+    ? `${state ? `${state} · ` : ''}${utility} — ${label}`
+    : `${label} — all eligible sites`;
+  return (
+    <div className={styles.modalBackdrop} onClick={onClose} role="presentation">
+      <div
+        className={`${styles.modal} ${styles.modalWide}`}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+      >
+        <div className={styles.modalHead} style={{ background: color }}>
+          <div>
+            <div className={styles.modalTitle}>{title}</div>
+            <div className={styles.modalSub}>
+              {rows.length.toLocaleString('en-US')} eligible site{rows.length === 1 ? '' : 's'}
+              {oneUtility ? '' : ` · ${utilCount} utilit${utilCount === 1 ? 'y' : 'ies'} across ${stateCount} state${stateCount === 1 ? '' : 's'}`}
+            </div>
+          </div>
+          <div className={styles.modalHeadActions}>
+            <button
+              type="button"
+              className={styles.modalExportBtn}
+              onClick={onExport}
+              title="Download these sites as an Excel workbook"
+            >⬇ Export to Excel</button>
+            <button type="button" className={styles.modalClose} onClick={onClose} aria-label="Close">×</button>
+          </div>
+        </div>
+        <div className={styles.modalBody}>
+          <div className={`${styles.tableScroll} ${styles.modalTableScroll}`}>
+            <table className={styles.siteTable}>
+              <thead>
+                <tr>
+                  <th>Site</th>
+                  <th>City</th>
+                  <th>State</th>
+                  <th>Jurisdiction</th>
+                  <th style={{ textAlign: 'right' }}>Sq Ft</th>
+                  <th>Electric Utility</th>
+                  <th>Natural Gas Utility</th>
+                  <th>BBS</th>
+                  <th>BPS</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr
+                    key={`${r.siteName}-${i}`}
+                    className={styles.siteRowClickable}
+                    onClick={() => onSiteClick(r)}
+                    title="Open the full screening detail for this site"
+                  >
+                    <td className={styles.siteCell}>{r.siteName || '—'}</td>
+                    <td>{r.city || '—'}</td>
+                    <td>{r.feedState || r.state || '—'}</td>
+                    <td>{r.government || '—'}</td>
+                    <td style={{ textAlign: 'right' }}>{r.sqft != null ? r.sqft.toLocaleString('en-US') : '—'}</td>
+                    <td>{r.electricUtility || <span className={styles.dash}>—</span>}</td>
+                    <td>{r.gasUtility || <span className={styles.dash}>—</span>}</td>
+                    <td>{r.bbs?.eligible === true
+                      ? <span className={styles.pillEligible}>Applicable</span>
+                      : <span className={styles.dash}>—</span>}</td>
+                    <td>{r.bps?.eligible === true
+                      ? <span className={styles.pillEligible}>Applicable</span>
+                      : <span className={styles.dash}>—</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Screens the Utility Lookup site list against the two-tab compliance
 // reference (City Lookup → Government ID → Master Ordinances) and surfaces
 // BBS / Audits / BPS eligibility, a summary dashboard, and the exportable
@@ -773,6 +872,9 @@ export function BuildingComplianceScreening({
   // The dashboard bar drilled into, as { category, government }. Opens the
   // list of sites behind that jurisdiction's count / penalty figure.
   const [drill, setDrill] = useState(null);
+  // The utility-feed figure drilled into, as { commodity, state, utility }.
+  // state/utility null means the card's whole eligible-sites total.
+  const [feedDrill, setFeedDrill] = useState(null);
   // A pending "Export report (PDF)". Held in state rather than printed
   // straight from the click handler because the print furniture (the
   // generated-at stamp) has to be in the DOM before window.print() reads it —
@@ -1128,13 +1230,76 @@ export function BuildingComplianceScreening({
 
   function exportDrill() {
     if (!drillRows.length) return;
-    const slug = (s) => String(s || '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '');
-    const cat = slug(CATEGORY_LABEL[drill.category]);
     writeRawWorkbook(
       drillRows,
-      drill.government ? `${slug(drill.government)}-${cat}-Sites.xlsx` : `${cat}-Applicable-Sites.xlsx`,
+      drill.government ? `${slug(drill.government)}-${slug(CATEGORY_LABEL[drill.category])}-Sites.xlsx` : `${slug(CATEGORY_LABEL[drill.category])}-Applicable-Sites.xlsx`,
       { category: drill.category },
     );
+  }
+
+  // The sites behind a utility-feed figure — one utility's bar, or the card's
+  // whole total when no utility is set.
+  const feedDrillRows = useMemo(
+    () => (feedDrill ? utilityFeedSites(results, feedDrill.commodity, { state: feedDrill.state, utility: feedDrill.utility }) : []),
+    [results, feedDrill],
+  );
+
+  // A utility-feed site as it reads in an export: who serves it on both
+  // commodities, and which of BBS / BPS put it in WBUDC scope — the pair of
+  // mandates the service is sold against.
+  function feedSiteRow(r) {
+    const row = {
+      Site: r.siteName || '',
+      City: r.city || '',
+      State: r.feedState || r.mandateState || r.state || '',
+      Jurisdiction: r.government || '',
+      'Government ID': r.govId || '',
+      'Sq Ft': r.sqft ?? '',
+      'Property Type': r.propertyType || '',
+      'Electric Utility': r.electricUtility || '',
+      'Natural Gas Utility': r.gasUtility || '',
+    };
+    for (const c of ['bbs', 'bps']) {
+      const e = r[c];
+      row[`${CATEGORY_LABEL[c]} Applicable`] = e?.eligible === true ? (e.sizeAssumed ? 'Yes — sq ft assumed' : 'Yes') : 'No';
+      row[`${CATEGORY_LABEL[c]} Deadline`] = e?.eligible === true ? (e.deadline ? mdY(e.deadline) : (e.deadlineRaw || '')) : '';
+      row[`${CATEGORY_LABEL[c]} Max Yearly Penalty`] = e?.eligible === true ? (e.penalty ?? '') : '';
+    }
+    return row;
+  }
+  // The card's bars as rows — the counts on screen, so the workbook opens on
+  // the same summary the reader clicked from.
+  const feedSummaryRows = (feed) => feed.rows.map(r => ({ State: r.state || '', Utility: r.utility, 'Eligible Sites': r.count }));
+
+  function writeSheets(sheets, filename) {
+    const wb = XLSX.utils.book_new();
+    for (const [name, rows] of sheets) {
+      if (rows.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), name.slice(0, 31));
+    }
+    if (!wb.SheetNames.length) return;
+    XLSX.writeFile(wb, filename);
+  }
+
+  // Both utility-feed cards in one workbook: the per-utility counts and the
+  // sites behind them, for each commodity.
+  function exportUtilityFeeds() {
+    const sheets = [];
+    for (const { key, feed, label } of FEED_CARDS.map(f => ({ ...f, feed: utilityFeeds[f.key] }))) {
+      if (!feed.total) continue;
+      sheets.push([`${label} Summary`, feedSummaryRows(feed)]);
+      sheets.push([`${label} Sites`, utilityFeedSites(results, key).map(feedSiteRow)]);
+    }
+    if (!sheets.length) { alert('No utility feed data to export.'); return; }
+    writeSheets(sheets, 'Utility-Feed-Eligibility.xlsx');
+  }
+
+  function exportFeedDrill() {
+    if (!feedDrillRows.length) return;
+    const card = FEED_CARDS.find(f => f.key === feedDrill.commodity);
+    const name = feedDrill.utility
+      ? `${slug(feedDrill.state)}-${slug(feedDrill.utility)}-${card.abbr}-Sites.xlsx`
+      : `${card.abbr}-Utility-Feed-Sites.xlsx`;
+    writeSheets([[`${card.label} Sites`, feedDrillRows.map(feedSiteRow)]], name.replace(/^-+/, ''));
   }
 
   // Owned / All-sites control. Only rendered when the parent owns the
@@ -1482,32 +1647,56 @@ export function BuildingComplianceScreening({
                 behind the BBS and BPS offerings only works where the site's
                 utilities publish whole-building data, so which utilities serve
                 the obligated sites decides what can actually be delivered. */}
-            <div className={styles.sectionTitle}>Eligibility per Data Stream for Utility Feeds</div>
+            <div className={styles.sectionTitleRow}>
+              <div className={styles.sectionTitle}>Eligibility per Data Stream for Utility Feeds</div>
+              <button
+                type="button"
+                className={`${styles.btn} ${styles.sectionAction}`}
+                onClick={exportUtilityFeeds}
+                disabled={!utilityFeeds.electric.total && !utilityFeeds.gas.total}
+                title="Download both utility feeds — the per-utility counts and the sites behind them — as an Excel workbook"
+              >Export utility feeds</button>
+            </div>
             <div className={styles.wbudcNote}>
               The Whole Building Utility Data Collection (WBUDC) service supports BPS and BBS offerings via
               whole-building data collection; applicability depends on whether the site&apos;s utilities provide
               this option.
             </div>
             <div className={styles.feedGrid}>
-              {[
-                { key: 'electric', feed: utilityFeeds.electric, color: '#F2B705', label: 'Electric Power (EP)' },
-                { key: 'gas', feed: utilityFeeds.gas, color: '#B5179E', label: 'Natural Gas (NG)' },
-              ].map(({ key, feed, color, label }) => (
-                <div key={key} className={styles.dashCard}>
-                  <div className={styles.dashHead} style={{ background: color }}>{label} Utility Feeds</div>
-                  <div className={styles.feedKpi}>
-                    <span className={styles.feedKpiNum} style={{ borderColor: color, color }}>{feed.total}</span>
-                    <span className={styles.kpiLbl}>total eligible sites</span>
+              {FEED_CARDS.map(({ key, label, color }) => {
+                const feed = utilityFeeds[key];
+                // The bar label carries the state, so the drill-down has to map
+                // it back to the (state, utility) pair it was built from.
+                const byLabel = new Map(feed.rows.map(r => [`${r.state ? `${r.state} · ` : ''}${r.utility}`, r]));
+                return (
+                  <div key={key} className={styles.dashCard}>
+                    <div className={styles.dashHead} style={{ background: color }}>{label} Utility Feeds</div>
+                    <button
+                      type="button"
+                      className={`${styles.feedKpi} ${styles.feedKpiBtn}`}
+                      onClick={() => setFeedDrill({ commodity: key, state: null, utility: null })}
+                      disabled={feed.total === 0}
+                      title={`Show every ${label} eligible site`}
+                    >
+                      <span className={styles.feedKpiNum} style={{ borderColor: color, color }}>{feed.total}</span>
+                      <span className={styles.kpiLbl}>total eligible sites</span>
+                    </button>
+                    <div className={styles.dashSubhead}>
+                      Eligible sites per utility (grouped by state) <span className={styles.dashHint}>· click a utility for its sites</span>
+                    </div>
+                    <HBars
+                      items={feed.rows.map(r => ({ label: `${r.state ? `${r.state} · ` : ''}${r.utility}`, value: r.count }))}
+                      color={color}
+                      wide
+                      empty="No utilities on the obligated sites"
+                      onSelect={(barLabel) => {
+                        const row = byLabel.get(barLabel);
+                        if (row) setFeedDrill({ commodity: key, state: row.state, utility: row.utility });
+                      }}
+                    />
                   </div>
-                  <div className={styles.dashSubhead}>Eligible sites per utility (grouped by state)</div>
-                  <HBars
-                    items={feed.rows.map(r => ({ label: `${r.state ? `${r.state} · ` : ''}${r.utility}`, value: r.count }))}
-                    color={color}
-                    wide
-                    empty="No utilities on the obligated sites"
-                  />
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             <div className={styles.sectionTitle}>Site-by-Site Mandate Detail</div>
@@ -1572,6 +1761,18 @@ export function BuildingComplianceScreening({
                 onExport={exportDrill}
                 onSiteClick={(site) => { setDrill(null); setDetailSite(site); }}
                 onClose={() => setDrill(null)}
+              />
+            )}
+            {feedDrill && (
+              <UtilityFeedSitesModal
+                label={`${FEED_CARDS.find(f => f.key === feedDrill.commodity).label} Utility Feeds`}
+                color={FEED_CARDS.find(f => f.key === feedDrill.commodity).color}
+                state={feedDrill.state}
+                utility={feedDrill.utility}
+                rows={feedDrillRows}
+                onExport={exportFeedDrill}
+                onSiteClick={(site) => { setFeedDrill(null); setDetailSite(site); }}
+                onClose={() => setFeedDrill(null)}
               />
             )}
             {detailSite && <SiteDetailModal site={detailSite} onClose={() => setDetailSite(null)} />}
