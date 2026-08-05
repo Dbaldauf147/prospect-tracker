@@ -196,12 +196,63 @@ export function mergeMeetings(rows) {
   return merged.sort((a, b) => (msOf(a._meetingStart) ?? 0) - (msOf(b._meetingStart) ?? 0));
 }
 
-/** The rows that start inside the local day containing `now`. */
-export function meetingsOnDay(rows, now = new Date()) {
-  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const dayEnd = dayStart + 24 * 60 * 60 * 1000;
+/**
+ * The window covering today and the `days - 1` days before it, as local
+ * calendar days: `days: 1` is today, `days: 7` is this day last week
+ * through tonight.
+ *
+ * Built by walking the date rather than subtracting 24-hour blocks, so a
+ * window spanning a daylight-saving change still starts at midnight
+ * instead of at 23:00 the evening before.
+ *
+ * The window ends at the end of TODAY. These are meetings that have
+ * happened or are about to; a longer look back is not an invitation to
+ * start showing next week.
+ */
+export function rangeForDays(days, now = new Date()) {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const end = new Date(today);
+  end.setDate(end.getDate() + 1);
+  const start = new Date(today);
+  start.setDate(start.getDate() - Math.max(0, (Number(days) || 1) - 1));
+  return { start: start.getTime(), end: end.getTime() };
+}
+
+/** The rows that start inside `{ start, end }`. */
+export function meetingsInRange(rows, { start, end } = {}) {
   return (rows || []).filter((r) => {
     const t = msOf(r?._meetingStart);
-    return t != null && t >= dayStart && t < dayEnd;
+    return t != null && (start == null || t >= start) && (end == null || t < end);
   });
+}
+
+/** The rows that start inside the local day containing `now`. */
+export function meetingsOnDay(rows, now = new Date()) {
+  return meetingsInRange(rows, rangeForDays(1, now));
+}
+
+/**
+ * Rows bucketed into local calendar days — most recent day first, and
+ * each day's meetings in the order they happened.
+ *
+ * That order is deliberate: the day is read forwards, the way a calendar
+ * shows it, but the list of days is read backwards, because a look back
+ * starts from what just happened.
+ */
+export function groupMeetingsByDay(rows) {
+  const buckets = new Map();
+  for (const row of (rows || [])) {
+    const t = msOf(row?._meetingStart);
+    if (t == null) continue;
+    const at = new Date(t);
+    const dayStart = new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime();
+    if (!buckets.has(dayStart)) buckets.set(dayStart, { dayStart, meetings: [] });
+    buckets.get(dayStart).meetings.push(row);
+  }
+  return [...buckets.values()]
+    .sort((a, b) => b.dayStart - a.dayStart)
+    .map(group => ({
+      ...group,
+      meetings: group.meetings.sort((a, b) => (msOf(a._meetingStart) ?? 0) - (msOf(b._meetingStart) ?? 0)),
+    }));
 }
