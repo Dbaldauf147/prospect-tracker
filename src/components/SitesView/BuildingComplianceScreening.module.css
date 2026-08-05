@@ -1097,13 +1097,36 @@
      deadline-per-row list that can outrun a sheet on its own, and holding it
      together would only push a mostly-empty page ahead of it. */
   .kpiTile,
-  .dashCard,
   .rmSumTile,
   .tlChart,
   .disclaimerBox,
   .sizeNote,
   .siteTable tr {
     break-inside: avoid;
+  }
+
+  /* .dashCard is deliberately not in that list. It is a header band, a pair
+     of figures and two bar lists, one row per jurisdiction -- so it grows
+     with the portfolio and at any real size runs taller than the sheet it
+     would have to fit on. Held whole it can never be placed anywhere: the
+     engine ejects it to a fresh page, overflows there anyway, and leaves
+     most of the page before it blank. Measured at 758px against 756px of
+     usable height, which cost two thirds of a sheet.
+
+     So the card breaks, and the pieces that must not are named instead: the
+     coloured header band, the figure pair, and any single bar. A list that
+     continues on the next sheet is fine; a bar sliced through the middle is
+     not. */
+  .dashHead,
+  .dashKpis,
+  .hbarRow,
+  .hbarRowWide {
+    break-inside: avoid;
+  }
+  /* Neither heading is left stranded at the foot of a sheet. */
+  .dashHead,
+  .dashSubhead {
+    break-after: avoid;
   }
 
   /* A heading never prints as the last line on a sheet. The timeline's own
