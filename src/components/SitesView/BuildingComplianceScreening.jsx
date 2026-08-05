@@ -7,7 +7,7 @@ import {
   CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
   totalEligible, eligibilityByOrdinance, totalPenalty, penaltyByOrdinance, sitesCompanyLabel,
   bpsPrioritization, penaltyBasis, auditRequirements, auditRequirementsLabel, categoryColumns,
-  deadlinesByDate, utilityFeedEligibility,
+  deadlinesWithRecurrence, utilityFeedEligibility,
 } from '../../utils/complianceMandates';
 import { exportComplianceReportXlsx } from '../../utils/complianceReportXlsx';
 import { schneiderLogoSvg } from '../../utils/schneiderLogo';
@@ -34,6 +34,9 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 // midnight "today" — a local-midnight clock would put a site in a deadline's
 // last day or its first depending on the reader's timezone.
 const DAY = 86400000;
+// How far past the last published deadline — or past today, whichever is
+// later — the recurring filings are projected.
+const PROJECT_YEARS = 5;
 const isoTime = (iso) => {
   const [y, m, d] = String(iso).split('-').map(Number);
   return Date.UTC(y, (m || 1) - 1, d || 1);
@@ -226,17 +229,30 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
               return (
                 <g key={p.date}>
                   {tier > 0 && <line x1={cx} y1={dotY + 7} x2={cx} y2={ly - 9} stroke={lane.color} strokeWidth="1" opacity="0.45" />}
-                  <circle cx={cx} cy={dotY} r="6" fill={lane.color} stroke="#fff" strokeWidth="1.5">
-                    <title>{`${lane.label} — ${mdY(p.date)}: ${p.count} site${p.count === 1 ? '' : 's'}`}</title>
+                  {/* Hollow for a projected filing — it's the ordinance's
+                      cycle carried forward, not a date the jurisdiction has
+                      published, and the two shouldn't read alike. */}
+                  <circle
+                    cx={cx} cy={dotY} r={p.projected ? 5 : 6}
+                    fill={p.projected ? '#fff' : lane.color}
+                    stroke={p.projected ? lane.color : '#fff'}
+                    strokeWidth={p.projected ? 2 : 1.5}
+                  >
+                    <title>
+                      {`${lane.label} — ${mdY(p.date)}: ${p.count} site${p.count === 1 ? '' : 's'}`
+                        + (p.projected ? ' (projected from the ordinance\u2019s compliance cycle)' : '')}
+                    </title>
                   </circle>
                   {tier >= 0 && (
                     <>
-                      <text x={cx} y={ly} textAnchor="middle" fontSize="11" fontWeight="800" fill="#0F172A"
-                        stroke="#fff" strokeWidth="3.5" paintOrder="stroke">
+                      <text x={cx} y={ly} textAnchor="middle" fontSize="11" fontWeight={p.projected ? 700 : 800}
+                        fill={p.projected ? '#64748B' : '#0F172A'} stroke="#fff" strokeWidth="3.5" paintOrder="stroke">
                         {p.count} site{p.count === 1 ? '' : 's'}
                       </text>
-                      <text x={cx} y={ly + 11} textAnchor="middle" fontSize="9.5" fill="#475569"
-                        stroke="#fff" strokeWidth="3.5" paintOrder="stroke">{mdY(p.date)}</text>
+                      <text x={cx} y={ly + 11} textAnchor="middle" fontSize="9.5"
+                        fill={p.projected ? '#94A3B8' : '#475569'} stroke="#fff" strokeWidth="3.5" paintOrder="stroke">
+                        {mdY(p.date)}
+                      </text>
                     </>
                   )}
                 </g>
@@ -793,21 +809,6 @@ export function BuildingComplianceScreening({
     return { below, assumed };
   }, [results]);
 
-  // Every dated deadline across the portfolio, one row per date, counting the
-  // sites each mandate brings due on it. Sorted earliest-first — the order the
-  // work actually lands in.
-  const roadmap = useMemo(() => {
-    const map = new Map();
-    for (const c of CATEGORIES) {
-      for (const { date, count } of deadlinesByDate(results, c)) {
-        if (!map.has(date)) map.set(date, { bbs: 0, audits: 0, bps: 0 });
-        map.get(date)[c] = count;
-      }
-    }
-    return [...map.entries()]
-      .map(([date, v]) => ({ date, ...v, total: v.bbs + v.audits + v.bps }))
-      .sort((a, b) => a.date.localeCompare(b.date));
-  }, [results]);
   // Fixed for the life of the mount, so the countdowns and the "today" marker
   // can't shift under a re-render mid-session.
   const todayTime = useMemo(() => utcToday(), []);
@@ -817,16 +818,14 @@ export function BuildingComplianceScreening({
   // brings it due, so the running total is what the portfolio is exposed to at
   // any point along the lanes above it.
   const roadmapCharts = useMemo(() => {
-    const lanes = CATEGORIES.map(c => {
-      const points = deadlinesByDate(results, c).map(d => ({ date: d.date, count: d.count }));
-      return {
-        key: c,
-        label: CATEGORY_LABEL[c],
-        color: CATEGORY_COLOR[c],
-        points,
-        total: totalEligible(results, c),
-      };
-    });
+    const todayISO = new Date(todayTime).toISOString().slice(0, 10);
+    const lanes = CATEGORIES.map(c => ({
+      key: c,
+      label: CATEGORY_LABEL[c],
+      color: CATEGORY_COLOR[c],
+      points: deadlinesWithRecurrence(results, c, { todayISO, horizonYears: PROJECT_YEARS }),
+      total: totalEligible(results, c),
+    }));
     const byDate = new Map();
     for (const r of results) {
       for (const c of CATEGORIES) {
@@ -840,7 +839,26 @@ export function BuildingComplianceScreening({
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([date, add]) => ({ date, add, cum: (run += add) }));
     return { lanes, steps };
-  }, [results]);
+  }, [results, todayTime]);
+
+  // Every dated deadline across the portfolio, one row per date, counting the
+  // sites each mandate brings due on it. Sorted earliest-first — the order the
+  // work actually lands in.
+  const roadmap = useMemo(() => {
+    const map = new Map();
+    for (const lane of roadmapCharts.lanes) {
+      for (const p of lane.points) {
+        if (!map.has(p.date)) map.set(p.date, { bbs: 0, audits: 0, bps: 0, projected: true });
+        const row = map.get(p.date);
+        row[lane.key] = p.count;
+        // A date is only projected if nothing published lands on it.
+        if (!p.projected) row.projected = false;
+      }
+    }
+    return [...map.entries()]
+      .map(([date, v]) => ({ date, ...v, total: v.bbs + v.audits + v.bps }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }, [roadmapCharts]);
 
   // The domain both charts are drawn against. Today is inside it rather than
   // merely drawn on it, so the gap between now and the first deadline is a
@@ -873,6 +891,8 @@ export function BuildingComplianceScreening({
       next: ahead[0] || null,
       passed: dated.length - ahead.length,
       aheadCount: ahead.length,
+      aheadPublished: ahead.filter(r => !r.projected).length,
+      aheadProjected: ahead.filter(r => r.projected).length,
       sitesAhead: ahead.reduce((s, r) => s + r.total, 0),
       busiest,
       undated,
@@ -1265,6 +1285,7 @@ export function BuildingComplianceScreening({
                     <div className={styles.rmSumVal}>{mdY(roadmapSummary.next.date)}</div>
                     <div className={styles.rmSumSub}>
                       {relDue(roadmapSummary.next.days)} · {roadmapSummary.next.total} site{roadmapSummary.next.total === 1 ? '' : 's'} due
+                      {roadmapSummary.next.projected ? ' · projected' : ''}
                     </div>
                   </>
                 ) : (
@@ -1278,13 +1299,15 @@ export function BuildingComplianceScreening({
                 <div className={styles.rmSumLbl}>Deadlines ahead</div>
                 <div className={styles.rmSumVal}>{roadmapSummary.aheadCount}</div>
                 <div className={styles.rmSumSub}>
-                  {roadmapSummary.passed ? `${roadmapSummary.passed} already passed` : `across ${roadmap.length} dated date${roadmap.length === 1 ? '' : 's'}`}
+                  {roadmapSummary.aheadPublished} published · {roadmapSummary.aheadProjected} projected
                 </div>
               </div>
+              {/* Counts every recurrence in the window, not just the first
+                  filing — which is the point of projecting them. */}
               <div className={styles.rmSumTile}>
-                <div className={styles.rmSumLbl}>Site obligations ahead</div>
+                <div className={styles.rmSumLbl}>Filings ahead</div>
                 <div className={styles.rmSumVal}>{roadmapSummary.sitesAhead}</div>
-                <div className={styles.rmSumSub}>site + mandate pairs still to file</div>
+                <div className={styles.rmSumSub}>site filings over the next {PROJECT_YEARS} years</div>
               </div>
               <div className={styles.rmSumTile}>
                 <div className={styles.rmSumLbl}>Busiest deadline</div>
@@ -1303,7 +1326,10 @@ export function BuildingComplianceScreening({
               <div className={styles.tlHead}>
                 <span className={styles.tlHeadTitle}>
                   Key compliance deadlines
-                  <span className={styles.tlHeadSub}> — one lane per mandate; each dot is a deadline and the sites it brings due</span>
+                  <span className={styles.tlHeadSub}>
+                    {' '}— one lane per mandate; solid dots are published deadlines, hollow dots the ordinance&apos;s
+                    recurring cycle carried {PROJECT_YEARS} years forward
+                  </span>
                 </span>
               </div>
               <div className={styles.tlChart}>
@@ -1314,7 +1340,10 @@ export function BuildingComplianceScreening({
               <div className={styles.tlHead}>
                 <span className={styles.tlHeadTitle}>
                   Cumulative fine exposure
-                  <span className={styles.tlHeadSub}> — BBS, Energy Audits and BPS combined; each mandate starts counting at its own deadline</span>
+                  <span className={styles.tlHeadSub}>
+                    {' '}— BBS, Energy Audits and BPS combined. Each mandate starts counting at its own deadline; the
+                    figure is what the portfolio carries per year from then on, not a running total across years
+                  </span>
                 </span>
               </div>
               <div className={styles.tlChart}>
