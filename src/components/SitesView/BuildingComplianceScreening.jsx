@@ -15,15 +15,6 @@ import { OwnershipScopeBar } from './OwnershipScopeBar.jsx';
 import styles from './BuildingComplianceScreening.module.css';
 
 const usd = (n) => n == null ? '$-' : '$' + Math.round(n).toLocaleString('en-US');
-// Compact form for chart labels, where the full figure would collide with its
-// neighbour long before it read as a number.
-const usdShort = (n) => {
-  if (n == null) return '$-';
-  const a = Math.abs(n);
-  if (a >= 1e6) return '$' + (n / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace(/\.0$/, '') + 'M';
-  if (a >= 1e3) return '$' + Math.round(n / 1e3) + 'K';
-  return '$' + Math.round(n);
-};
 const isUrl = (v) => /^https?:\/\//i.test(String(v).trim());
 // Filename-safe form of a jurisdiction / utility name.
 const slug = (s) => String(s || '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -269,103 +260,6 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
           </g>
         );
       })}
-    </svg>
-  );
-}
-
-// Fine exposure as it accumulates: every mandate's max yearly penalty switches
-// on at the deadline that brings it due, so the line is what the portfolio is
-// carrying at any point on the axis above — all three mandates together, since
-// the exposure is paid as one number.
-function CumulativeFines({ steps, ax, todayTime }) {
-  if (!steps.length) return <div className={styles.miniEmpty}>No fines on file against a dated deadline.</div>;
-  const H = 128, padT = 20, padB = 24;
-  const ih = H - padT - padB;
-  const baseY = padT + ih;
-  const max = steps[steps.length - 1].cum;
-  const y = (v) => baseY - (max ? (v / max) * ih : 0);
-  const left = TL.padL, right = TL.W - TL.padR;
-
-  // Step-after: exposure holds flat until the next deadline lands.
-  let d = `M ${left} ${y(0)}`;
-  let prevY = y(0);
-  for (const s of steps) {
-    const px = tlX(isoTime(s.date), ax);
-    d += ` L ${px} ${prevY} L ${px} ${y(s.cum)}`;
-    prevY = y(s.cum);
-  }
-  d += ` L ${right} ${prevY}`;
-  const area = `${d} L ${right} ${baseY} L ${left} ${baseY} Z`;
-
-  // What is already in force, as of today.
-  const liveNow = steps.filter(s => isoTime(s.date) <= todayTime).at(-1)?.cum || 0;
-  const everythingLanded = liveNow >= max;
-  const liveText = `${usdShort(liveNow)} live today`;
-  const totalText = `${usdShort(max)} once every deadline has landed`;
-  // Rough advance width at this size and weight; near enough to keep two
-  // captions off each other without measuring text in the DOM.
-  const capW = (t) => t.length * 5;
-  const totalLeft = right - capW(totalText);
-  const halfLive = capW(liveText) / 2;
-  const liveX = Math.max(left + halfLive, Math.min(tlX(todayTime, ax), totalLeft - 10 - halfLive));
-  const showLive = liveX + halfLive <= totalLeft - 8;
-  const gridVals = max > 0 ? [0, max / 2, max] : [0];
-  // Which step values have room to be printed, decided before render.
-  const marks = [];
-  for (let i = 0, lastLabelX = -Infinity; i < steps.length; i++) {
-    const px = tlX(isoTime(steps[i].date), ax);
-    const show = px - lastLabelX >= 62;
-    if (show) lastLabelX = px;
-    marks.push({ ...steps[i], px, show });
-  }
-  return (
-    <svg width="100%" viewBox={`0 0 ${TL.W} ${H}`} preserveAspectRatio="xMidYMid meet" role="img"
-      aria-label="Cumulative estimated maximum yearly fine exposure over time">
-      {gridVals.map(v => (
-        <g key={v}>
-          <line x1={left} y1={y(v)} x2={right} y2={y(v)} stroke="#EEF2F6" strokeWidth="1" />
-          <text x={left - 10} y={y(v) + 3.5} textAnchor="end" fontSize="10" fill="#94A3B8" fontWeight="700">{usdShort(v)}</text>
-        </g>
-      ))}
-      {axisTicks(ax).map(t => (
-        <line key={t.t} x1={t.px} y1={padT - 6} x2={t.px} y2={baseY} stroke="#E2E8F0" strokeWidth="1" strokeDasharray="3 3" />
-      ))}
-      <path d={area} fill="#009530" opacity="0.12" />
-      <path d={d} fill="none" stroke="#009530" strokeWidth="2.2" strokeLinejoin="round" />
-      <TodayMark ax={ax} todayTime={todayTime} y1={padT - 6} y2={baseY} label={false} />
-      {marks.map(({ px, show, ...s }) => (
-        <g key={s.date}>
-            <circle cx={px} cy={y(s.cum)} r="3.5" fill="#fff" stroke="#009530" strokeWidth="2">
-              <title>{`${mdY(s.date)} — +${usd(s.add)}/yr, ${usd(s.cum)}/yr carried from here`}</title>
-            </circle>
-          {show && (
-            <text x={px} y={y(s.cum) - 9} textAnchor="middle" fontSize="10" fontWeight="800" fill="#0F172A"
-              stroke="#fff" strokeWidth="3.5" paintOrder="stroke">{usdShort(s.cum)}</text>
-          )}
-        </g>
-      ))}
-      {/* Where the portfolio stands right now, against where it ends up.
-          These two ran into each other whenever today fell near the right
-          edge, which is every portfolio whose deadlines have all landed. The
-          end figure owns the right edge; the live one is centred on the today
-          rule but pushed clear of it, and where they'd say the same thing
-          they're merged into one line rather than printed twice. */}
-      {everythingLanded ? (
-        <text x={right} y={baseY + 14} textAnchor="end" fontSize="9.5" fontWeight="800" fill="#009530">
-          {usdShort(max)} live today; every deadline has landed
-        </text>
-      ) : (
-        <>
-          {showLive && (
-            <text x={liveX} y={baseY + 14} textAnchor="middle" fontSize="9.5" fontWeight="800" fill="#DC2626">
-              {liveText}
-            </text>
-          )}
-          <text x={right} y={baseY + 14} textAnchor="end" fontSize="9.5" fontWeight="800" fill="#009530">
-            {totalText}
-          </text>
-        </>
-      )}
     </svg>
   );
 }
@@ -940,10 +834,8 @@ export function BuildingComplianceScreening({
   // can't shift under a re-render mid-session.
   const todayTime = useMemo(() => utcToday(), []);
 
-  // One lane per mandate, and the fine exposure the same deadlines switch on.
-  // A mandate's max yearly penalty starts being carried at the deadline that
-  // brings it due, so the running total is what the portfolio is exposed to at
-  // any point along the lanes above it.
+  // One lane per mandate: every deadline it brings due, published dates and
+  // the ordinance's recurring cycle carried forward.
   const roadmapCharts = useMemo(() => {
     const todayISO = new Date(todayTime).toISOString().slice(0, 10);
     const lanes = CATEGORIES.map(c => ({
@@ -953,19 +845,7 @@ export function BuildingComplianceScreening({
       points: deadlinesWithRecurrence(results, c, { todayISO, horizonYears: PROJECT_YEARS }),
       total: totalEligible(results, c),
     }));
-    const byDate = new Map();
-    for (const r of results) {
-      for (const c of CATEGORIES) {
-        const e = r[c];
-        if (e?.eligible !== true || !e.deadline || e.penalty == null) continue;
-        byDate.set(e.deadline, (byDate.get(e.deadline) || 0) + e.penalty);
-      }
-    }
-    let run = 0;
-    const steps = [...byDate.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([date, add]) => ({ date, add, cum: (run += add) }));
-    return { lanes, steps };
+    return { lanes };
   }, [results, todayTime]);
 
   // Every dated deadline across the portfolio, one row per date, counting the
@@ -987,14 +867,11 @@ export function BuildingComplianceScreening({
       .sort((a, b) => a.date.localeCompare(b.date));
   }, [roadmapCharts]);
 
-  // The domain both charts are drawn against. Today is inside it rather than
+  // The domain the lanes are drawn against. Today is inside it rather than
   // merely drawn on it, so the gap between now and the first deadline is a
   // real distance; a little padding keeps the end labels off the frame.
   const axis = useMemo(() => {
-    const times = [
-      ...roadmapCharts.lanes.flatMap(l => l.points.map(p => isoTime(p.date))),
-      ...roadmapCharts.steps.map(s => isoTime(s.date)),
-    ];
+    const times = roadmapCharts.lanes.flatMap(l => l.points.map(p => isoTime(p.date)));
     let lo = Math.min(todayTime, ...times);
     let hi = Math.max(todayTime, ...times);
     if (!times.length || hi === lo) { lo = Math.min(lo, todayTime) - 120 * DAY; hi = Math.max(hi, todayTime) + 120 * DAY; }
@@ -1508,10 +1385,8 @@ export function BuildingComplianceScreening({
               </div>
             </div>
 
-            {/* One lane per mandate, each deadline a labelled dot on it, and
-                directly below — on the same axis — the fine exposure those
-                same deadlines switch on. Reading down a date says both what
-                falls due and what it costs from then on. */}
+            {/* One lane per mandate, each deadline a labelled dot on it, so
+                reading across a date says what falls due and when. */}
             <div className={styles.panelWrap}>
               <div className={styles.tlHead}>
                 <span className={styles.tlHeadTitle}>
@@ -1526,18 +1401,6 @@ export function BuildingComplianceScreening({
                 {roadmap.length
                   ? <DeadlineLanes lanes={roadmapCharts.lanes} ax={axis} todayTime={todayTime} />
                   : <div className={styles.miniEmpty}>No dated deadlines across the screened portfolio.</div>}
-              </div>
-              <div className={styles.tlHead}>
-                <span className={styles.tlHeadTitle}>
-                  Cumulative fine exposure
-                  <span className={styles.tlHeadSub}>
-                    {' '}— BBS, Energy Audits and BPS combined. Each mandate starts counting at its own deadline; the
-                    figure is what the portfolio carries per year from then on, not a running total across years
-                  </span>
-                </span>
-              </div>
-              <div className={styles.tlChart}>
-                <CumulativeFines steps={roadmapCharts.steps} ax={axis} todayTime={todayTime} />
               </div>
             </div>
             {roadmapSummary.undated > 0 && (
