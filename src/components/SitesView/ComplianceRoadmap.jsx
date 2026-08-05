@@ -136,10 +136,17 @@ function MandateTimeline({ lanes, today }) {
     const placed = lane.items.map((it) => {
       const w = Math.max(textW(it.chip, 9), textW(it.shortDue, 8));
       const cx = x(it.due);
-      const x1 = cx - w / 2, x2 = cx + w / 2;
+      // Keep the label inside the plot area. The axis is padded by 45 days
+      // either side, which says nothing about how wide a chip renders at
+      // 9px — so a marker near either end would otherwise print into the
+      // lane-label gutter or off the right frame. Clamping moves the text
+      // only; the dot stays on its true date and the leader line slants
+      // across to say so.
+      const lx = Math.min(Math.max(cx, padL + w / 2), W - padR - w / 2);
+      const x1 = lx - w / 2, x2 = lx + w / 2;
       let row = rowEnds.findIndex(end => x1 > end + 6);
       if (row === -1) { row = rowEnds.length; rowEnds.push(x2); } else { rowEnds[row] = x2; }
-      return { ...it, cx, row };
+      return { ...it, cx, lx, row };
     });
     return { ...lane, placed, rows: Math.max(1, rowEnds.length) };
   });
@@ -188,10 +195,16 @@ function MandateTimeline({ lanes, today }) {
             return (
               <g key={it.key}>
                 <title>{`${lane.label} · ${it.mandate}\n${it.dueLabel}\n${it.requirement}`}</title>
-                <line x1={it.cx} y1={lane.cy} x2={it.cx} y2={ly - 9} stroke="#CBD5E1" />
+                <line x1={it.cx} y1={lane.cy} x2={it.lx} y2={ly - 9} stroke="#CBD5E1" />
                 <circle cx={it.cx} cy={lane.cy} r="5" fill={STATUS_COLOR[it.status]} stroke="#fff" strokeWidth="2" />
-                <text x={it.cx} y={ly} textAnchor="middle" fontSize="9" fontWeight="700" fill="#334155">{it.chip}</text>
-                <text x={it.cx} y={ly + 9} textAnchor="middle" fontSize="8" fill="#64748B">{it.shortDue}</text>
+                {/* The year gridlines and the today rule run the full height
+                    of the chart, behind the lanes. A white halo keeps them
+                    from striking through a label that happens to sit on
+                    one, without having to route labels around them. */}
+                <text x={it.lx} y={ly} textAnchor="middle" fontSize="9" fontWeight="700" fill="#334155"
+                  stroke="#fff" strokeWidth="3" paintOrder="stroke">{it.chip}</text>
+                <text x={it.lx} y={ly + 9} textAnchor="middle" fontSize="8" fill="#64748B"
+                  stroke="#fff" strokeWidth="3" paintOrder="stroke">{it.shortDue}</text>
               </g>
             );
           })}
