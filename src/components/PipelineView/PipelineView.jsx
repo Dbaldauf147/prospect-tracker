@@ -87,7 +87,7 @@ function oppOpenTs(r, ageRef) {
 function isBlankFollowUp(row) {
   const v = String(row?.['Follow Up On Sale'] ?? '').trim();
   if (!v) return true;
-  return ['-', '-', '#n/a'].includes(v.toLowerCase());
+  return ['-', '\u2014', '#n/a'].includes(v.toLowerCase());
 }
 
 // The date a deal closed/sold, used to sort the Post-Sale Follow-Up table.
@@ -155,7 +155,7 @@ const CLOSE_RATE_PULL_THROUGH = /pull[\s-]?through/i;
 // A value that's present and isn't one of the spreadsheet's null markers.
 const filledCell = (v) => {
   const s = String(v ?? '').trim();
-  return !!s && s !== '-' && s !== '-' && s !== 'N/A' && s !== '#N/A';
+  return !!s && s !== '-' && s !== '\u2014' && s !== 'N/A' && s !== '#N/A';
 };
 const hasBfoOpportunity = (r) => filledCell(r['BFO Link']);
 const isAemScope = (r) => /\baem\b/i.test(String(r.Scope || ''));

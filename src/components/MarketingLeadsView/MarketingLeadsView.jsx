@@ -296,7 +296,7 @@ function nameKey(s) {
 function isPlaceholderCompany(s) {
   const t = String(s || '').trim();
   if (!t) return true;
-  if (/^[--–_]+$/.test(t)) return true;
+  if (/^[-\u2013\u2014_]+$/.test(t)) return true;
   if (/^(n\.?a\.?|n\/a|none|null|tbd|unknown|\?|\.|test)$/i.test(t)) return true;
   return false;
 }

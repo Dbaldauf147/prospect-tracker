@@ -113,7 +113,7 @@ const RENEWAL_WARNING_DAYS = 270;
 // dash placeholder. Matches the noStatus check in ClientsView.
 function hasNoClientStatus(statusMap, clientKey) {
   const s = String(statusMap?.[clientKey] || '').trim();
-  return s === '' || s === '-' || s === '-' || s === '–';
+  return s === '' || s === '-' || s === '\u2014' || s === '\u2013';
 }
 
 // Issue #4: a client whose soonest active contract renews within

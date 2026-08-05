@@ -349,7 +349,7 @@ function ContractTable({ deals }) {
 function isBlankFollowUp(row) {
   const v = String(row?.['Follow Up On Sale'] ?? '').trim();
   if (!v) return true;
-  return ['-', '-', '#n/a'].includes(v.toLowerCase());
+  return ['-', '\u2014', '#n/a'].includes(v.toLowerCase());
 }
 
 // The date a deal closed/sold. Deals don't carry an explicit close date, so
@@ -1400,7 +1400,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
               // Tint the row light red when a renewal is closing in
               // (<270 days) and the Status column is unset — those are
               // the clients that need a status set before they slip.
-              const noStatus = s === '' || s === '-' || s === '-' || s === '–';
+              const noStatus = s === '' || s === '-' || s === '\u2014' || s === '\u2013';
               if (row.daysUntilExpiration != null && row.daysUntilExpiration < RENEWAL_WARNING_DAYS && noStatus) {
                 return { background: '#FEE2E2' };
               }

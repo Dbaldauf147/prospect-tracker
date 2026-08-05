@@ -128,7 +128,7 @@ export function computeNewBfoOpps({ oppsCache, prospects = [], serviceOverrides 
 // placeholder — those leave a hole in the generated prompt / Project Name.
 function isBlankBfoField(v) {
   const s = String(v ?? '').trim();
-  return !s || s === '-' || s === '-';
+  return !s || s === '-' || s === '\u2014';
 }
 
 /**
