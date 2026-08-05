@@ -797,7 +797,7 @@ export function BuildingComplianceScreening({
   const [city, setCity] = useState('');
   const [state, setState] = useState('');
   const [siteSearch, setSiteSearch] = useState('');
-  const [onlyEligible, setOnlyEligible] = useState(false);
+  const [onlyEligible, setOnlyEligible] = useState(true);
   // The screened site whose detail popup is open, if any.
   const [detailSite, setDetailSite] = useState(null);
   // The dashboard bar drilled into, as { category, government }. Opens the
