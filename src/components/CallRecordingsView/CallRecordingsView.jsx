@@ -673,12 +673,15 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     setSyncNote('Checking Granola for new calls…');
     const idx = buildCompanyGuessIndex(prospects || []);
     const watermark = full ? '' : String(settings.granolaSyncedThrough || '');
+    const pendingLatest = full ? '' : String(settings.granolaSyncPendingLatest || '');
     try {
       const result = await syncGranolaCalls({
         updatedAfter: watermark,
         // No watermark means a first sync, which would otherwise pull the
         // whole workspace history; cap it at the back-fill window.
         createdAfter: watermark ? '' : daysAgoIso(DEFAULT_BACKFILL_DAYS),
+        // Pick up where the last run stopped. A full re-read starts over.
+        startCursor: full ? '' : String(settings.granolaSyncCursor || ''),
         shouldFetchDetail: (summary) => {
           if (full) return true;
           const stored = recordsRef.current[`granola:${summary.noteId}`];
@@ -700,21 +703,44 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
         onProgress: (p) => setSyncNote(`Syncing… ${p.imported + p.updated} call${p.imported + p.updated === 1 ? '' : 's'} so far`),
       });
 
-      // Advance the watermark only when the sync ran clean. A partial
-      // sync that moved it would leave the calls it failed on permanently
-      // behind the cursor.
-      if (result.errors.length === 0 && !result.truncated && result.latest) {
-        updateSettings?.({ granolaSyncedThrough: result.latest });
+      // The high-water mark a resumed walk has to carry. Each leg of a
+      // truncated sync only sees its own pages, so the newest updated_at
+      // is the newest across all of them, not the newest in the last one.
+      // Without this a resume that finished on older pages would move the
+      // watermark backwards and re-read those calls on the next sync.
+      const newest = result.latest > pendingLatest ? result.latest : pendingLatest;
+
+      // Advance the watermark only when the sync ran clean AND reached the
+      // end of the window. A partial sync that moved it would leave the
+      // calls it failed on permanently behind the cursor.
+      //
+      // A clean-but-truncated run instead banks where it stopped, so the
+      // next sync carries on from there rather than re-walking the pages
+      // it just finished. Errors bank nothing: restarting the window is
+      // what gives the notes that failed another go.
+      if (result.errors.length === 0) {
+        if (result.truncated) {
+          updateSettings?.({ granolaSyncCursor: result.nextCursor || '', granolaSyncPendingLatest: newest });
+        } else if (newest) {
+          updateSettings?.({ granolaSyncedThrough: newest, granolaSyncCursor: '', granolaSyncPendingLatest: '' });
+        }
+      } else if (settings.granolaSyncCursor || pendingLatest) {
+        updateSettings?.({ granolaSyncCursor: '', granolaSyncPendingLatest: '' });
       }
 
       const counts = [
         result.imported ? `${result.imported} new` : '',
         result.updated ? `${result.updated} updated` : '',
       ].filter(Boolean).join(', ');
+      const more = result.truncated ? ' More remain: sync again to pick up where this stopped.' : '';
+      // Worth saying: a stale cursor means this run re-covered calls the
+      // last one had already done, so the counts read higher than the
+      // number of genuinely new calls.
+      const again = result.restarted ? ' The saved position had expired, so this read the window from the start.' : '';
       setSyncNote(
         counts
-          ? `Synced ${counts} from Granola.${result.truncated ? ' More remain: sync again to continue.' : ''}`
-          : 'Already up to date with Granola.',
+          ? `Synced ${counts} from Granola.${more}${again}`
+          : `Already up to date with Granola.${again}`,
       );
       if (result.errors.length > 0) {
         setError(`Some calls didn't import: ${result.errors.slice(0, 3).join(' · ')}`);
@@ -725,7 +751,8 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     } finally {
       setSyncing(false);
     }
-  }, [uid, syncing, prospects, settings.granolaSyncedThrough, updateSettings, persist, autoLink]);
+  }, [uid, syncing, prospects, settings.granolaSyncedThrough, settings.granolaSyncCursor,
+    settings.granolaSyncPendingLatest, updateSettings, persist, autoLink]);
 
   // Re-run attendee matching over every Granola call that still has no
   // company. Worth its own button because the prospect list can arrive
