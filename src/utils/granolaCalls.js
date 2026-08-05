@@ -71,6 +71,12 @@ export function describeMissingKey(hint) {
     // whitespace-only value, which is a re-paste rather than a re-scope.
     return `${where}${build} has a GRANOLA_API_KEY, but it is empty. Re-paste the key value and redeploy.`;
   }
+  if (named.length === 1 && named[0] === 'GRANOLA_API_BASE') {
+    // The two names sit next to each other in .env.example, so this is
+    // usually the key pasted into the wrong row rather than a deliberate
+    // host override.
+    return `${where}${build} can see GRANOLA_API_BASE but no GRANOLA_API_KEY. GRANOLA_API_BASE is an optional override for the API's address, not the key — if you pasted the key into it, delete that variable and add the key as GRANOLA_API_KEY instead.`;
+  }
   if (named.length > 0) {
     return `${where}${build} can see ${named.join(', ')} but no GRANOLA_API_KEY — check the variable's name.`;
   }

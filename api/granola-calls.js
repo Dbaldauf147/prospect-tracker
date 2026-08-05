@@ -24,7 +24,23 @@
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
 
-const GRANOLA_BASE = (process.env.GRANOLA_API_BASE || 'https://public-api.granola.ai/v1').replace(/\/+$/, '');
+const DEFAULT_BASE = 'https://public-api.granola.ai/v1';
+
+// GRANOLA_API_BASE is an escape hatch for Granola moving the public API,
+// not something to set day to day. Anything that isn't an http(s) URL is
+// a mistake — most often the API KEY pasted into the wrong row, the two
+// names being neighbours in .env.example — and honouring it would send
+// every request to a nonsense host and fail in a way that looks like
+// Granola being down. Ignore it and say so in the logs.
+export function resolveApiBase(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return DEFAULT_BASE;
+  if (/^https?:\/\/[^\s/]+/i.test(raw)) return raw.replace(/\/+$/, '');
+  console.warn('granola-calls: ignoring GRANOLA_API_BASE — not an http(s) URL. Did the API key go in this variable by mistake?');
+  return DEFAULT_BASE;
+}
+
+const GRANOLA_BASE = resolveApiBase(process.env.GRANOLA_API_BASE);
 
 // Granola documents 5 req/sec sustained with a 25 burst. A sync walks
 // pages and then fetches one detail per changed note, so the ceiling here
