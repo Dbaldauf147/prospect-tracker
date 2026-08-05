@@ -188,6 +188,7 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
   //
   // The dot never moves under any of this: it is the date. A label in a run
   // does not sit over its own dot, which is the trade the bracket pays for.
+  const todayX = tlX(todayTime, ax);
   const placed = lanes.map(lane => {
     const pts = lane.points.map(p => ({ ...p, cx: tlX(isoTime(p.date), ax) }));
     // A cluster is a run of dates whose labels would overlap if each sat under
@@ -226,8 +227,16 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
         const nextLeft = next ? next[0].cx - HALF : Infinity;
         // Where the run may legally begin, given the axis ends and whatever
         // sits either side of it.
-        const minStart = Math.max(TL.padL + HALF, prevRight + RUN_GAP + HALF);
-        const maxStart = Math.min(TL.W - TL.padR - HALF - width, nextLeft - RUN_GAP - HALF - width);
+        let minStart = Math.max(TL.padL + HALF, prevRight + RUN_GAP + HALF);
+        let maxStart = Math.min(TL.W - TL.padR - HALF - width, nextLeft - RUN_GAP - HALF - width);
+        // A label in a run no longer sits at its own date, so it must at least
+        // stay on the correct side of the TODAY rule: a deadline that has
+        // passed, labelled to the right of it, reads as still to come, which
+        // is the one thing this chart must not get wrong. Dates that straddle
+        // today are left alone — a run spanning the rule is telling the truth.
+        const times = cl.map(p => isoTime(p.date));
+        if (times.every(t => t < todayTime)) maxStart = Math.min(maxStart, todayX - RUN_GAP - HALF - width);
+        else if (times.every(t => t > todayTime)) minStart = Math.max(minStart, todayX + RUN_GAP + HALF);
         if (maxStart < minStart) return null;   // genuinely nowhere to put it
         // Centred on its cluster so it doesn't lean, then held inside those
         // bounds. The clamp only ever bites at the two ends of the axis, where
@@ -301,13 +310,17 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
             </text>
             <line x1={TL.padL} y1={dotY} x2={TL.W - TL.padR} y2={dotY} stroke="#E2E8F0" strokeWidth="1" />
             {/* One bracket per run: a stub down from the middle of the cluster,
-                then a rule spanning the labels with a tick turned down at each
-                end. Drawn before the dots and labels so it sits under them. */}
+                then a rule with a tick turned down at each end of the labels.
+                The rule runs to whichever is further out, the labels or the
+                cluster — a run held off-centre (by the TODAY rule, or by the
+                end of the axis) would otherwise leave the stub hanging off
+                thin air beyond the bracket's end. Drawn before the dots and
+                labels so it sits under them. */}
             {placed[i].brackets.map(b => (
               <path
                 key={`brk${b.x1}`}
                 d={`M${b.cx} ${dotY + 6} L${b.cx} ${dotY + BRK_Y}
-                    M${b.x1} ${dotY + BRK_Y} L${b.x2} ${dotY + BRK_Y}
+                    M${Math.min(b.x1, b.cx)} ${dotY + BRK_Y} L${Math.max(b.x2, b.cx)} ${dotY + BRK_Y}
                     M${b.x1} ${dotY + BRK_Y} L${b.x1} ${dotY + BRK_Y + 4}
                     M${b.x2} ${dotY + BRK_Y} L${b.x2} ${dotY + BRK_Y + 4}`}
                 fill="none" stroke={lane.color} strokeWidth="1" opacity="0.45"
