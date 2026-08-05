@@ -225,6 +225,59 @@ function summaryText(note) {
   return '';
 }
 
+// An ISO instant, whatever the input looked like. Unlike toMillis this
+// only ever accepts an ABSOLUTE moment: a calendar event's start is a
+// point in time, so "10:45" (a clock offset, valid for a transcript
+// turn) is not a date and must come back null rather than as an instant
+// 10 minutes after the epoch.
+export function toIsoInstant(value) {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    // Epoch seconds until they get big enough to only be milliseconds.
+    const ms = Math.abs(value) >= 1e11 ? value : value * 1000;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  const s = String(value).trim();
+  if (!s) return null;
+  // A bare number in a string is an epoch stamp; anything else has to
+  // parse as a date. Date.parse would read "10:45" as a date on some
+  // engines, so digits-and-colons alone are rejected up front.
+  if (/^-?\d+(\.\d+)?$/.test(s)) return toIsoInstant(Number(s));
+  if (/^\d{1,2}:\d{2}(:\d{2})?(\.\d+)?$/.test(s)) return null;
+  const parsed = Date.parse(s);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+}
+
+// The calendar meeting a note was taken in, when there is one.
+//
+// Granola sits in a meeting off the user's calendar, so most notes carry
+// the event that spawned them. That event — not the note — is what the
+// Activity page's calendar view is made of: it has the real start and
+// end, where the meeting was, and who organised it. Notes taken outside
+// a calendar meeting (an ad-hoc call, a voice memo) have no event, and
+// come back null rather than as a fabricated one.
+export function normalizeCalendarEvent(note) {
+  const event = pick(note, 'calendar_event', 'event');
+  if (!event || typeof event !== 'object' || Array.isArray(event)) return null;
+
+  const start = toIsoInstant(pick(event, 'start_time', 'start', 'starts_at', 'start_at'));
+  const end = toIsoInstant(pick(event, 'end_time', 'end', 'ends_at', 'end_at'));
+  const title = str(pick(event, 'title', 'summary', 'name'));
+  const location = str(pick(event, 'location', 'where', 'venue'));
+  const organizer = normalizePerson(pick(event, 'organizer', 'organiser', 'creator'));
+  const url = str(pick(event, 'html_link', 'htmlLink', 'url', 'link'));
+  const conferenceUrl = str(pick(event, 'conference_url', 'meeting_url', 'hangout_link', 'hangoutLink', 'join_url'));
+
+  // An event with nothing on it but empty strings is no better than no
+  // event at all, and a null keeps the client from having to tell those
+  // two apart.
+  if (!start && !end && !title && !location && !organizer) return null;
+
+  return { title, start, end, location, organizer, url, conferenceUrl };
+}
+
 function durationSeconds(note, utterances) {
   const event = pick(note, 'calendar_event', 'event') || {};
   const start = toMillis(pick(event, 'start_time', 'start', 'starts_at', 'start_at'));
@@ -253,6 +306,8 @@ export function normalizeNote(note, { withTranscript = false } = {}) {
   const recordedAt = str(pick(event, 'start_time', 'start', 'starts_at')
     || pick(note, 'created_at', 'createdAt', 'created'));
 
+  const calendarEvent = normalizeCalendarEvent(note);
+
   return {
     id: `granola:${noteId}`,
     noteId,
@@ -262,6 +317,9 @@ export function normalizeNote(note, { withTranscript = false } = {}) {
     updatedAt: str(pick(note, 'updated_at', 'updatedAt')) || null,
     createdAt: str(pick(note, 'created_at', 'createdAt')) || null,
     durationSeconds: durationSeconds(note, transcript.utterances),
+    // The calendar meeting behind the note, or null for a note taken
+    // outside one. The Activity page's calendar view is built from this.
+    calendarEvent,
     owner: normalizePerson(pick(note, 'owner', 'created_by')) || null,
     attendees: normalizePeople(
       pick(note, 'attendees', 'participants', 'people'),

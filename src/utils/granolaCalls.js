@@ -20,6 +20,12 @@ import {
 // incremental (updated_after the last sync), so this only bites once.
 export const DEFAULT_BACKFILL_DAYS = 90;
 
+// How far back the Activity page's meeting import reaches. Shorter than
+// the call back-fill on purpose: that one is building an archive of
+// calls to summarise, this one is filling a calendar view whose whole
+// point is the last few weeks and today.
+export const DEFAULT_MEETING_WINDOW_DAYS = 30;
+
 // Stop a runaway back-fill from paging forever on a large workspace.
 const MAX_PAGES = 20;
 
@@ -195,7 +201,15 @@ export async function fetchGranolaPage({ cursor = '', updatedAfter = '', created
     'Timed out listing calls from Granola.',
   );
   const data = await readJson(r);
-  if (!r.ok) throw new Error(data.error || `Granola list failed (HTTP ${r.status})`);
+  if (!r.ok) {
+    const err = new Error(data.error || `Granola list failed (HTTP ${r.status})`);
+    // Carried so a caller can tell "Granola isn't set up here" — which
+    // wants a setup pointer — from "Granola said no", which wants an
+    // error. Reading the message would work until someone reworded it.
+    err.httpStatus = r.status;
+    err.configured = data.configured !== false;
+    throw err;
+  }
   return { calls: data.calls || [], cursor: data.cursor || '', hasMore: !!data.hasMore };
 }
 
@@ -258,6 +272,11 @@ export function recordPatchFor(call) {
     granolaUrl: call.granolaUrl || '',
     granolaSummary: call.granolaSummary || '',
     granolaUpdatedAt: call.updatedAt || null,
+    // The calendar meeting behind the note. Kept even on the Call
+    // Recordings path: it costs nothing here and it is what the Activity
+    // page's meeting rows are built from, so a call synced from either
+    // page shows up on both.
+    calendarEvent: call.calendarEvent || null,
     // Kept so attendee matching can be re-run later without a re-sync:
     // the owner's own domain is what tells colleagues from the other side.
     owner: call.owner || null,
@@ -384,6 +403,55 @@ export async function syncGranolaCalls({
   result.truncated = !!cursor;
   result.nextCursor = cursor;
   result.restarted = restarted;
+  return result;
+}
+
+/**
+ * Pull the calendar meetings Granola took notes in, over a fixed window.
+ *
+ * This is the Activity page's import, and it is deliberately NOT the
+ * call sync above. It wants the meeting, not the call: title, when it
+ * ran, who was in it — all of which arrive in the list response. So it
+ * never fetches a note in full, which is what makes it cheap enough to
+ * run on a page the user opens all day.
+ *
+ * No watermark either. The window is re-read every time, and each note
+ * is upserted onto the record it already has, so the import is
+ * idempotent and carries no state that can drift out of step with the
+ * Call Recordings sync — the two write to the same records and must be
+ * able to run in any order.
+ *
+ * `onNote` stores one note and may return false to say it stored
+ * nothing. Returns { seen, stored, errors, truncated }.
+ */
+export async function importGranolaMeetings({
+  days = DEFAULT_MEETING_WINDOW_DAYS,
+  onNote,
+  onProgress,
+} = {}) {
+  const createdAfter = daysAgoIso(days);
+  const result = { seen: 0, stored: 0, errors: [], truncated: false };
+  let cursor = '';
+  let pages = 0;
+
+  do {
+    const page = await fetchGranolaPage({ cursor, createdAfter, limit: 100 });
+    pages += 1;
+    for (const note of page.calls) {
+      if (!note.noteId) continue;
+      result.seen += 1;
+      try {
+        const outcome = await onNote?.(note);
+        if (outcome !== false) result.stored += 1;
+      } catch (err) {
+        result.errors.push(`${note.name || note.noteId}: ${err?.message || err}`);
+      }
+    }
+    onProgress?.({ ...result });
+    cursor = page.hasMore ? page.cursor : '';
+  } while (cursor && pages < MAX_PAGES);
+
+  result.truncated = !!cursor;
   return result;
 }
 

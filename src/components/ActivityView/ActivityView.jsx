@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase';
@@ -7,6 +7,11 @@ import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
+import { loadCallRecords, saveCallRecord } from '../../utils/callRecordingsStore';
+import {
+  importGranolaMeetings, recordPatchFor, DEFAULT_MEETING_WINDOW_DAYS,
+} from '../../utils/granolaCalls';
+import { granolaMeetingsFromRecords, mergeMeetings, meetingsOnDay } from '../../utils/granolaMeetings';
 import { useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import styles from './ActivityView.module.css';
 
@@ -19,6 +24,12 @@ const CACHE_KEY = 'hubspot-activity-cache';
 // rather than every record — so it always persists and reliably drives
 // that column.
 const OUTREACH_INDEX_KEY = 'hubspot-outreach-index';
+
+// When the Granola calendar import last ran. Only a timestamp — the
+// meetings themselves are in Firestore, so this is purely what keeps
+// the page from re-importing on every visit.
+const GRANOLA_IMPORTED_AT_KEY = 'granola-meetings-imported-at';
+const GRANOLA_STALE_MS = 15 * 60 * 1000;
 
 function normalizeOutreachPhone(p) {
   const digits = String(p || '').replace(/\D/g, '');
@@ -117,6 +128,15 @@ function fmtDuration(ms) {
   const rem = sec % 60;
   return rem > 0 ? `${min}m ${rem}s` : `${min}m`;
 }
+
+// Badge per calendar source on the Today panel. A merged row wears one
+// of each, which is how the user can tell a meeting Granola actually sat
+// in from one that is only on the calendar.
+const SOURCE_BADGES = {
+  outlook: { label: 'Outlook', color: '#0078D4', background: '#E8F4FD' },
+  hubspot: { label: 'HubSpot', color: '#7C3AED', background: '#F3E8FF' },
+  granola: { label: 'Granola', color: '#B45309', background: '#FEF3C7' },
+};
 
 export function ActivityView({ prospects = [], settings, updateSettings }) {
   const { user, isAdmin } = useAuth();
@@ -340,15 +360,130 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     return map;
   }, [hubspotCache]);
 
+  // ── Meetings from Granola ────────────────────────────────────────────
+  // Granola sits in the meetings on the user's calendar and writes a note
+  // for each one, which makes the notes it has synced a usable mirror of
+  // that calendar. They already live in this app: the Call Recordings
+  // page stores every synced note as a `callRecordings` document. This
+  // page reads those, and can top them up itself, so the calendar is
+  // current without a trip to that tab.
+  const uid = user?.uid || '';
+  const [granolaRecords, setGranolaRecords] = useState({});
+  const [granolaLoaded, setGranolaLoaded] = useState(false);
+  const [granolaImporting, setGranolaImporting] = useState(false);
+  const [granolaError, setGranolaError] = useState('');
+  // Set when Granola has no API key in this deployment. That isn't a
+  // failure to report as one — it means the integration was never set
+  // up, and the fix lives on the Call Recordings page.
+  const [granolaUnconfigured, setGranolaUnconfigured] = useState(false);
+  const [granolaSyncedAt, setGranolaSyncedAt] = useState('');
+  const granolaRecordsRef = useRef({});
+  const granolaImportingRef = useRef(false);
+  const granolaAutoRan = useRef(false);
+
+  useEffect(() => { granolaRecordsRef.current = granolaRecords; }, [granolaRecords]);
+
+  // Stored records first. The calendar paints from Firestore, so it
+  // fills in on first paint, offline, and when Granola itself is down —
+  // importing only ever adds to it.
+  useEffect(() => {
+    if (!uid) return undefined;
+    let cancelled = false;
+    setGranolaLoaded(false);
+    granolaAutoRan.current = false;
+    setGranolaSyncedAt(userLsGet(GRANOLA_IMPORTED_AT_KEY) || '');
+    loadCallRecords(uid).then((stored) => {
+      if (cancelled) return;
+      const granola = {};
+      for (const [id, record] of Object.entries(stored || {})) {
+        if (record?.source === 'granola') granola[id] = record;
+      }
+      setGranolaRecords(granola);
+      setGranolaLoaded(true);
+    });
+    return () => { cancelled = true; };
+  }, [uid]);
+
+  /**
+   * Pull the last few weeks of Granola meetings and upsert them onto the
+   * records this page reads. Metadata only — no transcripts — so it stays
+   * cheap enough to run whenever the page is opened.
+   */
+  const importMeetings = useCallback(async () => {
+    if (!uid || granolaImportingRef.current) return;
+    granolaImportingRef.current = true;
+    setGranolaImporting(true);
+    setGranolaError('');
+    const written = {};
+    try {
+      const result = await importGranolaMeetings({
+        days: DEFAULT_MEETING_WINDOW_DAYS,
+        onNote: async (note) => {
+          const base = granolaRecordsRef.current[note.id] || null;
+          // Nothing about this note has changed since it was stored, and
+          // it already carries its calendar event. Re-writing it would
+          // cost a Firestore write per meeting on every refresh and
+          // change nothing.
+          const unchanged = base
+            && String(base.granolaUpdatedAt || '') === String(note.updatedAt || '')
+            && (!note.calendarEvent || base.calendarEvent);
+          if (unchanged) return false;
+          const saved = await saveCallRecord(uid, note.id, recordPatchFor(note), base);
+          if (saved) written[note.id] = saved;
+          return !!saved;
+        },
+      });
+      setGranolaUnconfigured(false);
+      if (Object.keys(written).length > 0) setGranolaRecords(prev => ({ ...prev, ...written }));
+      const stamp = new Date().toISOString();
+      setGranolaSyncedAt(stamp);
+      try { userLsSet(GRANOLA_IMPORTED_AT_KEY, stamp); } catch { /* quota */ }
+      if (result.errors.length > 0) {
+        setGranolaError(`Some meetings didn't import: ${result.errors.slice(0, 2).join(' · ')}`);
+      }
+    } catch (err) {
+      // "Not configured" is a setup state, not an error: the key was
+      // never added to this deployment, so there is nothing to retry.
+      if (err?.configured === false) {
+        setGranolaUnconfigured(true);
+        setGranolaError('');
+      } else {
+        setGranolaError(err?.message || String(err));
+      }
+    } finally {
+      granolaImportingRef.current = false;
+      setGranolaImporting(false);
+    }
+  }, [uid]);
+
+  // One import per visit, and only when what's stored has gone stale.
+  // Waits for the stored records so the unchanged-note check above has
+  // something to compare against — without it the first import would
+  // rewrite every meeting it has ever seen.
+  useEffect(() => {
+    if (!uid || !granolaLoaded || granolaAutoRan.current) return;
+    const age = granolaSyncedAt ? Date.now() - new Date(granolaSyncedAt).getTime() : Infinity;
+    if (Number.isFinite(age) && age < GRANOLA_STALE_MS) return;
+    granolaAutoRan.current = true;
+    importMeetings();
+  }, [uid, granolaLoaded, granolaSyncedAt, importMeetings]);
+
+  const granolaMeetings = useMemo(() => (
+    granolaMeetingsFromRecords(granolaRecords).map(m => (
+      m._company ? m : { ...m, _company: guessCompanyFromEmails(...(m._externalEmails || [])) }
+    ))
+  ), [granolaRecords, hubspotContacts, domainToCompany]);
+
   const allActivities = useMemo(() => {
-    if (!data) return [];
+    if (!data && granolaMeetings.length === 0) return [];
     // Filter out sample emails only — keep all real emails
-    const filteredEmails = (data.emails || []).filter(e => {
+    const filteredEmails = (data?.emails || []).filter(e => {
       const subject = (e.hs_email_subject || '').toLowerCase();
       if (subject.includes('(sample email)')) return false;
       return true;
     });
     const combined = [
+      ...granolaMeetings,
       ...filteredEmails.map(e => {
         // Determine direction: anything from @se.com (all SE users share
         // the domain) or the current user's configured work email is
@@ -405,7 +540,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
           _phone: emailPhone,
         };
       }),
-      ...(data.calls || []).map(c => {
+      ...(data?.calls || []).map(c => {
         // Resolve contact name and phone from associated contact IDs
         const callContactIds = c._contactIds || [];
         let callContactName = '';
@@ -435,7 +570,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
           _phone: callContactPhone || c.hs_call_to_number || '',
         };
       }),
-      ...(data.meetings || []).map(m => {
+      ...(data?.meetings || []).map(m => {
         // Resolve attendees from associated contact IDs
         const contactIds = m._contactIds || [];
         const attendeeNames = contactIds.map(id => {
@@ -452,6 +587,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
         return {
           ...m,
           _type: 'meeting',
+          _source: 'hubspot',
           _timestamp: m.hs_timestamp || m.hs_meeting_start_time,
           _subject: m.hs_meeting_title || 'Meeting',
           _to: attendeeNames.join(', '),
@@ -471,25 +607,18 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     ];
     combined.sort((a, b) => new Date(b._timestamp || 0) - new Date(a._timestamp || 0));
     return combined;
-  }, [data, settings?.workEmail]);
+  }, [data, granolaMeetings, settings?.workEmail]);
 
   const emailCount = allActivities.filter(a => a._type === 'email').length;
   const callCount = allActivities.filter(a => a._type === 'call').length;
   const meetingCount = allActivities.filter(a => a._type === 'meeting').length;
 
-  const hubspotTodaysMeetings = useMemo(() => {
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    const todayEnd = todayStart + 24 * 60 * 60 * 1000;
-    return allActivities
-      .filter(a => a._type === 'meeting' && a._meetingStart)
-      .filter(a => {
-        const t = new Date(a._meetingStart).getTime();
-        return Number.isFinite(t) && t >= todayStart && t < todayEnd;
-      })
-      .map(a => ({ ...a, _source: 'hubspot' }))
-      .sort((a, b) => new Date(a._meetingStart) - new Date(b._meetingStart));
-  }, [allActivities]);
+  const hubspotTodaysMeetings = useMemo(() => (
+    meetingsOnDay(allActivities.filter(a => a._type === 'meeting' && a._source === 'hubspot'))
+      .sort((a, b) => new Date(a._meetingStart) - new Date(b._meetingStart))
+  ), [allActivities]);
+
+  const granolaTodaysMeetings = useMemo(() => meetingsOnDay(granolaMeetings), [granolaMeetings]);
 
   // ── Outlook Calendar via Power Automate webhook ──
   // Power Automate pushes meetings to /api/calendar-webhook?token=xxx,
@@ -569,12 +698,13 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     return unsub;
   }, [webhookToken]);
 
-  // Merge HubSpot + Outlook meetings for Today panel, sorted by start time
-  const todaysMeetings = useMemo(() => {
-    const combined = [...hubspotTodaysMeetings, ...outlookEvents];
-    combined.sort((a, b) => new Date(a._meetingStart || 0) - new Date(b._meetingStart || 0));
-    return combined;
-  }, [hubspotTodaysMeetings, outlookEvents]);
+  // HubSpot + Outlook + Granola for the Today panel, sorted by start
+  // time. The same meeting reaches this page from more than one of them
+  // — the calendar invite from Outlook, Granola's note on the meeting it
+  // sat in — so the copies are collapsed into one row that carries both.
+  const todaysMeetings = useMemo(() => (
+    mergeMeetings([...hubspotTodaysMeetings, ...outlookEvents, ...granolaTodaysMeetings])
+  ), [hubspotTodaysMeetings, outlookEvents, granolaTodaysMeetings]);
 
   function fmtMeetingTime(startStr, endStr) {
     if (!startStr) return '-';
@@ -593,7 +723,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     if (search.trim()) {
       const term = search.toLowerCase();
       result = result.filter(a =>
-        [a._subject, a._to, a._toName, a._from, a._fromName, a._cc, a._ccName, a._status, a._company]
+        [a._subject, a._to, a._toName, a._from, a._fromName, a._cc, a._ccName, a._status, a._company, a._attendees]
           .filter(Boolean).join(' ').toLowerCase().includes(term)
       );
     }
@@ -893,7 +1023,23 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     { key: '_direction', label: 'Direction', defaultWidth: 80, render: (a) => a._direction ? <span className={styles.directionBadge}>{a._direction}</span> : <span className={styles.metaText}>-</span> },
     { key: '_timestamp', label: 'Date', defaultWidth: 140, render: (a) => <span className={styles.dateText}>{fmtDateTime(a._timestamp)}</span> },
     { key: '_company', label: 'Company', defaultWidth: 160, render: (a) => a._company ? <span style={{ fontWeight: 600 }}>{a._company}</span> : <span className={styles.metaText}>-</span> },
-    { key: '_subject', label: 'Subject / Title', defaultWidth: 250, render: (a) => <span className={styles.subject}>{a._subject || '-'}</span> },
+    // Granola meetings link straight to their note: the row says a
+    // meeting happened, the note says what was said in it.
+    { key: '_subject', label: 'Subject / Title', defaultWidth: 250, render: (a) => (
+      a._granolaUrl
+        ? (
+          <a
+            href={a._granolaUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+            title={a._granolaSummary ? a._granolaSummary.slice(0, 400) : a._subject}
+            className={styles.subject}
+            style={{ color: '#B45309', fontWeight: 600 }}
+          >{a._subject || 'Granola call'} ↗</a>
+        )
+        : <span className={styles.subject}>{a._subject || '-'}</span>
+    ) },
     { key: '_to', label: 'To', defaultWidth: 200, render: (a) => a._toName ? <span><button className={styles.contactLink} onClick={e => { e.stopPropagation(); openContactPopup(a._toName, a._to, a._company, a._phone); }}>{a._toName}</button> <span className={styles.metaText}>{a._to}</span></span> : a._to ? <button className={styles.contactLink} onClick={e => { e.stopPropagation(); openContactPopup('', a._to, a._company, a._phone); }}>{a._to}</button> : <span className={styles.metaText}>-</span> },
     { key: '_from', label: 'From', defaultWidth: 200, render: (a) => a._fromName ? <span><button className={styles.contactLink} onClick={e => { e.stopPropagation(); openContactPopup(a._fromName, a._from, a._company, ''); }}>{a._fromName}</button> <span className={styles.metaText}>{a._from}</span></span> : a._from ? <button className={styles.contactLink} onClick={e => { e.stopPropagation(); openContactPopup('', a._from, a._company, ''); }}>{a._from}</button> : <span className={styles.metaText}>-</span> },
     { key: '_cc', label: 'CC', defaultWidth: 220, render: (a) => {
@@ -938,7 +1084,10 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
 
       {error && <div className={styles.error}>{error}</div>}
 
-      {data && (
+      {/* Today's calendar. Rendered as soon as EITHER source has
+          something to say — the Granola meetings stand on their own,
+          so the panel no longer waits on the HubSpot fetch. */}
+      {(data || granolaLoaded) && (
         <div style={{ marginBottom: '1rem', border: '1px solid var(--color-border)', borderRadius: 8, background: '#fff', overflow: 'hidden' }}>
           <div style={{ padding: '0.6rem 0.9rem', background: '#F8FAFC', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
             <div style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--color-text)' }}>
@@ -949,6 +1098,14 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>{todaysMeetings.length} meeting{todaysMeetings.length === 1 ? '' : 's'}</span>
+              <button
+                onClick={importMeetings}
+                disabled={granolaImporting || !uid}
+                title={granolaSyncedAt
+                  ? `Import the last ${DEFAULT_MEETING_WINDOW_DAYS} days of meetings from Granola. Last imported ${fmtDateTime(granolaSyncedAt)}.`
+                  : `Import the last ${DEFAULT_MEETING_WINDOW_DAYS} days of meetings from Granola`}
+                style={{ padding: '0.25rem 0.6rem', border: '1px solid #7C3AED', borderRadius: 4, background: '#fff', color: '#7C3AED', fontSize: '0.68rem', fontWeight: 600, cursor: granolaImporting ? 'default' : 'pointer', fontFamily: 'inherit', opacity: granolaImporting ? 0.6 : 1 }}
+              >{granolaImporting ? 'Importing…' : '↻ Granola'}</button>
               {!hasWebhookToken ? (
                 <button
                   onClick={setupWebhook}
@@ -1025,6 +1182,16 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
               {outlookError}
             </div>
           )}
+          {granolaUnconfigured && (
+            <div style={{ padding: '0.4rem 0.9rem', background: '#F5F3FF', color: '#5B21B6', fontSize: '0.75rem', borderBottom: '1px solid #DDD6FE' }}>
+              Granola isn't connected in this deployment, so no meetings can be imported from it. The Call Recordings page explains how to set it up.
+            </div>
+          )}
+          {granolaError && (
+            <div style={{ padding: '0.4rem 0.9rem', background: '#FEF2F2', color: '#991B1B', fontSize: '0.75rem', borderBottom: '1px solid #FCA5A5' }}>
+              Granola: {granolaError}
+            </div>
+          )}
           {todaysMeetings.length === 0 ? (
             <div style={{ padding: '0.8rem 0.9rem', fontSize: '0.8rem', color: '#94A3B8', fontStyle: 'italic' }}>
               No meetings scheduled for today.
@@ -1037,9 +1204,16 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
                     <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#7C3AED', fontVariantNumeric: 'tabular-nums' }}>
                       {fmtMeetingTime(m._meetingStart, m._meetingEnd)}
                     </div>
-                    <span style={{ display: 'inline-block', marginTop: 2, fontSize: '0.55rem', fontWeight: 700, padding: '1px 5px', borderRadius: 999, color: m._source === 'outlook' ? '#0078D4' : '#7C3AED', background: m._source === 'outlook' ? '#E8F4FD' : '#F3E8FF', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                      {m._source === 'outlook' ? 'Outlook' : 'HubSpot'}
-                    </span>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 2 }}>
+                      {(m._sources?.length ? m._sources : [m._source]).map((src) => {
+                        const badge = SOURCE_BADGES[src] || SOURCE_BADGES.hubspot;
+                        return (
+                          <span key={src} style={{ display: 'inline-block', fontSize: '0.55rem', fontWeight: 700, padding: '1px 5px', borderRadius: 999, color: badge.color, background: badge.background, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                            {badge.label}
+                          </span>
+                        );
+                      })}
+                    </div>
                   </div>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m._subject}>
@@ -1050,6 +1224,15 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
                     )}
                     {m._company && (
                       <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: 1 }}>{m._company}</div>
+                    )}
+                    {m._granolaUrl && (
+                      <a
+                        href={m._granolaUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={m._granolaSummary ? m._granolaSummary.slice(0, 400) : 'Open this meeting’s notes in Granola'}
+                        style={{ display: 'inline-block', marginTop: 2, fontSize: '0.68rem', fontWeight: 600, color: '#B45309' }}
+                      >Granola notes ↗</a>
                     )}
                   </div>
                   <div style={{ fontSize: '0.72rem', color: '#334155' }}>
@@ -1067,7 +1250,11 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
                       </div>
                     ) : (
                       <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m._attendees}>
-                        {m._attendees || <span style={{ color: '#94A3B8', fontStyle: 'italic' }}>No attendees</span>}
+                        {m._attendees || (
+                          <span style={{ color: '#94A3B8', fontStyle: 'italic' }}>
+                            {m._internalOnly ? 'Internal only' : 'No attendees'}
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>

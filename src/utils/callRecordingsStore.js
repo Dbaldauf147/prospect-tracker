@@ -77,6 +77,12 @@ export function emptyRecord(recordingId) {
     // re-sync can refresh theirs without touching what we pushed to an opp.
     granolaSummary: '',
     granolaUpdatedAt: null,
+    // The calendar meeting the note was taken in — { title, start, end,
+    // location, organizer, url, conferenceUrl } — or null for a note
+    // taken outside one. This is what the Activity page renders its
+    // Granola meetings from, so it is stored even when nothing on the
+    // Call Recordings page reads it.
+    calendarEvent: null,
     owner: null,
     attendees: [],
     folders: [],

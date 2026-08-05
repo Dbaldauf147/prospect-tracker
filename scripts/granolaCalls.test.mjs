@@ -7,7 +7,7 @@
 // part the route itself flags as most likely to need adjusting when
 // Granola renames a field. Every read below is deliberately tolerant, so
 // the tests pin the tolerance rather than one exact spelling.
-import { normalizeNote, resolveApiBase } from '../api/granola-calls.js';
+import { normalizeNote, resolveApiBase, normalizeCalendarEvent, toIsoInstant } from '../api/granola-calls.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -217,6 +217,88 @@ function eq(actual, expected, name) {
     { name: 'Dana Reid', email: 'dana@acme.com' },
     { name: 'Sam', email: 'sam@acme.com' },
   ], 'attendees dedupe case-insensitively and absorb the organiser');
+}
+
+// --- calendar events ------------------------------------------------------
+// The Activity page's calendar view is built from these, so an event has
+// to come back as an INSTANT or not at all.
+{
+  eq(toIsoInstant('2026-08-05T14:00:00Z'), '2026-08-05T14:00:00.000Z', 'an ISO string normalises to an ISO instant');
+  eq(toIsoInstant(1785938400000), '2026-08-05T14:00:00.000Z', 'epoch milliseconds become an instant');
+  eq(toIsoInstant(1785938400), '2026-08-05T14:00:00.000Z', 'epoch seconds scale up first');
+  eq(toIsoInstant('1785938400000'), '2026-08-05T14:00:00.000Z', 'an epoch stamp in a string is still a stamp');
+  // The one that matters: toMillis reads "14:00" as a 14-minute offset,
+  // which is right for a transcript turn and nonsense for a meeting.
+  eq(toIsoInstant('14:00'), null, 'a clock offset is not a date');
+  eq(toIsoInstant('01:02:03'), null, 'a longer clock offset is not a date either');
+  eq(toIsoInstant('sometime tuesday'), null, 'unparseable text is null');
+  eq(toIsoInstant(''), null, 'blank is null');
+  eq(toIsoInstant(null), null, 'null is null');
+}
+
+{
+  const event = normalizeCalendarEvent({
+    calendar_event: {
+      title: 'Acme quarterly review',
+      start_time: '2026-08-05T14:00:00Z',
+      end_time: '2026-08-05T14:45:00Z',
+      location: 'Microsoft Teams',
+      organizer: { name: 'Dana Reid', email: 'Dana@Acme.com' },
+      html_link: 'https://calendar.example/e/1',
+    },
+  });
+  eq(event, {
+    title: 'Acme quarterly review',
+    start: '2026-08-05T14:00:00.000Z',
+    end: '2026-08-05T14:45:00.000Z',
+    location: 'Microsoft Teams',
+    organizer: { name: 'Dana Reid', email: 'dana@acme.com' },
+    url: 'https://calendar.example/e/1',
+    conferenceUrl: '',
+  }, 'a calendar event is normalised whole');
+}
+
+// Alternate spellings, including the British one Granola uses elsewhere
+// in the same payload.
+{
+  const event = normalizeCalendarEvent({
+    event: { summary: 'Fallbacks', starts_at: '2026-08-05T09:00:00Z', organiser: 'sam@acme.com' },
+  });
+  eq(event.title, 'Fallbacks', 'summary is read when title is absent');
+  eq(event.start, '2026-08-05T09:00:00.000Z', 'starts_at is read when start_time is absent');
+  eq(event.organizer, { name: '', email: 'sam@acme.com' }, 'the British spelling is read too');
+  eq(event.end, null, 'an event with no end says so rather than guessing one');
+}
+
+// A note taken outside a meeting must not be given a fabricated event —
+// that is what tells the Activity page it has no calendar entry.
+{
+  eq(normalizeCalendarEvent({ title: 'Ad-hoc call' }), null, 'no calendar event means null');
+  eq(normalizeCalendarEvent({ calendar_event: {} }), null, 'an empty event object is null');
+  eq(normalizeCalendarEvent({ calendar_event: { title: '', location: '' } }), null, 'an event of blanks is null');
+  eq(normalizeCalendarEvent({ calendar_event: [] }), null, 'a non-object event is null');
+  eq(normalizeCalendarEvent({ calendar_event: { location: 'Room 4' } }), {
+    title: '', start: null, end: null, location: 'Room 4', organizer: null, url: '', conferenceUrl: '',
+  }, 'one real field is enough to keep the event');
+}
+
+// The event rides on every note, from the list response as well as the
+// detail one — the Activity page never fetches notes in full.
+{
+  const out = normalizeNote({
+    id: 'not_cal',
+    title: 'Acme — quarterly review',
+    calendar_event: {
+      title: 'Acme quarterly review',
+      start_time: '2026-08-05T14:00:00Z',
+      end_time: '2026-08-05T14:45:00Z',
+      conference_url: 'https://teams.example/join/1',
+    },
+  });
+  eq(out.calendarEvent.title, 'Acme quarterly review', 'the event is on a list-only note');
+  eq(out.calendarEvent.conferenceUrl, 'https://teams.example/join/1', 'the join link is kept');
+  eq(out.name, 'Acme — quarterly review', 'the note title still wins for the record name');
+  eq(normalizeNote({ id: 'not_plain', title: 'No meeting' }).calendarEvent, null, 'a note with no meeting carries no event');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
