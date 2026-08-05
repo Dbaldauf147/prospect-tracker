@@ -292,6 +292,75 @@
   line-height: 1.5;
 }
 
+/* Who did the talking, above the turns. Sticky so the split stays
+   visible while scrolling a long transcript — it is context for what
+   you are reading, not a one-off header. */
+.talkTime {
+  position: sticky;
+  top: -0.6rem;
+  margin: -0.6rem -0.8rem 0.6rem;
+  padding: 0.5rem 0.8rem;
+  background: var(--color-bg-subtle, #f8fafc);
+  border-bottom: 1px solid var(--color-border-light, #e2e8f0);
+}
+
+.talkBar {
+  display: flex;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #e2e8f0;
+}
+
+/* Every other speaker shares one muted colour: the question this answers
+   is "was it me or them", so the user's own share is the only one that
+   needs to stand out. */
+.talkSegment {
+  background: #cbd5e1;
+  min-width: 2px;
+}
+
+/* Two speakers from the same side sit next to each other in the same
+   grey and read as one block. A hairline keeps them countable without
+   introducing a second colour that would compete with "you". */
+.talkSegment + .talkSegment {
+  box-shadow: inset 1px 0 0 var(--color-bg-subtle, #f8fafc);
+}
+
+.talkSegment[data-you='true'] {
+  background: #7c3aed;
+}
+
+.talkLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.talkKey::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #cbd5e1;
+  margin-right: 0.3rem;
+}
+
+.talkKey[data-you='true'] {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.talkKey[data-you='true']::before { background: #7c3aed; }
+
+.talkBasis {
+  font-style: italic;
+}
+
 .transcriptStatus {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);

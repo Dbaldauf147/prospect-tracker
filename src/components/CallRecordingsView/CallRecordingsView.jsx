@@ -47,6 +47,7 @@ import {
   probeGranola, syncGranolaCalls, recordPatchFor, recordingFromStored,
   matchCompanyForCall, daysAgoIso, describeMissingKey, diagnoseEmptySync, DEFAULT_BACKFILL_DAYS,
 } from '../../utils/granolaCalls';
+import { talkTimeSplit, formatShare } from '../../utils/talkTime';
 import { buildCompanyGuessIndex } from '../../utils/companyGuess';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { buildActiveOppsIndex, activeOppsForCompany } from '../../utils/targetAccountOpps';
@@ -1442,6 +1443,10 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
             const transcriptText = (tr?.status === 'completed' ? tr.text : '') || stored?.transcript || '';
             const utterances = (tr?.status === 'completed' ? tr.utterances : null) || stored?.utterances || [];
             const hasTranscript = !!transcriptText || utterances.length > 0;
+            // Null whenever the turns can't answer it — a flat transcript,
+            // or one whose turns were dropped to fit Firestore. The bar
+            // then renders not at all, rather than as an empty split.
+            const talkSplit = talkTimeSplit(utterances);
             const inFlight = tr && (tr.status === 'starting' || tr.status === 'queued' || tr.status === 'processing');
             const state = busy[rec.id] || '';
             const problem = actionError[rec.id] || '';
@@ -1718,6 +1723,35 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
 
                 {(tr || hasTranscript) && (
                   <div className={styles.transcript}>
+                    {/* Who did the talking. Above the turns because it is
+                        the thing you can't get by scrolling them. */}
+                    {talkSplit && (
+                      <div className={styles.talkTime}>
+                        <div className={styles.talkBar}>
+                          {talkSplit.speakers.map(s => (
+                            <div
+                              key={s.name}
+                              className={styles.talkSegment}
+                              data-you={s.isYou ? 'true' : 'false'}
+                              style={{ width: `${s.share * 100}%` }}
+                              title={`${s.name}: ${formatShare(s.share)}`}
+                            />
+                          ))}
+                        </div>
+                        <div className={styles.talkLegend}>
+                          {talkSplit.speakers.map(s => (
+                            <span key={s.name} className={styles.talkKey} data-you={s.isYou ? 'true' : 'false'}>
+                              {s.name} {formatShare(s.share)}
+                            </span>
+                          ))}
+                          {/* A words split is a different measurement, so
+                              it never passes silently as talk time. */}
+                          {talkSplit.basis === 'words' && (
+                            <span className={styles.talkBasis}>by word count: this transcript has no timings</span>
+                          )}
+                        </div>
+                      </div>
+                    )}
                     {tr?.status === 'error' ? (
                       <div className={styles.error} style={{ margin: 0 }}>{tr.error}</div>
                     ) : inFlight ? (
