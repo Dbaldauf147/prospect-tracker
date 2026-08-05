@@ -1,6 +1,13 @@
 // Per-user fixed-window rate limiting backed by Firestore so the count
 // survives serverless cold starts. Keyed by uid + bucket name.
 import { adminDb } from './firebaseAdmin.js';
+import { withDeadline } from './deadline.js';
+
+// Firestore retries a transaction it can't complete, with backoff, for
+// far longer than a request should wait. Metering is not worth holding
+// the response open for: past this it fails open, same as any other
+// metering failure.
+const TXN_TIMEOUT_MS = 5000;
 
 /**
  * Returns { ok: true } when under the limit, or { ok: false, retryAfter }
@@ -10,19 +17,28 @@ import { adminDb } from './firebaseAdmin.js';
 export async function checkRateLimit(uid, bucket, limit, windowMs) {
   const now = Date.now();
   const windowStart = Math.floor(now / windowMs) * windowMs;
-  const ref = adminDb().collection('rateLimits').doc(`${uid}__${bucket}__${windowStart}`);
   try {
-    return await adminDb().runTransaction(async (tx) => {
-      const snap = await tx.get(ref);
-      const count = snap.exists ? (snap.data().count || 0) : 0;
-      if (count >= limit) {
-        return { ok: false, retryAfter: Math.ceil((windowStart + windowMs - now) / 1000) };
-      }
-      tx.set(ref, { count: count + 1, expiresAt: windowStart + windowMs }, { merge: true });
-      return { ok: true };
-    });
+    // Inside the try with everything else: adminDb() throws when the
+    // service account is missing or unparseable, and a throw here reaches
+    // the caller as an unhandled rejection rather than the fail-open this
+    // is supposed to guarantee.
+    const ref = adminDb().collection('rateLimits').doc(`${uid}__${bucket}__${windowStart}`);
+    return await withDeadline(
+      adminDb().runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        const count = snap.exists ? (snap.data().count || 0) : 0;
+        if (count >= limit) {
+          return { ok: false, retryAfter: Math.ceil((windowStart + windowMs - now) / 1000) };
+        }
+        tx.set(ref, { count: count + 1, expiresAt: windowStart + windowMs }, { merge: true });
+        return { ok: true };
+      }),
+      TXN_TIMEOUT_MS,
+      'The rate-limit check',
+    );
   } catch {
-    // Never let a metering failure take down the feature.
+    // Never let a metering failure — or a metering stall — take down the
+    // feature it is only counting.
     return { ok: true };
   }
 }

@@ -56,6 +56,12 @@ const MAX_PAGE = 100;
 // that never finishes loading.
 const GRANOLA_TIMEOUT_MS = 20000;
 
+// The probe gets less. It has to answer inside the browser's own 30s
+// ceiling for the status check, and the two steps ahead of it — verifying
+// the token, then metering — can spend 15s between them before this one
+// starts. One note is all it asks for, so 12s is already generous.
+const PROBE_GRANOLA_TIMEOUT_MS = 12000;
+
 function apiKey() {
   return String(process.env.GRANOLA_API_KEY || '').trim();
 }
@@ -296,7 +302,7 @@ function missingKeyHint() {
 
 // ---- Granola calls ----------------------------------------------------------
 
-async function granolaFetch(path) {
+async function granolaFetch(path, timeoutMs = GRANOLA_TIMEOUT_MS) {
   let resp;
   try {
     resp = await fetch(`${GRANOLA_BASE}${path}`, {
@@ -307,12 +313,12 @@ async function granolaFetch(path) {
       // Without this, an unresponsive Granola holds the function open to
       // its 300s ceiling and the page sits on "Checking Granola…" with
       // nothing to show for it. Fail in seconds with a reason instead.
-      signal: AbortSignal.timeout(GRANOLA_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
     const timedOut = err?.name === 'TimeoutError' || err?.name === 'AbortError';
     const failure = new Error(timedOut
-      ? `Granola didn't respond within ${Math.round(GRANOLA_TIMEOUT_MS / 1000)}s. Calls already synced are unaffected: try again shortly.`
+      ? `Granola didn't respond within ${Math.round(timeoutMs / 1000)}s. Calls already synced are unaffected: try again shortly.`
       : `Couldn't reach Granola at ${GRANOLA_BASE} (${err?.message || err}). If GRANOLA_API_BASE is set, unset it.`);
     failure.httpStatus = timedOut ? 504 : 502;
     throw failure;
@@ -398,7 +404,7 @@ async function handler(req, res, auth) {
     const noteId = str(req.query?.noteId);
     if (noteId) return await getNote(req, res, noteId);
     if (str(req.query?.probe)) {
-      const { resp, body } = await granolaFetch('/notes?limit=1');
+      const { resp, body } = await granolaFetch('/notes?limit=1', PROBE_GRANOLA_TIMEOUT_MS);
       if (!resp.ok) {
         const e = errorFor(resp, body);
         return res.status(e.status).json({ error: e.error, configured: true });
