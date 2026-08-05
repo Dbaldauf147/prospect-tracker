@@ -833,18 +833,15 @@
 }
 .sectionTitleRow .sectionTitle { margin: 0; }
 
+/* The counts are the only thing left in this row now that the lead line is
+   gone, so they are pushed to the trailing edge rather than left to sit
+   where space-between drops a lone child. */
 .reportMeta {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 1.5rem;
   flex-wrap: wrap;
-}
-.reportLead {
-  font-size: 0.78rem;
-  color: var(--color-text-secondary, #5A6B7E);
-  max-width: 640px;
-  line-height: 1.5;
 }
 .reportCounts {
   text-align: right;
@@ -1123,12 +1120,15 @@
 
   .wrapper { gap: 0.6rem; }
 
-  /* Cards, charts and rows survive whole or move to the next sheet. The
-     panels themselves are free to flow: the roadmap panel carries a
-     deadline-per-row list that can outrun a sheet on its own, and holding it
-     together would only push a mostly-empty page ahead of it. */
+  /* Cards, charts and rows survive whole or move to the next sheet.
+     .panelWrap is in this list now that the timeline is the only thing it
+     wraps -- it was left flowing while it also held the penalty table, whose
+     row-per-jurisdiction list could outrun a sheet. Flowing, it let its
+     caption sit alone at the foot of a page above an empty bordered box,
+     with the chart it labels overleaf. */
   .kpiTile,
   .rmSumTile,
+  .panelWrap,
   .tlChart,
   .disclaimerBox,
   .sizeNote,
