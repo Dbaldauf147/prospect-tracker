@@ -1761,7 +1761,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       const lines = String(data.body).split(/\r?\n/);
       for (const line of lines) {
         if (!out.start) {
-          const m = line.match(/^\s*(?:When|Time|Start)\s*[:–--]\s*(.+)$/i);
+          const m = line.match(/^\s*(?:When|Time|Start)\s*[-:\u2013\u2014]\s*(.+)$/i);
           if (m) {
             const cleaned = m[1].replace(/\s+\([^)]+\)\s*$/, '').trim();
             const d = new Date(cleaned);
@@ -1769,7 +1769,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           }
         }
         if (!out.location) {
-          const m = line.match(/^\s*(?:Where|Location)\s*[:–--]\s*(.+)$/i);
+          const m = line.match(/^\s*(?:Where|Location)\s*[-:\u2013\u2014]\s*(.+)$/i);
           if (m) out.location = m[1].trim();
         }
       }

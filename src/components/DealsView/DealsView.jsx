@@ -68,7 +68,7 @@ function normClient(s) { return String(s || '').toLowerCase().trim(); }
 // strings and bare dash placeholders ("-", "—", "–") as not filled
 // so a workbook that uses a dash for "blank" doesn't bump the X/N
 // progress count.
-const DASH_PLACEHOLDERS = new Set(['-', '–', '-']);
+const DASH_PLACEHOLDERS = new Set(['-', '\u2013', '\u2014']);
 function isFilled(v) {
   if (v == null) return false;
   const s = String(v).trim();

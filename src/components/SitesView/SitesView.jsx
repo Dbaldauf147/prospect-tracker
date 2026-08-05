@@ -2063,7 +2063,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const isSupplierPlaceholder = (s) => {
         const t = String(s || '').trim();
         if (!t) return true;
-        if (/^[--–_]+$/.test(t)) return true;
+        if (/^[-\u2013\u2014_]+$/.test(t)) return true;
         if (/^(n\/a|na|none|null|tbd|unknown|\?|\.)$/i.test(t)) return true;
         return false;
       };
@@ -4671,7 +4671,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     const isPlaceholder = (s) => {
       const t = String(s || '').trim();
       if (!t) return true;
-      if (/^[--–_]+$/.test(t)) return true; // dashes / em / en / underscore
+      if (/^[-\u2013\u2014_]+$/.test(t)) return true; // dashes / em / en / underscore
       if (/^(n\/a|na|none|null|tbd|unknown|\?|\.)$/i.test(t)) return true;
       return false;
     };

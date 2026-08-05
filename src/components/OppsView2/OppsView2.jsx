@@ -434,7 +434,7 @@ function needsUsdFlag(row) {
   const usd = String(row['USD?'] ?? '')
     .replace(ZERO_WIDTH_RE, '')
     .replace(/[\s$,]/g, '')
-    .replace(/[-–-−]/g, '');
+    .replace(/[-\u2013\u2014\u2212]/g, '');
   return usd === '';
 }
 
@@ -459,7 +459,7 @@ function needsBudgetTimelineFlag(row) {
   if (!/\bbudgets?\b/.test(scope)) return false;
   const timeline = String(rowValueByHeader(row, 'timeline?') ?? '')
     .replace(ZERO_WIDTH_RE, '')
-    .replace(/[\s-–-−]/g, '');
+    .replace(/[-\s\u2013\u2014\u2212]/g, '');
   return timeline === '';
 }
 
