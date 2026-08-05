@@ -172,43 +172,99 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
   // drop to a lower tier (or off the chart) for a collision that wouldn't have
   // happened.
   const HALF = 10;
-  const TIER_H = 19;     // vertical pitch between label tiers
-  // Deep enough that a year's cluster stacks without a label being dropped.
-  // Stacking needs more tiers than nudging did: a nudged label could share a
-  // tier with its neighbour, a stacked one is stuck at its dot's x and has to
-  // go a tier lower. Measured on a 46-site portfolio, five tiers silently
-  // dropped 12 labels; seven drops none, and matches what the nudged layout
-  // used to show. A tier costs nothing until it is used — lane height is
-  // measured from the deepest tier the lane actually reaches.
+  const TIER_H = 19;     // vertical pitch between the stacked fallback's tiers
   const TIERS = 7;
-  // Placement is worked out up front rather than while mapping to JSX — the
-  // tier bookkeeping is a running decision and doesn't belong in render.
+  const PITCH = 27;      // gap between labels laid out along a run
+  const RUN_GAP = 12;    // clear space between one run and the next
+  const LBL_Y = 14;      // a lone label sits this far under its dot
+  const BRK_Y = 14;      // the bracket tying a run to its cluster
+  const RUN_Y = 30;      // a run sits below that bracket
+  // Deadlines arrive in clusters — the same handful of dates every year, inside
+  // a couple of months, which on a five-year axis is about one label's width of
+  // room for four labels. The space *between* those clusters is meanwhile
+  // enormous and empty, so a cluster's labels are laid out left to right into
+  // it rather than stacked down the page. A bracket says which dots the run
+  // belongs to; order within the run says which label is which date.
+  //
+  // The dot never moves under any of this: it is the date. A label in a run
+  // does not sit over its own dot, which is the trade the bracket pays for.
   const placed = lanes.map(lane => {
-    // A label sits directly under the dot it belongs to, so a cluster stacks
-    // straight down in a column and its leader line is vertical. Labels used
-    // to be nudged apart sideways to fit more of them on a tier, but each one
-    // then had to be tied back to its dot by a slanted line, and a run of
-    // those read as a fan of wires rather than a column of dates. The dot
-    // never moves either way: it is the date.
+    const pts = lane.points.map(p => ({ ...p, cx: tlX(isoTime(p.date), ax) }));
+    // A cluster is a run of dates whose labels would overlap if each sat under
+    // its own dot. A date far enough from its neighbours is a cluster of one
+    // and just gets a label underneath, with no bracket to explain.
+    const clusters = [];
+    for (const p of pts) {
+      const last = clusters[clusters.length - 1];
+      if (last && p.cx - last[last.length - 1].cx < HALF * 2 + 5) last.push(p);
+      else clusters.push([p]);
+    }
+    // A run only earns its place if it fits where it wants to be, clear of
+    // both neighbours. The one ahead matters as much as the one behind: a run
+    // that reaches into the next cluster lands on top of whatever that cluster
+    // draws. Nudging a run clear instead would walk it away from the dots it
+    // describes, which is the drift this layout exists to avoid.
     //
-    // Labels drop to a lower tier rather than print over their neighbour. A
-    // label with no free tier is left off entirely — the dot keeps its
+    // The choice is made for the lane as a whole rather than per cluster. Mixed
+    // lanes were tried and read badly: runs and stacks alternating year by year
+    // look arbitrary, and the lane is as tall as its stacks regardless, so the
+    // runs buy nothing. Either every cluster in the lane runs or none does.
+    const runLayout = () => {
+      const labels = [];
+      const brackets = [];
+      let prevRight = -Infinity;
+      for (let ci = 0; ci < clusters.length; ci++) {
+        const cl = clusters[ci];
+        if (cl.length === 1) {
+          labels.push({ ...cl[0], lx: cl[0].cx, dy: LBL_Y });
+          prevRight = Math.max(prevRight, cl[0].cx + HALF);
+          continue;
+        }
+        const mid = (cl[0].cx + cl[cl.length - 1].cx) / 2;
+        const width = (cl.length - 1) * PITCH;
+        const next = clusters[ci + 1];
+        const nextLeft = next ? next[0].cx - HALF : Infinity;
+        // Where the run may legally begin, given the axis ends and whatever
+        // sits either side of it.
+        const minStart = Math.max(TL.padL + HALF, prevRight + RUN_GAP + HALF);
+        const maxStart = Math.min(TL.W - TL.padR - HALF - width, nextLeft - RUN_GAP - HALF - width);
+        if (maxStart < minStart) return null;   // genuinely nowhere to put it
+        // Centred on its cluster so it doesn't lean, then held inside those
+        // bounds. The clamp only ever bites at the two ends of the axis, where
+        // the first and last clusters would otherwise hang off the edge — and
+        // there is no neighbour there to be confused with, so a run sitting a
+        // little off-centre reads fine. Failing instead would cost the whole
+        // lane its runs for the sake of one edge cluster.
+        const start = Math.min(Math.max(mid - width / 2, minStart), maxStart);
+        cl.forEach((p, k) => labels.push({ ...p, lx: start + k * PITCH, dy: RUN_Y }));
+        brackets.push({ x1: start, x2: start + width, cx: mid });
+        prevRight = start + width + HALF;
+      }
+      return { labels, brackets };
+    };
+    // Stacked fallback: straight down, one tier per collision, vertical leader.
+    // A label with no free tier is left off entirely — the dot keeps its
     // tooltip, and an unreadable overprint helps nobody.
-    const tierRight = Array(TIERS).fill(-Infinity);
-    return lane.points.map((p) => {
-      const cx = tlX(isoTime(p.date), ax);
-      const tier = tierRight.findIndex(right => cx - HALF >= right + 5);
-      if (tier >= 0) tierRight[tier] = cx + HALF;
-      return { ...p, cx, tier };
-    });
+    const stackLayout = () => {
+      const tierRight = Array(TIERS).fill(-Infinity);
+      return {
+        brackets: [],
+        labels: pts.map(p => {
+          const tier = tierRight.findIndex(right => p.cx - HALF >= right + 5);
+          if (tier >= 0) tierRight[tier] = p.cx + HALF;
+          return { ...p, lx: p.cx, dy: tier >= 0 ? LBL_Y + tier * TIER_H : null, stacked: true };
+        }),
+      };
+    };
+    return runLayout() || stackLayout();
   });
   // Each lane is only as tall as its own labels need. A fixed height sized
   // for the worst case left a lane with one deadline — or none — sitting in
   // an empty band as deep as the busiest one.
   const laneTops = [];
-  const laneHeights = placed.map(pts => {
-    const deepest = pts.reduce((m, p) => Math.max(m, p.tier), -1);
-    return pts.length ? 40 + Math.max(0, deepest) * TIER_H : 34;
+  const laneHeights = placed.map(({ labels }) => {
+    const deepest = labels.reduce((m, p) => Math.max(m, p.dy ?? 0), 0);
+    return labels.length ? 15 + deepest + 11 : 34;
   });
   laneHeights.reduce((top, h) => { laneTops.push(top); return top + h; }, padT);
   const bodyH = laneHeights.reduce((a, b) => a + b, 0);
@@ -244,14 +300,28 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
                 : 'no dated deadlines'}
             </text>
             <line x1={TL.padL} y1={dotY} x2={TL.W - TL.padR} y2={dotY} stroke="#E2E8F0" strokeWidth="1" />
-            {placed[i].map(({ cx, tier, ...p }) => {
-              const ly = dotY + 14 + tier * TIER_H;
+            {/* One bracket per run: a stub down from the middle of the cluster,
+                then a rule spanning the labels with a tick turned down at each
+                end. Drawn before the dots and labels so it sits under them. */}
+            {placed[i].brackets.map(b => (
+              <path
+                key={`brk${b.x1}`}
+                d={`M${b.cx} ${dotY + 6} L${b.cx} ${dotY + BRK_Y}
+                    M${b.x1} ${dotY + BRK_Y} L${b.x2} ${dotY + BRK_Y}
+                    M${b.x1} ${dotY + BRK_Y} L${b.x1} ${dotY + BRK_Y + 4}
+                    M${b.x2} ${dotY + BRK_Y} L${b.x2} ${dotY + BRK_Y + 4}`}
+                fill="none" stroke={lane.color} strokeWidth="1" opacity="0.45"
+              />
+            ))}
+            {placed[i].labels.map(({ cx, lx, dy, stacked, ...p }) => {
+              const ly = dotY + dy;
               return (
                 <g key={p.date}>
-                  {/* Vertical by construction: the label shares the dot's x.
-                      Only a stacked label needs the line at all — a tier-0
-                      label sits right under its dot. */}
-                  {tier > 0 && (
+                  {/* Only a stacked label below the first tier needs a leader,
+                      and it is vertical by construction — the label shares its
+                      dot's x. A label in a run is tied to its cluster by the
+                      bracket instead. */}
+                  {stacked && dy != null && dy > LBL_Y && (
                     <line x1={cx} y1={dotY + 6} x2={cx} y2={ly - 9} stroke={lane.color} strokeWidth="1" opacity="0.45" />
                   )}
                   {/* Hollow for a projected filing — it's the ordinance's
@@ -270,13 +340,13 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
                         + (p.projected ? ' (projected from the ordinance\u2019s compliance cycle)' : '')}
                     </title>
                   </circle>
-                  {tier >= 0 && (
+                  {dy != null && (
                     <>
-                      <text x={cx} y={ly} textAnchor="middle" fontSize="9.5" fontWeight={p.projected ? 700 : 800}
+                      <text x={lx} y={ly} textAnchor="middle" fontSize="9.5" fontWeight={p.projected ? 700 : 800}
                         fill={p.projected ? '#64748B' : '#0F172A'} stroke="#fff" strokeWidth="3" paintOrder="stroke">
                         {p.count}
                       </text>
-                      <text x={cx} y={ly + 8} textAnchor="middle" fontSize="7"
+                      <text x={lx} y={ly + 8} textAnchor="middle" fontSize="7"
                         fill={p.projected ? '#94A3B8' : '#475569'} stroke="#fff" strokeWidth="3" paintOrder="stroke">
                         {md(p.date)}
                       </text>
