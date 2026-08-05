@@ -928,6 +928,12 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
           transcript,
           company: stored.company || '',
           oppContext: stored.oppLabel || '',
+          // Who was on the call is what tells an internal meeting from a
+          // client one, and machine speaker labels ("A"/"B") don't carry
+          // it. Only Granola records have attendees; the others send
+          // nothing and the summariser classifies from the transcript.
+          attendees: stored.attendees || null,
+          owner: stored.owner || null,
         }),
       });
       const data = await r.json().catch(() => ({}));
@@ -937,6 +943,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
       }
       const saved = await persist(id, {
         ...metaFor(rec),
+        meetingType: data.meetingType || '',
         summary: data.summary || '',
         keyItems: data.keyItems || [],
         followUps: data.followUps || [],
@@ -1585,6 +1592,15 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                   <div className={styles.summary}>
                     <div className={styles.summaryHead}>
                       <span className={styles.summaryTitle}>Call summary</span>
+                      {/* Which section set the summary was written to.
+                          Absent on summaries made before the summariser
+                          classified, and on ones where it couldn't tell. */}
+                      {stored.meetingType && (
+                        <span
+                          className={styles.meetingType}
+                          title="What the summariser decided this meeting was, which sets the sections it filled"
+                        >{stored.meetingType}</span>
+                      )}
                       {stored.sentiment && (
                         <span className={styles.sentiment} data-tone={stored.sentiment}>{stored.sentiment}</span>
                       )}

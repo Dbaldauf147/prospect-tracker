@@ -13,6 +13,10 @@ import {
 import {
   docIdFor, emptyRecord, summaryForOpp, mergeIntoNotes, oppLabel,
 } from '../src/utils/callRecordShape.js';
+// The push script keeps its own copy of the meeting-type vocabulary (it
+// must not import an API route, which pulls in auth and rate limiting).
+// Importing the route's list HERE is what stops the two from drifting.
+import { MEETING_TYPES } from '../api/call-summary.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -96,6 +100,20 @@ const NOW = '2026-08-05T12:00:00.000Z';
   eq(patchFromRecap({ noteId: 'n', summary: 'x', sentiment: 'Cautious' }, NOW).sentiment, 'cautious', 'sentiment is lower-cased');
   eq(patchFromRecap({ noteId: 'n', summary: 'x', sentiment: 'thrilled' }, NOW).sentiment, '', 'an off-vocabulary sentiment is dropped');
   eq(patchFromRecap({ noteId: 'n', summary: 'x' }, NOW).sentiment, '', 'an absent sentiment is empty');
+}
+
+// --- meeting type: the same vocabulary as the app's summariser ---------
+// A recap filed here and one produced by the page's Summarize button end
+// up in the same field on the same record, so they must agree on what
+// the valid values are. If these drift, the page renders a label for a
+// category it does not have.
+{
+  for (const type of MEETING_TYPES) {
+    eq(patchFromRecap({ noteId: 'n', summary: 'x', meetingType: type }, NOW).meetingType, type, `"${type}" survives the push`);
+  }
+  eq(patchFromRecap({ noteId: 'n', summary: 'x', meetingType: 'Client' }, NOW).meetingType, 'client', 'the meeting type is lower-cased');
+  eq(patchFromRecap({ noteId: 'n', summary: 'x', meetingType: 'prospect' }, NOW).meetingType, '', 'an off-vocabulary type is dropped');
+  eq(patchFromRecap({ noteId: 'n', summary: 'x' }, NOW).meetingType, '', 'an absent type is empty');
 }
 
 // --- lists are bounded --------------------------------------------------

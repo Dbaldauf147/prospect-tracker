@@ -255,6 +255,11 @@ function followUpList(value) {
 
 const SENTIMENTS = ['positive', 'neutral', 'cautious', 'negative'];
 
+// Kept in step with MEETING_TYPES in api/call-summary.js. The page
+// renders this as a label, so an off-vocabulary value ("prospect") would
+// show as a category that does not exist — it becomes '' instead.
+const MEETING_TYPES = ['sales', 'client', 'internal'];
+
 /** The recording id for a Granola note — the prefix api/granola-calls.js uses. */
 export function recordIdFor(noteId) {
   const raw = str(noteId);
@@ -271,8 +276,10 @@ export function recordIdFor(noteId) {
  */
 export function patchFromRecap(recap, now = new Date().toISOString()) {
   const sentiment = str(recap.sentiment).toLowerCase();
+  const meetingType = str(recap.meetingType).toLowerCase();
   const patch = {
     source: 'granola',
+    meetingType: MEETING_TYPES.includes(meetingType) ? meetingType : '',
     name: str(recap.name) || 'Granola call',
     granolaNoteId: str(recap.noteId).replace(/^granola:/, ''),
     granolaUrl: str(recap.granolaUrl),
