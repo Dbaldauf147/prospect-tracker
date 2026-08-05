@@ -30,7 +30,7 @@ import {
 } from '../../utils/utilityRates';
 import { isCaliforniaSite } from '../../utils/siteRegion';
 import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripState, isIndicativeSavingsExport } from '../../utils/xlsxParse';
-import { UtilityMappingView } from './UtilityMappingView';
+import { UtilityMappingView, NAME_MAP_LIST_KEY } from './UtilityMappingView';
 import { BuildingComplianceScreening } from './BuildingComplianceScreening';
 import { ComplianceRoadmap } from './ComplianceRoadmap';
 import { scopeSitesByOwnership } from './ownershipScope.js';
@@ -11342,8 +11342,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
   // Master Analysis export: one workbook combining the Utility Lookup
   // exports — Indicative Savings, the Building Compliance report (+ its Site
-  // Detail), Corporate Compliance (company footprint + California ops), and
-  // the Compliance Report Methodology. Each builder adds its sheets to a
+  // Detail), Corporate Compliance (company footprint + California ops), the
+  // Compliance Report Methodology, and the Utility Mapping coverage analysis
+  // (% of sites mapped to a known utility, % with utility interval data,
+  // mapped and broken out by state). Each builder adds its sheets to a
   // shared ExcelJS workbook; the Indicative Savings native charts are
   // injected after the merged workbook is written (the compliance report's
   // Site Detail is renamed so it doesn't collide with Indicative Savings' own
@@ -11579,7 +11581,25 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       companyName: company,
     });
 
-    // 5. Round-trip sheets — the Site List the whole workbook was built
+    // 5. Utility Mapping coverage — the same analysis the Utility Mapping
+    //    page exports: the NA coverage map, the per-state breakdown, and the
+    //    per-site detail, headlined by the share of sites mapped to a known
+    //    utility and the share with utility interval data. It reads the
+    //    Utility Name Mapping list straight from IndexedDB so the sheets are
+    //    there whether or not that tab has been opened this session. Tabs are
+    //    renamed to avoid colliding with Indicative Savings' NAM / Site
+    //    Detail sheets.
+    const savedNameMap = await loadListFromIDB(NAME_MAP_LIST_KEY);
+    await exportUtilityMappingAnalysis(Array.isArray(savedNameMap) ? savedNameMap : [], {
+      targetWb: wb,
+      sheetNames: {
+        nam: 'Utility Mapping',
+        stateBreakdown: 'Utility Mapping by State',
+        siteDetail: 'Utility Mapping Site Detail',
+      },
+    });
+
+    // 6. Round-trip sheets — the Site List the whole workbook was built
     //    from, plus the hidden state sheet. These are what let the
     //    analysis be imported back onto the Utility Lookup page (and
     //    from there onto every subtab) later, from this company's
@@ -11614,15 +11634,20 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // Styled multi-tab utility-mapping workbook, launched from the Utility
   // Mapping page's "Download Analysis" button. Sheets:
   //   1. NAM — a North-America choropleth: each state / province shaded by
-  //      the share of its portfolio sites mapped to a known utility.
+  //      the share of its portfolio sites mapped to a known utility, with
+  //      both headline coverage numbers (% mapped, % with interval data).
   //   2. State Breakdown — one row per state / province with mapping counts,
-  //      unique-utility count, and the Has Access split (sorted by most
-  //      Has Access sites).
+  //      unique-utility count, and the interval-data split (sorted by most
+  //      sites with interval data).
   //   3. Site Detail — one row per site with its mapping state, zip, the
-  //      matched uploaded name, mapped-to utility, Status, and Requirements.
+  //      matched uploaded name, mapped-to utility, Status, whether that
+  //      status means we have interval data, and Requirements.
   // `nameMapList` is the Utility Name Mapping table passed up from
   // UtilityMappingView; each site's electric utility is classified against it.
-  async function exportUtilityMappingAnalysis(nameMapList) {
+  // With `targetWb` the sheets are added to an existing workbook (and nothing
+  // is downloaded) — that's how the Master Analysis carries the same
+  // analysis; `sheetNames` renames the tabs so they don't collide there.
+  async function exportUtilityMappingAnalysis(nameMapList, { targetWb = null, sheetNames = {} } = {}) {
     if (!rows.length) {
       throw new Error('No sites available to export: re-check the uploaded file or the Site Name column mapping.');
     }
@@ -11650,17 +11675,20 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       if (mappedTo) return { status: 'unmapped', detail: 'Mapped value is not a known utility', matched: hit.name, mappedTo, rowStatus, requirements };
       return { status: 'unmapped', detail: 'In the mapping table but not yet mapped', matched: hit.name, mappedTo: '', rowStatus, requirements };
     };
-    const bumpBucket = (b, status) => {
+    const bumpBucket = (b, status, interval) => {
       b.total++;
       if (status === 'mapped') b.mapped++;
       else if (status === 'unmapped') b.unmapped++;
       else b.notInList++;
+      if (interval === true) b.intervalYes++;
+      else if (interval === false) b.intervalNo++;
     };
-    // A site "has access" when its utility's Status reads available /
+    // A site has interval data when its utility's Status reads available /
     // positive; explicit negatives (no / not available / pending / …)
-    // read as no-access. Blank / unknown returns null and is left out of
-    // both counts. Drives the access split on the State Breakdown tab.
-    const statusHasAccess = (v) => {
+    // read as no interval data. Blank / unknown returns null and is left
+    // out of both counts — those sites are neither confirmed nor ruled
+    // out, so they only move the denominator.
+    const statusHasIntervalData = (v) => {
       const s = String(v ?? '').trim().toLowerCase();
       if (!s) return null;
       if (/^(no|n|none|false|0|unavailable|not\s*available|no\s*access|n\/a|na|tbd|unknown|pending|-)$/.test(s)) return false;
@@ -11669,11 +11697,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
     // Per-site detail rows + per-state (NAM) buckets for the choropleth.
     const detailRows = [];
-    const buckets = new Map(); // key -> { center, total, mapped, unmapped, notInList, label, stateCode, countryLabel }
-    const stateBuckets = new Map(); // `${country}|||${state}` -> { country, state, total, mapped, unmapped, notInList, accessYes, accessNo, utilities:Set, requirements:Set }
+    const buckets = new Map(); // key -> { center, total, mapped, unmapped, notInList, intervalYes, intervalNo, label, stateCode, countryLabel }
+    const stateBuckets = new Map(); // `${country}|||${state}` -> { country, state, total, mapped, unmapped, notInList, intervalYes, intervalNo, utilities:Set, requirements:Set }
     const allUtilities = new Set(); // distinct electric utilities portfolio-wide (for the State Breakdown total row)
     let totMapped = 0, totUnmapped = 0, totNotInList = 0;
-    let totAccessYes = 0, totAccessNo = 0;
+    let totIntervalYes = 0, totIntervalNo = 0;
     for (const r of rows) {
       const siteName = siteNameColumn ? String(r[siteNameColumn] || '').trim() : '';
       const electricUtility = String(r.__electric__ || '').trim();
@@ -11697,19 +11725,17 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       else if (cls.status === 'unmapped') totUnmapped++;
       else totNotInList++;
       if (utilityKey) allUtilities.add(utilityKey);
-      // Utility access (from the Status column) + requirements text,
-      // surfaced per state on the State Breakdown tab.
-      const access = statusHasAccess(cls.rowStatus);
-      if (access === true) totAccessYes++;
-      else if (access === false) totAccessNo++;
+      // Interval-data availability (from the utility's Status column) +
+      // requirements text, surfaced per state on the State Breakdown tab.
+      const interval = statusHasIntervalData(cls.rowStatus);
+      if (interval === true) totIntervalYes++;
+      else if (interval === false) totIntervalNo++;
       // State / province breakdown across the whole portfolio (NAM + intl).
       {
         const sKey = `${rawCountry}|||${stateDisplay}`;
         let sb = stateBuckets.get(sKey);
-        if (!sb) { sb = { country: rawCountry, state: stateDisplay, total: 0, mapped: 0, unmapped: 0, notInList: 0, accessYes: 0, accessNo: 0, utilities: new Set(), requirements: new Set() }; stateBuckets.set(sKey, sb); }
-        bumpBucket(sb, cls.status);
-        if (access === true) sb.accessYes++;
-        else if (access === false) sb.accessNo++;
+        if (!sb) { sb = { country: rawCountry, state: stateDisplay, total: 0, mapped: 0, unmapped: 0, notInList: 0, intervalYes: 0, intervalNo: 0, utilities: new Set(), requirements: new Set() }; stateBuckets.set(sKey, sb); }
+        bumpBucket(sb, cls.status, interval);
         if (utilityKey) sb.utilities.add(utilityKey);
         if (cls.requirements) sb.requirements.add(cls.requirements);
       }
@@ -11724,6 +11750,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         rowStatus: cls.rowStatus,
         requirements: cls.requirements,
         status: cls.status === 'mapped' ? 'Mapped' : (cls.status === 'unmapped' ? 'Unmapped' : 'Not in mapping list'),
+        intervalData: interval === true ? 'Yes' : interval === false ? 'No' : 'Unknown',
         detail: cls.detail,
       });
       let center = null, label = '', countryLabel = '';
@@ -11732,24 +11759,34 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       if (!center) continue;
       const key = `${isUS ? 'US' : 'CA'}/${stateCode}`;
       let b = buckets.get(key);
-      if (!b) { b = { center, total: 0, mapped: 0, unmapped: 0, notInList: 0, label, stateCode, countryLabel }; buckets.set(key, b); }
-      bumpBucket(b, cls.status);
+      if (!b) { b = { center, total: 0, mapped: 0, unmapped: 0, notInList: 0, intervalYes: 0, intervalNo: 0, label, stateCode, countryLabel }; buckets.set(key, b); }
+      bumpBucket(b, cls.status, interval);
     }
 
-    const { Workbook } = await import('exceljs');
     const SE_GREEN_DARK = 'FF009530';
     const SE_GREEN = 'FF3DCD58';
     const SE_GREEN_LIGHT = 'FFE6F7EC';
     const SE_TEXT_DARK = 'FF1E293B';
     const SE_BORDER = 'FFD4DDE1';
     const SE_SLATE = 'FF475569';
-    const wb = new Workbook();
-    wb.creator = 'Schneider Electric · Prospect Tracker';
+    let wb = targetWb;
+    if (!wb) {
+      const { Workbook } = await import('exceljs');
+      wb = new Workbook();
+      wb.creator = 'Schneider Electric · Prospect Tracker';
+    }
+    const namSheetName = sheetNames.nam || 'NAM';
+    const stateSheetName = sheetNames.stateBreakdown || 'State Breakdown';
+    const detailSheetName = sheetNames.siteDetail || 'Site Detail';
+    // Headline coverage, shown wherever the analysis is summarised.
+    const totalSites = totMapped + totUnmapped + totNotInList;
+    const pctText = (n) => (totalSites ? `${Math.round((n / totalSites) * 100)}%` : '0%');
+    const coverageLine = `${pctText(totMapped)} of sites mapped to a known utility · ${pctText(totIntervalYes)} with utility interval data`;
 
     // ---- Sheet 1: NAM utility-mapping dot map ----
     {
       const COLS = 16;
-      const ws = wb.addWorksheet('NAM', {
+      const ws = wb.addWorksheet(namSheetName, {
         properties: { tabColor: { argb: SE_GREEN_DARK } },
         views: [{ showGridLines: false }],
       });
@@ -11858,15 +11895,35 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
       ws.mergeCells(2, 1, 2, COLS);
       const sub = ws.getCell(2, 1);
-      sub.value = `${detailRows.length} site${detailRows.length === 1 ? '' : 's'} · ${totMapped} mapped to a known utility · ${totUnmapped} in the table but unmapped · ${totNotInList} not in the mapping list. Each NA state / province is shaded by the share of its portfolio sites whose electric utility is mapped to a known utility (light → dark green); states with no portfolio sites stay light grey.`;
+      sub.value = `${nameMapRows.length === 0 ? 'No utility list is loaded on the Utility Name Mapping tab, so no site can be mapped or confirmed for interval data yet. ' : ''}${detailRows.length} site${detailRows.length === 1 ? '' : 's'} · ${coverageLine}. Mapping: ${totMapped} mapped to a known utility · ${totUnmapped} in the table but unmapped · ${totNotInList} not in the mapping list. Interval data: ${totIntervalYes} yes · ${totIntervalNo} no · ${totalSites - totIntervalYes - totIntervalNo} unknown (utility Status blank or not in the mapping list). Each NA state / province is shaded by the share of its portfolio sites whose electric utility is mapped to a known utility (light → dark green); states with no portfolio sites stay light grey.`;
       sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
       sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
       ws.getRow(2).height = 36;
 
-      ws.addImage(imageId, { tl: { col: 0, row: 3 }, ext: { width: W, height: H } });
+      // KPI band — the two headline percentages, one merged block each, so
+      // the coverage read doesn't depend on reading the subtitle prose.
+      {
+        const half = Math.floor(COLS / 2);
+        const kpis = [
+          { from: 1, to: half, label: 'Sites mapped to a known utility', value: totalSites ? totMapped / totalSites : 0, sub: `${totMapped.toLocaleString()} of ${totalSites.toLocaleString()} sites` },
+          { from: half + 1, to: COLS, label: 'Sites with utility interval data', value: totalSites ? totIntervalYes / totalSites : 0, sub: `${totIntervalYes.toLocaleString()} of ${totalSites.toLocaleString()} sites` },
+        ];
+        for (const k of kpis) {
+          ws.mergeCells(3, k.from, 3, k.to);
+          const cell = ws.getCell(3, k.from);
+          cell.value = `${k.label}:  ${totalSites ? Math.round(k.value * 100) : 0}%   (${k.sub})`;
+          cell.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_GREEN_DARK } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } }, right: { style: 'thin', color: { argb: 'FFFFFFFF' } } };
+        }
+        ws.getRow(3).height = 22;
+      }
+
+      ws.addImage(imageId, { tl: { col: 0, row: 4 }, ext: { width: W, height: H } });
 
       // Per-state breakdown table below the map.
-      const SUMMARY_START = 3 + Math.ceil(H / 15) + 2;
+      const SUMMARY_START = 4 + Math.ceil(H / 15) + 2;
       ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
       const sumHdr = ws.getCell(SUMMARY_START, 1);
       sumHdr.value = 'Utility Mapping by State / Province';
@@ -11876,7 +11933,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       ws.getRow(SUMMARY_START).height = 22;
 
       const tableHeaderRow = SUMMARY_START + 1;
-      const breakdownCols = ['State / Prov', 'Country', 'Total Sites', 'Mapped', 'Unmapped', 'Not in List', '% Mapped'];
+      const breakdownCols = ['State / Prov', 'Country', 'Total Sites', 'Mapped', 'Unmapped', 'Not in List', '% Mapped', 'Interval Data', 'No Interval Data', '% Interval Data'];
       const hdr = ws.getRow(tableHeaderRow);
       breakdownCols.forEach((label, i) => {
         const cell = hdr.getCell(i + 1);
@@ -11891,8 +11948,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         .sort((a, b) => b.total - a.total || a.label.localeCompare(b.label));
       breakdown.forEach((b, i) => {
         const row = ws.getRow(tableHeaderRow + 1 + i);
-        const vals = [b.stateCode, b.countryLabel, b.total, b.mapped, b.unmapped, b.notInList, b.total ? b.mapped / b.total : 0];
-        const fmts = [null, null, '#,##0', '#,##0', '#,##0', '#,##0', '0%'];
+        const vals = [b.stateCode, b.countryLabel, b.total, b.mapped, b.unmapped, b.notInList, b.total ? b.mapped / b.total : 0, b.intervalYes, b.intervalNo, b.total ? b.intervalYes / b.total : 0];
+        const fmts = [null, null, '#,##0', '#,##0', '#,##0', '#,##0', '0%', '#,##0', '#,##0', '0%'];
         vals.forEach((v, ci) => {
           const cell = row.getCell(ci + 1);
           cell.value = v;
@@ -11903,11 +11960,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         });
         row.height = 18;
       });
-      // Total row.
-      const total = totMapped + totUnmapped + totNotInList;
+      // Total row — portfolio-wide (including any sites outside NA, which
+      // have no map bucket of their own).
+      const total = totalSites;
       const totalRow = ws.getRow(tableHeaderRow + 1 + breakdown.length);
-      const totVals = ['Total', '', total, totMapped, totUnmapped, totNotInList, total ? totMapped / total : 0];
-      const totFmts = [null, null, '#,##0', '#,##0', '#,##0', '#,##0', '0%'];
+      const totVals = ['Total', '', total, totMapped, totUnmapped, totNotInList, total ? totMapped / total : 0, totIntervalYes, totIntervalNo, total ? totIntervalYes / total : 0];
+      const totFmts = [null, null, '#,##0', '#,##0', '#,##0', '#,##0', '0%', '#,##0', '#,##0', '0%'];
       totVals.forEach((v, ci) => {
         const cell = totalRow.getCell(ci + 1);
         cell.value = v;
@@ -11925,7 +11983,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // with its utility-mapping coverage, so the user can scan jurisdictions
     // without reading the map.
     {
-      const ws = wb.addWorksheet('State Breakdown', {
+      const ws = wb.addWorksheet(stateSheetName, {
         properties: { tabColor: { argb: SE_GREEN } },
         views: [{ showGridLines: false, state: 'frozen', ySplit: 1 }],
       });
@@ -11938,9 +11996,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         { label: 'Not in List', get: (s) => s.notInList, width: 12, numFmt: '#,##0' },
         { label: 'Unique Utilities', get: (s) => (s.utilities ? s.utilities.size : 0), width: 14, numFmt: '#,##0' },
         { label: '% Mapped', get: (s) => (s.total ? s.mapped / s.total : 0), width: 12, numFmt: '0%' },
-        { label: 'Has Access', get: (s) => s.accessYes, width: 12, numFmt: '#,##0' },
-        { label: 'No Access', get: (s) => s.accessNo, width: 12, numFmt: '#,##0' },
-        { label: '% With Access', get: (s) => (s.total ? s.accessYes / s.total : 0), width: 13, numFmt: '0%' },
+        { label: 'Interval Data', get: (s) => s.intervalYes, width: 13, numFmt: '#,##0' },
+        { label: 'No Interval Data', get: (s) => s.intervalNo, width: 15, numFmt: '#,##0' },
+        { label: '% With Interval Data', get: (s) => (s.total ? s.intervalYes / s.total : 0), width: 17, numFmt: '0%' },
         { label: 'Requirements / Comments', get: (s) => [...s.requirements].map(x => `• ${x}`).join('\n'), width: 46, numFmt: null, wrap: true },
       ];
       ws.columns = cols.map(c => ({ width: c.width }));
@@ -11954,10 +12012,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } }, right: { style: 'hair', color: { argb: 'FFFFFFFF' } } };
       });
       head.height = 28;
-      // Sort by states with the most "Has Access" sites first, then by total
+      // Sort by states with the most interval-data sites first, then by total
       // sites, then alphabetically.
       const stateRows = Array.from(stateBuckets.values()).sort((a, b) =>
-        b.accessYes - a.accessYes ||
+        b.intervalYes - a.intervalYes ||
         b.total - a.total ||
         String(a.country).localeCompare(String(b.country)) ||
         String(a.state).localeCompare(String(b.state)));
@@ -11978,9 +12036,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         row.height = reqLines > 1 ? Math.min(18 + (reqLines - 1) * 14, 120) : 18;
       });
       // Total row.
-      const total = totMapped + totUnmapped + totNotInList;
+      const total = totalSites;
       const totalRow = ws.getRow(2 + stateRows.length);
-      const totVals = ['Total', '', total, totMapped, totUnmapped, totNotInList, allUtilities.size, total ? totMapped / total : 0, totAccessYes, totAccessNo, total ? totAccessYes / total : 0, ''];
+      const totVals = ['Total', '', total, totMapped, totUnmapped, totNotInList, allUtilities.size, total ? totMapped / total : 0, totIntervalYes, totIntervalNo, total ? totIntervalYes / total : 0, ''];
       totVals.forEach((v, i) => {
         const cell = totalRow.getCell(i + 1);
         cell.value = v;
@@ -11996,7 +12054,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
     // ---- Sheet 3: Site Detail ----
     {
-      const ws = wb.addWorksheet('Site Detail', {
+      const ws = wb.addWorksheet(detailSheetName, {
         properties: { tabColor: { argb: SE_GREEN } },
         views: [{ showGridLines: false, state: 'frozen', ySplit: 1 }],
       });
@@ -12009,6 +12067,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         { label: 'Matched Uploaded Name', get: (s) => s.matched, width: 28 },
         { label: 'Mapped-To Known Utility', get: (s) => s.mappedTo, width: 28 },
         { label: 'Status', get: (s) => s.rowStatus, width: 18 },
+        { label: 'Interval Data', get: (s) => s.intervalData, width: 13 },
         { label: 'Requirements / Comments', get: (s) => s.requirements, width: 36 },
         { label: 'Mapping State', get: (s) => s.status, width: 18 },
         { label: 'Detail', get: (s) => s.detail, width: 34 },
@@ -12029,6 +12088,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const sorted = detailRows.slice().sort((a, b) =>
         (order[a.status] - order[b.status]) || String(a.siteName).localeCompare(String(b.siteName)));
       const STATUS_TEXT = { Mapped: 'FF166534', Unmapped: 'FF92400E', 'Not in mapping list': 'FFB91C1C' };
+      const INTERVAL_TEXT = { Yes: 'FF166534', No: 'FFB91C1C', Unknown: 'FF92400E' };
       sorted.forEach((s, ri) => {
         const row = ws.getRow(2 + ri);
         cols.forEach((c, i) => {
@@ -12036,7 +12096,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           const v = c.get(s);
           cell.value = (v === '' || v == null) ? ' ' : v;
           const isStatus = c.label === 'Mapping State';
-          cell.font = { name: 'Nunito Sans', size: 10, bold: isStatus, color: { argb: isStatus ? (STATUS_TEXT[s.status] || SE_TEXT_DARK) : SE_TEXT_DARK } };
+          const isInterval = c.label === 'Interval Data';
+          const color = isStatus
+            ? (STATUS_TEXT[s.status] || SE_TEXT_DARK)
+            : isInterval
+              ? (INTERVAL_TEXT[s.intervalData] || SE_TEXT_DARK)
+              : SE_TEXT_DARK;
+          cell.font = { name: 'Nunito Sans', size: 10, bold: isStatus || isInterval, color: { argb: color } };
           cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
           cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } }, right: { style: 'hair', color: { argb: SE_BORDER } } };
         });
@@ -12044,6 +12110,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       });
       ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols.length } };
     }
+
+    // Embedded in another workbook (Master Analysis): the caller writes and
+    // downloads the merged file, so stop here.
+    if (targetWb) return { totalSites, mapped: totMapped, intervalYes: totIntervalYes, coverageLine };
 
     sanitizeExcelWorkbook(wb);
     const buf = await wb.xlsx.writeBuffer();

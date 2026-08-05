@@ -14,7 +14,9 @@ import styles from './SitesView.module.css';
 // the user maps onto the app's known utility names. Each row carries the
 // uploaded name + commodity / state / country, plus a `mappedTo` field
 // holding the reference utility name the user matched it to.
-const NAME_MAP_LIST_KEY = 'utility-name-map-list-override';
+// Exported so the Master Analysis export (in SitesView) can read the same
+// list this view maintains without the view having to be mounted.
+export const NAME_MAP_LIST_KEY = 'utility-name-map-list-override';
 
 // Minimum fuzzy score before we pre-suggest a reference utility for an
 // uploaded name. Same scale as findFuzzyMatch (0-100); a touch higher
