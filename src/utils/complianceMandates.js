@@ -725,17 +725,27 @@ export function bpsPrioritization(results, ordinances = MASTER_ORDINANCES) {
 }
 
 // The sites behind a utility-feed figure: BBS- or BPS-eligible sites whose
-// commodity utility ('electric' | 'gas') is known. With `state` + `utility`
-// it's one bar on the card; without them it's the card's whole total. The
-// counts below are grouped from this same list, so a bar and the list it
-// opens can't disagree. Each row carries the state and utility it was counted
-// under (`feedState` / `feedUtility`) — the mandate's state, which is what the
-// card groups by, not necessarily the site's own.
+// commodity utility ('electric' | 'gas') both is known and hands over
+// whole-building data for that commodity. With `state` + `utility` it's one
+// bar on the card; without them it's the card's whole total. The counts below
+// are grouped from this same list, so a bar and the list it opens can't
+// disagree. Each row carries the state and utility it was counted under
+// (`feedState` / `feedUtility`) — the mandate's state, which is what the card
+// groups by, not necessarily the site's own.
+//
+// `wbMeters` is the Whole Building Data file's own answer for the utility it
+// named — see withWholeBuildingUtilities(). A feed is only collectible where
+// that answer is "Yes", so anything else is left out however plainly the site
+// names a utility: a site served by a utility the file says nothing about is a
+// site the service can't reach. Rows that never went through the reference
+// carry no `wbMeters` and are admitted on the utility name alone, which is
+// what the screening does while the reference is still loading.
 export function utilityFeedSites(results, commodity, { state = null, utility = null } = {}) {
   const utilKey = commodity === 'gas' ? 'gasUtility' : 'electricUtility';
   const out = [];
   for (const r of (results || [])) {
     if (!(isEligible(r, 'bbs') || isEligible(r, 'bps'))) continue;
+    if (r.wbMeters && r.wbMeters[commodity] !== 'yes') continue;
     const feedUtility = String(r[utilKey] || '').trim();
     if (!feedUtility) continue;
     const feedState = String(r.mandateState || r.state || '').trim();
