@@ -68,6 +68,15 @@ const call = (over = {}) => ({
   eq(unnamed.blocked, 'you-unknown', 'an unattributable call says the turns were not attributed');
   eq(unnamed.youShare, null, 'and reports null rather than a misleading 0%');
   eq(unnamed.speakerCount, 2, 'its speakers are still counted — the split exists, the "You" does not');
+  // Calls synced before the ingest read Granola's nested speaker object
+  // all look like this, and re-reading the note is what fixes them.
+  ok(unnamed.blockedReason.includes('Re-sync everything'),
+    'a Granola call with no "You" turns points at the re-sync that can fix it');
+  ok(!breakdownRowFromRecord(call({
+    source: 'onedrive',
+    utterances: [{ speaker: 'A', text: 'a b' }, { speaker: 'B', text: 'c' }],
+  })).blockedReason.includes('Re-sync'),
+    'a call from another source is not sent to a Granola button that cannot help it');
 
   const empty = breakdownRowFromRecord(call({
     utterances: [{ speaker: 'You', text: '' }], transcript: 'text',
