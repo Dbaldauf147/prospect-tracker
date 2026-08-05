@@ -1084,21 +1084,26 @@
   }
   .siteTable th { font-size: 0.55rem; letter-spacing: 0; }
 
-  /* The ten-column site detail is the widest thing in the report. Left to
+  /* The twelve-column site detail is the widest thing in the report. Left to
      lay itself out it gives the identity columns room they don't need and
-     squeezes the three mandate columns — where all the content is — until
-     they spill over each other. Fixed layout with the split stated. */
+     squeezes the mandate columns — where all the content is — until they
+     spill over each other. Fixed layout with the split stated; the two
+     utility columns take their share off the identity block rather than off
+     the mandates, since a utility name is one wrapped phrase and a mandate
+     cell is a pill, a date and a figure. */
   .siteDetailTable { table-layout: fixed; }
-  .siteDetailTable th:nth-child(1) { width: 10%; }
-  .siteDetailTable th:nth-child(2) { width: 8%; }
-  .siteDetailTable th:nth-child(3) { width: 5%; }
-  .siteDetailTable th:nth-child(4) { width: 9%; }
-  .siteDetailTable th:nth-child(5) { width: 8%; }
-  .siteDetailTable th:nth-child(6) { width: 6%; }
+  .siteDetailTable th:nth-child(1) { width: 8.5%; }  /* Site */
+  .siteDetailTable th:nth-child(2) { width: 6.5%; }  /* City */
+  .siteDetailTable th:nth-child(3) { width: 5.5%; }  /* State: fits "Massachusetts" */
+  .siteDetailTable th:nth-child(4) { width: 7.5%; }  /* Jurisdiction */
+  .siteDetailTable th:nth-child(5) { width: 6.5%; }  /* Gov ID */
+  .siteDetailTable th:nth-child(6) { width: 6%; }    /* Sq Ft: holds "190,000" unwrapped */
   .siteDetailTable th:nth-child(7),
-  .siteDetailTable th:nth-child(8),
-  .siteDetailTable th:nth-child(10) { width: 12.5%; }
-  .siteDetailTable th:nth-child(9) { width: 16%; }
+  .siteDetailTable th:nth-child(8) { width: 8.5%; }  /* Electric / Gas utility */
+  .siteDetailTable th:nth-child(9),
+  .siteDetailTable th:nth-child(10) { width: 10.5%; } /* BBS / Energy Audits */
+  .siteDetailTable th:nth-child(11) { width: 11%; }  /* Audit Required: most content */
+  .siteDetailTable th:nth-child(12) { width: 10.5%; } /* BPS */
 
   /* Both of these reserve screen width the printed column doesn't have, and
      a min-width inside a fixed cell overflows rather than wraps. */
