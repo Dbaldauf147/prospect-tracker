@@ -1,75 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { subscribeToUserSettings, saveUserSettings, savePathUpdates, initUserSettings } from '../utils/userSettingsSync';
 import { pushBackup } from '../utils/settingsBackup';
-
-// Best-effort merge for a single setting key when two devices both
-// touched it. The goal is to never lose data without being asked, so
-// we use structural rules rather than always letting one side win:
-//
-//   * arrays of objects with stable ids (rows in zoomInfo, opps, etc.)
-//     → union by id, ours wins on same id (last-edit-on-this-device).
-//   * arrays of primitives (customTypes, hiddenServices)
-//     → dedup union, preserving our order then appending remote-only.
-//   * plain objects (dismissedGuesses, contactLocalFields, …)
-//     → recursive shallow merge: ours wins on overlapping leaf keys.
-//   * anything else (strings, numbers, bool, mixed arrays)
-//     → ours wins, since we just made the edit on this device.
-function autoMergeValue(ours, remote) {
-  if (remote === undefined) return ours;
-  if (ours === undefined) return remote;
-  if (Array.isArray(ours) && Array.isArray(remote)) {
-    const idOf = (x) => (x && typeof x === 'object' ? (x.id ?? x._id ?? null) : null);
-    const oursAllIded = ours.length === 0 || ours.every(x => idOf(x) != null);
-    const remoteAllIded = remote.length === 0 || remote.every(x => idOf(x) != null);
-    if (oursAllIded && remoteAllIded) {
-      const ourIds = new Set(ours.map(idOf));
-      const result = [...ours];
-      for (const r of remote) if (!ourIds.has(idOf(r))) result.push(r);
-      return result;
-    }
-    const allPrim = ours.every(x => x === null || typeof x !== 'object')
-      && remote.every(x => x === null || typeof x !== 'object');
-    if (allPrim) {
-      const norm = (v) => (typeof v === 'string' ? v.toLowerCase() : v);
-      const seen = new Set(ours.map(norm));
-      const result = [...ours];
-      for (const v of remote) {
-        const k = norm(v);
-        if (!seen.has(k)) { seen.add(k); result.push(v); }
-      }
-      return result;
-    }
-    return ours;
-  }
-  if (ours && remote && typeof ours === 'object' && typeof remote === 'object'
-      && !Array.isArray(ours) && !Array.isArray(remote)) {
-    const out = { ...remote };
-    for (const k of Object.keys(ours)) out[k] = autoMergeValue(ours[k], remote[k]);
-    return out;
-  }
-  return ours;
-}
-
-// Table-layout prefs (settings.tablePrefs) get their own merge instead
-// of autoMergeValue. Each table's `visible` is a complete snapshot of
-// the columns currently shown — the generic primitive-array union above
-// would resurrect any column the user just hid, because the removed key
-// still sits in the remote array and gets appended back. Merge per
-// table with ours-wins-per-field: the device that just touched a
-// table's layout is right about that layout, and tables only the other
-// device touched flow through from remote untouched.
-function mergeTablePrefs(ours, remote) {
-  const isMap = (v) => v && typeof v === 'object' && !Array.isArray(v);
-  if (!isMap(ours)) return remote === undefined ? ours : remote;
-  if (!isMap(remote)) return ours;
-  const out = { ...remote };
-  for (const tableId of Object.keys(ours)) {
-    const o = ours[tableId];
-    const r = remote[tableId];
-    out[tableId] = (isMap(o) && isMap(r)) ? { ...r, ...o } : o;
-  }
-  return out;
-}
+import { autoMergeValue, mergeSettingsKey } from '../utils/settingsMerge';
 
 // Set (or delete, when value is null/undefined) one dotted path on a
 // plain nested object, creating intermediate objects as needed.
@@ -150,7 +82,7 @@ export function useUserSettings(user) {
 
       if (result.stale) {
         // Silent auto-merge — never prompt. For any key both devices
-        // touched, fold the two values together with autoMergeValue
+        // touched, fold the two values together with mergeSettingsKey
         // (id-keyed array union, primitive-array dedup, recursive
         // object merge). For keys only we touched, ours flows through.
         // Firestore's setDoc(merge:true) keeps the other device's
@@ -161,9 +93,7 @@ export function useUserSettings(user) {
         const mergedUpdates = { ...updates };
         for (const k of updateKeys) {
           if (!(k in remote)) continue;
-          mergedUpdates[k] = k === 'tablePrefs'
-            ? mergeTablePrefs(updates[k], remote[k])
-            : autoMergeValue(updates[k], remote[k]);
+          mergedUpdates[k] = mergeSettingsKey(k, updates[k], remote[k]);
         }
         const forced = await saveUserSettings(userIdRef.current, mergedUpdates, { force: true });
         written = mergedUpdates;
@@ -252,7 +182,11 @@ export function useUserSettings(user) {
             if (cur && typeof cur === 'object' && part in cur) cur = cur[part];
             else { cur = undefined; break; }
           }
-          mergedPathUpdates[path] = cur === undefined ? value : autoMergeValue(value, cur);
+          // The path's last segment is the key the value sits under, so
+          // a dotted write resolves by the same rules as a whole-key one.
+          mergedPathUpdates[path] = cur === undefined
+            ? value
+            : autoMergeValue(value, cur, parts[parts.length - 1]);
         }
         const forced = await savePathUpdates(userIdRef.current, mergedPathUpdates, { force: true });
         written = mergedPathUpdates;
