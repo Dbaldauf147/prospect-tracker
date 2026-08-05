@@ -23,6 +23,21 @@ export const DEFAULT_BACKFILL_DAYS = 90;
 // Stop a runaway back-fill from paging forever on a large workspace.
 const MAX_PAGES = 20;
 
+// A ceiling on any one request to our own route. The route already
+// bounds its call to Granola, so this only catches the layers below it
+// — a cold function that never wakes, a connection that drops. Without
+// it the page can sit on "Checking Granola…" forever, which reads as
+// broken with nothing to act on.
+const REQUEST_TIMEOUT_MS = 45000;
+
+function timeoutSignal(ms = REQUEST_TIMEOUT_MS) {
+  try { return AbortSignal.timeout(ms); } catch { return undefined; }
+}
+
+function isTimeout(err) {
+  return err?.name === 'TimeoutError' || err?.name === 'AbortError';
+}
+
 function domainOf(email) {
   const at = String(email || '').lastIndexOf('@');
   return at >= 0 ? String(email).slice(at + 1).toLowerCase().trim() : '';
@@ -41,7 +56,7 @@ async function readJson(response) {
  */
 export async function probeGranola() {
   try {
-    const r = await apiFetch('/api/granola-calls?probe=1');
+    const r = await apiFetch('/api/granola-calls?probe=1', { signal: timeoutSignal() });
     const data = await readJson(r);
     if (r.status === 501) {
       return { configured: false, ok: false, error: data.error || '', hint: data.hint || null };
@@ -49,7 +64,13 @@ export async function probeGranola() {
     if (!r.ok) return { configured: true, ok: false, error: data.error || `HTTP ${r.status}` };
     return { configured: true, ok: true, error: '' };
   } catch (err) {
-    return { configured: true, ok: false, error: err?.message || String(err) };
+    return {
+      configured: true,
+      ok: false,
+      error: isTimeout(err)
+        ? 'The check for Granola timed out. Calls already synced still show below — use Sync calls to retry.'
+        : (err?.message || String(err)),
+    };
   }
 }
 
@@ -89,7 +110,12 @@ export async function fetchGranolaPage({ cursor = '', updatedAfter = '', created
   if (cursor) params.set('cursor', cursor);
   if (updatedAfter) params.set('updatedAfter', updatedAfter);
   if (createdAfter) params.set('createdAfter', createdAfter);
-  const r = await apiFetch(`/api/granola-calls?${params.toString()}`);
+  let r;
+  try {
+    r = await apiFetch(`/api/granola-calls?${params.toString()}`, { signal: timeoutSignal() });
+  } catch (err) {
+    throw new Error(isTimeout(err) ? 'Timed out listing calls from Granola.' : (err?.message || String(err)));
+  }
   const data = await readJson(r);
   if (!r.ok) throw new Error(data.error || `Granola list failed (HTTP ${r.status})`);
   return { calls: data.calls || [], cursor: data.cursor || '', hasMore: !!data.hasMore };
@@ -97,7 +123,12 @@ export async function fetchGranolaPage({ cursor = '', updatedAfter = '', created
 
 /** One note in full, including its transcript. */
 export async function fetchGranolaNote(noteId) {
-  const r = await apiFetch(`/api/granola-calls?noteId=${encodeURIComponent(noteId)}`);
+  let r;
+  try {
+    r = await apiFetch(`/api/granola-calls?noteId=${encodeURIComponent(noteId)}`, { signal: timeoutSignal() });
+  } catch (err) {
+    throw new Error(isTimeout(err) ? 'Timed out fetching this call from Granola.' : (err?.message || String(err)));
+  }
   const data = await readJson(r);
   if (!r.ok) throw new Error(data.error || `Granola note fetch failed (HTTP ${r.status})`);
   return data.call || null;
