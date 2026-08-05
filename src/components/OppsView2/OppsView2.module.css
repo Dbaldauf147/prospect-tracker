@@ -311,3 +311,156 @@
   cursor: pointer;
   margin-left: 0.75rem;
 }
+
+/* Keith tab agenda — what you mean to raise, above the opps waiting on him.
+   Sits between the tab strip and the result count, so it reads as the header
+   of the tab rather than a row in its table. */
+.agendaWrap {
+  margin: 0 1.25rem 0.75rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+}
+
+.agendaHead {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.45rem;
+}
+
+.agendaTitle {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text);
+}
+
+.agendaHint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.agendaList {
+  margin: 0 0 0.5rem;
+  padding-left: 1.4rem;
+}
+
+/* The li stays a list-item so the ol still numbers it — a flex li drops its
+   marker — and the text + remove button get their own flex row inside. */
+.agendaItem {
+  display: list-item;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+
+.agendaRow {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 1.5rem;
+}
+
+/* The line itself is the edit affordance, so it's a button that doesn't look
+   like one until hovered. */
+.agendaText {
+  flex: 0 1 auto;
+  padding: 0.1rem 0.25rem;
+  margin-left: -0.25rem;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: text;
+}
+
+.agendaText:hover {
+  background: var(--color-bg-hover, #F1F5F9);
+}
+
+.agendaRemove {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  font-size: 0.95rem;
+  line-height: 1;
+  font-family: inherit;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.agendaRow:hover .agendaRemove,
+.agendaRemove:focus-visible { opacity: 1; }
+
+.agendaRemove:hover {
+  color: var(--color-danger, #b91c1c);
+  background: var(--color-bg-hover, #F1F5F9);
+}
+
+.agendaEditInput {
+  flex: 1 1 auto;
+  padding: 0.1rem 0.25rem;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm, 4px);
+  font: inherit;
+  color: var(--color-text);
+  background: var(--color-bg);
+  outline: none;
+}
+
+.agendaAddRow {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.agendaAddInput {
+  flex: 0 1 320px;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+.agendaAddInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.agendaAddBtn {
+  padding: 0.3rem 0.7rem;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.agendaAddBtn:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-accent);
+}
+
+.agendaAddBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

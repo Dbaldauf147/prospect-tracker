@@ -18,6 +18,7 @@ import {
   LinkColumnsModal,
 } from '../common/columnLinks';
 import { ScopeServicesCell, ScopeServicesModal } from './ScopeServicesPicker';
+import { KeithAgenda } from './KeithAgenda';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
 import { dbGet } from '../../utils/db';
@@ -10399,6 +10400,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
 
       {activeTab === 'waitingKeith' && (
         <>
+          {/* What to raise with him, above what the data says is stuck on him. */}
+          <KeithAgenda settings={settings} updateSettings={updateSettings} />
           <div className={styles.searchRow}>
             <span className={styles.resultCount}>
               {waitingOnKeith.length} opp{waitingOnKeith.length === 1 ? '' : 's'} waiting on Keith
