@@ -51,6 +51,11 @@ const RATE_WINDOW_MS = 10 * 60 * 1000;
 const DEFAULT_PAGE = 50;
 const MAX_PAGE = 100;
 
+// How long any one call to Granola may take. Well inside the function's
+// own ceiling so a stall surfaces as a message rather than as a page
+// that never finishes loading.
+const GRANOLA_TIMEOUT_MS = 20000;
+
 function apiKey() {
   return String(process.env.GRANOLA_API_KEY || '').trim();
 }
@@ -292,12 +297,26 @@ function missingKeyHint() {
 // ---- Granola calls ----------------------------------------------------------
 
 async function granolaFetch(path) {
-  const resp = await fetch(`${GRANOLA_BASE}${path}`, {
-    headers: {
-      Authorization: `Bearer ${apiKey()}`,
-      Accept: 'application/json',
-    },
-  });
+  let resp;
+  try {
+    resp = await fetch(`${GRANOLA_BASE}${path}`, {
+      headers: {
+        Authorization: `Bearer ${apiKey()}`,
+        Accept: 'application/json',
+      },
+      // Without this, an unresponsive Granola holds the function open to
+      // its 300s ceiling and the page sits on "Checking Granola…" with
+      // nothing to show for it. Fail in seconds with a reason instead.
+      signal: AbortSignal.timeout(GRANOLA_TIMEOUT_MS),
+    });
+  } catch (err) {
+    const timedOut = err?.name === 'TimeoutError' || err?.name === 'AbortError';
+    const failure = new Error(timedOut
+      ? `Granola didn't respond within ${Math.round(GRANOLA_TIMEOUT_MS / 1000)}s. Calls already synced are unaffected — try again shortly.`
+      : `Couldn't reach Granola at ${GRANOLA_BASE} (${err?.message || err}). If GRANOLA_API_BASE is set, unset it.`);
+    failure.httpStatus = timedOut ? 504 : 502;
+    throw failure;
+  }
   let body = null;
   try { body = await resp.json(); } catch { body = null; }
   return { resp, body };
@@ -388,7 +407,9 @@ async function handler(req, res, auth) {
     }
     return await listNotes(req, res);
   } catch (err) {
-    return res.status(500).json({ error: err?.message || String(err) });
+    // granolaFetch tags timeouts and unreachable hosts with the status
+    // that describes them; anything else is genuinely ours.
+    return res.status(err?.httpStatus || 500).json({ error: err?.message || String(err) });
   }
 }
 
