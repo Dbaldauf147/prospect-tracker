@@ -800,3 +800,267 @@
   background: rgba(255, 255, 255, 0.2);
   color: #fff;
 }
+
+/* ---------------------------------------------------------------------------
+   Report sections
+   ---------------------------------------------------------------------------
+   The page IS the PDF — "Export report (PDF)" prints this component rather
+   than a second, hand-written HTML document that had to be kept in sync by
+   hand. Everything below is either a section that used to exist only in that
+   document (the roadmap deadline table, the jurisdiction penalty table, the
+   utility-feed panels) or the print furniture around them.
+   ------------------------------------------------------------------------ */
+
+/* Matches .bpsTitle — one heading treatment across the whole report. */
+.sectionTitle {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--color-text, #0F172A);
+  margin: 1.1rem 0 0.55rem;
+  padding-left: 0.6rem;
+  border-left: 4px solid #3DCD58;
+}
+
+.reportMeta {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+.reportLead {
+  font-size: 0.78rem;
+  color: var(--color-text-secondary, #5A6B7E);
+  max-width: 640px;
+  line-height: 1.5;
+}
+.reportCounts {
+  text-align: right;
+  font-size: 0.72rem;
+  color: var(--color-text-secondary, #5A6B7E);
+  line-height: 1.7;
+  white-space: nowrap;
+}
+.reportCounts strong { color: var(--color-text, #0F172A); }
+
+.disclaimerBox {
+  border-left: 3px solid #F7941E;
+  background: #FFF8EE;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0 6px 6px 0;
+}
+.disclaimerTitle {
+  display: block;
+  color: #B45309;
+  font-weight: 800;
+  font-size: 0.6rem;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.1rem;
+}
+.disclaimer {
+  font-size: 0.62rem;
+  color: var(--color-text-secondary, #5A6B7E);
+  line-height: 1.5;
+}
+
+/* Roadmap: the deadline table beside the per-category column charts. */
+.roadmapGrid {
+  display: grid;
+  grid-template-columns: 1.05fr 1fr;
+  gap: 0.9rem;
+  align-items: start;
+}
+.tlGrid { display: grid; grid-template-columns: 1fr; gap: 0.6rem; }
+.tlCard {
+  border: 1px solid var(--color-border, #E2E8F0);
+  border-radius: 8px;
+  padding: 0.4rem 0.6rem;
+  background: var(--color-surface, #fff);
+}
+.tlTitle { font-size: 0.7rem; font-weight: 800; margin-bottom: 0.1rem; }
+
+/* Shared shell for the report's standalone tables. */
+.panelWrap {
+  border: 1px solid var(--color-border, #E2E8F0);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--color-surface, #fff);
+}
+.rmTable { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+.rmTable thead th {
+  background: #009530;
+  color: #fff;
+  font-weight: 800;
+  text-align: center;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.66rem;
+  letter-spacing: 0.03em;
+}
+.rmTable thead th:first-child { text-align: left; }
+.rmTable tbody td {
+  padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid var(--color-border-light, #F1F5F9);
+  text-align: center;
+  color: var(--color-text-secondary, #475569);
+  font-variant-numeric: tabular-nums;
+}
+.rmTable tbody tr:nth-child(even) td { background: #FAFCFB; }
+.rmTable td.rmDate { text-align: left; font-weight: 800; color: var(--color-text, #0F172A); white-space: nowrap; }
+.rmTable td.rmTotal { font-weight: 900; color: var(--color-text, #0F172A); }
+.rmChip {
+  display: inline-block;
+  min-width: 24px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid;
+  font-weight: 800;
+  font-size: 0.72rem;
+}
+.rmSum td {
+  background: #E6F7EC;
+  font-weight: 900;
+  color: var(--color-text, #0F172A);
+  border-top: 2px solid #3DCD58;
+}
+.rmSum td:first-child { text-align: left; }
+
+/* Utility feeds (WBUDC). */
+.wbudcNote {
+  font-size: 0.7rem;
+  color: var(--color-text-secondary, #5A6B7E);
+  line-height: 1.5;
+  margin: -0.2rem 0 0.6rem;
+  max-width: 900px;
+}
+.feedGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+.feedKpi { display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.75rem 0; }
+.feedKpiNum {
+  border: 2px solid;
+  border-radius: 8px;
+  padding: 0.1rem 0.7rem;
+  font-size: 1.1rem;
+  font-weight: 900;
+  min-width: 58px;
+  text-align: center;
+}
+
+/* The deadline, under the Applicable pill on a site row. Only ever lived in
+   the hover tip, which doesn't survive a print. */
+.catDue {
+  font-size: 0.62rem;
+  color: var(--color-text-secondary, #5A6B7E);
+  white-space: nowrap;
+}
+
+.printOnly { display: none; }
+.printFooter {
+  text-align: center;
+  font-size: 0.65rem;
+  color: var(--color-text-muted, #94A3B8);
+  margin-top: 0.75rem;
+}
+.printFooterBrand { color: #009530; font-weight: 800; }
+
+/* ---------------------------------------------------------------------------
+   Print — what "Export report (PDF)" produces
+   ---------------------------------------------------------------------------
+   src/print.css does the shell-level work (hiding app chrome, unwinding the
+   scroll containers, landscape @page). These are this report's own rules:
+   drop the controls that mean nothing on paper, undo the on-screen scrollers,
+   and keep sections from being cut in half by a page break.
+   ------------------------------------------------------------------------ */
+@media print {
+  .actions,
+  .modeToggle,
+  .siteToolbar,
+  .dashHint {
+    display: none !important;
+  }
+
+  .printOnly { display: block; }
+
+  /* Horizontal scrollers become plain blocks — a clipped table prints clipped. */
+  .tableScroll,
+  .panelWrap {
+    overflow: visible !important;
+  }
+
+  /* Sticky headers stack on top of the rows they've scrolled past. */
+  .siteTable th { position: static !important; }
+
+  /* On screen these tables are as wide as their content and scroll sideways
+     inside .tableScroll. A sheet of paper doesn't scroll, so anything past the
+     page width is simply cut off — the widest table here runs ~1440px against
+     ~1000px of landscape Letter. Tightened to fit: everything wraps, nothing
+     is held on one line, and the type comes down a step. */
+  .siteTable {
+    font-size: 0.6rem;
+    width: 100%;
+  }
+  .siteTable th,
+  .siteTable td {
+    padding: 0.3rem 0.35rem;
+    white-space: normal !important;
+    overflow-wrap: break-word;
+  }
+  .siteTable th { font-size: 0.55rem; letter-spacing: 0; }
+
+  /* The ten-column site detail is the widest thing in the report. Left to
+     lay itself out it gives the identity columns room they don't need and
+     squeezes the three mandate columns — where all the content is — until
+     they spill over each other. Fixed layout with the split stated. */
+  .siteDetailTable { table-layout: fixed; }
+  .siteDetailTable th:nth-child(1) { width: 10%; }
+  .siteDetailTable th:nth-child(2) { width: 8%; }
+  .siteDetailTable th:nth-child(3) { width: 5%; }
+  .siteDetailTable th:nth-child(4) { width: 9%; }
+  .siteDetailTable th:nth-child(5) { width: 8%; }
+  .siteDetailTable th:nth-child(6) { width: 6%; }
+  .siteDetailTable th:nth-child(7),
+  .siteDetailTable th:nth-child(8),
+  .siteDetailTable th:nth-child(10) { width: 12.5%; }
+  .siteDetailTable th:nth-child(9) { width: 16%; }
+
+  /* Both of these reserve screen width the printed column doesn't have, and
+     a min-width inside a fixed cell overflows rather than wraps. */
+  .reqList { min-width: 0 !important; }
+  .reqRequired,
+  .reqConditional,
+  .reqOptional { white-space: normal !important; }
+  .rmTable { font-size: 0.68rem; }
+  .rmTable thead th,
+  .rmTable tbody td { padding: 0.35rem 0.5rem; }
+  .catDue,
+  .catFine,
+  .catFineNone,
+  .govIdCell { white-space: normal !important; }
+
+  /* Repeat table headers on every sheet a long table spans. */
+  .siteTable thead,
+  .rmTable thead {
+    display: table-header-group;
+  }
+
+  .wrapper { gap: 0.6rem; }
+
+  /* Cards, panels and rows survive whole or move to the next sheet. */
+  .kpiTile,
+  .dashCard,
+  .tlCard,
+  .panelWrap,
+  .disclaimerBox,
+  .sizeNote,
+  .siteTable tr,
+  .rmTable tr {
+    break-inside: avoid;
+  }
+
+  /* A heading never prints as the last line on a sheet. */
+  .sectionTitle,
+  .bpsTitle {
+    break-after: avoid;
+  }
+
+  /* Hover-only affordances read as noise on paper. */
+  .siteTable tbody tr:hover td { background: inherit; }
+}

@@ -1,0 +1,65 @@
+/* Report printing — turns a live page into the PDF deliverable.
+ *
+ * "Export report (PDF)" used to build a second, hand-written HTML document and
+ * print that, so the PDF and the page it claimed to be were two independent
+ * implementations that drifted apart. Now the page itself is what prints: the
+ * report root stays visible, the app chrome around it goes away, and the
+ * scroll containers between them are unwound so the content can flow across
+ * printed pages.
+ *
+ * Activated by `body.printingReport`, set for the duration of window.print()
+ * so nothing here affects ordinary screen use — or an ordinary Ctrl-P of some
+ * other view.
+ */
+
+@media print {
+  /* Hide everything, then bring back the report subtree. Cheaper and far more
+     durable than enumerating the sidebar, subtab bars and toolbars that happen
+     to sit around the report today — anything added later is hidden by
+     default rather than leaking into the deliverable. */
+  body.printingReport * {
+    visibility: hidden;
+  }
+  body.printingReport [data-print-root],
+  body.printingReport [data-print-root] * {
+    visibility: visible;
+  }
+
+  /* The shell is a fixed-height flex column with its own scrollers (.layout /
+     .main / .content in App.css). Left alone it clips the report to one
+     viewport. Unwind it so the report is laid out at its natural height. */
+  body.printingReport,
+  body.printingReport .layout,
+  body.printingReport .main,
+  body.printingReport .content {
+    display: block !important;
+    height: auto !important;
+    max-height: none !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    margin-left: 0 !important;
+    background: #fff !important;
+  }
+
+  /* Anchored at the top-left of the sheet, since its hidden ancestors still
+     occupy their layout boxes. */
+  body.printingReport [data-print-root] {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    padding: 0 !important;
+  }
+
+  /* Brand bands, KPI tiles, chart headers and table header rows are all
+     colour-carrying — without this they print as white boxes. */
+  body.printingReport [data-print-root] * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  @page {
+    size: landscape;
+    margin: 8mm;
+  }
+}
