@@ -291,6 +291,16 @@ function CumulativeFines({ steps, ax, todayTime }) {
 
   // What is already in force, as of today.
   const liveNow = steps.filter(s => isoTime(s.date) <= todayTime).at(-1)?.cum || 0;
+  const everythingLanded = liveNow >= max;
+  const liveText = `${usdShort(liveNow)} live today`;
+  const totalText = `${usdShort(max)} once every deadline has landed`;
+  // Rough advance width at this size and weight; near enough to keep two
+  // captions off each other without measuring text in the DOM.
+  const capW = (t) => t.length * 5;
+  const totalLeft = right - capW(totalText);
+  const halfLive = capW(liveText) / 2;
+  const liveX = Math.max(left + halfLive, Math.min(tlX(todayTime, ax), totalLeft - 10 - halfLive));
+  const showLive = liveX + halfLive <= totalLeft - 8;
   const gridVals = max > 0 ? [0, max / 2, max] : [0];
   // Which step values have room to be printed, decided before render.
   const marks = [];
@@ -326,13 +336,28 @@ function CumulativeFines({ steps, ax, todayTime }) {
           )}
         </g>
       ))}
-      {/* Where the portfolio stands right now, against where it ends up. */}
-      <text x={tlX(todayTime, ax)} y={baseY + 14} textAnchor="middle" fontSize="9.5" fontWeight="800" fill="#DC2626">
-        {usdShort(liveNow)} live today
-      </text>
-      <text x={right} y={baseY + 14} textAnchor="end" fontSize="9.5" fontWeight="800" fill="#009530">
-        {usdShort(max)} once every deadline has landed
-      </text>
+      {/* Where the portfolio stands right now, against where it ends up.
+          These two ran into each other whenever today fell near the right
+          edge, which is every portfolio whose deadlines have all landed. The
+          end figure owns the right edge; the live one is centred on the today
+          rule but pushed clear of it, and where they'd say the same thing
+          they're merged into one line rather than printed twice. */}
+      {everythingLanded ? (
+        <text x={right} y={baseY + 14} textAnchor="end" fontSize="9.5" fontWeight="800" fill="#009530">
+          {usdShort(max)} live today; every deadline has landed
+        </text>
+      ) : (
+        <>
+          {showLive && (
+            <text x={liveX} y={baseY + 14} textAnchor="middle" fontSize="9.5" fontWeight="800" fill="#DC2626">
+              {liveText}
+            </text>
+          )}
+          <text x={right} y={baseY + 14} textAnchor="end" fontSize="9.5" fontWeight="800" fill="#009530">
+            {totalText}
+          </text>
+        </>
+      )}
     </svg>
   );
 }
