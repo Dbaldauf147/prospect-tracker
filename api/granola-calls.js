@@ -76,8 +76,19 @@ function pick(obj, ...names) {
   return undefined;
 }
 
+// Text, or nothing.
+//
+// String({}) is "[object Object]", and this route reads fields Granola
+// has already respelled more than once — so the day one of them arrives
+// as an object instead of a string, the naive version writes that
+// literal into a record and it renders as "[object Object]" wherever the
+// page shows it. An object is not text: say so by returning '', and let
+// the caller that knows the shape (normalizePerson, summaryText) unpack
+// it deliberately.
 function str(value) {
-  return value == null ? '' : String(value).trim();
+  if (value == null) return '';
+  if (typeof value === 'object') return '';
+  return String(value).trim();
 }
 
 // An ISO string, an epoch number, or "01:02:03" / "2:03" — whatever it
@@ -128,13 +139,43 @@ function rebaseTimings(starts, ends) {
   return { starts: apply(starts), ends: apply(ends) };
 }
 
-// Granola labels a transcript line by where the audio came from:
+// Is this turn the person whose Granola account the note came from?
+// Email is the only identifier worth trusting across systems; a name is
+// accepted only on an exact match, because "Dan" vs "Daniel Baldauf"
+// guessing wrong here mislabels who said what.
+function isOwnerSpeaker(person, named, owner) {
+  if (!owner) return false;
+  const email = String(person?.email || '').toLowerCase();
+  const ownerEmail = String(owner.email || '').toLowerCase();
+  if (email && ownerEmail) return email === ownerEmail;
+  const name = String(person?.name || named || '').trim().toLowerCase();
+  const ownerName = String(owner.name || '').trim().toLowerCase();
+  return !!name && !!ownerName && name === ownerName;
+}
+
+// Who said a line.
+//
+// Granola identifies a speaker two ways, and which one a note carries
+// depends on the call. Sometimes it names them — as a string, or as a
+// person object, which is why the object is unpacked rather than
+// stringified. Otherwise it says only where the audio came from:
 // "microphone" is the person running Granola, anything else is the other
-// side of the call. The page renders "Speaker <label>", so the labels are
-// written to read correctly there.
-function speakerLabel(segment) {
-  const named = str(pick(segment, 'speaker', 'speaker_name', 'speaker_label', 'participant'));
-  if (named && !/^(microphone|system|speaker)$/i.test(named)) return named;
+// side of the call.
+//
+// A named speaker is kept as their name, since that is what distinguishes
+// three people on a call from each other — except for the note's own
+// owner, who reads as "You". Knowing which voice is yours is most of what
+// a transcript is skimmed for, and "Daniel Baldauf" only answers that if
+// you already know whose account synced the call.
+function speakerLabel(segment, owner) {
+  const raw = pick(segment, 'speaker', 'speaker_name', 'speaker_label', 'participant');
+  // A person object ({ name, email }) rather than a bare name.
+  const person = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? normalizePerson(raw) : null;
+  const named = person ? (person.name || person.email) : str(raw);
+
+  if (named && !/^(microphone|system|speaker)$/i.test(named)) {
+    return isOwnerSpeaker(person, named, owner) ? 'You' : named;
+  }
   const source = str(pick(segment, 'source', 'audio_source', 'channel')).toLowerCase();
   if (source === 'microphone' || source === 'mic') return 'You';
   if (source) return 'Them';
@@ -144,7 +185,7 @@ function speakerLabel(segment) {
 // Turn whatever shape the transcript came back in into the
 // { speaker, text, start, end } turns the rest of the app already speaks
 // (start/end in milliseconds, same as the AssemblyAI path).
-function normalizeTranscript(raw) {
+function normalizeTranscript(raw, owner) {
   if (!raw) return { text: '', utterances: [] };
   if (typeof raw === 'string') return { text: raw.trim(), utterances: [] };
 
@@ -162,7 +203,7 @@ function normalizeTranscript(raw) {
   );
 
   const utterances = list.map((segment, i) => ({
-    speaker: speakerLabel(segment),
+    speaker: speakerLabel(segment, owner),
     text: str(pick(segment, 'text', 'content', 'value')),
     start: starts[i] ?? null,
     end: ends[i] ?? null,
@@ -246,8 +287,11 @@ function durationSeconds(note, utterances) {
 export function normalizeNote(note, { withTranscript = false } = {}) {
   const noteId = str(pick(note, 'id', 'note_id', 'document_id'));
   const event = pick(note, 'calendar_event', 'event') || {};
+  // Resolved before the transcript: it's what tells the owner's own turns
+  // from everyone else's.
+  const owner = normalizePerson(pick(note, 'owner', 'created_by')) || null;
   const transcript = withTranscript
-    ? normalizeTranscript(pick(note, 'transcript', 'transcript_segments', 'segments'))
+    ? normalizeTranscript(pick(note, 'transcript', 'transcript_segments', 'segments'), owner)
     : { text: '', utterances: [] };
 
   const recordedAt = str(pick(event, 'start_time', 'start', 'starts_at')
@@ -262,7 +306,7 @@ export function normalizeNote(note, { withTranscript = false } = {}) {
     updatedAt: str(pick(note, 'updated_at', 'updatedAt')) || null,
     createdAt: str(pick(note, 'created_at', 'createdAt')) || null,
     durationSeconds: durationSeconds(note, transcript.utterances),
-    owner: normalizePerson(pick(note, 'owner', 'created_by')) || null,
+    owner,
     attendees: normalizePeople(
       pick(note, 'attendees', 'participants', 'people'),
       pick(event, 'invitees', 'attendees'),

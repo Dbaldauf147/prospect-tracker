@@ -223,8 +223,13 @@ function OppPicker({ oppsIndex, company, onPick, onClose }) {
 // ("A", "B"), which only reads as a person with the word in front;
 // Granola names them ("You", "Them", "Rita Chen"), which doesn't.
 function speakerName(label) {
-  const s = String(label ?? '').trim();
-  if (!s) return 'Speaker ?';
+  // Calls synced before the label fix have the literal "[object Object]"
+  // stored as their speaker, from a Granola field that arrived as an
+  // object and was stringified. Nothing can recover the real name from
+  // that here — a re-sync does — but it should not be printed over every
+  // turn in the meantime.
+  const s = (label && typeof label === 'object') ? '' : String(label ?? '').trim();
+  if (!s || s === '[object Object]') return 'Speaker ?';
   return /^[A-Za-z0-9]$/.test(s) ? `Speaker ${s}` : s;
 }
 
