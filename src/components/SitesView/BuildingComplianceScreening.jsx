@@ -1253,22 +1253,19 @@ export function BuildingComplianceScreening({
         ) : (
           <>
             {scopeBar}
-            {/* Report furniture. The lead line and the disclaimer are part of
-                the deliverable, so they live on the page rather than only in
-                the export — the PDF is this page printed. The generated-at
-                stamp is the one print-only element: a live page has no
-                meaningful "generated" time. */}
+            {/* Report furniture. Both the generated-at stamp and the
+                disclaimer are print-only: on a live page the first has no
+                meaningful "generated" time, and the second is deliverable
+                boilerplate that only needs to travel with the exported PDF.
+                They still live here rather than in a separate export template
+                because the PDF is this page printed. */}
             <div className={styles.reportMeta}>
-              <div className={styles.reportLead}>
-                Preliminary benchmarking (BBS), energy-audit &amp; building-performance-standard (BPS)
-                applicability across your portfolio.
-              </div>
               <div className={styles.reportCounts}>
                 {printJob && <div className={styles.printOnly}>Generated {printJob.at}</div>}
                 <div><strong>{results.length}</strong> sites · <strong>{matchedCount}</strong> matched · <strong>{jurisdictionCount}</strong> jurisdictions</div>
               </div>
             </div>
-            <div className={styles.disclaimerBox}>
+            <div className={`${styles.disclaimerBox} ${styles.printOnly}`}>
               <span className={styles.disclaimerTitle}>DISCLAIMER, PLEASE READ</span>
               <span className={styles.disclaimer}>{DISCLAIMER}</span>
             </div>
