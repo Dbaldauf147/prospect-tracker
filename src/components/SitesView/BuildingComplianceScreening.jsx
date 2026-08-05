@@ -1390,31 +1390,6 @@ export function BuildingComplianceScreening({
                   Key compliance deadlines
                   <span className={styles.tlHeadSub}>{': '}one lane per mandate</span>
                 </span>
-                {/* What the dots and the number under them mean, said once here
-                    rather than spelled out on every label — with 30-odd dots on
-                    the chart, "N sites" repeated at each one was most of the
-                    ink and crowded the labels into lower tiers. */}
-                <span className={styles.tlLegend}>
-                  <span className={styles.tlLegItem}>
-                    <svg className={styles.tlLegDot} viewBox="0 0 14 14" aria-hidden="true">
-                      <circle cx="7" cy="7" r="6" fill="#475569" stroke="#fff" strokeWidth="1.5" />
-                    </svg>
-                    published deadline
-                  </span>
-                  <span className={styles.tlLegItem}>
-                    <svg className={styles.tlLegDot} viewBox="0 0 14 14" aria-hidden="true">
-                      <circle cx="7" cy="7" r="5" fill="#fff" stroke="#475569" strokeWidth="2" />
-                    </svg>
-                    projected — the ordinance&apos;s recurring cycle carried {PROJECT_YEARS} years forward
-                  </span>
-                  <span className={styles.tlLegItem}>
-                    <span className={styles.tlLegLabel} aria-hidden="true">
-                      <b>12</b>
-                      <i>5/1</i>
-                    </span>
-                    sites due, over the date they fall due
-                  </span>
-                </span>
               </div>
               <div className={styles.tlChart}>
                 {roadmap.length
