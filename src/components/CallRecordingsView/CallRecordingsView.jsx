@@ -1772,12 +1772,33 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                     ) : (
                       <div className={styles.transcriptStatus}>The transcription came back empty: there may be no speech in this file.</div>
                     )}
-                    {stored?.utterancesDropped && utterances.length === 0 && transcriptText && (
+                    {/* A transcript with no speaker turns can't say who
+                        was talking, and until this said so the talk-time
+                        bar just wasn't there — indistinguishable from a
+                        feature that doesn't exist. */}
+                    {utterances.length === 0 && transcriptText && (
                       <div className={styles.transcriptStatus}>
-                        This transcript was too long to store its speaker turns: the text above is the whole
-                        call, but jump-to-moment links aren’t available for it.
+                        {stored?.utterancesDropped
+                          ? 'This transcript was too long to store its speaker turns: the text above is the whole '
+                            + 'call, but jump-to-moment links and the talk-time split aren’t available for it.'
+                          : 'This transcript arrived as one block of text with no speaker turns, so there are no '
+                            + 'jump-to-moment links and no talk-time split. Re-syncing may bring the turns back.'}
                       </div>
                     )}
+                  </div>
+                )}
+
+                {/* A Granola note with no transcript behind it. The card
+                    otherwise shows nothing here at all, which reads as a
+                    missing feature rather than a missing transcript. */}
+                {rec.isGranola && !hasTranscript && !inFlight && (
+                  <div className={styles.transcript}>
+                    <div className={styles.transcriptStatus}>
+                      Granola sent this note without a transcript, so there is nothing to summarise and no
+                      talk-time split. Meetings imported on the Activity page carry no transcript by design —
+                      use Sync calls here to fetch them. If they still arrive empty, the Granola plan may not
+                      include transcript access.
+                    </div>
                   </div>
                 )}
               </div>
