@@ -15,6 +15,7 @@ import { apiFetch, isStalled } from './apiFetch';
 import {
   buildCompanyGuessIndex, guessCompanyForContact, FREE_MAIL_DOMAINS,
 } from './companyGuess';
+import { diagnoseEmptySync } from './granolaShape';
 
 // How far back a first-ever sync reaches. Everything after that is
 // incremental (updated_after the last sync), so this only bites once.
@@ -210,8 +211,18 @@ export async function fetchGranolaPage({ cursor = '', updatedAfter = '', created
     err.configured = data.configured !== false;
     throw err;
   }
-  return { calls: data.calls || [], cursor: data.cursor || '', hasMore: !!data.hasMore };
+  return {
+    calls: data.calls || [],
+    cursor: data.cursor || '',
+    hasMore: !!data.hasMore,
+    shape: data.shape || null,
+  };
 }
+
+// Re-exported so callers keep one import for the Granola client. The
+// function itself lives in a module with no imports, which is what lets
+// it be tested under plain Node.
+export { diagnoseEmptySync };
 
 /** One note in full, including its transcript. */
 export async function fetchGranolaNote(noteId) {
@@ -356,7 +367,7 @@ export async function syncGranolaCalls({
   onCall,
   onProgress,
 } = {}) {
-  const result = { imported: 0, updated: 0, skipped: 0, errors: [], latest: updatedAfter || '' };
+  const result = { imported: 0, updated: 0, skipped: 0, errors: [], latest: updatedAfter || '', shape: null };
   let cursor = startCursor;
   let pages = 0;
   // Set when a stored cursor turned out to be stale and the window had to
@@ -378,8 +389,15 @@ export async function syncGranolaCalls({
       page = await fetchGranolaPage({ cursor, updatedAfter, createdAfter });
     }
     pages += 1;
+    // Kept from the FIRST page: it describes the answer Granola gives
+    // to this window, and a later page's shape would only overwrite it
+    // with the same thing (or, on a walk that ended, with nothing).
+    if (!result.shape) result.shape = page.shape || null;
     for (const summary of page.calls) {
-      if (!summary.noteId) continue;
+      // No id means nothing to store this against. Counted rather than
+      // dropped in silence — every note arriving this way is the whole
+      // reason a sync can report success and import nothing.
+      if (!summary.noteId) { result.skipped += 1; continue; }
       const stamp = summary.updatedAt || summary.createdAt || '';
       if (stamp > result.latest) result.latest = stamp;
 
@@ -430,15 +448,16 @@ export async function importGranolaMeetings({
   onProgress,
 } = {}) {
   const createdAfter = daysAgoIso(days);
-  const result = { seen: 0, stored: 0, errors: [], truncated: false };
+  const result = { seen: 0, stored: 0, skipped: 0, errors: [], truncated: false, shape: null };
   let cursor = '';
   let pages = 0;
 
   do {
     const page = await fetchGranolaPage({ cursor, createdAfter, limit: 100 });
     pages += 1;
+    if (!result.shape) result.shape = page.shape || null;
     for (const note of page.calls) {
-      if (!note.noteId) continue;
+      if (!note.noteId) { result.skipped += 1; continue; }
       result.seen += 1;
       try {
         const outcome = await onNote?.(note);

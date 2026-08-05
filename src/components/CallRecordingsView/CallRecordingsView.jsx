@@ -45,7 +45,7 @@ import {
 } from '../../utils/callRecordingsStore';
 import {
   probeGranola, syncGranolaCalls, recordPatchFor, recordingFromStored,
-  matchCompanyForCall, daysAgoIso, describeMissingKey, DEFAULT_BACKFILL_DAYS,
+  matchCompanyForCall, daysAgoIso, describeMissingKey, diagnoseEmptySync, DEFAULT_BACKFILL_DAYS,
 } from '../../utils/granolaCalls';
 import { buildCompanyGuessIndex } from '../../utils/companyGuess';
 import { loadOppsFromCache } from '../../utils/oppsCache';
@@ -780,11 +780,18 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
       // unknown by a timed-out check is now answered. Clearing it takes
       // the stale warning off a page that has visibly just worked.
       setGranolaStatus(prev => (prev?.timedOut ? { configured: true, ok: true, error: '' } : prev));
+      // A sync that ran clean and imported nothing has two very different
+      // causes that read identically: Granola had nothing new, or it
+      // answered with something this build couldn't read. Say which.
+      const diagnosis = counts ? '' : diagnoseEmptySync(result.shape);
       setSyncNote(
         counts
           ? `Synced ${counts} from Granola.${more}${again}`
-          : `Already up to date with Granola.${again}`,
+          : diagnosis
+            ? `No calls imported. ${diagnosis}`
+            : `Already up to date with Granola.${again}`,
       );
+      if (!counts && diagnosis) setError(diagnosis);
       if (result.errors.length > 0) {
         setError(`Some calls didn't import: ${result.errors.slice(0, 3).join(' · ')}`);
       }

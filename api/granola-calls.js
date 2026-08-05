@@ -449,6 +449,37 @@ function errorFor(resp, body) {
   return { status: 502, error: detail ? `Granola API error: ${detail}` : `Granola API error (HTTP ${resp.status})` };
 }
 
+// Which key the notes came out of, and what shape the answer was.
+//
+// A list request can come back 200 with nothing usable in it, and until
+// this existed that was indistinguishable from "you have no calls": the
+// route returned `calls: []` and the page said it was up to date. Two
+// ways that happens, both of them live risks with an API this young —
+// the notes arriving under a key none of the spellings below covers, and
+// the note id arriving under a new name, which leaves every row without
+// the id the client stores it against.
+//
+// Names and counts only. Never a note's content, and never the key.
+export function describeListShape(body, rows, notes) {
+  const isArray = Array.isArray(body);
+  let bodyKeys = [];
+  if (!isArray && body && typeof body === 'object') {
+    bodyKeys = Object.keys(body).slice(0, 12);
+  }
+  return {
+    bodyKeys,
+    // Null means nothing in the reply looked like a list of notes —
+    // which is the case worth shouting about.
+    rowsFrom: isArray ? '(root array)' : (ROW_KEYS.find(k => Array.isArray(body?.[k])) || null),
+    rowCount: rows.length,
+    // Rows Granola sent that this build could not key: they are dropped
+    // downstream, and without this they are dropped in silence.
+    missingIds: notes.filter(n => !n.noteId).length,
+  };
+}
+
+const ROW_KEYS = ['data', 'notes', 'items', 'results'];
+
 async function listNotes(req, res) {
   const limit = Math.min(MAX_PAGE, Math.max(1, Number(req.query?.limit) || DEFAULT_PAGE));
   const params = new URLSearchParams({ limit: String(limit) });
@@ -465,15 +496,23 @@ async function listNotes(req, res) {
     return res.status(e.status).json({ error: e.error });
   }
 
-  const rows = Array.isArray(body)
-    ? body
-    : (pick(body, 'data', 'notes', 'items', 'results') || []);
+  const raw = Array.isArray(body) ? body : (pick(body, ...ROW_KEYS) || []);
+  const rows = Array.isArray(raw) ? raw : [];
   const page = pick(body, 'pagination', 'page_info') || body || {};
+  const notes = rows.map(n => normalizeNote(n));
+
+  const nextCursor = str(pick(page, 'next_cursor', 'cursor', 'nextCursor')) || '';
+  const hasMoreFlag = pick(page, 'has_more', 'hasMore');
 
   return res.status(200).json({
-    calls: (Array.isArray(rows) ? rows : []).map(n => normalizeNote(n)),
-    cursor: str(pick(page, 'next_cursor', 'cursor', 'nextCursor')) || '',
-    hasMore: !!(pick(page, 'has_more', 'hasMore') ?? false),
+    calls: notes,
+    cursor: nextCursor,
+    // A cursor with no has_more beside it still means there is another
+    // page. Reading only the flag stopped the walk after the first page
+    // on any response that paginates by cursor alone, which silently
+    // capped a sync at one page of notes.
+    hasMore: hasMoreFlag == null ? !!nextCursor : !!hasMoreFlag,
+    shape: describeListShape(body, rows, notes),
   });
 }
 

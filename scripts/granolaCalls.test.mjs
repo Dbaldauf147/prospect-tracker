@@ -7,7 +7,9 @@
 // part the route itself flags as most likely to need adjusting when
 // Granola renames a field. Every read below is deliberately tolerant, so
 // the tests pin the tolerance rather than one exact spelling.
-import { normalizeNote, resolveApiBase, normalizeCalendarEvent, toIsoInstant } from '../api/granola-calls.js';
+import {
+  normalizeNote, resolveApiBase, normalizeCalendarEvent, toIsoInstant, describeListShape,
+} from '../api/granola-calls.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -299,6 +301,55 @@ function eq(actual, expected, name) {
   eq(out.calendarEvent.conferenceUrl, 'https://teams.example/join/1', 'the join link is kept');
   eq(out.name, 'Acme — quarterly review', 'the note title still wins for the record name');
   eq(normalizeNote({ id: 'not_plain', title: 'No meeting' }).calendarEvent, null, 'a note with no meeting carries no event');
+}
+
+// --- describeListShape: why a sync imported nothing ----------------------
+// A list request can come back 200 with nothing usable in it, and that
+// used to be indistinguishable from "you have no calls". These are the
+// two shapes that cause it, both live risks with an API this young.
+{
+  const rows = [{ id: 'not_a' }, { id: 'not_b' }];
+  const shape = describeListShape({ data: rows, has_more: false }, rows, rows.map(n => normalizeNote(n)));
+  eq(shape.rowsFrom, 'data', 'the key the notes came out of is named');
+  eq(shape.rowCount, 2, 'the rows are counted');
+  eq(shape.missingIds, 0, 'notes with ids report none missing');
+  eq(shape.bodyKeys, ['data', 'has_more'], 'the reply\u2019s top-level keys are reported, never its contents');
+}
+
+// Notes under a key none of the spellings covers: rowsFrom is null, which
+// is the case worth shouting about.
+{
+  const body = { documents: [{ id: 'not_a' }], total: 1 };
+  const shape = describeListShape(body, [], []);
+  eq(shape.rowsFrom, null, 'an unrecognised envelope reports no rows key');
+  eq(shape.bodyKeys, ['documents', 'total'], 'and names what it did send, so the new key is visible');
+  eq(shape.rowCount, 0, 'nothing was read out of it');
+}
+
+// The note id renamed: rows arrive, none can be keyed, all are dropped
+// downstream. Counting them is what makes that audible.
+{
+  const rows = [{ uuid: 'x1', title: 'A' }, { uuid: 'x2', title: 'B' }];
+  const shape = describeListShape({ data: rows }, rows, rows.map(n => normalizeNote(n)));
+  eq(shape.rowCount, 2, 'the notes are still counted');
+  eq(shape.missingIds, 2, 'and every one is flagged as unkeyable');
+}
+
+// A bare array of notes is a legitimate envelope too.
+{
+  const rows = [{ id: 'not_a' }];
+  const shape = describeListShape(rows, rows, rows.map(n => normalizeNote(n)));
+  eq(shape.rowsFrom, '(root array)', 'a root-level array names itself');
+  eq(shape.bodyKeys, [], 'an array has no top-level keys to report');
+}
+
+// Never leak the payload: a wide reply is capped, and only names travel.
+{
+  const body = {};
+  for (let i = 0; i < 20; i += 1) body[`k${i}`] = 'secret-value';
+  const shape = describeListShape(body, [], []);
+  eq(shape.bodyKeys.length, 12, 'the key list is capped');
+  eq(shape.bodyKeys.includes('secret-value'), false, 'values never travel, only names');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
