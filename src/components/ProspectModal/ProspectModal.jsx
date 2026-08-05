@@ -21,7 +21,11 @@ import { loadTargetAccountsFromDB, saveTargetAccountsToDB, renameTargetAccountRo
 import { computePortfolioFitScore, industrySector, sectorScoreFor, tierForScoreValue, industryTier, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { SiteListPasteModal } from './SiteListPasteModal';
 import { isContactInEvent, toggleContactInEvents } from '../../utils/eventsStore';
-import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
+// Aliased: `setClientManager` is also the name of this modal's own state
+// setter for the resolved value.
+import {
+  loadClientManagerMap, setClientManager as saveClientManager, CLIENT_MANAGER_EVENT,
+} from '../../utils/clientManagerStore';
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions, buildCdmOptions } from '../../utils/prospectOptions';
 import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
@@ -3797,6 +3801,33 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return () => window.removeEventListener(CLIENT_MANAGER_EVENT, refresh);
   }, [isNew, fields.company]);
 
+  // The Client Manager is editable here as well as on the Clients page,
+  // and both write the same per-company entry — so a name typed in either
+  // place is the name in the other. Held as a draft and committed on blur
+  // or Enter (the Clients page cell behaves the same way) rather than
+  // saving each keystroke, which would write a partial name to shared
+  // storage on the way to a whole one.
+  const [cmDraft, setCmDraft] = useState('');
+  useEffect(() => { setCmDraft(clientManager || ''); }, [clientManager]);
+
+  // Escape restores the draft and blurs, but blur() runs its handler
+  // before React has re-rendered — so a commit there still reads the
+  // abandoned text and saves the very edit Escape just discarded. The
+  // flag tells the blur that this one was cancelled.
+  const cmCancelled = useRef(false);
+
+  function commitClientManager() {
+    if (cmCancelled.current) { cmCancelled.current = false; return; }
+    const next = cmDraft.trim();
+    if (next === (clientManager || '').trim()) return;
+    if (!fields.company) return;
+    saveClientManager(fields.company, next);
+    // Clearing removes the assignment rather than storing a blank, so the
+    // company falls back to the CM on the imported clients list if it has
+    // one — the same "no override set" state it started in.
+    setClientManager(next || null);
+  }
+
   // Load opps scope+stage pairs matching this company
   const oppsRecords = useMemo(() => {
     if (isNew || !fields.company || !oppsCache) return [];
@@ -5690,10 +5721,33 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
 
             <div>
-              <label className={styles.label}>Client Manager</label>
-              <div className={styles.input} style={{ background: clientManager ? '#F0FDF4' : 'var(--color-bg)', color: clientManager ? '#166534' : 'var(--color-text-muted)', fontWeight: clientManager ? 600 : 400, cursor: 'default' }}>
-                {clientManager || '-'}
-              </div>
+              <label
+                className={styles.label}
+                title="Who manages this client. Shared with the Clients page: editing it here changes it there too."
+              >Client Manager</label>
+              <input
+                className={styles.input}
+                type="text"
+                value={cmDraft}
+                placeholder={fields.company ? '-' : 'Name the company first'}
+                disabled={!fields.company}
+                onChange={e => setCmDraft(e.target.value)}
+                onBlur={commitClientManager}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+                  else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    cmCancelled.current = true;
+                    setCmDraft(clientManager || '');
+                    e.currentTarget.blur();
+                  }
+                }}
+                style={{
+                  background: cmDraft ? '#F0FDF4' : 'var(--color-bg)',
+                  color: cmDraft ? '#166534' : 'var(--color-text)',
+                  fontWeight: cmDraft ? 600 : 400,
+                }}
+              />
             </div>
 
             <div>

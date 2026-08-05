@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import { DataTable } from '../common/DataTable';
 import { FollowUpOnSaleCell } from '../common/FollowUpOnSaleCell';
 import { matchesCdm } from '../../utils/cdmMatch';
@@ -139,7 +139,12 @@ function ClientManagerCell({ company, value, onCommit }) {
   const [draft, setDraft] = useState(value || '');
   const [focused, setFocused] = useState(false);
   useEffect(() => { setDraft(value || ''); }, [value]);
+  // Escape restores the draft and blurs, but blur() runs its handler
+  // before React has re-rendered — so commit() still reads the abandoned
+  // text and saves the very edit Escape just discarded.
+  const cancelled = useRef(false);
   function commit() {
+    if (cancelled.current) { cancelled.current = false; return; }
     const next = draft.trim();
     if (next === (value || '').trim()) return;
     onCommit(company, next);
@@ -157,7 +162,12 @@ function ClientManagerCell({ company, value, onCommit }) {
       onKeyDown={(e) => {
         e.stopPropagation();
         if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
-        else if (e.key === 'Escape') { e.preventDefault(); setDraft(value || ''); e.currentTarget.blur(); }
+        else if (e.key === 'Escape') {
+          e.preventDefault();
+          cancelled.current = true;
+          setDraft(value || '');
+          e.currentTarget.blur();
+        }
       }}
       style={{
         width: '100%', boxSizing: 'border-box',
@@ -177,7 +187,11 @@ function ClientStatusTextCell({ company, value, onCommit }) {
   const [draft, setDraft] = useState(value || '');
   const [focused, setFocused] = useState(false);
   useEffect(() => { setDraft(value || ''); }, [value]);
+  // See ClientManagerCell: blur runs before the re-render, so without
+  // this an escaped edit is still what commit() reads and saves.
+  const cancelled = useRef(false);
   function commit() {
+    if (cancelled.current) { cancelled.current = false; return; }
     const next = draft.trim();
     if (next === (value || '').trim()) return;
     onCommit(company, next);
@@ -195,7 +209,12 @@ function ClientStatusTextCell({ company, value, onCommit }) {
       onKeyDown={(e) => {
         e.stopPropagation();
         if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
-        else if (e.key === 'Escape') { e.preventDefault(); setDraft(value || ''); e.currentTarget.blur(); }
+        else if (e.key === 'Escape') {
+          e.preventDefault();
+          cancelled.current = true;
+          setDraft(value || '');
+          e.currentTarget.blur();
+        }
       }}
       style={{
         width: '100%', boxSizing: 'border-box',
