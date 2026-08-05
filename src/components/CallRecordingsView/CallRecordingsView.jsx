@@ -48,6 +48,10 @@ import {
   matchCompanyForCall, daysAgoIso, describeMissingKey, diagnoseEmptySync, DEFAULT_BACKFILL_DAYS,
 } from '../../utils/granolaCalls';
 import { talkTimeSplit, formatShare } from '../../utils/talkTime';
+import {
+  callHistoryRows, filterHistoryRows, historyTotals, STAGE_LABELS,
+} from '../../utils/callHistory';
+import { DataTable } from '../common/DataTable';
 import { buildCompanyGuessIndex } from '../../utils/companyGuess';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { buildActiveOppsIndex, activeOppsForCompany } from '../../utils/targetAccountOpps';
@@ -248,6 +252,11 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   // where call data is supposed to come from; the other two need a
   // Microsoft account or a folder on this particular machine.
   const [source, setSource] = useState(settings.callRecordingsSource || 'granola');
+  // 'calls' is the card list, which shows what the ACTIVE source can see
+  // right now. 'history' is every call ever stored, whatever it came from
+  // and whether or not that source is still reachable.
+  const [tab, setTab] = useState(settings.callRecordingsTab === 'history' ? 'history' : 'calls');
+  const [historyQuery, setHistoryQuery] = useState('');
   const [connected, setConnected] = useState(false);
   const [checkedConnection, setCheckedConnection] = useState(false);
   // Granola: { configured, ok, error, timedOut } from the probe, plus
@@ -677,6 +686,192 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   // What the body renders. Granola comes from the stored records; the two
   // media sources from whatever the last listing returned.
   const visible = source === 'granola' ? granolaRecordings : recordings;
+
+  function chooseTab(next) {
+    setTab(next);
+    updateSettings?.({ callRecordingsTab: next });
+  }
+
+  // ---- History ---------------------------------------------------------
+  // Every call ever stored, not just the ones the active source can see.
+  // A OneDrive call whose folder is disconnected, or a file since
+  // deleted, still has its transcript, summary and tag in Firestore —
+  // the cards drop it, this keeps it.
+  const historyRows = useMemo(() => callHistoryRows(records), [records]);
+  const filteredHistory = useMemo(
+    () => filterHistoryRows(historyRows, historyQuery),
+    [historyRows, historyQuery],
+  );
+  const totals = useMemo(() => historyTotals(filteredHistory), [filteredHistory]);
+  const [expandedHistory, setExpandedHistory] = useState([]);
+
+  function toggleHistoryRow(row) {
+    setExpandedHistory(ids => (
+      ids.includes(row.id) ? ids.filter(i => i !== row.id) : [...ids, row.id]
+    ));
+  }
+
+  const historyColumns = useMemo(() => [
+    {
+      key: 'recordedAt',
+      label: 'Date',
+      defaultWidth: 150,
+      // Sorted on the epoch, not the formatted text, so the column runs
+      // chronologically rather than alphabetically by month name.
+      getSortValue: r => r.recordedAtMs,
+      render: r => (r.recordedAt
+        ? <span className={styles.historyDate}>{fmtWhen(r.recordedAt)}</span>
+        : <span className={styles.transcriptStatus}>No date</span>),
+    },
+    {
+      key: 'name',
+      label: 'Call',
+      defaultWidth: 280,
+      render: r => (
+        <button
+          type="button"
+          className={styles.historyName}
+          onClick={e => { e.stopPropagation(); toggleHistoryRow(r); }}
+          title="Show what was said and what came out of it"
+        >
+          {expandedHistory.includes(r.id) ? '▾ ' : '▸ '}{r.name}
+        </button>
+      ),
+    },
+    { key: 'sourceLabel', label: 'Source', defaultWidth: 110 },
+    {
+      key: 'company',
+      label: 'Company',
+      defaultWidth: 170,
+      render: r => (r.company
+        ? <span className={styles.historyStrong}>{r.company}</span>
+        : <span className={styles.transcriptStatus}>Untagged</span>),
+    },
+    {
+      key: 'oppLabel',
+      label: 'Opportunity',
+      defaultWidth: 240,
+      render: r => (r.oppLabel
+        ? <span title={r.oppLabel}>{r.oppLabel}</span>
+        : <span className={styles.transcriptStatus}>—</span>),
+    },
+    {
+      key: 'durationSeconds',
+      label: 'Duration',
+      defaultWidth: 90,
+      getSortValue: r => r.durationSeconds,
+      render: r => fmtDuration(r.durationSeconds) || <span className={styles.transcriptStatus}>—</span>,
+    },
+    {
+      key: 'attendees',
+      label: 'Attendees',
+      defaultWidth: 240,
+      render: r => (r.attendees
+        ? <span title={r.attendeeEmails || r.attendees}>{r.attendees}</span>
+        : <span className={styles.transcriptStatus}>{r.attendeeCount === 0 ? 'None recorded' : '—'}</span>),
+    },
+    {
+      key: 'stageLabel',
+      label: 'Status',
+      defaultWidth: 130,
+      // Ranked along the pipeline, so sorting groups what still needs
+      // doing rather than ordering the labels alphabetically.
+      getSortValue: r => r.stageRank,
+      render: r => <span className={styles[`stage_${r.stage}`] || styles.stage_stored}>{r.stageLabel}</span>,
+    },
+    {
+      key: 'youShare',
+      label: 'You spoke',
+      defaultWidth: 100,
+      getSortValue: r => r.youShare,
+      render: (r) => {
+        if (r.youShare == null) return <span className={styles.transcriptStatus}>—</span>;
+        // The basis has to travel with the number: a words-based split is
+        // a different measurement and would overstate a fast talker.
+        return (
+          <span title={r.talkBasis === 'words'
+            ? 'Share of words spoken — this transcript carried no timings'
+            : 'Share of talking time'}>
+            {formatShare(r.youShare)}{r.talkBasis === 'words' ? ' (words)' : ''}
+          </span>
+        );
+      },
+    },
+    { key: 'meetingType', label: 'Type', defaultWidth: 100 },
+    {
+      key: 'pushedToOppAt',
+      label: 'Pushed',
+      defaultWidth: 150,
+      getSortValue: r => new Date(r.pushedToOppAt || 0).getTime() || null,
+      render: r => (r.pushedToOppAt
+        ? fmtWhen(r.pushedToOppAt)
+        : <span className={styles.transcriptStatus}>—</span>),
+    },
+    { key: 'folders', label: 'Granola folders', defaultWidth: 150 },
+  ], [expandedHistory]);
+
+  function renderHistoryExpansion(row) {
+    const rec = row._record || {};
+    const followUps = Array.isArray(rec.followUps) ? rec.followUps : [];
+    const keyItems = Array.isArray(rec.keyItems) ? rec.keyItems : [];
+    const textOf = v => (typeof v === 'string' ? v : v?.text || '');
+    return (
+      <div className={styles.historyDetail}>
+        {row.granolaUrl && (
+          <a className={styles.historyLink} href={row.granolaUrl} target="_blank" rel="noopener noreferrer">
+            Open in Granola ↗
+          </a>
+        )}
+        {row.summary
+          ? <p className={styles.historySummary}>{row.summary}</p>
+          : row.granolaSummary
+            ? (
+              <>
+                <div className={styles.historyLabel}>Granola’s notes</div>
+                <p className={styles.historySummary}>{row.granolaSummary}</p>
+              </>
+            )
+            : (
+              <p className={styles.transcriptStatus}>
+                {row.hasTranscript
+                  ? 'Transcribed, but not summarised yet. Summarise it on the Calls tab.'
+                  : 'Nothing was stored for this call beyond its details.'}
+              </p>
+            )}
+        {keyItems.length > 0 && (
+          <>
+            <div className={styles.historyLabel}>Key items</div>
+            <ul className={styles.historyList}>
+              {keyItems.map((k, i) => <li key={i}>{textOf(k)}</li>)}
+            </ul>
+          </>
+        )}
+        {followUps.length > 0 && (
+          <>
+            <div className={styles.historyLabel}>Follow-ups</div>
+            <ul className={styles.historyList}>
+              {followUps.map((f, i) => {
+                const owner = typeof f === 'object' && f?.owner ? ` — ${f.owner}` : '';
+                const due = typeof f === 'object' && f?.due ? ` (${f.due})` : '';
+                return <li key={i}>{textOf(f)}{owner}{due}</li>;
+              })}
+            </ul>
+          </>
+        )}
+        {rec.nextSteps && (
+          <>
+            <div className={styles.historyLabel}>Next steps</div>
+            <p className={styles.historySummary}>{rec.nextSteps}</p>
+          </>
+        )}
+        {row.transcriptTrimmed && (
+          <div className={styles.transcriptStatus}>
+            This transcript was too long to store its speaker turns, so the talk-time split isn’t available for it.
+          </div>
+        )}
+      </div>
+    );
+  }
 
   // Syncing needs the probe to have come back healthy — or to have told
   // us nothing at all. A check that timed out leaves the integration's
@@ -1311,7 +1506,27 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
         </div>
       </div>
 
-      {source === 'granola' ? (
+      <div className={styles.subtabs}>
+        {[
+          { key: 'calls', label: 'Calls', count: visible.length },
+          { key: 'history', label: 'History', count: historyRows.length },
+        ].map(t => (
+          <button
+            key={t.key}
+            type="button"
+            className={tab === t.key ? styles.subtabOn : styles.subtabOff}
+            onClick={() => chooseTab(t.key)}
+            title={t.key === 'calls'
+              ? 'The calls this source can see right now'
+              : 'Every call ever stored, whatever it came from'}
+          >
+            {t.label}
+            <span className={styles.subtabCount}>{t.count}</span>
+          </button>
+        ))}
+      </div>
+
+      {tab === 'calls' && (source === 'granola' ? (
         <div className={styles.controls}>
           <span className={styles.fieldLabel}>Granola</span>
           <button
@@ -1397,9 +1612,54 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
             Any folder on this machine: Desktop, Documents, a synced OneDrive folder. Subfolders are included.
           </span>
         </div>
+      ))}
+
+      {tab === 'history' && (
+        <div className={styles.historyBody}>
+          <div className={styles.historyBar}>
+            <input
+              className={styles.input}
+              type="search"
+              placeholder="Search calls, companies, attendees, summaries…"
+              value={historyQuery}
+              onChange={e => setHistoryQuery(e.target.value)}
+            />
+            <span className={styles.historyTotals}>
+              <strong>{totals.calls}</strong> call{totals.calls === 1 ? '' : 's'}
+              {totals.durationSeconds > 0 && <> · {fmtDuration(totals.durationSeconds)} recorded</>}
+              {' · '}{totals.transcribed} transcribed
+              {' · '}{totals.summarized} summarised
+              {' · '}{totals.pushed} pushed to an opp
+              {' · '}{totals.withCompany} tagged to a company
+            </span>
+          </div>
+          {uid && !recordsLoaded ? (
+            <div className={styles.transcriptStatus}>Loading your saved calls…</div>
+          ) : (
+            <DataTable
+              tableId="call-history"
+              columns={historyColumns}
+              rows={filteredHistory}
+              alwaysVisible={[]}
+              defaultSort={{ key: 'recordedAt', direction: 'desc' }}
+              expandedRowIds={expandedHistory}
+              renderExpansion={renderHistoryExpansion}
+              onRowClick={toggleHistoryRow}
+              exportFileName="call-history"
+              emptyMessage={historyQuery
+                ? `No stored call matches “${historyQuery}”.`
+                : 'No calls have been stored yet. Sync from Granola, or transcribe a recording, and it lands here.'}
+              settings={settings}
+              updateSettings={updateSettings}
+            />
+          )}
+        </div>
       )}
 
-      <div className={styles.body}>
+      {/* Hidden rather than unmounted: a recording mid-playback and a
+          transcription still running both live in this subtree, and
+          tearing them down to glance at the history would lose them. */}
+      <div className={styles.body} style={tab === 'history' ? { display: 'none' } : undefined}>
         {error && <div className={styles.error}>{error}</div>}
         {/* A dead key or a plan without transcript access stops new calls
             arriving, but everything already synced still reads — so this
