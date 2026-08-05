@@ -15,16 +15,21 @@ import { OwnershipScopeBar } from './OwnershipScopeBar.jsx';
 import styles from './BuildingComplianceScreening.module.css';
 
 const usd = (n) => n == null ? '$-' : '$' + Math.round(n).toLocaleString('en-US');
+// Compact form for chart labels, where the full figure would collide with its
+// neighbour long before it read as a number.
+const usdShort = (n) => {
+  if (n == null) return '$-';
+  const a = Math.abs(n);
+  if (a >= 1e6) return '$' + (n / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace(/\.0$/, '') + 'M';
+  if (a >= 1e3) return '$' + Math.round(n / 1e3) + 'K';
+  return '$' + Math.round(n);
+};
 const isUrl = (v) => /^https?:\/\//i.test(String(v).trim());
 const mdY = (iso) => { if (!iso) return '—'; const [y, m, d] = String(iso).split('-'); return `${Number(m)}/${Number(d)}/${y}`; };
 // Property-type buckets the size requirements are published against, for the
 // lines that have to name the bucket a building fell into.
 const PT_CLASS_LABEL = { multifamily: 'multifamily', public: 'public / institutional', nonresidential: 'non-residential' };
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const monthYr = (iso) => {
-  const [y, m] = String(iso).split('-');
-  return `${MONTHS[Number(m) - 1] || '?'} ${y}`;
-};
 // Deadlines are calendar dates, so they're compared in UTC against a UTC
 // midnight "today" — a local-midnight clock would put a site in a deadline's
 // last day or its first depending on the reader's timezone.
@@ -102,100 +107,206 @@ function HBars({ items, color, fmt = String, wide = false, empty = 'No eligible 
   );
 }
 
-// The portfolio's dated deadlines on one time-proportional axis, each a
-// stacked column of the BBS / Energy Audits / BPS obligations falling due on
-// it, with today marked.
-//
-// This replaced three separate per-category column charts sitting beside a
-// plain table. Those charts spaced deadlines evenly, so a date two months out
-// and one four years out looked equally far away, and splitting the
-// categories meant the three views couldn't be read against each other —
-// with a quiet "No dated deadlines" panel whenever a category had none. One
-// axis says both things the section is for: when the work lands, and what
-// kind of work it is.
-function DeadlineTimeline({ points, todayTime }) {
-  if (!points.length) return <div className={styles.miniEmpty}>No dated deadlines across the screened portfolio.</div>;
-  const W = 920, H = 216;
-  const padL = 30, padR = 30, padT = 30, padB = 48;
-  const iw = W - padL - padR, ih = H - padT - padB;
-  const baseY = padT + ih;
+// ---- Roadmap charts -------------------------------------------------------
+// Both charts share one time axis and one viewBox width, so a date sits at the
+// same x in the lanes and in the fines chart below them and the two can be
+// read as one picture.
+const TL = { W: 960, padL: 122, padR: 36 };
+const tlX = (t, ax) => TL.padL + ((t - ax.lo) / (ax.hi - ax.lo)) * (TL.W - TL.padL - TL.padR);
 
-  // Today is inside the domain, not just drawn on it — the gap between now and
-  // the first deadline is the most useful distance on the chart.
-  const times = points.map(p => isoTime(p.date));
-  let lo = Math.min(todayTime, ...times);
-  let hi = Math.max(todayTime, ...times);
-  if (hi === lo) { lo -= 30 * DAY; hi += 30 * DAY; }
-  const x = (t) => padL + ((t - lo) / (hi - lo)) * iw;
-
-  // Deadlines cluster — a jurisdiction's dates land within weeks of each
-  // other, then nothing for two years. Placed on a strict time scale those
-  // columns overlap into an unreadable smear, so they're nudged apart to a
-  // minimum spacing, in order, and clamped back inside the axis. Spacing is
-  // true to the calendar wherever there's room for it and merely ordered
-  // where there isn't; the milestone list below carries the exact dates.
-  const bw = 20, minSep = 24;
-  const xs = times.map(x);
-  for (let i = 1; i < xs.length; i++) xs[i] = Math.max(xs[i], xs[i - 1] + minSep);
-  const overshoot = xs[xs.length - 1] - (W - padR - bw / 2);
-  if (overshoot > 0) {
-    for (let i = xs.length - 1; i >= 0; i--) {
-      xs[i] = Math.min(xs[i], (i === xs.length - 1 ? W - padR - bw / 2 : xs[i + 1] - minSep));
-      xs[i] = Math.max(xs[i], padL + bw / 2);
+// Year boundaries, so the axis reads as elapsed time rather than as a row of
+// ticks. Quarters instead when the whole span is inside a couple of years,
+// which is where most portfolios sit.
+function axisTicks(ax) {
+  const out = [];
+  const y0 = new Date(ax.lo).getUTCFullYear(), y1 = new Date(ax.hi).getUTCFullYear();
+  const byQuarter = (ax.hi - ax.lo) < 800 * DAY;
+  for (let y = y0; y <= y1; y++) {
+    for (const m of (byQuarter ? [0, 3, 6, 9] : [0])) {
+      const t = Date.UTC(y, m, 1);
+      if (t <= ax.lo || t >= ax.hi) continue;
+      out.push({ t, px: tlX(t, ax), label: m === 0 ? String(y) : `${MONTHS[m]} ${y}`, major: m === 0 });
     }
   }
-  const max = Math.max(1, ...points.map(p => p.total));
+  return out;
+}
 
-  // Year boundaries, so the axis reads as time rather than as a row of ticks.
-  const years = [];
-  for (let y = new Date(lo).getUTCFullYear(); y <= new Date(hi).getUTCFullYear(); y++) {
-    const t = Date.UTC(y, 0, 1);
-    if (t > lo && t < hi) years.push({ y, px: x(t) });
-  }
-
-  const todayX = x(todayTime);
-  // Date labels are dropped rather than allowed to collide.
-  let lastLabelX = -Infinity;
+// Today, drawn the same way on both charts.
+function TodayMark({ ax, todayTime, y1, y2, label = true }) {
+  const px = tlX(todayTime, ax);
   return (
-    <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" role="img"
-      aria-label="Compliance deadlines over time, by mandate">
-      {years.map(({ y, px }) => (
-        <g key={y}>
-          <line x1={px} y1={padT - 8} x2={px} y2={baseY} stroke="#E2E8F0" strokeWidth="1" strokeDasharray="3 3" />
-          <text x={px + 4} y={padT - 12} fontSize="10" fontWeight="700" fill="#94A3B8">{y}</text>
+    <g>
+      <line x1={px} y1={y1} x2={px} y2={y2} stroke="#DC2626" strokeWidth="1.6" />
+      {label && <text x={px} y={y1 - 5} textAnchor="middle" fontSize="9.5" fontWeight="800" fill="#DC2626">TODAY</text>}
+    </g>
+  );
+}
+
+// One lane per mandate, each deadline a labelled dot on it — the shape a
+// compliance roadmap is normally read in: which obligation, when, how much of
+// the portfolio.
+//
+// Labels are the hard part. Deadlines cluster (a jurisdiction's dates land
+// within weeks, then nothing for two years), so a label is dropped to a second
+// tier when it would collide with its neighbour rather than being drawn on top
+// of it — the dots stay exactly on their true dates either way.
+function DeadlineLanes({ lanes, ax, todayTime }) {
+  const laneH = 96, padT = 30, padB = 10;
+  const H = padT + lanes.length * laneH + padB;
+  const ticks = axisTicks(ax);
+  const HALF = 34;       // half the width a two-line label needs
+  const DOT_SEP = 18;    // dots at least this far apart, so none hides another
+  const TIERS = 3;
+  // Placement is worked out up front rather than while mapping to JSX — the
+  // tier bookkeeping is a running decision and doesn't belong in render.
+  const placed = lanes.map(lane => {
+    // Two dates a fortnight apart are the same pixel on a five-year axis, so
+    // dots are nudged to a minimum separation, in order, and clamped back
+    // inside the axis. The date under each dot is the real one.
+    const cxs = lane.points.map(p => tlX(isoTime(p.date), ax));
+    for (let i = 1; i < cxs.length; i++) cxs[i] = Math.max(cxs[i], cxs[i - 1] + DOT_SEP);
+    for (let i = cxs.length - 1; i >= 0; i--) {
+      cxs[i] = Math.min(cxs[i], i === cxs.length - 1 ? TL.W - TL.padR : cxs[i + 1] - DOT_SEP);
+      cxs[i] = Math.max(cxs[i], TL.padL);
+    }
+    // Labels drop to a lower tier rather than print over their neighbour. A
+    // label with no free tier is left off entirely — the dot keeps its
+    // tooltip, and an unreadable overprint helps nobody.
+    const tierRight = Array(TIERS).fill(-Infinity);
+    return lane.points.map((p, i) => {
+      const cx = cxs[i];
+      const tier = tierRight.findIndex(right => cx - HALF >= right + 5);
+      if (tier >= 0) tierRight[tier] = cx + HALF;
+      return { ...p, cx, tier };
+    });
+  });
+  return (
+    <svg width="100%" viewBox={`0 0 ${TL.W} ${H}`} preserveAspectRatio="xMidYMid meet" role="img"
+      aria-label="Compliance deadlines by mandate over time">
+      {lanes.map((lane, i) => (
+        i % 2 === 1 ? (
+          <rect key={`band${lane.key}`} x="0" y={padT + i * laneH} width={TL.W} height={laneH} fill="#F8FAFC" />
+        ) : null
+      ))}
+      {ticks.map(t => (
+        <g key={t.t}>
+          <line x1={t.px} y1={padT - 14} x2={t.px} y2={padT + lanes.length * laneH} stroke="#E2E8F0" strokeWidth="1" strokeDasharray="3 3" />
+          {/* The TODAY caption owns its stretch of the header — a tick label
+              underneath it prints as one illegible word. */}
+          {Math.abs(t.px - tlX(todayTime, ax)) > 42 && (
+            <text x={t.px + 4} y={padT - 17} fontSize={t.major ? 11 : 9} fontWeight={t.major ? 800 : 600} fill={t.major ? '#94A3B8' : '#CBD5E1'}>{t.label}</text>
+          )}
         </g>
       ))}
-      <line x1={padL} y1={baseY} x2={W - padR} y2={baseY} stroke="#CBD5E1" strokeWidth="1.5" />
-      {/* Today */}
-      <line x1={todayX} y1={padT - 4} x2={todayX} y2={baseY + 6} stroke="#0F172A" strokeWidth="1.5" strokeDasharray="4 3" opacity="0.25" />
-      <circle cx={todayX} cy={baseY} r="3.5" fill="#0F172A" opacity="0.6" />
-      <text x={todayX} y={baseY + 32} textAnchor="middle" fontSize="9.5" fontWeight="800" fill="#0F172A" opacity="0.65">TODAY</text>
-      {points.map((p, i) => {
-        const cx = xs[i];
-        const full = (p.total / max) * ih;
-        let y = baseY;
-        const segs = CATEGORIES.filter(c => p[c] > 0).map(c => {
-          const h = Math.max(3, (p[c] / p.total) * full);
-          y -= h;
-          return { c, h, y };
-        });
-        const topY = segs.length ? segs[segs.length - 1].y : baseY;
-        const showLabel = cx - lastLabelX >= 52;
-        if (showLabel) lastLabelX = cx;
+      <TodayMark ax={ax} todayTime={todayTime} y1={padT - 12} y2={padT + lanes.length * laneH} />
+      {lanes.map((lane, i) => {
+        const top = padT + i * laneH;
+        const dotY = top + 20;
         return (
-          <g key={p.date}>
-            {segs.map(({ c, h, y: sy }) => (
-              <rect key={c} x={cx - bw / 2} y={sy} width={bw} height={h} fill={CATEGORY_COLOR[c]}>
-                <title>{`${mdY(p.date)} — ${CATEGORY_LABEL[c]}: ${p[c]} site${p[c] === 1 ? '' : 's'}`}</title>
-              </rect>
-            ))}
-            <text x={cx} y={topY - 7} textAnchor="middle" fontSize="11.5" fontWeight="800" fill="#0F172A">{p.total}</text>
-            {showLabel && (
-              <text x={cx} y={baseY + 16} textAnchor="middle" fontSize="9.5" fill="#475569">{monthYr(p.date)}</text>
-            )}
+          <g key={lane.key}>
+            <text x={TL.padL - 14} y={dotY - 1} textAnchor="end" fontSize="13" fontWeight="800" fill="#0F172A">{lane.label}</text>
+            <text x={TL.padL - 14} y={dotY + 14} textAnchor="end" fontSize="10" fill={lane.color} fontWeight="700">
+              {lane.points.length
+                ? `${lane.total} site${lane.total === 1 ? '' : 's'}`
+                : 'no dated deadlines'}
+            </text>
+            <line x1={TL.padL} y1={dotY} x2={TL.W - TL.padR} y2={dotY} stroke="#E2E8F0" strokeWidth="1" />
+            {placed[i].map(({ cx, tier, ...p }) => {
+              const ly = dotY + 18 + tier * 25;
+              return (
+                <g key={p.date}>
+                  {tier > 0 && <line x1={cx} y1={dotY + 7} x2={cx} y2={ly - 10} stroke={lane.color} strokeWidth="1" opacity="0.45" />}
+                  <circle cx={cx} cy={dotY} r="6.5" fill={lane.color} stroke="#fff" strokeWidth="1.5">
+                    <title>{`${lane.label} — ${mdY(p.date)}: ${p.count} site${p.count === 1 ? '' : 's'}`}</title>
+                  </circle>
+                  {tier >= 0 && (
+                    <>
+                      <text x={cx} y={ly} textAnchor="middle" fontSize="11" fontWeight="800" fill="#0F172A"
+                        stroke="#fff" strokeWidth="3.5" paintOrder="stroke">
+                        {p.count} site{p.count === 1 ? '' : 's'}
+                      </text>
+                      <text x={cx} y={ly + 12} textAnchor="middle" fontSize="10" fill="#475569"
+                        stroke="#fff" strokeWidth="3.5" paintOrder="stroke">{mdY(p.date)}</text>
+                    </>
+                  )}
+                </g>
+              );
+            })}
           </g>
         );
       })}
+    </svg>
+  );
+}
+
+// Fine exposure as it accumulates: every mandate's max yearly penalty switches
+// on at the deadline that brings it due, so the line is what the portfolio is
+// carrying at any point on the axis above — all three mandates together, since
+// the exposure is paid as one number.
+function CumulativeFines({ steps, ax, todayTime }) {
+  if (!steps.length) return <div className={styles.miniEmpty}>No fines on file against a dated deadline.</div>;
+  const H = 176, padT = 26, padB = 30;
+  const ih = H - padT - padB;
+  const baseY = padT + ih;
+  const max = steps[steps.length - 1].cum;
+  const y = (v) => baseY - (max ? (v / max) * ih : 0);
+  const left = TL.padL, right = TL.W - TL.padR;
+
+  // Step-after: exposure holds flat until the next deadline lands.
+  let d = `M ${left} ${y(0)}`;
+  let prevY = y(0);
+  for (const s of steps) {
+    const px = tlX(isoTime(s.date), ax);
+    d += ` L ${px} ${prevY} L ${px} ${y(s.cum)}`;
+    prevY = y(s.cum);
+  }
+  d += ` L ${right} ${prevY}`;
+  const area = `${d} L ${right} ${baseY} L ${left} ${baseY} Z`;
+
+  // What is already in force, as of today.
+  const liveNow = steps.filter(s => isoTime(s.date) <= todayTime).at(-1)?.cum || 0;
+  const gridVals = max > 0 ? [0, max / 2, max] : [0];
+  // Which step values have room to be printed, decided before render.
+  const marks = [];
+  for (let i = 0, lastLabelX = -Infinity; i < steps.length; i++) {
+    const px = tlX(isoTime(steps[i].date), ax);
+    const show = px - lastLabelX >= 62;
+    if (show) lastLabelX = px;
+    marks.push({ ...steps[i], px, show });
+  }
+  return (
+    <svg width="100%" viewBox={`0 0 ${TL.W} ${H}`} preserveAspectRatio="xMidYMid meet" role="img"
+      aria-label="Cumulative estimated maximum yearly fine exposure over time">
+      {gridVals.map(v => (
+        <g key={v}>
+          <line x1={left} y1={y(v)} x2={right} y2={y(v)} stroke="#EEF2F6" strokeWidth="1" />
+          <text x={left - 10} y={y(v) + 3.5} textAnchor="end" fontSize="10" fill="#94A3B8" fontWeight="700">{usdShort(v)}</text>
+        </g>
+      ))}
+      {axisTicks(ax).map(t => (
+        <line key={t.t} x1={t.px} y1={padT - 6} x2={t.px} y2={baseY} stroke="#E2E8F0" strokeWidth="1" strokeDasharray="3 3" />
+      ))}
+      <path d={area} fill="#009530" opacity="0.12" />
+      <path d={d} fill="none" stroke="#009530" strokeWidth="2.2" strokeLinejoin="round" />
+      <TodayMark ax={ax} todayTime={todayTime} y1={padT - 6} y2={baseY} label={false} />
+      {marks.map(({ px, show, ...s }) => (
+        <g key={s.date}>
+            <circle cx={px} cy={y(s.cum)} r="3.5" fill="#fff" stroke="#009530" strokeWidth="2">
+              <title>{`${mdY(s.date)} — +${usd(s.add)}/yr, ${usd(s.cum)}/yr carried from here`}</title>
+            </circle>
+          {show && (
+            <text x={px} y={y(s.cum) - 9} textAnchor="middle" fontSize="10" fontWeight="800" fill="#0F172A"
+              stroke="#fff" strokeWidth="3.5" paintOrder="stroke">{usdShort(s.cum)}</text>
+          )}
+        </g>
+      ))}
+      {/* Where the portfolio stands right now, against where it ends up. */}
+      <text x={tlX(todayTime, ax)} y={baseY + 14} textAnchor="middle" fontSize="9.5" fontWeight="800" fill="#DC2626">
+        {usdShort(liveNow)} live today
+      </text>
+      <text x={right} y={baseY + 14} textAnchor="end" fontSize="9.5" fontWeight="800" fill="#009530">
+        {usdShort(max)} once every deadline has landed
+      </text>
     </svg>
   );
 }
@@ -690,6 +801,51 @@ export function BuildingComplianceScreening({
   // Fixed for the life of the mount, so the countdowns and the "today" marker
   // can't shift under a re-render mid-session.
   const todayTime = useMemo(() => utcToday(), []);
+
+  // One lane per mandate, and the fine exposure the same deadlines switch on.
+  // A mandate's max yearly penalty starts being carried at the deadline that
+  // brings it due, so the running total is what the portfolio is exposed to at
+  // any point along the lanes above it.
+  const roadmapCharts = useMemo(() => {
+    const lanes = CATEGORIES.map(c => {
+      const points = deadlinesByDate(results, c).map(d => ({ date: d.date, count: d.count }));
+      return {
+        key: c,
+        label: CATEGORY_LABEL[c],
+        color: CATEGORY_COLOR[c],
+        points,
+        total: totalEligible(results, c),
+      };
+    });
+    const byDate = new Map();
+    for (const r of results) {
+      for (const c of CATEGORIES) {
+        const e = r[c];
+        if (e?.eligible !== true || !e.deadline || e.penalty == null) continue;
+        byDate.set(e.deadline, (byDate.get(e.deadline) || 0) + e.penalty);
+      }
+    }
+    let run = 0;
+    const steps = [...byDate.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([date, add]) => ({ date, add, cum: (run += add) }));
+    return { lanes, steps };
+  }, [results]);
+
+  // The domain both charts are drawn against. Today is inside it rather than
+  // merely drawn on it, so the gap between now and the first deadline is a
+  // real distance; a little padding keeps the end labels off the frame.
+  const axis = useMemo(() => {
+    const times = [
+      ...roadmapCharts.lanes.flatMap(l => l.points.map(p => isoTime(p.date))),
+      ...roadmapCharts.steps.map(s => isoTime(s.date)),
+    ];
+    let lo = Math.min(todayTime, ...times);
+    let hi = Math.max(todayTime, ...times);
+    if (!times.length || hi === lo) { lo = Math.min(lo, todayTime) - 120 * DAY; hi = Math.max(hi, todayTime) + 120 * DAY; }
+    const pad = (hi - lo) * 0.05;
+    return { lo: lo - pad, hi: hi + pad };
+  }, [roadmapCharts, todayTime]);
   // The headline read on the roadmap: what's next, how much is still ahead,
   // and which single date carries the most work.
   const roadmapSummary = useMemo(() => {
@@ -704,7 +860,6 @@ export function BuildingComplianceScreening({
       for (const c of CATEGORIES) if (r[c]?.eligible === true && !r[c].deadline) undated++;
     }
     return {
-      rows: dated,
       next: ahead[0] || null,
       passed: dated.length - ahead.length,
       aheadCount: ahead.length,
@@ -1130,58 +1285,31 @@ export function BuildingComplianceScreening({
               </div>
             </div>
 
+            {/* One lane per mandate, each deadline a labelled dot on it, and
+                directly below — on the same axis — the fine exposure those
+                same deadlines switch on. Reading down a date says both what
+                falls due and what it costs from then on. */}
             <div className={styles.panelWrap}>
               <div className={styles.tlHead}>
-                <span className={styles.tlHeadTitle}>Sites falling due over time</span>
-                <span className={styles.tlLegend}>
-                  {CATEGORIES.map(c => (
-                    <span key={c} className={styles.tlKey}>
-                      <span className={styles.tlSwatch} style={{ background: CATEGORY_COLOR[c] }} />
-                      {CATEGORY_LABEL[c]}
-                    </span>
-                  ))}
+                <span className={styles.tlHeadTitle}>
+                  Key compliance deadlines
+                  <span className={styles.tlHeadSub}> — one lane per mandate; each dot is a deadline and the sites it brings due</span>
                 </span>
               </div>
               <div className={styles.tlChart}>
-                <DeadlineTimeline points={roadmap} todayTime={todayTime} />
+                {roadmap.length
+                  ? <DeadlineLanes lanes={roadmapCharts.lanes} ax={axis} todayTime={todayTime} />
+                  : <div className={styles.miniEmpty}>No dated deadlines across the screened portfolio.</div>}
               </div>
-              {roadmap.length > 0 && (
-                <ol className={styles.mileList}>
-                  {roadmapSummary.rows.map(r => (
-                    <li
-                      key={r.date}
-                      className={`${styles.mileRow}${r.days < 0 ? ` ${styles.milePast}` : ''}${r === roadmapSummary.next ? ` ${styles.mileNext}` : ''}`}
-                    >
-                      <span className={styles.mileDot} />
-                      <span className={styles.mileDate}>{mdY(r.date)}</span>
-                      <span className={styles.mileWhen}>{relDue(r.days)}</span>
-                      {/* One bar per date, split by mandate and scaled against
-                          the heaviest date — the weight of a deadline reads
-                          before any of the numbers do. */}
-                      <span className={styles.mileBar}>
-                        {CATEGORIES.map(c => (r[c] ? (
-                          <span
-                            key={c}
-                            className={styles.mileSeg}
-                            style={{ width: `${(r[c] / roadmapSummary.busiest.total) * 100}%`, background: CATEGORY_COLOR[c] }}
-                            title={`${CATEGORY_LABEL[c]}: ${r[c]} site${r[c] === 1 ? '' : 's'}`}
-                          />
-                        ) : null))}
-                      </span>
-                      <span className={styles.mileChips}>
-                        {CATEGORIES.map(c => (r[c] ? (
-                          <span
-                            key={c}
-                            className={styles.rmChip}
-                            style={{ background: `${CATEGORY_COLOR[c]}1A`, color: CATEGORY_COLOR[c], borderColor: `${CATEGORY_COLOR[c]}66` }}
-                          >{CATEGORY_LABEL[c]} {r[c]}</span>
-                        ) : null))}
-                      </span>
-                      <span className={styles.mileTotal}>{r.total} <span className={styles.mileTotalUnit}>sites</span></span>
-                    </li>
-                  ))}
-                </ol>
-              )}
+              <div className={styles.tlHead}>
+                <span className={styles.tlHeadTitle}>
+                  Cumulative fine exposure
+                  <span className={styles.tlHeadSub}> — BBS, Energy Audits and BPS combined; each mandate starts counting at its own deadline</span>
+                </span>
+              </div>
+              <div className={styles.tlChart}>
+                <CumulativeFines steps={roadmapCharts.steps} ax={axis} todayTime={todayTime} />
+              </div>
             </div>
             {roadmapSummary.undated > 0 && (
               <div className={styles.rmFootnote}>
