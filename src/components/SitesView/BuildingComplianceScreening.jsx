@@ -830,28 +830,6 @@ export function BuildingComplianceScreening({
     () => results.filter(r => CATEGORIES.some(c => r[c]?.eligible === true)).length,
     [results],
   );
-  // Sites the size requirement decided against, and sites counted only because
-  // a missing square footage is taken as meeting it. Both have to be visible:
-  // the first explains why the totals are lower than the matched-site count,
-  // the second says how much of the total rests on an assumption.
-  const sizeScreened = useMemo(() => {
-    let below = 0;
-    let assumed = 0;
-    for (const r of results) {
-      if (!r.matched) continue;
-      const cats = CATEGORIES.map(c => r[c]).filter(e => e?.active);
-      if (!cats.length) continue;
-      if (cats.some(e => e.eligible === true)) {
-        // Counted — but on an assumed size if no mandate it qualifies for was
-        // actually measured against the building.
-        if (cats.every(e => e.eligible !== true || e.sizeAssumed)) assumed++;
-        continue;
-      }
-      below++;
-    }
-    return { below, assumed };
-  }, [results]);
-
   // Fixed for the life of the mount, so the countdowns and the "today" marker
   // can't shift under a re-render mid-session.
   const todayTime = useMemo(() => utcToday(), []);
@@ -1317,30 +1295,6 @@ export function BuildingComplianceScreening({
                 <div className={styles.kpiTileLbl}>Est. max yearly exposure</div>
               </div>
             </div>
-
-            {/* What the size requirement did to the counts above. The sites it
-                excluded are named rather than just missing, and so are the ones
-                counted on an assumed size — a figure resting on a gap in the
-                uploaded list should say so on the face of the page. */}
-            {(sizeScreened.below > 0 || sizeScreened.assumed > 0) && (
-              <div className={styles.sizeNote}>
-                <strong>Screened on the size requirement.</strong> A site is counted as needing to
-                report only where the ordinance is in force <em>and</em> the building meets that
-                mandate&apos;s ft² threshold.
-                {sizeScreened.below > 0 && (
-                  <> <strong>{sizeScreened.below.toLocaleString()}</strong> matched site
-                    {sizeScreened.below === 1 ? ' is' : 's are'} under the threshold for every mandate in
-                    {sizeScreened.below === 1 ? ' its' : ' their'} jurisdiction.</>
-                )}
-                {sizeScreened.assumed > 0 && (
-                  <> <strong>{sizeScreened.assumed.toLocaleString()}</strong> carr
-                    {sizeScreened.assumed === 1 ? 'ies' : 'y'} no square footage and
-                    {sizeScreened.assumed === 1 ? ' is' : ' are'} counted as meeting it: map a
-                    Sq Ft column on the <strong>Utility Lookup</strong> subtab to screen
-                    {sizeScreened.assumed === 1 ? ' it' : ' them'} for real.</>
-                )}
-              </div>
-            )}
 
             {/* Compliance roadmap — every dated deadline across the portfolio,
                 with the sites each mandate brings due on it, beside the same
