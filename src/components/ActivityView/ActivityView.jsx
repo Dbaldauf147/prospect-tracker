@@ -7,7 +7,7 @@ import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
-import { loadCallRecords, saveCallRecord } from '../../utils/callRecordingsStore';
+import { loadCallRecords, saveCallRecordResult } from '../../utils/callRecordingsStore';
 import {
   importGranolaMeetings, recordPatchFor, diagnoseEmptySync, DEFAULT_MEETING_WINDOW_DAYS,
 } from '../../utils/granolaCalls';
@@ -446,9 +446,15 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
             && String(base.granolaUpdatedAt || '') === String(note.updatedAt || '')
             && (!note.calendarEvent || base.calendarEvent);
           if (unchanged) return false;
-          const saved = await saveCallRecord(uid, note.id, recordPatchFor(note), base);
-          if (saved) written[note.id] = saved;
-          return !!saved;
+          // A failed save must NOT return false. False means "stored
+          // nothing, deliberately", which is the common and correct case
+          // just above — reusing it for a write that was refused hid the
+          // failure inside a legitimate skip. Throwing puts it in
+          // result.errors, which is already reported below.
+          const saved = await saveCallRecordResult(uid, note.id, recordPatchFor(note), base);
+          if (!saved.ok) throw new Error(saved.error || 'could not be saved');
+          written[note.id] = saved.record;
+          return true;
         },
       });
       setGranolaUnconfigured(false);

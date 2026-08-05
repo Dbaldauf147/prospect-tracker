@@ -63,7 +63,7 @@ export async function loadCallRecords(userId) {
  *
  * `code` is Firestore's own error code ('permission-denied',
  * 'unavailable', …), carried separately from the message because it is
- * what decides whether a retry can work — see utils/callReadError.js. The
+ * what decides whether a retry can work — see utils/callStoreError.js. The
  * message is prose and can be reworded; the code is a contract.
  */
 export async function loadCallRecordsResult(userId) {
@@ -87,12 +87,32 @@ export async function loadCallRecordsResult(userId) {
  * Returns the record as written (so callers can put it straight into
  * state), or null when the save failed.
  *
+ * Callers that have to TELL the user a save failed want
+ * `saveCallRecordResult` — a null here says only that something went
+ * wrong, and a page that can't say what went wrong ends up saying
+ * nothing at all, which is how a denied write came to look like a
+ * successful one.
+ */
+export async function saveCallRecord(userId, recordingId, patch, base = null) {
+  return (await saveCallRecordResult(userId, recordingId, patch, base)).record;
+}
+
+/**
+ * The same write, but saying whether it worked and why it didn't.
+ *
+ * Returns { record, ok, error, code } — `record` is what was written, or
+ * null on failure. `code` is Firestore's own error code, carried
+ * separately from the message because it is what decides whether a retry
+ * can work; see utils/callStoreError.js.
+ *
  * `base` is the record already in page state. Passing it avoids a read
  * before every write; when it's absent the current document is fetched
  * so a partial patch can't blank out fields it doesn't mention.
  */
-export async function saveCallRecord(userId, recordingId, patch, base = null) {
-  if (!userId || !recordingId) return null;
+export async function saveCallRecordResult(userId, recordingId, patch, base = null) {
+  if (!userId || !recordingId) {
+    return { record: null, ok: false, error: 'Not signed in.', code: 'unauthenticated' };
+  }
   const id = String(recordingId);
   const ref = doc(db, COLLECTION, userId, ITEMS, docIdFor(id));
 
@@ -120,22 +140,35 @@ export async function saveCallRecord(userId, recordingId, patch, base = null) {
 
   try {
     await setDoc(ref, next);
-    return next;
+    return { record: next, ok: true, error: '', code: '' };
   } catch (err) {
     console.warn('callRecordings: save failed', err);
-    return null;
+    return { record: null, ok: false, error: err?.message || String(err), code: err?.code || '' };
   }
 }
 
 /** Forget everything stored for one recording. */
 export async function deleteCallRecord(userId, recordingId) {
-  if (!userId || !recordingId) return false;
+  return (await deleteCallRecordResult(userId, recordingId)).ok;
+}
+
+/**
+ * The same delete, saying whether it worked and why it didn't.
+ *
+ * Returns { ok, error, code }. A caller that drops the record from its
+ * own state on a failed delete makes the call vanish from the page and
+ * come back on the next refresh, so the ok matters as much as the delete.
+ */
+export async function deleteCallRecordResult(userId, recordingId) {
+  if (!userId || !recordingId) {
+    return { ok: false, error: 'Not signed in.', code: 'unauthenticated' };
+  }
   try {
     await deleteDoc(doc(db, COLLECTION, userId, ITEMS, docIdFor(String(recordingId))));
-    return true;
+    return { ok: true, error: '', code: '' };
   } catch (err) {
     console.warn('callRecordings: delete failed', err);
-    return false;
+    return { ok: false, error: err?.message || String(err), code: err?.code || '' };
   }
 }
 
