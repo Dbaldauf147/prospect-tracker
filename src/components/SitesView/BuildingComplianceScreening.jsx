@@ -1481,8 +1481,13 @@ export function BuildingComplianceScreening({
               </div>
             )}
 
-            {/* Summary dashboard — the same figures the exported report charts. */}
-            <div className={styles.sectionTitle}>Total Eligible Sites by Requirement</div>
+            {/* Summary dashboard — the same figures the exported report charts.
+                Opens the second sheet of the PDF: everything above describes
+                the portfolio, everything from here describes what applies to
+                it. The break alone isn't enough — see the print block, which
+                also has to keep the preamble down to one sheet, or this lands
+                on the third. */}
+            <div className={`${styles.sectionTitle} ${styles.startsSheet}`}>Total Eligible Sites by Requirement</div>
             <div className={styles.dashGrid}>
               {CATEGORIES.map(c => (
                 <div key={c} className={styles.dashCard}>

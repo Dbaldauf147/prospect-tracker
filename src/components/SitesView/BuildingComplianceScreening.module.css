@@ -1086,7 +1086,31 @@
     display: table-header-group;
   }
 
-  .wrapper { gap: 0.6rem; }
+  /* The first sheet carries the whole preamble — brand band, lead paragraph,
+     disclaimer, KPI tiles, roadmap summary and the deadline timeline — so that
+     Total Eligible Sites by Requirement opens the second one. On a 46-site
+     portfolio that preamble measured 810px against 756px of usable height, so
+     the blocks above are tightened to bring it under rather than the cards
+     being forced onto a sheet of their own: break-before: page put them on the
+     third sheet and left the second nearly empty, which is worse than the
+     problem. Screen sizing is untouched — none of this applies outside print.
+     A portfolio big enough to grow the timeline past what this reclaims will
+     push the cards down again; there is no page-height-aware rule in CSS to
+     catch that, so it is a limit worth knowing rather than one that is hidden. */
+  .wrapper { gap: 0.3rem; }
+  .subtitle { font-size: 0.7rem; line-height: 1.3; }
+  .disclaimerBox { padding: 0.3rem 0.6rem; }
+  .disclaimerTitle { font-size: 0.54rem; margin-bottom: 0; }
+  .disclaimer { font-size: 0.56rem; line-height: 1.35; }
+  /* 1.1rem above a heading is breathing room for a scrolling page; on paper
+     the sheet edge already separates sections. */
+  .sectionTitle { margin: 0.45rem 0 0.35rem; }
+  /* The other half of it. Tightening alone only fixes the portfolios whose
+     preamble overran: on a smaller one it frees enough room for the cards to
+     be pulled UP onto the first sheet instead, which is the same fault
+     mirrored. The break pins them to the second sheet either way, and lands
+     there rather than the third because of the tightening above. */
+  .startsSheet { break-before: page; }
 
   /* Cards, charts and rows survive whole or move to the next sheet.
      .panelWrap is in this list now that the timeline is the only thing it
