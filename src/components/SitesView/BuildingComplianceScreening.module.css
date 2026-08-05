@@ -1005,6 +1005,14 @@
    and keep sections from being cut in half by a page break.
    ------------------------------------------------------------------------ */
 @media print {
+  /* .header carries the "what this screens" explainer and the export /
+     reference-download buttons: an orientation line for someone about to run
+     the screen, not something the finished report should open with.
+     .screenOnly is the same idea for blocks that have no class of their own —
+     the ownership toggle and the sites/matched/jurisdictions counts, which the
+     KPI tiles below already state. */
+  .header,
+  .screenOnly,
   .actions,
   .modeToggle,
   .siteToolbar,

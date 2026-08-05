@@ -1196,9 +1196,15 @@ export function BuildingComplianceScreening({
   }
 
   // Owned / All-sites control. Only rendered when the parent owns the
-  // scope state — a standalone mount screens whatever it's handed.
+  // scope state — a standalone mount screens whatever it's handed. Wrapped
+  // rather than styled in place: the bar is shared with the roadmap subtab and
+  // carries its own inline styles, and only this page prints.
   const scopeBar = onOwnedOnlyChange
-    ? <OwnershipScopeBar sites={loadedSites} ownedOnly={ownedOnly} onChange={onOwnedOnlyChange} />
+    ? (
+      <div className={styles.screenOnly}>
+        <OwnershipScopeBar sites={loadedSites} ownedOnly={ownedOnly} onChange={onOwnedOnlyChange} />
+      </div>
+    )
     : null;
 
   return (
@@ -1287,7 +1293,10 @@ export function BuildingComplianceScreening({
             <div className={styles.reportMeta}>
               <div className={styles.reportCounts}>
                 {printJob && <div className={styles.printOnly}>Generated {printJob.at}</div>}
-                <div><strong>{results.length}</strong> sites · <strong>{matchedCount}</strong> matched · <strong>{jurisdictionCount}</strong> jurisdictions</div>
+                {/* Screen only: the KPI tiles a few lines down carry sites
+                    screened, sites with a mandate and jurisdictions matched, so
+                    on paper this is the same three numbers twice. */}
+                <div className={styles.screenOnly}><strong>{results.length}</strong> sites · <strong>{matchedCount}</strong> matched · <strong>{jurisdictionCount}</strong> jurisdictions</div>
               </div>
             </div>
             <div className={`${styles.disclaimerBox} ${styles.printOnly}`}>
