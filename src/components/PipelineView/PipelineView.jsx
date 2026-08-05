@@ -225,9 +225,6 @@ function closeRateTally(entries) {
   return { sold, notSold: entries.length - sold, rate: sold / entries.length, included };
 }
 
-// How many calendar months the Close Rate by Month table shows.
-const CLOSE_RATE_MONTHS = 12;
-
 // Stages that mean a deal was genuinely quoted. A closed deal that never
 // logged time in either of these counts as "not quoted" for the
 // "% of deals not Quoted" table.
@@ -1445,56 +1442,6 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
     return out;
   }, [oppsRecords]);
 
-  // Close rate month by month, per stage — the same numbers the Close
-  // Rate Actual column shows, cut into calendar months of Close Date so
-  // a trend is visible instead of one rolling snapshot. Rows are the
-  // four stages plus "All closed opps" (every closed opp, whatever it
-  // reached — the row that matches the Total line in Pipeline Metrics).
-  const oppsCloseRateByMonth = useMemo(() => {
-    const now = new Date();
-    const months = [];
-    const indexByKey = new Map();
-    for (let i = CLOSE_RATE_MONTHS - 1; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${d.getFullYear()}-${d.getMonth()}`;
-      indexByKey.set(key, months.length);
-      months.push({
-        key,
-        label: d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
-        longLabel: d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
-      });
-    }
-    // rowKey → array of per-month entry buckets, plus a window total.
-    const rowKeys = [...CLOSE_RATE_STAGES.map(s => String(s.num)), 'all'];
-    const buckets = {};
-    for (const k of rowKeys) buckets[k] = months.map(() => []);
-    for (const r of oppsRecords) {
-      const entry = closedOppEntry(r);
-      if (!entry) continue;
-      const d = new Date(entry.ts);
-      const mi = indexByKey.get(`${d.getFullYear()}-${d.getMonth()}`);
-      if (mi == null) continue; // closed outside the window
-      buckets.all[mi].push(entry);
-      for (const st of CLOSE_RATE_STAGES) {
-        if (st.test(r)) buckets[String(st.num)][mi].push(entry);
-      }
-    }
-    const rows = [
-      ...CLOSE_RATE_STAGES.map(st => ({ key: String(st.num), label: st.label, signal: st.signal })),
-      {
-        key: 'all',
-        label: 'All closed opps',
-        signal: 'no stage signal — every closed opp counts',
-      },
-    ].map(row => ({
-      ...row,
-      cells: buckets[row.key].map(closeRateTally),
-      total: closeRateTally(buckets[row.key].flat()),
-    }));
-    const anyData = rows.some(row => row.total);
-    return { months, rows, anyData };
-  }, [oppsRecords]);
-
   // % of closed deals that were never quoted. A deal counts as "quoted"
   // when it logged at least one day in the Quoted or Agreement Sent stage
   // (from its stage history); a closed deal (Sold / Not Sold) with no time
@@ -2413,86 +2360,6 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           </table>
           </div>
           </MetricsTableBoundary>
-        </div>
-
-        {/* Close Rate by Month — the Close Rate Actual column above, cut into
-            calendar months of Close Date so the trend per stage is visible
-            rather than one rolling-365-day snapshot. Same stage signals and
-            the same pull-through exclusion, so a stage's monthly cells and
-            its rolling figure are the same arithmetic over different windows. */}
-        <div className={styles.section}>
-          <div className={styles.sectionTitle}>
-            <EL id="crm-title">{`Close Rate by Month — Last ${CLOSE_RATE_MONTHS} Months`}</EL>
-          </div>
-          {!oppsCloseRateByMonth.anyData ? (
-            <div style={{ color: '#64748b', fontWeight: 500, fontSize: '0.8rem', padding: '0.25rem 0' }}>
-              No opps closed in the last {CLOSE_RATE_MONTHS} months. Paste the Opps tab to feed this table.
-            </div>
-          ) : (
-            <div className={styles.scrollX}>
-            <table className={styles.grid}>
-              <thead>
-                <tr>
-                  <th className={styles.headerLeft}><EL id="crm-stage">Stage</EL></th>
-                  {oppsCloseRateByMonth.months.map(m => <th key={m.key}>{m.label}</th>)}
-                  <th><EL id="crm-total">{`${CLOSE_RATE_MONTHS}-mo`}</EL></th>
-                </tr>
-              </thead>
-              <tbody>
-                {oppsCloseRateByMonth.rows.map(row => {
-                  // The stage rows drill down; the "all closed opps" row is
-                  // the same denominator as the metrics table's Total line.
-                  const cell = (tally, label, id) => {
-                    if (!tally) {
-                      return <span style={{ color: '#94a3b8', fontWeight: 500 }}>—</span>;
-                    }
-                    const pct = `${(tally.rate * 100).toFixed(0)}%`;
-                    return (
-                      <LiveValue
-                        id={id}
-                        className={styles.liveCell}
-                        style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1.15 }}
-                        breakdown={{
-                          title: `${row.label} — Close Rate, ${label}`,
-                          value: `${pct}  (${tally.sold}/${tally.sold + tally.notSold})`,
-                          formula: `Sold ÷ (Sold + Not Sold), over Opps whose Close Date falls in ${label} and that reached this stage (signal: ${row.signal}), with a Scope without "pull through".`,
-                          inputs: [
-                            { label: 'Sold', value: tally.sold },
-                            { label: 'Not Sold', value: tally.notSold },
-                            { label: 'Close rate', value: pct },
-                          ],
-                          rows: closeRateRows(tally.included, 'Opps included (newest close first)'),
-                          note: 'Auto-fed from the Opps tab. Re-paste the Opps tab to refresh.',
-                        }}
-                      >
-                        <span>{pct}</span>
-                        <span style={{ fontSize: '0.65rem', opacity: 0.75, fontWeight: 500 }}>{tally.sold}/{tally.sold + tally.notSold}</span>
-                      </LiveValue>
-                    );
-                  };
-                  return (
-                    <tr key={row.key}>
-                      <td className={styles.label} style={{ textAlign: 'left', whiteSpace: 'nowrap' }}>{row.label}</td>
-                      {row.cells.map((tally, i) => (
-                        <td key={oppsCloseRateByMonth.months[i].key} className={styles.numCell} style={{ textAlign: 'center' }}>
-                          {cell(tally, oppsCloseRateByMonth.months[i].longLabel, `closerate-month-${row.key}-${oppsCloseRateByMonth.months[i].key}`)}
-                        </td>
-                      ))}
-                      <td className={styles.numCell} style={{ textAlign: 'center', fontWeight: 700 }}>
-                        {cell(row.total, `the last ${CLOSE_RATE_MONTHS} months`, `closerate-month-${row.key}-total`)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            </div>
-          )}
-          <div style={{ color: '#64748b', fontSize: '0.7rem', marginTop: '0.35rem' }}>
-            Bucketed by Close Date. An opp counts in every stage it reached, so Stage 3 has the widest
-            denominator and Stage 6 the narrowest. Pull-through scopes are excluded throughout.
-            Blank months had nothing close.
-          </div>
         </div>
 
         {/* Mid row — Client/Greenfield + Coverage Ratio + % deals
