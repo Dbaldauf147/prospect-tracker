@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import MASTER_ORDINANCES from '../../data/masterOrdinances.js';
 import { STATES, GOV_IDS, JURISDICTIONS, CITY_ROWS } from '../../data/complianceCityLookup.js';
+// Counts only — the table itself is ~70k rows and is dynamic-imported inside
+// the download handler, so it never lands in this page's chunk.
+import { WHOLE_BUILDING_META } from '../../data/wholeBuildingUtilitiesMeta.js';
 import {
   screenSites, lookupGovId, getMandates,
   CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
@@ -807,6 +810,8 @@ export function BuildingComplianceScreening({
   const [city, setCity] = useState('');
   const [state, setState] = useState('');
   const [siteSearch, setSiteSearch] = useState('');
+  // The Whole Building Data download pulls its table over the network first.
+  const [wbdBusy, setWbdBusy] = useState(false);
   const [onlyEligible, setOnlyEligible] = useState(true);
   // The screened site whose detail popup is open, if any.
   const [detailSite, setDetailSite] = useState(null);
@@ -988,6 +993,25 @@ export function BuildingComplianceScreening({
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Master Ordinances Database');
     XLSX.writeFile(wb, 'Master-Ordinances-Database.xlsx');
+  }
+  // Whole Building Data By Utility: zip code → serving utility, and whether that
+  // utility hands over aggregated whole-building data. The other two references
+  // say what a site owes; this one says whether the data to report it can be
+  // obtained. Fetched on click — 70k rows have no business in the page's chunk
+  // for a button most sessions never press — so the button holds while it lands.
+  async function downloadWholeBuildingData() {
+    setWbdBusy(true);
+    try {
+      const { expandRows } = await import('../../data/wholeBuildingUtilities.js');
+      const ws = XLSX.utils.json_to_sheet(expandRows());
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Whole Building Data');
+      // SheetJS stores rather than deflates by default. On 70k rows of mostly
+      // repeated text that is the difference between a 52 MB file and a 4 MB one.
+      XLSX.writeFile(wb, 'Whole-Building-Data-By-Utility.xlsx', { compression: true });
+    } finally {
+      setWbdBusy(false);
+    }
   }
   // Raw-data workbook that accompanies the PDF: a per-site screening sheet and
   // the full raw rows for every matched jurisdiction. "Applicable" is the
@@ -1214,11 +1238,28 @@ export function BuildingComplianceScreening({
             Screens each Utility Lookup site: <strong>city + state → Government ID</strong> (City Lookup),
             then <strong>Government ID → BBS / Audits / BPS mandates</strong> (Master Ordinances).
             {' '}· <strong>{CITY_ROWS.length.toLocaleString('en-US')}</strong> cities across <strong>{MASTER_ORDINANCES.length}</strong> jurisdictions on file.
+            {/* The mandates say what a site owes; this says whether the data to
+                report it can be had. Cited here so the third reference reads as
+                part of the same chain rather than an unexplained download. */}
+            <br />
+            Whole Building Data adds <strong>zip code → serving utility</strong>, and whether that utility
+            releases aggregated whole-building data to report with.
+            {' '}· <strong>{WHOLE_BUILDING_META.zips.toLocaleString('en-US')}</strong> zip codes
+            across <strong>{WHOLE_BUILDING_META.utilities.toLocaleString('en-US')}</strong> utilities on file.
           </div>
         </div>
         <div className={styles.actions}>
           <button type="button" className={styles.btn} onClick={downloadCityLookup} title={`Download the City Lookup table: ${CITY_ROWS.length.toLocaleString('en-US')} cities, each with the Government ID it screens against`}>City Lookup</button>
           <button type="button" className={styles.btn} onClick={downloadMasterOrdinances} title="Download the Master Ordinances Database (Government ID → BBS/Audits/BPS)">Master Ordinances</button>
+          <button
+            type="button"
+            className={styles.btn}
+            onClick={downloadWholeBuildingData}
+            disabled={wbdBusy}
+            title={`Download Whole Building Data By Utility: ${WHOLE_BUILDING_META.rows.toLocaleString('en-US')} zip code + utility rows, each with that utility's aggregated whole-building data offering and benchmarking contact`}
+          >
+            {wbdBusy ? 'Preparing…' : 'Whole Building Data'}
+          </button>
           <button type="button" className={styles.btnPrimary} onClick={exportReport} title="Open the branded report (print / Save as PDF) and download the accompanying raw-data Excel">Export report (PDF)</button>
           <button type="button" className={styles.btnPrimary} onClick={exportExcelReport} disabled={sites.length === 0} title="Download the branded report as a formatted Excel workbook (KPI tiles, roadmap + penalty tables, charts)">Export report (Excel)</button>
         </div>

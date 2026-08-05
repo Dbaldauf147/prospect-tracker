@@ -1,0 +1,9 @@
+{
+  "name": "meeting-notes",
+  "version": "0.1.0",
+  "description": "Turn a Granola meeting into an adaptive recap and land it on the right opportunity in Prospect Tracker.",
+  "author": {
+    "name": "Prospect Tracker"
+  },
+  "keywords": ["granola", "meetings", "recap", "crm", "prospect-tracker"]
+}
