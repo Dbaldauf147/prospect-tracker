@@ -38,31 +38,77 @@ export function appendIntervalDataSummary(ws, coverage) {
   ws.getRow(row).height = 22;
   row++;
 
-  const half = Math.floor(NCOLS / 2);
+  // Stacked rather than side by side, each under its own bar. Two figures
+  // sharing a row read as one split of a whole — which these are not: they are
+  // two independent shares of the same site count, and the second is a subset
+  // of the first. One full-width band each, in the order they narrow.
   const kpis = [
-    { from: 1, to: half, label: 'Sites mapped to a known utility', n: mapped },
-    { from: half + 1, to: NCOLS, label: 'Sites with utility interval data', n: intervalYes },
+    { label: 'Sites mapped to a known utility', n: mapped },
+    { label: 'Sites with utility interval data', n: intervalYes },
   ];
+
   for (const k of kpis) {
-    ws.mergeCells(row, k.from, row, k.to);
-    const cell = ws.getCell(row, k.from);
-    cell.value = `${k.label}:  ${Math.round((k.n / totalSites) * 100)}%   (${k.n.toLocaleString()} of ${totalSites.toLocaleString()} sites)`;
+    const pct = Math.round((k.n / totalSites) * 100);
+
+    // The bar sits ABOVE its label. It is a real Excel data bar over a real
+    // number rather than a drawn shape, so it stays proportional if a reader
+    // edits the figure, and it survives the round-trip through Sheets and
+    // LibreOffice that a picture would not.
+    //
+    // Scaled 0..100 explicitly. Left to itself Excel scales a data bar to the
+    // min and max of the range, which for a single cell fills the whole width
+    // whatever the number is — 60% and 97% would both read as "all of it".
+    ws.mergeCells(row, 1, row, NCOLS);
+    const bar = ws.getCell(row, 1);
+    bar.value = pct / 100;
+    bar.numFmt = '0%';
+    bar.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
+    bar.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.addConditionalFormatting({
+      ref: `${colLetter(1)}${row}:${colLetter(NCOLS)}${row}`,
+      rules: [{
+        type: 'dataBar',
+        gradient: false,
+        cfvo: [{ type: 'num', value: 0 }, { type: 'num', value: 1 }],
+        color: { argb: SE_GREEN_DARK },
+      }],
+    });
+    ws.getRow(row).height = 14;
+    row++;
+
+    ws.mergeCells(row, 1, row, NCOLS);
+    const cell = ws.getCell(row, 1);
+    cell.value = `${k.label}:  ${pct}%   (${k.n.toLocaleString()} of ${totalSites.toLocaleString()} sites)`;
     cell.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_GREEN_DARK } };
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
     cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-    cell.border = {
-      bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
-      right: { style: 'thin', color: { argb: 'FFFFFFFF' } },
-    };
+    cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+    ws.getRow(row).height = 22;
+    row++;
   }
-  ws.getRow(row).height = 22;
-  row++;
 
   ws.mergeCells(row, 1, row, NCOLS);
   const note = ws.getCell(row, 1);
-  note.value = 'A site counts as having interval data when its electric utility is mapped to a known utility whose Status reports interval data available. Full breakdown on the Utility Mapping tabs.';
+  // The caption asked for, with the definition kept after it: without saying
+  // what counts as interval data, "93%" is a number nobody can check.
+  note.value = 'How many sites % are mapped and have interval data. A site counts as having interval data when '
+    + 'its electric utility is mapped to a known utility whose Status reports interval data available. '
+    + 'Full breakdown on the Utility Mapping tabs.';
   note.font = { name: 'Nunito Sans', italic: true, size: 9.5, color: { argb: SE_SLATE } };
   note.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
   ws.getRow(row).height = 18;
+}
+
+// 1 -> 'A'. Data-bar refs are A1-style, and the section is written by column
+// number everywhere else.
+function colLetter(n) {
+  let out = '';
+  let i = n;
+  while (i > 0) {
+    const rem = (i - 1) % 26;
+    out = String.fromCharCode(65 + rem) + out;
+    i = Math.floor((i - 1) / 26);
+  }
+  return out;
 }
 
