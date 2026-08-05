@@ -46,6 +46,7 @@ import {
 import { classifyHqRegion, normalizeHqRegion } from '../../utils/hqRegion';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { exportComplianceReportXlsx, buildCorporateComplianceSheet, buildComplianceMethodologySheet } from '../../utils/complianceReportXlsx';
+import { appendIntervalDataSummary } from '../../utils/intervalDataSummary';
 import { saveIndicativeAnalysis, getIndicativeAnalysisMeta, loadIndicativeAnalysis } from '../../utils/firestoreSync';
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
@@ -11590,7 +11591,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     //    renamed to avoid colliding with Indicative Savings' NAM / Site
     //    Detail sheets.
     const savedNameMap = await loadListFromIDB(NAME_MAP_LIST_KEY);
-    await exportUtilityMappingAnalysis(Array.isArray(savedNameMap) ? savedNameMap : [], {
+    const mappingCoverage = await exportUtilityMappingAnalysis(Array.isArray(savedNameMap) ? savedNameMap : [], {
       targetWb: wb,
       sheetNames: {
         nam: 'Utility Mapping',
@@ -11598,6 +11599,17 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         siteDetail: 'Utility Mapping Site Detail',
       },
     });
+
+    // 5b. The same two coverage headlines on the Summary tab. They answer
+    //     whether the interval data behind every savings figure on that tab
+    //     actually exists, which is the first thing asked of the numbers above
+    //     them — so they belong on the first sheet, not only on the Utility
+    //     Mapping tab three sheets in.
+    //
+    //     Written here rather than with the rest of the Summary because the
+    //     figures come out of step 5, which runs after Indicative Savings has
+    //     already built that sheet. Appended below whatever it ended on.
+    appendIntervalDataSummary(wb.getWorksheet('Summary'), mappingCoverage);
 
     // 6. Round-trip sheets — the Site List the whole workbook was built
     //    from, plus the hidden state sheet. These are what let the
