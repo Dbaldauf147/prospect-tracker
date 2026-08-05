@@ -347,8 +347,15 @@ export function normalizeNote(note, { withTranscript = false } = {}) {
     ? normalizeTranscript(pick(note, 'transcript', 'transcript_segments', 'segments'), owner)
     : { text: '', utterances: [] };
 
-  const recordedAt = str(pick(event, 'start_time', 'start', 'starts_at')
-    || pick(note, 'created_at', 'createdAt', 'created'));
+  // Through toIsoInstant, like every other timestamp here. Granola has
+  // served these as ISO strings and as epoch numbers, and a raw str()
+  // turns an epoch into "1785938400" — a string `new Date()` rejects.
+  // That matters beyond a wrong-looking date: the Activity page drops any
+  // meeting whose start it cannot parse, so a note with no calendar event
+  // behind it (an ad-hoc call, a voice memo) would vanish from the page
+  // rather than show up undated.
+  const recordedAt = toIsoInstant(pick(event, 'start_time', 'start', 'starts_at')
+    ?? pick(note, 'created_at', 'createdAt', 'created'));
 
   const calendarEvent = normalizeCalendarEvent(note);
 

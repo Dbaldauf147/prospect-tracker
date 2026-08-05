@@ -17,6 +17,7 @@ function eq(actual, expected, name) {
   if (a === e) { passed++; console.log(`PASS  ${name}`); }
   else { failed++; console.log(`FAIL  ${name}\n        expected ${e}\n        got      ${a}`); }
 }
+function ok(value, name) { eq(!!value, true, name); }
 
 // --- resolveApiBase: the escape hatch must not become a foot-gun --------
 // GRANOLA_API_BASE sits directly under GRANOLA_API_KEY in .env.example,
@@ -59,6 +60,44 @@ function eq(actual, expected, name) {
   eq(out.granolaUrl, 'https://notes.granola.ai/d/not_abc', 'url falls back to the notes deep link');
   eq(out.hasTranscript, false, 'a list-only note reports no transcript');
   eq(out.utterances, [], 'a list-only note carries no turns');
+}
+
+// --- recordedAt is normalised, not passed through -----------------------
+// It used to be a bare str(), so an epoch stamp came out as
+// "1785938400" — a string new Date() rejects. The Activity page drops a
+// meeting whose start it cannot parse, so a note with no calendar event
+// behind it disappeared from the page instead of showing up undated.
+// Every case below has to survive `new Date(recordedAt)`.
+{
+  const usable = (recordedAt) => {
+    const ms = new Date(recordedAt || 0).getTime();
+    return Number.isFinite(ms) && ms > 0;
+  };
+  const ISO = '2026-08-05T14:00:00.000Z';
+  const EPOCH_S = 1785938400;        // the same instant
+  const EPOCH_MS = 1785938400000;
+
+  eq(normalizeNote({ id: 'n', created_at: ISO }).recordedAt, ISO, 'an ISO created_at is kept');
+  eq(normalizeNote({ id: 'n', created_at: EPOCH_S }).recordedAt, ISO, 'an epoch-seconds number becomes an instant');
+  eq(normalizeNote({ id: 'n', created_at: String(EPOCH_S) }).recordedAt, ISO, 'an epoch-seconds string becomes an instant');
+  eq(normalizeNote({ id: 'n', created_at: EPOCH_MS }).recordedAt, ISO, 'an epoch-millis number becomes an instant');
+
+  for (const [label, value] of [['ISO', ISO], ['epoch seconds', EPOCH_S], ['epoch millis', EPOCH_MS]]) {
+    ok(usable(normalizeNote({ id: 'n', created_at: value }).recordedAt), `a ${label} created_at parses as a date`);
+  }
+
+  // The event's start wins over created_at, and gets the same treatment —
+  // this is the case that used to disagree with itself, normalising
+  // calendarEvent.start correctly while leaving recordedAt as a raw epoch.
+  const fromEvent = normalizeNote({ id: 'n', calendar_event: { start_time: EPOCH_S, title: 'Acme sync' }, created_at: '2020-01-01T00:00:00Z' });
+  eq(fromEvent.recordedAt, ISO, 'an epoch event start becomes an instant');
+  eq(fromEvent.recordedAt, fromEvent.calendarEvent.start, 'recordedAt and the calendar start agree on the same value');
+
+  // A note with no usable stamp anywhere stays null rather than becoming
+  // a string that only looks like a date.
+  eq(normalizeNote({ id: 'n' }).recordedAt, null, 'a note with no timestamp has a null recordedAt');
+  eq(normalizeNote({ id: 'n', created_at: 'not a date' }).recordedAt, null, 'an unparseable stamp is null, not passed through');
+  eq(normalizeNote({ id: 'n', created_at: '10:45' }).recordedAt, null, 'a bare time of day is not treated as a date');
 }
 
 // A note with none of the preferred spellings still comes back usable.

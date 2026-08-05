@@ -13,6 +13,7 @@ import {
 } from '../../utils/granolaCalls';
 import {
   granolaMeetingsFromRecords, mergeMeetings, meetingsInRange, rangeForDays, groupMeetingsByDay,
+  undatedGranolaRecords,
 } from '../../utils/granolaMeetings';
 import { useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import styles from './ActivityView.module.css';
@@ -491,6 +492,16 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
       m._company ? m : { ...m, _company: guessCompanyFromEmails(...(m._externalEmails || [])) }
     ))
   ), [granolaRecords, hubspotContacts, domainToCompany]);
+
+  // Notes that stored fine and still produced no row, because nothing on
+  // them parses as a start time. diagnoseEmptySync explains a sync that
+  // brought back nothing; this is the case after it, and without a line
+  // of its own it reads as an empty calendar — the one reading that
+  // points nowhere.
+  const granolaUndated = useMemo(
+    () => undatedGranolaRecords(granolaRecords).length,
+    [granolaRecords],
+  );
 
   const allActivities = useMemo(() => {
     if (!data && granolaMeetings.length === 0) return [];
@@ -1277,6 +1288,14 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
           {granolaError && (
             <div style={{ padding: '0.4rem 0.9rem', background: '#FEF2F2', color: '#991B1B', fontSize: '0.75rem', borderBottom: '1px solid #FCA5A5' }}>
               Granola: {granolaError}
+            </div>
+          )}
+          {granolaUndated > 0 && (
+            <div style={{ padding: '0.4rem 0.9rem', background: '#FFFBEB', color: '#92400E', fontSize: '0.75rem', borderBottom: '1px solid #FDE68A' }}>
+              {granolaUndated === 1
+                ? '1 Granola note has no readable date, so it is not shown here.'
+                : `${granolaUndated} Granola notes have no readable date, so they are not shown here.`}
+              {' '}Re-import to refresh them.
             </div>
           )}
           {rangeMeetings.length === 0 ? (

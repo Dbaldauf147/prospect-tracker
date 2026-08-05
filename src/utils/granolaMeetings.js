@@ -110,14 +110,32 @@ export function meetingFromRecord(record) {
   };
 }
 
+function granolaRecordList(records) {
+  const list = Array.isArray(records) ? records : Object.values(records || {});
+  return list.filter(r => r?.source === 'granola');
+}
+
 /** Every stored Granola record that describes a meeting, newest first. */
 export function granolaMeetingsFromRecords(records) {
-  const list = Array.isArray(records) ? records : Object.values(records || {});
-  return list
-    .filter(r => r?.source === 'granola')
+  return granolaRecordList(records)
     .map(meetingFromRecord)
     .filter(Boolean)
     .sort((a, b) => msOf(b._meetingStart) - msOf(a._meetingStart));
+}
+
+/**
+ * The stored Granola records that could NOT become a meeting row, because
+ * nothing on them parses as a start time.
+ *
+ * `granolaMeetingsFromRecords` drops these silently, which is right for
+ * rendering and wrong for explaining. diagnoseEmptySync covers the case
+ * where Granola returned nothing; this covers the one after it — notes
+ * that arrived, stored fine, and still produced no row. Without it that
+ * failure reads as an empty calendar, which is the one reading that
+ * points the user nowhere.
+ */
+export function undatedGranolaRecords(records) {
+  return granolaRecordList(records).filter(r => meetingFromRecord(r) == null);
 }
 
 // Titles are compared with the noise stripped: calendar clients prepend
