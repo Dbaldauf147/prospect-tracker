@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import MASTER_ORDINANCES from '../../data/masterOrdinances.js';
 import { STATES, GOV_IDS, JURISDICTIONS, CITY_ROWS } from '../../data/complianceCityLookup.js';
@@ -7,8 +7,8 @@ import {
   CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
   totalEligible, eligibilityByOrdinance, totalPenalty, penaltyByOrdinance, sitesCompanyLabel,
   bpsPrioritization, penaltyBasis, auditRequirements, auditRequirementsLabel, categoryColumns,
+  deadlinesByDate, utilityFeedEligibility,
 } from '../../utils/complianceMandates';
-import { buildComplianceReportHtml } from '../../utils/complianceReportHtml';
 import { exportComplianceReportXlsx } from '../../utils/complianceReportXlsx';
 import { schneiderLogoSvg } from '../../utils/schneiderLogo';
 import { OwnershipScopeBar } from './OwnershipScopeBar.jsx';
@@ -20,6 +20,16 @@ const mdY = (iso) => { if (!iso) return '—'; const [y, m, d] = String(iso).spl
 // Property-type buckets the size requirements are published against, for the
 // lines that have to name the bucket a building fell into.
 const PT_CLASS_LABEL = { multifamily: 'multifamily', public: 'public / institutional', nonresidential: 'non-residential' };
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const monthYr = (iso) => {
+  const [y, m] = String(iso).split('-');
+  return `${MONTHS[Number(m) - 1] || '?'} ${y}`;
+};
+
+// Rides on the face of the report — this is a preliminary screen off the
+// city + square footage supplied, not a compliance determination, and the
+// deliverable has to say so wherever it lands.
+const DISCLAIMER = 'The information provided in this document is based on the location and square footage data supplied by the requestor. This assessment is a preliminary review to help identify properties that may be subject to compliance with benchmarking (BBS), energy audit, and building performance standards (BPS) ordinances. It does not account for all jurisdiction-specific eligibility criteria such as exemptions, official validation, or special classifications. Estimated annual penalties are illustrative worst-case figures and do not constitute legal or financial advice.';
 
 // A source column as it should read in an export. The workbook leaves some
 // dates as Excel serials — Seattle's audit due date is "45931" — which is
@@ -67,6 +77,36 @@ function HBars({ items, color, fmt = String, wide = false, empty = 'No eligible 
         );
       })}
     </div>
+  );
+}
+
+// Sites falling due per deadline date, as a column chart. Vector rather than
+// CSS boxes so it stays sharp at print resolution, and a column reads far
+// better than a near-flat line when the per-date counts are small.
+function DeadlineColumns({ points, color, width = 460, height = 168 }) {
+  if (!points.length) return <div className={styles.miniEmpty}>No dated deadlines</div>;
+  const padL = 14, padR = 14, padT = 22, padB = 34;
+  const iw = width - padL - padR, ih = height - padT - padB;
+  const slot = iw / points.length;
+  const bw = Math.min(46, slot * 0.6);
+  const max = Math.max(1, ...points.map(p => p.value));
+  const baseY = padT + ih;
+  return (
+    <svg width="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" role="img">
+      <line x1={padL} y1={baseY} x2={width - padR} y2={baseY} stroke="#E2E8F0" strokeWidth="1.5" />
+      {points.map((p, i) => {
+        const cx = padL + slot * (i + 0.5);
+        const bh = Math.max(3, (p.value / max) * ih);
+        const y = baseY - bh;
+        return (
+          <g key={p.date}>
+            <rect x={cx - bw / 2} y={y} width={bw} height={bh} rx="4" fill={color} />
+            <text x={cx} y={y - 7} textAnchor="middle" fontSize="12" fontWeight="800" fill="#0F172A">{p.value}</text>
+            <text x={cx} y={baseY + 15} textAnchor="middle" fontSize="10" fill="#475569">{monthYr(p.date)}</text>
+          </g>
+        );
+      })}
+    </svg>
   );
 }
 
@@ -140,6 +180,14 @@ function CatCell({ res }) {
         className={res.sizeAssumed ? styles.pillAssumed : styles.pillEligible}
         title={tip}
       >Applicable{res.sizeAssumed ? ' · sq ft assumed' : ''}</span>
+      {/* The date the mandate comes due. It was only ever in the hover tip,
+          which a printed page can't show — and the deadline is half of what
+          the row is for. */}
+      {(res.deadline || res.deadlineRaw) && (
+        <span className={styles.catDue} title="Compliance deadline for this mandate">
+          due {res.deadline ? mdY(res.deadline) : res.deadlineRaw}
+        </span>
+      )}
       {res.penalty != null ? (
         <span className={styles.catFine} title="Estimated maximum yearly penalty for this mandate at this site">
           {usd(res.penalty)}/yr
@@ -498,6 +546,11 @@ export function BuildingComplianceScreening({
   // The dashboard bar drilled into, as { category, government }. Opens the
   // list of sites behind that jurisdiction's count / penalty figure.
   const [drill, setDrill] = useState(null);
+  // A pending "Export report (PDF)". Held in state rather than printed
+  // straight from the click handler because the print furniture (the
+  // generated-at stamp) has to be in the DOM before window.print() reads it —
+  // the effect below fires on the commit that put it there.
+  const [printJob, setPrintJob] = useState(null);
 
   const companyLabel = useMemo(() => sitesCompanyLabel(sites), [sites]);
   const results = useMemo(() => screenSites(sites), [sites]);
@@ -529,6 +582,53 @@ export function BuildingComplianceScreening({
     return { below, assumed };
   }, [results]);
 
+  // Every dated deadline across the portfolio, one row per date, counting the
+  // sites each mandate brings due on it. Sorted earliest-first — the order the
+  // work actually lands in.
+  const roadmap = useMemo(() => {
+    const map = new Map();
+    for (const c of CATEGORIES) {
+      for (const { date, count } of deadlinesByDate(results, c)) {
+        if (!map.has(date)) map.set(date, { bbs: 0, audits: 0, bps: 0 });
+        map.get(date)[c] = count;
+      }
+    }
+    return [...map.entries()]
+      .map(([date, v]) => ({ date, ...v, total: v.bbs + v.audits + v.bps }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }, [results]);
+  const deadlinePoints = useMemo(
+    () => Object.fromEntries(CATEGORIES.map(c => [c, deadlinesByDate(results, c).map(d => ({ date: d.date, value: d.count }))])),
+    [results],
+  );
+  // Per-jurisdiction fine exposure merged across the three categories, worst
+  // first. The dashboard's bars say what each mandate is worth on its own;
+  // this says what a city is worth in total, which is the figure a portfolio
+  // conversation actually opens on.
+  const penaltyRows = useMemo(() => {
+    const map = new Map();
+    for (const c of CATEGORIES) {
+      for (const { government, penalty } of penaltyByOrdinance(results, c)) {
+        if (!map.has(government)) map.set(government, { bbs: 0, audits: 0, bps: 0 });
+        map.get(government)[c] = penalty;
+      }
+    }
+    const rows = [...map.entries()]
+      .map(([government, v]) => ({ government, ...v, total: v.bbs + v.audits + v.bps }))
+      .sort((a, b) => b.total - a.total);
+    const totals = rows.reduce((s, r) => ({
+      bbs: s.bbs + r.bbs, audits: s.audits + r.audits, bps: s.bps + r.bps, total: s.total + r.total,
+    }), { bbs: 0, audits: 0, bps: 0, total: 0 });
+    return { rows, totals };
+  }, [results]);
+  // Whole Building Utility Data Collection reach: of the sites carrying a BBS
+  // or BPS obligation, which utilities serve them.
+  const utilityFeeds = useMemo(() => ({
+    electric: utilityFeedEligibility(results, 'electric'),
+    gas: utilityFeedEligibility(results, 'gas'),
+  }), [results]);
+  const jurisdictionCount = useMemo(() => new Set(results.filter(r => r.matched).map(r => r.govId)).size, [results]);
+
   const filtered = useMemo(() => {
     let out = results;
     if (onlyEligible) out = out.filter(r => CATEGORIES.some(c => r[c]?.eligible === true));
@@ -536,6 +636,33 @@ export function BuildingComplianceScreening({
     if (q) out = out.filter(r => `${r.siteName} ${r.city} ${r.state} ${r.government || ''}`.toLowerCase().includes(q));
     return out;
   }, [results, onlyEligible, siteSearch]);
+
+  // Runs the print once the generated-at stamp has been committed to the DOM.
+  // `printingReport` on the body is what src/print.css keys off to hide the
+  // sidebar, subtab bar and toolbars and unwind the shell's scroll containers,
+  // so an ordinary Ctrl-P elsewhere in the app is untouched.
+  const printedJob = useRef(null);
+  useEffect(() => {
+    // StrictMode double-invokes effects in dev; without this the print dialog
+    // opens twice for one click.
+    if (!printJob || printedJob.current === printJob) return;
+    printedJob.current = printJob;
+    const body = document.body;
+    body.classList.add('printingReport');
+    // Some browsers fire afterprint, others just return from print() — clear
+    // on both, idempotently, so the class can't outlive the dialog.
+    const done = () => {
+      body.classList.remove('printingReport');
+      window.removeEventListener('afterprint', done);
+    };
+    window.addEventListener('afterprint', done);
+    try {
+      window.print();
+    } finally {
+      // Deferred: Safari lays the print document out after print() returns.
+      setTimeout(done, 1000);
+    }
+  }, [printJob]);
 
   // Manual single lookup.
   const manual = useMemo(() => {
@@ -652,13 +779,18 @@ export function BuildingComplianceScreening({
     XLSX.writeFile(wb, filename);
   }
 
-  // Export the deliverable: the branded PDF-ready report (new tab; print /
-  // Save as PDF) AND the accompanying raw-data Excel.
+  // Export the deliverable: this page, printed (Save as PDF from the print
+  // dialog), plus the accompanying raw-data Excel.
+  //
+  // This used to build a second, hand-written HTML report and print that
+  // instead — a parallel implementation of the same screening that drifted
+  // from the page it was meant to mirror, in palette, typography, chart
+  // geometry and content alike. Printing the page itself is the only way the
+  // PDF and the screen stay identical without being kept in sync by hand.
+  // src/print.css hides the app chrome and unwinds the shell's scrollers for
+  // the duration; `printingReport` scopes all of that to this button.
   function exportReport() {
-    const html = buildComplianceReportHtml(results, { generatedAt: new Date().toLocaleString(), siteCount: results.length });
-    const w = window.open('', '_blank');
-    if (w) { w.document.open(); w.document.write(html); w.document.close(); }
-    else alert('Allow pop-ups to open the printable report. The raw-data Excel will still download.');
+    setPrintJob({ at: new Date().toLocaleString() });
     writeRawWorkbook(results, 'Building-Compliance-Screening-Data.xlsx');
   }
   // Formatted Excel version of the branded report (KPI tiles, roadmap +
@@ -715,7 +847,9 @@ export function BuildingComplianceScreening({
     : null;
 
   return (
-    <div className={styles.wrapper}>
+    // `data-print-root` is what src/print.css keeps visible when "Export
+    // report (PDF)" prints the page — everything outside it is app chrome.
+    <div className={styles.wrapper} data-print-root>
       <div className={styles.brandBand}>
         <div className={styles.brandBandLeft}>
           <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
@@ -772,6 +906,25 @@ export function BuildingComplianceScreening({
         ) : (
           <>
             {scopeBar}
+            {/* Report furniture. The lead line and the disclaimer are part of
+                the deliverable, so they live on the page rather than only in
+                the export — the PDF is this page printed. The generated-at
+                stamp is the one print-only element: a live page has no
+                meaningful "generated" time. */}
+            <div className={styles.reportMeta}>
+              <div className={styles.reportLead}>
+                Preliminary benchmarking (BBS), energy-audit &amp; building-performance-standard (BPS)
+                applicability across your portfolio.
+              </div>
+              <div className={styles.reportCounts}>
+                {printJob && <div className={styles.printOnly}>Generated {printJob.at}</div>}
+                <div><strong>{results.length}</strong> sites · <strong>{matchedCount}</strong> matched · <strong>{jurisdictionCount}</strong> jurisdictions</div>
+              </div>
+            </div>
+            <div className={styles.disclaimerBox}>
+              <span className={styles.disclaimerTitle}>DISCLAIMER, PLEASE READ</span>
+              <span className={styles.disclaimer}>{DISCLAIMER}</span>
+            </div>
             {/* KPI summary strip — portfolio-level headline figures. */}
             <div className={styles.kpiStrip}>
               <div className={styles.kpiTile}>
@@ -786,7 +939,7 @@ export function BuildingComplianceScreening({
               </div>
               <div className={styles.kpiTile}>
                 <div className={styles.kpiTileTop} style={{ background: '#29ABE2' }} />
-                <div className={styles.kpiTileVal}>{new Set(results.filter(r => r.matched).map(r => r.govId)).size}</div>
+                <div className={styles.kpiTileVal}>{jurisdictionCount}</div>
                 <div className={styles.kpiTileLbl}>Jurisdictions matched</div>
               </div>
               <div className={styles.kpiTile}>
@@ -820,7 +973,52 @@ export function BuildingComplianceScreening({
               </div>
             )}
 
+            {/* Compliance roadmap — every dated deadline across the portfolio,
+                with the sites each mandate brings due on it, beside the same
+                counts as a per-category column chart. */}
+            <div className={styles.sectionTitle}>Compliance Roadmap Upcoming Deadlines</div>
+            <div className={styles.roadmapGrid}>
+              <div className={styles.panelWrap}>
+                {roadmap.length ? (
+                  <table className={styles.rmTable}>
+                    <thead>
+                      <tr><th>Compliance deadline</th><th>BBS</th><th>Energy Audits</th><th>BPS</th><th>Total sites</th></tr>
+                    </thead>
+                    <tbody>
+                      {roadmap.map(r => (
+                        <tr key={r.date}>
+                          <td className={styles.rmDate}>{mdY(r.date)}</td>
+                          {CATEGORIES.map(c => (
+                            <td key={c}>
+                              {r[c] ? (
+                                <span
+                                  className={styles.rmChip}
+                                  style={{ background: `${CATEGORY_COLOR[c]}1A`, color: CATEGORY_COLOR[c], borderColor: `${CATEGORY_COLOR[c]}66` }}
+                                >{r[c]}</span>
+                              ) : null}
+                            </td>
+                          ))}
+                          <td className={styles.rmTotal}>{r.total}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <div className={styles.miniEmpty}>No dated deadlines across the screened portfolio.</div>
+                )}
+              </div>
+              <div className={styles.tlGrid}>
+                {CATEGORIES.map(c => (
+                  <div key={c} className={styles.tlCard}>
+                    <div className={styles.tlTitle} style={{ color: CATEGORY_COLOR[c] }}>{CATEGORY_LABEL[c]} sites per deadline</div>
+                    <DeadlineColumns points={deadlinePoints[c]} color={CATEGORY_COLOR[c]} />
+                  </div>
+                ))}
+              </div>
+            </div>
+
             {/* Summary dashboard — the same figures the exported report charts. */}
+            <div className={styles.sectionTitle}>Total Eligible Sites by Requirement</div>
             <div className={styles.dashGrid}>
               {CATEGORIES.map(c => (
                 <div key={c} className={styles.dashCard}>
@@ -871,6 +1069,39 @@ export function BuildingComplianceScreening({
               ))}
             </div>
 
+            {/* What each jurisdiction is worth in fines across all three
+                mandates, worst first. */}
+            {penaltyRows.rows.length > 0 && (
+              <>
+                <div className={styles.sectionTitle}>Penalty Exposure by Jurisdiction</div>
+                <div className={styles.panelWrap}>
+                  <table className={styles.rmTable}>
+                    <thead>
+                      <tr><th>Jurisdiction</th><th>BBS</th><th>Energy Audits</th><th>BPS</th><th>Total / yr</th></tr>
+                    </thead>
+                    <tbody>
+                      {penaltyRows.rows.map(r => (
+                        <tr key={r.government}>
+                          <td className={styles.rmDate}>{r.government}</td>
+                          <td>{r.bbs ? usd(r.bbs) : ''}</td>
+                          <td>{r.audits ? usd(r.audits) : ''}</td>
+                          <td>{r.bps ? usd(r.bps) : ''}</td>
+                          <td className={styles.rmTotal}>{usd(r.total)}</td>
+                        </tr>
+                      ))}
+                      <tr className={styles.rmSum}>
+                        <td>All jurisdictions</td>
+                        <td>{usd(penaltyRows.totals.bbs)}</td>
+                        <td>{usd(penaltyRows.totals.audits)}</td>
+                        <td>{usd(penaltyRows.totals.bps)}</td>
+                        <td className={styles.rmTotal}>{usd(penaltyRows.totals.total)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+
             {/* BPS — Prioritization: one row per (deadline, jurisdiction) over
                 the BPS-eligible sites. Mirrors the compliance exports and the
                 Master Analysis overview. */}
@@ -906,6 +1137,43 @@ export function BuildingComplianceScreening({
               </div>
             )}
 
+            {/* Whole Building Utility Data Collection reach — the service
+                behind the BBS and BPS offerings only works where the site's
+                utilities publish whole-building data, so which utilities serve
+                the obligated sites decides what can actually be delivered. */}
+            <div className={styles.sectionTitle}>Eligibility per Data Stream for Utility Feeds</div>
+            <div className={styles.wbudcNote}>
+              The Whole Building Utility Data Collection (WBUDC) service supports BPS and BBS offerings via
+              whole-building data collection; applicability depends on whether the site&apos;s utilities provide
+              this option.
+            </div>
+            <div className={styles.feedGrid}>
+              {[
+                { key: 'electric', feed: utilityFeeds.electric, color: '#F2B705', label: 'Electric Power (EP)' },
+                { key: 'gas', feed: utilityFeeds.gas, color: '#B5179E', label: 'Natural Gas (NG)' },
+              ].map(({ key, feed, color, label }) => (
+                <div key={key} className={styles.dashCard}>
+                  <div className={styles.dashHead} style={{ background: color }}>{label} Utility Feeds</div>
+                  <div className={styles.feedKpi}>
+                    <span className={styles.feedKpiNum} style={{ borderColor: color, color }}>{feed.total}</span>
+                    <span className={styles.kpiLbl}>total eligible sites</span>
+                  </div>
+                  <div className={styles.dashSubhead}>Eligible sites per utility (grouped by state)</div>
+                  <HBars
+                    items={feed.rows.map(r => ({ label: `${r.state ? `${r.state} · ` : ''}${r.utility}`, value: r.count }))}
+                    color={color}
+                    wide
+                    empty="No utilities on the obligated sites"
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className={styles.sectionTitle}>Site-by-Site Mandate Detail</div>
+            <div className={styles.wbudcNote}>
+              Every screened site and the specific BBS / Energy Audits / BPS mandates that apply to it, each with
+              its compliance deadline and estimated max yearly penalty.
+            </div>
             <div className={styles.siteToolbar}>
               <input className={styles.searchInput} type="text" placeholder="Search sites, cities, jurisdictions…" value={siteSearch} onChange={e => setSiteSearch(e.target.value)} />
               <label className={styles.checkLabel}>
@@ -919,7 +1187,7 @@ export function BuildingComplianceScreening({
             </div>
 
             <div className={styles.tableScroll}>
-              <table className={styles.siteTable}>
+              <table className={`${styles.siteTable} ${styles.siteDetailTable}`}>
                 <thead>
                   <tr>
                     <th>Site</th><th>City</th><th>State</th><th>Jurisdiction</th><th>Gov ID</th><th>Sq Ft</th>
@@ -1014,6 +1282,15 @@ export function BuildingComplianceScreening({
             </div>
           )}
         </>
+      )}
+      {/* Print-only page furniture — the one thing the PDF carries that the
+          screen has no use for. */}
+      {printJob && (
+        <div className={`${styles.printOnly} ${styles.printFooter}`}>
+          <span className={styles.printFooterBrand}>Schneider Electric</span>
+          {' · '}Generated {printJob.at}
+          {' · '}{matchedCount} of {results.length} sites matched a jurisdiction · Public
+        </div>
       )}
     </div>
   );
