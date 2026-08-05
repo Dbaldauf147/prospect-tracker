@@ -13,10 +13,11 @@ import { parseMoney } from '../../utils/oppsMetrics';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { sanitizeSheetJsWorkbook } from '../../utils/exportSanitize.js';
 import { loadDealsList } from '../../utils/dealsStore';
-import { asDate, fmtDate } from '../../utils/dealsFormat';
+import { fmtDate } from '../../utils/dealsFormat';
 import { loadDealClientMap } from '../../utils/dealClientMap';
 import { loadClientManagerMap, loadClientUntrackedMap, loadClientStatusMap } from '../../utils/clientManagerStore';
 import { computeExpiringClients, normClientName } from '../../utils/clientIssues';
+import { dealSoldTs, daysToFollowUpGoal, followUpGoalLabel, postSaleFollowUpRows } from '../../utils/postSaleFollowUp';
 import {
   buildOppStagesByClient,
   buildServiceCatalog,
@@ -76,53 +77,6 @@ function oppOpenTs(r, ageRef) {
     return closeTs - age * 86400000;
   }
   return ageRef - age * 86400000;
-}
-
-// A deal needs a post-sale follow-up when its "Follow Up On Sale" cell is
-// blank (or a placeholder dash / Excel #N/A error). Mirrors the Clients tab's
-// Post-Sale Follow-Up subtab so the two surfaces agree on what counts as "no
-// value". A deliberate "N/A" (marked from the follow-up editor to say a deal
-// never needs a follow-up) counts as resolved and drops the row off the list;
-// only Excel's #N/A error placeholder still reads as missing.
-function isBlankFollowUp(row) {
-  const v = String(row?.['Follow Up On Sale'] ?? '').trim();
-  if (!v) return true;
-  return ['-', '\u2014', '#n/a'].includes(v.toLowerCase());
-}
-
-// The date a deal closed/sold, used to sort the Post-Sale Follow-Up table.
-// Deals don't carry an explicit close date, so we use Original Contract Start
-// — the same field the Deals tab treats as the deal's canonical date (its
-// Year column derives from it). Returns a timestamp (ms) or NaN.
-function dealSoldTs(row) {
-  const d = asDate(row?.['Original Contract Start']);
-  return d ? d.getTime() : NaN;
-}
-
-// A post-sale follow-up should land within 60 days of the sale, so the
-// Post-Sale Follow-Up table tracks each deal against that goal.
-const POST_SALE_GOAL_DAYS = 60;
-
-// Days remaining until the 60-day post-sale follow-up deadline. Positive
-// means days left, 0 means it's due today, negative means it's overdue.
-// Returns null when the deal has no sold date to count from.
-function daysToFollowUpGoal(soldRaw) {
-  const d = asDate(soldRaw);
-  if (!d) return null;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const start = new Date(d);
-  start.setHours(0, 0, 0, 0);
-  const daysSince = Math.round((today.getTime() - start.getTime()) / 86400000);
-  return POST_SALE_GOAL_DAYS - daysSince;
-}
-
-// Plain-text label for the 60-day goal countdown — shared by the on-screen
-// cell and the Excel export so both read the same. '' for an undated deal.
-function followUpGoalLabel(left) {
-  if (left == null) return '';
-  if (left === 0) return 'Today';
-  return left > 0 ? `${left}d left` : `${Math.abs(left)}d overdue`;
 }
 
 // Colored countdown cell for the "Days Since Sold — 60 Day Goal" column:
@@ -1243,27 +1197,10 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
   // the Clients tab's Post-Sale Follow-Up subtab, sorted by how long it's been
   // since the deal was sold (Original Contract Start) — longest since sold
   // first, since those are the most overdue for a follow-up.
-  const postSaleFollowUps = useMemo(() => {
-    const out = [];
-    for (const d of (clientStores.deals || [])) {
-      const client = String(d['Client Name'] ?? d['Client Name '] ?? '').trim();
-      const agreement = String(d['Agreement Name'] ?? '').trim();
-      if (!client && !agreement) continue;  // skip blank spacer rows
-      if (!isBlankFollowUp(d)) continue;     // only deals still needing follow-up
-      out.push(d);
-    }
-    out.sort((a, b) => {
-      const ta = dealSoldTs(a);
-      const tb = dealSoldTs(b);
-      const aNan = Number.isNaN(ta);
-      const bNan = Number.isNaN(tb);
-      if (aNan && bNan) return 0;
-      if (aNan) return 1;   // undated rows sink to the bottom
-      if (bNan) return -1;
-      return ta - tb;       // oldest sold (most overdue) first
-    });
-    return out;
-  }, [clientStores.deals]);
+  const postSaleFollowUps = useMemo(
+    () => postSaleFollowUpRows(clientStores.deals),
+    [clientStores.deals],
+  );
 
   // Decision-maker contacts grouped by normalized company name, so each
   // renewals row can show the DM(s) at that account and whether they've been

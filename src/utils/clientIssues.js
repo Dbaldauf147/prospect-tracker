@@ -8,6 +8,7 @@
 import { asDate, fmtDate } from './dealsFormat';
 import { matchesCdm } from './cdmMatch';
 import { computeNewBfoOpps, computeNewBfoMissingData, normalizeBfoCompany } from './newBfoOpps';
+import { dealSoldDate, daysToFollowUpGoal, followUpGoalDate, postSaleFollowUpRows } from './postSaleFollowUp';
 import {
   buildOppStagesByClient,
   buildServiceCatalog,
@@ -512,6 +513,48 @@ function detectServiceCoverageGaps({ prospects = [], cdmName, coverageServices =
   return issues;
 }
 
+// Issue #10: a sold deal whose post-sale follow-up is past the 60-day goal.
+// Reads the same rows the Pipeline dashboard's Post-Sale Follow-Up table
+// shows — via the shared postSaleFollowUp helpers — and keeps the ones the
+// table prints as "Nd overdue". Deals with no sold date can't be overdue, so
+// they're left to the table, which lists them as undated.
+//
+// Not CDM-scoped: the tables this mirrors run off the uploaded deals list
+// rather than the prospect list, so filtering here would hide rows that the
+// Pipeline and Clients tabs both still show as overdue.
+function detectPostSaleFollowUpOverdue({ dealsList = [], prospects = [] }) {
+  // Company → prospect id, so an overdue row can open its account like the
+  // other client issues do. Deals whose client isn't a tracked prospect still
+  // raise the issue; they just aren't clickable.
+  const idByCompany = new Map();
+  for (const p of prospects) {
+    const k = normClientName(p.company);
+    if (k && !idByCompany.has(k)) idByCompany.set(k, p.id);
+  }
+  const issues = [];
+  for (const d of postSaleFollowUpRows(dealsList)) {
+    const left = daysToFollowUpGoal(d['Original Contract Start']);
+    if (left == null || left >= 0) continue;
+    const company = String(d['Client Name'] ?? d['Client Name '] ?? '').trim() || '-';
+    const agreement = String(d['Agreement Name'] ?? '').trim();
+    const sold = dealSoldDate(d);
+    const over = Math.abs(left);
+    issues.push({
+      // Client + agreement identifies the row; a client can have several
+      // agreements overdue at once and each is its own follow-up.
+      id: `postsale-overdue:${normClientName(company)}:${agreement.toLowerCase()}`,
+      source: 'Clients',
+      type: 'Post-sale follow-up overdue',
+      company,
+      prospectId: idByCompany.get(normClientName(company)) || null,
+      daysUntil: left,
+      expirationDate: followUpGoalDate(d['Original Contract Start']),
+      detail: `Sold ${sold ? fmtDate(sold) : '-'}, no Follow Up On Sale ${over} day${over === 1 ? '' : 's'} past the 60-day goal${agreement ? `: ${agreement}` : ''}`,
+    });
+  }
+  return issues;
+}
+
 // Active clients whose soonest contract End Date falls within `withinDays`
 // days (default 270 — the Clients-tab renewal-warning threshold). Mirrors
 // the Clients-tab row build: CDM match + Status = Client, untracked clients
@@ -563,5 +606,6 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   issues.push(...detectOppBfoNameNotInActivity({ bfoActivity, oppsCache, prospects }));
   issues.push(...detectNewBfoMissingData({ prospects, oppsCache, serviceOverrides }));
   issues.push(...detectServiceCoverageGaps({ prospects, cdmName, coverageServices, oppsCache, serviceCatalogSettings, clientStatusMap, untrackedMap }));
+  issues.push(...detectPostSaleFollowUpOverdue({ dealsList, prospects }));
   return issues;
 }
