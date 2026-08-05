@@ -182,6 +182,22 @@ function anyNfatScheduleEnabled(schedules) {
   return NFAT_SCHEDULE_TYPES.some(t => schedules?.[t]?.enabled);
 }
 
+// True when the row's "No Further Action Today" mark was placed after
+// `cutoffMs`. The per-field edit stamp the cross-device merge already
+// maintains is what dates the mark — it only advances when the column's
+// value actually changes, so it's the time the ✓ / ✗ went on. A row with
+// no stamp for the column carries a mark that predates field stamping
+// (or arrived via a sheet import), so it counts as older.
+//
+// This is what keeps a scheduled clear from taking marks made AFTER the
+// time it was supposed to run: a 06:00 sweep catching up at 11:00 should
+// take yesterday's leftovers, not the ✓ placed at 10:00.
+function nfatMarkedAfter(row, cutoffMs) {
+  if (!Number.isFinite(cutoffMs)) return false;
+  const t = Number(row?._fieldUpdatedAt?.['No Further Action Today']);
+  return Number.isFinite(t) && t > cutoffMs;
+}
+
 // True when the tristate "No Further Action Today" value matches the
 // clear type: 'check' for ✓/yes, 'x' for ✗/no, 'any' for anything set.
 function nfatValueMatches(value, type) {
@@ -7590,14 +7606,27 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // schedule of its own, so it can't overwrite one set elsewhere. The
   // legacy key is left in place — it costs nothing and keeps the old
   // config recoverable if the settings write doesn't land.
+  //
+  // Gated on `settings._lastWriteAt` (same guard the PE Owner migration
+  // above uses) so this only acts once synced settings have actually
+  // LOADED. `useUserSettings` starts at `{}` and fills in when the
+  // Firestore snapshot resolves, so without the guard `settings.nfatSchedules`
+  // read as absent for the first moments of *every* page load and the
+  // promotion re-fired on each one. That write also skipped the staleness
+  // check — `expectedAt` comes from `_lastWriteAt`, which `{}` doesn't
+  // have — so it replaced the cloud schedules, `lastRunAt` included, with
+  // the legacy copy whose `lastRunAt` stopped advancing when these moved
+  // to settings. The runner below then saw today's occurrence as a missed
+  // run and cleared the column on every refresh.
   const nfatMigratedRef = useRef(false);
   useEffect(() => {
-    if (nfatMigratedRef.current || settings?.nfatSchedules) return;
+    if (nfatMigratedRef.current) return;
+    if (!settings?._lastWriteAt || settings.nfatSchedules) return;
     const legacy = loadLegacyNfatSchedules();
     if (!legacy) return;
     nfatMigratedRef.current = true;
     updateSettings?.({ nfatSchedules: normalizeNfatSchedules(legacy) });
-  }, [settings?.nfatSchedules, updateSettings]);
+  }, [settings?._lastWriteAt, settings?.nfatSchedules, updateSettings]);
 
   // Blank the matching "No Further Action Today" cells for a given clear
   // type ('check' → ✓, 'x' → ✗, 'any' → anything set). Shared by the
@@ -7612,19 +7641,24 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // never having run. `_nfatSetAt` is blanked rather than deleted for the
   // same reason: the merge unions keys missing from one side, so a
   // deleted key comes back from the stale copy.
-  const clearNfat = useCallback((type) => {
+  //
+  // `since` is the scheduled occurrence this clear is running for. Marks
+  // placed after it are left alone — a run catching up hours (or days)
+  // later must not take a mark the user made in the meantime, which is
+  // how a refresh could wipe the column. The modal's "Clear now" passes
+  // no cutoff, so an explicit clear still takes everything.
+  const clearNfat = useCallback((type, { since = null } = {}) => {
     const recs = dataRef.current?.records || [];
-    const count = recs.reduce(
-      (n, r) => n + (nfatValueMatches(r?.['No Further Action Today'], type) ? 1 : 0),
-      0,
-    );
+    const shouldClear = (r) => nfatValueMatches(r?.['No Further Action Today'], type)
+      && !nfatMarkedAfter(r, since);
+    const count = recs.reduce((n, r) => n + (shouldClear(r) ? 1 : 0), 0);
     if (count > 0) {
       setData(prev => {
         const rs = prev?.records || [];
         const now = Date.now();
         let touched = false;
         const next = rs.map(r => {
-          if (!nfatValueMatches(r?.['No Further Action Today'], type)) return r;
+          if (!shouldClear(r)) return r;
           touched = true;
           const copy = { ...r };
           copy['No Further Action Today'] = '';
@@ -8119,7 +8153,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         // that write is in flight.
         if ((nfatFiredRef.current[type] || 0) >= occ) continue;
         nfatFiredRef.current[type] = occ;
-        clearNfat(type);
+        clearNfat(type, { since: occ });
         next[type] = { ...s, lastRunAt: now };
         changed = true;
       }
