@@ -1685,8 +1685,8 @@ export function BuildingComplianceScreening({
                         <th>Upcoming Deadline</th>
                         <th>Compliance Government</th>
                         <th>BPS Fines for Exceeding Limits</th>
-                        <th style={{ textAlign: 'right' }}>Number of eligible sites</th>
-                        <th style={{ textAlign: 'right' }}>Sum of Est. Penalty for non-reporting on BPS</th>
+                        <th>Number of eligible sites</th>
+                        <th>Sum of Est. Penalty for non-reporting on BPS</th>
                         <th>Fee for exceeding limits</th>
                       </tr>
                     </thead>
@@ -1696,8 +1696,8 @@ export function BuildingComplianceScreening({
                           <td>{g.deadline ? mdY(g.deadline) : '-'}</td>
                           <td><strong>{g.government || '-'}</strong></td>
                           <td>{g.fine}</td>
-                          <td style={{ textAlign: 'right' }}>{g.sites.toLocaleString('en-US')}</td>
-                          <td style={{ textAlign: 'right' }}>{g.penaltyKnown ? usd(g.penalty) : '-'}</td>
+                          <td>{g.sites.toLocaleString('en-US')}</td>
+                          <td>{g.penaltyKnown ? usd(g.penalty) : '-'}</td>
                           <td style={{ color: 'var(--color-text-muted)', fontStyle: 'italic' }}>{g.feeExceeding}</td>
                         </tr>
                       ))}
