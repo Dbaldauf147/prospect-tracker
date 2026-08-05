@@ -328,14 +328,7 @@ export function ComplianceRoadmap({
         </div>
         <span className={styles.brandLogo} dangerouslySetInnerHTML={{ __html: schneiderLogoSvg({ onDark: true, width: 172 }) }} />
       </div>
-      <div className={styles.header}>
-        <div>
-          <div className={styles.subtitle}>
-            When each site's BBS / Audits / BPS deadlines land, how many sites come into scope, and how the
-            cumulative estimated fine exposure ramps up over time: followed by the key submission deadlines
-            for the corporate disclosure mandates screened on the Corporate Compliance subtab.
-          </div>
-        </div>
+      <div className={`${styles.header} ${styles.headerEnd}`}>
         <div className={styles.actions}>
           <button type="button" className={styles.btn} onClick={exportRoadmap} disabled={!periods.length && !deadlines.length}>Export roadmap</button>
         </div>

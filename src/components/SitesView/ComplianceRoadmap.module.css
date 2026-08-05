@@ -12,6 +12,7 @@
 .brandLogo svg { display: block; }
 
 .header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0.75rem; }
+.headerEnd { justify-content: flex-end; }
 .title { font-size: 1.15rem; font-weight: 800; color: var(--color-text-primary, #1E293B); margin: 0; }
 .subtitle { font-size: 0.8rem; color: var(--color-text-muted, #64748B); margin-top: 0.25rem; max-width: 70ch; }
 .actions { display: flex; gap: 0.5rem; flex-shrink: 0; }
