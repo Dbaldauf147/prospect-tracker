@@ -161,12 +161,13 @@ function TodayMark({ ax, todayTime, y1, y2, label = true }) {
 function DeadlineLanes({ lanes, ax, todayTime }) {
   const padT = 26, padB = 6;
   const ticks = axisTicks(ax);
-  // Half the width a two-line label needs. Set by the wider of the two lines,
-  // which is always the "N sites" one — the date below it is now just M/D.
-  // Tied to that line's font size: shrink the text and this has to come down
-  // with it, or labels reserve room they no longer occupy and drop to a lower
-  // tier (or off the chart) for a collision that wouldn't have happened.
-  const HALF = 19;
+  // Half the width a two-line label needs. Now that the count is a bare number
+  // — the legend carries the "sites" — the wider line is the M/D date under it,
+  // at worst "12/31". Tied to that line's font size: shrink the text and this
+  // has to come down with it, or labels reserve room they no longer occupy and
+  // drop to a lower tier (or off the chart) for a collision that wouldn't have
+  // happened.
+  const HALF = 10;
   const DOT_SEP = 15;    // dots at least this far apart, so none hides another
   const TIER_H = 19;     // vertical pitch between label tiers
   const TIERS = 3;
@@ -256,9 +257,9 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
                   </circle>
                   {tier >= 0 && (
                     <>
-                      <text x={cx} y={ly} textAnchor="middle" fontSize="8" fontWeight={p.projected ? 700 : 800}
+                      <text x={cx} y={ly} textAnchor="middle" fontSize="9.5" fontWeight={p.projected ? 700 : 800}
                         fill={p.projected ? '#64748B' : '#0F172A'} stroke="#fff" strokeWidth="3" paintOrder="stroke">
-                        {p.count} site{p.count === 1 ? '' : 's'}
+                        {p.count}
                       </text>
                       <text x={cx} y={ly + 8} textAnchor="middle" fontSize="7"
                         fill={p.projected ? '#94A3B8' : '#475569'} stroke="#fff" strokeWidth="3" paintOrder="stroke">
@@ -1383,9 +1384,31 @@ export function BuildingComplianceScreening({
               <div className={styles.tlHead}>
                 <span className={styles.tlHeadTitle}>
                   Key compliance deadlines
-                  <span className={styles.tlHeadSub}>
-                    {': '}one lane per mandate; solid dots are published deadlines, hollow dots the ordinance&apos;s
-                    recurring cycle carried {PROJECT_YEARS} years forward
+                  <span className={styles.tlHeadSub}>{': '}one lane per mandate</span>
+                </span>
+                {/* What the dots and the number under them mean, said once here
+                    rather than spelled out on every label — with 30-odd dots on
+                    the chart, "N sites" repeated at each one was most of the
+                    ink and crowded the labels into lower tiers. */}
+                <span className={styles.tlLegend}>
+                  <span className={styles.tlLegItem}>
+                    <svg className={styles.tlLegDot} viewBox="0 0 14 14" aria-hidden="true">
+                      <circle cx="7" cy="7" r="6" fill="#475569" stroke="#fff" strokeWidth="1.5" />
+                    </svg>
+                    published deadline
+                  </span>
+                  <span className={styles.tlLegItem}>
+                    <svg className={styles.tlLegDot} viewBox="0 0 14 14" aria-hidden="true">
+                      <circle cx="7" cy="7" r="5" fill="#fff" stroke="#475569" strokeWidth="2" />
+                    </svg>
+                    projected — the ordinance&apos;s recurring cycle carried {PROJECT_YEARS} years forward
+                  </span>
+                  <span className={styles.tlLegItem}>
+                    <span className={styles.tlLegLabel} aria-hidden="true">
+                      <b>12</b>
+                      <i>5/1</i>
+                    </span>
+                    sites due, over the date they fall due
                   </span>
                 </span>
               </div>
