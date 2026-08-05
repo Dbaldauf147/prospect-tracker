@@ -702,10 +702,12 @@ function JurisdictionSitesModal({ category, government, rows, onExport, onSiteCl
 }
 
 // The sites behind a figure on a utility-feed card: either one utility's bar
-// (`utility` set) or the card's whole eligible-sites total. WBUDC only works
-// where the serving utility publishes whole-building data, so the list names
-// both utilities on every site and which of BBS / BPS put it in scope.
-function UtilityFeedSitesModal({ label, color, state, utility, rows, onExport, onSiteClick, onClose }) {
+// (`utility` set) or the card's whole eligible-sites total. This is the utility
+// mapping view — the zip each site resolved from and the utilities it resolved
+// to. Deliberately no BBS / Audits / BPS columns: eligibility is what picked
+// the sites, and repeating it here buries the mapping the reader opened this
+// for. The screening table above is where the compliance read lives.
+function UtilityFeedSitesModal({ label, color, state, utility, rows, onExport, onClose }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -752,35 +754,22 @@ function UtilityFeedSitesModal({ label, color, state, utility, rows, onExport, o
                   <th>Site</th>
                   <th>City</th>
                   <th>State</th>
-                  <th>Jurisdiction</th>
-                  <th style={{ textAlign: 'right' }}>Sq Ft</th>
+                  <th>Zip</th>
                   <th>Electric Utility</th>
                   <th>Natural Gas Utility</th>
-                  <th>BBS</th>
-                  <th>BPS</th>
+                  <th>Water Utility</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r, i) => (
-                  <tr
-                    key={`${r.siteName}-${i}`}
-                    className={styles.siteRowClickable}
-                    onClick={() => onSiteClick(r)}
-                    title="Open the full screening detail for this site"
-                  >
+                  <tr key={`${r.siteName}-${i}`}>
                     <td className={styles.siteCell}>{r.siteName || '-'}</td>
                     <td>{r.city || '-'}</td>
                     <td>{r.feedState || r.state || '-'}</td>
-                    <td>{r.government || '-'}</td>
-                    <td style={{ textAlign: 'right' }}>{r.sqft != null ? r.sqft.toLocaleString('en-US') : '-'}</td>
+                    <td>{r.zip || <span className={styles.dash}>-</span>}</td>
                     <td>{r.electricUtility || <span className={styles.dash}>-</span>}</td>
                     <td>{r.gasUtility || <span className={styles.dash}>-</span>}</td>
-                    <td>{r.bbs?.eligible === true
-                      ? <span className={styles.pillEligible}>Applicable</span>
-                      : <span className={styles.dash}>-</span>}</td>
-                    <td>{r.bps?.eligible === true
-                      ? <span className={styles.pillEligible}>Applicable</span>
-                      : <span className={styles.dash}>-</span>}</td>
+                    <td>{r.waterUtility || <span className={styles.dash}>-</span>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1153,28 +1142,20 @@ export function BuildingComplianceScreening({
     [results, feedDrill],
   );
 
-  // A utility-feed site as it reads in an export: who serves it on both
-  // commodities, and which of BBS / BPS put it in WBUDC scope — the pair of
-  // mandates the service is sold against.
+  // A utility-feed site as it reads in an export: the mapping on screen, so
+  // the workbook and the modal carry the same columns. No BBS / BPS columns —
+  // this sheet is the utility mapping, and the screening export is where the
+  // eligibility read belongs.
   function feedSiteRow(r) {
-    const row = {
+    return {
       Site: r.siteName || '',
       City: r.city || '',
       State: r.feedState || r.mandateState || r.state || '',
-      Jurisdiction: r.government || '',
-      'Government ID': r.govId || '',
-      'Sq Ft': r.sqft ?? '',
-      'Property Type': r.propertyType || '',
+      Zip: r.zip || '',
       'Electric Utility': r.electricUtility || '',
       'Natural Gas Utility': r.gasUtility || '',
+      'Water Utility': r.waterUtility || '',
     };
-    for (const c of ['bbs', 'bps']) {
-      const e = r[c];
-      row[`${CATEGORY_LABEL[c]} Applicable`] = e?.eligible === true ? (e.sizeAssumed ? 'Yes: sq ft assumed' : 'Yes') : 'No';
-      row[`${CATEGORY_LABEL[c]} Deadline`] = e?.eligible === true ? (e.deadline ? mdY(e.deadline) : (e.deadlineRaw || '')) : '';
-      row[`${CATEGORY_LABEL[c]} Max Yearly Penalty`] = e?.eligible === true ? (e.penalty ?? '') : '';
-    }
-    return row;
   }
   // The card's bars as rows — the counts on screen, so the workbook opens on
   // the same summary the reader clicked from.
@@ -1629,7 +1610,6 @@ export function BuildingComplianceScreening({
                 utility={feedDrill.utility}
                 rows={feedDrillRows}
                 onExport={exportFeedDrill}
-                onSiteClick={(site) => { setFeedDrill(null); setDetailSite(site); }}
                 onClose={() => setFeedDrill(null)}
               />
             )}
