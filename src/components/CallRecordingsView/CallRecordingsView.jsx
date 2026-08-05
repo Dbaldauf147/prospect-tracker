@@ -40,7 +40,7 @@ import {
   folderPermission, listFolderRecordings, recordsFromFileList,
 } from '../../utils/localRecordings';
 import {
-  loadCallRecords, saveCallRecord, deleteCallRecord, migrateSettingsLinks,
+  loadCallRecords, loadCallRecordsResult, saveCallRecord, deleteCallRecord, migrateSettingsLinks,
   oppLabel, summaryForOpp, mergeIntoNotes,
 } from '../../utils/callRecordingsStore';
 import {
@@ -50,7 +50,9 @@ import {
 import { talkTimeSplit, formatShare } from '../../utils/talkTime';
 import {
   callHistoryRows, filterHistoryRows, historyTotals, STAGE_LABELS,
+  cacheableHistoryRows, shouldReplaceCache,
 } from '../../utils/callHistory';
+import { loadCallHistoryCache, saveCallHistoryCache } from '../../utils/callHistoryCache';
 import { DataTable } from '../common/DataTable';
 import { buildCompanyGuessIndex } from '../../utils/companyGuess';
 import { loadOppsFromCache } from '../../utils/oppsCache';
@@ -298,6 +300,17 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   // utils/callRecordingsStore.js for the shape.
   const [records, setRecords] = useState({});
   const [recordsLoaded, setRecordsLoaded] = useState(false);
+  // Whether the Firestore read actually worked. A failed read returns no
+  // records, which is indistinguishable from having none — the History
+  // tab needs to tell those apart before it decides what to show and
+  // what to cache.
+  const [recordsReadOk, setRecordsReadOk] = useState(true);
+  const [recordsReadError, setRecordsReadError] = useState('');
+  // The last history this browser drew, read back from IndexedDB. It is
+  // what makes the tab fill in on refresh: it paints before Firestore
+  // answers, and stands in for it when it doesn't.
+  const [historyCache, setHistoryCache] = useState(null);
+  const [historyCacheLoaded, setHistoryCacheLoaded] = useState(false);
   // Active opps, read once from the Opps 2 cache the Opps tab fills.
   const [oppsIndex, setOppsIndex] = useState(null);
   // Per-recording in-flight flags and messages for the AI actions.
@@ -605,8 +618,13 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     if (!uid) return undefined;
     let cancelled = false;
     (async () => {
-      const stored = await loadCallRecords(uid);
+      const { records: stored, ok, error: readError } = await loadCallRecordsResult(uid);
       if (cancelled) return;
+      // A read that failed comes back empty, which draws exactly like
+      // having no calls. Say which it was, and let the cached history
+      // stand rather than replacing it with nothing.
+      setRecordsReadOk(ok);
+      setRecordsReadError(ok ? '' : readError);
       // Anything tagged or transcribed while this read was in flight has
       // already been written to Firestore, but isn't in `stored` — so
       // state wins on conflict rather than being clobbered by it.
@@ -697,12 +715,53 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   // A OneDrive call whose folder is disconnected, or a file since
   // deleted, still has its transcript, summary and tag in Firestore —
   // the cards drop it, this keeps it.
-  const historyRows = useMemo(() => callHistoryRows(records), [records]);
+  const liveHistoryRows = useMemo(() => callHistoryRows(records), [records]);
+
+  // What the table draws. The live rows win the moment Firestore has
+  // answered successfully; until then — and permanently, if that read
+  // failed — the cache stands in. This is what makes the history survive
+  // a refresh without a Granola sync: nothing here waits on one.
+  const usingCachedHistory = !recordsLoaded || !recordsReadOk;
+  const historyRows = usingCachedHistory && historyCache?.rows?.length
+    ? historyCache.rows
+    : liveHistoryRows;
+
   const filteredHistory = useMemo(
     () => filterHistoryRows(historyRows, historyQuery),
     [historyRows, historyQuery],
   );
   const totals = useMemo(() => historyTotals(filteredHistory), [filteredHistory]);
+
+  // Read the cache once per account, as early as possible: this is the
+  // paint that beats Firestore to the screen.
+  useEffect(() => {
+    let cancelled = false;
+    setHistoryCache(null);
+    setHistoryCacheLoaded(false);
+    if (!uid) { setHistoryCacheLoaded(true); return undefined; }
+    loadCallHistoryCache().then((cached) => {
+      if (cancelled) return;
+      setHistoryCache(cached);
+      setHistoryCacheLoaded(true);
+    });
+    return () => { cancelled = true; };
+  }, [uid]);
+
+  // Keep it current. Every tag, summary and sync lands in `records`, so
+  // writing from the derived rows means the cache tracks the page rather
+  // than only ever holding what the last full read returned.
+  useEffect(() => {
+    if (!uid || !recordsLoaded || !historyCacheLoaded) return;
+    if (!shouldReplaceCache({
+      ok: recordsReadOk,
+      rowCount: liveHistoryRows.length,
+      cachedCount: historyCache?.rows?.length || 0,
+    })) return;
+    const rows = cacheableHistoryRows(liveHistoryRows);
+    saveCallHistoryCache(rows).then((saved) => {
+      if (saved) setHistoryCache({ rows, savedAt: new Date().toISOString() });
+    });
+  }, [uid, recordsLoaded, recordsReadOk, historyCacheLoaded, liveHistoryRows, historyCache]);
   const [expandedHistory, setExpandedHistory] = useState([]);
 
   function toggleHistoryRow(row) {
@@ -1633,7 +1692,25 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
               {' · '}{totals.withCompany} tagged to a company
             </span>
           </div>
-          {uid && !recordsLoaded ? (
+          {recordsReadError && (
+            <div className={styles.error}>
+              Couldn’t read your saved calls: {recordsReadError}
+              {historyCache?.rows?.length
+                ? ' Showing the copy this browser saved last time — it may be out of date. Reload to try again.'
+                : ' Reload to try again.'}
+            </div>
+          )}
+          {usingCachedHistory && historyCache?.savedAt && (
+            <div className={styles.transcriptStatus} style={{ marginBottom: '0.4rem' }}>
+              {recordsReadOk
+                ? `Showing this browser’s saved copy from ${fmtWhen(historyCache.savedAt)} while your calls load…`
+                : `Saved on this browser ${fmtWhen(historyCache.savedAt)}.`}
+            </div>
+          )}
+          {/* Only ever a wait when there is nothing cached to show. With
+              a cache the table is already on screen and the Firestore
+              read just refreshes it underneath. */}
+          {uid && !recordsLoaded && !historyRows.length && historyCacheLoaded ? (
             <div className={styles.transcriptStatus}>Loading your saved calls…</div>
           ) : (
             <DataTable

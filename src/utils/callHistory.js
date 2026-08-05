@@ -196,3 +196,49 @@ export function historyTotals(rows) {
   }
   return totals;
 }
+
+// ---- local cache ------------------------------------------------------
+
+/**
+ * A row trimmed to what it takes to redraw the table, for storing in the
+ * browser.
+ *
+ * The full record hanging off `_record` carries the transcript and its
+ * speaker turns, which are most of a call's bytes and none of what the
+ * history shows — the expansion needs the summary, key items, follow-ups
+ * and next steps, all of which are already on the row or are kept here.
+ * Dropping the rest is what keeps a cache of years of calls small enough
+ * to read back instantly.
+ */
+export function trimRowForCache(row) {
+  if (!row) return null;
+  const rec = row._record || {};
+  return {
+    ...row,
+    _record: {
+      keyItems: Array.isArray(rec.keyItems) ? rec.keyItems : [],
+      followUps: Array.isArray(rec.followUps) ? rec.followUps : [],
+      nextSteps: typeof rec.nextSteps === 'string' ? rec.nextSteps : '',
+    },
+  };
+}
+
+export function cacheableHistoryRows(rows) {
+  return (rows || []).map(trimRowForCache).filter(Boolean);
+}
+
+/**
+ * Should this freshly-built set of rows replace what is cached?
+ *
+ * The one case that must never happen is a failed Firestore read — which
+ * comes back as zero records — wiping a good cache and leaving the page
+ * claiming you have no calls. So a read that did not succeed never
+ * writes, and a successful one only writes an EMPTY list when the cache
+ * is empty too: going from "50 calls" to "none" is the shape of a
+ * failure, not of a user deleting fifty calls one at a time.
+ */
+export function shouldReplaceCache({ ok, rowCount, cachedCount }) {
+  if (!ok) return false;
+  if (rowCount > 0) return true;
+  return !cachedCount;
+}

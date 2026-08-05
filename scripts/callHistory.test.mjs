@@ -10,6 +10,7 @@
 import {
   callHistoryRows, historyRowFromRecord, filterHistoryRows, historyTotals,
   callStage, externalAttendees, sourceLabel, STAGE_ORDER,
+  trimRowForCache, cacheableHistoryRows, shouldReplaceCache,
 } from '../src/utils/callHistory.js';
 
 let passed = 0, failed = 0;
@@ -190,6 +191,70 @@ function record(overrides = {}) {
   eq(flat.youShare, null, 'a transcript with no turns cannot say who talked');
   eq(flat.transcriptTrimmed, true, 'and says its turns were dropped, so the table can explain the gap');
   eq(flat.hasTranscript, true, 'while still counting as transcribed');
+}
+
+// --- the local cache -----------------------------------------------------
+// The history is cached in the browser so the tab fills in on refresh
+// without waiting on Firestore and without a Granola sync. What gets
+// cached, and when it is allowed to be replaced, is the whole safety of
+// that — so both are pinned.
+{
+  const row = historyRowFromRecord(record({
+    transcript: 'a very long transcript '.repeat(500),
+    utterances: [{ speaker: 'You', text: 'lots of words', start: 0, end: 1000 }],
+    summary: 'Short summary.',
+    keyItems: ['One', 'Two'],
+    followUps: [{ text: 'Send it', owner: 'Dan', due: 'Aug 8' }],
+    nextSteps: 'Follow up Friday.',
+  }));
+  const trimmed = trimRowForCache(row);
+
+  // The transcript is most of a call's bytes and none of what the table
+  // shows. Caching it would make the cache the size of the database.
+  eq(trimmed._record.transcript, undefined, 'the transcript never reaches the cache');
+  eq(trimmed._record.utterances, undefined, 'nor do the speaker turns');
+
+  // Everything the expanded row renders has to survive, or a reload
+  // would show rows that expand into nothing.
+  eq(trimmed.summary, 'Short summary.', 'the summary survives — it is on the row itself');
+  eq(trimmed._record.keyItems, ['One', 'Two'], 'key items survive');
+  eq(trimmed._record.followUps, [{ text: 'Send it', owner: 'Dan', due: 'Aug 8' }], 'follow-ups survive whole');
+  eq(trimmed._record.nextSteps, 'Follow up Friday.', 'next steps survive');
+  eq(trimmed.youShare, row.youShare, 'the talk split survives, already derived');
+  eq(trimmed.stageLabel, row.stageLabel, 'and so does the pipeline stage');
+
+  // A row whose record had none of those still caches cleanly rather
+  // than carrying undefined into IndexedDB.
+  const bare = trimRowForCache(historyRowFromRecord(record()));
+  eq(bare._record, { keyItems: [], followUps: [], nextSteps: '' }, 'a bare record caches as empty, not undefined');
+  eq(trimRowForCache(null), null, 'a missing row trims to null');
+  eq(cacheableHistoryRows([null, historyRowFromRecord(record())]).length, 1, 'nulls are dropped from the cached set');
+  eq(cacheableHistoryRows(null), [], 'no rows caches as an empty list');
+}
+
+// shouldReplaceCache — the rule that keeps a failed read from wiping the
+// history. This is the one that matters: without it, a network blip
+// overwrites a good cache with nothing and the page says you have no
+// calls, which is exactly the disappearance the cache exists to prevent.
+{
+  eq(shouldReplaceCache({ ok: false, rowCount: 0, cachedCount: 50 }), false,
+    'a FAILED read never replaces the cache');
+  eq(shouldReplaceCache({ ok: false, rowCount: 0, cachedCount: 0 }), false,
+    'even with nothing cached, a failed read writes nothing');
+  eq(shouldReplaceCache({ ok: false, rowCount: 12, cachedCount: 0 }), false,
+    'and a failed read that somehow carried rows is still not trusted');
+
+  eq(shouldReplaceCache({ ok: true, rowCount: 50, cachedCount: 0 }), true,
+    'a good read with calls always writes');
+  eq(shouldReplaceCache({ ok: true, rowCount: 50, cachedCount: 50 }), true,
+    'and keeps writing as the history changes');
+
+  // Going from a full history to none is the shape of a failure, not of
+  // someone deleting fifty calls one at a time.
+  eq(shouldReplaceCache({ ok: true, rowCount: 0, cachedCount: 50 }), false,
+    'a good read returning NOTHING does not wipe a non-empty cache');
+  eq(shouldReplaceCache({ ok: true, rowCount: 0, cachedCount: 0 }), true,
+    'but an empty read over an empty cache is fine — nothing is lost');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
