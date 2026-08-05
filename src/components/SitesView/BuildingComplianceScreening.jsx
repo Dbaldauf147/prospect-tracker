@@ -25,6 +25,10 @@ const FEED_CARDS = [
   { key: 'gas', abbr: 'NG', label: 'Natural Gas (NG)', color: '#B5179E' },
 ];
 const mdY = (iso) => { if (!iso) return '—'; const [y, m, d] = String(iso).split('-'); return `${Number(m)}/${Number(d)}/${y}`; };
+// Same date with a two-digit year, for the timeline labels — the century is
+// never in question there, and the four characters it costs are the difference
+// between two neighbouring labels fitting on one tier and colliding.
+const mdYY = (iso) => { if (!iso) return '—'; const [y, m, d] = String(iso).split('-'); return `${Number(m)}/${Number(d)}/${String(y).slice(-2)}`; };
 // Property-type buckets the size requirements are published against, for the
 // lines that have to name the bucket a building fell into.
 const PT_CLASS_LABEL = { multifamily: 'multifamily', public: 'public / institutional', nonresidential: 'non-residential' };
@@ -155,8 +159,9 @@ function TodayMark({ ax, todayTime, y1, y2, label = true }) {
 function DeadlineLanes({ lanes, ax, todayTime }) {
   const padT = 26, padB = 6;
   const ticks = axisTicks(ax);
-  const HALF = 34;       // half the width a two-line label needs
-  const DOT_SEP = 18;    // dots at least this far apart, so none hides another
+  const HALF = 21;       // half the width a two-line label needs
+  const DOT_SEP = 15;    // dots at least this far apart, so none hides another
+  const TIER_H = 19;     // vertical pitch between label tiers
   const TIERS = 3;
   // Placement is worked out up front rather than while mapping to JSX — the
   // tier bookkeeping is a running decision and doesn't belong in render.
@@ -187,7 +192,7 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
   const laneTops = [];
   const laneHeights = placed.map(pts => {
     const deepest = pts.reduce((m, p) => Math.max(m, p.tier), -1);
-    return pts.length ? 46 + Math.max(0, deepest) * 23 : 34;
+    return pts.length ? 40 + Math.max(0, deepest) * TIER_H : 34;
   });
   laneHeights.reduce((top, h) => { laneTops.push(top); return top + h; }, padT);
   const bodyH = laneHeights.reduce((a, b) => a + b, 0);
@@ -224,7 +229,7 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
             </text>
             <line x1={TL.padL} y1={dotY} x2={TL.W - TL.padR} y2={dotY} stroke="#E2E8F0" strokeWidth="1" />
             {placed[i].map(({ cx, tier, ...p }) => {
-              const ly = dotY + 15 + tier * 23;
+              const ly = dotY + 14 + tier * TIER_H;
               return (
                 <g key={p.date}>
                   {tier > 0 && <line x1={cx} y1={dotY + 7} x2={cx} y2={ly - 9} stroke={lane.color} strokeWidth="1" opacity="0.45" />}
@@ -244,13 +249,13 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
                   </circle>
                   {tier >= 0 && (
                     <>
-                      <text x={cx} y={ly} textAnchor="middle" fontSize="11" fontWeight={p.projected ? 700 : 800}
-                        fill={p.projected ? '#64748B' : '#0F172A'} stroke="#fff" strokeWidth="3.5" paintOrder="stroke">
+                      <text x={cx} y={ly} textAnchor="middle" fontSize="9" fontWeight={p.projected ? 700 : 800}
+                        fill={p.projected ? '#64748B' : '#0F172A'} stroke="#fff" strokeWidth="3" paintOrder="stroke">
                         {p.count} site{p.count === 1 ? '' : 's'}
                       </text>
-                      <text x={cx} y={ly + 11} textAnchor="middle" fontSize="9.5"
-                        fill={p.projected ? '#94A3B8' : '#475569'} stroke="#fff" strokeWidth="3.5" paintOrder="stroke">
-                        {mdY(p.date)}
+                      <text x={cx} y={ly + 9} textAnchor="middle" fontSize="7.5"
+                        fill={p.projected ? '#94A3B8' : '#475569'} stroke="#fff" strokeWidth="3" paintOrder="stroke">
+                        {mdYY(p.date)}
                       </text>
                     </>
                   )}
