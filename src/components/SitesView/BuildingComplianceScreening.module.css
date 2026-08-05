@@ -303,6 +303,44 @@
   font-size: 0.72rem;
 }
 
+/* Whole-building data availability. "Yes" is the only actionable state — it
+   means the feed needed to report the mandate can be had — so it is the only
+   one that carries colour. */
+.wbYes {
+  display: inline-block;
+  background: #DCFCE7;
+  border: 1px solid #86EFAC;
+  color: #166534;
+  font-weight: 700;
+  font-size: 0.68rem;
+  padding: 1px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* A stated refusal. Muted, but solid rather than the dashed "unknown" — the
+   difference between the two is the whole point of the column. */
+.wbNo {
+  display: inline-block;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.wbOther {
+  display: inline-block;
+  border: 1px dashed var(--color-border);
+  color: var(--color-text-secondary, var(--color-text-muted));
+  font-size: 0.68rem;
+  padding: 1px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
 .reqList {
   display: flex;
   flex-direction: column;

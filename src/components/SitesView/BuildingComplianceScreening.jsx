@@ -13,7 +13,10 @@ import {
   deadlinesWithRecurrence, utilityFeedEligibility, utilityFeedSites,
 } from '../../utils/complianceMandates';
 import { exportComplianceReportXlsx } from '../../utils/complianceReportXlsx';
-import { loadWholeBuildingLookup, withWholeBuildingUtilities } from '../../utils/wholeBuildingLookup';
+import {
+  loadWholeBuildingLookup, withWholeBuildingUtilities,
+  wholeBuildingForSite, WB_COMMODITIES,
+} from '../../utils/wholeBuildingLookup';
 import { schneiderLogoSvg } from '../../utils/schneiderLogo';
 import { OwnershipScopeBar } from './OwnershipScopeBar.jsx';
 import styles from './BuildingComplianceScreening.module.css';
@@ -481,6 +484,47 @@ function CatCell({ res }) {
 // level, a scope note) is the requirement itself and is printed beside it.
 const REQ_CLASS = { required: 'reqRequired', conditional: 'reqConditional', optional: 'reqOptional' };
 const REQ_LEVEL_ONLY = /^(mandatory|required|may\s+be\s+required|optional|conditional)$/i;
+// Whether the utility serving this site hands over aggregated whole-building
+// data for one commodity.
+//
+// Four states, and the distinction that matters most is between the last two:
+// "No" is the utility saying it does not release the data, "not on file" is
+// the reference having no answer — which it doesn't for 2,024 of its 2,137
+// utilities. Rendering those alike would turn an open question into a closed
+// door and stop somebody making a phone call worth making.
+function WholeBuildingCell({ state, commodity }) {
+  if (!state) {
+    return <span className={styles.dash} title="The Whole Building Data reference is still loading">…</span>;
+  }
+  const { verdict, value, utility } = state;
+  const who = utility ? ` (per ${utility})` : '';
+  // "Yes (4/50)" carries a qualification worth keeping; a bare "Yes" doesn't.
+  const qualifier = value && !/^yes$/i.test(value) ? value.replace(/^yes\s*/i, '') : '';
+
+  if (verdict === 'yes') {
+    return (
+      <span
+        className={styles.wbYes}
+        title={`${utility || 'The serving utility'} releases aggregated whole-building ${commodity} data${qualifier ? `: "${value}"` : ''}`}
+      >Yes{qualifier ? ` ${qualifier}` : ''}</span>
+    );
+  }
+  if (verdict === 'no') {
+    return <span className={styles.wbNo} title={`No aggregated whole-building ${commodity} data${who}`}>No</span>;
+  }
+  if (verdict === 'other') {
+    return <span className={styles.wbOther} title={`The reference says "${value}" for whole-building ${commodity} data${who}`}>{value}</span>;
+  }
+  return (
+    <span
+      className={styles.dash}
+      title={utility
+        ? `The reference has no whole-building ${commodity} answer for ${utility}. That is an open question, not a refusal: it may be worth asking them.`
+        : `No ${commodity} utility on file for this site to look the answer up against`}
+    >not on file</span>
+  );
+}
+
 function AuditTypeCell({ res }) {
   if (!res || res.eligible !== true) return <span className={styles.dash}>-</span>;
   const reqs = res.requirements || [];
@@ -1024,6 +1068,22 @@ export function BuildingComplianceScreening({
     return out;
   }, [results, onlyEligible, siteSearch]);
 
+  // Whether the data needed to REPORT each mandate can be had, per commodity.
+  // Read off feedResults rather than the raw results: those carry the utility
+  // names the reference itself uses (and a water utility, which the uploaded
+  // portfolio has no column for), so a site resolves under the spelling the
+  // reference files it under rather than the one it was billed under.
+  //
+  // Keyed by site id so re-filtering doesn't re-walk the zip map for rows
+  // already answered. Empty until the reference lands — the table renders
+  // straight away and these columns fill in.
+  const wbBySite = useMemo(() => {
+    const out = new Map();
+    if (!wholeBuilding) return out;
+    for (const r of feedResults) out.set(r.id, wholeBuildingForSite(wholeBuilding, r));
+    return out;
+  }, [wholeBuilding, feedResults]);
+
   // Runs the print once the generated-at stamp has been committed to the DOM.
   // `printingReport` on the body is what src/print.css keys off to hide the
   // sidebar, subtab bar and toolbars and unwind the shell's scroll containers,
@@ -1137,6 +1197,16 @@ export function BuildingComplianceScreening({
         // the site table shows, the utility feeds included.
         'Electric Utility': r.electricUtility || '', 'Natural Gas Utility': r.gasUtility || '',
       };
+      // The same three columns the table shows. Blank rather than a
+      // placeholder when the reference hasn't loaded: a spreadsheet cell has
+      // no tooltip to explain one, so an empty cell is the honest cell.
+      const wb = wbBySite.get(r.id);
+      for (const c of WB_COMMODITIES) {
+        const state = wb?.[c.key];
+        row[`Whole-Building ${c.label} Data`] = !state ? ''
+          : state.verdict === 'unknown' ? 'Not on file'
+          : (state.value || '');
+      }
       for (const c of CATEGORIES) {
         const e = r[c];
         row[`${CATEGORY_LABEL[c]} Applicable`] = !e?.active ? 'No'
@@ -1711,6 +1781,14 @@ export function BuildingComplianceScreening({
                   <tr>
                     <th>Site</th><th>City</th><th>State</th><th>Jurisdiction</th><th>Gov ID</th><th>Sq Ft</th>
                     <th>Electric Utility</th><th>Natural Gas Utility</th>
+                    {/* Whether the data needed to REPORT the mandates in the
+                        columns to the right can actually be obtained. */}
+                    {WB_COMMODITIES.map(c => (
+                      <th
+                        key={c.key}
+                        title={`Does the utility serving this site release aggregated whole-building ${c.label.toLowerCase()} data?`}
+                      >{c.label} WBD</th>
+                    ))}
                     <th>BBS</th><th>Energy Audits</th><th>Audit Required</th><th>BPS</th>
                   </tr>
                 </thead>
@@ -1743,6 +1821,11 @@ export function BuildingComplianceScreening({
                           this table lists. */}
                       <td>{r.electricUtility || <span className={styles.dash}>-</span>}</td>
                       <td>{r.gasUtility || <span className={styles.dash}>-</span>}</td>
+                      {WB_COMMODITIES.map(c => (
+                        <td key={c.key}>
+                          <WholeBuildingCell state={wbBySite.get(r.id)?.[c.key]} commodity={c.label.toLowerCase()} />
+                        </td>
+                      ))}
                       <td><CatCell res={r.bbs} /></td>
                       <td><CatCell res={r.audits} /></td>
                       <td><AuditTypeCell res={r.audits} /></td>
@@ -1750,7 +1833,7 @@ export function BuildingComplianceScreening({
                     </tr>
                   ))}
                   {filtered.length === 0 && (
-                    <tr><td colSpan={12} className={styles.emptyRow}>No sites match the current filters.</td></tr>
+                    <tr><td colSpan={12 + WB_COMMODITIES.length} className={styles.emptyRow}>No sites match the current filters.</td></tr>
                   )}
                 </tbody>
               </table>
