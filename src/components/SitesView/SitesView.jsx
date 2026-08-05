@@ -2325,8 +2325,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // 'Owned' | 'Leased' | null — scopes the two building-compliance
       // subtabs, whose obligations fall on the owner.
       ownership: r.__ownership__ || null,
+      // The utility mapping behind the whole-building-data cards: the zip the
+      // lookup resolved from, and the three serving utilities it resolved to.
+      zip: String(r.__zipNorm__ || '').trim(),
       electricUtility: r.__electric__ || '',
       gasUtility: r.__gas__ || '',
+      waterUtility: r.__water__ || '',
     }));
   }, [rows, siteNameColumn, cityOverride, stateColumnOverride]);
 
