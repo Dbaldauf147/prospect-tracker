@@ -151,8 +151,7 @@ function TodayMark({ ax, todayTime, y1, y2, label = true }) {
 // tier when it would collide with its neighbour rather than being drawn on top
 // of it — the dots stay exactly on their true dates either way.
 function DeadlineLanes({ lanes, ax, todayTime }) {
-  const laneH = 96, padT = 30, padB = 10;
-  const H = padT + lanes.length * laneH + padB;
+  const padT = 26, padB = 6;
   const ticks = axisTicks(ax);
   const HALF = 34;       // half the width a two-line label needs
   const DOT_SEP = 18;    // dots at least this far apart, so none hides another
@@ -180,43 +179,54 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
       return { ...p, cx, tier };
     });
   });
+  // Each lane is only as tall as its own labels need. A fixed height sized
+  // for the worst case left a lane with one deadline — or none — sitting in
+  // an empty band as deep as the busiest one.
+  const laneTops = [];
+  const laneHeights = placed.map(pts => {
+    const deepest = pts.reduce((m, p) => Math.max(m, p.tier), -1);
+    return pts.length ? 46 + Math.max(0, deepest) * 23 : 34;
+  });
+  laneHeights.reduce((top, h) => { laneTops.push(top); return top + h; }, padT);
+  const bodyH = laneHeights.reduce((a, b) => a + b, 0);
+  const H = padT + bodyH + padB;
   return (
     <svg width="100%" viewBox={`0 0 ${TL.W} ${H}`} preserveAspectRatio="xMidYMid meet" role="img"
       aria-label="Compliance deadlines by mandate over time">
       {lanes.map((lane, i) => (
         i % 2 === 1 ? (
-          <rect key={`band${lane.key}`} x="0" y={padT + i * laneH} width={TL.W} height={laneH} fill="#F8FAFC" />
+          <rect key={`band${lane.key}`} x="0" y={laneTops[i]} width={TL.W} height={laneHeights[i]} fill="#F8FAFC" />
         ) : null
       ))}
       {ticks.map(t => (
         <g key={t.t}>
-          <line x1={t.px} y1={padT - 14} x2={t.px} y2={padT + lanes.length * laneH} stroke="#E2E8F0" strokeWidth="1" strokeDasharray="3 3" />
+          <line x1={t.px} y1={padT - 12} x2={t.px} y2={padT + bodyH} stroke="#E2E8F0" strokeWidth="1" strokeDasharray="3 3" />
           {/* The TODAY caption owns its stretch of the header — a tick label
-              underneath it prints as one illegible word. */}
-          {Math.abs(t.px - tlX(todayTime, ax)) > 42 && (
-            <text x={t.px + 4} y={padT - 17} fontSize={t.major ? 11 : 9} fontWeight={t.major ? 800 : 600} fill={t.major ? '#94A3B8' : '#CBD5E1'}>{t.label}</text>
+              under it prints as one illegible word. Compared as boxes, since
+              a quarter label is twice the width of a year. */}
+          {!(t.px + 4 < tlX(todayTime, ax) + 27 && t.px + 4 + (t.major ? 26 : 48) > tlX(todayTime, ax) - 27) && (
+            <text x={t.px + 4} y={padT - 15} fontSize={t.major ? 11 : 9} fontWeight={t.major ? 800 : 600} fill={t.major ? '#94A3B8' : '#CBD5E1'}>{t.label}</text>
           )}
         </g>
       ))}
-      <TodayMark ax={ax} todayTime={todayTime} y1={padT - 12} y2={padT + lanes.length * laneH} />
+      <TodayMark ax={ax} todayTime={todayTime} y1={padT - 10} y2={padT + bodyH} />
       {lanes.map((lane, i) => {
-        const top = padT + i * laneH;
-        const dotY = top + 20;
+        const dotY = laneTops[i] + 15;
         return (
           <g key={lane.key}>
-            <text x={TL.padL - 14} y={dotY - 1} textAnchor="end" fontSize="13" fontWeight="800" fill="#0F172A">{lane.label}</text>
-            <text x={TL.padL - 14} y={dotY + 14} textAnchor="end" fontSize="10" fill={lane.color} fontWeight="700">
+            <text x={TL.padL - 14} y={dotY - 1} textAnchor="end" fontSize="12.5" fontWeight="800" fill="#0F172A">{lane.label}</text>
+            <text x={TL.padL - 14} y={dotY + 12} textAnchor="end" fontSize="9.5" fill={lane.color} fontWeight="700">
               {lane.points.length
                 ? `${lane.total} site${lane.total === 1 ? '' : 's'}`
                 : 'no dated deadlines'}
             </text>
             <line x1={TL.padL} y1={dotY} x2={TL.W - TL.padR} y2={dotY} stroke="#E2E8F0" strokeWidth="1" />
             {placed[i].map(({ cx, tier, ...p }) => {
-              const ly = dotY + 18 + tier * 25;
+              const ly = dotY + 15 + tier * 23;
               return (
                 <g key={p.date}>
-                  {tier > 0 && <line x1={cx} y1={dotY + 7} x2={cx} y2={ly - 10} stroke={lane.color} strokeWidth="1" opacity="0.45" />}
-                  <circle cx={cx} cy={dotY} r="6.5" fill={lane.color} stroke="#fff" strokeWidth="1.5">
+                  {tier > 0 && <line x1={cx} y1={dotY + 7} x2={cx} y2={ly - 9} stroke={lane.color} strokeWidth="1" opacity="0.45" />}
+                  <circle cx={cx} cy={dotY} r="6" fill={lane.color} stroke="#fff" strokeWidth="1.5">
                     <title>{`${lane.label} — ${mdY(p.date)}: ${p.count} site${p.count === 1 ? '' : 's'}`}</title>
                   </circle>
                   {tier >= 0 && (
@@ -225,7 +235,7 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
                         stroke="#fff" strokeWidth="3.5" paintOrder="stroke">
                         {p.count} site{p.count === 1 ? '' : 's'}
                       </text>
-                      <text x={cx} y={ly + 12} textAnchor="middle" fontSize="10" fill="#475569"
+                      <text x={cx} y={ly + 11} textAnchor="middle" fontSize="9.5" fill="#475569"
                         stroke="#fff" strokeWidth="3.5" paintOrder="stroke">{mdY(p.date)}</text>
                     </>
                   )}
@@ -245,7 +255,7 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
 // the exposure is paid as one number.
 function CumulativeFines({ steps, ax, todayTime }) {
   if (!steps.length) return <div className={styles.miniEmpty}>No fines on file against a dated deadline.</div>;
-  const H = 176, padT = 26, padB = 30;
+  const H = 128, padT = 20, padB = 24;
   const ih = H - padT - padB;
   const baseY = padT + ih;
   const max = steps[steps.length - 1].cum;
