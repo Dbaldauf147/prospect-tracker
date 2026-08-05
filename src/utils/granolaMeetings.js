@@ -244,6 +244,64 @@ export function meetingsInRange(rows, { start, end } = {}) {
   });
 }
 
+/**
+ * Why the Granola meeting count is what it is, as one sentence — or ''
+ * when the count needs no explaining.
+ *
+ * This is NOT diagnoseEmptySync's job. That one explains a fetch that
+ * came back with nothing, and it can only speak while an import is
+ * running in this session. Two very common states fall outside it and
+ * were, until now, completely silent:
+ *
+ *   - a fresh page load with nothing stored, where no import has run at
+ *     all, so nothing has anything to report;
+ *   - meetings stored and visible in the data, but none inside the day
+ *     range the panel is currently showing.
+ *
+ * Both render as "0 meetings / No meetings scheduled for today", which
+ * is indistinguishable from a broken import. Naming them is the whole
+ * point of this function.
+ *
+ * `imported` is { seen } from an import that ran this session, or null.
+ */
+export function describeGranolaMeetings({
+  total = 0, inRange = 0, undated = 0, imported = null,
+  rangeDays = 1, windowDays = 30, syncedAt = '',
+} = {}) {
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  // Carries its own preposition: "none today" but "none IN the last 7
+  // days", and the two read as one phrase at the call site.
+  const rangeName = rangeDays === 1 ? 'today' : `in the last ${rangeDays} days`;
+
+  // Nothing stored and nothing undated. Either no import has ever run,
+  // or every one of them came back empty — and the user can only act on
+  // the first, so say which it is.
+  if (total === 0 && undated === 0) {
+    if (imported) {
+      // An import ran this session and saw notes, yet none became a
+      // meeting. diagnoseEmptySync covers seen === 0; this is the case
+      // after it.
+      return imported.seen > 0
+        ? `Granola returned ${plural(imported.seen, 'note')}, but none of them describe a meeting.`
+        : '';
+    }
+    return syncedAt
+      ? 'Nothing is stored from Granola. The last import brought back no meetings: use ↻ Granola to try again.'
+      : 'Nothing has been imported from Granola yet: use ↻ Granola.';
+  }
+
+  const parts = [];
+  if (total > 0 && inRange === 0) {
+    // The commonest benign cause of an empty panel once the import
+    // works, and the one the range buttons fix in a click.
+    parts.push(`Granola has ${plural(total, 'meeting')} in the last ${windowDays} days, none ${rangeName}`);
+  }
+  if (undated > 0) {
+    parts.push(`${plural(undated, 'note')} had no readable date and could not be placed`);
+  }
+  return parts.length ? `${parts.join('; ')}.` : '';
+}
+
 /** The rows that start inside the local day containing `now`. */
 export function meetingsOnDay(rows, now = new Date()) {
   return meetingsInRange(rows, rangeForDays(1, now));

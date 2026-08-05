@@ -10,6 +10,7 @@
 import {
   meetingFromRecord, granolaMeetingsFromRecords, isSameMeeting, mergeMeetings, meetingsOnDay,
   rangeForDays, meetingsInRange, groupMeetingsByDay, undatedGranolaRecords,
+  describeGranolaMeetings,
 } from '../src/utils/granolaMeetings.js';
 
 let passed = 0, failed = 0;
@@ -318,6 +319,57 @@ function record(overrides = {}) {
   eq(undatedGranolaRecords(null), [], 'a null record map is handled');
   eq(undatedGranolaRecords([records.c]), [records.c], 'an array of records works like a map');
   eq(undatedGranolaRecords({ f: records.f }), [], 'non-Granola records are never reported as undated');
+}
+
+// --- describeGranolaMeetings ---------------------------------------------
+// The line under the panel header. Its whole job is telling apart the
+// several different nothings that all render as "0 meetings", so each
+// branch is pinned to the cause it names. diagnoseEmptySync covers a
+// fetch that came back empty AND can only speak while an import runs;
+// everything below is a state it cannot reach.
+{
+  const d = (o) => describeGranolaMeetings({ windowDays: 30, rangeDays: 1, ...o });
+
+  // THE case that started this: a fresh load, nothing stored, no import
+  // has reported anything. Previously silent.
+  eq(d({}), 'Nothing has been imported from Granola yet: use ↻ Granola.',
+    'a fresh load with nothing stored points at the button');
+
+  // Same, but an import HAS run before (in an earlier visit) and left
+  // nothing. The distinction matters: one has never been tried.
+  eq(d({ syncedAt: '2026-08-05T10:00:00.000Z' }),
+    'Nothing is stored from Granola. The last import brought back no meetings: use ↻ Granola to try again.',
+    'a previous import that stored nothing says so rather than looking untried');
+
+  // An import ran this session and saw notes, none of which were
+  // meetings. seen === 0 belongs to diagnoseEmptySync, so this stays
+  // quiet and lets that message through.
+  eq(d({ imported: { seen: 4 } }), 'Granola returned 4 notes, but none of them describe a meeting.',
+    'notes that yield no meetings say so');
+  eq(d({ imported: { seen: 1 } }), 'Granola returned 1 note, but none of them describe a meeting.',
+    'one note is singular');
+  eq(d({ imported: { seen: 0 } }), '',
+    'an empty fetch stays silent so diagnoseEmptySync is not duplicated');
+
+  // Meetings exist but not in the visible range — the one the range
+  // buttons fix in a click, and the likeliest benign empty panel.
+  eq(d({ total: 12, inRange: 0 }), 'Granola has 12 meetings in the last 30 days, none today.',
+    'a today-only range with meetings on other days says so');
+  eq(d({ total: 12, inRange: 0, rangeDays: 7 }), 'Granola has 12 meetings in the last 30 days, none in the last 7 days.',
+    'the range is named as the user selected it');
+  eq(d({ total: 1, inRange: 0 }), 'Granola has 1 meeting in the last 30 days, none today.', 'one meeting is singular');
+
+  // Meetings are showing: the count above says it, so add nothing.
+  eq(d({ total: 12, inRange: 3 }), '', 'a range with meetings in it needs no explanation');
+
+  // Undated notes, alone and alongside the range message.
+  eq(d({ total: 0, inRange: 0, undated: 2 }), '2 notes had no readable date and could not be placed.',
+    'undated notes are reported on their own');
+  eq(d({ total: 5, inRange: 0, undated: 1 }),
+    'Granola has 5 meetings in the last 30 days, none today; 1 note had no readable date and could not be placed.',
+    'undated notes are appended to the range message');
+  eq(d({ total: 5, inRange: 2, undated: 1 }), '1 note had no readable date and could not be placed.',
+    'undated notes are reported even when the range has meetings');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

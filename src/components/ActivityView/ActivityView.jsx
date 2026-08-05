@@ -13,7 +13,7 @@ import {
 } from '../../utils/granolaCalls';
 import {
   granolaMeetingsFromRecords, mergeMeetings, meetingsInRange, rangeForDays, groupMeetingsByDay,
-  undatedGranolaRecords,
+  undatedGranolaRecords, describeGranolaMeetings,
 } from '../../utils/granolaMeetings';
 import { useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import styles from './ActivityView.module.css';
@@ -391,6 +391,10 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
   // up, and the fix lives on the Call Recordings page.
   const [granolaUnconfigured, setGranolaUnconfigured] = useState(false);
   const [granolaSyncedAt, setGranolaSyncedAt] = useState('');
+  // What an import that ran THIS SESSION saw. Null on a fresh load, which
+  // is the state the panel could not previously describe: no import has
+  // reported anything, so silence was all it had.
+  const [granolaImportResult, setGranolaImportResult] = useState(null);
   const granolaRecordsRef = useRef({});
   const granolaImportingRef = useRef(false);
   const granolaAutoRan = useRef(false);
@@ -448,6 +452,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
         },
       });
       setGranolaUnconfigured(false);
+      setGranolaImportResult({ seen: result.seen, stored: result.stored });
       if (Object.keys(written).length > 0) setGranolaRecords(prev => ({ ...prev, ...written }));
       const stamp = new Date().toISOString();
       setGranolaSyncedAt(stamp);
@@ -758,6 +763,23 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
   // forwards. A today-only window is one group, which is the panel
   // exactly as it was.
   const meetingDayGroups = useMemo(() => groupMeetingsByDay(rangeMeetings), [rangeMeetings]);
+
+  // Why the Granola count is what it is. Suppressed when the panel is
+  // already showing an error or the setup notice — those say more.
+  const granolaNote = useMemo(() => (
+    (granolaUnconfigured || granolaError) ? '' : describeGranolaMeetings({
+      total: granolaMeetings.length,
+      inRange: granolaRangeMeetings.length,
+      undated: granolaUndated,
+      imported: granolaImportResult,
+      rangeDays: meetingRangeDays,
+      windowDays: DEFAULT_MEETING_WINDOW_DAYS,
+      syncedAt: granolaSyncedAt,
+    })
+  ), [
+    granolaMeetings, granolaRangeMeetings, granolaUndated, granolaImportResult,
+    meetingRangeDays, granolaSyncedAt, granolaUnconfigured, granolaError,
+  ]);
 
   // The heading over a day's meetings. Recent days are named rather than
   // dated — "Yesterday" is what you actually call it when scanning back
@@ -1290,12 +1312,12 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
               Granola: {granolaError}
             </div>
           )}
-          {granolaUndated > 0 && (
-            <div style={{ padding: '0.4rem 0.9rem', background: '#FFFBEB', color: '#92400E', fontSize: '0.75rem', borderBottom: '1px solid #FDE68A' }}>
-              {granolaUndated === 1
-                ? '1 Granola note has no readable date, so it is not shown here.'
-                : `${granolaUndated} Granola notes have no readable date, so they are not shown here.`}
-              {' '}Re-import to refresh them.
+          {/* Why the count is what it is: nothing imported yet, meetings
+              outside the chosen range, or notes that couldn't be dated.
+              All three used to render as a bare "0 meetings". */}
+          {granolaNote && (
+            <div style={{ padding: '0.4rem 0.9rem', background: '#F8FAFC', color: 'var(--color-text-muted)', fontSize: '0.72rem', borderBottom: '1px solid #F1F5F9' }}>
+              {granolaNote}
             </div>
           )}
           {rangeMeetings.length === 0 ? (
