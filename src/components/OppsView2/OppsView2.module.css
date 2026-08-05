@@ -369,7 +369,6 @@
 .agendaText {
   flex: 0 1 auto;
   padding: 0.1rem 0.25rem;
-  margin-left: -0.25rem;
   background: transparent;
   border: none;
   border-radius: var(--radius-sm, 4px);
@@ -501,4 +500,44 @@
 .agendaAddBtn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Ticking a line off. Sits before the text so the ticks line up down the
+   left edge and the covered/not read is one scan rather than one per row. */
+.agendaCheck {
+  flex: none;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--color-accent);
+}
+
+/* A covered line stays readable — it's still the agenda, and a struck-through
+   item you can't read is no use when someone asks what was said about it. */
+.agendaTextDone {
+  text-decoration: line-through;
+  color: var(--color-text-muted);
+}
+
+.agendaCount {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-accent);
+  margin-left: auto;
+}
+
+.agendaClearBtn {
+  padding: 0.15rem 0.5rem;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.agendaClearBtn:hover {
+  color: var(--color-text);
+  border-color: var(--color-accent);
 }

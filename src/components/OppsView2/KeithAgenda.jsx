@@ -6,10 +6,16 @@
 // derived from the opps.
 //
 // Lives in user settings, so it syncs across devices and survives a reload. The
-// three starting lines are a default, not a seed write: an untouched agenda
-// stores nothing, and only materializes on the first edit. That keeps an empty
-// agenda (every line deleted) distinguishable from one never opened —
+// starting lines are a default, not a seed write: an untouched agenda stores
+// nothing, and only materializes on the first edit. That keeps an empty agenda
+// (every line deleted) distinguishable from one never opened —
 // `keithAgenda: []` means empty, absent means show the defaults.
+//
+// Lines tick off as they're covered. The tick is stored with the line rather
+// than kept on screen, so a meeting picked up on another device — or after a
+// reload mid-call — still knows what has been dealt with. It stays ticked until
+// cleared: the agenda carries over between meetings, so deciding when a run is
+// finished is the user's call, not a timer's. "Clear ticks" resets the lot.
 
 import { useEffect, useRef, useState } from 'react';
 import styles from './OppsView2.module.css';
@@ -33,10 +39,12 @@ const newId = () => `ka_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 // falls back to its position.
 function readAgenda(settings) {
   const raw = settings?.keithAgenda;
-  if (!Array.isArray(raw)) return KEITH_AGENDA_DEFAULTS.map((text, i) => ({ id: `ka_default_${i}`, text }));
+  if (!Array.isArray(raw)) return KEITH_AGENDA_DEFAULTS.map((text, i) => ({ id: `ka_default_${i}`, text, done: false }));
   return raw
     .filter(it => it && typeof it === 'object' && typeof it.text === 'string')
-    .map((it, i) => ({ id: it.id || `ka_row_${i}`, text: it.text }));
+    // `done` reads strictly: a line saved before ticks existed has no such
+    // field, and anything other than true is not ticked.
+    .map((it, i) => ({ id: it.id || `ka_row_${i}`, text: it.text, done: it.done === true }));
 }
 
 export function KeithAgenda({ settings, updateSettings }) {
@@ -60,7 +68,10 @@ export function KeithAgenda({ settings, updateSettings }) {
     }
   }, [editingId]);
 
-  const commit = (next) => updateSettings({ keithAgenda: next.map(({ id, text }) => ({ id, text })) });
+  const commit = (next) => updateSettings({
+    keithAgenda: next.map(({ id, text, done }) => ({ id, text, done: done === true })),
+  });
+  const doneCount = items.filter(it => it.done).length;
 
   function startEdit(item) {
     focusRef.current = item.id;
@@ -97,6 +108,14 @@ export function KeithAgenda({ settings, updateSettings }) {
     commit(items.filter(it => it.id !== id));
   }
 
+  function toggleDone(id) {
+    commit(items.map(it => (it.id === id ? { ...it, done: !it.done } : it)));
+  }
+
+  function clearDone() {
+    commit(items.map(it => ({ ...it, done: false })));
+  }
+
   // Swap a line with its neighbour. The order in the array is the order on the
   // page and the order stored, so there is nothing else to keep in step — and
   // reordering the untouched defaults materializes them, same as any edit.
@@ -113,7 +132,15 @@ export function KeithAgenda({ settings, updateSettings }) {
     <div className={styles.agendaWrap}>
       <div className={styles.agendaHead}>
         <span className={styles.agendaTitle}>Agenda</span>
-        <span className={styles.agendaHint}>click a line to edit it</span>
+        <span className={styles.agendaHint}>tick a line off as you cover it · click its text to edit</span>
+        {doneCount > 0 && (
+          <>
+            <span className={styles.agendaCount}>{doneCount} of {items.length} covered</span>
+            <button type="button" className={styles.agendaClearBtn} onClick={clearDone}>
+              Clear ticks
+            </button>
+          </>
+        )}
       </div>
       {items.length > 0 && (
         <ol className={styles.agendaList}>
@@ -134,9 +161,17 @@ export function KeithAgenda({ settings, updateSettings }) {
                   />
                 ) : (
                   <>
+                    <input
+                      type="checkbox"
+                      className={styles.agendaCheck}
+                      checked={item.done}
+                      onChange={() => toggleDone(item.id)}
+                      title={item.done ? `Mark "${item.text}" not covered` : `Mark "${item.text}" covered`}
+                      aria-label={`Covered: ${item.text}`}
+                    />
                     <button
                       type="button"
-                      className={styles.agendaText}
+                      className={item.done ? `${styles.agendaText} ${styles.agendaTextDone}` : styles.agendaText}
                       onClick={() => startEdit(item)}
                       title="Edit this line"
                     >
