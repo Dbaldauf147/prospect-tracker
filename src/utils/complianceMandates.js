@@ -543,15 +543,17 @@ function occurrencesAfter(deadline, cycle, horizonISO) {
 }
 
 // Every filing date for a category — the published deadline plus the
-// recurrences that follow it — as { date, count, projected }. The horizon runs
-// `horizonYears` past the later of the published deadline and today, so a
-// portfolio whose deadlines have all passed still shows the years of filing
-// ahead of it rather than an empty lane.
+// recurrences that follow it — as { date, count, projected }. Projections stop
+// `horizonYears` from today, so the chart covers one fixed window whatever the
+// deadlines are: measuring the horizon from each deadline instead let a single
+// far-off published date trail a decade of hollow dots behind it. Published
+// deadlines are always kept — they're real dates, horizon or not.
 export function deadlinesWithRecurrence(results, category, {
   todayISO, horizonYears = 5, ordinances = MASTER_ORDINANCES,
 } = {}) {
   const published = new Map();
   const projected = new Map();
+  const horizon = todayISO ? isoPlusYears(todayISO, horizonYears) : null;
   for (const r of results) {
     if (!isEligible(r, category)) continue;
     const deadline = r[category].deadline;
@@ -559,7 +561,6 @@ export function deadlinesWithRecurrence(results, category, {
     published.set(deadline, (published.get(deadline) || 0) + 1);
     if (!todayISO) continue;
     const cycle = parseCycle(getMandates(r.govId, ordinances)?.[category]?.complianceCycle, DEFAULT_CYCLE_YEARS[category]);
-    const horizon = isoPlusYears(deadline > todayISO ? deadline : todayISO, horizonYears);
     for (const iso of occurrencesAfter(deadline, cycle, horizon)) {
       projected.set(iso, (projected.get(iso) || 0) + 1);
     }
