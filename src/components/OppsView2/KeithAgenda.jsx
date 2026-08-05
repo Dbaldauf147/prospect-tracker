@@ -97,6 +97,18 @@ export function KeithAgenda({ settings, updateSettings }) {
     commit(items.filter(it => it.id !== id));
   }
 
+  // Swap a line with its neighbour. The order in the array is the order on the
+  // page and the order stored, so there is nothing else to keep in step — and
+  // reordering the untouched defaults materializes them, same as any edit.
+  function move(id, dir) {
+    const i = items.findIndex(it => it.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= items.length) return;
+    const next = items.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    commit(next);
+  }
+
   return (
     <div className={styles.agendaWrap}>
       <div className={styles.agendaHead}>
@@ -105,7 +117,7 @@ export function KeithAgenda({ settings, updateSettings }) {
       </div>
       {items.length > 0 && (
         <ol className={styles.agendaList}>
-          {items.map(item => (
+          {items.map((item, i) => (
             <li key={item.id} className={styles.agendaItem}>
               <div className={styles.agendaRow}>
                 {editingId === item.id ? (
@@ -129,6 +141,26 @@ export function KeithAgenda({ settings, updateSettings }) {
                       title="Edit this line"
                     >
                       {item.text}
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.agendaMove}
+                      onClick={() => move(item.id, -1)}
+                      disabled={i === 0}
+                      title={`Move "${item.text}" up`}
+                      aria-label={`Move ${item.text} up`}
+                    >
+                      ▲
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.agendaMove}
+                      onClick={() => move(item.id, 1)}
+                      disabled={i === items.length - 1}
+                      title={`Move "${item.text}" down`}
+                      aria-label={`Move ${item.text} down`}
+                    >
+                      ▼
                     </button>
                     <button
                       type="button"

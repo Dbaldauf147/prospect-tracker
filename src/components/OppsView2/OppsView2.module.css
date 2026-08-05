@@ -402,8 +402,46 @@
   opacity: 0;
 }
 
+/* Reorder controls. Same hidden-until-hover treatment as the remove button, so
+   a settled agenda reads as a plain numbered list and the controls appear on
+   the line you're pointing at. Arrows rather than dragging: the line itself is
+   already a click target for editing, and a drag would have to be told apart
+   from that click. */
+.agendaMove {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  font-size: 0.55rem;
+  line-height: 1;
+  font-family: inherit;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+
 .agendaRow:hover .agendaRemove,
-.agendaRemove:focus-visible { opacity: 1; }
+.agendaRow:hover .agendaMove,
+.agendaRemove:focus-visible,
+.agendaMove:focus-visible { opacity: 1; }
+
+/* A disabled arrow stays in place rather than vanishing, so the row's controls
+   don't shift under the pointer between the first line and the rest. */
+.agendaMove:disabled {
+  cursor: default;
+  color: var(--color-border, #E2E8F0);
+}
+
+.agendaMove:not(:disabled):hover {
+  color: var(--color-text);
+  background: var(--color-bg-hover, #F1F5F9);
+}
 
 .agendaRemove:hover {
   color: var(--color-danger, #b91c1c);
