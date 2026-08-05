@@ -75,7 +75,7 @@ export function FollowUpOnSaleCell({ deal, onSave }) {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: '0.45rem', paddingTop: '0.45rem', borderTop: '1px solid #E2E8F0' }}>
               <span style={{ flex: 1, fontSize: '0.62rem', color: '#64748B' }}>No follow-up needed?</span>
-              <button type="button" onClick={saveNA} title="Mark this deal as not applicable — no post-sale follow-up needed" style={{ padding: '3px 10px', borderRadius: 4, border: '1px solid #CBD5E1', background: '#F8FAFC', color: '#334155', fontSize: '0.66rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}>N/A</button>
+              <button type="button" onClick={saveNA} title="Mark this deal as not applicable: no post-sale follow-up needed" style={{ padding: '3px 10px', borderRadius: 4, border: '1px solid #CBD5E1', background: '#F8FAFC', color: '#334155', fontSize: '0.66rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}>N/A</button>
             </div>
           </div>
         </>,

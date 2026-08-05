@@ -71,7 +71,7 @@ const IGNORE_HEADER_PATTERNS = [
 // the Maps-To dropdown in the mapping preview modal and the default
 // row schema in the parser.
 const FIELD_OPTIONS = [
-  { key: '',                         label: '— Ignore this column —' },
+  { key: '',                         label: '(Ignore this column)' },
   { key: 'email',                    label: 'Email (required)' },
   { key: 'firstname',                label: 'First Name' },
   { key: 'lastname',                 label: 'Last Name' },
@@ -85,10 +85,10 @@ const FIELD_OPTIONS = [
   { key: 'state',                    label: 'State' },
   { key: 'country',                  label: 'Country' },
   { key: 'dans_tags',                label: "Dan's Tags" },
-  { key: '_upload_website',          label: 'Table View — Website' },
-  { key: '_upload_zoomCompanyId',    label: 'Table View — Zoom Company ID' },
-  { key: '_upload_zoomCompanyName',  label: 'Table View — Zoom Company Name' },
-  { key: '_upload_emailDomain',      label: 'Table View — Email Domain' },
+  { key: '_upload_website',          label: 'Table View: Website' },
+  { key: '_upload_zoomCompanyId',    label: 'Table View: Zoom Company ID' },
+  { key: '_upload_zoomCompanyName',  label: 'Table View: Zoom Company Name' },
+  { key: '_upload_emailDomain',      label: 'Table View: Email Domain' },
 ];
 
 // Auto-map a set of file headers to our internal destination fields.
@@ -1080,7 +1080,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
     const email = manualEmail.trim().toLowerCase();
     const { firstname, lastname, jobtitle, company } = manualEntry;
     if (!firstname.trim() && !lastname.trim()) { setManualMsg('Add a first or last name'); return; }
-    if (!email) { setManualMsg('No email yet — type one, or add a company whose pattern is on record'); return; }
+    if (!email) { setManualMsg('No email yet: type one, or add a company whose pattern is on record'); return; }
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { setManualMsg('That email doesn’t look valid'); return; }
     if (email.endsWith('@se.com')) { setManualMsg('@se.com addresses are skipped'); return; }
     if (rows.some(r => r.email === email)) { setManualMsg('That email is already in the list'); return; }
@@ -1097,7 +1097,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
     setManualEntry({ firstname: '', lastname: '', jobtitle: '', company: '' });
     setManualEmail('');
     setManualEmailTouched(false);
-    setManualMsg('Added — see it at the top of the list below');
+    setManualMsg('Added: see it at the top of the list below');
   }
 
   function handleDrop(e) {
@@ -2070,7 +2070,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
       <div className={styles.header}>
         <div>
           <h2 className={styles.title}>Bulk Add Contacts</h2>
-          <div className={styles.subtitle}>Drop emails from Outlook here — extract addresses, edit details, push to HubSpot in one go.</div>
+          <div className={styles.subtitle}>Drop emails from Outlook here: extract addresses, edit details, push to HubSpot in one go.</div>
         </div>
         <div className={styles.headerActions}>
           <div style={{ position: 'relative' }}>
@@ -2251,7 +2251,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
               {prospectSuggestionRows.map(({ prospect, cells }) => (
                 <Fragment key={prospect.id}>
                   <div style={{ color: '#166534', fontWeight: 600, alignSelf: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={prospect.company || ''}>
-                    {prospect.company || '—'}
+                    {prospect.company || '-'}
                   </div>
                   {PROSPECT_BACKFILL_FIELDS.map(f => {
                     const cell = cells[f.key];
@@ -2278,7 +2278,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                           </div>
                         );
                       }
-                      return <div key={f.key} style={{ color: '#CBD5E1', alignSelf: 'center' }}>—</div>;
+                      return <div key={f.key} style={{ color: '#CBD5E1', alignSelf: 'center' }}>-</div>;
                     }
                     const { sugg, dismissed, dismissKey } = cell;
                     const origin = sugg.origin;
@@ -2370,7 +2370,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                 <span style={{ fontSize: '0.7rem', color: '#94A3B8' }}>{showManualAdd ? '▾' : '▸'}</span>
                 Add a contact by name
                 <span style={{ fontWeight: 400, color: '#64748B' }}>
-                  — email is guessed from the company’s recorded pattern
+                 : email is guessed from the company’s recorded pattern
                 </span>
               </button>
               {showManualAdd && (<>
@@ -2393,7 +2393,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                   value={manualEmail}
                   onChange={e => { setManualEmail(e.target.value); setManualEmailTouched(true); if (manualMsg) setManualMsg(''); }}
                   onKeyDown={e => { if (e.key === 'Enter') addManualContact(); }}
-                  title={guessed ? 'Guessed from the company’s recorded email pattern — edit if it’s wrong' : 'Type the email, or add a company whose pattern is on record to auto-guess'}
+                  title={guessed ? 'Guessed from the company’s recorded email pattern: edit if it’s wrong' : 'Type the email, or add a company whose pattern is on record to auto-guess'}
                 />
                 <button type="button" className={styles.primaryBtn} onClick={addManualContact}
                   style={{ flex: '0 0 auto', whiteSpace: 'nowrap' }}>
@@ -2406,7 +2406,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                   : guessed
                     ? `Guessed “${manualEmail}” from ${manualEntry.company.trim()}’s recorded email pattern.`
                     : companyTyped && (manualEntry.firstname.trim() || manualEntry.lastname.trim()) && !manualEmail
-                      ? 'No email pattern on record for that company — type the email manually, or it’ll fill in once a pattern is known.'
+                      ? 'No email pattern on record for that company: type the email manually, or it’ll fill in once a pattern is known.'
                       : 'Type a name + company; if the company’s email pattern is on record, the address fills in automatically.'}
               </div>
               </>)}
@@ -2431,13 +2431,13 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
             }}
             title="Drag a sheet here, paste tab-separated rows (⌘V / Ctrl+V), or click and paste"
           >
-            No contacts yet. Drag a sheet, paste tab-separated rows (⌘V / Ctrl+V), or click and paste here — same column-mapping preview as the box above.
+            No contacts yet. Drag a sheet, paste tab-separated rows (⌘V / Ctrl+V), or click and paste here: same column-mapping preview as the box above.
           </div>
         ) : activeTab === 'contacts' && (
           <>
           {missingEmailCount > 0 && (
             <div style={{ margin: '0.75rem 0 0', padding: '0.5rem 0.7rem', background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#991B1B', borderRadius: 6, fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-              <strong>{missingEmailCount}</strong> contact{missingEmailCount === 1 ? '' : 's'} {missingEmailCount === 1 ? 'has' : 'have'} no email — no address could be estimated from the company’s pattern.
+              <strong>{missingEmailCount}</strong> contact{missingEmailCount === 1 ? '' : 's'} {missingEmailCount === 1 ? 'has' : 'have'} no email: no address could be estimated from the company’s pattern.
               Add an email in the <strong>Email</strong> column or remove {missingEmailCount === 1 ? 'it' : 'them'} before importing to HubSpot.
             </div>
           )}
@@ -2450,7 +2450,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                 onClick={addAll}
                 title={
                   missingEmailCount > 0
-                    ? `${missingEmailCount} contact${missingEmailCount === 1 ? '' : 's'} ${missingEmailCount === 1 ? 'has' : 'have'} no email — add or remove ${missingEmailCount === 1 ? 'it' : 'them'} first`
+                    ? `${missingEmailCount} contact${missingEmailCount === 1 ? '' : 's'} ${missingEmailCount === 1 ? 'has' : 'have'} no email: add or remove ${missingEmailCount === 1 ? 'it' : 'them'} first`
                     : newCount === 0 && updateCount === 0
                       ? 'Nothing to send'
                       : `Create ${newCount} new and fill missing fields on ${updateCount} existing contact${updateCount === 1 ? '' : 's'}`
@@ -2528,7 +2528,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                       disabled={sendDisabled}
                       title={sendDisabled
                         ? 'Every selected row is already in HubSpot with no missing fields to fill.'
-                        : `Push only the ${bulkSelected.size} ticked row${bulkSelected.size === 1 ? '' : 's'} — same create / fill-missing rules as the main Send button.`}
+                        : `Push only the ${bulkSelected.size} ticked row${bulkSelected.size === 1 ? '' : 's'}: same create / fill-missing rules as the main Send button.`}
                       style={{
                         padding: '0.3rem 0.7rem',
                         border: 'none', borderRadius: 6,
@@ -2554,12 +2554,12 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                         setQueuedContactIds(ids);
                         const skipped = picked.length - queueable.length;
                         const msg = added > 0
-                          ? `Added ${added} contact${added === 1 ? '' : 's'} to the Custom Email Campaign queue${skipped > 0 ? ` (skipped ${skipped} not yet in HubSpot — push them first, then queue)` : ''}.`
+                          ? `Added ${added} contact${added === 1 ? '' : 's'} to the Custom Email Campaign queue${skipped > 0 ? ` (skipped ${skipped} not yet in HubSpot: push them first, then queue)` : ''}.`
                           : `All ${queueable.length} picked contact${queueable.length === 1 ? ' was' : 's were'} already queued.`;
                         alert(msg);
                       }}
                       title={queueDisabled
-                        ? 'No selected rows are in HubSpot yet — push them with "Send selected to HubSpot" first, then queue them here.'
+                        ? 'No selected rows are in HubSpot yet: push them with "Send selected to HubSpot" first, then queue them here.'
                         : `Queue ${queueable.length} HubSpot-matched contact${queueable.length === 1 ? '' : 's'} for the Draft Emails → Custom Email Campaign card. ${picked.length - queueable.length > 0 ? `${picked.length - queueable.length} not-yet-imported row${picked.length - queueable.length === 1 ? '' : 's'} will be skipped.` : ''}`}
                       style={{
                         padding: '0.3rem 0.7rem',
@@ -2698,7 +2698,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                             {hasSuggestFilter && (
                               <button
                                 type="button"
-                                title={filterOn ? 'Showing only rows with a suggestion — click to show all' : 'Show only rows with a suggestion'}
+                                title={filterOn ? 'Showing only rows with a suggestion: click to show all' : 'Show only rows with a suggestion'}
                                 onClick={() => toggleColumnFilter(c.key)}
                                 style={{
                                   background: filterOn ? '#FEF3C7' : 'transparent',
@@ -2761,7 +2761,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                   const tvState = rowTableViewState(r);
                   const prospect = r._matchedProspectId ? prospects.find(p => p.id === r._matchedProspectId) : null;
                   const renderTv = (fieldKey) => {
-                    if (!tvState) return <span className={styles.metaText}>—</span>;
+                    if (!tvState) return <span className={styles.metaText}>-</span>;
                     const existing = tvState.has[fieldKey];
                     const pid = r._matchedProspectId;
                     const dismissKey = `${pid}::${fieldKey}`;
@@ -2938,16 +2938,16 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                               className={styles.cellInput}
                               type="email"
                               value={isPlaceholder ? '' : r.email}
-                              placeholder={missing ? 'No email — add one' : ''}
+                              placeholder={missing ? 'No email: add one' : ''}
                               onChange={e => {
                                 const v = e.target.value.trim().toLowerCase();
                                 if (v) updateRow(r.email, { email: v, _emailStatus: 'provided' });
                                 else updateRow(r.email, { email: placeholderEmailKey(r.firstname, r.lastname, effectiveRowCompany(r)), _emailStatus: 'missing' });
                               }}
                               title={estimated
-                                ? 'Estimated from the company’s recorded email pattern — edit if it’s wrong'
+                                ? 'Estimated from the company’s recorded email pattern: edit if it’s wrong'
                                 : missing
-                                  ? 'No address could be estimated — type one to import this contact to HubSpot'
+                                  ? 'No address could be estimated: type one to import this contact to HubSpot'
                                   : ''}
                               style={{
                                 background: estimated ? '#FFFBEB' : missing ? '#FEF2F2' : undefined,
@@ -3012,8 +3012,8 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                         // trust this match" — so the Tier badge that
                         // came from the matched prospect should hide
                         // alongside the dismissed pill.
-                        if (dismissedSuggestedCompanies.has(r.email)) return <span className={styles.metaText}>—</span>;
-                        if (!prospect) return <span className={styles.metaText}>—</span>;
+                        if (dismissedSuggestedCompanies.has(r.email)) return <span className={styles.metaText}>-</span>;
+                        if (!prospect) return <span className={styles.metaText}>-</span>;
                         const explicit = (prospect.tier || '').trim();
                         let t;
                         if (explicit === 'Tier 1' || explicit === 'Tier 2') {
@@ -3024,7 +3024,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                           // to Tier 3 the same way MyAccountsView does.
                           t = 'Tier 3';
                         } else {
-                          return <span className={styles.metaText}>—</span>;
+                          return <span className={styles.metaText}>-</span>;
                         }
                         const colors = t === 'Tier 1' ? { bg: '#DBEAFE', color: '#1E40AF' }
                           : t === 'Tier 2' ? { bg: '#FEF3C7', color: '#92400E' }
@@ -3042,8 +3042,8 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                         // prospect on the Lists page. If the user
                         // dismissed the company suggestion, the badge
                         // hides too — the match is no longer trusted.
-                        if (dismissedSuggestedCompanies.has(r.email)) return <span className={styles.metaText}>—</span>;
-                        if (!prospect) return <span className={styles.metaText}>—</span>;
+                        if (dismissedSuggestedCompanies.has(r.email)) return <span className={styles.metaText}>-</span>;
+                        if (!prospect) return <span className={styles.metaText}>-</span>;
                         const cdm = String(prospect.cdm || '').trim();
                         const reps = otherRepsByProspect.get(prospect.id) || [];
                         // Dedup reps by name and roll their target
@@ -3055,7 +3055,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                           if (!byRep.get(key).companies.includes(rep.company)) byRep.get(key).companies.push(rep.company);
                         }
                         const dedupedReps = [...byRep.values()];
-                        if (!cdm && dedupedReps.length === 0) return <span className={styles.metaText}>—</span>;
+                        if (!cdm && dedupedReps.length === 0) return <span className={styles.metaText}>-</span>;
                         return (
                           <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 3, alignItems: 'center' }}>
                             {cdm && (
@@ -3093,7 +3093,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                       {bulkColVisible.has('suggestedCompany') && <td className={styles.suggestCell}>
                         {(() => {
                           const sc = live.suggestedCompany;
-                          if (!sc) return <span className={styles.metaText}>—</span>;
+                          if (!sc) return <span className={styles.metaText}>-</span>;
                           if (r.company === sc) {
                             return <span style={{ fontSize: '0.7rem', color: '#64748B', fontStyle: 'italic' }}>applied</span>;
                           }
@@ -3118,7 +3118,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                           })[live.suggestSource] || 'matched';
                           return (
                             <span
-                              title={`${sc} — ${sourceLabel}`}
+                              title={`${sc} · ${sourceLabel}`}
                               style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 6px 1px 8px', background: '#FEF9C3', border: '1px solid #FACC15', borderRadius: 999, fontSize: '0.68rem', fontWeight: 600, color: '#854D0E', maxWidth: '100%' }}
                             >
                               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{sc}</span>
@@ -3180,7 +3180,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
             <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--color-border)' }}>
               <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>Bulk Edit {bulkSelected.size} contact{bulkSelected.size === 1 ? '' : 's'}</div>
               <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '0.25rem' }}>
-                Updates the selected rows in the grid only — push them to HubSpot via Send to HubSpot afterwards.
+                Updates the selected rows in the grid only: push them to HubSpot via Send to HubSpot afterwards.
               </div>
             </div>
             <div style={{ padding: '0.85rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
@@ -3265,11 +3265,11 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
         };
         const cancel = () => setPendingUpload(null);
         const confirmImport = () => {
-          if (!canImport) { alert('Map a column to Email — or map Name and Company so addresses can be estimated.'); return; }
+          if (!canImport) { alert('Map a column to Email: or map Name and Company so addresses can be estimated.'); return; }
           if (hasDuplicate) { alert('Each field can only be mapped to one column. Set duplicates to Ignore first.'); return; }
           const parsed = applyMappingToRows(rawRows, mapping);
           if (parsed.length === 0) {
-            alert('No rows had an email or a name — nothing to import.');
+            alert('No rows had an email or a name: nothing to import.');
             return;
           }
           mergeNewRows(parsed);
@@ -3281,21 +3281,21 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
               <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--color-border)' }}>
                 <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>Review column mapping</div>
                 <div style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '0.2rem' }}>
-                  <strong>{rawRows.length}</strong> row{rawRows.length === 1 ? '' : 's'} from <em>{fileName}</em> — confirm each column maps to the right field, then import.
+                  <strong>{rawRows.length}</strong> row{rawRows.length === 1 ? '' : 's'} from <em>{fileName}</em>: confirm each column maps to the right field, then import.
                 </div>
                 {!canImport && (
                   <div style={{ marginTop: '0.5rem', padding: '0.4rem 0.6rem', background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#991B1B', borderRadius: 6, fontSize: '0.75rem' }}>
-                    Map a column to <strong>Email</strong> — or map <strong>Name</strong> and <strong>Company</strong> so addresses can be estimated.
+                    Map a column to <strong>Email</strong>: or map <strong>Name</strong> and <strong>Company</strong> so addresses can be estimated.
                   </div>
                 )}
                 {canEstimate && (
                   <div style={{ marginTop: '0.5rem', padding: '0.4rem 0.6rem', background: '#EFF6FF', border: '1px solid #93C5FD', color: '#1E40AF', borderRadius: 6, fontSize: '0.75rem' }}>
-                    No <strong>Email</strong> column — addresses will be estimated from each company’s recorded pattern. Contacts we can’t estimate are flagged in the grid and blocked from the HubSpot import until you add an email.
+                    No <strong>Email</strong> column: addresses will be estimated from each company’s recorded pattern. Contacts we can’t estimate are flagged in the grid and blocked from the HubSpot import until you add an email.
                   </div>
                 )}
                 {hasDuplicate && (
                   <div style={{ marginTop: '0.5rem', padding: '0.4rem 0.6rem', background: '#FFFBEB', border: '1px solid #FCD34D', color: '#854D0E', borderRadius: 6, fontSize: '0.75rem' }}>
-                    Some fields are mapped by more than one column. Only one mapping can win — set duplicates to "Ignore".
+                    Some fields are mapped by more than one column. Only one mapping can win: set duplicates to "Ignore".
                   </div>
                 )}
               </div>

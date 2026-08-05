@@ -127,7 +127,7 @@ function ServiceSMEInput({ value, onSave, label }) {
     <input
       type="text"
       value={draft}
-      placeholder="—"
+      placeholder="-"
       aria-label={`SME for ${label}`}
       title={value || 'Schneider SME for this service'}
       onClick={(e) => e.stopPropagation()}
@@ -434,7 +434,7 @@ function needsUsdFlag(row) {
   const usd = String(row['USD?'] ?? '')
     .replace(ZERO_WIDTH_RE, '')
     .replace(/[\s$,]/g, '')
-    .replace(/[-–—−]/g, '');
+    .replace(/[-–-−]/g, '');
   return usd === '';
 }
 
@@ -459,7 +459,7 @@ function needsBudgetTimelineFlag(row) {
   if (!/\bbudgets?\b/.test(scope)) return false;
   const timeline = String(rowValueByHeader(row, 'timeline?') ?? '')
     .replace(ZERO_WIDTH_RE, '')
-    .replace(/[\s-–—−]/g, '');
+    .replace(/[\s-–-−]/g, '');
   return timeline === '';
 }
 
@@ -1196,7 +1196,7 @@ function ComputedCell({ value }) {
       }}
       title="Computed value"
     >
-      {isEmpty ? '—' : String(value)}
+      {isEmpty ? '-' : String(value)}
     </span>
   );
 }
@@ -1419,12 +1419,12 @@ function PricingOptionSnapshotView({ snapshot }) {
             <tbody>
               {rows.filter(r => r.fee || r.feeSchedule || r.type).map((r, idx) => (
                 <tr key={idx} style={{ borderTop: '1px solid var(--color-border-light)' }}>
-                  <td style={{ padding: '3px 6px' }}>{r.feeSchedule || '—'}</td>
-                  <td style={{ padding: '3px 6px' }}>{r.type || '—'}</td>
-                  <td style={{ padding: '3px 6px', textAlign: 'right' }}>{r.fee || '—'}</td>
-                  <td style={{ padding: '3px 6px' }}>{r.unit || '—'}</td>
-                  <td style={{ padding: '3px 6px', textAlign: 'right' }}>{r.unitCount || '—'}</td>
-                  <td style={{ padding: '3px 6px', textAlign: 'right' }}>{r.startMonth || '—'}</td>
+                  <td style={{ padding: '3px 6px' }}>{r.feeSchedule || '-'}</td>
+                  <td style={{ padding: '3px 6px' }}>{r.type || '-'}</td>
+                  <td style={{ padding: '3px 6px', textAlign: 'right' }}>{r.fee || '-'}</td>
+                  <td style={{ padding: '3px 6px' }}>{r.unit || '-'}</td>
+                  <td style={{ padding: '3px 6px', textAlign: 'right' }}>{r.unitCount || '-'}</td>
+                  <td style={{ padding: '3px 6px', textAlign: 'right' }}>{r.startMonth || '-'}</td>
                 </tr>
               ))}
             </tbody>
@@ -1519,7 +1519,7 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
   // click target for the editor popup; when a URL or snapshot is set
   // the value is styled as a link for affordance.
   const hasLink = !!url || !!snapshot;
-  const display = value || (url ? '—' : (snapshot ? fmtMoneyWhole(snapshot.year1Total || 0) || '—' : '—'));
+  const display = value || (url ? '-' : (snapshot ? fmtMoneyWhole(snapshot.year1Total || 0) || '-' : '-'));
   return (
     <>
       <span
@@ -1595,7 +1595,7 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
                 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
                     <span>BFO Opportunity Name</span>
-                    <strong style={{ color: '#1E293B', textAlign: 'right', wordBreak: 'break-word' }}>{nm || '—'}</strong>
+                    <strong style={{ color: '#1E293B', textAlign: 'right', wordBreak: 'break-word' }}>{nm || '-'}</strong>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
                     <span>BFO Address</span>
@@ -1608,7 +1608,7 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
                         style={{ color: '#2563eb', textDecoration: 'underline', textAlign: 'right', wordBreak: 'break-all' }}
                       >Open in BFO ↗</a>
                     ) : (
-                      <strong style={{ color: '#1E293B', textAlign: 'right', wordBreak: 'break-word' }}>{addr || '—'}</strong>
+                      <strong style={{ color: '#1E293B', textAlign: 'right', wordBreak: 'break-word' }}>{addr || '-'}</strong>
                     )}
                   </div>
                 </div>
@@ -1623,7 +1623,7 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
                   <span>Saved SIA Option</span>
-                  <strong style={{ color: '#1E293B', textAlign: 'right' }}>{snapStats.name || '—'}</strong>
+                  <strong style={{ color: '#1E293B', textAlign: 'right' }}>{snapStats.name || '-'}</strong>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
                   <span>Setup Fees <span style={{ color: '#94A3B8' }}>(Setup + One Time, Yr 1)</span></span>
@@ -1716,7 +1716,7 @@ function PricingOptionCell({ value, onClear }) {
         : `Linked Pricing Option: ${value}`}
     >
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {isEmpty ? '—' : value}
+        {isEmpty ? '-' : value}
       </span>
       {!isEmpty && (
         <button
@@ -1814,7 +1814,7 @@ function CellHoverPopover({ anchorRef, value, enabled }) {
 function NextStepsCell({ value, onOpen }) {
   const ref = useRef(null);
   const isEmpty = value === '' || value == null;
-  const text = isEmpty ? '—' : String(value);
+  const text = isEmpty ? '-' : String(value);
   return (
     <>
       <span
@@ -1953,7 +1953,7 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel, ren
 
   if (!editing) {
     const isEmpty = value === '' || value == null;
-    const text = isEmpty ? '—' : String(value);
+    const text = isEmpty ? '-' : String(value);
     const enterEdit = () => { setEditing(true); setOpen(dropdownAvailable); };
     // Let callers (e.g. the Account column) render a custom non-editing
     // display — such as a clickable company link — while keeping all of
@@ -2221,7 +2221,7 @@ function BfoCompanyNameCell({ account, prospects, updateProspect }) {
         style={{ color: 'var(--color-text-muted)' }}
         title={matched ? undefined : 'Add this company on the Table View to set its BFO Company Name'}
       >
-        {String(matched?.bfoCompanyName || '').trim() || '—'}
+        {String(matched?.bfoCompanyName || '').trim() || '-'}
       </span>
     );
   }
@@ -2591,7 +2591,7 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
           ? (accountSelected ? 'Click to tag contacts' : 'Pick an Account first')
           : 'Click to view / copy contact details'}
       >
-        {isEmpty ? '—' : displayString}
+        {isEmpty ? '-' : displayString}
       </span>
       {/* The + Contacts pill only shows when the column is empty — once
           contacts are tagged, the user clicks the email list itself to
@@ -2651,7 +2651,7 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
                       textUnderlineOffset: '2px',
                     }}
                   >{matched.company || account}</button>
-                ) : (matched?.company || account || '—')}
+                ) : (matched?.company || account || '-')}
               </div>
             </div>
             {!isEmpty && (
@@ -2855,7 +2855,7 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
                       {opt.name}
                       {opt.source === 'pe' && (
                         <span
-                          title={`PE Owner — ${opt.company}`}
+                          title={`PE Owner: ${opt.company}`}
                           style={{
                             marginLeft: 6, padding: '0 5px', fontSize: '0.62rem', fontWeight: 700,
                             color: '#6D28D9', background: '#F3E8FF', border: '1px solid #DDD6FE',
@@ -3176,7 +3176,7 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
                     ...(needsHqRegion ? { border: '1px solid #dc2626' } : null),
                   }}
                 >
-                  <option value="">— Select an HQ Region —</option>
+                  <option value="">(Select an HQ Region)</option>
                   {HQ_REGION_OPTIONS.map(r => (
                     <option key={r} value={r}>{r}</option>
                   ))}
@@ -3195,8 +3195,8 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
                 borderRadius: 4, display: 'flex', flexDirection: 'column', gap: 4,
                 fontSize: '0.74rem', color: 'var(--color-text)',
               }}>
-                <div><span style={{ color: 'var(--color-text-muted)' }}>CDM:</span>{' '}<strong>{cdm || '—'}</strong></div>
-                <div><span style={{ color: 'var(--color-text-muted)' }}>Tier:</span>{' '}<strong>{tier || '—'}</strong></div>
+                <div><span style={{ color: 'var(--color-text-muted)' }}>CDM:</span>{' '}<strong>{cdm || '-'}</strong></div>
+                <div><span style={{ color: 'var(--color-text-muted)' }}>Tier:</span>{' '}<strong>{tier || '-'}</strong></div>
                 <div>
                   <span style={{ color: 'var(--color-text-muted)' }}>Frameworks:</span>{' '}
                   <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4, verticalAlign: 'top' }}>
@@ -3236,7 +3236,7 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
               onChange={(e) => setSource(e.target.value)}
               style={fieldStyle}
             >
-              <option value="">— Select a Source —</option>
+              <option value="">(Select a Source)</option>
               {sourceOptions.map(o => (
                 <option key={o} value={o}>{o}</option>
               ))}
@@ -3250,7 +3250,7 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
               onChange={(e) => { setTypeTouched(true); setTypeInput(e.target.value); }}
               style={fieldStyle}
             >
-              <option value="">— Select a Type —</option>
+              <option value="">(Select a Type)</option>
               {/* Keep a saved non-standard type selectable so reviewing it
                   doesn't silently blank the dropdown. */}
               {type && !TYPES.includes(type) && <option value={type}>{type}</option>}
@@ -3465,7 +3465,7 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, 
               onChange={(e) => handleCompetitionChange(e.target.value)}
               style={inputStyle}
             >
-              <option value="">— Select —</option>
+              <option value="">(Select)</option>
               {competitionOptions.map(o => (
                 <option key={o} value={o}>{o}</option>
               ))}
@@ -3478,7 +3478,7 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, 
               onChange={(e) => setReason(e.target.value)}
               style={inputStyle}
             >
-              <option value="">— Select a reason —</option>
+              <option value="">(Select a reason)</option>
               {filteredReasonOptions.map(o => (
                 <option key={o} value={o}>{o}</option>
               ))}
@@ -3598,7 +3598,7 @@ function SoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, onC
           <div>
             <label style={labelStyle}>Close Date</label>
             <div style={{ fontSize: '0.8rem', color: 'var(--color-text)' }}>
-              {formatDateDisplay(opp?.['Close Date']) || '—'}
+              {formatDateDisplay(opp?.['Close Date']) || '-'}
               <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', marginLeft: 6 }}>
                 (set to the status-change date)
               </span>
@@ -3611,7 +3611,7 @@ function SoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, onC
               onChange={(e) => setReason(e.target.value)}
               style={inputStyle}
             >
-              <option value="">— Select a reason —</option>
+              <option value="">(Select a reason)</option>
               {reasonOptions.map(o => (
                 <option key={o} value={o}>{o}</option>
               ))}
@@ -3635,7 +3635,7 @@ function SoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, onC
               onChange={(e) => setCompetition(e.target.value)}
               style={inputStyle}
             >
-              <option value="">— Select —</option>
+              <option value="">(Select)</option>
               {competitionOptions.map(o => (
                 <option key={o} value={o}>{o}</option>
               ))}
@@ -3911,7 +3911,7 @@ function QuotedFollowUpModal({ opp, chanceOptions, columnLinks, listRegistry, on
                 onChange={(e) => setUsd(e.target.value)}
                 style={inputStyle}
               >
-                <option value="">— Select —</option>
+                <option value="">(Select)</option>
                 {((!usd || usdOptions.includes(usd)) ? usdOptions : [usd, ...usdOptions]).map(o => (
                   <option key={o} value={o}>{o}</option>
                 ))}
@@ -3933,7 +3933,7 @@ function QuotedFollowUpModal({ opp, chanceOptions, columnLinks, listRegistry, on
               onChange={(e) => setChance(e.target.value)}
               style={inputStyle}
             >
-              <option value="">— Select —</option>
+              <option value="">(Select)</option>
               {chanceOptions.map(o => (
                 <option key={o} value={o}>{o}</option>
               ))}
@@ -4067,7 +4067,7 @@ function AgreementSentFollowUpModal({
           onChange={(e) => setVal(e.target.value)}
           style={inputStyle}
         >
-          <option value="">— Select —</option>
+          <option value="">(Select)</option>
           {display.map(o => <option key={o} value={o}>{o}</option>)}
         </select>
       );
@@ -4194,9 +4194,9 @@ function AgreementSentFollowUpModal({
               background: 'var(--color-bg)', color: 'var(--color-text-muted)',
               cursor: 'default',
             }}>
-              {pricingOptionName || '—'}
+              {pricingOptionName || '-'}
             </div>
-            <div style={hintStyle}>Read-only — linked from the Pricing tab.</div>
+            <div style={hintStyle}>Read-only: linked from the Pricing tab.</div>
           </div>
         </div>
 
@@ -4372,7 +4372,7 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
       >
         <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)' }}>
           <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
-            Update Status{opp?.['Account'] ? <> — {opp['Account']}</> : null}
+            Update Status{opp?.['Account'] ? <>: {opp['Account']}</> : null}
           </div>
         </div>
 
@@ -4386,7 +4386,7 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
                 onChange={(e) => setStatus(e.target.value)}
                 style={inputStyle}
               >
-                <option value="">— Select —</option>
+                <option value="">(Select)</option>
                 {statusOptions.map(o => (
                   <option key={o} value={o}>{o}</option>
                 ))}
@@ -4409,7 +4409,7 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
                 type="text"
                 value={salesPartner}
                 onChange={(e) => setSalesPartner(e.target.value)}
-                placeholder="—"
+                placeholder="-"
                 style={inputStyle}
               />
             </div>
@@ -4547,7 +4547,7 @@ export function OppInfoModal({
   // shows, so the "Show N hidden" toggle reflects what's collapsed here.
   const hiddenCount = orderedFields.filter(h => hiddenFields.has(h)).length;
   const formatValue = (key, raw) => {
-    if (raw == null || raw === '') return '—';
+    if (raw == null || raw === '') return '-';
     if (DATE_COLUMNS.has(key)) return formatDateDisplay(raw);
     return String(raw);
   };
@@ -4558,7 +4558,7 @@ export function OppInfoModal({
     if (h === 'Call In' || h === 'Last Spoke') {
       return (
         <span style={{ color: 'var(--color-text-muted)' }}>
-          {value == null || value === '' ? '—' : String(value)}
+          {value == null || value === '' ? '-' : String(value)}
         </span>
       );
     }
@@ -4606,7 +4606,7 @@ export function OppInfoModal({
               currentOppId={opp._id}
               extraGroups={extraGroups}
               extraGroupsLabel="Add from Pricing Option"
-              extraGroupsPlaceholder="— pick an option —"
+              extraGroupsPlaceholder="(pick an option)"
               nowrap
               placeholder="AEM"
             />
@@ -4619,7 +4619,7 @@ export function OppInfoModal({
             options={opts}
             extraGroups={extraGroups}
             extraGroupsLabel="Add from Pricing Option"
-            extraGroupsPlaceholder="— pick an option —"
+            extraGroupsPlaceholder="(pick an option)"
             nowrap={h === 'Scope'}
             placeholder={h === 'Scope' ? 'AEM' : undefined}
           />
@@ -4965,7 +4965,7 @@ function MassEditBar({ selectedCount, headers, columnLinks, listRegistry, onAppl
             background: '#fff', color: 'var(--color-text)',
           }}
         >
-          <option value="">— pick a value —</option>
+          <option value="">(pick a value)</option>
           {(listOptions || []).map(o => (
             <option key={o} value={o}>{o}</option>
           ))}
@@ -5101,7 +5101,7 @@ function EmailTableModal({ records, onClose, signature }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
     } else {
-      alert('Could not copy automatically — select the table below and copy with Ctrl/Cmd+C.');
+      alert('Could not copy automatically: select the table below and copy with Ctrl/Cmd+C.');
     }
   }, [html]);
 
@@ -5147,7 +5147,7 @@ function EmailTableModal({ records, onClose, signature }) {
               type="button"
               onClick={createDraft}
               disabled={orderedKeys.length === 0}
-              title='Download an Outlook draft (.eml) — subject "Small Deal Size Help", starting "Keith," with your signature. Double-click the file to open it in Outlook.'
+              title='Download an Outlook draft (.eml): subject "Small Deal Size Help", starting "Keith," with your signature. Double-click the file to open it in Outlook.'
               style={{
                 padding: '0.4rem 0.9rem', background: orderedKeys.length === 0 ? '#94A3B8' : '#0F6CBD',
                 border: `1px solid ${orderedKeys.length === 0 ? '#94A3B8' : '#0F6CBD'}`, borderRadius: 4,
@@ -5587,7 +5587,7 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
                             onChange={(e) => setMapping(prev => ({ ...prev, [h]: e.target.value }))}
                             style={{ width: '100%', fontFamily: 'inherit', fontSize: '0.74rem', padding: '2px 4px' }}
                           >
-                            <option value="">— Skip this column —</option>
+                            <option value="">(Skip this column)</option>
                             {targetOptions.map(t => (
                               <option key={t} value={t}>{t}</option>
                             ))}
@@ -5616,7 +5616,7 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
                   {mismatchCount > 0 && (
                     <div style={{ flex: '1 1 220px', padding: '0.5rem 0.75rem', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#991B1B' }}>⚠ {mismatchCount} account name mismatch{mismatchCount === 1 ? '' : 'es'}</div>
-                      <div style={{ fontSize: '0.7rem', color: '#7F1D1D', marginTop: 2 }}>BFO Link matched an existing row but the Account differs — check column alignment or remap the names.</div>
+                      <div style={{ fontSize: '0.7rem', color: '#7F1D1D', marginTop: 2 }}>BFO Link matched an existing row but the Account differs: check column alignment or remap the names.</div>
                     </div>
                   )}
                 </div>
@@ -5647,7 +5647,7 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem', gap: '0.5rem' }}>
                   <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#0f172a' }}>
-                    Skipped rows — source line{analysis.skipped.length === 1 ? '' : 's'} {analysis.skipped.map(s => s.lineNo).join(', ')}
+                    Skipped rows: source line{analysis.skipped.length === 1 ? '' : 's'} {analysis.skipped.map(s => s.lineNo).join(', ')}
                   </div>
                   <button
                     type="button"
@@ -5682,7 +5682,7 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
                                   <div><strong>Paste:</strong> {s.pasteAccount || <em style={{ color: '#94A3B8' }}>(blank)</em>}</div>
                                   <div><strong>Existing:</strong> {s.existingAccount || <em style={{ color: '#94A3B8' }}>(blank)</em>}</div>
                                 </>
-                              ) : <span style={{ color: '#94A3B8' }}>—</span>}
+                              ) : <span style={{ color: '#94A3B8' }}>-</span>}
                             </td>
                             <td style={{ padding: '0.25rem 0.55rem', borderBottom: '1px solid var(--color-border-light)', color: '#0f172a', whiteSpace: 'normal', wordBreak: 'break-word' }}>{s.reason}</td>
                           </tr>
@@ -5987,7 +5987,7 @@ function TimelinesEditor({ list, onChangeList }) {
                       onChange={(e) => updateRow(idx, 'type', e.target.value)}
                       onBlur={(e) => commitType(e.target.value)}
                       onKeyDown={(e) => { if (e.key === 'Enter') commitType(e.currentTarget.value); }}
-                      placeholder="— Timeline type —"
+                      placeholder="(Timeline type)"
                       style={cellInput}
                     />
                   </td>
@@ -6007,8 +6007,8 @@ function TimelinesEditor({ list, onChangeList }) {
                       onClick={() => setHidden(idx, !hidden)}
                       aria-label={hidden ? 'Unhide timeline' : 'Hide timeline'}
                       title={hidden
-                        ? 'Unhide — bring this timeline back into the list'
-                        : 'Hide — keep this timeline on the opp but out of the list'}
+                        ? 'Unhide: bring this timeline back into the list'
+                        : 'Hide: keep this timeline on the opp but out of the list'}
                       style={rowActionButton}
                     >{hidden ? 'Unhide' : 'Hide'}</button>
                     <button
@@ -6164,10 +6164,10 @@ function NextStepsEditor({ opp, clientManager, solutionOptions, serviceOverrides
         type="button"
         onClick={() => updateOppField(opp._id, field, isToday ? '' : today)}
         title={isToday
-          ? `Marked "${label}" today — click to unmark`
+          ? `Marked "${label}" today: click to unmark`
           : stamped
-            ? `Last marked "${label}" on ${stamped} — click to mark again for today (shows on the Agents page's BFO Activity list)`
-            : `Mark "${label}" today — shows on the Agents page's BFO Activity list`}
+            ? `Last marked "${label}" on ${stamped}: click to mark again for today (shows on the Agents page's BFO Activity list)`
+            : `Mark "${label}" today: shows on the Agents page's BFO Activity list`}
         style={{
           display: 'inline-block', padding: '3px 10px', borderRadius: 999,
           fontSize: '0.72rem', fontWeight: 700, whiteSpace: 'nowrap',
@@ -6206,7 +6206,7 @@ function NextStepsEditor({ opp, clientManager, solutionOptions, serviceOverrides
       >
         <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
           <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            Notes — {account}
+            Notes: {account}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
             {markBtn('_calledOn', '📞', 'Called')}
@@ -6241,7 +6241,7 @@ function NextStepsEditor({ opp, clientManager, solutionOptions, serviceOverrides
                 key={String(opp?.['Sales Partner'] ?? '')}
                 type="text"
                 defaultValue={String(opp?.['Sales Partner'] ?? '')}
-                placeholder="—"
+                placeholder="-"
                 onBlur={(e) => {
                   const v = e.currentTarget.value.trim();
                   if (v !== String(opp?.['Sales Partner'] ?? '').trim()) updateOppField(opp._id, 'Sales Partner', v);
@@ -6342,7 +6342,7 @@ function NfatScheduleModal({ schedules, onSave, onClearNow, onClose }) {
           <button type="button" onClick={onClose} style={{ background: 'transparent', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: 'inherit' }}>×</button>
         </div>
         <p style={{ marginTop: 0, fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
-          Set a schedule for each mark type, or clear it right now. Schedules run on the chosen days at the chosen time (US Eastern) and only fire while this app is open — a missed time catches up the next time you open it.
+          Set a schedule for each mark type, or clear it right now. Schedules run on the chosen days at the chosen time (US Eastern) and only fire while this app is open: a missed time catches up the next time you open it.
         </p>
         {NFAT_SCHEDULE_TYPES.map(type => {
           const s = draft[type];
@@ -6930,7 +6930,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       }
       if (!additions.length) {
         window.alert(
-          `Nothing new to import — every Opps - Old tab row (${incoming.length}) is ` +
+          `Nothing new to import: every Opps - Old tab row (${incoming.length}) is ` +
           `already on Opps (duplicates skipped: ${skippedDuplicate}).`
         );
         return;
@@ -6968,7 +6968,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           if (ts != null) lastFsSavedAtRef.current = ts;
         } catch (err) {
           console.error('Import from Opps tab: Firestore save failed:', err);
-          firestoreWarning = `\n\nWarning: cross-device sync failed (${err?.message || err}). Rows are safe on this device — hydration now picks the newer of IndexedDB vs Firestore, so a refresh here will keep them.`;
+          firestoreWarning = `\n\nWarning: cross-device sync failed (${err?.message || err}). Rows are safe on this device: hydration now picks the newer of IndexedDB vs Firestore, so a refresh here will keep them.`;
         }
       }
       window.alert(
@@ -8482,7 +8482,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                     currentOppId={row._id}
                     extraGroups={extraGroups}
                     extraGroupsLabel="Add from Pricing Option"
-                    extraGroupsPlaceholder="— pick an option —"
+                    extraGroupsPlaceholder="(pick an option)"
                     nowrap
                     placeholder="AEM"
                   />
@@ -8495,7 +8495,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                   options={opts}
                   extraGroups={extraGroups}
                   extraGroupsLabel="Add from Pricing Option"
-                  extraGroupsPlaceholder="— pick an option —"
+                  extraGroupsPlaceholder="(pick an option)"
                   nowrap={h === 'Scope'}
                   placeholder={h === 'Scope' ? 'AEM' : undefined}
                 />
@@ -8732,7 +8732,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             selectionAnchorRef.current = row._id;
           }}
           style={{ margin: 0, cursor: 'pointer' }}
-          title="Select for mass edit — hold Shift and click another row to select the range"
+          title="Select for mass edit: hold Shift and click another row to select the range"
         />
       ),
     };
@@ -8810,7 +8810,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       },
       exportValue: (row) => flagSummary(row),
       render: (row) => {
-        if (flagsSuppressedForStage(row)) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+        if (flagsSuppressedForStage(row)) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
         const missingUsd = needsUsdFlag(row);
         const missingBudgetTimeline = needsBudgetTimelineFlag(row);
         const missingAddr = oppMissingBfoAddress(row);
@@ -8820,42 +8820,42 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         const kickoffDays = kickoffDeadlineFlag(row);
         const stall = oppStageStall(row);
         const ignored = !!row?._ignoreStallFlag;
-        if (!missingUsd && !missingBudgetTimeline && !missingAddr && !missingQuote && !missingMargin && !needsCredit && kickoffDays == null && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+        if (!missingUsd && !missingBudgetTimeline && !missingAddr && !missingQuote && !missingMargin && !needsCredit && kickoffDays == null && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
         return (
           <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
             {missingUsd && (
               <span
-                title="Stage is Qualifying or later but the USD? field is blank or “-” — fill in USD? to clear it."
+                title="Stage is Qualifying or later but the USD? field is blank or “-”: fill in USD? to clear it."
                 style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
               >⚠ Missing USD value</span>
             )}
             {missingBudgetTimeline && (
               <span
-                title="Budgets is in Scope but the Timeline? field is empty — set the budget delivery timeline."
+                title="Budgets is in Scope but the Timeline? field is empty: set the budget delivery timeline."
                 style={{ ...chipBase, background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}
               >⚠ Budget delivery timeline?</span>
             )}
             {missingAddr && (
               <span
-                title="Has a BFO Opportunity Name but no BFO Address — add the BFO Address."
+                title="Has a BFO Opportunity Name but no BFO Address: add the BFO Address."
                 style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
               >⚠ No BFO Address</span>
             )}
             {missingQuote && (
               <span
-                title={`Active opp in "${String(row['Stage'] || '').trim()}" with no Deal Size — add the Deal Size.`}
+                title={`Active opp in "${String(row['Stage'] || '').trim()}" with no Deal Size: add the Deal Size.`}
                 style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
               >⚠ Deal Size Missing</span>
             )}
             {missingMargin && (
               <span
-                title={`Opp in "${String(row['Stage'] || '').trim()}" with no Margin Email Date - Sales Leader Review Date — get margin approval.`}
+                title={`Opp in "${String(row['Stage'] || '').trim()}" with no Margin Email Date - Sales Leader Review Date: get margin approval.`}
                 style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
               >⚠ Missing Margin Approval</span>
             )}
             {needsCredit && (
               <span
-                title={`Deal Size over $50,000 in "${String(row['Stage'] || '').trim()}" with a blank Credit approval — get credit approval.`}
+                title={`Deal Size over $50,000 in "${String(row['Stage'] || '').trim()}" with a blank Credit approval: get credit approval.`}
                 style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
               >⚠ Credit Approval Needed</span>
             )}
@@ -9318,7 +9318,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       label: 'SME',
       defaultWidth: 160,
       renderHeader: (label) => (
-        <span title="Schneider subject-matter expert for this service. Free text — saved as you leave the box.">{label}</span>
+        <span title="Schneider subject-matter expert for this service. Free text: saved as you leave the box.">{label}</span>
       ),
       // Sort and filter on the saved value rather than the row, which
       // carries no sme field; also what the Excel export reads.
@@ -9350,7 +9350,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       ),
       render: (row) => (
         <div style={{ textAlign: 'right' }}>
-          {row.winRate == null ? '—' : `${row.winRate.toFixed(1)}%`}
+          {row.winRate == null ? '-' : `${row.winRate.toFixed(1)}%`}
         </div>
       ),
     },
@@ -9372,7 +9372,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       label: 'Active Opps',
       defaultWidth: 110,
       renderHeader: (label) => (
-        <span title="Opps still in play — not yet Sold or Not Sold.">{label}</span>
+        <span title="Opps still in play: not yet Sold or Not Sold.">{label}</span>
       ),
       render: (row) => (
         <div style={{ textAlign: 'right' }}>{row.active}</div>
@@ -9510,7 +9510,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       defaultWidth: 110,
       render: (row) => (
         <div style={{ textAlign: 'right' }}>
-          {row.winRate == null ? '—' : `${row.winRate.toFixed(1)}%`}
+          {row.winRate == null ? '-' : `${row.winRate.toFixed(1)}%`}
         </div>
       ),
     },
@@ -9534,7 +9534,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       {syncError && (
         <div className={styles.syncBanner} role="alert" aria-live="assertive">
           <span>
-            <strong>⚠ Cloud sync failed — your changes are saved on this device only.</strong>{' '}
+            <strong>⚠ Cloud sync failed: your changes are saved on this device only.</strong>{' '}
             Other devices may show older data, and these edits will be lost if
             you clear this browser. Check your connection and Firestore access,
             then retry.
@@ -9653,7 +9653,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             }}
             title={nfatScheduled
               ? `Scheduled: ${nfatScheduleSummary}. Click to change, or clear now.`
-              : 'No automatic clear is scheduled — click to set one up, or clear now'}
+              : 'No automatic clear is scheduled: click to set one up, or clear now'}
           >Clear No Further Action{nfatScheduled ? ' ⏱' : ''}</button>
           <button
             type="button"
@@ -9668,7 +9668,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               opacity: undoStack.length ? 1 : 0.6,
             }}
             title={undoStack.length
-              ? `Undo last change (${undoStack.length} in history) — Ctrl/Cmd+Z`
+              ? `Undo last change (${undoStack.length} in history): Ctrl/Cmd+Z`
               : 'No recent changes to undo'}
           >↶ Undo</button>
           <button className={styles.syncBtn} onClick={() => setPendingNewOpp({})}>+ New Opp</button>
@@ -9681,7 +9681,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             disabled={hideHistory && historyCount === 0}
             title={hideHistory
               ? 'Rows with no Call In number are hidden as history. Click to include them.'
-              : 'Hide rows with no Call In number — they aren’t on a callback schedule.'}
+              : 'Hide rows with no Call In number: they aren’t on a callback schedule.'}
           >
             {hideHistory
               ? `Show history${historyCount ? ` (${historyCount})` : ''}`
@@ -9891,8 +9891,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             currentOppId={opp._id}
             extraGroups={extraGroups}
             extraGroupsLabel="Add from Pricing Option"
-            extraGroupsPlaceholder="— pick an option —"
-            note={`Now ${String(opp['Stage'] ?? '').trim() || 'active'} — pick the service(s)`}
+            extraGroupsPlaceholder="(pick an option)"
+            note={`Now ${String(opp['Stage'] ?? '').trim() || 'active'}: pick the service(s)`}
           />
         );
       })()}
@@ -10077,11 +10077,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                       onClick={() => { setInfoOppId(r._id); setSourceDrillDown(null); }}
                       style={{ borderBottom: '1px solid var(--color-border)', cursor: 'pointer' }}
                     >
-                      <td style={{ padding: '0.4rem 0.5rem', fontWeight: 600 }}>{r['Account'] || '—'}</td>
-                      <td style={{ padding: '0.4rem 0.5rem' }}>{r['Contact'] || '—'}</td>
-                      <td style={{ padding: '0.4rem 0.5rem' }}>{r['Stage'] || '—'}</td>
-                      <td style={{ padding: '0.4rem 0.5rem' }}>{r['Scope'] || '—'}</td>
-                      <td style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap' }}>{r['Start Date'] || '—'}</td>
+                      <td style={{ padding: '0.4rem 0.5rem', fontWeight: 600 }}>{r['Account'] || '-'}</td>
+                      <td style={{ padding: '0.4rem 0.5rem' }}>{r['Contact'] || '-'}</td>
+                      <td style={{ padding: '0.4rem 0.5rem' }}>{r['Stage'] || '-'}</td>
+                      <td style={{ padding: '0.4rem 0.5rem' }}>{r['Scope'] || '-'}</td>
+                      <td style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap' }}>{r['Start Date'] || '-'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -10243,7 +10243,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 borderRadius: 6,
                 cursor: 'pointer',
               }}
-            >{showOnlySelected ? `Showing ${selectedIds.size} selected — Show all` : `Show ${selectedIds.size} selected only`}</button>
+            >{showOnlySelected ? `Showing ${selectedIds.size} selected: Show all` : `Show ${selectedIds.size} selected only`}</button>
           )}
         </div>
       )}
@@ -10282,7 +10282,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               enableColumnFilters
               onFilteredRowsChange={handleFilteredRowsChange}
               onDisplayedRowsChange={handleDisplayedRowsChange}
-              emptyMessage="No opps yet — click + New Opp to create one."
+              emptyMessage="No opps yet: click + New Opp to create one."
               settings={settings}
               updateSettings={updateSettings}
               // Notes / Next Steps can grow taller via Alt+Enter newlines,
@@ -10345,7 +10345,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               })}
               disabled={newOpps.length === 0}
               title={newOpps.length
-                ? 'Download an Outlook draft (.eml) of this email — open it in Outlook to review and send it yourself'
+                ? 'Download an Outlook draft (.eml) of this email: open it in Outlook to review and send it yourself'
                 : 'No new opps to draft'}
               style={{
                 marginLeft: '0.5rem', padding: '0.3rem 0.7rem', fontSize: '0.78rem', fontWeight: 600,

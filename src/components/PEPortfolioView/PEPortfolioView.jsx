@@ -24,14 +24,14 @@ import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 // user in settings.peStrategyRatings keyed by strategy id.
 const PE_STRATEGIES = [
   { id: 'buyout', name: 'Buyout / LBO', description: 'Acquire a controlling stake in a mature, cash-generative company, often using significant debt (leverage), then improve operations and exit for a return on equity.' },
-  { id: 'growth', name: 'Growth Equity', description: 'Take minority stakes in established, fast-growing companies that need capital to scale — expansion, new markets, acquisitions — without a control change or heavy leverage.' },
+  { id: 'growth', name: 'Growth Equity', description: 'Take minority stakes in established, fast-growing companies that need capital to scale (expansion, new markets, acquisitions), without a control change or heavy leverage.' },
   { id: 'venture', name: 'Venture Capital', description: 'Fund early-stage, high-growth startups in exchange for equity, accepting high failure rates in return for outsized returns from the winners.' },
   { id: 'growth_buyout', name: 'Middle-Market Buyout', description: 'Control buyouts of smaller mid-market businesses, where value is driven more by operational improvement and buy-and-build than by financial engineering.' },
-  { id: 'distressed', name: 'Distressed / Special Situations', description: 'Invest in troubled companies — via debt, restructuring, or turnaround equity — betting on a recovery or a favorable outcome in bankruptcy/reorganization.' },
+  { id: 'distressed', name: 'Distressed / Special Situations', description: 'Invest in troubled companies (via debt, restructuring, or turnaround equity), betting on a recovery or a favorable outcome in bankruptcy/reorganization.' },
   { id: 'mezzanine', name: 'Mezzanine / Private Credit', description: 'Provide subordinated debt or direct loans that sit between senior debt and equity, earning higher yields plus occasional equity upside (warrants).' },
   { id: 'secondaries', name: 'Secondaries', description: 'Buy existing LP interests or portfolios of assets from other investors seeking early liquidity, typically at a discount to net asset value.' },
   { id: 'fund_of_funds', name: 'Fund of Funds', description: 'Invest in a diversified portfolio of other PE funds rather than companies directly, spreading manager and vintage-year risk for LPs.' },
-  { id: 'infrastructure', name: 'Infrastructure', description: 'Own long-duration real assets — energy, transport, utilities, digital infrastructure — prized for stable, often inflation-linked cash flows.' },
+  { id: 'infrastructure', name: 'Infrastructure', description: 'Own long-duration real assets (energy, transport, utilities, digital infrastructure), prized for stable, often inflation-linked cash flows.' },
   { id: 'real_estate', name: 'Real Estate', description: 'Acquire, develop, or reposition property across core, value-add, and opportunistic risk profiles for income plus capital appreciation.' },
 ];
 
@@ -43,9 +43,9 @@ const PE_STRATEGY_CATEGORIES = [
   { id: 'cat_venture', name: 'Venture Capital', description: 'Fund early-stage, high-growth startups in exchange for equity, accepting high failure rates in return for outsized returns from the winners.' },
   { id: 'cat_buyout', name: 'Buyout', description: 'Acquire a controlling stake in a mature, cash-generative company, often using significant debt (leverage), then improve operations and exit for a return on equity.' },
   { id: 'cat_real_estate', name: 'Real Estate', description: 'Acquire, develop, or reposition property across core, value-add, and opportunistic risk profiles for income plus capital appreciation.' },
-  { id: 'cat_infrastructure', name: 'Infrastructure', description: 'Own long-duration real assets — transport, utilities, digital infrastructure — prized for stable, often inflation-linked cash flows.' },
-  { id: 'cat_growth', name: 'Growth Equity', description: 'Take minority stakes in established, fast-growing companies that need capital to scale — expansion, new markets, acquisitions — without a control change or heavy leverage.' },
-  { id: 'cat_energy', name: 'Energy', description: 'Invest across energy assets and companies — traditional and renewable power, oil & gas, transition infrastructure — for cash yield and long-term value.' },
+  { id: 'cat_infrastructure', name: 'Infrastructure', description: 'Own long-duration real assets (transport, utilities, digital infrastructure), prized for stable, often inflation-linked cash flows.' },
+  { id: 'cat_growth', name: 'Growth Equity', description: 'Take minority stakes in established, fast-growing companies that need capital to scale (expansion, new markets, acquisitions), without a control change or heavy leverage.' },
+  { id: 'cat_energy', name: 'Energy', description: 'Invest across energy assets and companies (traditional and renewable power, oil & gas, transition infrastructure), for cash yield and long-term value.' },
   { id: 'cat_credit', name: 'Credit', description: 'Lend to companies through direct loans, mezzanine, or distressed debt, earning contractual yield that sits senior to equity, sometimes with equity upside.' },
 ];
 
@@ -1023,15 +1023,15 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               : subtab === 'stages'
               ? <>PE firms grouped by their <strong>PE Stage</strong> (set in each firm's company popup): <code>Discovery</code>, <code>Piloting</code>, <code>Existing Partnership</code>, and <code>Not Sold</code>.</>
               : subtab === 'companies'
-              ? <>Every mapped <strong>portfolio company</strong> across all PE firms (from each firm's Portfolio Companies tab), merged into one searchable, filterable table. <strong>Opportunity Score</strong> is ranked within each PC's own firm — matching that firm's export. The <strong>PE Owner</strong> dropdown filters to one owner, matching the source PE firm, the company's own PE Owner from Table View, or firms that owner owns — so picking <code>Blue Owl</code> also shows the portfolio companies of every Blue Owl-owned firm.</>
+              ? <>Every mapped <strong>portfolio company</strong> across all PE firms (from each firm's Portfolio Companies tab), merged into one searchable, filterable table. <strong>Opportunity Score</strong> is ranked within each PC's own firm: matching that firm's export. The <strong>PE Owner</strong> dropdown filters to one owner, matching the source PE firm, the company's own PE Owner from Table View, or firms that owner owns: so picking <code>Blue Owl</code> also shows the portfolio companies of every Blue Owl-owned firm.</>
               : subtab === 'blueOwl'
-              ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>{peFirm || '—'}</code>. Pick a different firm from the dropdown to switch the view. Double-click any cell to edit it — same dropdowns as Table View.</>
+              ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>{peFirm || '-'}</code>. Pick a different firm from the dropdown to switch the view. Double-click any cell to edit it: same dropdowns as Table View.</>
               : subtab === 'stageDays'
               ? <>PE firms grouped by their <strong>PE Stage</strong>, each card showing how many days the firm has sat in that stage. The clock starts when a firm's PE Stage changes (set in its company popup); firms already in a stage started counting the day this shipped. Longest-waiting firms lead each column.</>
               : subtab === 'strategies'
-              ? <>Reference lists of <strong>private-equity strategies</strong>, each with a short description — switch between the detailed <strong>Investment Strategies</strong> and the higher-level <strong>Categories</strong>. Drag each slider to rate how valuable that strategy is to you (0–10); your ratings save automatically and are ranked highest-first per list.</>
+              ? <>Reference lists of <strong>private-equity strategies</strong>, each with a short description: switch between the detailed <strong>Investment Strategies</strong> and the higher-level <strong>Categories</strong>. Drag each slider to rate how valuable that strategy is to you (0–10); your ratings save automatically and are ranked highest-first per list.</>
               : subtab === 'caseStudy'
-              ? <>The <strong>industries our experience spans</strong>. Fill in the <strong>Company</strong>, <strong>Summary</strong>, and <strong>Results</strong> for a case study in each industry — your edits save automatically.</>
+              ? <>The <strong>industries our experience spans</strong>. Fill in the <strong>Company</strong>, <strong>Summary</strong>, and <strong>Results</strong> for a case study in each industry: your edits save automatically.</>
               : <>Every opportunity from the <strong>Opps</strong> tab with Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>}
           </div>
         </div>
@@ -1228,7 +1228,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
             <div style={{ fontSize: '0.78rem' }}>
               {peFirms.length === 0
                 ? <>Scanned {prospects.length} prospect{prospects.length === 1 ? '' : 's'}. Set a prospect's <strong>Type</strong> to <code>Private Equity</code> to list it here.</>
-                : `${peFirms.length} total PE firms loaded — adjust your search.`}
+                : `${peFirms.length} total PE firms loaded: adjust your search.`}
             </div>
           </div>
         ) : (() => {
@@ -1334,7 +1334,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                         style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem', fontWeight: 600, color: pe.geography ? '#1E293B' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                         title={pe.geography || 'No geography set on this prospect record'}
                       >
-                        {pe.geography || '—'}
+                        {pe.geography || '-'}
                       </div>
                       )}
 
@@ -1358,7 +1358,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                         const nyc = stats.nycCount || 0;
                         if (dmTotal === 0) {
                           return (
-                            <div style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem', color: '#CBD5E1' }}>—</div>
+                            <div style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem', color: '#CBD5E1' }}>-</div>
                           );
                         }
                         const nycList = (stats.decisionMakerEntries || [])
@@ -1449,7 +1449,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                                 ⬇ {pcCount}
                               </span>
                             ) : (
-                              <span style={{ color: '#CBD5E1', fontSize: '0.72rem' }}>—</span>
+                              <span style={{ color: '#CBD5E1', fontSize: '0.72rem' }}>-</span>
                             )}
                           </div>
                         );
@@ -1457,7 +1457,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
 
                       {visibleCols.has('ratio') && (() => {
                         const oppsTip = stats.oppsTip || [];
-                        const fmt = o => `• ${o.title}${o.stage ? ` — ${o.stage}` : ''}${o.account ? ` [${o.account}]` : ''}`;
+                        const fmt = o => `• ${o.title}${o.stage ? `: ${o.stage}` : ''}${o.account ? ` [${o.account}]` : ''}`;
                         let tipText;
                         if (oppsTip.length === 0) {
                           tipText = 'No opportunities on this firm or its portfolio companies';
@@ -1527,7 +1527,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                               : 'No PE Stage set on this firm\'s company popup'}
                           style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: pe.peStage === stage ? '#7C3AED' : '#CBD5E1' }}
                         >
-                          {pe.peStage === stage ? '✓' : '—'}
+                          {pe.peStage === stage ? '✓' : '-'}
                         </div>
                       ))}
 
@@ -1759,7 +1759,7 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect }) {
         title={`Open "${r.peFirm}" in the Table View`}
         style={{ background: 'none', border: 'none', padding: 0, color: '#7C3AED', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', textAlign: 'left' }}
       >
-        {r.peFirm || '—'}
+        {r.peFirm || '-'}
       </button>
     ) },
     { key: 'companyName', label: 'Company Name', defaultWidth: 220 },
@@ -1782,13 +1782,13 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect }) {
       key: 'frameworks',
       label: 'External Frameworks',
       defaultWidth: 200,
-      headerTitle: 'External reporting / disclosure frameworks this company has been mapped onto from the Lists tab — same signal as the PC analysis table',
+      headerTitle: 'External reporting / disclosure frameworks this company has been mapped onto from the Lists tab: same signal as the PC analysis table',
       getFilterValue: (r) => r.frameworks.join(', '),
       getSortValue: (r) => r.frameworks.join(', '),
       exportValue: (r) => r.frameworks.join(', '),
       render: (r) => (
         r.frameworks.length === 0
-          ? <span style={{ color: '#CBD5E1', fontSize: '0.72rem' }}>—</span>
+          ? <span style={{ color: '#CBD5E1', fontSize: '0.72rem' }}>-</span>
           : (
             <span style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
               {r.frameworks.map(label => {
@@ -1842,7 +1842,7 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect }) {
         <select
           value={ownerFilter}
           onChange={e => setOwnerFilter(e.target.value)}
-          title="Show only companies under one PE owner — matches the source PE firm, the company's own PE Owner from Table View, or firms that owner owns (their PCs count too)"
+          title="Show only companies under one PE owner: matches the source PE firm, the company's own PE Owner from Table View, or firms that owner owns (their PCs count too)"
           style={{
             maxWidth: 220, padding: '0.4rem 0.6rem',
             border: `1px solid ${ownerFilter ? '#7C3AED' : '#E2E8F0'}`, borderRadius: 6,
@@ -1861,7 +1861,7 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect }) {
           <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
             <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No portfolio companies mapped yet</div>
             <div style={{ fontSize: '0.78rem' }}>
-              Open a PE firm's company popup and add companies in its <strong>Portfolio Companies</strong> tab — they'll be merged here.
+              Open a PE firm's company popup and add companies in its <strong>Portfolio Companies</strong> tab: they'll be merged here.
             </div>
           </div>
         ) : (
@@ -1932,7 +1932,7 @@ function BlueOwlBulkEditBar({ selectedCount, applying, onApply, onClear }) {
       <span style={{ color: '#64748B' }}>to</span>
       {field.options ? (
         <select value={value} onChange={e => setValue(e.target.value)} style={{ ...inputStyle, minWidth: 170 }}>
-          <option value="">— blank (clear) —</option>
+          <option value="">(blank (clear))</option>
           {field.options.map(o => <option key={o} value={o}>{o}</option>)}
         </select>
       ) : (
@@ -1979,7 +1979,7 @@ function BlueOwlBulkEditBar({ selectedCount, applying, onApply, onClear }) {
 function NameListCell({ items, empty }) {
   const list = Array.isArray(items) ? items.filter(Boolean) : [];
   if (list.length === 0) {
-    return <span style={{ color: '#CBD5E1' }} title={empty || ''}>—</span>;
+    return <span style={{ color: '#CBD5E1' }} title={empty || ''}>-</span>;
   }
   return (
     <span
@@ -2009,7 +2009,7 @@ function ClientManagerCell({ company, value, onCommit }) {
     <input
       type="text"
       value={draft}
-      placeholder="—"
+      placeholder="-"
       onChange={(e) => setDraft(e.target.value)}
       onFocus={() => setFocused(true)}
       onBlur={() => { setFocused(false); commit(); }}
@@ -2074,7 +2074,7 @@ function CompanyOppsModal({ company, opps = [], onClose, onOpenCompany }) {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.85rem 1rem', borderBottom: '1px solid #E2E8F0' }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              Opportunities — {company || '—'}
+              Opportunities: {company || '-'}
             </div>
             <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
               {opps.length} matching opportunit{opps.length === 1 ? 'y' : 'ies'} from the Opps tab
@@ -2240,7 +2240,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
         }
       }
       if (failed.length) {
-        window.alert(`Bulk edit failed for ${failed.length} compan${failed.length === 1 ? 'y' : 'ies'} — try again:\n  ${failed.join('\n  ')}`);
+        window.alert(`Bulk edit failed for ${failed.length} compan${failed.length === 1 ? 'y' : 'ies'}: try again:\n  ${failed.join('\n  ')}`);
       }
     } finally {
       setBulkApplying(false);
@@ -2274,7 +2274,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
         const isActive = !CLOSED_STAGES.has(stage);
         if (isActive) active++;
         records.push({ record: r, isActive });
-        tip.push(`• ${r['Opportunity Name'] || r['Opportunity'] || r['Name'] || r['Description'] || '(Unnamed opportunity)'}${stage ? ` — ${stage}` : ''}`);
+        tip.push(`• ${r['Opportunity Name'] || r['Opportunity'] || r['Name'] || r['Description'] || '(Unnamed opportunity)'}${stage ? `: ${stage}` : ''}`);
       }
       records.sort((a, b) => (a.isActive === b.isActive ? 0 : a.isActive ? -1 : 1));
       if (total > 0) map.set(p.id, { active, total, tip, records: records.map(x => x.record) });
@@ -2314,7 +2314,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
         if (!pcMatch) continue;
         total++;
         if (!CLOSED_STAGES.has(stage)) active++;
-        tip.push(`• ${r['Opportunity Name'] || r['Opportunity'] || r['Name'] || r['Description'] || '(Unnamed opportunity)'}${stage ? ` — ${stage}` : ''} [${pcMatch.display}]`);
+        tip.push(`• ${r['Opportunity Name'] || r['Opportunity'] || r['Name'] || r['Description'] || '(Unnamed opportunity)'}${stage ? `: ${stage}` : ''} [${pcMatch.display}]`);
         const display = (pcMatch.display || '').trim();
         if (display && !companySeen.has(display.toLowerCase())) {
           companySeen.add(display.toLowerCase());
@@ -2418,7 +2418,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
           title={`Open "${r.company}" in the Table View`}
           style={{ background: 'none', border: 'none', padding: 0, color: '#7C3AED', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', textAlign: 'left' }}
         >
-          {r.company || '—'}
+          {r.company || '-'}
         </button>
       ) },
       // Explored-services breakdown, pulled from each prospect's
@@ -2556,7 +2556,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
             ? `active / total opps across this firm's ${r._pcCount} portfolio compan${r._pcCount === 1 ? 'y' : 'ies'}\n${r._pcOppsTip.join('\n')}`
             : r._pcCount > 0
             ? `No opps on this firm's ${r._pcCount} portfolio compan${r._pcCount === 1 ? 'y' : 'ies'} in the Opps tab`
-            : 'No portfolio companies point to this firm — set a company\'s PE Owner to link it'}
+            : 'No portfolio companies point to this firm: set a company\'s PE Owner to link it'}
           style={{ fontWeight: 700, color: r.pcOppsActive > 0 ? '#7C3AED' : r.pcOppsTotal > 0 ? '#64748B' : '#CBD5E1' }}
         >{r.pcOppsActive}/{r.pcOppsTotal}</span>
       ) },
@@ -2574,7 +2574,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); onDownloadPortfolio?.(r._prospect); } }}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 700, color: '#2563EB', cursor: 'pointer', textDecoration: 'underline' }}
           >⬇ {r._pcMappedCount}</span>
-        ) : <span style={{ color: '#CBD5E1', fontSize: '0.72rem' }}>—</span>
+        ) : <span style={{ color: '#CBD5E1', fontSize: '0.72rem' }}>-</span>
       ) },
       // Read-only companions to PC Opps: the portfolio companies that
       // carry those opps, and the contacts tied to them (both pulled from
@@ -2641,7 +2641,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
       if (plan.unchanged?.length) parts.push(`${plan.unchanged.length} unchanged`);
       if (plan.noCompany) parts.push(`${plan.noCompany} without a company skipped`);
       if (failed.length) parts.push(`${failed.length} FAILED`);
-      window.alert(`Blue Owl paste: ${parts.join(' · ')}.${failed.length ? `\n\nFailed rows — try them again:\n  ${failed.join('\n  ')}` : ''}`);
+      window.alert(`Blue Owl paste: ${parts.join(' · ')}.${failed.length ? `\n\nFailed rows: try them again:\n  ${failed.join('\n  ')}` : ''}`);
     } finally {
       setImporting(false);
     }
@@ -2766,7 +2766,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
             type="button"
             onClick={() => setPasteOpen(true)}
             disabled={importing}
-            title={`Copy rows from Excel (with the header row) and paste them in — fills blank fields on companies already in Table View and adds the rest as ${firmLabel} companies`}
+            title={`Copy rows from Excel (with the header row) and paste them in: fills blank fields on companies already in Table View and adds the rest as ${firmLabel} companies`}
             style={{ padding: '0.4rem 0.75rem', border: '1px solid #E2E8F0', borderRadius: 6, background: importing ? '#F1F5F9' : '#fff', fontSize: '0.72rem', fontWeight: 600, color: importing ? '#94A3B8' : '#334155', cursor: importing ? 'wait' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
           >{importing ? 'Importing…' : 'Paste from Excel'}</button>
         )}
@@ -2801,7 +2801,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
           <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
             <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No {firmLabel} companies found</div>
             <div style={{ fontSize: '0.78rem' }}>
-              Open a company's popup and set its <strong>PE Owner</strong> to <code>{selectedFirm.trim() || 'the firm'}</code> — it'll show up here. Or pick a different firm from the dropdown above.
+              Open a company's popup and set its <strong>PE Owner</strong> to <code>{selectedFirm.trim() || 'the firm'}</code>: it'll show up here. Or pick a different firm from the dropdown above.
             </div>
           </div>
         ) : (
@@ -2940,8 +2940,8 @@ function PEStagesTab({ firms, portfolioByPe, onSelectProspect }) {
         const pcCount = pcCountOf(pe);
         cell.value = {
           richText: [
-            { text: pe.company || '—', font: { name: 'Nunito Sans', bold: true, size: 11, color: { argb: 'FF1E293B' } } },
-            { text: `\n${formatAum(pe.peAum)}   ·   ${pe.geography || '—'}`, font: { name: 'Nunito Sans', size: 9, color: { argb: 'FF475569' } } },
+            { text: pe.company || '-', font: { name: 'Nunito Sans', bold: true, size: 11, color: { argb: 'FF1E293B' } } },
+            { text: `\n${formatAum(pe.peAum)}   ·   ${pe.geography || '-'}`, font: { name: 'Nunito Sans', size: 9, color: { argb: 'FF475569' } } },
             { text: `\n${pcCount} portfolio co${pcCount === 1 ? '' : 's'}`, font: { name: 'Nunito Sans', size: 9, color: { argb: 'FF64748B' } } },
           ],
         };
@@ -3015,10 +3015,10 @@ function PEStagesTab({ firms, portfolioByPe, onSelectProspect }) {
                         title={`Open ${pe.company || 'this firm'}`}
                         style={{ display: 'block', width: '100%', textAlign: 'left', background: '#fff', border: '1px solid #E2E8F0', borderLeft: `3px solid ${accent}`, borderRadius: 6, padding: '0.55rem 0.6rem', cursor: 'pointer', fontFamily: 'inherit', boxShadow: '0 1px 2px rgba(15,23,42,0.04)' }}
                       >
-                        <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pe.company || '—'}</div>
+                        <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pe.company || '-'}</div>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem', marginTop: '0.35rem' }}>
                           <span style={{ fontSize: '0.7rem', fontWeight: 600, color: pe.peAum ? '#1E293B' : '#CBD5E1' }} title={pe.peAum ? `PE AUM: $${pe.peAum}B` : 'No PE AUM set'}>{formatAum(pe.peAum)}</span>
-                          <span style={{ fontSize: '0.68rem', fontWeight: 600, color: pe.geography ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={pe.geography || 'No geography set'}>{pe.geography || '—'}</span>
+                          <span style={{ fontSize: '0.68rem', fontWeight: 600, color: pe.geography ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={pe.geography || 'No geography set'}>{pe.geography || '-'}</span>
                         </div>
                         <div style={{ marginTop: '0.3rem', fontSize: '0.66rem', fontWeight: 600, color: pcCount ? '#64748B' : '#CBD5E1' }} title="Portfolio companies linked to this firm">
                           {pcCount} portfolio co{pcCount === 1 ? '' : 's'}
@@ -3126,7 +3126,7 @@ function PEStageDaysTab({ firms, portfolioByPe, onSelectProspect }) {
                     const days = daysOf(pe);
                     const enteredISO = toISODate(pe.peStageEnteredAt);
                     const badgeTitle = stage === 'Unassigned'
-                      ? 'No PE Stage set — set one in this firm\'s company popup to start the clock.'
+                      ? 'No PE Stage set: set one in this firm\'s company popup to start the clock.'
                       : enteredISO
                         ? `In ${stage} since ${formatDateDisplay(enteredISO)} · ${days} day${days === 1 ? '' : 's'}`
                         : 'No entry date recorded yet.';
@@ -3139,17 +3139,17 @@ function PEStageDaysTab({ firms, portfolioByPe, onSelectProspect }) {
                         style={{ display: 'block', width: '100%', textAlign: 'left', background: '#fff', border: '1px solid #E2E8F0', borderLeft: `3px solid ${accent}`, borderRadius: 6, padding: '0.55rem 0.6rem', cursor: 'pointer', fontFamily: 'inherit', boxShadow: '0 1px 2px rgba(15,23,42,0.04)' }}
                       >
                         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.4rem' }}>
-                          <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{pe.company || '—'}</span>
+                          <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{pe.company || '-'}</span>
                           <span
                             title={badgeTitle}
                             style={{ fontSize: '0.72rem', fontWeight: 700, color: dayColor(days), fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', flexShrink: 0 }}
                           >
-                            {days == null ? '—' : `${days}d`}
+                            {days == null ? '-' : `${days}d`}
                           </span>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem', marginTop: '0.35rem' }}>
                           <span style={{ fontSize: '0.7rem', fontWeight: 600, color: pe.peAum ? '#1E293B' : '#CBD5E1' }} title={pe.peAum ? `PE AUM: $${pe.peAum}B` : 'No PE AUM set'}>{formatAum(pe.peAum)}</span>
-                          <span style={{ fontSize: '0.68rem', fontWeight: 600, color: pe.geography ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={pe.geography || 'No geography set'}>{pe.geography || '—'}</span>
+                          <span style={{ fontSize: '0.68rem', fontWeight: 600, color: pe.geography ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={pe.geography || 'No geography set'}>{pe.geography || '-'}</span>
                         </div>
                         <div style={{ marginTop: '0.3rem', fontSize: '0.66rem', fontWeight: 600, color: pcCount ? '#64748B' : '#CBD5E1' }} title="Portfolio companies linked to this firm">
                           {pcCount} portfolio co{pcCount === 1 ? '' : 's'}
@@ -3189,7 +3189,7 @@ function EditableCell({ value, align, onCommit }) {
         key={initial}
         type="text"
         defaultValue={initial}
-        placeholder="—"
+        placeholder="-"
         onBlur={(e) => commit(e.currentTarget)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
@@ -3370,7 +3370,7 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, firm = '', setFirm, firmO
             <select
               value={firm}
               onChange={e => setFirm(e.target.value)}
-              title="Scope the list to one PE firm — every opp on that firm or its portfolio companies. Choose “All PE Opps” for the full PE channel."
+              title="Scope the list to one PE firm: every opp on that firm or its portfolio companies. Choose “All PE Opps” for the full PE channel."
               style={{ padding: '0.4rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: 6, background: '#fff', fontSize: '0.78rem', fontFamily: 'inherit', color: '#1E293B', maxWidth: 220, cursor: 'pointer' }}
             >
               <option value="">All PE Opps</option>
@@ -3461,7 +3461,7 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, firm = '', setFirm, firmO
                 ? (firmLabel
                     ? <>No Opps rows have an Account matching <strong>{firmLabel}</strong> or a company whose PE Owner is <strong>{firmLabel}</strong>.</>
                     : <>No Opps rows have Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>)
-                : `${totalOpps} total ${firmLabel || 'PE'} opps loaded — adjust your search.`}
+                : `${totalOpps} total ${firmLabel || 'PE'} opps loaded: adjust your search.`}
             </div>
           </div>
         ) : (
@@ -3508,7 +3508,7 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, firm = '', setFirm, firmO
                         key={c.key}
                         title={String(val)}
                         style={{ padding: '0.5rem 0.6rem', fontSize: '0.74rem', fontWeight: isAccount ? 700 : 500, color: isAccount ? '#1E293B' : '#334155', textAlign: c.align || 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', borderRight: '1px solid #F1F5F9' }}
-                      >{val || '—'}</div>
+                      >{val || '-'}</div>
                     );
                   })}
                 </div>

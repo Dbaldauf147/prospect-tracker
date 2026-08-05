@@ -47,7 +47,7 @@ async function handler(req, res, auth) {
 
   const html = `
     <div style="font-family:Arial,sans-serif;max-width:900px;margin:0 auto">
-      <h2 style="color:#1E2A36">Bulk Upload Report — Failed Contacts</h2>
+      <h2 style="color:#1E2A36">Bulk Upload Report: Failed Contacts</h2>
       <p style="color:#5A6B7E;font-size:14px">
         <strong>${totalUploaded}</strong> contacts attempted &middot;
         <strong style="color:#10B981">${totalCreated}</strong> created &middot;
@@ -69,7 +69,7 @@ async function handler(req, res, auth) {
       body: JSON.stringify({
         from: 'Prospect Tracker <onboarding@resend.dev>',
         to: [to],
-        subject: subject || `Bulk Upload Report — ${totalErrors} Failed Contacts`,
+        subject: subject || `Bulk Upload Report: ${totalErrors} Failed Contacts`,
         html,
       }),
     });

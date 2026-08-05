@@ -14,7 +14,7 @@ import { matchesCdm } from '../../utils/cdmMatch';
 function EditableCell({ value, onCommit, color, suffix = '', bold = false }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
-  const display = value == null || value === '' ? '—' : `${value}${suffix}`;
+  const display = value == null || value === '' ? '-' : `${value}${suffix}`;
   const tdStyle = { padding: '0.4rem 0.6rem', textAlign: 'center', fontWeight: bold ? 600 : 400, color: color || 'inherit', cursor: 'pointer' };
   if (editing) {
     return (
@@ -165,7 +165,7 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
           <select
             value={viewType}
             onChange={e => changeView(e.target.value)}
-            title="Chart view — your selection is saved as this chart's default"
+            title="Chart view: your selection is saved as this chart's default"
             style={{ fontSize: '0.7rem', padding: '0.2rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: '5px', background: 'var(--color-surface)', color: 'var(--color-text)', fontFamily: 'inherit', cursor: 'pointer' }}
           >
             {CHART_VIEW_OPTIONS.map(opt => (
@@ -274,7 +274,7 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
                 <button
                   type="button"
                   onClick={onDownloadPins}
-                  title="Download every pinned point on this chart (Excel) — the plotted values plus the accounts behind them"
+                  title="Download every pinned point on this chart (Excel): the plotted values plus the accounts behind them"
                   style={{ background: 'none', border: '1px solid #6EE7B7', borderRadius: 5, color: '#059669', cursor: 'pointer', padding: '0.1rem 0.4rem', fontSize: '0.65rem', fontWeight: 700, fontFamily: 'inherit' }}
                 >⬇ Excel</button>
               )}
@@ -328,7 +328,7 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
       ) : (
         onTogglePin && (
           <div style={{ marginTop: '0.4rem', fontSize: '0.65rem', color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>
-            Tip: click a point on the chart to pin it — pinned points download to Excel with the accounts behind them.
+            Tip: click a point on the chart to pin it: pinned points download to Excel with the accounts behind them.
           </div>
         )
       )}
@@ -624,7 +624,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
           setHistoryLoaded(true);
         }
       } catch (err) {
-        console.error('[ProgressView] Failed to load progress — auto-save disabled to avoid overwrite:', err);
+        console.error('[ProgressView] Failed to load progress: auto-save disabled to avoid overwrite:', err);
       }
 
       // Load opps: try the user's configured Opps sheet first, then
@@ -1106,7 +1106,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
       for (const c of PROGRESS_CHART_DEFS) {
         const chartTitle = titleFor(c.id, c.label);
         for (const s of [...c.series, ...(c.secondarySeries || [])]) {
-          if (!seenKeys.has(s.key)) { seenKeys.add(s.key); combinedCols.push({ key: s.key, header: `${chartTitle} — ${s.name}` }); }
+          if (!seenKeys.has(s.key)) { seenKeys.add(s.key); combinedCols.push({ key: s.key, header: `${chartTitle} · ${s.name}` }); }
         }
       }
       const combined = [['Week', 'Week Start', ...combinedCols.map(s => s.header)]];
@@ -1292,21 +1292,21 @@ export function ProgressView({ prospects, settings, cdmName }) {
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                     <div>
-                      <div style={{ fontSize: '0.65rem', fontWeight: 600, color: '#DC2626', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Tier 1 — Yes ({card.t1Yes.length})</div>
+                      <div style={{ fontSize: '0.65rem', fontWeight: 600, color: '#DC2626', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Tier 1: Yes ({card.t1Yes.length})</div>
                       {card.t1Yes.map((c, i) => <div key={i} style={{ fontSize: '0.72rem', color: 'var(--color-text)', padding: '1px 0' }}>{c}</div>)}
                       {card.key !== 'inactive' && card.t1No.length > 0 && (
                         <>
-                          <div style={{ fontSize: '0.65rem', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase', marginTop: '0.5rem', marginBottom: '0.3rem' }}>Tier 1 — No ({card.t1No.length})</div>
+                          <div style={{ fontSize: '0.65rem', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase', marginTop: '0.5rem', marginBottom: '0.3rem' }}>Tier 1: No ({card.t1No.length})</div>
                           {card.t1No.map((c, i) => <div key={i} style={{ fontSize: '0.72rem', color: '#9CA3AF', padding: '1px 0' }}>{c}</div>)}
                         </>
                       )}
                     </div>
                     <div>
-                      <div style={{ fontSize: '0.65rem', fontWeight: 600, color: '#3B82F6', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Tier 2 — Yes ({card.t2Yes.length})</div>
+                      <div style={{ fontSize: '0.65rem', fontWeight: 600, color: '#3B82F6', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Tier 2: Yes ({card.t2Yes.length})</div>
                       {card.t2Yes.map((c, i) => <div key={i} style={{ fontSize: '0.72rem', color: 'var(--color-text)', padding: '1px 0' }}>{c}</div>)}
                       {card.key !== 'inactive' && card.t2No.length > 0 && (
                         <>
-                          <div style={{ fontSize: '0.65rem', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase', marginTop: '0.5rem', marginBottom: '0.3rem' }}>Tier 2 — No ({card.t2No.length})</div>
+                          <div style={{ fontSize: '0.65rem', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase', marginTop: '0.5rem', marginBottom: '0.3rem' }}>Tier 2: No ({card.t2No.length})</div>
                           {card.t2No.map((c, i) => <div key={i} style={{ fontSize: '0.72rem', color: '#9CA3AF', padding: '1px 0' }}>{c}</div>)}
                         </>
                       )}
@@ -1326,7 +1326,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
             <button
               type="button"
               onClick={() => downloadChartsData()}
-              title="Download an Excel workbook with the raw weekly data behind every chart — a combined sheet plus one sheet per chart"
+              title="Download an Excel workbook with the raw weekly data behind every chart: a combined sheet plus one sheet per chart"
               style={{ padding: '0.3rem 0.8rem', border: '1px solid #059669', borderRadius: 6, background: '#059669', color: '#fff', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
             >
               ⬇ Excel (raw data)
@@ -1335,7 +1335,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
               <button
                 type="button"
                 onClick={() => downloadPinnedData()}
-                title="Download every pinned point across all charts — their plotted values plus the accounts behind them"
+                title="Download every pinned point across all charts: their plotted values plus the accounts behind them"
                 style={{ padding: '0.3rem 0.8rem', border: '1px solid #6366F1', borderRadius: 6, background: '#EEF2FF', color: '#3730A3', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
               >
                 ⬇ 📌 Pinned points

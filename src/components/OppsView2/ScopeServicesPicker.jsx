@@ -125,7 +125,7 @@ function StatusSelect({ item, manual, auto, onSet, disabled, disabledReason }) {
   const title = disabled
     ? disabledReason
     : manual
-      ? `Manual override: ${manual}.${auto ? ` Automatic status from another opp: ${auto}.` : ' No matching opp, so the automatic status is blank.'} Pick "— (auto)" to revert.`
+      ? `Manual override: ${manual}.${auto ? ` Automatic status from another opp: ${auto}.` : ' No matching opp, so the automatic status is blank.'} Pick "- (auto)" to revert.`
       : auto
         ? `Automatic status from another opp on this account: ${auto}. Pick a status to set a manual override.`
         : 'No status yet. Pick one to set it on the company card.';
@@ -150,7 +150,7 @@ function StatusSelect({ item, manual, auto, onSet, disabled, disabledReason }) {
       }}
     >
       {SERVICE_STATUSES.map(s => (
-        <option key={s} value={s}>{s === '-' ? '— (auto)' : s}</option>
+        <option key={s} value={s}>{s === '-' ? '- (auto)' : s}</option>
       ))}
     </select>
   );
@@ -198,7 +198,7 @@ export function ScopeServicesModal({
   const cannotEditReason = !account
     ? 'This opp has no Account, so there is no company record to save a status against.'
     : !prospect
-      ? `No company record matches “${account}” — add the company on the Table view to set statuses here.`
+      ? `No company record matches “${account}”: add the company on the Table view to set statuses here.`
       : 'Status editing is unavailable on this screen.';
 
   const setStatus = (item, next) => {
@@ -286,7 +286,7 @@ export function ScopeServicesModal({
           background: 'var(--color-bg)',
         }}>
           <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-text)' }}>
-            Scope — select services
+            Scope: select services
           </span>
           {account && (
             <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
@@ -328,7 +328,7 @@ export function ScopeServicesModal({
                 background: 'var(--color-surface)', color: 'var(--color-text)',
               }}
             >
-              <option value="">{extraGroupsPlaceholder || '— pick an option —'}</option>
+              <option value="">{extraGroupsPlaceholder || '(pick an option)'}</option>
               {groups.map(g => (
                 <option key={g.label} value={g.label}>{g.label} ({g.options.length})</option>
               ))}
@@ -473,7 +473,7 @@ export function ScopeServicesModal({
           background: 'var(--color-bg)', fontSize: '0.65rem', color: 'var(--color-text-muted)',
         }}>
           {canEditStatus
-            ? 'Tick a service to put it in Scope. The status dropdown saves to the company card — italic means it is derived from another opp, “— (auto)” reverts to that.'
+            ? 'Tick a service to put it in Scope. The status dropdown saves to the company card: italic means it is derived from another opp, “- (auto)” reverts to that.'
             : `${cannotEditReason} Ticking a service still sets Scope.`}
         </div>
       </div>
@@ -509,9 +509,9 @@ export function ScopeServicesCell({
           overflow: nowrap ? 'hidden' : undefined,
           textOverflow: nowrap ? 'ellipsis' : undefined,
         }}
-        title={showPlaceholder ? `${placeholder} (placeholder — no service selected)` : isEmpty ? 'Click to pick services' : selected.join(', ')}
+        title={showPlaceholder ? `${placeholder} (placeholder: no service selected)` : isEmpty ? 'Click to pick services' : selected.join(', ')}
       >
-        {showPlaceholder ? placeholder : isEmpty ? '—' : selected.join(', ')}
+        {showPlaceholder ? placeholder : isEmpty ? '-' : selected.join(', ')}
       </span>
       {open && (
         <ScopeServicesModal

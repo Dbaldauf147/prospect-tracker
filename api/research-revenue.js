@@ -35,16 +35,16 @@ async function handler(req, res, auth) {
   const systemPrompt = `You are a financial research analyst. For the requested company, use web search to find its most recent reported annual revenue and closely related facts.
 
 Return ONLY a single JSON object (no prose, no markdown fences) with these fields:
-- revenue: string — the headline annual revenue as a readable figure using the company's reporting currency (e.g. "$5.6B", "€1.2B", "$740M"). Empty string if you cannot find a credible figure.
-- revenueUsd: number | null — the same figure normalized to whole US dollars (e.g. 5600000000). Null if unknown or not convertible with confidence.
-- fiscalYear: string — the fiscal year or period the revenue figure covers (e.g. "FY2023", "2023", "TTM as of Q2 2024"). Empty string if unknown.
-- ownership: string — "Public" or "Private" (or "Subsidiary" / "Division" when that's the clearest description). Empty string if unclear.
-- ticker: string — stock exchange and ticker if publicly traded (e.g. "NYSE: CNR"). Empty string otherwise.
-- employees: number | null — approximate employee count if reported. Null if unknown.
-- headquarters: string — the company's global headquarters as "City, State/Province, Country" (e.g. "Toronto, Ontario, Canada", "Zug, Switzerland"). Always name the country. Empty string if you cannot find it.
-- hqRegion: string — exactly "North America" when that headquarters is in the United States, Canada or Mexico, otherwise exactly "Outside of North America". Empty string if the headquarters is unknown.
-- summary: string — 1-2 sentence plain-language note on the figure: how recent it is, whether it's an estimate, and any caveat (e.g. private company estimates, revenue reported by a parent). Note explicitly when the figure is uncertain or public data is sparse.
-- sources: array of { title: string, url: string } — citation list of pages you used, most authoritative first. Up to 6 entries.
+- revenue: string: the headline annual revenue as a readable figure using the company's reporting currency (e.g. "$5.6B", "€1.2B", "$740M"). Empty string if you cannot find a credible figure.
+- revenueUsd: number | null: the same figure normalized to whole US dollars (e.g. 5600000000). Null if unknown or not convertible with confidence.
+- fiscalYear: string: the fiscal year or period the revenue figure covers (e.g. "FY2023", "2023", "TTM as of Q2 2024"). Empty string if unknown.
+- ownership: string: "Public" or "Private" (or "Subsidiary" / "Division" when that's the clearest description). Empty string if unclear.
+- ticker: string: stock exchange and ticker if publicly traded (e.g. "NYSE: CNR"). Empty string otherwise.
+- employees: number | null: approximate employee count if reported. Null if unknown.
+- headquarters: string: the company's global headquarters as "City, State/Province, Country" (e.g. "Toronto, Ontario, Canada", "Zug, Switzerland"). Always name the country. Empty string if you cannot find it.
+- hqRegion: string: exactly "North America" when that headquarters is in the United States, Canada or Mexico, otherwise exactly "Outside of North America". Empty string if the headquarters is unknown.
+- summary: string: 1-2 sentence plain-language note on the figure: how recent it is, whether it's an estimate, and any caveat (e.g. private company estimates, revenue reported by a parent). Note explicitly when the figure is uncertain or public data is sparse.
+- sources: array of { title: string, url: string }: citation list of pages you used, most authoritative first. Up to 6 entries.
 
 Prefer official filings and the company's own investor relations pages over third-party estimators. If the company is private and no credible revenue figure surfaces, return the object with revenue and revenueUsd empty/null and explain in summary.`;
 
@@ -125,7 +125,7 @@ Prefer official filings and the company's own investor relations pages over thir
   } catch (err) {
     if (err?.name === 'AbortError') {
       return res.status(504).json({
-        error: `Revenue research timed out after ${Math.round(researchBudgetMs() / 1000)}s. Try again — if it keeps timing out, raise RESEARCH_TIMEOUT_MS (needs a plan whose function limit allows it).`,
+        error: `Revenue research timed out after ${Math.round(researchBudgetMs() / 1000)}s. Try again: if it keeps timing out, raise RESEARCH_TIMEOUT_MS (needs a plan whose function limit allows it).`,
       });
     }
     return res.status(500).json({ error: err.message || 'Unknown error' });

@@ -577,10 +577,10 @@ export function VibeProspecting({ prospects = [], onUpdate, cdmName }) {
           </div>
           <div style={{ maxHeight: '200px', overflowY: 'auto', fontSize: '0.72rem' }}>
             {uploadReport.skipped.map((s, i) => (
-              <div key={`s${i}`} style={{ padding: '2px 0', color: '#F59E0B' }}>⚠ {s.name} ({s.email}) — {s.reason}</div>
+              <div key={`s${i}`} style={{ padding: '2px 0', color: '#F59E0B' }}>⚠ {s.name} ({s.email}): {s.reason}</div>
             ))}
             {uploadReport.failed.map((f, i) => (
-              <div key={`f${i}`} style={{ padding: '2px 0', color: '#DC2626' }}>✗ {f.name} ({f.email}) — {f.reason}</div>
+              <div key={`f${i}`} style={{ padding: '2px 0', color: '#DC2626' }}>✗ {f.name} ({f.email}): {f.reason}</div>
             ))}
           </div>
         </div>
@@ -1012,7 +1012,7 @@ export function VibeProspecting({ prospects = [], onUpdate, cdmName }) {
           </div>
           {contactUploadResult && (
             <div style={{ marginTop: '0.5rem', fontSize: '0.72rem', color: '#10B981', fontWeight: 600 }}>
-              ✓ {contactUploadResult.fileName}: {contactUploadResult.rows.length} contacts loaded — review in table above, then push to HubSpot
+              ✓ {contactUploadResult.fileName}: {contactUploadResult.rows.length} contacts loaded: review in table above, then push to HubSpot
             </div>
           )}
         </div>

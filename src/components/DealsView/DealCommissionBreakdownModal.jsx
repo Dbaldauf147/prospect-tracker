@@ -198,7 +198,7 @@ export function DealCommissionBreakdownModal({ deal, metric: metricKey, commissi
                       </td>
                       {activeMonthIdx.map((i) => (
                         <td key={i} style={{ textAlign: 'right', padding: '0.35rem 0.5rem', borderBottom: '1px solid #F1F5F9', fontVariantNumeric: 'tabular-nums', color: p.months[i] ? '#0F172A' : '#CBD5E1' }}>
-                          {p.months[i] ? fmtCurrency(p.months[i]) : '—'}
+                          {p.months[i] ? fmtCurrency(p.months[i]) : '-'}
                         </td>
                       ))}
                       <td style={{ textAlign: 'right', padding: '0.35rem 0.5rem', borderBottom: '1px solid #F1F5F9', fontVariantNumeric: 'tabular-nums', fontWeight: 700, color: '#0F172A' }}>{fmtCurrency(p.total)}</td>
@@ -212,7 +212,7 @@ export function DealCommissionBreakdownModal({ deal, metric: metricKey, commissi
                       const colTotal = projects.reduce((s, p) => s + p.months[i], 0);
                       return (
                         <td key={i} style={{ textAlign: 'right', padding: '0.4rem 0.5rem', fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: colTotal ? '#0F172A' : '#CBD5E1' }}>
-                          {colTotal ? fmtCurrency(colTotal) : '—'}
+                          {colTotal ? fmtCurrency(colTotal) : '-'}
                         </td>
                       );
                     })}

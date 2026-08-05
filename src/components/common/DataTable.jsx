@@ -278,7 +278,7 @@ function ColumnFilterCell({ value, onChange, suggestions, hasBlanks = false }) {
         >
           {matches.length === 0 ? (
             <div style={{ padding: '6px 10px', fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
-              {suggestions.length === 0 ? 'No values to filter by.' : 'No match — keep typing to filter.'}
+              {suggestions.length === 0 ? 'No values to filter by.' : 'No match: keep typing to filter.'}
             </div>
           ) : (
             <>
@@ -295,7 +295,7 @@ function ColumnFilterCell({ value, onChange, suggestions, hasBlanks = false }) {
               ))}
               {totalAvailable > matches.length && (
                 <div style={{ position: 'sticky', bottom: 0, padding: '4px 8px', fontSize: '0.65rem', color: 'var(--color-text-muted)', background: '#F8FAFC', borderTop: '1px solid var(--color-border-light)' }}>
-                  Showing {matches.length} of {totalAvailable} — type to narrow.
+                  Showing {matches.length} of {totalAvailable}: type to narrow.
                 </div>
               )}
             </>
@@ -442,14 +442,14 @@ function ColumnToggle({ columns, visibleCols, onToggle, onRemove, removedCount =
                         <button
                           type="button"
                           onClick={() => onToggle(col.key)}
-                          title="Hide this column — moves it to the Hidden list, where you can restore it with “+ Show”"
+                          title="Hide this column: moves it to the Hidden list, where you can restore it with “+ Show”"
                           aria-label={`Hide ${labelOf(col)}`}
                           style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.62rem', fontWeight: 600, color: 'var(--color-text-muted)', cursor: 'pointer', padding: '1px 6px', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
                         >Hide</button>
                         <button
                           type="button"
                           onClick={() => (onRemove ? onRemove(col.key) : onToggle(col.key))}
-                          title="Remove this column from the table — it won’t show in the Hidden list. Restore it with Reset."
+                          title="Remove this column from the table: it won’t show in the Hidden list. Restore it with Reset."
                           aria-label={`Remove ${labelOf(col)}`}
                           style={{ background: 'transparent', border: '1px solid #FECACA', borderRadius: 4, fontSize: '0.62rem', fontWeight: 600, color: '#B91C1C', cursor: 'pointer', padding: '1px 6px', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
                         >Remove</button>
@@ -1379,7 +1379,7 @@ export function DataTable({
                               className={col.sticky ? styles.stickyCol : undefined}
                               style={computedRowStyle}
                             >
-                              {col.render ? col.render(row) : (row[col.key] ?? '—')}
+                              {col.render ? col.render(row) : (row[col.key] ?? '-')}
                             </td>
                           ))}
                         </tr>

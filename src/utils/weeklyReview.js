@@ -65,8 +65,8 @@ const PROGRESS_SERIES = [
 ];
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
-const money = (n) => (Number.isFinite(n) ? `$${Math.round(n).toLocaleString('en-US')}` : '—');
-const pct = (n, digits = 0) => (Number.isFinite(n) ? `${n.toFixed(digits)}%` : '—');
+const money = (n) => (Number.isFinite(n) ? `$${Math.round(n).toLocaleString('en-US')}` : '-');
+const pct = (n, digits = 0) => (Number.isFinite(n) ? `${n.toFixed(digits)}%` : '-');
 
 // ---- Pipeline (metrics table + BFO live actuals) ------------------------
 
@@ -268,15 +268,15 @@ export function reviewHighlights(snapshot) {
 export function serializeReviewSnapshot(snapshot) {
   const s = snapshot || {};
   const L = [];
-  L.push(`WEEKLY REVIEW INPUT — week of ${s.weekLabel || s.weekKey || ''}${s.cdmName ? ` (${s.cdmName})` : ''}`);
+  L.push(`WEEKLY REVIEW INPUT: week of ${s.weekLabel || s.weekKey || ''}${s.cdmName ? ` (${s.cdmName})` : ''}`);
 
   if (s.yoy) {
     const y = s.yoy;
     L.push('');
-    L.push('YOY — SALES AGAINST TARGET');
+    L.push('YOY: SALES AGAINST TARGET');
     L.push(`- Annual target: ${money(y.ytd.target)}`);
-    L.push(`- Sold YTD (${y.ytd.year}): ${money(y.ytd.amount)} across ${y.ytd.deals} deals — ${pct(y.ytd.pctOfTarget, 1)} of target`);
-    L.push(`- Year elapsed: ${pct(y.ytd.yearElapsedPct, 1)} — on pace would be ${money(y.ytd.onPaceAmount)}`);
+    L.push(`- Sold YTD (${y.ytd.year}): ${money(y.ytd.amount)} across ${y.ytd.deals} deals: ${pct(y.ytd.pctOfTarget, 1)} of target`);
+    L.push(`- Year elapsed: ${pct(y.ytd.yearElapsedPct, 1)}: on pace would be ${money(y.ytd.onPaceAmount)}`);
     L.push(`- Gap to target: ${money(y.ytd.gapToTarget)}; current run rate lands the year at ${money(y.ytd.runRateFullYear)}`);
     L.push(`- Same point last year (${y.priorYearSameDate.year}): ${money(y.priorYearSameDate.amount)} across ${y.priorYearSameDate.deals} deals (delta ${money(y.priorYearSameDate.deltaAmount)})`);
     if (y.years.length) {
@@ -294,44 +294,44 @@ export function serializeReviewSnapshot(snapshot) {
   if (s.pipeline) {
     const p = s.pipeline;
     L.push('');
-    L.push(`PIPELINE METRICS${p.hasBfo ? ' (stage actuals live from BFO Activity)' : ' (no BFO data — stage actuals are the last hand-entered values)'}`);
-    L.push(`- Quota: ${money(p.quota.closedYTD)} closed of ${money(p.quota.target)} — ${pct(p.quota.pctOfQuota, 1)}`);
+    L.push(`PIPELINE METRICS${p.hasBfo ? ' (stage actuals live from BFO Activity)' : ' (no BFO data: stage actuals are the last hand-entered values)'}`);
+    L.push(`- Quota: ${money(p.quota.closedYTD)} closed of ${money(p.quota.target)} · ${pct(p.quota.pctOfQuota, 1)}`);
     L.push('- Stage goal vs actual:');
     for (const st of p.stages) {
       const parts = [
-        `active ${st.activeActual ?? '—'}/${st.activeGoal}`,
+        `active ${st.activeActual ?? '-'}/${st.activeGoal}`,
         `deal size ${money(st.dealSizeActual)} vs ${money(st.dealSizeGoal)}`,
         `pipeline ${money(st.pipelineActual)} vs ${money(st.pipelineGoal)}`,
         `close rate ${pct(st.closeActual == null ? null : st.closeActual * 100)} vs ${pct(st.closeGoal * 100)}`,
-        `opp life ${st.lifeActual ?? '—'}d vs ${st.lifeGoal ?? '—'}d max`,
+        `opp life ${st.lifeActual ?? '-'}d vs ${st.lifeGoal ?? '-'}d max`,
       ];
       if (st.stalledCount) parts.push(`${st.stalledCount} past max age`);
       L.push(`  • ${st.label}: ${parts.join('; ')}`);
     }
-    L.push(`- Totals: ${p.totals.activeActual ?? '—'}/${p.totals.activeGoal} active opps; pipeline ${money(p.totals.pipelineActual)} vs ${money(p.totals.pipelineGoal)} goal`);
+    L.push(`- Totals: ${p.totals.activeActual ?? '-'}/${p.totals.activeGoal} active opps; pipeline ${money(p.totals.pipelineActual)} vs ${money(p.totals.pipelineGoal)} goal`);
     L.push(`- Target projection at goal conversion: ${money(p.totals.targetProjGoal)} vs ${money(p.quota.target)} target (${p.totals.targetProjGap >= 0 ? 'surplus' : 'shortfall'} ${money(Math.abs(p.totals.targetProjGap))})`);
     if (p.coverage.actual != null || p.coverage.goal != null) {
-      L.push(`- Coverage ratio: ${p.coverage.actual ?? '—'} vs ${p.coverage.goal ?? '—'} goal`);
+      L.push(`- Coverage ratio: ${p.coverage.actual ?? '-'} vs ${p.coverage.goal ?? '-'} goal`);
     }
     if (p.clientMix.goalPct != null || p.clientMix.actualPct != null) {
-      L.push(`- Current-client mix: ${pct(p.clientMix.actualPct == null ? null : p.clientMix.actualPct * 100)} vs ${pct(p.clientMix.goalPct == null ? null : p.clientMix.goalPct * 100)} goal (${p.clientMix.clientCount ?? '—'} client / ${p.clientMix.greenfieldCount ?? '—'} greenfield opps)`);
+      L.push(`- Current-client mix: ${pct(p.clientMix.actualPct == null ? null : p.clientMix.actualPct * 100)} vs ${pct(p.clientMix.goalPct == null ? null : p.clientMix.goalPct * 100)} goal (${p.clientMix.clientCount ?? '-'} client / ${p.clientMix.greenfieldCount ?? '-'} greenfield opps)`);
     }
     if (p.notQuoted.goalPct != null) {
       L.push(`- Deals not quoted: ${pct(p.notQuoted.yearPct == null ? null : p.notQuoted.yearPct * 100)} year / ${pct(p.notQuoted.monthPct == null ? null : p.notQuoted.monthPct * 100)} month vs ${pct(p.notQuoted.goalPct * 100)} goal (lower is better)`);
     }
     const a = p.activity;
     if (a.newOppsGoal != null || a.activitiesGoal != null) {
-      L.push(`- New opps: ${a.newOppsThisMonth ?? '—'} this month (${a.newOppsLastMonth ?? '—'} last) vs ${a.newOppsGoal ?? '—'} goal; activities: ${a.activitiesThisWeek ?? '—'} this week (${a.activitiesLastWeek ?? '—'} last) vs ${a.activitiesGoal ?? '—'} goal`);
+      L.push(`- New opps: ${a.newOppsThisMonth ?? '-'} this month (${a.newOppsLastMonth ?? '-'} last) vs ${a.newOppsGoal ?? '-'} goal; activities: ${a.activitiesThisWeek ?? '-'} this week (${a.activitiesLastWeek ?? '-'} last) vs ${a.activitiesGoal ?? '-'} goal`);
     }
   }
 
   if (s.progress) {
     const pr = s.progress;
     L.push('');
-    L.push(`PROGRESS — ACCOUNT COVERAGE (snapshot ${pr.week}${pr.stale ? ', not refreshed this week' : ''}; ${pr.weeksTracked} weeks tracked${pr.comparedWith ? `, 4-week change vs ${pr.comparedWith}` : ''})`);
+    L.push(`PROGRESS: ACCOUNT COVERAGE (snapshot ${pr.week}${pr.stale ? ', not refreshed this week' : ''}; ${pr.weeksTracked} weeks tracked${pr.comparedWith ? `, 4-week change vs ${pr.comparedWith}` : ''})`);
     for (const m of pr.series) {
-      const wk = m.weekChange == null ? '—' : `${m.weekChange > 0 ? '+' : ''}${m.weekChange}`;
-      const four = m.fourWeekChange == null ? '—' : `${m.fourWeekChange > 0 ? '+' : ''}${m.fourWeekChange}`;
+      const wk = m.weekChange == null ? '-' : `${m.weekChange > 0 ? '+' : ''}${m.weekChange}`;
+      const four = m.fourWeekChange == null ? '-' : `${m.fourWeekChange > 0 ? '+' : ''}${m.fourWeekChange}`;
       L.push(`  • ${m.label}: ${m.value}${m.unit} (week ${wk}, 4-week ${four}; ${m.dir === 'up' ? 'higher is better' : m.dir === 'down' ? 'lower is better' : 'context only'})`);
     }
   }
@@ -349,7 +349,7 @@ export function serializeReviewSnapshot(snapshot) {
 export function serializeReview(review, weekLabel) {
   const r = review || {};
   const L = [];
-  L.push(`WEEKLY REVIEW — ${weekLabel || ''}`.trim());
+  L.push(`WEEKLY REVIEW: ${weekLabel || ''}`.trim());
   if (r.headline) { L.push(''); L.push(r.headline); }
   if (r.targetOutlook) { L.push(''); L.push(`Target outlook: ${r.targetOutlook}`); }
   if (Array.isArray(r.blockers) && r.blockers.length) {

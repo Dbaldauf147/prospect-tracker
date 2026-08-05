@@ -22,14 +22,14 @@ import styles from './EventsView.module.css';
 // options as the Table View's Type column. Commits immediately on
 // change so the lookup list can set/correct Type without leaving Events.
 function TypeCell({ prospect, onCommit }) {
-  if (!prospect) return <span className={styles.tvMuted}>—</span>;
+  if (!prospect) return <span className={styles.tvMuted}>-</span>;
   return (
     <select
       className={styles.cdmInput}
       value={prospect.type || ''}
       onChange={e => onCommit(e.target.value)}
     >
-      <option value="">—</option>
+      <option value="">-</option>
       {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
     </select>
   );
@@ -41,7 +41,7 @@ function TypeCell({ prospect, onCommit }) {
 function CdmCell({ prospect, onCommit }) {
   const [val, setVal] = useState(prospect?.cdm || '');
   useEffect(() => { setVal(prospect?.cdm || ''); }, [prospect?.id, prospect?.cdm]);
-  if (!prospect) return <span className={styles.tvMuted}>—</span>;
+  if (!prospect) return <span className={styles.tvMuted}>-</span>;
   const commit = () => {
     const next = val.trim();
     if (next !== String(prospect.cdm || '').trim()) onCommit(next);
@@ -120,7 +120,7 @@ function SuggestedCell({ rejected, suggestion, prospectCompanies, onAccept, onRe
         <>
           <span className={styles.suggestName} title={suggestion.company}>≈ {suggestion.company}</span>
           <div className={styles.suggestBtns}>
-            <button type="button" className={styles.suggestUse} onClick={() => pick(suggestion.company)} title="Use this name — rewrites this row's company to the Table View name">✓ Use</button>
+            <button type="button" className={styles.suggestUse} onClick={() => pick(suggestion.company)} title="Use this name: rewrites this row's company to the Table View name">✓ Use</button>
             <button type="button" className={styles.suggestReject} onClick={onReject} title="Reject this suggestion">✕</button>
             <button type="button" className={styles.suggestSearchBtn} onClick={() => setSearching(s => !s)} title="Search for a different company">🔍</button>
           </div>
@@ -443,7 +443,7 @@ function AttendeePicker({ contacts, existingIds, onAdd }) {
             >
               <div className={styles.optionName}>{contactDisplayName(c)}</div>
               <div className={styles.optionMeta}>
-                {[c.jobtitle, c.company, c.email].filter(Boolean).join(' · ') || '—'}
+                {[c.jobtitle, c.company, c.email].filter(Boolean).join(' · ') || '-'}
               </div>
             </button>
           ))}
@@ -559,7 +559,7 @@ function ContactPickerModal({ company, title, contacts, attendees, onAdd, onRemo
               >
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <div className={styles.optionName}>{contactDisplayName(c)}</div>
-                  <div className={styles.optionMeta}>{[c.jobtitle, c.email].filter(Boolean).join(' · ') || '—'}</div>
+                  <div className={styles.optionMeta}>{[c.jobtitle, c.email].filter(Boolean).join(' · ') || '-'}</div>
                 </span>
                 <span className={att ? styles.modalTagged : styles.modalAddTag}>{att ? '✓ Added' : '+ Add'}</span>
               </button>
@@ -625,18 +625,18 @@ function AttendeeContactModal({ attendee, contact, onClose }) {
   const tags = contactTags(contact);
 
   const rows = [
-    ['Original title', attendee.originalTitle || '—'],
-    ['Contact title', contactTitle || '—'],
-    ['Company', company || '—'],
-    ['Email', email ? <a href={`mailto:${email}`}>{email}</a> : '—'],
-    ['Phone', phone || '—'],
-    ['Location', location || '—'],
-    ['LinkedIn', linkedin ? <a href={linkedin} target="_blank" rel="noopener noreferrer">View profile</a> : '—'],
+    ['Original title', attendee.originalTitle || '-'],
+    ['Contact title', contactTitle || '-'],
+    ['Company', company || '-'],
+    ['Email', email ? <a href={`mailto:${email}`}>{email}</a> : '-'],
+    ['Phone', phone || '-'],
+    ['Location', location || '-'],
+    ['LinkedIn', linkedin ? <a href={linkedin} target="_blank" rel="noopener noreferrer">View profile</a> : '-'],
     ['Tags', tags.length ? (
       <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>
         {tags.map(t => <span key={t} className={styles.tagChip}>{t}</span>)}
       </span>
-    ) : '—'],
+    ) : '-'],
   ];
 
   return createPortal(
@@ -647,7 +647,7 @@ function AttendeeContactModal({ attendee, contact, onClose }) {
             <strong>{name}</strong>
             {!attendee.contactId && (
               <span style={{ marginLeft: 6, fontSize: '0.7rem', fontWeight: 400, color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
-                (manual — not in HubSpot)
+                (manual: not in HubSpot)
               </span>
             )}
           </span>
@@ -666,7 +666,7 @@ function AttendeeContactModal({ attendee, contact, onClose }) {
           </table>
           {!contact && attendee.contactId && (
             <div style={{ marginTop: '0.6rem', fontSize: '0.74rem', color: 'var(--color-text-muted)' }}>
-              The full contact record isn't in the synced HubSpot cache right now — showing the details saved with this event.
+              The full contact record isn't in the synced HubSpot cache right now: showing the details saved with this event.
             </div>
           )}
         </div>
@@ -1322,7 +1322,7 @@ export function EventsView({
     const verb = mode === 'add' ? 'Added' : 'Removed';
     setTagStatus(
       failed
-        ? `${verb} "${tag}" on ${changed} — ${failed} failed`
+        ? `${verb} "${tag}" on ${changed} · ${failed} failed`
         : changed
           ? `${verb} "${tag}" on ${changed} contact${changed === 1 ? '' : 's'}`
           : 'No changes needed',
@@ -1877,7 +1877,7 @@ export function EventsView({
         </span>
       );
     }
-    return <span className={styles.tvMuted}>—</span>;
+    return <span className={styles.tvMuted}>-</span>;
   };
 
   // ---- Configurable columns for the two tables ---------------------
@@ -1904,8 +1904,8 @@ export function EventsView({
         )}
       </>
     ) },
-    { key: 'originalTitle', label: 'Original Title', width: 150, filterable: true, render: (a) => a.originalTitle || '—' },
-    { key: 'title', label: 'Contact Title', width: 150, filterable: true, render: (a) => a.title || '—' },
+    { key: 'originalTitle', label: 'Original Title', width: 150, filterable: true, render: (a) => a.originalTitle || '-' },
+    { key: 'title', label: 'Contact Title', width: 150, filterable: true, render: (a) => a.title || '-' },
     { key: 'company', label: 'Company', width: 160, filterable: true, render: (a) => {
       const prospect = matchProspect(a.company);
       if (prospect) {
@@ -1920,7 +1920,7 @@ export function EventsView({
           </button>
         );
       }
-      return a.company || '—';
+      return a.company || '-';
     } },
     { key: 'email', label: 'Email', width: 220, filterable: true, render: (a, { i }) => {
       if (a.email) {
@@ -1928,13 +1928,13 @@ export function EventsView({
           <span>
             {a.email}
             {a.emailGuessed && (
-              <span className={styles.guessTag} title="Guessed from the company email domain — verify before using">guess</span>
+              <span className={styles.guessTag} title="Guessed from the company email domain: verify before using">guess</span>
             )}
           </span>
         );
       }
       const info = resolveEmailDomain(a.company);
-      if (!info.domain) return <span className={styles.tvMuted}>—</span>;
+      if (!info.domain) return <span className={styles.tvMuted}>-</span>;
       return (
         <button
           type="button"
@@ -1960,7 +1960,7 @@ export function EventsView({
           {tags.map(t => <span key={t} className={styles.tagChip}>{t}</span>)}
         </span>
       ) : (
-        <span className={styles.tvMuted}>—</span>
+        <span className={styles.tvMuted}>-</span>
       )
     ) },
   ];
@@ -1970,8 +1970,8 @@ export function EventsView({
     { key: 'name', label: 'Name', width: 150, filterable: true, render: (l, { i }) => (
       <LookupNameCell value={l.name} onCommit={v => updateLookup(i, { name: v })} />
     ) },
-    { key: 'title', label: 'Title', width: 150, filterable: true, render: (l) => l.title || '—' },
-    { key: 'company', label: 'Company', width: 160, filterable: true, render: (l) => l.company || '—' },
+    { key: 'title', label: 'Title', width: 150, filterable: true, render: (l) => l.title || '-' },
+    { key: 'company', label: 'Company', width: 160, filterable: true, render: (l) => l.company || '-' },
     { key: 'emailDomain', label: 'Email Domain', width: 150, render: (l) => renderDomainCell(l.company) },
     { key: 'tableView', label: 'Table View', width: 160, filterable: true, render: (l, { prospect, adding }) => (
       prospect ? (
@@ -1997,7 +1997,7 @@ export function EventsView({
     ) },
     { key: 'suggested', label: 'Suggested', width: 190, render: (l, { i, prospect, suggestion }) => (
       prospect ? (
-        <span className={styles.tvMuted}>—</span>
+        <span className={styles.tvMuted}>-</span>
       ) : (
         <SuggestedCell
           rejected={!!l.suggestRejected}
@@ -2305,7 +2305,7 @@ export function EventsView({
             )}
           </div>
           <div style={{ fontSize: '0.74rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
-            Paste, drop, or upload a list of <strong>titles and company names</strong> (CSV or tab-separated) — a <strong>column-mapping</strong> popup lets you pick which column is which. Each row gets a LinkedIn people-search button, a <strong>Table View</strong> match (click to open, or <strong>+ Add</strong> a new prospect), and an editable <strong>CDM</strong>.
+            Paste, drop, or upload a list of <strong>titles and company names</strong> (CSV or tab-separated): a <strong>column-mapping</strong> popup lets you pick which column is which. Each row gets a LinkedIn people-search button, a <strong>Table View</strong> match (click to open, or <strong>+ Add</strong> a new prospect), and an editable <strong>CDM</strong>.
             {lookups.length > 0 && (
               <span style={{ marginLeft: 6 }}>
                 <span style={{ color: '#166534', fontWeight: 600 }}>{lookupMatchCount} in Table View</span>

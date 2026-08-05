@@ -170,7 +170,7 @@ export async function replaceAllProspects(existingIds, newProspects, onProgress)
 
   async function report(phase) {
     const pct = Math.round((completed / totalSteps) * 100);
-    if (onProgress) onProgress(`${phase} — ${pct}%`);
+    if (onProgress) onProgress(`${phase} · ${pct}%`);
     // Yield to browser so UI can repaint
     await waitFrame();
   }

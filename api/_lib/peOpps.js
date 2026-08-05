@@ -266,7 +266,7 @@ const PE_STAGE_META = [
 
 // AUM formatting identical to src/utils/formatters.formatAum.
 function formatAum(value) {
-  if (value == null || value === 0) return '—';
+  if (value == null || value === 0) return '-';
   if (value >= 1) return `$${value.toFixed(1)}B`;
   return `$${(value * 1000).toFixed(0)}M`;
 }
@@ -345,8 +345,8 @@ function addPeStagesSheet(wb, firms) {
       }
       cell.value = {
         richText: [
-          { text: f.company || '—', font: { name: 'Nunito Sans', bold: true, size: 11, color: { argb: 'FF1E293B' } } },
-          { text: `\n${formatAum(f.peAum)}   ·   ${f.geography || '—'}`, font: { name: 'Nunito Sans', size: 9, color: { argb: 'FF475569' } } },
+          { text: f.company || '-', font: { name: 'Nunito Sans', bold: true, size: 11, color: { argb: 'FF1E293B' } } },
+          { text: `\n${formatAum(f.peAum)}   ·   ${f.geography || '-'}`, font: { name: 'Nunito Sans', size: 9, color: { argb: 'FF475569' } } },
           { text: `\n${f.pcCount} portfolio co${f.pcCount === 1 ? '' : 's'}`, font: { name: 'Nunito Sans', size: 9, color: { argb: 'FF64748B' } } },
         ],
       };

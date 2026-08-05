@@ -62,7 +62,7 @@ function ServiceCell({ value, onCommit }) {
       >
         {value
           ? value
-          : <span className={styles.serviceMutedCell}>—</span>}
+          : <span className={styles.serviceMutedCell}>-</span>}
       </span>
     );
   }
@@ -112,7 +112,7 @@ function ServiceYesNoCell({ value, onCommit }) {
         cursor: 'pointer', boxSizing: 'border-box',
       }}
     >
-      <option value="">—</option>
+      <option value="">-</option>
       <option value="Yes">Yes</option>
       <option value="No">No</option>
     </select>
@@ -443,7 +443,7 @@ function ListCard({ list, filter, wide, links, onSaveLink, onChange, onRenameLab
         )}
         {visible.length === 0 ? (
           <div className={styles.optionEmpty}>
-            {list.options.length === 0 ? '— no options —' : '— no matches —'}
+            {list.options.length === 0 ? '(no options)' : '(no matches)'}
           </div>
         ) : (
           visible.map(({ opt, idx }) => (
@@ -674,8 +674,8 @@ export function DropdownsView({ settings, updateSettings }) {
           className={styles.serviceLinkEditBtn}
           onClick={() => toggleHideService(row.name)}
           title={row._hidden
-            ? `Show "${row.name}" again — here, on the company card's services board, and in the Opps Scope picker`
-            : `Hide "${row.name}" — takes it out of this list, the company card's services board, and the Opps Scope picker`}
+            ? `Show "${row.name}" again: here, on the company card's services board, and in the Opps Scope picker`
+            : `Hide "${row.name}": takes it out of this list, the company card's services board, and the Opps Scope picker`}
           aria-label={row._hidden ? `Show ${row.name}` : `Hide ${row.name}`}
         >{row._hidden ? '↩' : '✕'}</button>
       )

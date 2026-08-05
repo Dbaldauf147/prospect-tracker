@@ -273,7 +273,7 @@ const TypeDropdown = memo(function TypeDropdown({ value, options, onChange, onAd
         appearance: 'auto',
       }}
     >
-      <option value="">—</option>
+      <option value="">-</option>
       {(options || []).map(o => <option key={o} value={o}>{o}</option>)}
       <option value={ADD_NEW_TYPE}>+ Add new Type…</option>
     </select>
@@ -425,7 +425,7 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings, onAddPr
   const isPlaceholderCompany = (s) => {
     const t = String(s || '').trim();
     if (!t) return true;
-    if (/^[-—–_]+$/.test(t)) return true;
+    if (/^[--–_]+$/.test(t)) return true;
     if (/^(n\.?a\.?|n\/a|none|null|tbd|unknown|\?|\.|test)$/i.test(t)) return true;
     return false;
   };
@@ -1019,7 +1019,7 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings, onAddPr
         >Clear table</button>
       </div>
       <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
-        Tip: click <strong>📋 Paste from Excel</strong> to import a copied block — a column-mapping modal pops up so you can confirm which Excel column fills which Zoom Info field. You can also type directly in the Company column to search Table View; pick a match and the Zoom ID / Name / Website / CDM / Tier / Type auto-fill from that account.
+        Tip: click <strong>📋 Paste from Excel</strong> to import a copied block: a column-mapping modal pops up so you can confirm which Excel column fills which Zoom Info field. You can also type directly in the Company column to search Table View; pick a match and the Zoom ID / Name / Website / CDM / Tier / Type auto-fill from that account.
       </div>
 
       {pasteHelper !== null && (
@@ -1031,7 +1031,7 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings, onAddPr
             autoFocus
             value={pasteHelper}
             onChange={e => setPasteHelper(e.target.value)}
-            placeholder="Paste a block copied from Excel — first row should be the headers (Company, Zoom Company ID, …)."
+            placeholder="Paste a block copied from Excel: first row should be the headers (Company, Zoom Company ID, …)."
             style={{ width: '100%', minHeight: 90, padding: '0.4rem', border: '1px solid #86EFAC', borderRadius: 4, fontSize: '0.78rem', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', boxSizing: 'border-box', resize: 'vertical' }}
           />
           <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end' }}>
@@ -1137,7 +1137,7 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings, onAddPr
                           value={r[c.key] || ''}
                           onCommit={v => updateCell(r.id, c.key, v)}
                           suggestions={companyOptions}
-                          placeholder={isPad ? 'Type a company…' : '—'}
+                          placeholder={isPad ? 'Type a company…' : '-'}
                           style={cellInputStyle}
                         />
                       ) : c.key === 'tvStatus' ? (
@@ -1145,7 +1145,7 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings, onAddPr
                           {(() => {
                             const company = (r.company || '').trim();
                             if (!company) {
-                              return <span style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}>—</span>;
+                              return <span style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}>-</span>;
                             }
                             const onTV = !!findProspectByCompany(company);
                             if (onTV) {
@@ -1157,7 +1157,7 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings, onAddPr
                               );
                             }
                             if (!onAddProspect || isPad) {
-                              return <span style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}>—</span>;
+                              return <span style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}>-</span>;
                             }
                             return (
                               <button
@@ -1184,7 +1184,7 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings, onAddPr
                                   style={{ fontSize: '0.74rem', color: '#166534', fontWeight: 600 }}
                                 >{cm}</span>
                               ) : (
-                                <span style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}>—</span>
+                                <span style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}>-</span>
                               )}
                             </div>
                           );
@@ -1233,14 +1233,14 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings, onAddPr
                               }}
                             >→ {suggestion.name}</button>
                           ) : (
-                            <span style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}>—</span>
+                            <span style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}>-</span>
                           )}
                         </div>
                       ) : (
                         <CommitOnBlurInput
                           value={r[c.key] || ''}
                           onCommit={v => updateCell(r.id, c.key, v)}
-                          placeholder="—"
+                          placeholder="-"
                           style={cellInputStyle}
                         />
                       )}
@@ -1315,14 +1315,14 @@ function PasteMappingModal({ modal, onCancel, onConfirm, onChangeMapping }) {
         style={{ background: '#fff', borderRadius: 12, padding: '1.5rem', width: 1000, maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>Paste from Excel — Column Mapping</h3>
+          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>Paste from Excel: Column Mapping</h3>
           <button
             onClick={onCancel}
             style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}
           >×</button>
         </div>
         <p style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', margin: '0 0 1rem 0', lineHeight: 1.4 }}>
-          Detected <strong>{rows.length.toLocaleString()}</strong> row{rows.length === 1 ? '' : 's'} and <strong>{headers.length}</strong> column{headers.length === 1 ? '' : 's'} from your clipboard. The first row was treated as headers — pick which file column should fill each Zoom Info field. Headers that already match common names ("Zoom Company ID", "Website", etc.) are mapped automatically.
+          Detected <strong>{rows.length.toLocaleString()}</strong> row{rows.length === 1 ? '' : 's'} and <strong>{headers.length}</strong> column{headers.length === 1 ? '' : 's'} from your clipboard. The first row was treated as headers: pick which file column should fill each Zoom Info field. Headers that already match common names ("Zoom Company ID", "Website", etc.) are mapped automatically.
         </p>
         {missingRequired.length > 0 && (
           <div style={{ margin: '0 0 0.75rem', padding: '0.4rem 0.6rem', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 6, fontSize: '0.75rem', color: '#991B1B', fontWeight: 600 }}>
@@ -1349,7 +1349,7 @@ function PasteMappingModal({ modal, onCancel, onConfirm, onChangeMapping }) {
                     >← {header}</span>
                   ) : (
                     <span style={{ color: t.required ? '#DC2626' : '#94A3B8', fontSize: '0.68rem', fontWeight: 600 }}>
-                      {t.required ? '— not mapped —' : '— optional —'}
+                      {t.required ? '(not mapped)' : '(optional)'}
                     </span>
                   )}
                 </div>
@@ -1379,7 +1379,7 @@ function PasteMappingModal({ modal, onCancel, onConfirm, onChangeMapping }) {
                       color: target ? '#166534' : 'var(--color-text)',
                     }}
                   >
-                    <option value="">— Ignore —</option>
+                    <option value="">(Ignore)</option>
                     {PASTE_TARGETS.map(t => (
                       <option key={t.key} value={t.key}>
                         {t.label}{t.required ? ' *' : ''}
@@ -1411,7 +1411,7 @@ function PasteMappingModal({ modal, onCancel, onConfirm, onChangeMapping }) {
                     const v = h && idxOf[h] != null ? cells[idxOf[h]] || '' : '';
                     return (
                       <td key={t.key} style={{ ...cellBase, color: v ? '#1E293B' : '#CBD5E1', fontStyle: v ? 'normal' : 'italic' }}>
-                        {v || '—'}
+                        {v || '-'}
                       </td>
                     );
                   })}

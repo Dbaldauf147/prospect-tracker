@@ -185,7 +185,7 @@ async function handler(req, res, auth) {
           id: e.id,
           timestamp: e.hs_timestamp,
           recipients,
-          recipientNames: [e.hs_email_to_firstname, e.hs_email_to_lastname].filter(Boolean).join(' ') || recipients[0] || '—',
+          recipientNames: [e.hs_email_to_firstname, e.hs_email_to_lastname].filter(Boolean).join(' ') || recipients[0] || '-',
           replied: false,
           replyDate: null,
           repliedBy: null,

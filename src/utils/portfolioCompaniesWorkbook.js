@@ -576,27 +576,27 @@ export async function downloadPortfolioCompaniesWorkbook({
                     function addBlank() { mRow++; }
 
                     addSectionHeader('Overview');
-                    addParagraph('The Opportunity Score is a 0–100 composite value computed for each portfolio company. Higher values indicate a better fit for Schneider Electric engagement based on industry alignment, operational scale, and acquisition recency. The score is computed relative to the other companies in this table — energy, site count, and acquisition year are normalized against the rows exported here.');
+                    addParagraph('The Opportunity Score is a 0–100 composite value computed for each portfolio company. Higher values indicate a better fit for Schneider Electric engagement based on industry alignment, operational scale, and acquisition recency. The score is computed relative to the other companies in this table: energy, site count, and acquisition year are normalized against the rows exported here.');
                     addBlank();
 
                     addSectionHeader('Component Weights');
-                    addKV('Est. Energy (GWh/yr)', '40% — linearly normalized against the maximum value in the exported table. Largest single driver of the score.');
-                    addKV('Sector Fit Score', '25% — uses the per-row Subsector Score (1-10) only when both a Subsector label AND its score are present. If the subsector is missing or unscored, falls back to the per-row Sector Score; if that is also missing, falls back to the keyword-derived sector lookup (table below). Divided by 10.');
-                    addKV('Site Count', '20% — linearly normalized against the maximum value in the exported table.');
-                    addKV('Acquisition Year', '15% — most recent acquisition year scores 1.0, oldest scores 0.0, others linearly between.');
+                    addKV('Est. Energy (GWh/yr)', '40%: linearly normalized against the maximum value in the exported table. Largest single driver of the score.');
+                    addKV('Sector Fit Score', '25%: uses the per-row Subsector Score (1-10) only when both a Subsector label AND its score are present. If the subsector is missing or unscored, falls back to the per-row Sector Score; if that is also missing, falls back to the keyword-derived sector lookup (table below). Divided by 10.');
+                    addKV('Site Count', '20%: linearly normalized against the maximum value in the exported table.');
+                    addKV('Acquisition Year', '15%: most recent acquisition year scores 1.0, oldest scores 0.0, others linearly between.');
                     addBlank();
 
                     addSectionHeader('Sector Fit Scores');
                     addParagraph('The Industry column is fuzzy-matched to one of the sectors below. The sector score (1-10) is divided by 10 and contributes 25% to the composite. Unmatched industries contribute 0. Fit Tier in the data tab reflects the same mapping: High for 8.0+, Medium for 5.0-7.9, Low for under 5.0.');
-                    addKV('Industrial / Manufacturing', '9.5 — industrial, manufacturing, factory, plant, chemical, materials, energy, utilities, mining, metal, petroleum/oil & gas, steel, cement, paper/pulp, automotive, aerospace');
-                    addKV('Data Centers', '9.3 — data center, colocation');
-                    addKV('Cold Storage / Food Mfg', '9.0 — cold storage, food mfg/processing, beverage mfg');
-                    addKV('Healthcare / Life Sciences', '8.6 — healthcare, life sciences, pharma, biotech, medical, hospital, clinic');
-                    addKV('Real Estate / Facilities', '8.4 — real estate, facilities, property, REIT, infrastructure');
-                    addKV('Hospitality / Food Service', '7.8 — hotel, restaurant, food service, lodging, QSR, hospitality');
-                    addKV('Retail / Consumer', '6.5 — retail, consumer, grocery, apparel, e-commerce');
-                    addKV('Warehousing / 3PL', '4.2 — warehousing, 3PL, logistics, distribution, freight, transport, supply chain');
-                    addKV('Tech / Software & Office Occupiers', '3.0 — tech, software, SaaS, fintech, media, telecom, advertising, office, professional services, financial services, insurance, banking, asset management');
+                    addKV('Industrial / Manufacturing', '9.5: industrial, manufacturing, factory, plant, chemical, materials, energy, utilities, mining, metal, petroleum/oil & gas, steel, cement, paper/pulp, automotive, aerospace');
+                    addKV('Data Centers', '9.3: data center, colocation');
+                    addKV('Cold Storage / Food Mfg', '9.0: cold storage, food mfg/processing, beverage mfg');
+                    addKV('Healthcare / Life Sciences', '8.6: healthcare, life sciences, pharma, biotech, medical, hospital, clinic');
+                    addKV('Real Estate / Facilities', '8.4: real estate, facilities, property, REIT, infrastructure');
+                    addKV('Hospitality / Food Service', '7.8: hotel, restaurant, food service, lodging, QSR, hospitality');
+                    addKV('Retail / Consumer', '6.5: retail, consumer, grocery, apparel, e-commerce');
+                    addKV('Warehousing / 3PL', '4.2: warehousing, 3PL, logistics, distribution, freight, transport, supply chain');
+                    addKV('Tech / Software & Office Occupiers', '3.0: tech, software, SaaS, fintech, media, telecom, advertising, office, professional services, financial services, insurance, banking, asset management');
                     addBlank();
 
                     addSectionHeader('Normalization Formulas');
@@ -612,7 +612,7 @@ export async function downloadPortfolioCompaniesWorkbook({
 
                     addSectionHeader('Key Assumptions & Caveats');
                     addKV('Relative scoring', 'Scores are relative to the current table. Adding or removing rows changes the normalization max/min and can shift every row\'s score.');
-                    addKV('Estimates', 'Energy (GWh/yr) and Site Count are best-effort estimates — Claude research output or manual input. They are not audited figures.');
+                    addKV('Estimates', 'Energy (GWh/yr) and Site Count are best-effort estimates: Claude research output or manual input. They are not audited figures.');
                     addKV('Industry keywords', 'Matching is substring-based and may mis-classify broad terms. Review the Fit Tier column and correct the Industry text if needed.');
                     addKV('Missing values', 'Blank energy / sites / year cells contribute 0 to their component, never negative.');
 

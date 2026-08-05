@@ -219,7 +219,7 @@ export async function saveOpps2ToFirestore(userId, data, { allowEmpty = false } 
   // not a save — never let it reach the cloud.
   const incomingRecords = Array.isArray(stamped.records) ? stamped.records : null;
   if (incomingRecords === null) {
-    throw new Error('opps2: refusing to save — payload has no records array');
+    throw new Error('opps2: refusing to save: payload has no records array');
   }
 
   // Anti-wipe guard: refuse to replace a populated cloud dataset with an

@@ -150,7 +150,7 @@ export function AuthProvider({ children }) {
       }
       await logAction(result.user, 'signup', { method: 'email' });
     } catch (err) {
-      setAuthError(err.code === 'auth/email-already-in-use' ? 'Account already exists — try signing in' : err.message || 'Sign-up failed');
+      setAuthError(err.code === 'auth/email-already-in-use' ? 'Account already exists: try signing in' : err.message || 'Sign-up failed');
     }
   }
 

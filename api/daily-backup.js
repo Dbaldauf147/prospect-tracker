@@ -35,7 +35,7 @@ function summaryHtml({ fileName, summary, alerts, prevCounts }) {
     const cur = summary.counts[k];
     const prev = prevCounts ? prevCounts[k] : undefined;
     const delta = prev != null ? cur - prev : null;
-    const deltaStr = delta == null ? '—' : (delta > 0 ? `+${delta}` : String(delta));
+    const deltaStr = delta == null ? '-' : (delta > 0 ? `+${delta}` : String(delta));
     const color = delta != null && delta < 0 ? '#b91c1c' : '#334155';
     return `<tr>
       <td style="padding:4px 10px;border-bottom:1px solid #eee">${esc(k)}</td>
@@ -46,7 +46,7 @@ function summaryHtml({ fileName, summary, alerts, prevCounts }) {
 
   const alertBlock = alerts.length ? `
     <div style="background:#fdecea;border:1px solid #f5c2c0;color:#8a1c12;border-radius:6px;padding:12px 14px;margin:0 0 16px">
-      <strong>⚠ Possible data loss — review before trusting this backup.</strong>
+      <strong>⚠ Possible data loss: review before trusting this backup.</strong>
       <ul style="margin:8px 0 0;padding-left:18px">
         ${alerts.map(a => `<li>${esc(a.field)} dropped ${a.dropPct}% (${a.prev} → ${a.cur})</li>`).join('')}
       </ul>
@@ -134,7 +134,7 @@ export default async function handler(req, res) {
         try {
           await sendEmail({
             to,
-            subject: `${alerts.length ? '⚠ ' : ''}Prospect Tracker daily backup — ${date}`,
+            subject: `${alerts.length ? '⚠ ' : ''}Prospect Tracker daily backup: ${date}`,
             html: summaryHtml({ fileName, summary, alerts, prevCounts }),
           });
           emailed = true;

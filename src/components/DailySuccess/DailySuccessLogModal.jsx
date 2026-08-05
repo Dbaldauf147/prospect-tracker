@@ -43,7 +43,7 @@ export function DailySuccessLogModal({ open, onClose, user }) {
           <div className={styles.sub}>
             {tab === 'log'
               ? 'Click a date to view or edit. Numbers show what was checked off at 1 PM and 5 PM.'
-              : 'Long-running goals — Claude prioritizes them against your live pipeline and drafts daily tasks.'}
+              : 'Long-running goals: Claude prioritizes them against your live pipeline and drafts daily tasks.'}
           </div>
           <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
             <button
@@ -84,7 +84,7 @@ export function DailySuccessLogModal({ open, onClose, user }) {
           ) : (
             <>
               {entries.length === 0 && (
-                <p className={styles.smallNote}>No entries yet — write your first plan in the morning prompt.</p>
+                <p className={styles.smallNote}>No entries yet: write your first plan in the morning prompt.</p>
               )}
               {entries.length > 0 && (
                 <table className={styles.logTable}>

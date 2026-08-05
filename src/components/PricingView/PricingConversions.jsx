@@ -2,12 +2,12 @@ import { useState } from 'react';
 import styles from './PricingConversions.module.css';
 
 const fmtMoney = (n, dp = 2) => {
-  if (n === null || n === undefined || !Number.isFinite(n)) return '—';
+  if (n === null || n === undefined || !Number.isFinite(n)) return '-';
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: dp, maximumFractionDigits: dp });
 };
 
 const fmtPct = (n, dp = 1) => {
-  if (n === null || n === undefined || !Number.isFinite(n)) return '—';
+  if (n === null || n === undefined || !Number.isFinite(n)) return '-';
   return `${(n * 100).toFixed(dp)}%`;
 };
 
@@ -170,7 +170,7 @@ export function PricingConversions() {
           <span className={styles.caption}>
             Cost figures assume a 4% higher cost (tech-depreciation uplift), matching the pricing model above.
           </span>
-          <div className={styles.dpControl} title="Add decimal places to the results below. This is a temporary view — it resets to the standard 2 places on refresh.">
+          <div className={styles.dpControl} title="Add decimal places to the results below. This is a temporary view: it resets to the standard 2 places on refresh.">
             <span className={styles.dpLabel}>Decimals</span>
             <button
               type="button"

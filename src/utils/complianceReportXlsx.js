@@ -721,7 +721,7 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
     // doesn't inflate the exported count.
     if (isCaliforniaSite(site)) {
       e.california += 1;
-      const label = [site.siteName, site.city].filter(Boolean).join(' — ');
+      const label = [site.siteName, site.city].filter(Boolean).join(': ');
       if (label) e.caSites.push(label);
     }
   }
@@ -760,7 +760,7 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
   if (!companies.length) {
     ws.mergeCells(rr, 1, rr, NC);
     const c = ws.getCell(rr, 1);
-    c.value = 'No sites loaded — upload sites on the Utility Lookup tab to populate companies here.';
+    c.value = 'No sites loaded: upload sites on the Utility Lookup tab to populate companies here.';
     c.font = { name: FONT, italic: true, size: 10, color: { argb: SLATE } };
     c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
     rr += 1;
@@ -778,7 +778,7 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
         { v: co.total, align: 'center', num: '#,##0' },
         { v: co.california, align: 'center', num: '#,##0', green: co.california > 0 },
         { v: co.total ? co.california / co.total : 0, align: 'center', num: '0%' },
-        { v: caText || (co.california ? '' : '—'), align: 'left', wrap: true },
+        { v: caText || (co.california ? '' : '-'), align: 'left', wrap: true },
       ];
       cells.forEach((spec, i) => {
         const c = row.getCell(i + 1);
@@ -909,7 +909,7 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
             v: [
               j.jurisdiction === 'California' && co.california ? `${co.california} ${co.california === 1 ? 'site' : 'sites'}` : '',
               j.note,
-            ].filter(Boolean).join(' — ') || '—',
+            ].filter(Boolean).join(': ') || '-',
             wrap: true,
           },
           // A jurisdiction its revenue screen has ruled out reads No — the
@@ -920,7 +920,7 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
           {
             v: j.ruledOut
               ? (j.answer ? `No (answer on file: ${j.answer})` : 'No')
-              : (j.answer || '—'),
+              : (j.answer || '-'),
             center: true,
             green: !j.ruledOut && j.answer === 'Yes',
             red: j.ruledOut,
@@ -972,8 +972,8 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
             const cCells = [
               { v: '' },
               { v: row.label, wrap: true },
-              { v: row.screening || '—', wrap: true },
-              { v: row.verdict || '—', center: true, green: row.verdict === 'Yes', red: row.na },
+              { v: row.screening || '-', wrap: true },
+              { v: row.verdict || '-', center: true, green: row.verdict === 'Yes', red: row.na },
               {
                 v: [
                   row.basis,
@@ -1006,9 +1006,9 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
           const rrow = ws.getRow(rr);
           const rCells = [
             { v: '' },
-            { v: `${reg.regulation} — ${reg.timeline}`, bold: true },
+            { v: `${reg.regulation} · ${reg.timeline}`, bold: true },
             { v: '' },
-            { v: reg.verdict || '—', center: true, green: reg.verdict === 'Yes', red: reg.ruledOut },
+            { v: reg.verdict || '-', center: true, green: reg.verdict === 'Yes', red: reg.ruledOut },
             {
               v: [
                 reg.thresholds || reg.description,
@@ -1051,7 +1051,7 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
       if (co.doingBusinessInCA) {
         trailing.push({
           label: 'Doing business in CA',
-          text: co.caRuledOut ? `${co.doingBusinessInCA} — ${co.caRuledOutWhy}` : co.doingBusinessInCA,
+          text: co.caRuledOut ? `${co.doingBusinessInCA} · ${co.caRuledOutWhy}` : co.doingBusinessInCA,
         });
       }
       if (co.summary) trailing.push({ label: 'Summary', text: co.summary });
@@ -1161,7 +1161,7 @@ export function buildComplianceMethodologySheet(wb, results, meta = {}) {
   // --- Per-mandate calculation --------------------------------------------
   section('Fine Calculation by Mandate');
 
-  mandateBanner('BBS — Building Benchmarking & Disclosure', argb(CATEGORY_COLOR.bbs));
+  mandateBanner('BBS: Building Benchmarking & Disclosure', argb(CATEGORY_COLOR.bbs));
   para('Applies when', 'the site\'s jurisdiction has an active BBS benchmarking / disclosure ordinance and the building meets that ordinance\'s ft² threshold for its property type.', { lines: 2 });
   para('Estimated max yearly penalty', '= the jurisdiction\'s maximum annual BBS penalty (from the Master Ordinances), charged once per applicable site per year.', { lines: 2 });
 
@@ -1169,9 +1169,9 @@ export function buildComplianceMethodologySheet(wb, results, meta = {}) {
   para('Applies when', 'the site\'s jurisdiction has an active energy-audit / tune-up ordinance and the building meets that ordinance\'s ft² threshold for its property type.', { lines: 2 });
   para('Estimated max yearly penalty', '= the jurisdiction\'s maximum annual energy-audit penalty (from the Master Ordinances), charged once per applicable site per year.', { lines: 2 });
 
-  mandateBanner('BPS — Building Performance Standards', argb(CATEGORY_COLOR.bps));
+  mandateBanner('BPS: Building Performance Standards', argb(CATEGORY_COLOR.bps));
   para('Applies when', 'the site\'s jurisdiction has an active BPS ordinance and the building meets that ordinance\'s ft² threshold for its property type.', { lines: 2 });
-  para('Estimated non-reporting penalty', '= the jurisdiction\'s BPS penalty. When the penalty UOM is "$ per SqFt / Year" it scales by the building\'s square footage (rate × ft²); otherwise it is a flat annual amount. A size-based penalty on a site with no square footage is left blank ("—") rather than guessed.', { lines: 3 });
+  para('Estimated non-reporting penalty', '= the jurisdiction\'s BPS penalty. When the penalty UOM is "$ per SqFt / Year" it scales by the building\'s square footage (rate × ft²); otherwise it is a flat annual amount. A size-based penalty on a site with no square footage is left blank ("-") rather than guessed.', { lines: 3 });
   para('Fee for exceeding limits', 'is the jurisdiction\'s enforcement cost for exceeding performance targets. It is shown as its own labelled figure on the Compliance Report\'s BPS Prioritization table and is NOT added into the estimated exposure totals.', { lines: 2 });
 
   // --- Roll-ups -----------------------------------------------------------

@@ -93,7 +93,7 @@ export function EmailCampaignView() {
       const snippet = body.replace(/\s+/g, ' ').trim().slice(0, 100);
       throw new Error(
         res.ok
-          ? `the server sent an unexpected response${snippet ? ` — “${snippet}”` : ''}`
+          ? `the server sent an unexpected response${snippet ? `: “${snippet}”` : ''}`
           : `the server is temporarily unavailable (HTTP ${res.status})`,
       );
     }
@@ -196,7 +196,7 @@ export function EmailCampaignView() {
     }
     const failedNames = outcomes.filter(o => !o.ok).map(o => o.campaign.title || o.campaign.subject || '(untitled)');
     if (failedNames.length > 0) {
-      setError(`Refreshed ${updated.length - failedNames.length} of ${updated.length} campaigns — couldn’t reach ${failedNames.length} (kept last saved numbers): ${failedNames.join(', ')}.`);
+      setError(`Refreshed ${updated.length - failedNames.length} of ${updated.length} campaigns: couldn’t reach ${failedNames.length} (kept last saved numbers): ${failedNames.join(', ')}.`);
     }
     setRefreshingAll(false);
   }
@@ -269,7 +269,7 @@ export function EmailCampaignView() {
       });
     }
     if (recipients.length === 0) {
-      setNotice('No unsent contacts — everyone in this campaign has already been emailed.');
+      setNotice('No unsent contacts: everyone in this campaign has already been emailed.');
       setTimeout(() => setNotice(''), 5000);
       return;
     }
@@ -472,7 +472,7 @@ export function EmailCampaignView() {
     } catch (err) {
       // Keep the saved snapshot on screen; just note the refresh didn't land.
       if (viewTokenRef.current === token) {
-        setError('Couldn’t refresh the latest activity (' + (err.message || 'unknown error') + ') — showing the last saved numbers.');
+        setError('Couldn’t refresh the latest activity (' + (err.message || 'unknown error') + '): showing the last saved numbers.');
       }
     } finally {
       if (viewTokenRef.current === token) setRefreshing(false);
@@ -573,7 +573,7 @@ export function EmailCampaignView() {
       saveCampaigns(updated.map((x, i) => (i === idx ? { ...merged, title, subject: nextSubject } : x)));
     } catch (err) {
       if (viewTokenRef.current === token) {
-        setError('Couldn’t refresh activity for the new subject (' + (err.message || 'unknown error') + ') — showing the last saved numbers.');
+        setError('Couldn’t refresh activity for the new subject (' + (err.message || 'unknown error') + '): showing the last saved numbers.');
       }
     } finally {
       if (viewTokenRef.current === token) setRefreshing(false);
@@ -581,9 +581,9 @@ export function EmailCampaignView() {
   }
 
   function fmtDate(d) {
-    if (!d) return '—';
+    if (!d) return '-';
     const dt = new Date(d);
-    if (isNaN(dt)) return '—';
+    if (isNaN(dt)) return '-';
     return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   }
 
@@ -783,7 +783,7 @@ export function EmailCampaignView() {
               <>
                 <div style={{ padding: '0.75rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', borderLeft: '3px solid #F59E0B' }}>
                   <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Opened</div>
-                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#F59E0B' }} title={`${trackingStats.opened} of ${trackingStats.tracked} tracked send${trackingStats.tracked === 1 ? '' : 's'} opened. Opens are directional — Apple Mail pre-loads the pixel and Outlook blocks it.`}>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#F59E0B' }} title={`${trackingStats.opened} of ${trackingStats.tracked} tracked send${trackingStats.tracked === 1 ? '' : 's'} opened. Opens are directional: Apple Mail pre-loads the pixel and Outlook blocks it.`}>
                     {trackingStats.opened} <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>({trackingStats.openRate}%)</span>
                   </div>
                 </div>
@@ -878,7 +878,7 @@ export function EmailCampaignView() {
                     onClick={queueUnsentToDraft}
                     disabled={unsent === 0}
                     title={unsent === 0
-                      ? 'No unsent contacts — everyone has been emailed'
+                      ? 'No unsent contacts: everyone has been emailed'
                       : 'Queue every "Not Sent" contact for the Draft Emails composer'}
                     style={{
                       padding: '0.35rem 0.75rem', border: '1px solid #1D4ED8', borderRadius: '6px',
@@ -917,7 +917,7 @@ export function EmailCampaignView() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.75rem', marginBottom: '0.5rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: '6px', fontSize: '0.78rem', color: '#92400E' }}>
               <span>
                 <strong>⚠ {dupKeys.size} duplicate contact{dupKeys.size === 1 ? '' : 's'}</strong> in this campaign
-                {extraRows > 0 && <> — {extraRows} extra row{extraRows === 1 ? '' : 's'}</>}. Duplicated rows are flagged below.
+                {extraRows > 0 && <>: {extraRows} extra row{extraRows === 1 ? '' : 's'}</>}. Duplicated rows are flagged below.
               </span>
               <button
                 onClick={removeDuplicates}
@@ -942,7 +942,7 @@ export function EmailCampaignView() {
             <button
               onClick={() => { addContacts(addEmail); setAddEmail(''); }}
               disabled={!addEmail.trim()}
-              title="Add this email to the campaign's fixed list. The subject line is only used to look up whether this address was sent or replied — it never pulls in addresses on its own."
+              title="Add this email to the campaign's fixed list. The subject line is only used to look up whether this address was sent or replied: it never pulls in addresses on its own."
               style={{
                 padding: '0.4rem 0.85rem', border: '1px solid var(--color-accent)', borderRadius: '6px',
                 background: addEmail.trim() ? 'var(--color-accent)' : 'var(--color-surface)',
@@ -1001,7 +1001,7 @@ export function EmailCampaignView() {
                           {(() => {
                             const t = lookupTracking(c.email);
                             if (!t) {
-                              return <span style={{ color: 'var(--color-text-muted)' }} title="This send didn't carry a tracking pixel">—</span>;
+                              return <span style={{ color: 'var(--color-text-muted)' }} title="This send didn't carry a tracking pixel">-</span>;
                             }
                             const openTitle = t.firstOpenAt ? `First opened ${new Date(t.firstOpenAt).toLocaleString()}` : 'No opens recorded';
                             const clickTitle = t.lastClickAt ? `Last click ${new Date(t.lastClickAt).toLocaleString()}` : 'No clicks recorded';
@@ -1020,8 +1020,8 @@ export function EmailCampaignView() {
                           })()}
                         </td>
                       )}
-                      <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)', fontWeight: c.replied ? 600 : 400 }}>{c.repliedBy || '—'}</td>
-                      <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)' }}>{c.replied ? fmtDate(c.replyDate) : '—'}</td>
+                      <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)', fontWeight: c.replied ? 600 : 400 }}>{c.repliedBy || '-'}</td>
+                      <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)' }}>{c.replied ? fmtDate(c.replyDate) : '-'}</td>
                       <td style={{ padding: '0.4rem 0.6rem' }}>
                         {(() => {
                           const EVENT_STATUS_STYLES = {
@@ -1036,7 +1036,7 @@ export function EmailCampaignView() {
                               onChange={e => setEventStatus(i, e.target.value)}
                               style={{ padding: '2px 4px', borderRadius: '6px', fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', ...s }}
                             >
-                              <option value="">—</option>
+                              <option value="">-</option>
                               <option value="going">Going</option>
                               <option value="not-going">Not going</option>
                               <option value="maybe">Maybe</option>
@@ -1112,7 +1112,7 @@ export function EmailCampaignView() {
                   cursor: isEditing ? 'default' : 'pointer',
                   opacity: active ? 1 : 0.55,
                 }}
-                title={active ? undefined : (manualStatus ? 'Manually marked inactive' : 'Inactive — no save or refresh in the last 60 days')}
+                title={active ? undefined : (manualStatus ? 'Manually marked inactive' : 'Inactive: no save or refresh in the last 60 days')}
                 onClick={isEditing ? undefined : () => viewCampaign(i)}
               >
                 <td style={{ padding: '0.5rem 0.6rem', maxWidth: '340px', verticalAlign: 'top' }}>
@@ -1157,7 +1157,7 @@ export function EmailCampaignView() {
                     </>
                   )}
                   <div style={{ fontSize: '0.65rem', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
-                    Saved {fmtDate(c.savedAt)} — {c.uniqueRecipients} of {c.totalContacts ?? c.contacts?.length ?? c.uniqueRecipients} sent, {c.uniqueRepliers} replies
+                    Saved {fmtDate(c.savedAt)}: {c.uniqueRecipients} of {c.totalContacts ?? c.contacts?.length ?? c.uniqueRecipients} sent, {c.uniqueRepliers} replies
                     {c.refreshedAt && <span style={{ color: 'var(--color-text-muted)' }}> · updated {fmtDate(c.refreshedAt)}</span>}
                   </div>
                 </td>
@@ -1171,10 +1171,10 @@ export function EmailCampaignView() {
                       <button
                         onClick={e => toggleCampaignActive(i, e)}
                         title={active
-                          ? 'Active — click to mark this campaign inactive'
+                          ? 'Active: click to mark this campaign inactive'
                           : (manualStatus
-                            ? 'Manually marked inactive — click to mark active'
-                            : 'Inactive (no activity in 60 days) — click to mark active')}
+                            ? 'Manually marked inactive: click to mark active'
+                            : 'Inactive (no activity in 60 days): click to mark active')}
                         style={{
                           padding: '2px 8px', borderRadius: '999px', fontSize: '0.62rem', fontWeight: 700,
                           textTransform: 'uppercase', letterSpacing: '0.03em', fontFamily: 'inherit', cursor: 'pointer',

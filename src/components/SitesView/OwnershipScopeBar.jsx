@@ -35,7 +35,7 @@ export function OwnershipScopeBar({ sites = [], ownedOnly, onChange }) {
   const unavailable = stats.known === 0;
   const scoping = ownedOnly && !unavailable;
   const hint = unavailable
-    ? 'No Ownership status on the loaded sites — all sites are screened. Map an Ownership column on the Utility Lookup tab to scope this to owned buildings.'
+    ? 'No Ownership status on the loaded sites: all sites are screened. Map an Ownership column on the Utility Lookup tab to scope this to owned buildings.'
     : scoping
       ? `Screening ${stats.owned.toLocaleString()} owned site${stats.owned === 1 ? '' : 's'}${
           stats.leased || stats.unspecified
@@ -45,7 +45,7 @@ export function OwnershipScopeBar({ sites = [], ownedOnly, onChange }) {
               ].filter(Boolean).join(' and ')}`
             : ''
         }`
-      : `Screening all ${stats.total.toLocaleString()} site${stats.total === 1 ? '' : 's'} — ${stats.owned.toLocaleString()} owned, ${stats.leased.toLocaleString()} leased${stats.unspecified ? `, ${stats.unspecified.toLocaleString()} unspecified` : ''}.`;
+      : `Screening all ${stats.total.toLocaleString()} site${stats.total === 1 ? '' : 's'} · ${stats.owned.toLocaleString()} owned, ${stats.leased.toLocaleString()} leased${stats.unspecified ? `, ${stats.unspecified.toLocaleString()} unspecified` : ''}.`;
   return (
     <div style={barStyle}>
       <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
@@ -59,7 +59,7 @@ export function OwnershipScopeBar({ sites = [], ownedOnly, onChange }) {
           onClick={() => onChange(true)}
           title={unavailable
             ? 'No site in the loaded list has an Ownership status to filter on.'
-            : 'Screen only the buildings the portfolio owns — compliance obligations here fall on the owner.'}
+            : 'Screen only the buildings the portfolio owns: compliance obligations here fall on the owner.'}
         >Owned only{unavailable ? '' : ` (${stats.owned.toLocaleString()})`}</button>
         <button
           type="button"

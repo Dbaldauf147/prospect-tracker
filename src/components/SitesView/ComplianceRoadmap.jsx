@@ -204,7 +204,7 @@ function MandateTimeline({ lanes, today }) {
 function ChartCard({ title, subtitle, children }) {
   return (
     <div className={styles.card}>
-      <div className={styles.cardTitle}>{title}{subtitle && <span className={styles.cardSub}> — {subtitle}</span>}</div>
+      <div className={styles.cardTitle}>{title}{subtitle && <span className={styles.cardSub}>: {subtitle}</span>}</div>
       {children}
     </div>
   );
@@ -319,7 +319,7 @@ export function ComplianceRoadmap({
         <div>
           <div className={styles.subtitle}>
             When each site's BBS / Audits / BPS deadlines land, how many sites come into scope, and how the
-            cumulative estimated fine exposure ramps up over time — followed by the key submission deadlines
+            cumulative estimated fine exposure ramps up over time: followed by the key submission deadlines
             for the corporate disclosure mandates screened on the Corporate Compliance subtab.
           </div>
         </div>
@@ -361,7 +361,7 @@ export function ComplianceRoadmap({
             <div className={styles.kpi}><div className={styles.kpiNum} style={{ color: SITES_COLOR }}>{totals.sites}</div><div className={styles.kpiLbl}>sites in scope</div></div>
             <div className={styles.kpi}><div className={styles.kpiNum} style={{ color: '#334155' }}>{totals.obligations}</div><div className={styles.kpiLbl}>total deadlines</div></div>
             <div className={styles.kpi}><div className={styles.kpiNum} style={{ color: FINES_COLOR }}>{usd(totals.fines)}</div><div className={styles.kpiLbl}>max yearly fine exposure</div></div>
-            <div className={styles.kpi}><div className={styles.kpiNum} style={{ color: '#334155' }}>{firstActive ? firstActive.label : '—'}</div><div className={styles.kpiLbl}>next deadline window</div></div>
+            <div className={styles.kpi}><div className={styles.kpiNum} style={{ color: '#334155' }}>{firstActive ? firstActive.label : '-'}</div><div className={styles.kpiLbl}>next deadline window</div></div>
           </div>
 
           <div className={styles.legend}>
@@ -397,13 +397,13 @@ export function ComplianceRoadmap({
                   {periods.map(p => (
                     <tr key={p.key} className={p.newObligations === 0 ? styles.quietRow : undefined}>
                       <td className={styles.qCell}>{p.label}</td>
-                      <td>{p.newObligations || <span className={styles.dash}>—</span>}</td>
-                      <td>{p.newByCategory.bbs || <span className={styles.dash}>—</span>}</td>
-                      <td>{p.newByCategory.audits || <span className={styles.dash}>—</span>}</td>
-                      <td>{p.newByCategory.bps || <span className={styles.dash}>—</span>}</td>
-                      <td>{p.newSites || <span className={styles.dash}>—</span>}</td>
+                      <td>{p.newObligations || <span className={styles.dash}>-</span>}</td>
+                      <td>{p.newByCategory.bbs || <span className={styles.dash}>-</span>}</td>
+                      <td>{p.newByCategory.audits || <span className={styles.dash}>-</span>}</td>
+                      <td>{p.newByCategory.bps || <span className={styles.dash}>-</span>}</td>
+                      <td>{p.newSites || <span className={styles.dash}>-</span>}</td>
                       <td><strong>{p.cumSites}</strong></td>
-                      <td>{p.newFines ? usd(p.newFines) : <span className={styles.dash}>—</span>}</td>
+                      <td>{p.newFines ? usd(p.newFines) : <span className={styles.dash}>-</span>}</td>
                       <td><strong>{usd(p.cumFines)}</strong></td>
                     </tr>
                   ))}
@@ -459,13 +459,13 @@ export function ComplianceRoadmap({
             </div>
             <div className={styles.kpi}>
               <div className={styles.kpiNum} style={{ color: nextMandate ? STATUS_COLOR[nextMandate.status] : '#334155', fontSize: '1rem' }}>
-                {nextMandate ? `${nextMandate.chip} · ${nextMandate.shortDue}` : '—'}
+                {nextMandate ? `${nextMandate.chip} · ${nextMandate.shortDue}` : '-'}
               </div>
               <div className={styles.kpiLbl}>next submission</div>
             </div>
             <div className={styles.kpi}>
               <div className={styles.kpiNum} style={{ color: '#334155' }}>
-                {nextMandate ? (daysUntil(nextMandate.due, today) ?? '—') : '—'}
+                {nextMandate ? (daysUntil(nextMandate.due, today) ?? '-') : '-'}
               </div>
               <div className={styles.kpiLbl}>days away</div>
             </div>
@@ -522,7 +522,7 @@ export function ComplianceRoadmap({
               </table>
             </div>
             <div className={styles.footnote}>
-              Climate disclosure dates move — several of these shifted in the last year. Re-check the
+              Climate disclosure dates move: several of these shifted in the last year. Re-check the
               linked sources before putting a date in front of a client. Last reviewed 31 Jul 2026.
             </div>
           </ChartCard>

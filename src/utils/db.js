@@ -98,7 +98,7 @@ export function openDB() {
       // instead of hanging forever — callers can surface a "close
       // your other tabs" hint.
       req.onblocked = () => reject(new Error(
-        `IndexedDB upgrade to v${nextVersion} blocked — another tab has the database open at v${probeDb.version}. Close the other tabs and reload.`
+        `IndexedDB upgrade to v${nextVersion} blocked: another tab has the database open at v${probeDb.version}. Close the other tabs and reload.`
       ));
     });
   })();

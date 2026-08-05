@@ -36,7 +36,7 @@ export function resolveApiBase(value) {
   const raw = String(value || '').trim();
   if (!raw) return DEFAULT_BASE;
   if (/^https?:\/\/[^\s/]+/i.test(raw)) return raw.replace(/\/+$/, '');
-  console.warn('granola-calls: ignoring GRANOLA_API_BASE — not an http(s) URL. Did the API key go in this variable by mistake?');
+  console.warn('granola-calls: ignoring GRANOLA_API_BASE: not an http(s) URL. Did the API key go in this variable by mistake?');
   return DEFAULT_BASE;
 }
 
@@ -312,7 +312,7 @@ async function granolaFetch(path) {
   } catch (err) {
     const timedOut = err?.name === 'TimeoutError' || err?.name === 'AbortError';
     const failure = new Error(timedOut
-      ? `Granola didn't respond within ${Math.round(GRANOLA_TIMEOUT_MS / 1000)}s. Calls already synced are unaffected — try again shortly.`
+      ? `Granola didn't respond within ${Math.round(GRANOLA_TIMEOUT_MS / 1000)}s. Calls already synced are unaffected: try again shortly.`
       : `Couldn't reach Granola at ${GRANOLA_BASE} (${err?.message || err}). If GRANOLA_API_BASE is set, unset it.`);
     failure.httpStatus = timedOut ? 504 : 502;
     throw failure;
@@ -333,10 +333,10 @@ function errorFor(resp, body) {
     return { status: 403, error: detail || 'That Granola key is missing the scope this needs. It must be able to read notes and transcripts (Business or Enterprise plan).' };
   }
   if (resp.status === 404) {
-    return { status: 404, error: 'Granola has no note with that id — it may have been deleted, or it has no AI summary yet (Granola only serves summarised notes over the API).' };
+    return { status: 404, error: 'Granola has no note with that id: it may have been deleted, or it has no AI summary yet (Granola only serves summarised notes over the API).' };
   }
   if (resp.status === 429) {
-    return { status: 429, error: 'Granola is rate-limiting this sync. Wait a minute and sync again — already-imported calls are kept.' };
+    return { status: 429, error: 'Granola is rate-limiting this sync. Wait a minute and sync again: already-imported calls are kept.' };
   }
   return { status: 502, error: detail ? `Granola API error: ${detail}` : `Granola API error (HTTP ${resp.status})` };
 }

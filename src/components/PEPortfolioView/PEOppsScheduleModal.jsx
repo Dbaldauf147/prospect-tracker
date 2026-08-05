@@ -13,7 +13,7 @@ function emptyForm(defaultColumns, firm = '') {
     id: null,
     name: '',
     recipients: '',
-    subject: firm ? `${firm} — PE Opportunities` : 'PE Opportunities',
+    subject: firm ? `${firm}: PE Opportunities` : 'PE Opportunities',
     message: '',
     frequency: 'weekly',
     hourLocal: 9,
@@ -219,11 +219,11 @@ export function PEOppsScheduleModal({ open, onClose, uid, email, firm = '', opps
                       </div>
                       <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>{describeSchedule(s)} · {tzLabel}</div>
                       <div style={{ fontSize: '0.72rem', color: '#475569', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        To: {(s.recipients || []).join(', ') || '—'}
+                        To: {(s.recipients || []).join(', ') || '-'}
                       </div>
                       {s.lastStatus && (
                         <div style={{ fontSize: '0.68rem', marginTop: 3, color: s.lastStatus === 'error' ? '#B91C1C' : '#64748B' }}>
-                          Last: {s.lastStatus}{s.lastSentAt ? ` · ${new Date(s.lastSentAt).toLocaleString()}` : ''}{s.lastStatus === 'error' && s.lastError ? ` — ${s.lastError}` : ''}
+                          Last: {s.lastStatus}{s.lastSentAt ? ` · ${new Date(s.lastSentAt).toLocaleString()}` : ''}{s.lastStatus === 'error' && s.lastError ? `: ${s.lastError}` : ''}
                         </div>
                       )}
                     </div>
@@ -246,8 +246,8 @@ export function PEOppsScheduleModal({ open, onClose, uid, email, firm = '', opps
               <div style={{ fontSize: '0.72rem', color: '#475569', background: '#F1F5F9', border: '1px solid #E2E8F0', borderRadius: 6, padding: '0.45rem 0.6rem' }}>
                 Scope: <strong>{(form.firm || '').trim() || 'All PE Opps'}</strong>
                 {(form.firm || '').trim()
-                  ? ' — every opp on this firm or its portfolio companies.'
-                  : ' — the full PE Opps list (Type = Private Equity or Source = PE partner).'}
+                  ? ': every opp on this firm or its portfolio companies.'
+                  : ': the full PE Opps list (Type = Private Equity or Source = PE partner).'}
               </div>
               <Field label="Name (optional)">
                 <input style={inp} value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="e.g. Weekly PE digest" />

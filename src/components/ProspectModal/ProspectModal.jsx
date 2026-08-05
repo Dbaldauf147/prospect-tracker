@@ -128,7 +128,7 @@ function InlineRenameInput({ initial, onSubmit, onCancel }) {
 function buildDefaultOpportunityTemplate(dateLine, timeLine) {
   return [
     `<p><em>${dateLine} · ${timeLine}</em></p>`,
-    '<p><strong>ESS Call Plan</strong> — Advanced Collaboration Tools</p>',
+    '<p><strong>ESS Call Plan</strong>: Advanced Collaboration Tools</p>',
     '<h2>Intent</h2>',
     '<p>To find out if they have any needs we can address</p>',
     '<h2>End In Mind</h2>',
@@ -172,7 +172,7 @@ function buildDefaultOpportunityTemplate(dateLine, timeLine) {
     '<ul>',
     '<li>Our clients have confidentiality clauses in their agreements. We can say we are working with Blackstone as their system of record.</li>',
     '</ul>',
-    '<h2>Yellow Lights — Possible Doubts, Concerns, or Objections</h2>',
+    '<h2>Yellow Lights: Possible Doubts, Concerns, or Objections</h2>',
     '<ul>',
     '<li>We already have someone who handles our procurement/utility bills</li>',
     '</ul>',
@@ -187,12 +187,12 @@ function buildDefaultOpportunityTemplate(dateLine, timeLine) {
     '</ul>',
     '<h2>Agenda</h2>',
     '<ul>',
-    '<li>Agenda overview · Introduction of ESS Team — Dan (02:00)</li>',
-    '<li>RFP questions (listed in the Call Plan) — Dan (10:00)</li>',
-    '<li>Ashley\'s questions — Ashley (15:00)</li>',
-    '<li>Stephanie\'s questions — Stephanie (15:00)</li>',
-    '<li>Mike\'s questions — Chelsea (15:00)</li>',
-    '<li>Final GIC questions and next step discussions — Mike</li>',
+    '<li>Agenda overview · Introduction of ESS Team: Dan (02:00)</li>',
+    '<li>RFP questions (listed in the Call Plan): Dan (10:00)</li>',
+    '<li>Ashley\'s questions: Ashley (15:00)</li>',
+    '<li>Stephanie\'s questions: Stephanie (15:00)</li>',
+    '<li>Mike\'s questions: Chelsea (15:00)</li>',
+    '<li>Final GIC questions and next step discussions: Mike</li>',
     '</ul>',
   ].join('');
 }
@@ -306,7 +306,7 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
   }
 
   function ContactCard({ contact }) {
-    const name = [contact.firstname, contact.lastname].filter(Boolean).join(' ') || '—';
+    const name = [contact.firstname, contact.lastname].filter(Boolean).join(' ') || '-';
     const isDM = contactHasTag(contact, 'decision maker');
     const isDeleting = deletingContact === (contact.id || contact.vid);
     const matchedBuckets = BUCKETS.filter(b => getContactTags(contact).includes(b.tag));
@@ -583,7 +583,7 @@ const TIER_COLORS = {
 
 
 const PORTFOLIO_FIELD_OPTIONS = [
-  { key: '', label: '— Ignore this column —' },
+  { key: '', label: '(Ignore this column)' },
   { key: 'companyName', label: 'Company Name (required)' },
   { key: 'opportunityScore', label: 'Opportunity Score (0-100)' },
   { key: 'sector', label: 'Sector' },
@@ -748,7 +748,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   async function performMerge(secondaryId, secondaryLabel) {
     const primaryId = contact.id || contact.vid;
     if (!primaryId || !secondaryId || String(primaryId) === String(secondaryId)) return;
-    if (!window.confirm(`Merge "${secondaryLabel}" into this contact? The other contact will be DELETED in HubSpot — its email history, notes, and engagements move into the kept contact. This cannot be undone.`)) return;
+    if (!window.confirm(`Merge "${secondaryLabel}" into this contact? The other contact will be DELETED in HubSpot: its email history, notes, and engagements move into the kept contact. This cannot be undone.`)) return;
     setMergeProcessing(true);
     setMergeError('');
     try {
@@ -1121,10 +1121,10 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
         if (ca && ca.ok === false) {
           const detail = ca.errorText ? ` · ${ca.errorText}` : '';
           const what = ca.mode === 'rename-failed' ? 'rename the Company record' : 'pin the Company association';
-          setCompanyNote(`Saved "${hsProps.company}" locally. HubSpot couldn't ${what}${ca.status ? ` (HTTP ${ca.status})` : ''}${detail} — Prospect Tracker will keep your value through future syncs.`);
+          setCompanyNote(`Saved "${hsProps.company}" locally. HubSpot couldn't ${what}${ca.status ? ` (HTTP ${ca.status})` : ''}${detail}: Prospect Tracker will keep your value through future syncs.`);
         } else if (ca && ca.ok === true) {
           if (ca.mode === 'renamed') {
-            setCompanyNote(`Renamed the HubSpot Company "${ca.oldName || '—'}" → "${hsProps.company}". This updates it for every contact linked to that company.`);
+            setCompanyNote(`Renamed the HubSpot Company "${ca.oldName || '-'}" → "${hsProps.company}". This updates it for every contact linked to that company.`);
           } else if (ca.nameDiffers && ca.matchedName) {
             setCompanyNote(`Saved "${hsProps.company}". This contact had no linked company, so HubSpot linked it to an existing record named "${ca.matchedName}".`);
           }
@@ -1286,7 +1286,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               style={{ ...inputStyle, background: '#F8FAFC', color: '#64748B' }}
               value={`${f.firstname || ''} ${f.lastname || ''}`.trim()}
               readOnly
-              placeholder="—"
+              placeholder="-"
             />
           </div>
           <div><label style={labelStyle}>Work Phone Number</label><input style={inputStyle} value={f.phone} onChange={e => set('phone', e.target.value)} /></div>
@@ -1616,7 +1616,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
             {(!cid) ? (
               <div style={{ fontSize: '0.72rem', color: '#94A3B8', padding: '0.3rem 0' }}>Save the contact first to add them to events.</div>
             ) : events.length === 0 ? (
-              <div style={{ fontSize: '0.72rem', color: '#94A3B8', padding: '0.3rem 0' }}>No events yet — create one in <strong>Contacts → Events</strong>.</div>
+              <div style={{ fontSize: '0.72rem', color: '#94A3B8', padding: '0.3rem 0' }}>No events yet: create one in <strong>Contacts → Events</strong>.</div>
             ) : (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', padding: '0.4rem', border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', maxHeight: 120, overflowY: 'auto' }}>
                 {events.map(ev => {
@@ -1894,7 +1894,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               <button
                 type="button"
                 onClick={() => setMergeOpen(o => !o)}
-                title="Merge another HubSpot contact INTO this one — keeps this contact, deletes the other after consolidating its history."
+                title="Merge another HubSpot contact INTO this one: keeps this contact, deletes the other after consolidating its history."
                 style={{ padding: '0.5rem 1rem', border: '1px solid #FDE68A', borderRadius: 6, background: mergeOpen ? '#FEF3C7' : '#FFFBEB', color: '#92400E', fontSize: '0.78rem', fontFamily: 'inherit', cursor: 'pointer', fontWeight: 600 }}
               >{mergeOpen ? 'Cancel merge' : 'Merge…'}</button>
               <button
@@ -1919,7 +1919,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
             <button
               onClick={() => runSave({ auto: autosaveEnabled })}
               disabled={saving || (autosaveEnabled ? !dirty : saved) || !f.email.trim()}
-              title={!f.email.trim() ? 'Email is required' : autosaveEnabled ? 'Edits save automatically — click to push them now' : ''}
+              title={!f.email.trim() ? 'Email is required' : autosaveEnabled ? 'Edits save automatically: click to push them now' : ''}
               style={{ padding: '0.5rem 1rem', border: 'none', borderRadius: '6px', background: (saved || (autosaveEnabled && !dirty)) ? '#059669' : (!f.email.trim() ? '#94A3B8' : '#0078D4'), color: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: (!f.email.trim() || saving || (autosaveEnabled && !dirty)) ? 'not-allowed' : 'pointer', fontWeight: 600, transition: 'background 0.2s', opacity: (!f.email.trim() && !saved) ? 0.6 : 1 }}
             >
               {saving ? 'Saving…' : !f.email.trim() ? 'Email required' : autosaveEnabled ? (dirty ? 'Save now' : '✓ Saved') : saved ? '✓ Saved!' : (!contact.id && !contact.vid) ? 'Create in HubSpot' : 'Save to HubSpot'}
@@ -2567,10 +2567,10 @@ function DivisionNode({ node, ownerId, editing, adding, picking, contacts, conta
               onClick={() => actions.startEdit(node.id)}
               onDoubleClick={() => actions.startEdit(node.id)}
               title={node.missing
-                ? `${node.company} — no longer in the tracker. Click to rename.`
-                : `${node.company} — click to rename`}
+                ? `${node.company}: no longer in the tracker. Click to rename.`
+                : `${node.company}: click to rename`}
             >
-              {node.company || '—'}
+              {node.company || '-'}
             </div>
             <button
               type="button"
@@ -2608,8 +2608,8 @@ function DivisionNode({ node, ownerId, editing, adding, picking, contacts, conta
                 onClick={() => actions.toggleLayout(node.id, layout)}
                 aria-label={`Lay out divisions under ${node.company} ${layout === 'row' ? 'vertically' : 'horizontally'}`}
                 title={layout === 'row'
-                  ? `Divisions under ${node.company} run across — click to stack them down`
-                  : `Divisions under ${node.company} stack down — click to run them across`}
+                  ? `Divisions under ${node.company} run across: click to stack them down`
+                  : `Divisions under ${node.company} stack down: click to run them across`}
                 style={{ ...btn, position: 'absolute', bottom: 1, left: '50%', transform: 'translateX(-50%)', fontSize: '0.7rem' }}
               >{layout === 'row' ? '\u21C5' : '\u21C4'}</button>
             )}
@@ -2645,8 +2645,8 @@ function DivisionsChart({ tree, editing, adding, picking, contacts, contactsByBo
             <div className={styles.divBoxHead}>
             <div
               className={`${styles.divBox} ${styles.divRoot}`}
-              title={`${tree.company} is this company — rename it in the Company field above, not here.`}
-            >{tree.company || '—'}</div>
+              title={`${tree.company} is this company: rename it in the Company field above, not here.`}
+            >{tree.company || '-'}</div>
             <button
               type="button"
               onClick={() => actions.startAdd(tree.id)}
@@ -2675,8 +2675,8 @@ function DivisionsChart({ tree, editing, adding, picking, contacts, contactsByBo
                 onClick={() => actions.toggleLayout(tree.id, rootLayout)}
                 aria-label={`Lay out divisions under ${tree.company} ${rootLayout === 'row' ? 'vertically' : 'horizontally'}`}
                 title={rootLayout === 'row'
-                  ? `Divisions run across — click to stack them down`
-                  : `Divisions stack down — click to run them across`}
+                  ? `Divisions run across: click to stack them down`
+                  : `Divisions stack down: click to run them across`}
                 style={{
                   position: 'absolute', bottom: 1, left: '50%', transform: 'translateX(-50%)',
                   border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer',
@@ -2833,8 +2833,8 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
       {open && (
         <div style={{ marginTop: '0.6rem' }}>
           <p style={{ fontSize: '0.72rem', color: '#94A3B8', margin: '0 0 0.5rem' }}>
-            Type the divisions of {parentCompany || 'this company'} — subsidiaries, operating brands,
-            regional entities — one per entry. Click any box to rename it, + to add one beneath it,
+            Type the divisions of {parentCompany || 'this company'}: subsidiaries, operating brands,
+            regional entities: one per entry. Click any box to rename it, + to add one beneath it,
             × to remove it. Nothing is added for you. My Accounts rolls a division's sites up under the
             parent by name, so spell it the way it appears on the site list.
           </p>
@@ -2942,7 +2942,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     setAnalysisError('');
     try {
       const saved = await loadIndicativeAnalysis(prospect.id);
-      if (!saved?.dataBase64) throw new Error('The saved analysis is empty — re-save it from Utility Lookup.');
+      if (!saved?.dataBase64) throw new Error('The saved analysis is empty: re-save it from Utility Lookup.');
       const binary = atob(saved.dataBase64);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
@@ -4031,7 +4031,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         return out;
       })
       .filter(r => r.email);
-    if (parsed.length === 0) { alert('No rows had a mapped Email — nothing to import.'); return; }
+    if (parsed.length === 0) { alert('No rows had a mapped Email: nothing to import.'); return; }
     const existingToDelete = companyContacts.filter(c => c.id || c.vid);
     const confirmMsg = existingToDelete.length > 0
       ? `This will REPLACE the contacts under ${fields.company}.\n\n` +
@@ -4458,10 +4458,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     // Subject mirrors a reply-all to the original meeting when one is
     // attached; otherwise we fall back to the company/opp title.
     const meetingSubject = String(meeting?.subject || '').trim();
-    const titleBit = selectedOpp.title ? ` — ${selectedOpp.title}` : '';
+    const titleBit = selectedOpp.title ? `: ${selectedOpp.title}` : '';
     const subject = meetingSubject
       ? (/^re:\s/i.test(meetingSubject) ? meetingSubject : `Re: ${meetingSubject}`)
-      : `Follow-up — ${fields.company || 'our conversation'}${titleBit}`;
+      : `Follow-up: ${fields.company || 'our conversation'}${titleBit}`;
 
     // Build the HTML body — bulleted list for the to-do items.
     const esc = s => String(s || '')
@@ -4473,7 +4473,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     // action item as a standalone <div> with a literal bullet character
     // so Outlook always shows it regardless of list-style handling.
     const itemsHtml = items.length > 0
-      ? items.map(i => `<div style="margin: 4px 0; line-height: 1.45;">&#8226;&nbsp;&nbsp;${esc(i.text)}${i.owner ? ` &mdash; <span style="color:#64748B;"><strong>Owner:</strong> ${esc(i.owner)}</span>` : ''}</div>`).join('')
+      ? items.map(i => `<div style="margin: 4px 0; line-height: 1.45;">&#8226;&nbsp;&nbsp;${esc(i.text)}${i.owner ? ` &middot; <span style="color:#64748B;"><strong>Owner:</strong> ${esc(i.owner)}</span>` : ''}</div>`).join('')
       : '<p><em>(No Action Items / Next Steps captured on the form yet.)</em></p>';
     // Append the saved email signature (from the Draft Emails page /
     // settings.emailSignature). The bundled default is the admin's
@@ -4531,7 +4531,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const safeTitle = (selectedOpp.title || 'opportunity').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80) || 'opportunity';
     const safeCompany = (fields.company || 'company').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60);
     const bodyHtml = oppNoteDraft && oppNoteDraft.trim() ? oppNoteDraft : '<p></p>';
-    const fullHtml = stripDashes(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${safeTitle}</title></head><body><h1>${safeCompany} — ${safeTitle}</h1>${bodyHtml}</body></html>`);
+    const fullHtml = stripDashes(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${safeTitle}</title></head><body><h1>${safeCompany} · ${safeTitle}</h1>${bodyHtml}</body></html>`);
     try {
       const { asBlob: htmlToDocxBlob } = await import('html-docx-js-typescript');
       const result = await htmlToDocxBlob(fullHtml);
@@ -5173,22 +5173,22 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
     let contactRows = '';
     for (const c of companyContacts) {
-      const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || '—';
+      const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || '-';
       const r = c.decision_maker || 'Unknown';
       const role = (r === 'true' || r === 'Yes') ? 'Decision Maker' : (r === 'No' || r === 'false') ? 'Unknown' : r;
       const linkedin = c.hs_linkedin_url || c.linkedin_url || c.hs_linkedinid || '';
       contactRows += `<tr>
         <td style="padding:4px 8px;border-bottom:1px solid #E2E8F0;font-weight:600">${name}</td>
-        <td style="padding:4px 8px;border-bottom:1px solid #E2E8F0">${c.jobtitle || '—'}</td>
-        <td style="padding:4px 8px;border-bottom:1px solid #E2E8F0">${c.email || '—'}</td>
-        <td style="padding:4px 8px;border-bottom:1px solid #E2E8F0">${c.phone || '—'}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #E2E8F0">${c.jobtitle || '-'}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #E2E8F0">${c.email || '-'}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #E2E8F0">${c.phone || '-'}</td>
         <td style="padding:4px 8px;border-bottom:1px solid #E2E8F0"><span style="padding:1px 6px;border-radius:999px;font-size:0.7rem;font-weight:700;background:${roleBgs[role] || '#F3F4F6'};color:${roleColors[role] || '#6B7280'}">${role}</span></td>
         <td style="padding:4px 8px;border-bottom:1px solid #E2E8F0">${linkedin ? `<a href="${linkedin.startsWith('http') ? linkedin : 'https://linkedin.com/in/' + linkedin}">${linkedin.replace(/^https?:\/\/(www\.)?linkedin\.com\/in\//, '').replace(/\/$/, '')}</a>` : '—'}</td>
       </tr>`;
     }
 
     const f = fields;
-    win.document.write(`<!DOCTYPE html><html><head><title>${f.company} — Prospect Report</title>
+    win.document.write(`<!DOCTYPE html><html><head><title>${f.company}: Prospect Report</title>
       <style>body{font-family:Arial,sans-serif;max-width:1000px;margin:0 auto;padding:20px;color:#1E293B}
       h1{font-size:1.5rem;margin-bottom:4px}table{width:100%;border-collapse:collapse;font-size:0.8rem;margin-top:8px}
       th{text-align:left;padding:6px 8px;background:#F8FAFC;border-bottom:2px solid #E2E8F0;font-size:0.72rem;text-transform:uppercase;color:#64748B;letter-spacing:0.03em}
@@ -5198,25 +5198,25 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       <h1>${f.company}</h1>
       <div style="color:#64748B;font-size:0.85rem;margin-bottom:12px">Generated ${new Date().toLocaleDateString()}</div>
       <div class="info">
-        <div class="info-item"><div class="info-label">Status</div><div class="info-val">${f.status || '—'}</div></div>
-        <div class="info-item"><div class="info-label">Tier</div><div class="info-val">${f.tier || '—'}</div></div>
-        <div class="info-item"><div class="info-label">Type</div><div class="info-val">${f.type || '—'}</div></div>
-        <div class="info-item"><div class="info-label">Geography</div><div class="info-val">${f.geography || '—'}</div></div>
-        <div class="info-item"><div class="info-label">Public/Private</div><div class="info-val">${f.publicPrivate || '—'}</div></div>
-        <div class="info-item"><div class="info-label">CDM</div><div class="info-val">${f.cdm || '—'}</div></div>
-        <div class="info-item"><div class="info-label">RE AUM</div><div class="info-val">${f.reAum != null ? '$' + f.reAum + 'B' : '—'}</div></div>
-        <div class="info-item"><div class="info-label">PE AUM</div><div class="info-val">${f.peAum != null ? '$' + f.peAum + 'B' : '—'}</div></div>
-        <div class="info-item"><div class="info-label">Sites</div><div class="info-val">${f.numberOfSites ?? '—'}</div></div>
-        <div class="info-item"><div class="info-label">Revenue</div><div class="info-val">${f.revenue || '—'}</div></div>
-        <div class="info-item"><div class="info-label">HQ Region</div><div class="info-val">${f.hqRegion || '—'}</div></div>
-        <div class="info-item"><div class="info-label">Website</div><div class="info-val">${f.website ? `<a href="${f.website.startsWith('http') ? f.website : 'https://' + f.website}">${f.website}</a>` : '—'}</div></div>
-        <div class="info-item"><div class="info-label">Email Domain</div><div class="info-val">${f.emailDomain || '—'}</div></div>
+        <div class="info-item"><div class="info-label">Status</div><div class="info-val">${f.status || '-'}</div></div>
+        <div class="info-item"><div class="info-label">Tier</div><div class="info-val">${f.tier || '-'}</div></div>
+        <div class="info-item"><div class="info-label">Type</div><div class="info-val">${f.type || '-'}</div></div>
+        <div class="info-item"><div class="info-label">Geography</div><div class="info-val">${f.geography || '-'}</div></div>
+        <div class="info-item"><div class="info-label">Public/Private</div><div class="info-val">${f.publicPrivate || '-'}</div></div>
+        <div class="info-item"><div class="info-label">CDM</div><div class="info-val">${f.cdm || '-'}</div></div>
+        <div class="info-item"><div class="info-label">RE AUM</div><div class="info-val">${f.reAum != null ? '$' + f.reAum + 'B' : '-'}</div></div>
+        <div class="info-item"><div class="info-label">PE AUM</div><div class="info-val">${f.peAum != null ? '$' + f.peAum + 'B' : '-'}</div></div>
+        <div class="info-item"><div class="info-label">Sites</div><div class="info-val">${f.numberOfSites ?? '-'}</div></div>
+        <div class="info-item"><div class="info-label">Revenue</div><div class="info-val">${f.revenue || '-'}</div></div>
+        <div class="info-item"><div class="info-label">HQ Region</div><div class="info-val">${f.hqRegion || '-'}</div></div>
+        <div class="info-item"><div class="info-label">Website</div><div class="info-val">${f.website ? `<a href="${f.website.startsWith('http') ? f.website : 'https://' + f.website}">${f.website}</a>` : '-'}</div></div>
+        <div class="info-item"><div class="info-label">Email Domain</div><div class="info-val">${f.emailDomain || '-'}</div></div>
       </div>
       ${f.notes ? `<div style="margin:12px 0;padding:8px 12px;background:#F8FAFC;border-radius:6px;font-size:0.85rem"><strong style="font-size:0.72rem;color:#64748B;text-transform:uppercase">Notes</strong><div style="margin-top:4px">${f.notes}</div></div>` : ''}
       ${f.sustainabilityTargets ? `<div style="margin:12px 0;padding:8px 12px;background:#F0FDF4;border-radius:6px;font-size:0.85rem"><strong style="font-size:0.72rem;color:#15803D;text-transform:uppercase">Sustainability Targets</strong><div style="margin-top:4px;white-space:pre-line">${f.sustainabilityTargets}</div></div>` : ''}
       <h2 style="font-size:1.1rem;margin-top:20px;margin-bottom:4px">Contacts (${companyContacts.length})</h2>
       ${companyContacts.length > 0 ? `<table><thead><tr><th>Name</th><th>Title</th><th>Email</th><th>Phone</th><th>Role</th><th>LinkedIn</th></tr></thead><tbody>${contactRows}</tbody></table>` : '<div style="color:#9CA3AF;font-style:italic;margin-top:8px">No HubSpot contacts found</div>'}
-      <div style="margin-top:24px;font-size:0.7rem;color:#9CA3AF">Prospect Tracker — ${new Date().toLocaleString()}</div>
+      <div style="margin-top:24px;font-size:0.7rem;color:#9CA3AF">Prospect Tracker: ${new Date().toLocaleString()}</div>
       </body></html>`);
     win.document.close();
     setTimeout(() => { win.print(); }, 300);
@@ -5293,7 +5293,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 type="button"
                 onClick={async () => {
                   const name = fields.company || 'this company';
-                  if (!window.confirm(`Delete "${name}" from Table View?\n\nThis permanently removes the company record — its fields, notes, and Portfolio Companies tab. This can't be undone.`)) return;
+                  if (!window.confirm(`Delete "${name}" from Table View?\n\nThis permanently removes the company record: its fields, notes, and Portfolio Companies tab. This can't be undone.`)) return;
                   try {
                     await onDeleteProspect(prospect.id);
                     onClose();
@@ -5493,7 +5493,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       value={fields.peOwner || ''}
                       onChange={e => { set('peOwner', e.target.value); setPeOpen(true); }}
                       onFocus={() => setPeOpen(true)}
-                      placeholder="Type a company name — comma-separate multiple owners…"
+                      placeholder="Type a company name: comma-separate multiple owners…"
                     />
                     {peOpen && allCompanies.length > 0 && (
                       <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 2, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', maxHeight: 260, overflowY: 'auto', zIndex: 100 }}>
@@ -5622,7 +5622,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div>
               <label className={styles.label}>Type</label>
               <select className={styles.select} value={fields.type} onChange={e => set('type', e.target.value)}>
-                <option value="">—</option>
+                <option value="">-</option>
                 {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
@@ -5631,7 +5631,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               <div>
                 <label className={styles.label}>PE Stage</label>
                 <select className={styles.select} value={fields.peStage || ''} onChange={e => set('peStage', e.target.value)}>
-                  <option value="">—</option>
+                  <option value="">-</option>
                   {PE_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
@@ -5640,7 +5640,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div>
               <label className={styles.label}>Tier</label>
               <select className={styles.select} value={fields.tier} onChange={e => set('tier', e.target.value)}>
-                <option value="">—</option>
+                <option value="">-</option>
                 {TIERS.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
@@ -5655,7 +5655,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div>
               <label className={styles.label}>Geography</label>
               <select className={styles.select} value={fields.geography} onChange={e => set('geography', e.target.value)}>
-                <option value="">—</option>
+                <option value="">-</option>
                 {GEOGRAPHIES.map(g => <option key={g} value={g}>{g}</option>)}
               </select>
             </div>
@@ -5663,7 +5663,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div>
               <label className={styles.label}>HQ Region</label>
               <select className={styles.input} value={fields.hqRegion} onChange={e => set('hqRegion', e.target.value)}>
-                <option value="">—</option>
+                <option value="">-</option>
                 <option value="North America">North America</option>
                 <option value="Outside of North America">Outside of North America</option>
               </select>
@@ -5672,7 +5672,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div>
               <label className={styles.label}>Public / Private</label>
               <select className={styles.select} value={fields.publicPrivate} onChange={e => set('publicPrivate', e.target.value)}>
-                <option value="">—</option>
+                <option value="">-</option>
                 {PUBLIC_PRIVATE.map(p => <option key={p} value={p}>{p}</option>)}
               </select>
             </div>
@@ -5692,7 +5692,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div>
               <label className={styles.label}>Client Manager</label>
               <div className={styles.input} style={{ background: clientManager ? '#F0FDF4' : 'var(--color-bg)', color: clientManager ? '#166534' : 'var(--color-text-muted)', fontWeight: clientManager ? 600 : 400, cursor: 'default' }}>
-                {clientManager || '—'}
+                {clientManager || '-'}
               </div>
             </div>
 
@@ -5823,7 +5823,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   value={fields.competitorsNotes || ''}
                   onCommit={v => set('competitorsNotes', v)}
                   services={SERVICE_CATEGORIES.flatMap(c => c.items)}
-                  placeholder="Who's competing here? Type @ to tag a service — e.g. @strategic sourcing."
+                  placeholder="Who's competing here? Type @ to tag a service: e.g. @strategic sourcing."
                   style={{ minHeight: '34px', padding: '0.3rem 0.5rem', fontSize: '0.78rem' }}
                 />
               </div>
@@ -6737,7 +6737,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                       set('servicesExplored', next);
                                     }}
                                     title={isManualOverride
-                                      ? `Manual override: ${manualStatus}.${oppStage ? ` Automatic status from a matching opp would be: ${oppStage}.` : ' No matching opp, so the automatic status is blank.'} Pick "— (auto)" or click ↺ to revert to the automatic status.`
+                                      ? `Manual override: ${manualStatus}.${oppStage ? ` Automatic status from a matching opp would be: ${oppStage}.` : ' No matching opp, so the automatic status is blank.'} Pick "- (auto)" or click ↺ to revert to the automatic status.`
                                       : oppStage ? `Automatic status from a matching opp: ${oppStage}. Pick a status to set a manual override.` : 'No manual override and no matching opp.'}
                                     style={{
                                       fontSize: '0.62rem', padding: '1px 2px', border: `1px solid ${isManualOverride ? 'var(--color-accent)' : 'var(--color-border)'}`,
@@ -6745,7 +6745,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                       cursor: 'pointer', minWidth: '65px', fontFamily: 'inherit', fontWeight: 600,
                                     }}
                                   >
-                                    {SERVICE_STATUSES.map(s => <option key={s} value={s}>{s === '-' ? '— (auto)' : s}</option>)}
+                                    {SERVICE_STATUSES.map(s => <option key={s} value={s}>{s === '-' ? '- (auto)' : s}</option>)}
                                   </select>
                                   {isManualOverride && (
                                     <button
@@ -6755,7 +6755,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                         delete next[item];
                                         set('servicesExplored', next);
                                       }}
-                                      title="Clear manual override — revert this service to the automatic (opp-based) status"
+                                      title="Clear manual override: revert this service to the automatic (opp-based) status"
                                       style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '0.72rem', padding: '0 1px', lineHeight: 1, flexShrink: 0 }}
                                       onMouseEnter={e => { e.currentTarget.style.color = 'var(--color-accent)'; }}
                                       onMouseLeave={e => { e.currentTarget.style.color = '#94A3B8'; }}
@@ -7442,7 +7442,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         disabled={!portfolioSourceFile?.blob}
                         title={portfolioSourceFile?.blob
                           ? `Download the raw ${portfolioSourceFile.name} that was uploaded (unmodified, not the polished export)`
-                          : 'No source file uploaded yet — use ↑ Upload Excel to save one'}
+                          : 'No source file uploaded yet: use ↑ Upload Excel to save one'}
                         style={{ padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', borderRadius: '5px', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: portfolioSourceFile?.blob ? 'pointer' : 'not-allowed', fontFamily: 'inherit', color: portfolioSourceFile?.blob ? 'var(--color-accent)' : 'var(--color-text-muted)', opacity: portfolioSourceFile?.blob ? 1 : 0.6 }}
                       >↓ Download Source File</button>
                       <label style={{ padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', borderRadius: '5px', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)' }}>
@@ -7578,7 +7578,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               <th
                                 style={{ ...thBase, cursor: 'pointer', userSelect: 'none' }}
                                 onClick={() => setPortfolioSortByRank(v => !v)}
-                                title={portfolioSortByRank ? 'Showing best fit first — click to restore original order' : 'Click to sort best fit first'}
+                                title={portfolioSortByRank ? 'Showing best fit first: click to restore original order' : 'Click to sort best fit first'}
                               >
                                 Opportunity Score{portfolioSortByRank ? ' ▼' : ''}<span style={resizeHandleStyle} onMouseDown={e => startResize('rank', e)} />
                               </th>
@@ -7628,7 +7628,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                   const hasImportedScore = r.opportunityScore != null && String(r.opportunityScore).trim() !== '';
                                   const isNA = score == null;
                                   const origin = isNA
-                                    ? 'From uploaded file — value was non-numeric (e.g. N/A) so no score is shown'
+                                    ? 'From uploaded file: value was non-numeric (e.g. N/A) so no score is shown'
                                     : hasImportedScore ? 'From uploaded file' : 'Computed (no Opportunity Score column mapped)';
                                   const colors = isNA
                                     ? { bg: '#F8FAFC', color: '#94A3B8', border: '#E2E8F0' }
@@ -7636,7 +7636,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                   return (
                                     <td style={{ padding: '0.15rem 0.25rem' }}>
                                       <span
-                                        title={`${origin}\nFit ${tier || '—'} · Energy ${r.energyGwh || 0} GWh · Sites ${r.siteCount || 0}`}
+                                        title={`${origin}\nFit ${tier || '-'} · Energy ${r.energyGwh || 0} GWh · Sites ${r.siteCount || 0}`}
                                         style={{ display: 'inline-block', minWidth: '38px', padding: '0.1rem 0.35rem', borderRadius: 10, fontSize: '0.68rem', fontWeight: 700, background: colors.bg, color: colors.color, border: `1px solid ${colors.border}` }}
                                       >
                                         {isNA ? 'N/A' : score}
@@ -7749,7 +7749,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                     value={r.subsectorScore || ''}
                                     onChange={e => updateRow(i, { subsectorScore: e.target.value })}
                                     title="Per-row sector fit score (1-10). Overrides the keyword-derived sector score."
-                                    placeholder="—"
+                                    placeholder="-"
                                     style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)' }}
                                     onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
                                     onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
@@ -7761,7 +7761,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                     value={r.strategy || ''}
                                     onChange={e => updateRow(i, { strategy: e.target.value })}
                                     title="PE investment strategy (e.g. Buyout, Growth Equity, Venture, Credit)"
-                                    placeholder="—"
+                                    placeholder="-"
                                     style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)' }}
                                     onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
                                     onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
@@ -7783,7 +7783,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                   <input
                                     value={r.pcDescription || ''}
                                     onChange={e => updateRow(i, { pcDescription: e.target.value })}
-                                    title={r.pcDescription || 'Describe what this company does — hover to read full text'}
+                                    title={r.pcDescription || 'Describe what this company does: hover to read full text'}
                                     placeholder="Describe what this company does…"
                                     style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                                     onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
@@ -7794,7 +7794,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                   <input
                                     value={r.notes || ''}
                                     onChange={e => updateRow(i, { notes: e.target.value })}
-                                    title={r.notes || 'Notes — hover to read full text'}
+                                    title={r.notes || 'Notes: hover to read full text'}
                                     placeholder="Notes…"
                                     style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                                     onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
@@ -7810,7 +7810,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                     onMouseEnter={e => e.currentTarget.style.border = '1px solid var(--color-accent)'}
                                     onMouseLeave={e => e.currentTarget.style.border = raFromSaved ? '1px dashed #3B82F6' : '1px solid transparent'}
                                   >
-                                    {isMatched ? `${raFromSaved ? '★' : '✓'} ${r.raClientMatch}` : (suggestions.length > 0 ? `${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'} ▾` : '— Click to map —')}
+                                    {isMatched ? `${raFromSaved ? '★' : '✓'} ${r.raClientMatch}` : (suggestions.length > 0 ? `${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'} ▾` : '(Click to map)')}
                                   </button>
                                   </div>
                                   {pickerOpen && (() => {
@@ -7930,8 +7930,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                             updateRow(i, { clientManager: v });
                                           }
                                         }}
-                                        placeholder="—"
-                                        title={showingSuggestion ? `Suggested from RA Client "${r.raClientMatch}" — select and copy as needed, or type to override.` : undefined}
+                                        placeholder="-"
+                                        title={showingSuggestion ? `Suggested from RA Client "${r.raClientMatch}": select and copy as needed, or type to override.` : undefined}
                                         style={{
                                           width: '100%',
                                           padding: '0.15rem 0.3rem',
@@ -7971,7 +7971,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                         onMouseEnter={e => e.currentTarget.style.border = '1px solid var(--color-accent)'}
                                         onMouseLeave={e => e.currentTarget.style.border = targetFromSaved ? '1px dashed #3B82F6' : '1px solid transparent'}
                                       >
-                                        {hasTarget ? `${targetFromSaved ? '★' : '✓'} ${r.targetAccount}` : (targetAccountNames.length === 0 ? '— No target list loaded —' : (targetSuggestions.length > 0 ? `${targetSuggestions.length} suggestion${targetSuggestions.length === 1 ? '' : 's'} ▾` : '— Click to map —'))}
+                                        {hasTarget ? `${targetFromSaved ? '★' : '✓'} ${r.targetAccount}` : (targetAccountNames.length === 0 ? '(No target list loaded)' : (targetSuggestions.length > 0 ? `${targetSuggestions.length} suggestion${targetSuggestions.length === 1 ? '' : 's'} ▾` : '(Click to map)'))}
                                       </button>
                                       </div>
                                       {targetOpen && (() => {
@@ -8069,7 +8069,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                   const tier = tierForTarget(r.targetAccount);
                                   return (
                                     <td style={{ padding: '0.15rem 0.3rem', fontSize: '0.7rem', color: tier ? 'var(--color-text)' : '#CBD5E1', fontStyle: tier ? 'normal' : 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={tier ? `Tier for "${r.targetAccount}" from the Target Accounts sheet` : (r.targetAccount ? 'No tier found on Target Accounts sheet for this account' : 'Map a target account to see its tier')}>
-                                      {tier || (r.targetAccount ? '—' : '—')}
+                                      {tier || (r.targetAccount ? '-' : '-')}
                                     </td>
                                   );
                                 })()}
@@ -8077,7 +8077,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                   const rep = repForTarget(r.targetAccount);
                                   return (
                                     <td style={{ padding: '0.15rem 0.3rem', fontSize: '0.7rem', color: rep ? 'var(--color-text)' : '#CBD5E1', fontStyle: rep ? 'normal' : 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={rep ? `From Target Accounts sheet for "${r.targetAccount}"` : (r.targetAccount ? 'No rep found on Target Accounts sheet for this account' : 'Map a target account to see its rep')}>
-                                      {rep || (r.targetAccount ? '— no rep found —' : '—')}
+                                      {rep || (r.targetAccount ? '(no rep found)' : '-')}
                                     </td>
                                   );
                                 })()}
@@ -8087,7 +8087,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                   return (
                                     <td style={{ padding: '0.15rem 0.3rem' }}>
                                       {flags.length === 0
-                                        ? <span style={{ color: '#CBD5E1', fontSize: '0.7rem' }}>—</span>
+                                        ? <span style={{ color: '#CBD5E1', fontSize: '0.7rem' }}>-</span>
                                         : (
                                           <span style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
                                             {flags.map(label => {
@@ -8132,7 +8132,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       </>
                     )}
                     {rows.length === 0 && (
-                      <div style={{ fontSize: '0.75rem', color: '#9CA3AF', fontStyle: 'italic', padding: '0.25rem 0' }}>No portfolio companies yet — paste a table above or add rows manually</div>
+                      <div style={{ fontSize: '0.75rem', color: '#9CA3AF', fontStyle: 'italic', padding: '0.25rem 0' }}>No portfolio companies yet: paste a table above or add rows manually</div>
                     )}
                   </div>
                 );
@@ -8484,7 +8484,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           })()}
                         </th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Name</th>
-                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }} title="Where this contact was created — HubSpot sync, bulk upload, or manual entry.">Source</th>
+                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }} title="Where this contact was created: HubSpot sync, bulk upload, or manual entry.">Source</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Full Name</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Title</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Tags</th>
@@ -8542,7 +8542,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               })()}
                             </td>
                             <td style={{ padding: '0.35rem 0.5rem', fontWeight: 600, color: '#1E293B', whiteSpace: 'nowrap' }}>
-                              {name || '—'}
+                              {name || '-'}
                               {isDM && <span style={{ marginLeft: '0.3rem', fontSize: '0.55rem', fontWeight: 700, color: '#92400E', background: '#FDE68A', padding: '0px 5px', borderRadius: '3px' }}>DM</span>}
                             </td>
                             <td style={{ padding: '0.35rem 0.5rem', whiteSpace: 'nowrap' }}>
@@ -8555,42 +8555,42 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                 const full = `${fullFirst} ${fullLast}`.trim();
                                 const nicknames = (settings && settings.contactNicknames) || {};
                                 const nick = (c.id && nicknames[c.id]) || '';
-                                if (!full && !nick) return <span style={{ color: '#CBD5E1' }}>—</span>;
+                                if (!full && !nick) return <span style={{ color: '#CBD5E1' }}>-</span>;
                                 return (
                                   <>
-                                    <span>{full || '—'}</span>
+                                    <span>{full || '-'}</span>
                                     {nick && <span style={{ marginLeft: '0.35rem', fontSize: '0.65rem', color: '#64748B', fontWeight: 400 }}>({nick})</span>}
                                   </>
                                 );
                               })()}
                             </td>
-                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.jobtitle || '—'}</td>
+                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.jobtitle || '-'}</td>
                             <td style={{ padding: '0.35rem 0.5rem', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.68rem', color: '#475569' }}>
-                              {(c.dans_tags || c.dan_s_tags || c.dans_tag || '—')}
+                              {(c.dans_tags || c.dan_s_tags || c.dans_tag || '-')}
                             </td>
                             <td style={{ padding: '0.35rem 0.5rem', maxWidth: '180px' }}>
                               {(() => {
                                 const matched = BUCKETS.filter(b => getContactTags(c).includes(b.tag));
-                                if (matched.length === 0) return <span style={{ fontSize: '0.62rem', color: '#CBD5E1' }}>—</span>;
+                                if (matched.length === 0) return <span style={{ fontSize: '0.62rem', color: '#CBD5E1' }}>-</span>;
                                 return <span style={{ display: 'flex', flexWrap: 'wrap', gap: '2px' }}>
                                   {matched.map(b => <span key={b.key} style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 700, background: b.headerBg, color: b.headerColor, whiteSpace: 'nowrap' }}>{b.label}</span>)}
                                 </span>;
                               })()}
                             </td>
-                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.email || '—'}</td>
-                            <td style={{ padding: '0.35rem 0.5rem', textAlign: 'right', color: counts.sent > 0 ? '#1E293B' : '#CBD5E1', fontVariantNumeric: 'tabular-nums' }} title={counts.sent > 0 ? `${counts.sent} outbound emails to this contact (Activity tab)` : 'No outbound emails recorded'}>{counts.sent || '—'}</td>
-                            <td style={{ padding: '0.35rem 0.5rem', textAlign: 'right', color: counts.received > 0 ? '#1E293B' : '#CBD5E1', fontVariantNumeric: 'tabular-nums' }} title={counts.received > 0 ? `${counts.received} inbound emails from this contact (Activity tab)` : 'No inbound emails recorded'}>{counts.received || '—'}</td>
-                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap' }}>{c.phone || '—'}</td>
-                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap' }}>{c.mobilephone || c.mobile_phone || '—'}</td>
-                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.city || '—'}</td>
-                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.country || '—'}</td>
+                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.email || '-'}</td>
+                            <td style={{ padding: '0.35rem 0.5rem', textAlign: 'right', color: counts.sent > 0 ? '#1E293B' : '#CBD5E1', fontVariantNumeric: 'tabular-nums' }} title={counts.sent > 0 ? `${counts.sent} outbound emails to this contact (Activity tab)` : 'No outbound emails recorded'}>{counts.sent || '-'}</td>
+                            <td style={{ padding: '0.35rem 0.5rem', textAlign: 'right', color: counts.received > 0 ? '#1E293B' : '#CBD5E1', fontVariantNumeric: 'tabular-nums' }} title={counts.received > 0 ? `${counts.received} inbound emails from this contact (Activity tab)` : 'No inbound emails recorded'}>{counts.received || '-'}</td>
+                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap' }}>{c.phone || '-'}</td>
+                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap' }}>{c.mobilephone || c.mobile_phone || '-'}</td>
+                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.city || '-'}</td>
+                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.country || '-'}</td>
                             <td style={{ padding: '0.35rem 0.5rem' }}>
-                              {linkedinUrl ? <a href={linkedinUrl.startsWith('http') ? linkedinUrl : `https://linkedin.com/in/${linkedinUrl}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ color: '#0A66C2', fontSize: '0.7rem', fontWeight: 600, textDecoration: 'none' }}>View</a> : <span style={{ color: '#CBD5E1' }}>—</span>}
+                              {linkedinUrl ? <a href={linkedinUrl.startsWith('http') ? linkedinUrl : `https://linkedin.com/in/${linkedinUrl}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ color: '#0A66C2', fontSize: '0.7rem', fontWeight: 600, textDecoration: 'none' }}>View</a> : <span style={{ color: '#CBD5E1' }}>-</span>}
                             </td>
                             <td style={{ padding: '0.35rem 0.5rem' }}>
                               {(() => {
                                 const parts = [c.firstname, c.lastname, c.company || fields.company].map(s => String(s || '').trim()).filter(Boolean);
-                                if (parts.length === 0) return <span style={{ color: '#CBD5E1' }}>—</span>;
+                                if (parts.length === 0) return <span style={{ color: '#CBD5E1' }}>-</span>;
                                 const keywords = encodeURIComponent(parts.join(' '));
                                 const liHref = `https://www.linkedin.com/search/results/people/?keywords=${keywords}`;
                                 const snHref = `https://www.linkedin.com/sales/search/people?keywords=${keywords}`;
@@ -8601,7 +8601,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       onClick={e => e.stopPropagation()}
-                                      title={`Open regular LinkedIn people search for "${parts.join(' ')}" — best for grabbing the canonical linkedin.com/in/ URL.`}
+                                      title={`Open regular LinkedIn people search for "${parts.join(' ')}": best for grabbing the canonical linkedin.com/in/ URL.`}
                                       style={{ color: '#0A66C2', fontSize: '0.65rem', fontWeight: 600, textDecoration: 'none' }}
                                     >LinkedIn ↗</a>
                                     <a
@@ -8616,7 +8616,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                 );
                               })()}
                             </td>
-                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.68rem' }}>{(settings.contactNotes || {})[c.id || c.vid] || c.notes || c.hs_content_membership_notes || c.message || '—'}</td>
+                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.68rem' }}>{(settings.contactNotes || {})[c.id || c.vid] || c.notes || c.hs_content_membership_notes || c.message || '-'}</td>
                             <td style={{ padding: '0.35rem 0.3rem', textAlign: 'center', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
                               {(() => {
                                 const cid = String(c.id || c.vid || '');
@@ -8906,7 +8906,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           const { fileName, headers, rows, mapping } = contactsUploadPreview;
           const sample = rows[0] || {};
           const FIELD_OPTIONS = [
-            { key: '', label: '— Ignore —' },
+            { key: '', label: '(Ignore)' },
             { key: 'firstname', label: 'First Name' },
             { key: 'lastname', label: 'Last Name' },
             { key: 'email', label: 'Email (required)' },
@@ -8941,7 +8941,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   <div>
                     <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B' }}>Map columns for import</div>
                     <div style={{ fontSize: '0.7rem', color: '#64748B' }}>
-                      <code>{fileName}</code> — {rows.length} row{rows.length === 1 ? '' : 's'} detected. Review each column's mapping before importing.
+                      <code>{fileName}</code>: {rows.length} row{rows.length === 1 ? '' : 's'} detected. Review each column's mapping before importing.
                     </div>
                   </div>
                   <button onClick={cancel} style={{ border: 'none', background: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer' }}>×</button>
@@ -8950,7 +8950,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 <div style={{ flex: 1, overflowY: 'auto', padding: '0.75rem 1rem' }}>
                   {!hasEmail && (
                     <div style={{ padding: '0.5rem 0.75rem', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 6, fontSize: '0.75rem', color: '#991B1B', marginBottom: '0.5rem', fontWeight: 600 }}>
-                      At least one column must be mapped to <strong>Email</strong> — rows with no email are skipped.
+                      At least one column must be mapped to <strong>Email</strong>: rows with no email are skipped.
                     </div>
                   )}
                   {hasDuplicate && (
@@ -9079,7 +9079,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               })
               .filter(r => r.companyName);
             if (parsed.length === 0) {
-              alert('No rows had a non-empty Company Name — nothing to import.');
+              alert('No rows had a non-empty Company Name: nothing to import.');
               return;
             }
             const existing = fields.portfolioCompanies || [];
@@ -9142,7 +9142,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--color-border-light)' }}>
                   <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>Review column mapping</div>
                   <div style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '0.2rem' }}>
-                    <strong>{fileRows.length}</strong> row{fileRows.length === 1 ? '' : 's'} from <em>{fileName}</em> — confirm each column maps to the right field, then import.
+                    <strong>{fileRows.length}</strong> row{fileRows.length === 1 ? '' : 's'} from <em>{fileName}</em>: confirm each column maps to the right field, then import.
                   </div>
                   {!hasCompanyName && (
                     <div style={{ marginTop: '0.5rem', padding: '0.4rem 0.6rem', background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#991B1B', borderRadius: 6, fontSize: '0.75rem' }}>
@@ -9151,7 +9151,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   )}
                   {hasDuplicateMapping && (
                     <div style={{ marginTop: '0.5rem', padding: '0.4rem 0.6rem', background: '#FFFBEB', border: '1px solid #FCD34D', color: '#854D0E', borderRadius: 6, fontSize: '0.75rem' }}>
-                      Some fields are mapped by more than one column. Only one mapping can win — set duplicates to "Ignore" or change them.
+                      Some fields are mapped by more than one column. Only one mapping can win: set duplicates to "Ignore" or change them.
                     </div>
                   )}
                   {unmappedExpected.length > 0 && (
@@ -9212,7 +9212,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           <td style={{ padding: '0.4rem 0.5rem', fontStyle: 'italic', color: '#854D0E', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`No column in your file maps to ${field.label}`}>
                             (no file column)
                           </td>
-                          <td style={{ padding: '0.4rem 0.5rem', color: '#A16207', fontStyle: 'italic' }}>—</td>
+                          <td style={{ padding: '0.4rem 0.5rem', color: '#A16207', fontStyle: 'italic' }}>-</td>
                           <td style={{ padding: '0.4rem 0.5rem' }}>
                             <div
                               title={`No file column maps to "${field.label}". Choose this field in the Maps To dropdown of one of the rows above to populate it on import, or leave it blank.`}

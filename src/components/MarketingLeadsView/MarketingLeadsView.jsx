@@ -296,7 +296,7 @@ function nameKey(s) {
 function isPlaceholderCompany(s) {
   const t = String(s || '').trim();
   if (!t) return true;
-  if (/^[-—–_]+$/.test(t)) return true;
+  if (/^[--–_]+$/.test(t)) return true;
   if (/^(n\.?a\.?|n\/a|none|null|tbd|unknown|\?|\.|test)$/i.test(t)) return true;
   return false;
 }
@@ -405,7 +405,7 @@ function hubspotName(c) {
 function hubspotDisplay(c) {
   const name = hubspotName(c);
   const email = (c?.email || '').trim();
-  if (name && email) return `${name} — ${email}`;
+  if (name && email) return `${name} · ${email}`;
   return name || email || '(unnamed contact)';
 }
 
@@ -473,7 +473,7 @@ const HubSpotContactAutocomplete = memo(function HubSpotContactAutocomplete({ co
               style={{ padding: '0.35rem 0.6rem', cursor: 'pointer', background: i === hoverIdx ? '#DCFCE7' : 'transparent', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
             >
               <span style={{ fontWeight: 600, color: '#1E293B' }}>{hubspotName(c) || '(no name)'}</span>
-              {c.email && <span style={{ color: '#64748B' }}> — {c.email}</span>}
+              {c.email && <span style={{ color: '#64748B' }}>: {c.email}</span>}
             </div>
           ))}
         </div>
@@ -1189,7 +1189,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     if (Object.keys(notesPatch).length) patch.contactNotes = { ...curNotes, ...notesPatch };
     if (Object.keys(patch).length) updateSettings(patch);
     setBulkAddingHubspot(false);
-    window.alert(`Added ${created.length} contact${created.length === 1 ? '' : 's'} to HubSpot${failed ? ` — ${failed} failed` : ''}.`);
+    window.alert(`Added ${created.length} contact${created.length === 1 ? '' : 's'} to HubSpot${failed ? `: ${failed} failed` : ''}.`);
   }
 
   // Visible list = persisted rows + synthetic padding rows up to the
@@ -1428,7 +1428,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
       return { fileName: `draft_${safeFileName(name || contact.email)}.eml`, eml };
     });
     downloadDrafts(drafts);
-    setDraftResult(`${drafts.length} draft .eml file${drafts.length === 1 ? '' : 's'} downloading — double-click each to open in Outlook.`);
+    setDraftResult(`${drafts.length} draft .eml file${drafts.length === 1 ? '' : 's'} downloading: double-click each to open in Outlook.`);
   }
 
   // ---- Contact popup (shared with the other Contacts subtabs) ---------
@@ -1530,7 +1530,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
   function removeDuplicates() {
     const { kept, dropIds } = dedupeByEmail(persistedRows);
     if (!dropIds.length) {
-      window.alert('No duplicate contacts found — every saved lead has a unique email.');
+      window.alert('No duplicate contacts found: every saved lead has a unique email.');
       return;
     }
     const ok = window.confirm(
@@ -1879,7 +1879,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
             onClick={unhideSelected}
             disabled={!selectedLeadIds.size}
             title={selectedLeadIds.size
-              ? `Unhide the ${selectedLeadIds.size} selected lead${selectedLeadIds.size === 1 ? '' : 's'} — they return to the active list.`
+              ? `Unhide the ${selectedLeadIds.size} selected lead${selectedLeadIds.size === 1 ? '' : 's'}: they return to the active list.`
               : 'Tick one or more hidden leads to bring them back.'}
             style={btn({ border: '1px solid #86EFAC', background: selectedLeadIds.size ? '#F0FDF4' : '#F8FAFC', color: selectedLeadIds.size ? '#166534' : '#CBD5E1', cursor: selectedLeadIds.size ? 'pointer' : 'not-allowed' })}
           >👁 Unhide {selectedLeadIds.size || ''}</button>
@@ -1889,7 +1889,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
             onClick={hideSelected}
             disabled={!selectedLeadIds.size}
             title={selectedLeadIds.size
-              ? `Hide the ${selectedLeadIds.size} selected lead${selectedLeadIds.size === 1 ? '' : 's'} from the list. They aren't deleted — bring them back with "Show hidden".`
+              ? `Hide the ${selectedLeadIds.size} selected lead${selectedLeadIds.size === 1 ? '' : 's'} from the list. They aren't deleted: bring them back with "Show hidden".`
               : 'Tick the checkbox on one or more leads to hide them.'}
             style={btn({ border: '1px solid #FDBA74', background: selectedLeadIds.size ? '#FFF7ED' : '#F8FAFC', color: selectedLeadIds.size ? '#9A3412' : '#CBD5E1', cursor: selectedLeadIds.size ? 'pointer' : 'not-allowed' })}
           >🙈 Hide {selectedLeadIds.size || ''}</button>
@@ -2019,7 +2019,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
           disabled={!duplicateCount}
           title={duplicateCount
             ? `Delete ${duplicateCount} duplicate lead${duplicateCount === 1 ? '' : 's'} (same email), keeping the most complete row for each.`
-            : 'No duplicate contacts — every saved lead has a unique email.'}
+            : 'No duplicate contacts: every saved lead has a unique email.'}
           style={btn({ border: '1px solid #FCD34D', background: duplicateCount ? '#fff' : '#F8FAFC', color: duplicateCount ? '#B45309' : '#CBD5E1', cursor: duplicateCount ? 'pointer' : 'not-allowed' })}
         >Remove {duplicateCount || ''} duplicate{duplicateCount === 1 ? '' : 's'}</button>
         <button
@@ -2031,7 +2031,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
         >Clear table</button>
       </div>
       <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
-        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, drag a header to reorder it (drag its right edge to resize), use <strong>Filters</strong> for per-column filtering, and <strong>Columns</strong> to show / hide or reorder columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account — accept the suggested match or type to pick another. The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand. The <strong>HubSpot Contact</strong> column maps each lead to a HubSpot contact — accept the email/name match, search to pick another, or <strong>+ Add to HubSpot</strong> to create a new contact from the lead. The read-only <strong>HubSpot Title</strong> column shows the mapped contact's job title. The <strong>Status</strong> column is a dropdown driven by the <strong>Marketing Lead Status</strong> list on the <strong>Dropdowns</strong> tab — edit that list to change the options. <strong>✉️ Draft Emails</strong> creates an Outlook draft for every shown lead with an email address, signed with your saved email signature (respects the current search / filters). Click a lead's <strong>Name</strong> to open it in the contact popup (the <strong>✎</strong> next to it edits the name inline instead). Tick the checkboxes and click <strong>🙈 Hide</strong> (or the per-row 🙈) to hide leads you're done with — they aren't deleted; use <strong>Show hidden</strong> to review or 👁 unhide them. Tick leads and click <strong>✏️ Bulk Edit</strong> to set one field (Status, Owner, Company Mapping, …) across all of them at once.
+        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, drag a header to reorder it (drag its right edge to resize), use <strong>Filters</strong> for per-column filtering, and <strong>Columns</strong> to show / hide or reorder columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account: accept the suggested match or type to pick another. The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand. The <strong>HubSpot Contact</strong> column maps each lead to a HubSpot contact: accept the email/name match, search to pick another, or <strong>+ Add to HubSpot</strong> to create a new contact from the lead. The read-only <strong>HubSpot Title</strong> column shows the mapped contact's job title. The <strong>Status</strong> column is a dropdown driven by the <strong>Marketing Lead Status</strong> list on the <strong>Dropdowns</strong> tab: edit that list to change the options. <strong>✉️ Draft Emails</strong> creates an Outlook draft for every shown lead with an email address, signed with your saved email signature (respects the current search / filters). Click a lead's <strong>Name</strong> to open it in the contact popup (the <strong>✎</strong> next to it edits the name inline instead). Tick the checkboxes and click <strong>🙈 Hide</strong> (or the per-row 🙈) to hide leads you're done with: they aren't deleted; use <strong>Show hidden</strong> to review or 👁 unhide them. Tick leads and click <strong>✏️ Bulk Edit</strong> to set one field (Status, Owner, Company Mapping, …) across all of them at once.
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -2043,7 +2043,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
             Close rate{isFiltering ? ' (filtered)' : ''}
           </span>
           <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#009530' }}>
-            {closeStats.rate == null ? '—' : `${(closeStats.rate * 100).toFixed(1)}%`}
+            {closeStats.rate == null ? '-' : `${(closeStats.rate * 100).toFixed(1)}%`}
           </span>
         </div>
         <span style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>
@@ -2070,7 +2070,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
             autoFocus
             value={pasteHelper}
             onChange={e => setPasteHelper(e.target.value)}
-            placeholder="Paste the copied block — the first row should be the headers (Name, Email, Job Title, …)."
+            placeholder="Paste the copied block: the first row should be the headers (Name, Email, Job Title, …)."
             style={{ width: '100%', minHeight: 90, padding: '0.4rem', border: '1px solid #86EFAC', borderRadius: 4, fontSize: '0.78rem', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', boxSizing: 'border-box', resize: 'vertical' }}
           />
           <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end' }}>
@@ -2193,7 +2193,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
             {filtered.length === 0 && (
               <tr>
                 <td colSpan={visibleColumnList.length + 2} style={{ padding: '1.2rem', textAlign: 'center', color: 'var(--color-text-muted)', fontStyle: 'italic', fontSize: '0.78rem' }}>
-                  {showHidden ? 'No hidden leads.' : isFiltering ? 'No leads match the current search / filters.' : 'No leads yet — paste from Salesforce to get started.'}
+                  {showHidden ? 'No hidden leads.' : isFiltering ? 'No leads match the current search / filters.' : 'No leads yet: paste from Salesforce to get started.'}
                 </td>
               </tr>
             )}
@@ -2328,7 +2328,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                           if (!status) {
                             return (
                               <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem' }}>
-                                <span style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}>—</span>
+                                <span style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}>-</span>
                               </div>
                             );
                           }
@@ -2337,8 +2337,8 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                             <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem' }}>
                               <span
                                 title={info.statusFrom
-                                  ? `Status borrowed from the related account "${info.statusFrom}" — "${info.name}" has no status set.`
-                                  : `Status for "${info.name}"${info.owned ? '' : ' (from Target Accounts — another CDM)'}`}
+                                  ? `Status borrowed from the related account "${info.statusFrom}": "${info.name}" has no status set.`
+                                  : `Status for "${info.name}"${info.owned ? '' : ' (from Target Accounts: another CDM)'}`}
                                 style={{ display: 'inline-block', maxWidth: '100%', background: `${color}1A`, border: `1px ${info.statusFrom ? 'dashed' : 'solid'} ${color}`, color, padding: '2px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                               >{status}{info.statusFrom ? ' *' : ''}</span>
                             </div>
@@ -2352,7 +2352,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                           const cdm = (info?.cdm || '').trim();
                           return (
                             <div title={cdm ? `CDM for "${info.name}"${info.owned ? '' : ' (Target Accounts)'}` : undefined} style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem', fontSize: '0.78rem', color: info?.owned ? '#334155' : '#7C3AED', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {cdm || <span style={{ color: '#CBD5E1', fontStyle: 'italic' }}>—</span>}
+                              {cdm || <span style={{ color: '#CBD5E1', fontStyle: 'italic' }}>-</span>}
                             </div>
                           );
                         })()
@@ -2360,13 +2360,13 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                         <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem' }}>
                           {(() => {
                             const company = effectiveCompany(r);
-                            if (!company) return <span style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}>—</span>;
+                            if (!company) return <span style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}>-</span>;
                             if (isOnTableView(company)) {
                               return (
                                 <span title={`"${company}" is already on Table View.`} style={{ background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534', padding: '2px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 700, whiteSpace: 'nowrap' }}>✓ On Table View</span>
                               );
                             }
-                            if (!onAddProspect || isPad) return <span style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}>—</span>;
+                            if (!onAddProspect || isPad) return <span style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}>-</span>;
                             return (
                               <button
                                 type="button"
@@ -2392,7 +2392,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                               <span
                                 title={r.hubspotContactId ? 'The mapped HubSpot contact has no job title set.' : 'Map a HubSpot contact to see its title.'}
                                 style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}
-                              >—</span>
+                              >-</span>
                             </div>
                           );
                         })()
@@ -2477,7 +2477,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                                   >{prospect.company || mapped}</button>
                                 ) : (
                                   <span
-                                    title={`Mapped to "${mapped}" — not on your Table View. Click ✎ to change it.`}
+                                    title={`Mapped to "${mapped}": not on your Table View. Click ✎ to change it.`}
                                     style={{ fontSize: '0.8rem', color: '#334155', flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                                   >{mapped}</span>
                                 )}
@@ -2545,7 +2545,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                               title={offList ? `"${cur}" isn't in the Marketing Lead Status list. Manage the list on the Dropdowns tab.` : 'Set the lead status (managed on the Dropdowns tab → Marketing Lead Status).'}
                               style={{ ...cellInputStyle, cursor: 'pointer', appearance: 'auto' }}
                             >
-                              <option value="">{isPad ? '' : '—'}</option>
+                              <option value="">{isPad ? '' : '-'}</option>
                               {offList && <option value={cur}>{cur} (not in list)</option>}
                               {statusOptions.map(opt => (
                                 <option key={opt} value={opt}>{opt}</option>
@@ -2566,7 +2566,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                               <CommitOnBlurInput
                                 value={r.name || ''}
                                 onCommit={v => { updateCell(r.id, 'name', v); if (isEditingName) setEditingNameId(null); }}
-                                placeholder={isPad ? 'Type or paste a lead…' : '—'}
+                                placeholder={isPad ? 'Type or paste a lead…' : '-'}
                                 style={cellInputStyle}
                                 autoFocus={isEditingName}
                               />
@@ -2595,7 +2595,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
                         <CommitOnBlurInput
                           value={r[c.key] || ''}
                           onCommit={v => updateCell(r.id, c.key, v)}
-                          placeholder="—"
+                          placeholder="-"
                           style={cellInputStyle}
                         />
                       )}
@@ -2648,7 +2648,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
               <button onClick={() => setDraftModalOpen(false)} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}>×</button>
             </div>
             <p style={{ fontSize: '0.74rem', color: 'var(--color-text-secondary)', margin: '0 0 0.9rem', lineHeight: 1.5 }}>
-              Creates one Outlook draft (<strong>.eml</strong>) per shown lead that has an email address, each addressed to that lead and signed with your saved email signature{resolveSignature(settings, isAdmin) ? '' : ' (none saved yet — add one on the Draft Emails page)'}. Double-click each downloaded file to open it as a draft in Outlook.
+              Creates one Outlook draft (<strong>.eml</strong>) per shown lead that has an email address, each addressed to that lead and signed with your saved email signature{resolveSignature(settings, isAdmin) ? '' : ' (none saved yet: add one on the Draft Emails page)'}. Double-click each downloaded file to open it as a draft in Outlook.
               {' '}Tokens: <code>{'{firstName}'}</code>, <code>{'{fullName}'}</code>, <code>{'{company}'}</code>, <code>{'{title}'}</code>, <code>{'{email}'}</code>.
             </p>
             <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: '#475569', marginBottom: 3 }}>Subject</label>
@@ -2843,11 +2843,11 @@ function PasteMappingModal({ modal, onCancel, onConfirm, onChangeMapping }) {
     <div onClick={onCancel} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 12, padding: '1.5rem', width: 1000, maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>Import Marketing Leads — Column Mapping</h3>
+          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>Import Marketing Leads: Column Mapping</h3>
           <button onClick={onCancel} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}>×</button>
         </div>
         <p style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', margin: '0 0 1rem 0', lineHeight: 1.4 }}>
-          Detected <strong>{rows.length.toLocaleString()}</strong> row{rows.length === 1 ? '' : 's'} and <strong>{headers.length}</strong> column{headers.length === 1 ? '' : 's'} from your clipboard. The first row was treated as headers — pick which pasted column should fill each lead field. Headers that match common names (Name, Email, Company, …) are mapped automatically.
+          Detected <strong>{rows.length.toLocaleString()}</strong> row{rows.length === 1 ? '' : 's'} and <strong>{headers.length}</strong> column{headers.length === 1 ? '' : 's'} from your clipboard. The first row was treated as headers: pick which pasted column should fill each lead field. Headers that match common names (Name, Email, Company, …) are mapped automatically.
         </p>
         {missingRequired.length > 0 && (
           <div style={{ margin: '0 0 0.75rem', padding: '0.4rem 0.6rem', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 6, fontSize: '0.75rem', color: '#991B1B', fontWeight: 600 }}>
@@ -2868,7 +2868,7 @@ function PasteMappingModal({ modal, onCancel, onConfirm, onChangeMapping }) {
                   {header ? (
                     <span title={`Mapped from "${header}"`} style={{ background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534', padding: '1px 8px', borderRadius: 999, fontSize: '0.68rem', fontWeight: 600, maxWidth: '55%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>← {header}</span>
                   ) : (
-                    <span style={{ color: t.required ? '#DC2626' : '#94A3B8', fontSize: '0.68rem', fontWeight: 600 }}>{t.required ? '— not mapped —' : '— optional —'}</span>
+                    <span style={{ color: t.required ? '#DC2626' : '#94A3B8', fontSize: '0.68rem', fontWeight: 600 }}>{t.required ? '(not mapped)' : '(optional)'}</span>
                   )}
                 </div>
               );
@@ -2887,7 +2887,7 @@ function PasteMappingModal({ modal, onCancel, onConfirm, onChangeMapping }) {
                     onChange={e => onChangeMapping(h, e.target.value)}
                     style={{ minWidth: 170, maxWidth: 220, padding: '0.25rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: 4, fontFamily: 'inherit', fontSize: '0.75rem', background: target ? '#DCFCE7' : '#fff', color: target ? '#166534' : 'var(--color-text)' }}
                   >
-                    <option value="">— Ignore —</option>
+                    <option value="">(Ignore)</option>
                     {PASTE_TARGETS.map(t => (
                       <option key={t.key} value={t.key}>{t.label}{t.required ? ' *' : ''}</option>
                     ))}
@@ -2915,7 +2915,7 @@ function PasteMappingModal({ modal, onCancel, onConfirm, onChangeMapping }) {
                     const h = mapping[t.key];
                     const v = h && idxOf[h] != null ? cells[idxOf[h]] || '' : '';
                     return (
-                      <td key={t.key} style={{ ...cellBase, color: v ? '#1E293B' : '#CBD5E1', fontStyle: v ? 'normal' : 'italic' }}>{v || '—'}</td>
+                      <td key={t.key} style={{ ...cellBase, color: v ? '#1E293B' : '#CBD5E1', fontStyle: v ? 'normal' : 'italic' }}>{v || '-'}</td>
                     );
                   })}
                 </tr>

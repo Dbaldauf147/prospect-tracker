@@ -83,13 +83,13 @@ function niceTicks(max, count = 5) {
   return out;
 }
 
-const fmtDays = (n) => (Number(n) > 0 ? `${Math.round(n)}d` : '—');
+const fmtDays = (n) => (Number(n) > 0 ? `${Math.round(n)}d` : '-');
 
-const fmtInt = (n) => (Number.isFinite(n) ? Math.round(n).toLocaleString('en-US') : '—');
+const fmtInt = (n) => (Number.isFinite(n) ? Math.round(n).toLocaleString('en-US') : '-');
 
 // Compact money for chart labels — $1.7M / $236K / $850.
 function fmtCompactMoney(n) {
-  if (!Number.isFinite(n)) return '—';
+  if (!Number.isFinite(n)) return '-';
   const a = Math.abs(n);
   if (a >= 1e6) return `$${(n / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace(/\.0$/, '')}M`;
   if (a >= 1e3) return `$${Math.round(n / 1e3).toLocaleString('en-US')}K`;
@@ -357,7 +357,7 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
   if (!geom) {
     return (
       <div className={styles.empty}>
-        No stage volume to chart yet — paste BFO Activity data, or fill in the
+        No stage volume to chart yet: paste BFO Activity data, or fill in the
         Active Opportunities / Pipeline cells below.
       </div>
     );
@@ -374,7 +374,7 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
             plan ? (
               <>
                 Bands = <strong>pipeline you have</strong>, dotted line ={' '}
-                <strong>pipeline the plan needs</strong> —{' '}
+                <strong>pipeline the plan needs</strong> -{' '}
                 <strong>{fmtInt(plan.totals.count)} opps</strong> worth{' '}
                 <strong>{fmtCompactMoney(plan.totals.amt)}</strong>, weighting to{' '}
                 <strong>{fmtCompactMoney(plan.totals.weighted)}</strong> against a{' '}
@@ -389,7 +389,7 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
             <>
               Band height = <strong>{metric.heading}</strong>, segment length ={' '}
               <strong>{geom.byLife ? 'avg opp life' : 'even (no avg opp life yet)'}</strong>
-              {geom.byLife ? ` — ${Math.round(geom.totalLife)} days end to end.` : '.'}
+              {geom.byLife ? `: ${Math.round(geom.totalLife)} days end to end.` : '.'}
             </>
           )}
         </div>
@@ -412,8 +412,8 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
           className={styles.svg}
           role="img"
           aria-label={metricKey === 'needed'
-            ? `Pipeline funnel — pipeline value by stage against the plan for a ${fmtCompactMoney(target)} target. ${gapCount} of ${geom.segs.length} stages are short of it.`
-            : `Pipeline funnel — ${metric.heading} by stage, segment length by average opportunity life. ${gapCount} of ${geom.segs.length} stages are short of goal.`}
+            ? `Pipeline funnel: pipeline value by stage against the plan for a ${fmtCompactMoney(target)} target. ${gapCount} of ${geom.segs.length} stages are short of it.`
+            : `Pipeline funnel: ${metric.heading} by stage, segment length by average opportunity life. ${gapCount} of ${geom.segs.length} stages are short of goal.`}
         >
           {/* Left axis — the entry bar, scaled, reading 0 at the baseline
               the funnel sits on and climbing to the tallest stage. A band's
@@ -459,9 +459,9 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
                 {sold != null ? (
                   <>
                     {row(outY - 26, outcome?.soldLabel || 'Closed YTD', metric.fmtOut(sold), { strong: true })}
-                    {row(outY - 6, '+ weighted pipeline', proj == null ? '—' : metric.fmtProj(proj))}
+                    {row(outY - 6, '+ weighted pipeline', proj == null ? '-' : metric.fmtProj(proj))}
                     <line x1={OUT_X} y1={outY + 4} x2={rx} y2={outY + 4} stroke={CHROME} strokeWidth={1} />
-                    {row(outY + 22, '= projected total', total == null ? '—' : metric.fmtProj(total), { strong: true, big: true })}
+                    {row(outY + 22, '= projected total', total == null ? '-' : metric.fmtProj(total), { strong: true, big: true })}
                     {metricKey === 'amount' && outcome?.target > 0 && total != null && (
                       <text x={rx} y={outY + 40} fontSize={11} fill={INK_MUTED} textAnchor="end">
                         {`${Math.round((total / outcome.target) * 100)}% of ${fmtCompactMoney(outcome.target)} target`}
@@ -472,7 +472,7 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
                   /* Nothing closed to add to — show the funnel's own weight
                      and say what's missing rather than a hollow total. */
                   <>
-                    {row(outY - 10, 'weighted pipeline', proj == null ? '—' : metric.fmtProj(proj), { strong: true, big: true })}
+                    {row(outY - 10, 'weighted pipeline', proj == null ? '-' : metric.fmtProj(proj), { strong: true, big: true })}
                     <text x={OUT_X} y={outY + 12} fontSize={10.5} fill={INK_MUTED}>closed count needs the Opps tab</text>
                   </>
                 )}
@@ -558,7 +558,7 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
                     textAnchor="middle"
                   >{`${fmtInt(g.neededCount)} opp${g.neededCount === 1 ? '' : 's'}`}</text>
                 )}
-                <title>{`Stage ${g.stageNum} — ${STAGE_NAME[g.stageNum] || ''}\n${metric.heading}: ${withUnit(metric, g.actual)}\n${metric.goalLabel}: ${withUnit(metric, g.goal)}${g.gap > 0 ? `\n${withUnit(metric, g.gap)} ${metric.shortWord}` : g.over > 0 ? `\n${withUnit(metric, g.over)} ${metric.overWord}` : ''}\nAvg opp life: ${fmtDays(g.life)}`}</title>
+                <title>{`Stage ${g.stageNum} · ${STAGE_NAME[g.stageNum] || ''}\n${metric.heading}: ${withUnit(metric, g.actual)}\n${metric.goalLabel}: ${withUnit(metric, g.goal)}${g.gap > 0 ? `\n${withUnit(metric, g.gap)} ${metric.shortWord}` : g.over > 0 ? `\n${withUnit(metric, g.over)} ${metric.overWord}` : ''}\nAvg opp life: ${fmtDays(g.life)}`}</title>
                 {/* Invisible hit area so thin bands are still hoverable. */}
                 <rect x={g.x0} y={BASE_Y - MAX_H - 24} width={g.x1 - g.x0} height={MAX_H + 30} fill="transparent" />
               </g>
@@ -580,7 +580,7 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
           >
             <div className={styles.tipTitle}>
               <span className={styles.tipDot} style={{ background: STAGE_FILL[hovered.stageNum] }} />
-              Stage {hovered.stageNum} — {STAGE_NAME[hovered.stageNum] || ''}
+              Stage {hovered.stageNum}: {STAGE_NAME[hovered.stageNum] || ''}
             </div>
             <div className={styles.tipRow}><span>{metric.heading}</span><strong>{withUnit(metric, hovered.actual)}</strong></div>
             <div className={styles.tipRow}><span>{metric.goalLabel}</span><strong>{withUnit(metric, hovered.goal)}</strong></div>
@@ -591,7 +591,7 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
                 : <div className={hovered.hasGoal ? styles.tipOk : styles.tipNote}>
                     {hovered.hasGoal
                       ? (metricKey === 'needed' ? '✓ Exactly enough' : '✓ Exactly at goal')
-                      : (metricKey === 'needed' ? 'No requirement — needs a target and a close rate' : 'No goal set')}
+                      : (metricKey === 'needed' ? 'No requirement: needs a target and a close rate' : 'No goal set')}
                   </div>}
             <div className={styles.tipRow}>
               <span>Avg opp life</span>

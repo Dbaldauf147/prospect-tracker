@@ -147,7 +147,7 @@ export function StageDaysBoard({ byStage, hideNotStarted, setHideNotStarted, onC
                   <div style={{
                     color: '#94A3B8', fontSize: '0.72rem',
                     textAlign: 'center', padding: '8px 0',
-                  }}>—</div>
+                  }}>-</div>
                 ) : items.map(row => {
                   const dayBadgeTitle = row.enteredAt
                     ? `Stage entered ${formatDateDisplay(row.enteredAt)}${row._hasExplicitEntry ? '' : ' (fallback to Start Date)'}`
@@ -196,7 +196,7 @@ export function StageDaysBoard({ byStage, hideNotStarted, setHideNotStarted, onC
                             fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
                           }}
                         >
-                          {row.days == null ? '—' : `${row.days}d`}
+                          {row.days == null ? '-' : `${row.days}d`}
                         </span>
                       </div>
                       {action && (

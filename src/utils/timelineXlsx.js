@@ -643,7 +643,7 @@ export async function exportTimelineXlsx(template) {
     ownerCell.alignment = { vertical: 'middle', indent: 1 };
 
     const timingCell = ws.getCell(r, 3);
-    timingCell.value = stage.timing || (range ? '' : '— no dates —');
+    timingCell.value = stage.timing || (range ? '' : '(no dates)');
     timingCell.font = { name: FONT, size: 9.5, color: { argb: range ? SLATE : MUTE }, italic: !range };
     timingCell.alignment = { vertical: 'middle', indent: 1 };
 

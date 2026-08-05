@@ -182,7 +182,7 @@ function RevenueSection({ data, loading, error, disabled, onResearch }) {
             title={detail || undefined}
             style={{ fontWeight: 700, color: 'var(--color-text)', fontSize: 'var(--font-size-sm)' }}
           >
-            {data.revenue || '—'}
+            {data.revenue || '-'}
           </span>
           {data.fiscalYear && <span style={{ fontSize: '0.65rem' }}>{data.fiscalYear}</span>}
           {btn(loading ? 'Researching…' : 'Re-run research')}
@@ -238,7 +238,7 @@ function HqSection({ location, region, source, loading, error, disabled, notFoun
         </span>
       ) : (
         <span style={{ fontStyle: 'italic' }}>
-          {loading ? 'Looking up HQ…' : notFound ? 'No HQ on file — try "Research everything"' : 'HQ: pending lookup'}
+          {loading ? 'Looking up HQ…' : notFound ? 'No HQ on file: try "Research everything"' : 'HQ: pending lookup'}
         </span>
       )}
 
@@ -251,7 +251,7 @@ function HqSection({ location, region, source, loading, error, disabled, notFoun
         onChange={(e) => onSetRegion(e.target.value)}
         disabled={disabled}
         aria-label="HQ region"
-        title={region ? undefined : 'Not known — set it here, or look up the HQ.'}
+        title={region ? undefined : 'Not known: set it here, or look up the HQ.'}
         style={{
           fontSize: '0.62rem', fontWeight: 700, fontFamily: 'inherit',
           padding: '0.1rem 0.25rem', borderRadius: 4,
@@ -470,7 +470,7 @@ function ReferenceLink({ url, onSave, ariaLabel, disabled, shared }) {
         >✕</button>
         {invalid && (
           <span style={{ width: '100%', fontSize: '0.58rem', color: '#B91C1C' }}>
-            Not a usable web address — it needs to look like example.com/page.
+            Not a usable web address: it needs to look like example.com/page.
           </span>
         )}
       </span>
@@ -490,7 +490,7 @@ function ReferenceLink({ url, onSave, ariaLabel, disabled, shared }) {
         <button
           type="button"
           onClick={() => setEditing(true)}
-          title={shared ? 'Edit this shared link — it applies to every company' : 'Edit link'}
+          title={shared ? 'Edit this shared link: it applies to every company' : 'Edit link'}
           style={tiny}
         >✎</button>
       </span>
@@ -502,7 +502,7 @@ function ReferenceLink({ url, onSave, ariaLabel, disabled, shared }) {
       type="button"
       onClick={() => setEditing(true)}
       title={shared
-        ? 'Add the page you look this up on — saved once and shown on every company'
+        ? 'Add the page you look this up on: saved once and shown on every company'
         : 'Add a reference URL for this question'}
       style={{ ...tiny, marginTop: '0.2rem', opacity: 0.75 }}
     >+ link</button>
@@ -518,8 +518,8 @@ function thresholdText(thresholds) {
 // for one somebody checked.
 const CRITERION_SOURCE = {
   research: { label: 'from research', title: 'Derived from the revenue research on this card. Pick a value to override.' },
-  sites: { label: 'from sites', title: 'Counted from the uploaded site list — the California sites matched to this company. Pick a value to override.' },
-  manual: { label: 'manual', title: 'Nothing on this page settles this one — answer it by hand.' },
+  sites: { label: 'from sites', title: 'Counted from the uploaded site list: the California sites matched to this company. Pick a value to override.' },
+  manual: { label: 'manual', title: 'Nothing on this page settles this one: answer it by hand.' },
 };
 
 // A figure a criterion asks for rather than a Yes/No — turnover in millions,
@@ -548,7 +548,7 @@ function NumberCriterionInput({ value, derived, title, ariaLabel, onCommit }) {
       value={draft}
       title={title}
       aria-label={ariaLabel}
-      placeholder="—"
+      placeholder="-"
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
@@ -731,7 +731,7 @@ function JurisdictionScreening({ answers, links, sharedLinks, onSetSharedLink, f
                 <th style={{ ...th, width: '14%' }}>Applies?</th>
                 <th style={{ ...th, width: '40%' }}>
                   Reference &amp; Findings
-                  <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}> — your link + notes</span>
+                  <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>: your link + notes</span>
                 </th>
               </tr>
             </thead>
@@ -760,13 +760,13 @@ function JurisdictionScreening({ answers, links, sharedLinks, onSetSharedLink, f
                         {ruledOut && (
                           <div style={{ marginTop: '0.15rem', display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
                             <span style={{ color: '#991B1B', fontWeight: 700, fontSize: '0.62rem' }}>
-                              Ruled out — under {caScreen.floorLabel}
+                              Ruled out: under {caScreen.floorLabel}
                             </span>
                             <button
                               type="button"
                               onClick={() => setExpandedRuledOut((m) => ({ ...m, [q.key]: !m[q.key] }))}
                               title={collapsed
-                                ? 'Show the rows behind this verdict — editing one is how you undo it'
+                                ? 'Show the rows behind this verdict: editing one is how you undo it'
                                 : 'Hide the rows behind this verdict'}
                               style={{
                                 fontSize: '0.58rem', fontWeight: 700, fontFamily: 'inherit',
@@ -794,7 +794,7 @@ function JurisdictionScreening({ answers, links, sharedLinks, onSetSharedLink, f
                         {note
                           ? <div style={{ color: 'var(--color-text-muted)', fontStyle: 'italic', fontSize: '0.68rem' }}>{note}</div>
                           : (q.key !== 'california' || caSiteCount === 0)
-                            ? <span style={{ color: 'var(--color-text-muted)' }}>—</span>
+                            ? <span style={{ color: 'var(--color-text-muted)' }}>-</span>
                             : null}
                       </td>
                       <td style={td}>
@@ -822,7 +822,7 @@ function JurisdictionScreening({ answers, links, sharedLinks, onSetSharedLink, f
                             aria-label={`${q.jurisdiction}: ${q.question}`}
                             style={answerSelectStyle(val)}
                           >
-                            <option value="">—</option>
+                            <option value="">-</option>
                             {SCREENING_ANSWERS.map((a) => <option key={a} value={a}>{a}</option>)}
                           </select>
                         )}
@@ -899,7 +899,7 @@ function JurisdictionScreening({ answers, links, sharedLinks, onSetSharedLink, f
                                 ) : row.note ? (
                                   <span style={{ color: 'var(--color-text-muted)', fontSize: '0.68rem' }}>{row.note}</span>
                                 ) : (
-                                  <span style={{ color: 'var(--color-text-muted)' }}>—</span>
+                                  <span style={{ color: 'var(--color-text-muted)' }}>-</span>
                                 )}
                               </td>
                               <td style={td}>
@@ -929,7 +929,7 @@ function JurisdictionScreening({ answers, links, sharedLinks, onSetSharedLink, f
                                       title={derived ? derived.basis : undefined}
                                       style={answerSelectStyle(shown, !!derived)}
                                     >
-                                      <option value="">—</option>
+                                      <option value="">-</option>
                                       {SCREENING_ANSWERS.map((a) => <option key={a} value={a}>{a}</option>)}
                                     </select>
                                   )}
@@ -1014,7 +1014,7 @@ function JurisdictionScreening({ answers, links, sharedLinks, onSetSharedLink, f
                                 title={auto ? auto.basis : undefined}
                                 style={answerSelectStyle(shownVal, !!auto)}
                               >
-                                <option value="">—</option>
+                                <option value="">-</option>
                                 {SCREENING_ANSWERS.map((a) => <option key={a} value={a}>{a}</option>)}
                               </select>
                               {auto && (
@@ -1098,7 +1098,7 @@ function RegulationReference() {
       >
         <span style={{ color: 'var(--color-text-muted)' }}>{open ? '▾' : '▸'}</span>
         Regulation reference &amp; thresholds
-        <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>— what each question screens for</span>
+        <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>- what each question screens for</span>
       </button>
       {open && (
         <div style={{ padding: '0 0.9rem 0.75rem' }}>
@@ -1195,7 +1195,7 @@ function CaExcludedNote({ excluded }) {
   const n = excluded.reduce((sum, c) => sum + c.count, 0);
   return (
     <span
-      title={`${n} row${n === 1 ? '' : 's'} with a California State ${n === 1 ? 'was' : 'were'} left out of this count because ${n === 1 ? 'its' : 'their'} Country isn't the United States (${regionCountryLabel(excluded)}). "CA" also arrives as a country code for Canada and as a Spanish province — check the State / Country column mapping on the Utility Lookup tab if these should have counted.`}
+      title={`${n} row${n === 1 ? '' : 's'} with a California State ${n === 1 ? 'was' : 'were'} left out of this count because ${n === 1 ? 'its' : 'their'} Country isn't the United States (${regionCountryLabel(excluded)}). "CA" also arrives as a country code for Canada and as a Spanish province: check the State / Country column mapping on the Utility Lookup tab if these should have counted.`}
       style={{ marginLeft: '0.3rem', color: '#B45309', cursor: 'help' }}
     >
       · {n} non-US &ldquo;CA&rdquo; {n === 1 ? 'row' : 'rows'} excluded ⚠
@@ -1235,7 +1235,7 @@ function OtherCompanyResearchPanel({ stranded, companies, onReattach }) {
       >
         {open ? '▾' : '▸'} Compliance research saved for {stranded.length} other{' '}
         {stranded.length === 1 ? 'company' : 'companies'}
-        {open ? '' : ' — kept, not shown on this page'}
+        {open ? '' : ': kept, not shown on this page'}
       </button>
       {open && (
         <div style={{
@@ -1245,7 +1245,7 @@ function OtherCompanyResearchPanel({ stranded, companies, onReattach }) {
         }}>
           <div style={{ marginBottom: '0.35rem', lineHeight: 1.4 }}>
             Screened when a different site list was loaded, and kept for when it
-            comes back. Nothing here needs doing — unless one of them is a
+            comes back. Nothing here needs doing: unless one of them is a
             company on this page under an old name, in which case move it over.
           </div>
           {stranded.map((row) => {
@@ -1256,7 +1256,7 @@ function OtherCompanyResearchPanel({ stranded, companies, onReattach }) {
                 flexWrap: 'wrap', padding: '0.15rem 0',
               }}>
                 <strong style={{ color: 'var(--color-text)' }}>{row.key}</strong>
-                <span>— {describeStranded(row.parts)}</span>
+                <span>- {describeStranded(row.parts)}</span>
                 <select
                   value={target}
                   onChange={(e) => setPicks(m => ({ ...m, [row.key]: e.target.value }))}
@@ -1277,7 +1277,7 @@ function OtherCompanyResearchPanel({ stranded, companies, onReattach }) {
                     if (!to) return;
                     // Naming both ends: the move clears the old key, so a
                     // wrong pick here isn't a click away from undoing.
-                    if (!window.confirm(`Move the research saved under "${row.key}" (${describeStranded(row.parts)}) onto ${to.name}?\n\nDo this only if they are the same company. Anything already recorded against ${to.name} is kept — this only fills in what's missing.`)) return;
+                    if (!window.confirm(`Move the research saved under "${row.key}" (${describeStranded(row.parts)}) onto ${to.name}?\n\nDo this only if they are the same company. Anything already recorded against ${to.name} is kept: this only fills in what's missing.`)) return;
                     onReattach(row.key, target);
                   }}
                   style={{
@@ -1329,7 +1329,7 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
       if (isCaliforniaSite(site)) {
         entry.california += 1;
         if (site.siteName || site.city) {
-          entry.caSites.push([site.siteName, site.city].filter(Boolean).join(' — '));
+          entry.caSites.push([site.siteName, site.city].filter(Boolean).join(': '));
         }
       }
     }
@@ -1770,9 +1770,9 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
         </span>
       </div>
       <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', maxWidth: 640, marginTop: '0.35rem' }}>
-        Screen each company against the corporate disclosure regimes — <strong>California</strong>{' '}
+        Screen each company against the corporate disclosure regimes: <strong>California</strong>{' '}
         (SB 253 / SB 261), <strong>EU</strong> (CSRD), <strong>UK</strong>, <strong>Australia</strong>,{' '}
-        <strong>Mexico</strong>, and <strong>Brazil</strong> — with the six gating questions on each card.
+        <strong>Mexico</strong>, and <strong>Brazil</strong>: with the six gating questions on each card.
         Cards also carry <strong>annual revenue</strong> research, <strong>California site operations</strong>,
         and fuzzy matches against the uploaded <strong>Lists</strong> (CDP, GRESB, SBT, Ecovadis, …).
       </p>
@@ -1805,7 +1805,7 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
           </button>
         )}
         <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)' }}>
-          Applies to every site without a mapped Company Name column — across all Utility Lookup subtabs.
+          Applies to every site without a mapped Company Name column: across all Utility Lookup subtabs.
         </span>
       </div>
 

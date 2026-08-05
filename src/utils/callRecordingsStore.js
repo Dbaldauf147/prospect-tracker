@@ -202,7 +202,7 @@ function withinDocBudget(record) {
     // by character count can only ever undershoot the byte budget.
     out = {
       ...out,
-      transcript: `${transcript.slice(0, room)}\n\n[Transcript truncated — too long to store in full.]`,
+      transcript: `${transcript.slice(0, room)}\n\n[Transcript truncated: too long to store in full.]`,
       utterancesDropped: true,
     };
   }
@@ -266,7 +266,7 @@ export function oppLabel(opp) {
   const stage = String(opp['Stage'] || '').trim();
   const scope = String(opp['Scope'] || '').trim();
   const tail = [stage, scope].filter(Boolean).join(' · ');
-  return tail ? `${account || 'Untitled opp'} — ${tail}` : (account || 'Untitled opp');
+  return tail ? `${account || 'Untitled opp'} · ${tail}` : (account || 'Untitled opp');
 }
 
 /**
@@ -281,7 +281,7 @@ export function summaryForOpp(record, { recordedAt } = {}) {
     ? ''
     : `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
 
-  const lines = [`Call summary${stamp ? ` — ${stamp}` : ''}`];
+  const lines = [`Call summary${stamp ? `: ${stamp}` : ''}`];
   if (record?.summary) lines.push(record.summary);
 
   const keyItems = Array.isArray(record?.keyItems) ? record.keyItems.filter(Boolean) : [];
@@ -294,7 +294,7 @@ export function summaryForOpp(record, { recordedAt } = {}) {
     lines.push('', 'Follow-ups:', ...followUps.map((f) => {
       const text = typeof f === 'string' ? f : f?.text || '';
       if (!text) return '';
-      const owner = typeof f === 'object' && f?.owner ? ` — ${f.owner}` : '';
+      const owner = typeof f === 'object' && f?.owner ? `: ${f.owner}` : '';
       const due = typeof f === 'object' && f?.due ? ` (${f.due})` : '';
       return `• ${text}${owner}${due}`;
     }).filter(Boolean));

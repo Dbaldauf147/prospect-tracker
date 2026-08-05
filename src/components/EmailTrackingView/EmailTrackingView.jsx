@@ -23,7 +23,7 @@ function toDate(ts) {
 
 function fmtDateTime(ts) {
   const d = toDate(ts);
-  if (!d) return '—';
+  if (!d) return '-';
   return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
@@ -42,11 +42,11 @@ function fmtRelative(ts) {
 
 function location(ev) {
   const parts = [ev.city, ev.region, ev.country].filter(Boolean);
-  return parts.length ? parts.join(', ') : '—';
+  return parts.length ? parts.join(', ') : '-';
 }
 
 function deviceFromUa(ua) {
-  if (!ua) return '—';
+  if (!ua) return '-';
   if (/GoogleImageProxy/i.test(ua)) return 'Gmail (image proxy)';
   if (/iPhone/i.test(ua)) return 'iPhone';
   if (/iPad/i.test(ua)) return 'iPad';
@@ -134,7 +134,7 @@ export function EmailTrackingView() {
 
       {/* Accuracy note — set expectations the way an experienced HubSpot user reads these numbers. */}
       <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E', borderRadius: 8, padding: '0.5rem 0.75rem', fontSize: '0.74rem', lineHeight: 1.45, margin: '0.5rem 0 1rem' }}>
-        <strong>Reading these numbers:</strong> opens are a directional signal — Apple Mail Privacy Protection pre-loads the pixel (inflating opens), Gmail proxies images (so location shows Google), and Outlook blocks images by default (so some real opens never register). <strong>Clicks are the hard signal.</strong>
+        <strong>Reading these numbers:</strong> opens are a directional signal: Apple Mail Privacy Protection pre-loads the pixel (inflating opens), Gmail proxies images (so location shows Google), and Outlook blocks images by default (so some real opens never register). <strong>Clicks are the hard signal.</strong>
       </div>
 
       {/* Shown only when the realtime read was blocked and we fell back to
@@ -230,18 +230,18 @@ function FragmentRow({ r, isOpen, opened, clicked, onToggle }) {
       <tr onClick={onToggle} style={{ cursor: 'pointer', background: isOpen ? '#F8FAFC' : 'transparent' }}>
         <td style={{ ...td, width: 28, color: '#94A3B8', textAlign: 'center' }}>{isOpen ? '▾' : '▸'}</td>
         <td style={td}>
-          <div style={{ fontWeight: 600 }}>{r.recipientName || '—'}</div>
+          <div style={{ fontWeight: 600 }}>{r.recipientName || '-'}</div>
           <div style={{ fontSize: '0.72rem', color: '#94A3B8' }}>{r.to || ''}</div>
         </td>
         <td style={{ ...td, maxWidth: 280 }}>
-          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 280 }} title={r.subject || ''}>{r.subject || '—'}</div>
+          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 280 }} title={r.subject || ''}>{r.subject || '-'}</div>
         </td>
         <td style={{ ...td, whiteSpace: 'nowrap', color: '#64748B' }}>{fmtDateTime(r.createdAt)}</td>
         <td style={{ ...td, textAlign: 'center' }}>
           {opened ? <Pill tone="green">{r.openCount}</Pill> : <Pill tone="grey">0</Pill>}
         </td>
         <td style={{ ...td, whiteSpace: 'nowrap', color: '#64748B' }}>
-          {r.lastOpenAt ? <span title={fmtDateTime(r.lastOpenAt)}>{fmtRelative(r.lastOpenAt)}</span> : '—'}
+          {r.lastOpenAt ? <span title={fmtDateTime(r.lastOpenAt)}>{fmtRelative(r.lastOpenAt)}</span> : '-'}
         </td>
         <td style={{ ...td, textAlign: 'center' }}>
           {clicked ? <Pill tone="blue">{r.clickCount}</Pill> : <Pill tone="grey">0</Pill>}

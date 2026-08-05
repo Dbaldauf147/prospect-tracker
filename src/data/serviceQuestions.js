@@ -39,19 +39,19 @@ export const SERVICE_THEIR_QUESTIONS = {
   'bill payment': [
     { question: "What's your process for onboarding new sites or accounts?", response: '' },
     { question: 'Do you integrate with our ERP/AP system, or will we need to manually import data?', response: '' },
-    { question: 'What does the approval workflow look like on our end — can we customize it?', response: '' },
+    { question: 'What does the approval workflow look like on our end: can we customize it?', response: '' },
     { question: 'How do you handle exceptions, disputes, and bills that fall outside normal parameters?', response: '' },
   ],
   'budgets': [
     { question: "What's your forecasting methodology, and how accurate have you been historically?", response: '' },
     { question: 'How do you handle weather normalization and rate volatility?', response: '' },
-    { question: 'How do you factor in our operational changes — new sites, closures, expansions?', response: '' },
+    { question: 'How do you factor in our operational changes: new sites, closures, expansions?', response: '' },
     { question: 'Can you model "what-if" scenarios for us?', response: '' },
   ],
   'rate optimization': [
     { question: 'Do you scan all sites and rate schedules?', response: "With our hunting license approach, we only go after utilities where we have a good chance of finding savings. You would not want to pay us to search where it doesn't make sense." },
     { question: 'How often do you scan for new rates?', response: '' },
     { question: "What's a typical savings percentage you find for companies like ours?", response: '' },
-    { question: 'Who handles the actual rate switch — you or us?', response: '' },
+    { question: 'Who handles the actual rate switch: you or us?', response: '' },
   ],
 };

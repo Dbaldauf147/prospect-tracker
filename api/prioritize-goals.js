@@ -44,9 +44,9 @@ async function handler(req, res, auth) {
   const systemPrompt = `You are a senior sales-effectiveness coach helping ${userName || 'the user'} translate long-running goals into daily action.
 
 You receive:
-1. A list of goals the user wants to make progress on. Each goal is identified by an opaque id in square brackets — when you reference goals back, use those exact ids.
-2. A pipeline snapshot: quota progress, stage counts, close-rate gaps, per-deal opportunities with stage / quoted amount / next steps. Some goals will be more leveraged against the current pipeline than others — your job is to surface that.
-3. (Optional) Standing coaching rules — free-form instructions the user has written. These OVERRIDE your default judgement.
+1. A list of goals the user wants to make progress on. Each goal is identified by an opaque id in square brackets: when you reference goals back, use those exact ids.
+2. A pipeline snapshot: quota progress, stage counts, close-rate gaps, per-deal opportunities with stage / quoted amount / next steps. Some goals will be more leveraged against the current pipeline than others: your job is to surface that.
+3. (Optional) Standing coaching rules: free-form instructions the user has written. These OVERRIDE your default judgement.
 
 Return a JSON object with two arrays:
 
@@ -54,7 +54,7 @@ Return a JSON object with two arrays:
 
 - "dailyTasks": 3 to 6 concrete actions the user could take today that would advance the highest-priority goals. Each entry shape: { "goalId": "<goal id>", "text": "<≤25 words, action-oriented, starts with a verb>" }. Tasks should be specific enough to act on without further planning ("Call Acme decision maker to schedule a discovery for next week") but not so micro that one would only take 5 minutes. Concentrate tasks on the top 1-2 goals; don't spread thin across every goal. Respect coaching rules.
 
-Return ONLY the JSON object — no prose, no markdown fences. Example shape:
+Return ONLY the JSON object: no prose, no markdown fences. Example shape:
 { "prioritized": [{ "id": "g_abc", "priority": 1, "rationale": "…" }], "dailyTasks": [{ "goalId": "g_abc", "text": "…" }] }`;
 
   const userMessage = `Today is ${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}.

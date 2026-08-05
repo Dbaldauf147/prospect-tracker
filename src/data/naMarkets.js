@@ -22,7 +22,7 @@
 export const NA_CATEGORIES = {
   REG_NG_EP: {
     key: 'REG_NG_EP',
-    label: 'Regulated — NG & EP',
+    label: 'Regulated: NG & EP',
     ng: 'Regulated',
     ep: 'Regulated',
     fill: 'FF4AA3E0',
@@ -30,7 +30,7 @@ export const NA_CATEGORIES = {
   },
   DEREG_NG: {
     key: 'DEREG_NG',
-    label: 'Deregulated — NG; Regulated — EP',
+    label: 'Deregulated (NG; Regulated), EP',
     ng: 'Deregulated',
     ep: 'Regulated',
     fill: 'FF4CAF50',
@@ -38,7 +38,7 @@ export const NA_CATEGORIES = {
   },
   DEREG_NG_EP: {
     key: 'DEREG_NG_EP',
-    label: 'Deregulated — NG & EP',
+    label: 'Deregulated: NG & EP',
     ng: 'Deregulated',
     ep: 'Deregulated',
     fill: 'FF2E9E4F',
@@ -46,7 +46,7 @@ export const NA_CATEGORIES = {
   },
   DEREG_LTD_NG: {
     key: 'DEREG_LTD_NG',
-    label: 'Deregulated – Limited Opportunity — NG; Regulated — EP',
+    label: 'Deregulated – Limited Opportunity (NG; Regulated), EP',
     ng: 'Deregulated – Limited Opportunity',
     ep: 'Regulated',
     fill: 'FFF2C200',
@@ -54,7 +54,7 @@ export const NA_CATEGORIES = {
   },
   CA_DEREG_LOTTERY: {
     key: 'CA_DEREG_LOTTERY',
-    label: 'Deregulated — NG; Deregulated (market cap + annual lottery) — EP',
+    label: 'Deregulated (NG; Deregulated (market cap + annual lottery)), EP',
     ng: 'Deregulated',
     ep: 'Deregulated (market cap + annual lottery eligibility)',
     fill: 'FFE8743B',
@@ -62,7 +62,7 @@ export const NA_CATEGORIES = {
   },
   MI_DEREG_CAP: {
     key: 'MI_DEREG_CAP',
-    label: 'Deregulated — NG; Deregulated with market cap — EP',
+    label: 'Deregulated (NG; Deregulated with market cap), EP',
     ng: 'Deregulated',
     ep: 'Deregulated with market cap',
     fill: 'FF6B7280',
@@ -70,7 +70,7 @@ export const NA_CATEGORIES = {
   },
   OR_DEREG_ELECTION: {
     key: 'OR_DEREG_ELECTION',
-    label: 'Deregulated — NG; Deregulated with annual election period — EP',
+    label: 'Deregulated (NG; Deregulated with annual election period), EP',
     ng: 'Deregulated',
     ep: 'Deregulated with annual election period',
     fill: 'FF5B9BD5',
@@ -78,7 +78,7 @@ export const NA_CATEGORIES = {
   },
   VA_DEREG_LTD_EP: {
     key: 'VA_DEREG_LTD_EP',
-    label: 'Deregulated — NG; Deregulated – Limited Opportunity (5 MW min.) — EP',
+    label: 'Deregulated: NG; Deregulated – Limited Opportunity (5 MW min.): EP',
     ng: 'Deregulated',
     ep: 'Deregulated – Limited Opportunity (utility account must be 5 MW)',
     fill: 'FFD68910',

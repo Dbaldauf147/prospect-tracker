@@ -411,7 +411,7 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
       case 'commodity':
       case 'state':
       case 'country':
-        return r[key] ? <span style={{ color: 'var(--color-text-muted)' }}>{r[key]}</span> : <span style={{ color: '#CBD5E1' }}>—</span>;
+        return r[key] ? <span style={{ color: 'var(--color-text-muted)' }}>{r[key]}</span> : <span style={{ color: '#CBD5E1' }}>-</span>;
       case 'mappedTo':
         return (
           <input
@@ -419,7 +419,7 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
             list="utility-name-map-options"
             value={r.mappedTo || ''}
             onChange={e => setRowMapping(idx, e.target.value)}
-            placeholder="— pick a known utility —"
+            placeholder="(pick a known utility)"
             style={cellInputStyle}
           />
         );
@@ -429,7 +429,7 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
             type="text"
             value={r.status || ''}
             onChange={e => setRowField(idx, 'status', e.target.value)}
-            placeholder="—"
+            placeholder="-"
             style={cellInputStyle}
           />
         );
@@ -439,7 +439,7 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
             type="text"
             value={r.requirements || ''}
             onChange={e => setRowField(idx, 'requirements', e.target.value)}
-            placeholder="—"
+            placeholder="-"
             style={cellInputStyle}
           />
         );
@@ -470,7 +470,7 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
             <h1 className={styles.title}>Utility Name Mapping</h1>
             <div className={styles.subtitle}>
               Upload a list of utility names (with optional commodity, state, and country) and map each one to the
-              app's known utility names. Suggestions are pre-filled by fuzzy match — confirm or override per row.
+              app's known utility names. Suggestions are pre-filled by fuzzy match: confirm or override per row.
             </div>
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
@@ -556,8 +556,8 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
 
         {nameMapList.length === 0 ? (
           <div style={{ marginTop: '1rem', padding: '1.5rem', borderRadius: 8, border: '1px dashed var(--color-border)', background: '#F8FAFC', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
-            No utility list uploaded yet. Upload (or paste) a list with a utility-name column — plus optional Commodity,
-            State, and Country columns — and each name will be matched against the {referenceOptions.length.toLocaleString()} known
+            No utility list uploaded yet. Upload (or paste) a list with a utility-name column: plus optional Commodity,
+            State, and Country columns: and each name will be matched against the {referenceOptions.length.toLocaleString()} known
             utilities so you can confirm the mapping.
           </div>
         ) : (

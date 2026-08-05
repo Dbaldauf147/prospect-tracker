@@ -281,7 +281,7 @@ function CompanyFilterCombo({ companies, counts, total, value, onChange }) {
         // the placeholder.
         value={open ? query : (selected ? value : '')}
         placeholder={selected ? value : `All companies (${total})`}
-        title="Filter the list to one company — type to search"
+        title="Filter the list to one company: type to search"
         // The highlight resets alongside every query change rather than in an
         // effect, so the list and its selection never render out of step.
         onFocus={() => { setQuery(''); setActive(0); setOpen(true); }}
@@ -326,7 +326,7 @@ function CompanyFilterCombo({ companies, counts, total, value, onChange }) {
           )}
           {matches.length > shown.length && (
             <div className={styles.comboEmpty}>
-              Showing {shown.length} of {matches.length} — keep typing to narrow.
+              Showing {shown.length} of {matches.length}: keep typing to narrow.
             </div>
           )}
         </div>
@@ -793,7 +793,7 @@ export function MasterSiteListView({ prospects = [] }) {
           }
           toAppend.push(obj);
         }
-        if (!toAppend.length) { setBusy('Nothing to export — all selected sites already exist in Utility Lookup.'); return; }
+        if (!toAppend.length) { setBusy('Nothing to export: all selected sites already exist in Utility Lookup.'); return; }
         await saveList(SITES_STORAGE_KEY, [...existing, ...toAppend]);
         setBusy(`Added ${toAppend.length} site${toAppend.length === 1 ? '' : 's'} to Utility Lookup. Open the Utility Lookup tab to see them.`);
       } else {
@@ -1034,14 +1034,14 @@ export function MasterSiteListView({ prospects = [] }) {
                         ? { iso: r.iso ?? null, egrid_subregion: r.egrid_subregion ?? null, iso_confidence: r.iso_confidence }
                         : lookupIsoForZip(r.zip);
                       if (!info.iso) {
-                        return <td key={c.key} className={styles.derived}><span style={{ color: 'var(--color-text-muted)' }}>—</span></td>;
+                        return <td key={c.key} className={styles.derived}><span style={{ color: 'var(--color-text-muted)' }}>-</span></td>;
                       }
                       const isNone = info.iso.startsWith('None');
                       const cellTitle = [
                         isNone ? info.iso : `ISO / RTO: ${info.iso}`,
                         info.egrid_subregion ? `eGRID subregion ${info.egrid_subregion}` : null,
-                        info.iso_confidence === 'seam' ? 'ZIP straddles two markets — primary market shown' : null,
-                        info.iso_confidence === 'verify' ? 'Subregion is ambiguous — verify' : null,
+                        info.iso_confidence === 'seam' ? 'ZIP straddles two markets: primary market shown' : null,
+                        info.iso_confidence === 'verify' ? 'Subregion is ambiguous: verify' : null,
                       ].filter(Boolean).join(' · ');
                       return (
                         <td key={c.key} className={styles.derived} title={cellTitle}>
@@ -1057,7 +1057,7 @@ export function MasterSiteListView({ prospects = [] }) {
                     if (c.kind === 'utility') {
                       return (
                         <td key={c.key} className={styles.derived}>
-                          {look.utility || <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
+                          {look.utility || <span style={{ color: 'var(--color-text-muted)' }}>-</span>}
                         </td>
                       );
                     }
@@ -1068,7 +1068,7 @@ export function MasterSiteListView({ prospects = [] }) {
                           ? <span className={`${styles.badge} ${styles.badgeReg}`}>Regulated</span>
                           : look.status === 'Deregulated'
                             ? <span className={`${styles.badge} ${styles.badgeDereg}`}>Deregulated</span>
-                            : <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
+                            : <span style={{ color: 'var(--color-text-muted)' }}>-</span>}
                       </td>
                     );
                   })}
@@ -1141,10 +1141,10 @@ export function MasterSiteListView({ prospects = [] }) {
                       value={matcher.mapping[f.key] ?? -1}
                       onChange={e => setFieldColumn(f.key, Number(e.target.value))}
                     >
-                      <option value={-1}>— Not mapped —</option>
+                      <option value={-1}>(Not mapped)</option>
                       {headers.map((h, idx) => (
                         <option key={idx} value={idx}>
-                          {h}{sample[idx] ? ` — e.g. "${String(sample[idx]).slice(0, 24)}"` : ''}
+                          {h}{sample[idx] ? `: e.g. "${String(sample[idx]).slice(0, 24)}"` : ''}
                         </option>
                       ))}
                     </select>
@@ -1186,7 +1186,7 @@ export function MasterSiteListView({ prospects = [] }) {
             <h3 className={styles.modalTitle}>Unmapped to Table View ({unmappedList.length})</h3>
             <p className={styles.modalText}>
               These Master Site List companies don’t match any Table View company. Pick a
-              Table View company for each to rename its rows so they map — start typing to
+              Table View company for each to rename its rows so they map: start typing to
               search. Matched companies drop off the list.
             </p>
             <label className={styles.checkRow}>

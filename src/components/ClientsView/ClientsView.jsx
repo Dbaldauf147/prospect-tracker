@@ -94,7 +94,7 @@ const CONTRACT_COLUMNS = [
 // expired rows render in grey to match the rest of the inactive row.
 function renderDaysToEnd(endRaw, inactive) {
   const d = asDate(endRaw);
-  if (!d) return <span style={{ color: '#94A3B8' }}>—</span>;
+  if (!d) return <span style={{ color: '#94A3B8' }}>-</span>;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const target = new Date(d);
@@ -118,7 +118,7 @@ function renderDaysToEnd(endRaw, inactive) {
 // hover tooltip (e.g. which target account the mapped tier came from).
 function tierBadge(tier, title) {
   const t = String(tier || '').trim();
-  if (!t || t === '-') return <span style={{ color: '#94A3B8' }} title={title}>—</span>;
+  if (!t || t === '-') return <span style={{ color: '#94A3B8' }} title={title}>-</span>;
   const palette = /1/.test(t)
     ? { bg: '#FEE2E2', color: '#B91C1C' }
     : /2/.test(t)
@@ -148,7 +148,7 @@ function ClientManagerCell({ company, value, onCommit }) {
     <input
       type="text"
       value={draft}
-      placeholder="—"
+      placeholder="-"
       onChange={(e) => setDraft(e.target.value)}
       onFocus={() => setFocused(true)}
       onBlur={() => { setFocused(false); commit(); }}
@@ -186,7 +186,7 @@ function ClientStatusTextCell({ company, value, onCommit }) {
     <input
       type="text"
       value={draft}
-      placeholder="—"
+      placeholder="-"
       onChange={(e) => setDraft(e.target.value)}
       onFocus={() => setFocused(true)}
       onBlur={() => { setFocused(false); commit(); }}
@@ -222,7 +222,7 @@ function NotesCell({ company, value, onCommit }) {
   return (
     <textarea
       value={draft}
-      placeholder="—"
+      placeholder="-"
       rows={focused ? 3 : 1}
       onChange={(e) => setDraft(e.target.value)}
       onFocus={() => setFocused(true)}
@@ -267,7 +267,7 @@ function InPersonCell({ company, checked, onChange }) {
 }
 
 function renderContractCell(key, value) {
-  if (value == null || value === '') return <span style={{ color: '#94A3B8' }}>—</span>;
+  if (value == null || value === '') return <span style={{ color: '#94A3B8' }}>-</span>;
   if (DEAL_CHECK_KEYS.has(key)) {
     const yes = isTruthy(value);
     return (
@@ -286,7 +286,7 @@ function ContractTable({ deals }) {
   if (!deals || deals.length === 0) {
     return (
       <div style={{ padding: '0.75rem 1.25rem', color: '#64748B', fontSize: '0.75rem', fontStyle: 'italic' }}>
-        No contracts found for this client. Upload contract data on the Deals subtab — the Client Name column must match this client.
+        No contracts found for this client. Upload contract data on the Deals subtab: the Client Name column must match this client.
       </div>
     );
   }
@@ -349,7 +349,7 @@ function ContractTable({ deals }) {
 function isBlankFollowUp(row) {
   const v = String(row?.['Follow Up On Sale'] ?? '').trim();
   if (!v) return true;
-  return ['-', '—', '#n/a'].includes(v.toLowerCase());
+  return ['-', '-', '#n/a'].includes(v.toLowerCase());
 }
 
 // The date a deal closed/sold. Deals don't carry an explicit close date, so
@@ -365,7 +365,7 @@ function dealSoldDate(row) {
 // run red, rows past a week run amber. Undated rows render an em dash.
 function renderDaysSinceSold(soldRaw) {
   const d = asDate(soldRaw);
-  if (!d) return <span style={{ color: '#94A3B8' }}>—</span>;
+  if (!d) return <span style={{ color: '#94A3B8' }}>-</span>;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const start = new Date(d);
@@ -488,7 +488,7 @@ function PostSaleFollowUpView({ deals, onUpdateFollowUp }) {
         <div>
           <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>Post-Sale Follow-Up</h2>
           <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
-            Deals from the Deals subtab with no <strong>Follow Up On Sale</strong> value — these still need a post-sale follow-up.
+            Deals from the Deals subtab with no <strong>Follow Up On Sale</strong> value: these still need a post-sale follow-up.
           </div>
         </div>
         <input
@@ -502,7 +502,7 @@ function PostSaleFollowUpView({ deals, onUpdateFollowUp }) {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: '#64748B', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
         <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 3, background: '#FEE2E2', border: '1px solid #FCA5A5', flexShrink: 0 }} />
-        <span><strong style={{ color: '#B91C1C' }}>{filtered.length}</strong> deal{filtered.length === 1 ? '' : 's'} flagged — missing a Follow Up On Sale value.</span>
+        <span><strong style={{ color: '#B91C1C' }}>{filtered.length}</strong> deal{filtered.length === 1 ? '' : 's'} flagged: missing a Follow Up On Sale value.</span>
         <span style={{ color: '#CBD5E1' }}>·</span>
         <span style={{ color: '#94A3B8' }}>Drag a column edge to resize.</span>
         {Object.keys(colWidths).length > 0 && (
@@ -518,7 +518,7 @@ function PostSaleFollowUpView({ deals, onUpdateFollowUp }) {
       {filtered.length === 0 ? (
         <div style={{ padding: '0.75rem 0', color: '#64748B', fontSize: '0.8rem', fontStyle: 'italic' }}>
           {deals && deals.length
-            ? 'Every uploaded deal has a Follow Up On Sale value — nothing to follow up on.'
+            ? 'Every uploaded deal has a Follow Up On Sale value: nothing to follow up on.'
             : 'No deals uploaded yet. Upload contract data on the Deals subtab.'}
         </div>
       ) : (
@@ -549,7 +549,7 @@ function PostSaleFollowUpView({ deals, onUpdateFollowUp }) {
                   {POST_SALE_COLUMNS.map(col => (
                     <td key={col.key} style={{ padding: '0.35rem 0.6rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {col.key === '__dateSold'
-                        ? (dealSoldDate(d) ? <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtDate(d['Original Contract Start'])}</span> : <span style={{ color: '#94A3B8' }}>—</span>)
+                        ? (dealSoldDate(d) ? <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtDate(d['Original Contract Start'])}</span> : <span style={{ color: '#94A3B8' }}>-</span>)
                         : col.key === '__daysSinceSold'
                         ? renderDaysSinceSold(d['Original Contract Start'])
                         : col.key === 'Follow Up On Sale'
@@ -984,7 +984,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               }}
             >{isOpen ? '▾' : '▸'}</button>
-            <span style={{ fontWeight: 600, color: '#1E293B' }}>{row.company || '—'}</span>
+            <span style={{ fontWeight: 600, color: '#1E293B' }}>{row.company || '-'}</span>
           </span>
         );
       },
@@ -995,7 +995,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
         const isOld = isOldClient(row);
         return (
           <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: isOld ? '#F1F5F9' : '#DCFCE7', color: isOld ? '#64748B' : '#166534' }}>
-            {row.status || '—'}
+            {row.status || '-'}
           </span>
         );
       },
@@ -1030,7 +1030,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
             <span style={{ flex: 1, minWidth: 0 }}>{cell}</span>
             <span
-              title={`This status auto-clears in ${left} day${left === 1 ? '' : 's'} — ${REACHED_OUT_TIMER_DAYS} days after "Reached out to CM" was set.`}
+              title={`This status auto-clears in ${left} day${left === 1 ? '' : 's'} · ${REACHED_OUT_TIMER_DAYS} days after "Reached out to CM" was set.`}
               style={{ flexShrink: 0, fontSize: '0.64rem', fontWeight: 700, color: left <= 7 ? '#B45309' : '#92400E', background: '#FEF9C3', border: '1px solid #FDE047', borderRadius: 999, padding: '1px 6px', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}
             >{left}d</span>
           </div>
@@ -1059,7 +1059,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       getFilterValue: (row) => row.targetTier || '',
       render: (row) => {
         if (!row.targetTier) {
-          return <span style={{ color: '#94A3B8' }} title="Not mapped to a Target Account (or the mapped account has no tier). Map it on the My Accounts tab.">—</span>;
+          return <span style={{ color: '#94A3B8' }} title="Not mapped to a Target Account (or the mapped account has no tier). Map it on the My Accounts tab.">-</span>;
         }
         const via = row.targetTierName
           ? `From Target Account "${row.targetTierName}"${row.targetTierSource === 'fuzzy' ? ' (name match)' : ''}`
@@ -1120,14 +1120,14 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       key: 'services', label: 'Services', defaultWidth: 100,
       render: (row) => (
         <span style={{ color: row.services > 0 ? '#059669' : '#94A3B8', fontWeight: row.services > 0 ? 600 : 400 }}>
-          {row.services || '—'}
+          {row.services || '-'}
         </span>
       ),
     },
     {
       key: 'numberOfSites', label: 'Sites', defaultWidth: 90,
       render: (row) => (
-        <span style={{ color: '#475569' }}>{row.numberOfSites || '—'}</span>
+        <span style={{ color: '#475569' }}>{row.numberOfSites || '-'}</span>
       ),
     },
     {
@@ -1154,8 +1154,8 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
           return (
             <span
               style={{ color: '#94A3B8' }}
-              title={`No Master Analysis saved to ${row.company || 'this company'}'s popup. Save one from Utility Lookup — load the sites, then "⬇ Master Analysis" → "Save to Company".`}
-            >—</span>
+              title={`No Master Analysis saved to ${row.company || 'this company'}'s popup. Save one from Utility Lookup: load the sites, then "⬇ Master Analysis" → "Save to Company".`}
+            >-</span>
           );
         }
         const meta = row.masterAnalysis;
@@ -1164,7 +1164,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
         const kb = meta.sizeBytes ? ` · ${Math.round(meta.sizeBytes / 1024).toLocaleString()} KB` : '';
         return (
           <span
-            title={`${meta.fileName || 'Master Analysis'} — saved ${whenLabel || 'previously'}${kb}. Open this company's popup to download it.`}
+            title={`${meta.fileName || 'Master Analysis'}: saved ${whenLabel || 'previously'}${kb}. Open this company's popup to download it.`}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}
           >
             <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: '#DCFCE7', color: '#166534', whiteSpace: 'nowrap' }}>
@@ -1182,7 +1182,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       getSortValue: (row) => row.soonestExpiration ? row.soonestExpiration.getTime() : null,
       render: (row) => (
         <span style={{ color: row.soonestExpiration ? '#334155' : '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>
-          {row.soonestExpiration ? fmtDate(row.soonestExpiration) : '—'}
+          {row.soonestExpiration ? fmtDate(row.soonestExpiration) : '-'}
         </span>
       ),
     },
@@ -1190,7 +1190,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       key: 'daysUntilExpiration', label: 'Days Until', defaultWidth: 110,
       getSortValue: (row) => row.daysUntilExpiration == null ? null : row.daysUntilExpiration,
       render: (row) => {
-        if (row.daysUntilExpiration == null) return <span style={{ color: '#94A3B8' }}>—</span>;
+        if (row.daysUntilExpiration == null) return <span style={{ color: '#94A3B8' }}>-</span>;
         const d = row.daysUntilExpiration;
         // Highlight contracts that are inside the typical 90-day renewal window
         // so they pop without the user having to sort the column manually.
@@ -1205,7 +1205,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     {
       key: 'website', label: 'Website', defaultWidth: 240,
       render: (row) => {
-        if (!row.website) return '—';
+        if (!row.website) return '-';
         return (
           <a
             href={/^https?:\/\//i.test(row.website) ? row.website : `https://${row.website}`}
@@ -1302,7 +1302,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
         <div>
           <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>{headingLabel}</h2>
           <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
-            {cdmName ? `${cdmName}'s ${headingLabel.toLowerCase()}` : `Your ${headingLabel.toLowerCase()}`} — every prospect with CDM = {cdmName || 'your CDM'} and <strong>Status = {statusLabel}</strong>
+            {cdmName ? `${cdmName}'s ${headingLabel.toLowerCase()}` : `Your ${headingLabel.toLowerCase()}`}: every prospect with CDM = {cdmName || 'your CDM'} and <strong>Status = {statusLabel}</strong>
             {showOld ? ` or ${otherLabel}` : ''}. Click ▸ to expand a client&apos;s contracts.
           </div>
         </div>
@@ -1343,7 +1343,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
           Red rows need attention: the soonest contract expires within {RENEWAL_WARNING_DAYS} days and the <strong>Status</strong> column is still blank. Set a Status to clear the highlight.
         </span>
         <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 3, background: '#FEF9C3', border: '1px solid #FDE047', flexShrink: 0, marginLeft: '0.6rem' }} />
-        <span>Yellow rows are in progress — <strong>Status</strong> is &ldquo;Reached out to CM&rdquo;; the badge counts down the {REACHED_OUT_TIMER_DAYS} days until that status auto-clears.</span>
+        <span>Yellow rows are in progress: <strong>Status</strong> is &ldquo;Reached out to CM&rdquo;; the badge counts down the {REACHED_OUT_TIMER_DAYS} days until that status auto-clears.</span>
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -1400,7 +1400,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
               // Tint the row light red when a renewal is closing in
               // (<270 days) and the Status column is unset — those are
               // the clients that need a status set before they slip.
-              const noStatus = s === '' || s === '-' || s === '—' || s === '–';
+              const noStatus = s === '' || s === '-' || s === '-' || s === '–';
               if (row.daysUntilExpiration != null && row.daysUntilExpiration < RENEWAL_WARNING_DAYS && noStatus) {
                 return { background: '#FEE2E2' };
               }

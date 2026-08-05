@@ -60,7 +60,7 @@ export function buildNewOppsTableHtml(records, columnKeys) {
   const columns = keys.map((k) => byKey.get(k)).filter(Boolean);
 
   if (!Array.isArray(records) || records.length === 0 || columns.length === 0) {
-    return '<p style="font:13px Arial,sans-serif;color:#000;margin:0">Nothing to export — select at least one opp and one column.</p>';
+    return '<p style="font:13px Arial,sans-serif;color:#000;margin:0">Nothing to export: select at least one opp and one column.</p>';
   }
 
   const cellBorder = 'border:1px solid #000';

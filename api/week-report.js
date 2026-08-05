@@ -44,10 +44,10 @@ async function handler(req, res, auth) {
 Write a tight, upbeat-but-honest recap in this exact structure, using Markdown:
 
 ## Summary
-One or two sentences capturing the headline of the ${periodWord} — lead with the most consequential outcome (deals closed and their value if any, otherwise the strongest activity or pipeline movement).
+One or two sentences capturing the headline of the ${periodWord}: lead with the most consequential outcome (deals closed and their value if any, otherwise the strongest activity or pipeline movement).
 
 ## Highlights
-3–5 bullet points of what actually got done, each anchored in a real number from the stats. Name specific accounts when the stats list them and it makes the point concrete. Do not invent numbers or accounts — use only what is in the stats block.
+3–5 bullet points of what actually got done, each anchored in a real number from the stats. Name specific accounts when the stats list them and it makes the point concrete. Do not invent numbers or accounts: use only what is in the stats block.
 
 ## Where the effort went
 1–2 sentences on the shape of the work (prospecting vs. advancing vs. closing) based on the mix of activity and opp changes.
@@ -55,7 +55,7 @@ One or two sentences capturing the headline of the ${periodWord} — lead with t
 ## Watch next ${periodWord}
 2–3 forward-looking bullets: momentum to keep, or gaps implied by the numbers (e.g. lots of outreach but no stage movement, or open goals with no progress). Keep these grounded in the data, not generic advice.
 
-Rules: Never fabricate figures, accounts, or outcomes not present in the stats. If a section has no data (e.g. zero deals closed), say so plainly and move on — do not pad. Keep the whole thing under ~250 words. Return only the Markdown recap, no preamble.`;
+Rules: Never fabricate figures, accounts, or outcomes not present in the stats. If a section has no data (e.g. zero deals closed), say so plainly and move on: do not pad. Keep the whole thing under ~250 words. Return only the Markdown recap, no preamble.`;
 
   const userMessage = `This is the end-of-${periodWord} recap for ${periodLabel || 'the current ' + periodWord}.
 

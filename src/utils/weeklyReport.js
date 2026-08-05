@@ -241,7 +241,7 @@ const fmtMoney = (n) => (Number.isFinite(n)
 // deterministic (no AI) so "copy" always works even without the network.
 export function serializeReport({ label, activity, oppChanges, goals, pipelineSummary }) {
   const L = [];
-  L.push(`WORK SUMMARY — ${label}`);
+  L.push(`WORK SUMMARY: ${label}`);
   L.push('');
   L.push('ACTIVITY');
   L.push(`- Emails sent: ${activity.emails.length}`);
@@ -262,7 +262,7 @@ export function serializeReport({ label, activity, oppChanges, goals, pipelineSu
     for (const x of arr.slice(0, 25)) L.push(`  • ${fmt(x)}`);
     if (arr.length > 25) L.push(`  • …and ${arr.length - 25} more`);
   };
-  const who = (x) => [x.account, x.scope].filter(Boolean).join(' — ') || `Opp ${x.id}`;
+  const who = (x) => [x.account, x.scope].filter(Boolean).join(': ') || `Opp ${x.id}`;
   detail('Deals closed:', oppChanges.closed, x => `${who(x)} → ${x.stage}${x.amount ? ` (${x.amount})` : ''}`);
   detail('New opps:', oppChanges.newOpps, x => `${who(x)}${x.stage ? ` (${x.stage})` : ''}`);
   detail('Stage changes:', oppChanges.stageChanges, x => `${who(x)} → ${x.stage}`);

@@ -67,11 +67,11 @@ async function handler(req, res) {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     if (resp.status === 401) {
-      return res.status(401).json({ error: 'OneDrive token expired or invalid — reconnect OneDrive.' });
+      return res.status(401).json({ error: 'OneDrive token expired or invalid: reconnect OneDrive.' });
     }
     if (resp.status === 404) {
       return res.status(404).json({
-        error: `No folder "${folder || '/'}" in this OneDrive. Check the folder path — it is case-sensitive and relative to the drive root.`,
+        error: `No folder "${folder || '/'}" in this OneDrive. Check the folder path: it is case-sensitive and relative to the drive root.`,
       });
     }
     if (!resp.ok) {

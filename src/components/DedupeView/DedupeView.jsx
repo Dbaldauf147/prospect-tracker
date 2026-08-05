@@ -282,19 +282,19 @@ export function DedupeView() {
                       <div className={styles.contactDetail}>
                         <span className={styles.contactDetailItem}>
                           <span className={styles.contactDetailLabel}>Email:</span>
-                          <span className={styles.contactDetailValue}>{c.email || '—'}</span>
+                          <span className={styles.contactDetailValue}>{c.email || '-'}</span>
                         </span>
                         <span className={styles.contactDetailItem}>
                           <span className={styles.contactDetailLabel}>Company:</span>
-                          <span className={styles.contactDetailValue}>{c.company || '—'}</span>
+                          <span className={styles.contactDetailValue}>{c.company || '-'}</span>
                         </span>
                         <span className={styles.contactDetailItem}>
                           <span className={styles.contactDetailLabel}>Title:</span>
-                          <span className={styles.contactDetailValue}>{c.jobtitle || '—'}</span>
+                          <span className={styles.contactDetailValue}>{c.jobtitle || '-'}</span>
                         </span>
                         <span className={styles.contactDetailItem}>
                           <span className={styles.contactDetailLabel}>Phone:</span>
-                          <span className={styles.contactDetailValue}>{c.phone || '—'}</span>
+                          <span className={styles.contactDetailValue}>{c.phone || '-'}</span>
                         </span>
                       </div>
                     </div>

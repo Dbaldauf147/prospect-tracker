@@ -183,7 +183,7 @@ export function CalculatorTab() {
           />
           <div className={styles.multiplyResult}>
             <span className={styles.multiplyResultLabel}>=</span>
-            <span className={styles.multiplyResultValue}>{mulProduct == null ? '—' : fmt(mulProduct)}</span>
+            <span className={styles.multiplyResultValue}>{mulProduct == null ? '-' : fmt(mulProduct)}</span>
           </div>
         </div>
       </div>

@@ -394,7 +394,7 @@ export async function injectLiveLineChart(buffer, options) {
 
     return await zip.generateAsync({ type: 'arraybuffer' });
   } catch (err) {
-    console.warn('injectLiveLineChart: falling back to chart-less workbook —', err);
+    console.warn('injectLiveLineChart: falling back to chart-less workbook -', err);
     return buffer;
   }
 }
