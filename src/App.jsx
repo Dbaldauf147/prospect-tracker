@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, Suspense } from 'react';
+import { lazyView } from './utils/lazyView';
 import { getHubspotContacts } from './utils/hubspotContactsCache';
 import { useAuth } from './contexts/AuthContext';
 import { useProspects } from './hooks/useProspects';
@@ -29,28 +30,28 @@ import './App.css';
 // you were headed to. One <Suspense> around the view switch below covers
 // them all; ProspectModal gets its own, plus an idle prefetch since it
 // opens from nearly every view.
-const ActivityView = lazy(() => import('./components/ActivityView/ActivityView').then(m => ({ default: m.ActivityView })));
-const AgentsView = lazy(() => import('./components/AgentsView/AgentsView').then(m => ({ default: m.AgentsView })));
-const BFOActivityView = lazy(() => import('./components/BFOActivityView/BFOActivityView').then(m => ({ default: m.BFOActivityView })));
-const CallRecordingsView = lazy(() => import('./components/CallRecordingsView/CallRecordingsView').then(m => ({ default: m.CallRecordingsView })));
-const ChartsView = lazy(() => import('./components/ChartsView/ChartsView').then(m => ({ default: m.ChartsView })));
-const ClientsView = lazy(() => import('./components/ClientsView/ClientsView').then(m => ({ default: m.ClientsView })));
-const ContactsView = lazy(() => import('./components/ContactsView/ContactsView').then(m => ({ default: m.ContactsView })));
-const DraftEmailsPage = lazy(() => import('./components/DraftEmailView/DraftEmailsPage').then(m => ({ default: m.DraftEmailsPage })));
-const DropdownsView = lazy(() => import('./components/DropdownsView/DropdownsView').then(m => ({ default: m.DropdownsView })));
-const EmailTrackingView = lazy(() => import('./components/EmailTrackingView/EmailTrackingView').then(m => ({ default: m.EmailTrackingView })));
-const IssuesView = lazy(() => import('./components/IssuesView/IssuesView').then(m => ({ default: m.IssuesView })));
-const KanbanView = lazy(() => import('./components/KanbanView/KanbanView').then(m => ({ default: m.KanbanView })));
-const ListsView = lazy(() => import('./components/ListsView/ListsView').then(m => ({ default: m.ListsView })));
-const MyAccountsView = lazy(() => import('./components/MyAccountsView/MyAccountsView').then(m => ({ default: m.MyAccountsView })));
-const OppsView = lazy(() => import('./components/OppsView/OppsView').then(m => ({ default: m.OppsView })));
-const OppsView2 = lazy(() => import('./components/OppsView2/OppsView2').then(m => ({ default: m.OppsView2 })));
-const PEPortfolioView = lazy(() => import('./components/PEPortfolioView/PEPortfolioView').then(m => ({ default: m.PEPortfolioView })));
-const PricingView = lazy(() => import('./components/PricingView/PricingView').then(m => ({ default: m.PricingView })));
-const ProspectModal = lazy(() => import('./components/ProspectModal/ProspectModal').then(m => ({ default: m.ProspectModal })));
-const TableView = lazy(() => import('./components/TableView/TableView').then(m => ({ default: m.TableView })));
-const UploadedListView = lazy(() => import('./components/UploadedListView/UploadedListView').then(m => ({ default: m.UploadedListView })));
-const VibeProspecting = lazy(() => import('./components/VibeProspecting/VibeProspecting').then(m => ({ default: m.VibeProspecting })));
+const ActivityView = lazyView(() => import('./components/ActivityView/ActivityView').then(m => ({ default: m.ActivityView })));
+const AgentsView = lazyView(() => import('./components/AgentsView/AgentsView').then(m => ({ default: m.AgentsView })));
+const BFOActivityView = lazyView(() => import('./components/BFOActivityView/BFOActivityView').then(m => ({ default: m.BFOActivityView })));
+const CallRecordingsView = lazyView(() => import('./components/CallRecordingsView/CallRecordingsView').then(m => ({ default: m.CallRecordingsView })));
+const ChartsView = lazyView(() => import('./components/ChartsView/ChartsView').then(m => ({ default: m.ChartsView })));
+const ClientsView = lazyView(() => import('./components/ClientsView/ClientsView').then(m => ({ default: m.ClientsView })));
+const ContactsView = lazyView(() => import('./components/ContactsView/ContactsView').then(m => ({ default: m.ContactsView })));
+const DraftEmailsPage = lazyView(() => import('./components/DraftEmailView/DraftEmailsPage').then(m => ({ default: m.DraftEmailsPage })));
+const DropdownsView = lazyView(() => import('./components/DropdownsView/DropdownsView').then(m => ({ default: m.DropdownsView })));
+const EmailTrackingView = lazyView(() => import('./components/EmailTrackingView/EmailTrackingView').then(m => ({ default: m.EmailTrackingView })));
+const IssuesView = lazyView(() => import('./components/IssuesView/IssuesView').then(m => ({ default: m.IssuesView })));
+const KanbanView = lazyView(() => import('./components/KanbanView/KanbanView').then(m => ({ default: m.KanbanView })));
+const ListsView = lazyView(() => import('./components/ListsView/ListsView').then(m => ({ default: m.ListsView })));
+const MyAccountsView = lazyView(() => import('./components/MyAccountsView/MyAccountsView').then(m => ({ default: m.MyAccountsView })));
+const OppsView = lazyView(() => import('./components/OppsView/OppsView').then(m => ({ default: m.OppsView })));
+const OppsView2 = lazyView(() => import('./components/OppsView2/OppsView2').then(m => ({ default: m.OppsView2 })));
+const PEPortfolioView = lazyView(() => import('./components/PEPortfolioView/PEPortfolioView').then(m => ({ default: m.PEPortfolioView })));
+const PricingView = lazyView(() => import('./components/PricingView/PricingView').then(m => ({ default: m.PricingView })));
+const ProspectModal = lazyView(() => import('./components/ProspectModal/ProspectModal').then(m => ({ default: m.ProspectModal })));
+const TableView = lazyView(() => import('./components/TableView/TableView').then(m => ({ default: m.TableView })));
+const UploadedListView = lazyView(() => import('./components/UploadedListView/UploadedListView').then(m => ({ default: m.UploadedListView })));
+const VibeProspecting = lazyView(() => import('./components/VibeProspecting/VibeProspecting').then(m => ({ default: m.VibeProspecting })));
 
 const EMPTY_OBJ = Object.freeze({});
 
