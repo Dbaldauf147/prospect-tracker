@@ -11,7 +11,9 @@ import { loadCallRecords, saveCallRecord } from '../../utils/callRecordingsStore
 import {
   importGranolaMeetings, recordPatchFor, DEFAULT_MEETING_WINDOW_DAYS,
 } from '../../utils/granolaCalls';
-import { granolaMeetingsFromRecords, mergeMeetings, meetingsOnDay } from '../../utils/granolaMeetings';
+import {
+  granolaMeetingsFromRecords, mergeMeetings, meetingsInRange, rangeForDays, groupMeetingsByDay,
+} from '../../utils/granolaMeetings';
 import { useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import styles from './ActivityView.module.css';
 
@@ -30,6 +32,17 @@ const OUTREACH_INDEX_KEY = 'hubspot-outreach-index';
 // the page from re-importing on every visit.
 const GRANOLA_IMPORTED_AT_KEY = 'granola-meetings-imported-at';
 const GRANOLA_STALE_MS = 15 * 60 * 1000;
+
+// How far back the meetings panel can look. Capped at the Granola import
+// window: offering more would show whatever the Call Recordings back-fill
+// happened to leave behind, which looks like a gappy calendar rather than
+// a longer one.
+const MEETING_RANGE_KEY = 'activity-meeting-range-days';
+const MEETING_RANGES = [
+  { days: 1, label: 'Today' },
+  { days: 7, label: '7 days' },
+  { days: 30, label: '30 days' },
+];
 
 function normalizeOutreachPhone(p) {
   const digits = String(p || '').replace(/\D/g, '');
@@ -613,12 +626,31 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
   const callCount = allActivities.filter(a => a._type === 'call').length;
   const meetingCount = allActivities.filter(a => a._type === 'meeting').length;
 
-  const hubspotTodaysMeetings = useMemo(() => (
-    meetingsOnDay(allActivities.filter(a => a._type === 'meeting' && a._source === 'hubspot'))
-      .sort((a, b) => new Date(a._meetingStart) - new Date(b._meetingStart))
-  ), [allActivities]);
+  // How far back the meetings panel looks. Today is the default — it is
+  // what the panel was, and it is what most visits want — but the same
+  // meetings are worth reading back over after the fact, which is what
+  // the wider windows are for. The choice is kept per browser rather
+  // than in synced settings: it is how you're reading the page right
+  // now, not a preference worth pushing to your other devices.
+  const [meetingRangeDays, setMeetingRangeDays] = useState(() => {
+    const saved = Number(userLsGet(MEETING_RANGE_KEY));
+    return MEETING_RANGES.some(r => r.days === saved) ? saved : 1;
+  });
 
-  const granolaTodaysMeetings = useMemo(() => meetingsOnDay(granolaMeetings), [granolaMeetings]);
+  function chooseMeetingRange(days) {
+    setMeetingRangeDays(days);
+    try { userLsSet(MEETING_RANGE_KEY, String(days)); } catch { /* quota */ }
+  }
+
+  const meetingWindow = useMemo(() => rangeForDays(meetingRangeDays), [meetingRangeDays]);
+
+  const hubspotRangeMeetings = useMemo(() => (
+    meetingsInRange(allActivities.filter(a => a._type === 'meeting' && a._source === 'hubspot'), meetingWindow)
+  ), [allActivities, meetingWindow]);
+
+  const granolaRangeMeetings = useMemo(() => (
+    meetingsInRange(granolaMeetings, meetingWindow)
+  ), [granolaMeetings, meetingWindow]);
 
   // ── Outlook Calendar via Power Automate webhook ──
   // Power Automate pushes meetings to /api/calendar-webhook?token=xxx,
@@ -663,15 +695,11 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
       (snap) => {
         const data = snap.data();
         if (!data?.meetings) { setOutlookEvents([]); return; }
-        // Filter to today only (Power Automate might send multi-day data)
-        const now = new Date();
-        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-        const todayEnd = todayStart + 24 * 60 * 60 * 1000;
+        // Everything the flow pushed is kept — the panel's own window
+        // decides what to show. Narrowing to today here instead would
+        // mean re-subscribing every time that window changes, and would
+        // throw away the past meetings the wider windows are for.
         const events = data.meetings
-          .filter(m => {
-            const t = new Date(m.start).getTime();
-            return Number.isFinite(t) && t >= todayStart && t < todayEnd;
-          })
           .map((m, i) => ({
             id: `outlook-wh-${i}`,
             _type: 'meeting',
@@ -698,13 +726,36 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     return unsub;
   }, [webhookToken]);
 
-  // HubSpot + Outlook + Granola for the Today panel, sorted by start
-  // time. The same meeting reaches this page from more than one of them
-  // — the calendar invite from Outlook, Granola's note on the meeting it
-  // sat in — so the copies are collapsed into one row that carries both.
-  const todaysMeetings = useMemo(() => (
-    mergeMeetings([...hubspotTodaysMeetings, ...outlookEvents, ...granolaTodaysMeetings])
-  ), [hubspotTodaysMeetings, outlookEvents, granolaTodaysMeetings]);
+  // HubSpot + Outlook + Granola over the chosen window. The same meeting
+  // reaches this page from more than one of them — the calendar invite
+  // from Outlook, Granola's note on the meeting it sat in — so the copies
+  // are collapsed into one row that carries both.
+  const rangeMeetings = useMemo(() => (
+    mergeMeetings([
+      ...hubspotRangeMeetings,
+      ...meetingsInRange(outlookEvents, meetingWindow),
+      ...granolaRangeMeetings,
+    ])
+  ), [hubspotRangeMeetings, outlookEvents, granolaRangeMeetings, meetingWindow]);
+
+  // Broken into days for rendering: newest day first, each day read
+  // forwards. A today-only window is one group, which is the panel
+  // exactly as it was.
+  const meetingDayGroups = useMemo(() => groupMeetingsByDay(rangeMeetings), [rangeMeetings]);
+
+  // The heading over a day's meetings. Recent days are named rather than
+  // dated — "Yesterday" is what you actually call it when scanning back
+  // through the week.
+  function fmtDayHeading(dayStart) {
+    const day = new Date(dayStart);
+    const today = new Date();
+    const midnight = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    const daysBack = Math.round((midnight - dayStart) / (24 * 60 * 60 * 1000));
+    const dated = day.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+    if (daysBack === 0) return `Today · ${dated}`;
+    if (daysBack === 1) return `Yesterday · ${dated}`;
+    return dated;
+  }
 
   function fmtMeetingTime(startStr, endStr) {
     if (!startStr) return '-';
@@ -1090,14 +1141,45 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
       {(data || granolaLoaded) && (
         <div style={{ marginBottom: '1rem', border: '1px solid var(--color-border)', borderRadius: 8, background: '#fff', overflow: 'hidden' }}>
           <div style={{ padding: '0.6rem 0.9rem', background: '#F8FAFC', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <div style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--color-text)' }}>
-              Today's Meetings
-              <span style={{ marginLeft: '0.5rem', fontSize: '0.7rem', fontWeight: 500, color: 'var(--color-text-muted)' }}>
-                {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
-              </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+              <div style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--color-text)' }}>
+                {meetingRangeDays === 1 ? "Today's Meetings" : 'Meetings'}
+                <span style={{ marginLeft: '0.5rem', fontSize: '0.7rem', fontWeight: 500, color: 'var(--color-text-muted)' }}>
+                  {meetingRangeDays === 1
+                    ? new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })
+                    : `${new Date(meetingWindow.start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – today`}
+                </span>
+              </div>
+              {/* How far back to look. Segmented rather than a dropdown:
+                  three options, and the current one is worth seeing
+                  without opening anything. */}
+              <div style={{ display: 'inline-flex', border: '1px solid var(--color-border)', borderRadius: 4, overflow: 'hidden' }}>
+                {MEETING_RANGES.map((range) => {
+                  const isActive = meetingRangeDays === range.days;
+                  return (
+                    <button
+                      key={range.days}
+                      type="button"
+                      onClick={() => chooseMeetingRange(range.days)}
+                      title={range.days === 1 ? 'Meetings today' : `Meetings from the last ${range.days} days`}
+                      style={{
+                        padding: '0.2rem 0.5rem',
+                        border: 'none',
+                        borderLeft: range.days === MEETING_RANGES[0].days ? 'none' : '1px solid var(--color-border)',
+                        background: isActive ? 'var(--color-accent)' : '#fff',
+                        color: isActive ? '#fff' : 'var(--color-text-secondary)',
+                        fontSize: '0.66rem',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                      }}
+                    >{range.label}</button>
+                  );
+                })}
+              </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>{todaysMeetings.length} meeting{todaysMeetings.length === 1 ? '' : 's'}</span>
+              <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>{rangeMeetings.length} meeting{rangeMeetings.length === 1 ? '' : 's'}</span>
               <button
                 onClick={importMeetings}
                 disabled={granolaImporting || !uid}
@@ -1192,14 +1274,28 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
               Granola: {granolaError}
             </div>
           )}
-          {todaysMeetings.length === 0 ? (
+          {rangeMeetings.length === 0 ? (
             <div style={{ padding: '0.8rem 0.9rem', fontSize: '0.8rem', color: '#94A3B8', fontStyle: 'italic' }}>
-              No meetings scheduled for today.
+              {meetingRangeDays === 1
+                ? 'No meetings scheduled for today.'
+                : `No meetings in the last ${meetingRangeDays} days.`}
             </div>
           ) : (
             <div>
-              {todaysMeetings.map((m, i) => (
-                <div key={m.id || `m${i}`} style={{ display: 'grid', gridTemplateColumns: '120px 1fr 260px', gap: '0.75rem', padding: '0.55rem 0.9rem', borderBottom: i < todaysMeetings.length - 1 ? '1px solid #F1F5F9' : 'none', alignItems: 'start' }}>
+              {meetingDayGroups.map(group => (
+              <div key={group.dayStart}>
+              {/* A day heading only earns its row once the panel covers
+                  more than one day. */}
+              {meetingRangeDays > 1 && (
+                <div style={{ padding: '0.35rem 0.9rem', background: '#F8FAFC', borderTop: '1px solid #E2E8F0', borderBottom: '1px solid #F1F5F9', fontSize: '0.68rem', fontWeight: 700, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
+                  <span>{fmtDayHeading(group.dayStart)}</span>
+                  <span style={{ fontWeight: 600, textTransform: 'none', letterSpacing: 0, color: '#94A3B8' }}>
+                    {group.meetings.length} meeting{group.meetings.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+              )}
+              {group.meetings.map((m, i) => (
+                <div key={m.id || `${group.dayStart}-${i}`} style={{ display: 'grid', gridTemplateColumns: '120px 1fr 260px', gap: '0.75rem', padding: '0.55rem 0.9rem', borderBottom: i < group.meetings.length - 1 ? '1px solid #F1F5F9' : 'none', alignItems: 'start' }}>
                   <div>
                     <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#7C3AED', fontVariantNumeric: 'tabular-nums' }}>
                       {fmtMeetingTime(m._meetingStart, m._meetingEnd)}
@@ -1259,6 +1355,8 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
                     )}
                   </div>
                 </div>
+              ))}
+              </div>
               ))}
             </div>
           )}

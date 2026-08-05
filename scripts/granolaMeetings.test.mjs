@@ -9,6 +9,7 @@
 // a meeting, so the rules are pinned rather than left to the UI.
 import {
   meetingFromRecord, granolaMeetingsFromRecords, isSameMeeting, mergeMeetings, meetingsOnDay,
+  rangeForDays, meetingsInRange, groupMeetingsByDay,
 } from '../src/utils/granolaMeetings.js';
 
 let passed = 0, failed = 0;
@@ -205,6 +206,82 @@ function record(overrides = {}) {
   ];
   eq(meetingsOnDay(rows, noon).map(r => r._subject), ['Early', 'Late'], 'only meetings inside the local day are kept');
   eq(meetingsOnDay(null, noon), [], 'no rows is an empty list');
+}
+
+// --- rangeForDays --------------------------------------------------------
+// Local calendar days, walked rather than subtracted in 24-hour blocks:
+// a window that spans a daylight-saving change still starts at midnight.
+{
+  const noon = new Date(2026, 7, 5, 12, 0, 0);
+  const local = (y, mo, d) => new Date(y, mo, d).getTime();
+
+  eq(rangeForDays(1, noon), { start: local(2026, 7, 5), end: local(2026, 7, 6) }, 'one day is today');
+  eq(rangeForDays(7, noon), { start: local(2026, 6, 30), end: local(2026, 7, 6) },
+    'seven days reaches back six, crossing into the previous month');
+  eq(rangeForDays(30, noon), { start: local(2026, 6, 7), end: local(2026, 7, 6) }, 'thirty days reaches back twenty-nine');
+
+  // The window ends at the end of today: looking further back is not a
+  // reason to start showing next week.
+  eq(rangeForDays(30, noon).end, rangeForDays(1, noon).end, 'every window ends at the end of today');
+  eq(rangeForDays(0, noon), rangeForDays(1, noon), 'a nonsense day count falls back to today');
+  eq(rangeForDays(undefined, noon), rangeForDays(1, noon), 'a missing day count falls back to today');
+
+  // Across the US spring-forward (8 Mar 2026), a naive 24-hour
+  // subtraction would land the start at 23:00 on the 8th and drop that
+  // morning's meetings.
+  const afterDst = new Date(2026, 2, 10, 12, 0, 0);
+  eq(rangeForDays(7, afterDst).start, local(2026, 2, 4), 'a window spanning a DST change still starts at local midnight');
+}
+
+// --- meetingsInRange -----------------------------------------------------
+{
+  const noon = new Date(2026, 7, 5, 12, 0, 0);
+  const at = (dayOffset, h) => new Date(2026, 7, 5 + dayOffset, h, 0, 0).toISOString();
+  const rows = [
+    { _subject: 'Today', _meetingStart: at(0, 9) },
+    { _subject: 'Later today', _meetingStart: at(0, 17) },
+    { _subject: 'Three days back', _meetingStart: at(-3, 14) },
+    { _subject: 'Ten days back', _meetingStart: at(-10, 14) },
+    { _subject: 'Tomorrow', _meetingStart: at(1, 9) },
+    { _subject: 'Timeless', _meetingStart: null },
+  ];
+  eq(meetingsInRange(rows, rangeForDays(1, noon)).map(r => r._subject), ['Today', 'Later today'],
+    'a one-day window is today, including the rest of it');
+  eq(meetingsInRange(rows, rangeForDays(7, noon)).map(r => r._subject), ['Today', 'Later today', 'Three days back'],
+    'a seven-day window reaches back but never forward');
+  eq(meetingsInRange(rows, rangeForDays(30, noon)).map(r => r._subject),
+    ['Today', 'Later today', 'Three days back', 'Ten days back'], 'a thirty-day window picks up the older meeting');
+  eq(meetingsInRange(rows, {}).length, 5, 'an open window keeps everything that has a time');
+  eq(meetingsInRange(null, rangeForDays(7, noon)), [], 'no rows is an empty list');
+}
+
+// --- groupMeetingsByDay --------------------------------------------------
+// Days newest first, each day read forwards — a look back starts from
+// what just happened, but a day is still read the way a calendar shows it.
+{
+  const at = (day, h, m = 0) => new Date(2026, 7, day, h, m, 0).toISOString();
+  const groups = groupMeetingsByDay([
+    { _subject: 'Mon late', _meetingStart: at(3, 16) },
+    { _subject: 'Wed first', _meetingStart: at(5, 9) },
+    { _subject: 'Mon early', _meetingStart: at(3, 8) },
+    { _subject: 'Wed second', _meetingStart: at(5, 14) },
+    { _subject: 'Timeless', _meetingStart: null },
+  ]);
+  eq(groups.length, 2, 'meetings bucket into one group per calendar day');
+  eq(groups.map(g => g.meetings.map(m => m._subject)),
+    [['Wed first', 'Wed second'], ['Mon early', 'Mon late']],
+    'newest day first, and each day in the order it happened');
+  eq(groups[0].dayStart, new Date(2026, 7, 5).getTime(), 'a group is stamped with its local midnight');
+  eq(groupMeetingsByDay([]), [], 'no meetings groups to nothing');
+  eq(groupMeetingsByDay(null), [], 'a missing list is not a throw');
+}
+
+// A meeting near midnight belongs to the day it starts in LOCAL time,
+// which is not the day its UTC timestamp falls on.
+{
+  const late = new Date(2026, 7, 5, 23, 30, 0);
+  const groups = groupMeetingsByDay([{ _subject: 'Late call', _meetingStart: late.toISOString() }]);
+  eq(groups[0].dayStart, new Date(2026, 7, 5).getTime(), 'a late-evening meeting stays on its own local day');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
