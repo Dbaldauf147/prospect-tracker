@@ -53,6 +53,7 @@ import {
   cacheableHistoryRows, shouldReplaceCache,
 } from '../../utils/callHistory';
 import { loadCallHistoryCache, saveCallHistoryCache } from '../../utils/callHistoryCache';
+import { describeReadFailure } from '../../utils/callReadError';
 import {
   callBreakdownRows, filterBreakdownRows, breakdownAverages,
 } from '../../utils/callBreakdown';
@@ -453,6 +454,9 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   // what to cache.
   const [recordsReadOk, setRecordsReadOk] = useState(true);
   const [recordsReadError, setRecordsReadError] = useState('');
+  // Firestore's own code for that failure, kept beside the message
+  // because it — not the prose — decides whether reloading can help.
+  const [recordsReadCode, setRecordsReadCode] = useState('');
   // The last history this browser drew, read back from IndexedDB. It is
   // what makes the tab fill in on refresh: it paints before Firestore
   // answers, and stands in for it when it doesn't.
@@ -765,13 +769,14 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     if (!uid) return undefined;
     let cancelled = false;
     (async () => {
-      const { records: stored, ok, error: readError } = await loadCallRecordsResult(uid);
+      const { records: stored, ok, error: readError, code: readCode } = await loadCallRecordsResult(uid);
       if (cancelled) return;
       // A read that failed comes back empty, which draws exactly like
       // having no calls. Say which it was, and let the cached history
       // stand rather than replacing it with nothing.
       setRecordsReadOk(ok);
       setRecordsReadError(ok ? '' : readError);
+      setRecordsReadCode(ok ? '' : readCode || '');
       // Anything tagged or transcribed while this read was in flight has
       // already been written to Firestore, but isn't in `stored` — so
       // state wins on conflict rather than being clobbered by it.
@@ -868,6 +873,14 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   // answered successfully; until then — and permanently, if that read
   // failed — the cache stands in. This is what makes the history survive
   // a refresh without a Granola sync: nothing here waits on one.
+  // What to tell the user about a failed read. A denied read and a
+  // dropped connection both land here, and only one of them is fixed by
+  // reloading — see utils/callReadError.js.
+  const readFailure = useMemo(
+    () => describeReadFailure({ ok: recordsReadOk, code: recordsReadCode, error: recordsReadError }),
+    [recordsReadOk, recordsReadCode, recordsReadError],
+  );
+
   const usingCachedHistory = !recordsLoaded || !recordsReadOk;
   const historyRows = usingCachedHistory && historyCache?.rows?.length
     ? historyCache.rows
@@ -1866,9 +1879,12 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
           {recordsReadError && (
             <div className={styles.error}>
               Couldn’t read your saved calls: {recordsReadError}
+              {/* The cache note comes before the advice: what you are
+                  looking at right now, then what to do about it. */}
               {historyCache?.rows?.length
-                ? ' Showing the copy this browser saved last time — it may be out of date. Reload to try again.'
-                : ' Reload to try again.'}
+                ? ' Showing the copy this browser saved last time — it may be out of date.'
+                : ''}
+              {readFailure && ` ${readFailure.advice}`}
             </div>
           )}
           {usingCachedHistory && historyCache?.savedAt && (
@@ -1942,8 +1958,15 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                 from — so this says so instead of standing in. */}
             {recordsReadError && (
               <div className={styles.error}>
-                Couldn’t read your saved calls: {recordsReadError} A breakdown needs each call’s stored speaker
-                turns, which the browser’s saved copy of your history doesn’t keep. Reload to try again.
+                Couldn’t read your saved calls: {recordsReadError}
+                {/* Only worth saying when there IS a cached history to
+                    contrast with — otherwise it explains a difference
+                    the user can't see. */}
+                {historyCache?.rows?.length
+                  ? ' The History tab can fall back to the copy this browser saved, but a breakdown can’t:'
+                    + ' that copy doesn’t keep each call’s speaker turns.'
+                  : ''}
+                {readFailure && ` ${readFailure.advice}`}
               </div>
             )}
             <div className={styles.breakdownScroll}>
