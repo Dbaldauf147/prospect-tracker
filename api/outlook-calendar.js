@@ -3,6 +3,10 @@
 // withAuth); the user's own Microsoft Graph token goes in X-MS-Token.
 import { withAuth } from './_lib/http.js';
 
+// Pages of 200 events. Five covers a month of even a heavily-booked
+// calendar; past that the window is the problem, not the paging.
+const MAX_PAGES = 5;
+
 async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -32,20 +36,37 @@ async function handler(req, res) {
     `&$top=200`;
 
   try {
-    const resp = await fetch(graphUrl, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    // Graph pages a calendar view, and it orders this one oldest-first —
+    // so a window wide enough to overflow one page drops the meetings at
+    // the END of it. That is the half a "what's coming up" view is made
+    // of, and losing it silently reads as an empty afternoon. Follow
+    // @odata.nextLink instead, with a cap so a pathological calendar
+    // can't hold the function open indefinitely.
+    const raw = [];
+    let next = graphUrl;
+    let pages = 0;
+    let truncated = false;
+    while (next && pages < MAX_PAGES) {
+      const resp = await fetch(next, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
 
-    if (resp.status === 401) {
-      return res.status(401).json({ error: 'Token expired or invalid: re-authenticate with Outlook.' });
-    }
-    if (!resp.ok) {
-      const errBody = await resp.text();
-      return res.status(resp.status).json({ error: `Microsoft Graph error: ${errBody}` });
+      if (resp.status === 401) {
+        return res.status(401).json({ error: 'Token expired or invalid: re-authenticate with Outlook.' });
+      }
+      if (!resp.ok) {
+        const errBody = await resp.text();
+        return res.status(resp.status).json({ error: `Microsoft Graph error: ${errBody}` });
+      }
+
+      const data = await resp.json();
+      raw.push(...(data.value || []));
+      pages += 1;
+      next = data['@odata.nextLink'] || '';
+      if (next && pages >= MAX_PAGES) truncated = true;
     }
 
-    const data = await resp.json();
-    const events = (data.value || [])
+    const events = raw
       .filter(e => !e.isCancelled)
       .map(e => ({
         id: e.id,
@@ -66,7 +87,16 @@ async function handler(req, res) {
         })),
       }));
 
-    return res.status(200).json({ events, count: events.length, rangeStart: startISO, rangeEnd: endISO });
+    return res.status(200).json({
+      events,
+      count: events.length,
+      rangeStart: startISO,
+      rangeEnd: endISO,
+      // Set when the calendar had more than MAX_PAGES pages of events in
+      // this window, so a caller can say the far end is missing rather
+      // than present a short list as the whole story.
+      truncated,
+    });
   } catch (err) {
     return res.status(500).json({ error: err.message || 'Unknown error' });
   }
