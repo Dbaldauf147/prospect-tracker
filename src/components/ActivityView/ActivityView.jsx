@@ -834,6 +834,11 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     return () => window.removeEventListener('message', onMessage);
   }, [loadOutlookCalendar]);
 
+  // The history behind the Outlook sign-in not being offered. Closed by
+  // default: it is a footnote until somebody asks why the calendar is
+  // not here.
+  const [showOutlookNote, setShowOutlookNote] = useState(false);
+
   function connectOutlook() {
     setGraphError('');
     window.open('/api/outlook-auth', 'outlook-auth', 'width=500,height=700,left=200,top=100');
@@ -1502,12 +1507,24 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
                     onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
                   >×</button>
                 </>
-              ) : outlookAuth !== 'unknown' && (
+              ) : outlookAuth === 'expired' ? (
                 <button
                   onClick={connectOutlook}
-                  title="Sign in to Outlook to show your calendar — including meetings that haven't happened yet"
+                  title="Your Outlook sign-in expired. Signing in again is the whole fix."
                   style={{ padding: '0.25rem 0.6rem', border: '1px solid #0078D4', borderRadius: 4, background: '#fff', color: '#0078D4', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
-                >{outlookAuth === 'expired' ? '↻ Reconnect Outlook' : '+ Connect Outlook'}</button>
+                >↻ Reconnect Outlook</button>
+              ) : outlookAuth !== 'unknown' && (
+                // Not a "+ Connect Outlook" button any more. Signing in
+                // needs an Azure app registration this tenant will not
+                // grant, so the button could only ever spend a click to
+                // reach a Microsoft error page. It opens the history of
+                // that decision instead, which is the useful thing left
+                // to hand somebody looking at an Outlook-shaped gap.
+                <button
+                  onClick={() => setShowOutlookNote(v => !v)}
+                  title="Why the Outlook sign-in is not offered here"
+                  style={{ padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: '#94A3B8', fontSize: '0.68rem', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}
+                >Outlook: not available</button>
               )}
               {/* The Power Automate route the panel used to depend on.
                   Kept for anyone already running that flow, but folded
@@ -1582,6 +1599,80 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
                 onClick={() => setShowWebhookSetup(false)}
                 style={{ marginTop: '0.5rem', padding: '0.3rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: '#64748B', fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit' }}
               >Close</button>
+            </div>
+          )}
+          {/* Why the calendar is not read straight from Outlook.
+              Written down on the page rather than in a commit message
+              because the question comes back every time this panel looks
+              thin, and the answer is the kind that costs a week to
+              rediscover. */}
+          {showOutlookNote && (
+            <div style={{ padding: '0.75rem 0.9rem', background: '#F8FAFC', borderBottom: '1px solid var(--color-border)', fontSize: '0.75rem', color: 'var(--color-text)', lineHeight: 1.55 }}>
+              <div style={{ fontWeight: 700, marginBottom: '0.4rem' }}>
+                Reading Outlook directly: closed, August 2026
+              </div>
+              <div style={{ marginBottom: '0.5rem' }}>
+                Microsoft Graph is the only route that shows meetings <em>before</em> they happen, so it
+                was worth trying. It cannot work on this tenant.
+              </div>
+              <div style={{ fontWeight: 600, marginBottom: '0.2rem' }}>What happened</div>
+              <div style={{ marginBottom: '0.5rem' }}>
+                Connecting returned <code>AADSTS700016: Application with identifier 'undefined' was not
+                found in the directory</code>. One message, two separate causes:
+                <ol style={{ margin: '0.3rem 0 0 1.2rem' }}>
+                  <li>
+                    <code>OUTLOOK_CLIENT_ID</code> was never set in the deployment, so the sign-in URL
+                    asked Azure for an app literally named "undefined". Fixed in August 2026: the popup
+                    now names the missing variable instead of blaming the tenant.
+                  </li>
+                  <li>
+                    Setting that variable needs an Azure app registration in the Schneider Electric
+                    tenant. <strong>IT will not grant one.</strong> This is the decisive one, and no
+                    amount of code changes it.
+                  </li>
+                </ol>
+              </div>
+              <div style={{ fontWeight: 600, marginBottom: '0.2rem' }}>So don't try this again</div>
+              <div style={{ marginBottom: '0.5rem' }}>
+                <code>/api/outlook-auth</code> and <code>/api/outlook-calendar</code> are kept because
+                they are correct and would work in a tenant that allows the registration. Nothing is
+                wrong with them. There is simply no point spending time here again unless that
+                decision changes.
+              </div>
+              <div style={{ fontWeight: 600, marginBottom: '0.2rem' }}>What to use instead</div>
+              <ul style={{ margin: '0 0 0.5rem 1.2rem' }}>
+                <li>
+                  <strong>Power Automate</strong> pushes your calendar to this page from your own
+                  account, with no app registration. It is the working route for meetings that have
+                  not happened yet.
+                </li>
+                <li>
+                  <strong>Granola</strong> (↻ above) covers meetings it sat in, after the fact only.
+                </li>
+                <li>
+                  <strong>Outlook "Publish calendar"</strong> hands out an ICS URL and is sometimes
+                  left enabled where app registration is locked down.{' '}
+                  <code>/api/outlook-calendar-ics</code> is written but has no button yet.
+                </li>
+              </ul>
+              <div style={{ marginBottom: '0.6rem', color: '#64748B' }}>
+                Not viable: reading Granola's local cache file. Granola encrypted it in April 2026 and
+                the projects that relied on it were archived.
+              </div>
+              <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                <button
+                  onClick={() => setShowOutlookNote(false)}
+                  style={{ padding: '0.3rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: '#64748B', fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit' }}
+                >Close</button>
+                {/* The escape hatch, deliberately dull. If the tenant
+                    ever allows the registration this is how you find out,
+                    and until then it is not something to click twice. */}
+                <button
+                  onClick={connectOutlook}
+                  title="Only useful if an Azure app registration has since been granted and the variables set"
+                  style={{ padding: '0.3rem 0.6rem', border: '1px dashed var(--color-border)', borderRadius: 4, background: 'transparent', color: '#94A3B8', fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit' }}
+                >Try the sign-in anyway</button>
+              </div>
             </div>
           )}
           {outlookError && (
