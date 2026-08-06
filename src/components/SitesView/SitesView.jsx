@@ -119,6 +119,26 @@ const SITES_STORAGE_KEY = 'sites-list-override';
 const MAX_ANALYSIS_MB = 40;
 const MAX_ANALYSIS_BASE64_CHARS = Math.ceil((MAX_ANALYSIS_MB * 1024 * 1024) / 3) * 4;
 
+// When a company's saved Master Analysis was last written, phrased the way
+// the question is actually asked — "is what's on this company still current?"
+// Recent saves read as "today" / "3 days ago"; older ones get the date, with
+// the year only when it isn't this one.
+function describeAnalysisSave(meta) {
+  const d = meta?.savedAt ? new Date(meta.savedAt) : null;
+  if (!d || isNaN(d)) return 'previously';
+  const midnight = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const now = new Date();
+  const days = Math.round((midnight(now) - midnight(d)) / 86400000);
+  if (days === 0) return `today, ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+  if (days === 1) return 'yesterday';
+  if (days < 7) return `${days} days ago`;
+  return d.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(d.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }),
+  });
+}
+
 // xlsxParse reads date cells with raw:true, so source date values
 // arrive as Excel serial numbers (e.g., 45673) rather than JS Dates.
 // Convert at the row-creation boundary so every downstream consumer
@@ -977,6 +997,34 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     const v = String(name || '').trim();
     updateSettingsPath({ utilityLookupCompanyName: v || null });
   }, [updateSettingsPath]);
+  // The prospect record the mapped portfolio company resolves to — the one
+  // "Save to <company>" writes its Master Analysis against.
+  const portfolioProspect = useMemo(() => {
+    const target = portfolioCompanyName.toLowerCase();
+    if (!target) return null;
+    return (prospects || []).find(p => String(p?.company || '').trim().toLowerCase() === target) || null;
+  }, [prospects, portfolioCompanyName]);
+
+  // Whether that company ALREADY has a Master Analysis saved, and when.
+  // Saving stamps a marker on the prospect record, which is the cheap read;
+  // analyses saved before that marker existed only show up in the analyses
+  // subcollection, so fall back to a metadata-only fetch (one document read
+  // for the mapped company). Re-runs after a save, since the marker moves.
+  const savedAnalysisMarker = portfolioProspect?.indicativeAnalysisMeta || null;
+  const [fetchedAnalysisMeta, setFetchedAnalysisMeta] = useState(null);
+  useEffect(() => {
+    setFetchedAnalysisMeta(null);
+    if (!portfolioProspect?.id) return;
+    let cancelled = false;
+    getIndicativeAnalysisMeta(portfolioProspect.id)
+      .then(meta => { if (!cancelled) setFetchedAnalysisMeta(meta); })
+      .catch(() => { /* absent or unreadable — the marker still stands */ });
+    return () => { cancelled = true; };
+  }, [portfolioProspect?.id, savedAnalysisMarker?.savedAt]);
+  // Prefer whichever carries a date; the marker is written client-side at
+  // save time, the fetched copy comes from the analysis doc's server stamp.
+  const savedAnalysis = savedAnalysisMarker?.savedAt ? savedAnalysisMarker : (fetchedAnalysisMeta || savedAnalysisMarker);
+
   // Bumped by Remove Sites so the Company Look Up panel empties with the
   // rest of the page — the company it shows is local state down there.
   const [lookupResetSignal, setLookupResetSignal] = useState(0);
@@ -12685,11 +12733,32 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                 setSavePickerSearch(mapped || '');
                 setSaveStatus({ state: 'idle', message: '' });
               }}
-              title="Save the current Master Analysis to the company mapped to this page. If no company is mapped, search for one. The saved file shows up on that company's prospect / client popup and can be downloaded from there."
+              title={savedAnalysis
+                ? `Replace ${portfolioCompanyName}'s saved Master Analysis (last saved ${describeAnalysisSave(savedAnalysis)}) with the one currently on this page. The saved file shows up on that company's prospect / client popup and can be downloaded from there.`
+                : "Save the current Master Analysis to the company mapped to this page. If no company is mapped, search for one. The saved file shows up on that company's prospect / client popup and can be downloaded from there."}
               style={{ padding: '0.4rem 0.8rem', border: '1px solid #009530', background: '#fff', color: '#009530', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
             >
-              💾 {portfolioCompanyName ? `Save to ${portfolioCompanyName}` : 'Save to Company'}
+              💾 {portfolioCompanyName
+                ? `${savedAnalysis ? 'Update' : 'Save to'} ${portfolioCompanyName}`
+                : 'Save to Company'}
             </button>
+          )}
+          {/* This company already has one saved. Says so before the save is
+              clicked, so a save that silently replaces the previous analysis
+              isn't a surprise — and dates it, since "is what's saved current?"
+              is the actual question. */}
+          {sitesData.length > 0 && savedAnalysis && (
+            <span
+              title={`${portfolioCompanyName} has a Master Analysis saved${savedAnalysis.savedAt ? ` on ${new Date(savedAnalysis.savedAt).toLocaleString()}` : ''}.${savedAnalysis.fileName ? `\n${savedAnalysis.fileName}` : ''}${savedAnalysis.sizeBytes ? ` · ${(savedAnalysis.sizeBytes / (1024 * 1024)).toFixed(1)} MB` : ''}\n\nSaving again replaces it.`}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
+                padding: '0.25rem 0.55rem', borderRadius: 999,
+                background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534',
+                fontSize: '0.72rem', fontWeight: 600, whiteSpace: 'nowrap',
+              }}
+            >
+              ✓ Analysis saved {describeAnalysisSave(savedAnalysis)}
+            </span>
           )}
           {sitesData.length > 0 && (
             <button
