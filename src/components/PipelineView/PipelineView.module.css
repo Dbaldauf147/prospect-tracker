@@ -611,9 +611,13 @@
 
 .svcCovLists {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 1rem;
   align-items: start;
+}
+
+@media (max-width: 1000px) {
+  .svcCovLists { grid-template-columns: 1fr 1fr; }
 }
 
 @media (max-width: 720px) {
@@ -669,6 +673,15 @@
   background: #f1f5f9;
   border-color: #e2e8f0;
   color: #64748b;
+}
+
+/* "Service doesn't apply here" — answered, but not exploration, so it reads
+   quieter than Explored and distinct from the not-yet-explored chips. */
+.svcCovChipNa {
+  background: #fff;
+  border-style: dashed;
+  border-color: #cbd5e1;
+  color: #94a3b8;
 }
 
 .svcCovChipStatus {
