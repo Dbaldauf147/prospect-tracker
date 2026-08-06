@@ -4580,17 +4580,18 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       rows: merged.rows,
       uploadedAt: new Date().toISOString(),
     };
-    // companySiteLists lives on the single settings document, which
-    // Firestore caps at ~1 MiB across every company's list. Skip rather
-    // than fail the whole save when these rows alone would crowd it out —
-    // and say that the list the company already had is untouched, since
-    // that is the difference between "nothing was added" and "everything
-    // is gone".
-    if (JSON.stringify(entry).length > 400_000) {
+    // Each company's list is its own Firestore document, so the ~1 MiB
+    // cap applies to this company alone rather than to every company's
+    // list at once (it used to be one map on the settings document, and
+    // the limit was shared). Skip rather than fail the whole save when
+    // one company's rows won't fit — and say that the list the company
+    // already had is untouched, since that is the difference between
+    // "nothing was added" and "everything is gone".
+    if (JSON.stringify(entry).length > 900_000) {
       return {
         note: existingRows.length
-          ? ` Site list not updated: ${merged.rows.length.toLocaleString()} sites is too many for the settings document, so the ${existingRows.length.toLocaleString()} already saved are unchanged.`
-          : ' Site list not updated: too many sites for the settings document.',
+          ? ` Site list not updated: ${merged.rows.length.toLocaleString()} sites is too many to store for one company, so the ${existingRows.length.toLocaleString()} already saved are unchanged.`
+          : ' Site list not updated: too many sites to store for one company.',
         total: existingRows.length,
       };
     }

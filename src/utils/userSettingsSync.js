@@ -1,15 +1,71 @@
 import { doc, getDoc, setDoc, updateDoc, deleteField, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
+import {
+  SITE_LISTS_KEY,
+  applySiteListOps,
+  migrateCompanySiteLists,
+  readCompanySiteLists,
+  slugsForOps,
+  splitSiteListPaths,
+  splitSiteListUpdates,
+  subscribeToCompanySiteLists,
+} from './companySiteListsStore';
 
 const COL = 'userSettings';
 
+// The settings document plus the per-company site lists that used to be a
+// key on it (see companySiteListsStore for why they moved), delivered as
+// the single object every caller already expects.
 export function subscribeToUserSettings(userId, onChange) {
   const ref = doc(db, COL, userId);
-  return onSnapshot(ref, (snap) => {
-    onChange(snap.exists() ? snap.data() : null);
+  let docData;   // undefined until the document's first snapshot
+  let lists;     // undefined until the subcollection's first snapshot
+  let migrating = false;
+
+  const emit = () => {
+    // Nothing goes out until BOTH sources have reported. A settings object
+    // whose companySiteLists is still empty is worse than a slightly later
+    // one: "Save to <company>" merges its rows against what it finds
+    // there, so an early emit would let a save write a company's existing
+    // sites away.
+    if (docData === undefined || lists === undefined) return;
+    if (docData === null && !Object.keys(lists).length) { onChange(null); return; }
+
+    const merged = { ...(docData || {}) };
+    const legacy = merged[SITE_LISTS_KEY];
+    // A migration that hasn't finished yet leaves a company in both
+    // places; the subcollection holds the newer copy either way.
+    const all = { ...(legacy && typeof legacy === 'object' ? legacy : {}), ...lists };
+    if (Object.keys(all).length) merged[SITE_LISTS_KEY] = all;
+    else delete merged[SITE_LISTS_KEY];
+    onChange(merged);
+  };
+
+  const unsubDoc = onSnapshot(ref, (snap) => {
+    docData = snap.exists() ? snap.data() : null;
+    const legacy = docData?.[SITE_LISTS_KEY];
+    if (!migrating && legacy && typeof legacy === 'object' && Object.keys(legacy).length) {
+      migrating = true;
+      migrateCompanySiteLists(userId, legacy)
+        .catch(err => { migrating = false; console.error('companySiteLists migration failed:', err); });
+    }
+    emit();
   }, (err) => {
     console.error('userSettings subscription error:', err);
   });
+
+  const unsubLists = subscribeToCompanySiteLists(userId, (map) => {
+    lists = map;
+    emit();
+  }, () => {
+    // Reads of the subcollection failed (most likely rules that haven't
+    // released yet). Carry on with whatever the settings document holds
+    // rather than leaving the app stuck on "loading" — writes will still
+    // surface the real error.
+    if (lists === undefined) { lists = {}; emit(); }
+  });
+
+  return () => { unsubDoc(); unsubLists(); };
 }
 
 // Write with an optional staleness check.
@@ -24,6 +80,9 @@ export function subscribeToUserSettings(userId, onChange) {
 export async function saveUserSettings(userId, updates, opts = {}) {
   const ref = doc(db, COL, userId);
   const { expectedAt, force } = opts;
+  // companySiteLists lives in its own subcollection; everything else is a
+  // field on the document.
+  const { ops, rest } = splitSiteListUpdates(updates);
 
   if (!force && expectedAt != null) {
     try {
@@ -31,7 +90,7 @@ export async function saveUserSettings(userId, updates, opts = {}) {
       if (snap.exists()) {
         const remoteAt = Number(snap.data()?._lastWriteAt || 0);
         if (remoteAt > Number(expectedAt)) {
-          return { stale: true, remoteAt, remoteData: snap.data() };
+          return { stale: true, remoteAt, remoteData: await withSiteLists(userId, snap.data(), ops) };
         }
       }
     } catch (err) {
@@ -45,8 +104,29 @@ export async function saveUserSettings(userId, updates, opts = {}) {
   }
 
   const writtenAt = Date.now();
-  await setDoc(ref, { ...updates, _lastWriteAt: writtenAt }, { merge: true });
+  if (ops.length) await applySiteListOps(userId, ops);
+  await setDoc(ref, { ...rest, _lastWriteAt: writtenAt }, { merge: true });
   return { stale: false, writtenAt };
+}
+
+// The remote settings document with the site lists a write touches folded
+// back in under their old key, so the auto-merge in useUserSettings sees
+// the other device's rows exactly as it did when they were one field.
+async function withSiteLists(userId, remote, ops) {
+  if (!ops.length) return remote;
+  try {
+    const lists = await readCompanySiteLists(userId, slugsForOps(ops));
+    const existing = remote?.[SITE_LISTS_KEY];
+    return {
+      ...remote,
+      [SITE_LISTS_KEY]: { ...(existing && typeof existing === 'object' ? existing : {}), ...lists },
+    };
+  } catch (err) {
+    // Worst case the merge treats the remote as having nothing at these
+    // paths, which is what it did before the site lists moved.
+    console.warn('Could not read remote site lists for the stale-write merge', err);
+    return remote;
+  }
 }
 
 // On first login with empty Firestore settings, copy existing localStorage data up.
@@ -91,6 +171,7 @@ async function migrateFromLocalStorage(userId) {
 export async function savePathUpdates(userId, pathUpdates, opts = {}) {
   const ref = doc(db, COL, userId);
   const { expectedAt, force } = opts;
+  const { ops, rest } = splitSiteListPaths(pathUpdates);
 
   if (!force && expectedAt != null) {
     try {
@@ -98,7 +179,7 @@ export async function savePathUpdates(userId, pathUpdates, opts = {}) {
       if (snap.exists()) {
         const remoteAt = Number(snap.data()?._lastWriteAt || 0);
         if (remoteAt > Number(expectedAt)) {
-          return { stale: true, remoteAt, remoteData: snap.data() };
+          return { stale: true, remoteAt, remoteData: await withSiteLists(userId, snap.data(), ops) };
         }
       }
     } catch (err) {
@@ -110,8 +191,12 @@ export async function savePathUpdates(userId, pathUpdates, opts = {}) {
   }
 
   const writtenAt = Date.now();
+  if (ops.length) await applySiteListOps(userId, ops);
+
+  // Still stamp _lastWriteAt even when every path went to the
+  // subcollection: it is what other devices watch to know this one wrote.
   const updates = { _lastWriteAt: writtenAt };
-  for (const [path, value] of Object.entries(pathUpdates)) {
+  for (const [path, value] of Object.entries(rest)) {
     updates[path] = value == null ? deleteField() : value;
   }
 
@@ -122,7 +207,7 @@ export async function savePathUpdates(userId, pathUpdates, opts = {}) {
     // setDoc by building a nested object from the dot paths.
     if (err?.code === 'not-found') {
       const nested = { _lastWriteAt: writtenAt };
-      for (const [path, value] of Object.entries(pathUpdates)) {
+      for (const [path, value] of Object.entries(rest)) {
         if (value == null) continue;
         const parts = path.split('.');
         let cur = nested;
