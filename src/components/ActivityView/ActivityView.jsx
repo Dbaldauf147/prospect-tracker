@@ -10,7 +10,7 @@ import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
 import { loadCallRecords, saveCallRecordResult } from '../../utils/callRecordingsStore';
 import {
   importGranolaMeetings, recordPatchFor, diagnoseEmptySync, DEFAULT_MEETING_WINDOW_DAYS,
-  fetchGranolaCalendar, describeGranolaCalendar,
+  fetchGranolaCalendar, describeGranolaCalendar, probeGranola, describeGranolaConnection,
 } from '../../utils/granolaCalls';
 import {
   granolaMeetingsFromRecords, mergeMeetings, meetingsInRange, rangeForDays, rangeForUpcoming,
@@ -420,11 +420,52 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
   // "Coming up" list: { events, supported, attempts, error }. Null until
   // an import has asked.
   const [granolaCalendar, setGranolaCalendar] = useState(null);
+  // Whether Granola is configured at all, asked directly rather than
+  // inferred from an import that happened to fail.
+  //
+  // The panel used to learn this only as a side effect: an import ran,
+  // came back "not configured", and set the flag. So on any visit where
+  // the import did not run - the usual case, since it only re-runs when
+  // the last one is stale - a deployment with no API key looked exactly
+  // like a deployment with a key and no meetings. Both rendered "0
+  // meetings", and the one thing that would explain it went unsaid.
+  //
+  // { configured, ok, error, hint, timedOut }, or null before the first
+  // answer lands. The Call Recordings page asks the same question the
+  // same way.
+  const [granolaStatus, setGranolaStatus] = useState(null);
+  const [granolaChecking, setGranolaChecking] = useState(false);
   const granolaRecordsRef = useRef({});
   const granolaImportingRef = useRef(false);
   const granolaAutoRan = useRef(false);
+  // Discards the answer to a probe that a newer one has already replaced.
+  const granolaProbeRun = useRef(0);
 
   useEffect(() => { granolaRecordsRef.current = granolaRecords; }, [granolaRecords]);
+
+  // Ask whether the key is there and live. Also the handler behind
+  // "Check again": a probe that timed out says nothing about Granola
+  // either way, so re-running it is the first thing to try.
+  const checkGranola = useCallback(async () => {
+    const run = granolaProbeRun.current + 1;
+    granolaProbeRun.current = run;
+    setGranolaChecking(true);
+    const status = await probeGranola();
+    if (granolaProbeRun.current !== run) return status;
+    setGranolaStatus(status);
+    // A probe that reached Granola is a better answer than whatever an
+    // import concluded earlier, so it owns the flag from here.
+    if (!status.timedOut) setGranolaUnconfigured(!status.configured);
+    setGranolaChecking(false);
+    return status;
+  }, []);
+
+  useEffect(() => { checkGranola(); }, [checkGranola]);
+
+  const granolaConnection = useMemo(
+    () => describeGranolaConnection(granolaStatus, { checking: granolaChecking }),
+    [granolaStatus, granolaChecking],
+  );
 
   // Stored records first. The calendar paints from Firestore, so it
   // fills in on first paint, offline, and when Granola itself is down —
@@ -1707,9 +1748,24 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
               {outlookNote}
             </div>
           )}
-          {granolaUnconfigured && (
-            <div style={{ padding: '0.4rem 0.9rem', background: '#F5F3FF', color: '#5B21B6', fontSize: '0.75rem', borderBottom: '1px solid #DDD6FE' }}>
-              Granola isn't connected in this deployment, so no meetings can be imported from it. The Call Recordings page explains how to set it up.
+          {/* Whether Granola can be reached at all, said outright. Every
+              other line in this panel describes meetings; this one
+              describes the connection they would have to arrive over,
+              and it is the answer to "why is this empty" that no count
+              can give. */}
+          {granolaConnection && (
+            <div style={{ padding: '0.4rem 0.9rem', background: granolaConnection.background, color: granolaConnection.color, fontSize: '0.75rem', borderBottom: `1px solid ${granolaConnection.border}`, display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
+              <span style={{ flex: 1 }}>
+                <strong>{granolaConnection.headline}</strong>
+                {granolaConnection.detail && <>{' '}{granolaConnection.detail}</>}
+              </span>
+              {granolaConnection.retry && (
+                <button
+                  onClick={checkGranola}
+                  disabled={granolaChecking}
+                  style={{ padding: '0.15rem 0.5rem', border: `1px solid ${granolaConnection.border}`, borderRadius: 4, background: '#fff', color: granolaConnection.color, fontSize: '0.68rem', fontWeight: 600, cursor: granolaChecking ? 'default' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap', opacity: granolaChecking ? 0.6 : 1 }}
+                >{granolaChecking ? 'Checking…' : 'Check again'}</button>
+              )}
             </div>
           )}
           {granolaError && (
