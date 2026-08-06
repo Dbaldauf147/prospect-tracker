@@ -62,6 +62,10 @@ import { buildCompanyGuessIndex } from '../../utils/companyGuess';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { buildActiveOppsIndex, activeOppsForCompany } from '../../utils/targetAccountOpps';
 import { setOppField } from '../../utils/opps2Store';
+import {
+  tagOppPatch, markOppNaPatch, clearOppTagPatch, oppTagStateOf, oppTagLabelOf,
+  filterByOppTag, oppTagCounts, OPP_TAG_FILTERS,
+} from '../../utils/callOppTag';
 import styles from './CallRecordingsView.module.css';
 
 const TOKEN_KEY = 'onedrive-access-token';
@@ -402,6 +406,10 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   // one stored call and reports who did the talking on it.
   const [tab, setTab] = useState(SUBTABS.has(settings.callRecordingsTab) ? settings.callRecordingsTab : 'calls');
   const [historyQuery, setHistoryQuery] = useState('');
+  // Which triage pile the History table is showing: all / untagged /
+  // tagged / na. Not persisted — it is how you are working through the
+  // list right now, not a setting.
+  const [oppTagFilter, setOppTagFilter] = useState('all');
   const [breakdownQuery, setBreakdownQuery] = useState('');
   // Which call the Breakdown subtab is showing. Empty means "the newest
   // one", resolved below against the filtered list rather than stored, so
@@ -920,7 +928,14 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     : liveHistoryRows;
 
   const filteredHistory = useMemo(
-    () => filterHistoryRows(historyRows, historyQuery),
+    () => filterByOppTag(filterHistoryRows(historyRows, historyQuery), oppTagFilter),
+    [historyRows, historyQuery, oppTagFilter],
+  );
+
+  // Counted before the tag filter, so the chips keep showing how big
+  // each pile is while you're standing inside one of them.
+  const tagCounts = useMemo(
+    () => oppTagCounts(filterHistoryRows(historyRows, historyQuery)),
     [historyRows, historyQuery],
   );
   const totals = useMemo(() => historyTotals(filteredHistory), [filteredHistory]);
@@ -984,6 +999,14 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     ));
   }
 
+  // The tagging handlers, reachable from inside the memoised columns.
+  // They are defined further down (they need `visible` and `persist`),
+  // and a memo can neither list them as dependencies before they exist
+  // nor safely capture the copy from the render it last ran in. A ref
+  // refreshed every render sidesteps both: the column calls whichever
+  // handler is current when the button is actually clicked.
+  const tagActionsRef = useRef({ tagOpp: () => {}, markOppNa: () => {} });
+
   const historyColumns = useMemo(() => [
     {
       key: 'recordedAt',
@@ -1023,10 +1046,40 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     {
       key: 'oppLabel',
       label: 'Opportunity',
-      defaultWidth: 240,
-      render: r => (r.oppLabel
-        ? <span title={r.oppLabel}>{r.oppLabel}</span>
-        : <span className={styles.transcriptStatus}>—</span>),
+      defaultWidth: 260,
+      // Sorted by decision, then by name: the queue collects at one end
+      // rather than scattering through the alphabet.
+      getSortValue: r => `${{ none: 0, na: 1, tagged: 2 }[r.oppTag] ?? 0}${r.oppLabel || ''}`,
+      render: (r) => {
+        if (r.oppTag === 'tagged') return <span title={r.oppLabel}>{r.oppLabel}</span>;
+        if (r.oppTag === 'na') {
+          return (
+            <span
+              className={styles.historyNa}
+              title={r.oppNaAt ? `Marked N/A ${fmtWhen(r.oppNaAt)}` : 'Belongs to no opportunity'}
+            >N/A</span>
+          );
+        }
+        // The queue. Both decisions are one click from here, so the
+        // backlog can be worked through in the view that shows it —
+        // rather than card by card on another tab.
+        return (
+          <span className={styles.historyTagActions}>
+            <button
+              type="button"
+              className={styles.historyTagBtn}
+              onClick={(e) => { e.stopPropagation(); setOppPickerFor(r.id); }}
+              title="Tag this call to an opportunity"
+            >Tag</button>
+            <button
+              type="button"
+              className={styles.historyTagBtn}
+              onClick={(e) => { e.stopPropagation(); tagActionsRef.current.markOppNa(r.id); }}
+              title="This call belongs to no opportunity"
+            >N/A</button>
+          </span>
+        );
+      },
     },
     {
       key: 'durationSeconds',
@@ -1335,18 +1388,41 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     const rec = visible.find(r => r.id === recordingId);
     persist(recordingId, {
       ...(rec ? metaFor(rec) : {}),
-      oppId: String(opp?._id || ''),
-      oppLabel: oppLabel(opp),
-      // Tagging an opp for a recording with no company yet adopts the
-      // opp's account, so the two tags can't contradict each other.
-      ...(recordsRef.current[recordingId]?.company ? {} : { company: String(opp?.Account || '').trim() }),
+      ...tagOppPatch(opp, {
+        label: oppLabel(opp),
+        company: recordsRef.current[recordingId]?.company || '',
+      }),
     });
     setOppPickerFor(null);
   }
 
-  function untagOpp(recordingId) {
-    persist(recordingId, { oppId: '', oppLabel: '' });
+  /**
+   * "This call belongs to no opportunity" — a decision, not a blank.
+   *
+   * Most calls are this: an internal 1:1, a training session, a
+   * prospecting block Granola sat in. Without somewhere to put them they
+   * stayed indistinguishable from the client call nobody had got to yet,
+   * so the untagged pile only ever grew and never meant anything.
+   *
+   * `metaFor` goes on too, because this can be the FIRST thing ever
+   * written for a call listed straight from OneDrive — without it the
+   * record would be an N/A flag with no name or date attached to it.
+   */
+  function markOppNa(recordingId) {
+    const rec = visible.find(r => r.id === recordingId);
+    persist(recordingId, { ...(rec ? metaFor(rec) : {}), ...markOppNaPatch() });
+    setOppPickerFor(null);
   }
+
+  // Undoes either decision — back into the queue.
+  function untagOpp(recordingId) {
+    persist(recordingId, clearOppTagPatch());
+  }
+
+  // Refreshed every render so the History table's row buttons always
+  // call the current closures rather than the ones from whenever the
+  // column definitions were last memoised.
+  tagActionsRef.current = { tagOpp, markOppNa };
 
   async function forgetRecord(recordingId) {
     // A Granola call has no file behind it, so forgetting it removes the
@@ -1610,7 +1686,14 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   }
 
   const pickerRecording = pickerFor ? visible.find(r => r.id === pickerFor) : null;
-  const oppPickerRecording = oppPickerFor ? visible.find(r => r.id === oppPickerFor) : null;
+  // The picker opens from the Calls cards AND from a History row, and
+  // History covers every call ever stored — including ones the current
+  // source can't see (a OneDrive call while Granola is selected, a file
+  // since moved). Falling back to the stored record means the picker
+  // opens for those too, instead of silently doing nothing.
+  const oppPickerRecording = oppPickerFor
+    ? (visible.find(r => r.id === oppPickerFor) || (records[oppPickerFor] ? { id: oppPickerFor } : null))
+    : null;
 
   // The fallback <input webkitdirectory> path never produces a handle, so
   // "have we been pointed at a folder yet?" is handle-or-name, not handle.
@@ -1932,6 +2015,27 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
               value={historyQuery}
               onChange={e => setHistoryQuery(e.target.value)}
             />
+            {/* Triage, as four piles you can stand in. "Needs tagging"
+                is the only one that names work still to do, so it
+                carries its count even when empty — an empty queue is
+                worth seeing. */}
+            <span className={styles.historyFilters}>
+              {OPP_TAG_FILTERS.map((f) => {
+                const count = f.key === 'all' ? tagCounts.total : tagCounts[f.key === 'untagged' ? 'untagged' : f.key];
+                return (
+                  <button
+                    key={f.key}
+                    type="button"
+                    className={oppTagFilter === f.key ? styles.historyFilterOn : styles.historyFilterOff}
+                    onClick={() => setOppTagFilter(f.key)}
+                    title={f.title}
+                  >
+                    {f.label}
+                    <span className={styles.historyFilterCount}>{count}</span>
+                  </button>
+                );
+              })}
+            </span>
             <span className={styles.historyTotals}>
               <strong>{totals.calls}</strong> call{totals.calls === 1 ? '' : 's'}
               {totals.durationSeconds > 0 && <> · {fmtDuration(totals.durationSeconds)} recorded</>}
@@ -1939,6 +2043,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
               {' · '}{totals.summarized} summarised
               {' · '}{totals.pushed} pushed to an opp
               {' · '}{totals.withCompany} tagged to a company
+              {totals.needsOppTag > 0 && <> · <strong>{totals.needsOppTag}</strong> still need an opp or N/A</>}
             </span>
           </div>
           {recordsReadError && (
@@ -1977,7 +2082,11 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
               exportFileName="call-history"
               emptyMessage={historyQuery
                 ? `No stored call matches “${historyQuery}”.`
-                : 'No calls have been stored yet. Sync from Granola, or transcribe a recording, and it lands here.'}
+                : oppTagFilter === 'untagged'
+                  ? 'Nothing left to triage: every stored call has an opportunity or an N/A on it.'
+                  : oppTagFilter !== 'all'
+                    ? `No calls are ${oppTagFilter === 'na' ? 'marked N/A' : 'tagged to an opportunity'} yet.`
+                    : 'No calls have been stored yet. Sync from Granola, or transcribe a recording, and it lands here.'}
               settings={settings}
               updateSettings={updateSettings}
             />
@@ -2173,11 +2282,17 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                       }}
                     >{company}</span>
                   )}
-                  {stored?.oppId && (
+                  {oppTagStateOf(stored) === 'tagged' && (
                     <span
                       className={styles.oppChip}
                       title={`Tagged to ${stored.oppLabel || 'an opportunity'}`}
-                    >◆ {stored.oppLabel || 'Opportunity'}</span>
+                    >◆ {oppTagLabelOf(stored)}</span>
+                  )}
+                  {oppTagStateOf(stored) === 'na' && (
+                    <span
+                      className={styles.oppChipNa}
+                      title="Marked as belonging to no opportunity — this call is done being triaged"
+                    >N/A</span>
                   )}
                   <span className={styles.cardActions}>
                     {/* A Granola call has no media behind it — the note is
@@ -2213,8 +2328,27 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                       onClick={() => setOppPickerFor(rec.id)}
                       title="Tag this call to an opportunity so its summary can be pushed onto the deal"
                     >{stored?.oppId ? 'Change opp' : 'Tag to opp'}</button>
-                    {stored?.oppId && (
-                      <button type="button" className={styles.btn} onClick={() => untagOpp(rec.id)} title="Remove the opportunity tag">Untag opp</button>
+                    {/* The other half of the decision. Most calls are
+                        this one — internal, training, a prospecting
+                        block — and without it they sit in the untagged
+                        pile forever looking like work still to do. */}
+                    {oppTagStateOf(stored) !== 'na' && (
+                      <button
+                        type="button"
+                        className={styles.btn}
+                        onClick={() => markOppNa(rec.id)}
+                        title="This call belongs to no opportunity. It stops counting as needing tagging."
+                      >N/A</button>
+                    )}
+                    {oppTagStateOf(stored) !== 'none' && (
+                      <button
+                        type="button"
+                        className={styles.btn}
+                        onClick={() => untagOpp(rec.id)}
+                        title={oppTagStateOf(stored) === 'na'
+                          ? 'Put this call back in the queue'
+                          : 'Remove the opportunity tag'}
+                      >{oppTagStateOf(stored) === 'na' ? 'Clear N/A' : 'Untag opp'}</button>
                     )}
                     {company && (
                       <button type="button" className={styles.btn} onClick={() => unlink(rec.id)} title={`Remove the link to ${company}`}>Unlink</button>
