@@ -188,7 +188,7 @@ eq(back.map(g => new Date(g.dayStart).getDate()), [27, 7, 6, 5], 'a look-back st
 // user who has said they don't want to.
 eq(
   describeOutlookCalendar({ connected: false }),
-  'Outlook isn’t connected to this app.',
+  'Outlook isn’t connected, and cannot be on this tenant: see "Outlook: not available" for the history.',
   'never connected states the fact without prescribing the fix',
 );
 eq(

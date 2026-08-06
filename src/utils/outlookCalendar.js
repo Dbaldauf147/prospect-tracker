@@ -194,7 +194,7 @@ export function describeOutlookCalendar({
   connected = false, expired = false, loaded = false,
   events = 0, inRange = 0, rangeLabel = 'today',
 } = {}) {
-  if (!connected) return 'Outlook isn’t connected to this app.';
+  if (!connected) return 'Outlook isn’t connected, and cannot be on this tenant: see "Outlook: not available" for the history.';
   if (expired) return 'Your Outlook sign-in has expired. Use Reconnect Outlook to sign in again — it lasts about an hour.';
   if (!loaded) return '';
   if (events === 0) return `Outlook returned no calendar events for this window (${rangeLabel}).`;
