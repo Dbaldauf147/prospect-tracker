@@ -1744,7 +1744,13 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
   // Each company's ultimate parent, keyed the same way the screening
   // answers are (the canonical company identity, not a raw-name slug) so
   // the two travel together. Blank means the company is its own parent.
-  const parentCompanies = settings?.corporateComplianceParent || {};
+  // Memoized like the other settings-backed maps on this page: the `|| {}`
+  // fallback is a fresh object every render, and parentOf is now a
+  // dependency of the revenue research, which would churn on each one.
+  const parentCompanies = useMemo(
+    () => settings?.corporateComplianceParent || {},
+    [settings?.corporateComplianceParent],
+  );
   const setParentCompany = useCallback((slug, value) => {
     if (!updateSettingsPath || !slug) return;
     updateSettingsPath({ [`corporateComplianceParent.${slug}`]: String(value || '').trim() || null });
@@ -2006,7 +2012,15 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
     if (region) applyHqToProspect(company, '', region);
   }, [updateSettingsPath, applyHqToProspect]);
 
-  const researchRevenue = useCallback(async (name) => {
+  // Self-reference for the parent chain below. A useCallback can't call
+  // itself by name without becoming its own dependency, and the chained
+  // run is the same function with the parent step switched off.
+  const researchRevenueRef = useRef(null);
+
+  // `applyParent` is on for a card's own run and off for the chained run
+  // against the parent it just found — one level only, so a group three
+  // deep doesn't walk itself up the tree on a single click.
+  const researchRevenue = useCallback(async (name, { applyParent = true } = {}) => {
     const company = String(name || '').trim();
     if (!company || company === UNNAMED) return;
     const slug = revenueSlug(company);
@@ -2049,10 +2063,24 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
         data.headquarters,
         normalizeHqRegion(data.hqRegion) || classifyHqRegion(data.headquarters),
       );
+      // The parent, which every regime on this page actually tests its
+      // thresholds against. Filled only when the card has none — a parent
+      // the user typed is a decision, and research doesn't get to overrule
+      // it. On first discovery the parent's own revenue is researched too:
+      // a named parent with no figure leaves the Compliance rows below
+      // still derived from the subsidiary, which is the thing naming it
+      // was meant to fix.
+      const foundParent = applyParent ? String(data.parentCompany || '').trim() : '';
+      const key = foundParent ? companyKeyOf(company) : '';
+      if (key && !parentOf(key)) {
+        setParentCompany(key, foundParent);
+        researchRevenueRef.current?.(foundParent, { applyParent: false });
+      }
     } catch (err) {
       setRevState(s => ({ ...s, [company]: { loading: false, error: err?.message || 'Request failed' } }));
     }
-  }, [updateSettingsPath, updateProspect, prospectByKey, applyHqToProspect]);
+  }, [updateSettingsPath, updateProspect, prospectByKey, applyHqToProspect, parentOf, setParentCompany]);
+  researchRevenueRef.current = researchRevenue;
 
   // Persisted compliance-research blobs (per-question verdicts + rationale
   // + sources), keyed by the canonical company key so they line up with the
