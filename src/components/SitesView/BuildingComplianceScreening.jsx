@@ -924,6 +924,11 @@ export function BuildingComplianceScreening({
   ownedOnly = false,
   onOwnedOnlyChange = null,
   companyName = '',
+  // The Utility Lookup's active Division scope, when one is set. The
+  // sites handed in are already narrowed to it; this is so the report
+  // says which slice of the portfolio it covers — on screen, in the
+  // printed PDF, and in the Excel export's header.
+  scopeLabel = '',
 }) {
   const loadedSites = allSites || sites;
   const [mode, setMode] = useState('sites'); // 'sites' | 'manual'
@@ -1288,7 +1293,7 @@ export function BuildingComplianceScreening({
   // the printable report, distinct from the raw-data workbook.
   async function exportExcelReport() {
     try {
-      await exportComplianceReportXlsx(results, { generatedAt: new Date().toLocaleString(), siteCount: results.length, companyName: companyLabel || companyName });
+      await exportComplianceReportXlsx(results, { generatedAt: new Date().toLocaleString(), siteCount: results.length, companyName: [companyLabel || companyName, scopeLabel].filter(Boolean).join(' \u2014 ') });
     } catch (err) {
       console.error('Excel report export failed', err);
       alert('Could not build the Excel report: ' + (err?.message || 'unknown error'));
@@ -1431,8 +1436,10 @@ export function BuildingComplianceScreening({
       <div className={styles.brandBand}>
         <div className={styles.brandBandLeft}>
           <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-            {companyLabel && (
-              <div style={{ color: 'rgba(255,255,255,0.92)', fontSize: '0.9rem', fontWeight: 700, letterSpacing: '0.01em', lineHeight: 1.2 }}>{companyLabel}</div>
+            {(companyLabel || scopeLabel) && (
+              <div style={{ color: 'rgba(255,255,255,0.92)', fontSize: '0.9rem', fontWeight: 700, letterSpacing: '0.01em', lineHeight: 1.2 }}>
+                {[companyLabel, scopeLabel].filter(Boolean).join(' \u2014 ')}
+              </div>
             )}
             <h1 className={styles.title} style={{ color: '#fff' }}>Building Compliance Screening &amp; Roadmap</h1>
           </div>

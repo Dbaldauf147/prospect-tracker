@@ -235,6 +235,10 @@ export function ComplianceRoadmap({
   ownedOnly = false,
   onOwnedOnlyChange = null,
   settings,
+  // The Utility Lookup's active Division scope, when one is set. `sites`
+  // is already narrowed to it; this names the slice on the banner so a
+  // one-division roadmap doesn't read as the whole portfolio.
+  scopeLabel = '',
 }) {
   const loadedSites = allSites || sites;
   // Company identity comes off the full list — the ownership scope
@@ -321,8 +325,10 @@ export function ComplianceRoadmap({
     <div className={styles.wrapper}>
       <div className={styles.brandBand}>
         <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          {companyLabel && (
-            <div style={{ color: 'rgba(255,255,255,0.92)', fontSize: '0.9rem', fontWeight: 700, letterSpacing: '0.01em', lineHeight: 1.2 }}>{companyLabel}</div>
+          {(companyLabel || scopeLabel) && (
+            <div style={{ color: 'rgba(255,255,255,0.92)', fontSize: '0.9rem', fontWeight: 700, letterSpacing: '0.01em', lineHeight: 1.2 }}>
+              {[companyLabel, scopeLabel].filter(Boolean).join(' \u2014 ')}
+            </div>
           )}
           <h1 className={styles.title}>Compliance Roadmap</h1>
         </div>
