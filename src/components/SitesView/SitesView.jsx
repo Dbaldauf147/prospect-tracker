@@ -29,6 +29,7 @@ import {
   formatRate,
 } from '../../utils/utilityRates';
 import { isCaliforniaSite } from '../../utils/siteRegion';
+import { mergeIntoSiteList } from '../../utils/siteListMerge';
 import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripState, isIndicativeSavingsExport } from '../../utils/xlsxParse';
 import { UtilityMappingView, NAME_MAP_LIST_KEY } from './UtilityMappingView';
 import { BuildingComplianceScreening } from './BuildingComplianceScreening';
@@ -4375,12 +4376,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // Mirror the currently-loaded sites into settings.companySiteLists under
   // the company's slug, matching the shape the company popup writes
   // ({ company, fileName, headers, rows, uploadedAt }) so the Company Look
-  // Up status and the Site List Overview both read it. Returns a short
-  // note to append to the save status ('' when the list was written).
+  // Up status and the Site List Overview both read it. Returns the note
+  // to append to the save status, and how many sites the company's list
+  // holds afterwards (0 when it couldn't be written).
   async function saveSitesAsCompanySiteList(company) {
     const slug = companySlug(company);
-    if (!slug || !updateSettingsPath) return ' Site list not updated: no company to file it under.';
-    if (!sitesData.length || !siteHeaders.length) return ' Site list not updated: no sites are loaded.';
+    if (!slug || !updateSettingsPath) return { note: ' Site list not updated: no company to file it under.', total: 0 };
+    if (!sitesData.length || !siteHeaders.length) return { note: ' Site list not updated: no sites are loaded.', total: 0 };
     // Firestore rejects Dates / nested objects in these row maps, and the
     // popup's own upload path normalizes the same way.
     const safeCell = (v) => {
@@ -4414,34 +4416,66 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       if (source) derivedFor.set(source, derived);
     });
 
-    const rows = sitesData.map((r) => {
+    const loadedRows = sitesData.map((r) => {
       const o = {};
       for (const h of siteHeaders) o[h] = safeCell(r[h]);
       const derived = derivedFor.get(r);
       for (const col of analysisCols) o[col.name] = derived ? safeCell(col.get(derived)) : '';
       return o;
     });
+    const loadedHeaders = [...siteHeaders, ...analysisCols.map(c => c.name)];
+
+    // What the company already has. The page rarely holds a company's
+    // whole portfolio at once — a file gets uploaded per region, per
+    // division, per acquisition — so a save ADDS to that list rather than
+    // standing in for it. Replacing it wholesale meant the second upload
+    // silently deleted the first, and the only way back was to find the
+    // original file. (Wholesale replacement is still available, on the
+    // company popup's own Replace via file / paste.)
+    const existing = (settings?.companySiteLists || {})[slug] || null;
+    const existingHeaders = Array.isArray(existing?.headers) ? existing.headers.filter(h => typeof h === 'string') : [];
+    const existingRows = Array.isArray(existing?.rows) ? existing.rows.filter(r => r && typeof r === 'object') : [];
+    const merged = mergeIntoSiteList(
+      { headers: existingHeaders, rows: existingRows },
+      { headers: loadedHeaders, rows: loadedRows },
+    );
+
     const entry = {
       company: company || '',
       fileName: 'Saved from Utility Look Up',
-      headers: [...siteHeaders, ...analysisCols.map(c => c.name)],
-      rows,
+      headers: merged.headers,
+      rows: merged.rows,
       uploadedAt: new Date().toISOString(),
     };
     // companySiteLists lives on the single settings document, which
     // Firestore caps at ~1 MiB across every company's list. Skip rather
-    // than fail the whole save when these rows alone would crowd it out.
+    // than fail the whole save when these rows alone would crowd it out —
+    // and say that the list the company already had is untouched, since
+    // that is the difference between "nothing was added" and "everything
+    // is gone".
     if (JSON.stringify(entry).length > 400_000) {
-      return ' Site list not updated: too many sites for the settings document.';
+      return {
+        note: existingRows.length
+          ? ` Site list not updated: ${merged.rows.length.toLocaleString()} sites is too many for the settings document, so the ${existingRows.length.toLocaleString()} already saved are unchanged.`
+          : ' Site list not updated: too many sites for the settings document.',
+        total: existingRows.length,
+      };
     }
     try {
       // Awaited, so the save status can't call the site list done while
       // the write is still in flight.
       await updateSettingsPath({ [`companySiteLists.${slug}`]: entry });
-      return ` Site list updated with ${rows.length.toLocaleString()} site${rows.length === 1 ? '' : 's'} and the analysis columns.`;
+      const parts = [];
+      if (merged.added) parts.push(`${merged.added.toLocaleString()} added`);
+      if (merged.updated) parts.push(`${merged.updated.toLocaleString()} updated`);
+      const detail = parts.length ? `${parts.join(', ')}, ` : '';
+      return {
+        note: ` Site list now holds ${merged.rows.length.toLocaleString()} site${merged.rows.length === 1 ? '' : 's'} (${detail}with the analysis columns).`,
+        total: merged.rows.length,
+      };
     } catch (e) {
       console.warn('Could not save company site list:', e);
-      return ' Site list could not be updated.';
+      return { note: ' Site list could not be updated.', total: 0 };
     }
   }
 
@@ -4491,13 +4525,20 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         dataBase64,
         sizeBytes: buffer.byteLength,
       });
+      // Fold the loaded sites into this company's site list, so the "Site
+      // list mapped" status (and the Site List Overview) reflect the save
+      // instead of staying empty until someone re-uploads the same rows
+      // from the company popup. Ahead of the prospect stamp below because
+      // the merged list is what Number of Sites is counted from.
+      const siteList = await saveSitesAsCompanySiteList(prospect.company);
       // Stamp a lightweight marker on the prospect record so the Company
       // Look Up widget can show "analysis saved" without fetching the
       // (chunked) analysis subcollection for every company it lists.
-      // The analysis is also the best count of the company's sites we
-      // have, so roll it onto Number of Sites — that's the figure the
-      // company popup (and the accounts tables) show.
-      const siteCount = cleanSitesData.length;
+      // Number of Sites comes off the company's whole site list rather
+      // than this upload: the page holds one file at a time, and a company
+      // whose 158 sites arrived as three uploads has 158 sites, not
+      // however many were on screen for the last save.
+      const siteCount = Math.max(cleanSitesData.length, siteList.total || 0);
       if (updateProspect) {
         try {
           updateProspect(prospect.id, {
@@ -4506,15 +4547,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           });
         } catch (e) { console.warn('Could not stamp analysis marker on prospect:', e); }
       }
-      // Also register the loaded sites as this company's site list, so the
-      // "Site list mapped" status (and the Site List Overview) reflect the
-      // save instead of staying empty until someone re-uploads the same
-      // rows from the company popup.
-      const siteListNote = await saveSitesAsCompanySiteList(prospect.company);
       const siteCountNote = siteCount > 0
         ? ` Number of Sites set to ${siteCount.toLocaleString()}.`
         : '';
-      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteCountNote}${siteListNote}` });
+      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteCountNote}${siteList.note}` });
       setSavePickerSearch(null);
       setTimeout(() => setSaveStatus({ state: 'idle', message: '' }), 4000);
     } catch (err) {
