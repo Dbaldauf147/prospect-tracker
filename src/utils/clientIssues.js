@@ -497,6 +497,17 @@ function detectCloseNotSoldMissingData({ oppsCache = null, bfoActivity = null, p
     prospectId: prospectIdByNorm.get(normalizeBfoCompany(m.account)) || null,
     daysUntil: null,
     expirationDate: null,
+    // Lets the Issues tab edit the pair that drives the mapping (Reason
+    // Not Sold + Competition) inline, writing straight back to the opp.
+    // `oppId` can be undefined on older cached rows with no _id — the
+    // editor treats that as read-only rather than saving to nothing.
+    closeNotSold: {
+      oppId: m.oppId,
+      name: m.name,
+      account: m.account,
+      reasonNotSold: m.reasonNotSold,
+      competition: m.competition,
+    },
     detail: `Close Not Solds prompt is missing ${m.missing.join(', ')} for "${m.name}": Reason Not Sold / Competition / BFO Address come from the opp's row on Opps${m.unmapped ? '; an unmapped pair either needs those fields corrected or the Reason Not Sold + Competition → BFO mapping extended' : ''}.`,
   }));
 }
