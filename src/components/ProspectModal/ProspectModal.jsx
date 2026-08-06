@@ -14,6 +14,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB, renameSourceFile as renamePortfolioSourceFile } from '../../utils/portfolioSourceFileStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { splitPeOwners } from '../../utils/peOwners';
+import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
 import { loadOpps2Newest, bulkSetOppField } from '../../utils/opps2Store';
 import { buildCompanyRenamePlan, planHasWork, summarizeRenamePlan, applyListMappingWrites } from '../../utils/companyRenameCascade';
 import { countClientsSubtabRename, clientsSubtabRenameTotal, summarizeClientsSubtabRename, applyClientsSubtabRename } from '../../utils/clientsRename';
@@ -6685,6 +6686,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             // affordance so the user can drop back to the
                             // normal logic at the service level.
                             const isManualOverride = manualStatus !== '-';
+                            // A service that already carried a status and now
+                            // has an opp naming it too: back in play. Purely
+                            // how the row is painted — the saved status below
+                            // is untouched.
+                            const retry = isTryingAgain(manualStatus, oppStage);
                             const statusColors = {
                               'Sold': { bg: '#DCFCE7', color: '#166534' },
                               'Renewal': { bg: '#F1F5F9', color: '#94A3B8' },
@@ -6699,6 +6705,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               'Not Started': { bg: '#FEF9C3', color: '#854D0E' },
                               'Not Sold': { bg: '#FEE2E2', color: '#991B1B' },
                               'N/A': { bg: '#F1F5F9', color: '#94A3B8' },
+                              // Derived rather than picked today, but coloured
+                              // here too so it reads purple if it is ever added
+                              // to the selectable statuses.
+                              [TRYING_AGAIN]: { bg: TRYING_AGAIN_COLORS.bg, color: TRYING_AGAIN_COLORS.color },
                             };
                             const colors = statusColors[effectiveStatus] || {};
 
@@ -6750,9 +6760,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                 <div
                                   style={{
                                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                    // The category boxes sit in a narrow grid,
+                                    // so the "Trying again" chip wraps to its
+                                    // own line rather than squeezing the
+                                    // service name out of the row.
+                                    flexWrap: 'wrap',
                                     padding: '0.1rem 0.35rem', gap: '0.25rem',
-                                    background: colors.bg || 'transparent',
-                                    opacity: effectiveStatus === 'N/A' ? 0.5 : 1,
+                                    background: retry ? TRYING_AGAIN_COLORS.bg : (colors.bg || 'transparent'),
+                                    // A retried service is the opposite of
+                                    // dormant, so it keeps full weight even
+                                    // when the saved status was N/A.
+                                    opacity: !retry && effectiveStatus === 'N/A' ? 0.5 : 1,
                                   }}
                                 >
                                   <span
@@ -6760,7 +6778,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                     style={{ fontSize: '0.6rem', cursor: 'pointer', color: hasNote ? '#F59E0B' : '#CBD5E1', padding: '0 1px', lineHeight: 1, flexShrink: 0 }}
                                     title={hasNote ? noteVal : 'Add note'}
                                   >{hasNote ? '\u270E' : '\u270E'}</span>
-                                  <span style={{ flex: 1, fontSize: '0.68rem', color: colors.color || 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item}>
+                                  <span style={{ flex: 1, minWidth: '3.5rem', fontSize: '0.68rem', color: retry ? TRYING_AGAIN_COLORS.color : (colors.color || 'var(--color-text)'), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item}>
                                     {getDisplayName(item)}
                                   </span>
                                   {/* SME — the Schneider contact who owns this
@@ -6814,6 +6832,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                       onMouseEnter={e => { e.currentTarget.style.color = 'var(--color-accent)'; }}
                                       onMouseLeave={e => { e.currentTarget.style.color = '#94A3B8'; }}
                                     >↺</button>
+                                  )}
+                                  {/* Last in the row so it is the chip that
+                                      wraps when the box is narrow — the
+                                      status controls stay on line one. */}
+                                  {retry && (
+                                    <span
+                                      title={tryingAgainTitle(manualStatus, oppStage)}
+                                      style={{
+                                        flexShrink: 0, fontSize: '0.55rem', fontWeight: 700,
+                                        padding: '1px 3px', borderRadius: '3px', lineHeight: 1.4,
+                                        whiteSpace: 'nowrap',
+                                        background: TRYING_AGAIN_COLORS.bg, color: TRYING_AGAIN_COLORS.color,
+                                        border: `1px solid ${TRYING_AGAIN_COLORS.border}`,
+                                      }}
+                                    >{TRYING_AGAIN}</span>
                                   )}
                                 </div>
                                 {isSMEOpen && (
