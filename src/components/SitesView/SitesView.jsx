@@ -34,6 +34,8 @@ import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripS
 import { UtilityMappingView, NAME_MAP_LIST_KEY } from './UtilityMappingView';
 import { BuildingComplianceScreening } from './BuildingComplianceScreening';
 import { ComplianceRoadmap } from './ComplianceRoadmap';
+import { applyOrdinanceOverrides, overrideKey } from '../../utils/ordinanceOverrides';
+import MASTER_ORDINANCES from '../../data/masterOrdinances.js';
 import { scopeSitesByOwnership } from './ownershipScope.js';
 import CorporateCompliance from './CorporateCompliance';
 import { screenSites, CATEGORIES, totalPenalty, bpsPrioritization } from '../../utils/complianceMandates';
@@ -4400,6 +4402,34 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       && (r.__electricCostActual__ == null || r.__gasCostActual__ == null));
     return out.filter(Boolean);
   };
+
+  // Mandate data with the user's own corrections applied. Every screening
+  // on this page — the two compliance subtabs and the two exports — reads
+  // this rather than the published seed, so a corrected deadline or
+  // penalty reaches every figure instead of only the popup it was typed
+  // into. MASTER_ORDINANCES is returned unchanged when nothing is
+  // corrected, which keeps the screening's per-list caches warm.
+  const ordinanceOverrides = settings?.complianceOrdinanceOverrides || null;
+  const ordinances = useMemo(
+    () => applyOrdinanceOverrides(MASTER_ORDINANCES, ordinanceOverrides),
+    [ordinanceOverrides],
+  );
+
+  // Save (or clear, with a null patch) one jurisdiction's correction for
+  // one mandate category.
+  const saveOrdinanceOverride = useCallback((govId, category, patch) => {
+    const key = overrideKey(govId);
+    if (!key || !category || !updateSettingsPath) return;
+    const current = settings?.complianceOrdinanceOverrides?.[key] || {};
+    const next = { ...current };
+    if (patch) next[category] = patch;
+    else delete next[category];
+    updateSettingsPath({
+      // Dropping the last correction for a jurisdiction drops the
+      // jurisdiction, so the map doesn't fill with empty objects.
+      [`complianceOrdinanceOverrides.${key}`]: Object.keys(next).length ? next : null,
+    });
+  }, [settings?.complianceOrdinanceOverrides, updateSettingsPath]);
 
   // Mirror the currently-loaded sites into settings.companySiteLists under
   // the company's slug, matching the shape the company popup writes
@@ -8996,7 +9026,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // yearly penalty across the three mandate types.
         // Same ownership scope the Compliance Screening subtab is showing,
         // so the workbook's KPI tiles reconcile with the page.
-        const complianceResults = screenSites(complianceScopedSites);
+        const complianceResults = screenSites(complianceScopedSites, { ordinances });
         const cMatched = complianceResults.filter(r => r.matched);
         const cJurisdictions = new Set(cMatched.map(r => r.govId)).size;
         const cWithMandate = complianceResults.filter(r => CATEGORIES.some(c => r[c]?.eligible === true)).length;
@@ -9052,7 +9082,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // Section 2b: BPS — Prioritization. One row per (deadline,
         // jurisdiction) over the BPS-eligible sites, matching the compliance
         // exports + on-page table.
-        const bpsRows = bpsPrioritization(complianceResults);
+        const bpsRows = bpsPrioritization(complianceResults, ordinances);
         if (bpsRows.length) {
           sumSection(sumRow++, 'BPS Prioritization');
           const bpsHdrRowNum = sumRow++;
@@ -11919,7 +11949,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     //    site list the compliance subtabs use. Site Detail is renamed to
     //    avoid colliding with Indicative Savings' Site Detail sheet.
     //    Scoped to the same Owned / All-sites toggle the subtabs are on.
-    const complianceResults = screenSites(complianceScopedSites);
+    const complianceResults = screenSites(complianceScopedSites, { ordinances });
     await exportComplianceReportXlsx(complianceResults, {
       targetWb: wb,
       generatedAt: new Date().toLocaleString('en-US'),
@@ -12889,6 +12919,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         <CorporateCompliance sites={complianceSites} settings={settings} updateSettingsPath={updateSettingsPath} prospects={prospects} updateProspect={updateProspect} />
       ) : mainTab === 'roadmap' ? (
         <ComplianceRoadmap
+          ordinances={ordinances}
           sites={complianceScopedSites}
           allSites={complianceSites}
           ownedOnly={complianceOwnedOnly}
@@ -12898,6 +12929,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         />
       ) : mainTab === 'compliance' ? (
         <BuildingComplianceScreening
+          ordinances={ordinances}
+          overrides={ordinanceOverrides}
+          onSaveOverride={saveOrdinanceOverride}
           sites={complianceScopedSites}
           allSites={complianceSites}
           ownedOnly={complianceOwnedOnly}

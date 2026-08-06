@@ -229,6 +229,10 @@ function ChartCard({ title, subtitle, children }) {
 // Screening subtab.
 export function ComplianceRoadmap({
   sites = [],
+  // The mandate reference with the user's corrections applied, so a
+  // deadline edited on the Compliance Screening subtab moves the date on
+  // this roadmap too.
+  ordinances = undefined,
   // The unscoped list behind `sites` — drives the ownership toggle's
   // counts and tells an ownership-emptied view apart from no upload.
   allSites = null,
@@ -244,7 +248,7 @@ export function ComplianceRoadmap({
   // Company identity comes off the full list — the ownership scope
   // narrows which buildings are charted, not who the portfolio is.
   const companyLabel = useMemo(() => sitesCompanyLabel(loadedSites), [loadedSites]);
-  const results = useMemo(() => screenSites(sites), [sites]);
+  const results = useMemo(() => screenSites(sites, ordinances ? { ordinances } : undefined), [sites, ordinances]);
   const roadmap = useMemo(() => buildComplianceRoadmap(results), [results]);
   const { periods, totals } = roadmap;
 
