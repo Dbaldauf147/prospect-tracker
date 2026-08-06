@@ -115,6 +115,47 @@ export function meetingFromOutlookEvent(event, { internalDomain = INTERNAL_EMAIL
 }
 
 /**
+ * A calendar event Granola served → the same row.
+ *
+ * Granola syncs the user's Outlook calendar, so an event that arrives
+ * this way IS the Outlook calendar — just relayed. It is tagged as such,
+ * because what matters downstream is that this is the schedule (which
+ * outranks a notetaker's account of it when the two disagree), not which
+ * pipe carried it. `_via` keeps the pipe recorded for the panel to show.
+ *
+ * Granola names an event's title `title`; Graph calls it `subject`. That
+ * rename is the only real difference, so the shared mapper does the rest.
+ */
+export function meetingFromGranolaEvent(event) {
+  if (!event) return null;
+  const row = meetingFromOutlookEvent({
+    id: event.id || '',
+    subject: event.title || event.subject || '',
+    start: event.start,
+    end: event.end,
+    isAllDay: event.isAllDay,
+    showAs: event.showAs || '',
+    location: event.location || event.conferenceUrl || '',
+    organizer: event.organizer || null,
+    attendees: event.attendees || [],
+  });
+  if (!row) return null;
+  return {
+    ...row,
+    id: row.id ? `granola-cal:${row.id.replace(/^outlook:/, '')}` : '',
+    _via: 'granola',
+  };
+}
+
+/** Every Granola-served calendar event, in the order the day runs. */
+export function granolaCalendarMeetings(events) {
+  return (Array.isArray(events) ? events : [])
+    .map(meetingFromGranolaEvent)
+    .filter(Boolean)
+    .sort((a, b) => new Date(a._meetingStart).getTime() - new Date(b._meetingStart).getTime());
+}
+
+/**
  * Every Graph event that describes a meeting, in the order the day runs.
  *
  * Graph returns a recurring series as one event per occurrence, and a
@@ -153,7 +194,7 @@ export function describeOutlookCalendar({
   connected = false, expired = false, loaded = false,
   events = 0, inRange = 0, rangeLabel = 'today',
 } = {}) {
-  if (!connected) return 'Outlook isn’t connected, so nothing on your calendar can show here yet. Use Connect Outlook to sign in.';
+  if (!connected) return 'Outlook isn’t connected to this app.';
   if (expired) return 'Your Outlook sign-in has expired. Use Reconnect Outlook to sign in again — it lasts about an hour.';
   if (!loaded) return '';
   if (events === 0) return `Outlook returned no calendar events for this window (${rangeLabel}).`;

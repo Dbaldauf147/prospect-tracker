@@ -15,7 +15,7 @@ import { apiFetch, isStalled } from './apiFetch';
 import {
   buildCompanyGuessIndex, guessCompanyForContact, FREE_MAIL_DOMAINS,
 } from './companyGuess';
-import { diagnoseEmptySync } from './granolaShape';
+import { diagnoseEmptySync, describeGranolaCalendar } from './granolaShape';
 
 // How far back a first-ever sync reaches. Everything after that is
 // incremental (updated_after the last sync), so this only bites once.
@@ -222,7 +222,7 @@ export async function fetchGranolaPage({ cursor = '', updatedAfter = '', created
 // Re-exported so callers keep one import for the Granola client. The
 // function itself lives in a module with no imports, which is what lets
 // it be tested under plain Node.
-export { diagnoseEmptySync };
+export { diagnoseEmptySync, describeGranolaCalendar };
 
 /** One note in full, including its transcript. */
 export async function fetchGranolaNote(noteId) {
@@ -472,6 +472,51 @@ export async function importGranolaMeetings({
 
   result.truncated = !!cursor;
   return result;
+}
+
+/**
+ * Ask Granola for the user's calendar — the Outlook sync behind its own
+ * "Coming up" list.
+ *
+ * This is the only way a meeting that HASN'T HAPPENED can reach the
+ * Activity page from Granola. The notes endpoints serve notes once they
+ * have finished summarising, so by the time a meeting is in that list it
+ * is over; a calendar endpoint would carry the schedule itself.
+ *
+ * Resolves to { events, supported, attempts } and never throws. When
+ * `supported` is false, `attempts` says what every candidate path
+ * answered — which is the whole point: it settles the question against
+ * the user's own key instead of against a documentation page.
+ */
+export async function fetchGranolaCalendar({ from = '', to = '' } = {}) {
+  const params = new URLSearchParams({ calendar: '1' });
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  try {
+    const r = await request(
+      `/api/granola-calls?${params.toString()}`,
+      'Timed out asking Granola for your calendar.',
+    );
+    const data = await readJson(r);
+    if (!r.ok) {
+      return {
+        events: [],
+        supported: false,
+        attempts: [],
+        error: data.error || `Granola calendar request failed (HTTP ${r.status})`,
+        configured: data.configured !== false,
+      };
+    }
+    return {
+      events: data.events || [],
+      supported: !!data.supported,
+      attempts: data.attempts || [],
+      error: '',
+      configured: true,
+    };
+  } catch (err) {
+    return { events: [], supported: false, attempts: [], error: err?.message || String(err), configured: true };
+  }
 }
 
 /** ISO timestamp for `days` ago, used as the first sync's floor. */
