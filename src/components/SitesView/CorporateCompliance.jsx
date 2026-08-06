@@ -4,6 +4,7 @@ import { normalizeCompany, pickNameKey } from '../../utils/companyNorm';
 import { UPLOADED_LISTS } from '../../utils/uploadedListsRegistry';
 import { LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { reportingStatus, REPORTED_COLORS, NOT_REPORTED_COLORS } from '../../utils/reportingFrameworks';
+import { sustainabilityProfile, describeSustainability } from '../../utils/sustainabilityProfile';
 import { userLsGet } from '../../utils/userLs';
 import {
   parseEmployeesInput, parseTextInput, resolveCompanyFacts,
@@ -1400,19 +1401,20 @@ function RegulationReference() {
 // The three chips always render, even with no targets written down —
 // "reports under CSRD but has published no targets" is a finding in its
 // own right, and a row that vanished would hide it.
-function SustainabilityTargets({ prospect, listMatched, unnamed }) {
+function SustainabilityTargets({ profile, prospect, listMatched, unnamed }) {
   const muted = { fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', fontStyle: 'italic' };
   if (unnamed) {
     return <div style={muted}>Add a company name to pull its targets across.</div>;
   }
-  if (!prospect) {
-    return <div style={muted}>No matching company record. Add the company on the Table view to see its targets here.</div>;
-  }
-  const targets = String(prospect.sustainabilityTargets || '')
-    .split('\n')
-    .map(t => t.trim())
-    .filter(Boolean);
-  const statuses = reportingStatus(prospect.frameworks, listMatched);
+  // No company record is no longer the end of the row. A company can be
+  // researched from its company page without ever being added to the
+  // table, and that research — targets, frameworks, the published reports
+  // — is exactly what this row is for; refusing to show it because a
+  // record is missing threw away the answer while claiming there wasn't
+  // one.
+  const targets = profile.targets;
+  const statuses = reportingStatus(profile.frameworks, listMatched);
+  const empty = describeSustainability(profile, { hasProspect: !!prospect });
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
@@ -1433,13 +1435,59 @@ function SustainabilityTargets({ prospect, listMatched, unnamed }) {
         })}
       </div>
       {targets.length === 0 ? (
-        <div style={muted}>No sustainability targets recorded on the company page.</div>
+        <div style={muted}>{empty || 'No sustainability targets recorded on the company page.'}</div>
       ) : (
-        <ul style={{ margin: 0, paddingLeft: '1.05rem', display: 'flex', flexDirection: 'column', gap: '0.1rem' }}>
-          {targets.map((t, i) => (
-            <li key={`${i}-${t}`} style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text)' }}>{t}</li>
+        <>
+          <ul style={{ margin: 0, paddingLeft: '1.05rem', display: 'flex', flexDirection: 'column', gap: '0.1rem' }}>
+            {targets.map((t, i) => (
+              <li key={`${i}-${t}`} style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text)' }}>{t}</li>
+            ))}
+          </ul>
+          {/* Research that nobody has confirmed is labelled as such. A
+              machine's reading of a company's commitments is a good
+              starting point and a bad thing to quote back as fact. */}
+          {profile.targetsSource === 'research' && (
+            <div style={{ fontSize: '0.62rem', color: 'var(--color-text-muted)' }}>
+              From Claude research, not yet confirmed on the company page.
+            </div>
+          )}
+        </>
+      )}
+
+      {/* The published reports the research turned up. These are the
+          documents a screening decision gets checked against, so they
+          belong next to the targets rather than one page away. */}
+      {profile.reports.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', alignItems: 'baseline' }}>
+          <span style={{ fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: 'var(--color-text-muted)' }}>
+            Reports
+          </span>
+          {profile.reports.map(r => (
+            <a
+              key={r.url}
+              href={r.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={r.title}
+              style={{
+                fontSize: '0.62rem', fontWeight: 600, color: 'var(--color-accent)',
+                maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}
+            >{r.title}{r.year ? ` (${r.year})` : ''}</a>
           ))}
-        </ul>
+        </div>
+      )}
+
+      {profile.summary && (
+        <div
+          title={profile.programs.length ? profile.programs.map(x => `• ${x}`).join('\n') : undefined}
+          style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', lineHeight: 1.35 }}
+        >
+          {profile.summary}
+          {profile.programs.length > 0 && (
+            <span style={{ fontWeight: 700 }}> · {profile.programs.length} programme{profile.programs.length === 1 ? '' : 's'}</span>
+          )}
+        </div>
       )}
     </div>
   );
@@ -1701,6 +1749,14 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
     if (!updateSettingsPath || !slug) return;
     updateSettingsPath({ [`corporateComplianceParent.${slug}`]: String(value || '').trim() || null });
   }, [updateSettingsPath]);
+
+  // Saved "Research with Claude" runs, keyed by a slug of the company
+  // name. The company page writes them; this page reads them, so a
+  // company researched there needs no second run here.
+  const companyResearch = useMemo(
+    () => settings?.companyResearch || {},
+    [settings?.companyResearch],
+  );
 
   const parentOf = useCallback(
     (key) => String(parentCompanies[key] || '').trim(),
@@ -2240,6 +2296,14 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
               // no parent, or one nobody has researched yet, it stays this
               // company's own figure and nothing changes.
               const thresholdRevenue = thresholdRevenueFor(c.key, c.name, facts);
+              // Targets, frameworks, programmes and published reports —
+              // the curated company-page fields where they exist, the
+              // saved Claude research where they don't.
+              const sustainability = sustainabilityProfile({
+                company: c.name,
+                prospect: prospectByKey.get(c.key) || null,
+                companyResearch,
+              });
               return (
                 <div key={c.key || c.name} style={{
                   border: '1px solid var(--color-border)', borderRadius: 8,
@@ -2417,6 +2481,7 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                         distinction matters. */}
                     <CardRow label="Targets">
                       <SustainabilityTargets
+                        profile={sustainability}
                         prospect={prospectByKey.get(c.key) || null}
                         listMatched={reportedLists}
                         unnamed={c.name === UNNAMED}
