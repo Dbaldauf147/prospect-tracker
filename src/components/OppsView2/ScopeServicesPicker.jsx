@@ -19,6 +19,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SERVICE_CATEGORIES, SERVICE_STATUSES } from '../../data/enums';
 import { companiesMatch } from '../../utils/listFlags';
+import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
 import { parseMulti } from '../common/columnLinks';
 
 // Same palette the company card's services board uses, so a service reads
@@ -37,6 +38,9 @@ const STATUS_COLORS = {
   'Not Started': { bg: '#FEF9C3', color: '#854D0E' },
   'Not Sold': { bg: '#FEE2E2', color: '#991B1B' },
   'N/A': { bg: '#F1F5F9', color: '#94A3B8' },
+  // Derived rather than picked today, but coloured here too so the status
+  // reads purple if it is ever added to the selectable statuses.
+  [TRYING_AGAIN]: { bg: TRYING_AGAIN_COLORS.bg, color: TRYING_AGAIN_COLORS.color },
 };
 
 // Which stage wins when several of an account's opps name the same service.
@@ -382,13 +386,22 @@ export function ScopeServicesModal({
                       const checked = selectedSet.has(item.toLowerCase());
                       const sme = String(smes[item] || '').trim();
                       const manual = String(manualStatuses[item] ?? '').trim();
+                      const auto = autoStatuses.get(item) || '';
+                      // Already has a status on the company card and an opp
+                      // names it again: back in play. The tick's green still
+                      // wins the row, since that is this board's job.
+                      const retry = isTryingAgain(manual, auto);
                       return (
                         <div
                           key={item}
                           style={{
                             display: 'flex', alignItems: 'center', gap: '0.25rem',
+                            // Lets the "Trying again" chip drop to its own
+                            // line in a narrow card instead of squeezing the
+                            // service name away.
+                            flexWrap: 'wrap',
                             padding: '0.12rem 0.35rem',
-                            background: checked ? '#DCFCE7' : 'transparent',
+                            background: checked ? '#DCFCE7' : retry ? TRYING_AGAIN_COLORS.bg : 'transparent',
                           }}
                         >
                           {/* The label covers only the tick and the name —
@@ -397,7 +410,7 @@ export function ScopeServicesModal({
                           <label
                             title={sme ? `SME: ${sme}` : displayName(item)}
                             style={{
-                              flex: 1, minWidth: 0, display: 'flex', alignItems: 'center',
+                              flex: 1, minWidth: '4.5rem', display: 'flex', alignItems: 'center',
                               gap: '0.3rem', cursor: 'pointer',
                             }}
                           >
@@ -427,11 +440,25 @@ export function ScopeServicesModal({
                           <StatusSelect
                             item={item}
                             manual={manual && manual !== '-' ? manual : ''}
-                            auto={autoStatuses.get(item) || ''}
+                            auto={auto}
                             onSet={setStatus}
                             disabled={!canEditStatus}
                             disabledReason={cannotEditReason}
                           />
+                          {/* Last in the row so it is the chip that wraps
+                              when the card is narrow — the tick, name and
+                              status stay on line one. */}
+                          {retry && (
+                            <span
+                              title={tryingAgainTitle(manual, auto)}
+                              style={{
+                                flex: '0 0 auto', fontSize: '0.52rem', fontWeight: 700,
+                                padding: '0.05rem 0.25rem', borderRadius: 3, whiteSpace: 'nowrap',
+                                background: TRYING_AGAIN_COLORS.bg, color: TRYING_AGAIN_COLORS.color,
+                                border: `1px solid ${TRYING_AGAIN_COLORS.border}`,
+                              }}
+                            >{TRYING_AGAIN}</span>
+                          )}
                         </div>
                       );
                     })}
