@@ -9,6 +9,7 @@
 // person the meeting is with.
 import {
   meetingFromOutlookEvent, outlookMeetingsFromEvents, describeOutlookCalendar,
+  meetingFromGranolaEvent, granolaCalendarMeetings,
 } from '../src/utils/outlookCalendar.js';
 import { mergeMeetings, rangeForUpcoming, meetingsInRange, groupMeetingsByDay } from '../src/utils/granolaMeetings.js';
 
@@ -90,6 +91,42 @@ const rows = outlookMeetingsFromEvents([
 eq(rows.map(r => r._subject), ['Earlier', 'Later'], 'the day is read forwards, and the same occurrence lands once');
 eq(outlookMeetingsFromEvents(null), [], 'no events is an empty day, not a crash');
 
+// ---- the same calendar, relayed by Granola ----------------------------------
+//
+// Granola syncs Outlook, so an event arriving this way IS the schedule
+// and has to behave like one: outranking a notetaker's account of the
+// same meeting, and merging with the note rather than sitting beside it.
+
+const viaGranola = meetingFromGranolaEvent({
+  id: 'evt_9',
+  title: 'Simon | Schneider Electric - Weekly Check In',
+  start: '2026-08-06T18:00:00.000Z',
+  end: '2026-08-06T19:00:00.000Z',
+  location: 'Microsoft Teams Meeting',
+  organizer: { name: 'Me', email: 'me@se.com' },
+  attendees: [{ name: 'Me', email: 'me@se.com' }, { name: 'Simon Reed', email: 'simon@acme.com' }],
+});
+eq(viaGranola._subject, 'Simon | Schneider Electric - Weekly Check In', 'Granola names the title `title`, not `subject`');
+eq(viaGranola._source, 'outlook', 'a relayed calendar event still ranks as the schedule');
+eq(viaGranola._via, 'granola', 'the pipe that carried it is recorded');
+eq(viaGranola.id, 'granola-cal:evt_9', 'its id cannot collide with a directly-fetched event');
+eq(viaGranola._attendees, 'Simon Reed', 'colleagues drop off the same way');
+eq(meetingFromGranolaEvent({ title: 'x' }), null, 'an event with no start still cannot be placed');
+eq(meetingFromGranolaEvent(null), null, 'nothing in, nothing out');
+eq(granolaCalendarMeetings(null), [], 'no calendar is an empty list, not a crash');
+
+const relayedMerge = mergeMeetings([viaGranola, {
+  id: 'granola:not_9',
+  _type: 'meeting',
+  _source: 'granola',
+  _subject: 'Simon | Schneider Electric - Weekly Check In',
+  _meetingStart: '2026-08-06T18:01:00.000Z',
+  _granolaUrl: 'https://notes.granola.ai/d/not_9',
+  _attendeeDetails: [],
+}]);
+eq(relayedMerge.length, 1, 'the relayed event and Granola’s own note on it are one meeting');
+eq(relayedMerge[0]._granolaUrl, 'https://notes.granola.ai/d/not_9', 'the note link still survives');
+
 // ---- against the other sources ----------------------------------------------
 //
 // The whole point of routing the calendar through the same row shape:
@@ -145,10 +182,14 @@ eq(back.map(g => new Date(g.dayStart).getDate()), [27, 7, 6, 5], 'a look-back st
 
 // ---- explaining an empty panel ----------------------------------------------
 
+// Stated as a fact, not an instruction. When Granola can't serve the
+// calendar this line is a footnote to Granola's own answer, and a panel
+// that opens with "use Connect Outlook to sign in" is arguing with a
+// user who has said they don't want to.
 eq(
   describeOutlookCalendar({ connected: false }),
-  'Outlook isn’t connected, so nothing on your calendar can show here yet. Use Connect Outlook to sign in.',
-  'never connected says how to connect',
+  'Outlook isn’t connected to this app.',
+  'never connected states the fact without prescribing the fix',
 );
 eq(
   describeOutlookCalendar({ connected: true, expired: true }),

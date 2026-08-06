@@ -405,6 +405,94 @@ export function normalizeCalendarEvent(note) {
   return { title, start, end, location, organizer, url, conferenceUrl };
 }
 
+// ---- calendar events --------------------------------------------------------
+//
+// Granola syncs the user's Outlook calendar — that sync is what puts
+// "Coming up" in its sidebar — so asking Granola for the calendar is the
+// natural way to get a meeting onto the Activity page without this app
+// holding a calendar connection of its own.
+//
+// Whether the API will hand it over is a different question. The notes
+// endpoints serve notes that have finished summarising, which by
+// definition excludes a meeting that has not happened; nothing in
+// Granola's published API reference describes a calendar or events
+// endpoint. Rather than assert that from documentation, this asks. The
+// paths below are the shapes such an endpoint would plausibly take, each
+// is tried once, and whatever comes back — events, 404, 403 — is
+// reported so the page can tell the user what their own key can do.
+//
+// If Granola ships one of these, this starts working with no change.
+const CALENDAR_PATHS = [
+  '/calendar/events',
+  '/calendar-events',
+  '/events',
+  '/meetings',
+];
+
+// A standalone calendar event (not one nested inside a note) → the same
+// { title, start, end, ... } shape normalizeCalendarEvent produces, so
+// both paths feed the page identically.
+export function normalizeStandaloneEvent(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const event = normalizeCalendarEvent({ calendar_event: raw });
+  if (!event) return null;
+  return {
+    ...event,
+    id: str(pick(raw, 'id', 'event_id', 'ical_uid', 'uid')),
+    attendees: normalizePeople(
+      pick(raw, 'attendees', 'invitees', 'participants', 'people'),
+      pick(raw, 'organizer', 'organiser'),
+    ),
+    isAllDay: !!pick(raw, 'all_day', 'is_all_day', 'isAllDay'),
+  };
+}
+
+// Where a list of events might sit in the reply, alongside the note keys
+// the list endpoint already uses.
+const EVENT_ROW_KEYS = ['events', 'calendar_events', 'data', 'items', 'results'];
+
+/**
+ * Ask Granola for the user's calendar.
+ *
+ * Returns { events, supported, attempts } — `attempts` records the status
+ * every candidate path answered with, which is the actual deliverable
+ * when none of them exists: "Granola's API has no calendar endpoint" is
+ * worth far more coming from the user's own key than from a doc page.
+ *
+ * A 401/403 stops the walk. That is the key being wrong or under-scoped,
+ * not a missing endpoint, and trying three more paths would only turn one
+ * clear answer into four confusing ones.
+ */
+async function fetchCalendarEvents(params) {
+  const attempts = [];
+  for (const path of CALENDAR_PATHS) {
+    const query = params ? `?${params}` : '';
+    let resp; let body;
+    try {
+      ({ resp, body } = await granolaFetch(`${path}${query}`));
+    } catch (err) {
+      attempts.push({ path, status: 0, note: err?.message || String(err) });
+      break;
+    }
+
+    if (resp.ok) {
+      const raw = Array.isArray(body) ? body : (pick(body, ...EVENT_ROW_KEYS) || []);
+      const rows = Array.isArray(raw) ? raw : [];
+      const events = rows.map(normalizeStandaloneEvent).filter(Boolean);
+      attempts.push({ path, status: resp.status, count: events.length });
+      // A 200 that carries no recognisable event list is not support: it
+      // is some other resource answering, and treating it as an empty
+      // calendar would report "no meetings" for a calendar never read.
+      if (events.length > 0) return { events, supported: true, attempts, path };
+      continue;
+    }
+
+    attempts.push({ path, status: resp.status });
+    if (resp.status === 401 || resp.status === 403) break;
+  }
+  return { events: [], supported: false, attempts };
+}
+
 function durationSeconds(note, utterances) {
   const event = pick(note, 'calendar_event', 'event') || {};
   const start = toMillis(pick(event, 'start_time', 'start', 'starts_at', 'start_at'));
@@ -637,6 +725,15 @@ async function handler(req, res, auth) {
   try {
     const noteId = str(req.query?.noteId);
     if (noteId) return await getNote(req, res, noteId);
+    if (str(req.query?.calendar)) {
+      const params = new URLSearchParams();
+      const from = str(req.query?.from);
+      const to = str(req.query?.to);
+      if (from) params.set('start', from);
+      if (to) params.set('end', to);
+      const result = await fetchCalendarEvents(params.toString());
+      return res.status(200).json(result);
+    }
     if (str(req.query?.probe)) {
       const { resp, body } = await granolaFetch('/notes?limit=1', PROBE_GRANOLA_TIMEOUT_MS);
       if (!resp.ok) {

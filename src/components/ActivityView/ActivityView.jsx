@@ -10,12 +10,15 @@ import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
 import { loadCallRecords, saveCallRecordResult } from '../../utils/callRecordingsStore';
 import {
   importGranolaMeetings, recordPatchFor, diagnoseEmptySync, DEFAULT_MEETING_WINDOW_DAYS,
+  fetchGranolaCalendar, describeGranolaCalendar,
 } from '../../utils/granolaCalls';
 import {
   granolaMeetingsFromRecords, mergeMeetings, meetingsInRange, rangeForDays, rangeForUpcoming,
   groupMeetingsByDay, undatedGranolaRecords, describeGranolaMeetings,
 } from '../../utils/granolaMeetings';
-import { outlookMeetingsFromEvents, describeOutlookCalendar } from '../../utils/outlookCalendar';
+import {
+  outlookMeetingsFromEvents, granolaCalendarMeetings, describeOutlookCalendar,
+} from '../../utils/outlookCalendar';
 import { secureGet, secureSet, secureClear } from '../../utils/secureStorage';
 import { useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import styles from './ActivityView.module.css';
@@ -413,6 +416,10 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
   // is the state the panel could not previously describe: no import has
   // reported anything, so silence was all it had.
   const [granolaImportResult, setGranolaImportResult] = useState(null);
+  // What Granola answered when asked for the calendar behind its own
+  // "Coming up" list: { events, supported, attempts, error }. Null until
+  // an import has asked.
+  const [granolaCalendar, setGranolaCalendar] = useState(null);
   const granolaRecordsRef = useRef({});
   const granolaImportingRef = useRef(false);
   const granolaAutoRan = useRef(false);
@@ -477,6 +484,16 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
       });
       setGranolaUnconfigured(false);
       setGranolaImportResult({ seen: result.seen, stored: result.stored });
+      // And the calendar itself. Granola syncs Outlook — that sync is
+      // what fills its own "Coming up" list — so if its API will serve
+      // the schedule, this is the meeting panel's source and no calendar
+      // connection of our own is needed. The answer is stored either
+      // way: when it can't, the panel says so instead of leaving an
+      // empty list to be read as a clear diary.
+      setGranolaCalendar(await fetchGranolaCalendar({
+        from: new Date(Date.now() + GRAPH_START_DAYS * 24 * 3600 * 1000).toISOString(),
+        to: new Date(Date.now() + GRAPH_END_DAYS * 24 * 3600 * 1000).toISOString(),
+      }));
       if (Object.keys(written).length > 0) setGranolaRecords(prev => ({ ...prev, ...written }));
       const stamp = new Date().toISOString();
       setGranolaSyncedAt(stamp);
@@ -918,13 +935,24 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     return unsub;
   }, [webhookToken]);
 
-  // The calendar, from whichever Outlook path is live. Both describe the
-  // same events, and mergeMeetings only ever collapses copies from
-  // DIFFERENT sources — so feeding it both would double every meeting of
-  // anyone who has the direct sign-in and an old Power Automate flow.
-  // The direct connection wins: it is fetched on this page, for this
-  // window, rather than being whatever the flow last pushed.
-  const calendarMeetings = outlookMeetings.length > 0 ? outlookMeetings : outlookEvents;
+  // The calendar as Granola relays it, when Granola will relay it.
+  const granolaCalendarRows = useMemo(() => (
+    granolaCalendarMeetings(granolaCalendar?.events || []).map(m => (
+      m._company ? m : { ...m, _company: guessCompanyFromEmails(...(m._externalEmails || [])) }
+    ))
+  ), [granolaCalendar, hubspotContacts, domainToCompany]);
+
+  // The calendar, from whichever path is live — in the order the user
+  // would choose them: through Granola (no connection of our own), then
+  // the direct sign-in, then the Power Automate flow.
+  //
+  // Exactly one of them, never a blend. They all describe the same
+  // events, and mergeMeetings only ever collapses copies from DIFFERENT
+  // sources — so feeding it two calendar feeds would double every
+  // meeting rather than reconcile them.
+  const calendarMeetings = granolaCalendarRows.length > 0
+    ? granolaCalendarRows
+    : (outlookMeetings.length > 0 ? outlookMeetings : outlookEvents);
 
   // HubSpot + Outlook + Granola over the chosen window. The same meeting
   // reaches this page from more than one of them — the calendar invite
@@ -973,12 +1001,25 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
   // Why the calendar is showing what it is: not connected, signed out,
   // or connected with nothing in this window. All three render as an
   // empty list, and only the first two are something the user can act on.
+  // What Granola said when asked for the calendar. This is the sentence
+  // that matters when the panel is empty: Granola sits in these meetings
+  // and syncs this calendar, so "why isn't it here" has a real answer,
+  // and it isn't one more sync will fix.
+  const granolaCalendarNote = useMemo(() => (
+    (!granolaCalendar || calendarMeetings.length > 0) ? '' : describeGranolaCalendar({
+      supported: granolaCalendar.supported,
+      attempts: granolaCalendar.attempts,
+      error: granolaCalendar.error,
+      events: granolaCalendarRows.length,
+    })
+  ), [granolaCalendar, granolaCalendarRows, calendarMeetings]);
+
   const outlookNote = useMemo(() => (
     // Nothing to say while the stored token is still being read, and
-    // nothing to say to somebody whose Power Automate flow is already
-    // filling the panel — "Outlook isn't connected" would be answering a
-    // question they haven't asked.
-    (graphError || outlookAuth === 'unknown' || outlookEvents.length > 0) ? '' : describeOutlookCalendar({
+    // nothing at all to somebody whose calendar is already on the page
+    // by some other route — "Outlook isn't connected" would be answering
+    // a question they haven't asked.
+    (graphError || outlookAuth === 'unknown' || calendarMeetings.length > 0) ? '' : describeOutlookCalendar({
       connected: outlookAuth === 'live' || outlookAuth === 'expired',
       expired: outlookAuth === 'expired',
       loaded: graphLoaded,
@@ -986,7 +1027,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
       inRange: meetingsInRange(calendarMeetings, meetingWindow).length,
       rangeLabel: rangeName,
     })
-  ), [graphError, outlookAuth, graphLoaded, graphEvents, outlookEvents, calendarMeetings, meetingWindow, rangeName]);
+  ), [graphError, outlookAuth, graphLoaded, graphEvents, calendarMeetings, meetingWindow, rangeName]);
 
   // The heading over a day's meetings. The days either side of today are
   // named rather than dated — "Yesterday" and "Tomorrow" are what you
@@ -1558,7 +1599,19 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
               Your calendar has more events in this window than one read can return, so the far end of it is missing here.
             </div>
           )}
-          {outlookNote && (
+          {/* Granola first: it is the connection the user already has,
+              and its answer is the one that explains an empty panel. The
+              Outlook line is a footnote to it, not the headline it used
+              to be. */}
+          {granolaCalendarNote && (
+            <div style={{ padding: '0.4rem 0.9rem', background: '#F5F3FF', color: '#5B21B6', fontSize: '0.72rem', borderBottom: '1px solid #DDD6FE' }}>
+              {granolaCalendarNote}
+              {outlookNote && (
+                <span style={{ color: '#7C6BAF' }}>{' '}{outlookNote} A calendar has to come from somewhere: connect it, or push it here from a Power Automate flow.</span>
+              )}
+            </div>
+          )}
+          {!granolaCalendarNote && outlookNote && (
             <div style={{ padding: '0.4rem 0.9rem', background: '#F0F9FF', color: '#075985', fontSize: '0.72rem', borderBottom: '1px solid #E0F2FE' }}>
               {outlookNote}
             </div>
