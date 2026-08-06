@@ -1433,6 +1433,39 @@ function SustainabilityTargets({ profile, prospect, listMatched, unnamed }) {
             >{reported ? '\u2713' : '\u2013'} {label}</span>
           );
         })}
+
+        {/* Frameworks the research confirmed that aren't one of the three
+            regimes above. A company whose only framework is UN PRI used to
+            render as three dashes — nothing found — when something had. */}
+        {profile.otherFrameworks.map(label => (
+          <span
+            key={label}
+            title={`${label} — found by research. Not one of the three disclosure regimes screened above.`}
+            style={{
+              fontSize: '0.62rem', fontWeight: 700, padding: '0.1rem 0.4rem',
+              borderRadius: 4, whiteSpace: 'nowrap',
+              background: REPORTED_COLORS.bg, color: REPORTED_COLORS.text,
+              border: `1px solid ${REPORTED_COLORS.border}`,
+            }}
+          >{'\u2713'} {label}</span>
+        ))}
+
+        {/* Named in the research narrative, absent from its own structured
+            list. The two halves of one research run disagreeing is worth
+            surfacing, not resolving by picking a side: the summary repeats
+            what a company says about itself, while the list is held to
+            direct evidence of a published report. */}
+        {profile.claimedFrameworks.map(label => (
+          <span
+            key={`claimed-${label}`}
+            title={`${label} — the research narrative says this company reports under it, but the run found no published report to confirm it. Check the reports below before relying on it.`}
+            style={{
+              fontSize: '0.62rem', fontWeight: 700, padding: '0.1rem 0.4rem',
+              borderRadius: 4, whiteSpace: 'nowrap',
+              background: '#FEF9C3', color: '#854D0E', border: '1px solid #FDE68A',
+            }}
+          >? {label} claimed</span>
+        ))}
       </div>
       {targets.length === 0 ? (
         <div style={muted}>{empty || 'No sustainability targets recorded on the company page.'}</div>

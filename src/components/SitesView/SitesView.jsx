@@ -9417,8 +9417,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
               const bannerNum = sumRow++;
               summarySheet.mergeCells(bannerNum, 1, bannerNum, SUM_NCOLS);
               const banner = summarySheet.getCell(bannerNum, 1);
-              banner.value = prof.frameworks.length
-                ? `${c.name}    ${prof.frameworks.join(' · ')}`
+              // Confirmed frameworks, then any the narrative claims without
+              // a published report behind them — marked, because a reader
+              // scanning this banner must not read the two as the same
+              // kind of fact.
+              const frameworkBits = [
+                ...prof.frameworks,
+                ...prof.claimedFrameworks.map(f => `${f} (claimed, unverified)`),
+              ];
+              banner.value = frameworkBits.length
+                ? `${c.name}    ${frameworkBits.join(' · ')}`
                 : c.name;
               banner.font = { name: 'Nunito Sans', bold: true, size: 10.5, color: { argb: SE_TEXT_DARK } };
               banner.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
@@ -9458,7 +9466,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             const stNoteNum = sumRow++;
             summarySheet.mergeCells(stNoteNum, 1, stNoteNum, SUM_NCOLS);
             const stNote = summarySheet.getCell(stNoteNum, 1);
-            stNote.value = 'Sustainability commitments and disclosures per company, from the company page\u2019s Sustainability Targets field and its saved Claude research. Targets marked * came from research and have not been confirmed on the company page.';
+            stNote.value = 'Sustainability commitments and disclosures per company, from the company page\u2019s Sustainability Targets field and its saved Claude research. Targets marked * came from research and have not been confirmed on the company page. A framework marked \u201Cclaimed, unverified\u201D is one the research narrative names without finding a published report under it \u2014 check the reports listed before relying on it.';
             stNote.font = { name: 'Nunito Sans', italic: true, size: 9.5, color: { argb: SE_SLATE } };
             stNote.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
             summarySheet.getRow(stNoteNum).height = 30;
