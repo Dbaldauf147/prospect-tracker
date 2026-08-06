@@ -17,6 +17,10 @@ import {
 } from './companyGuess';
 import { diagnoseEmptySync, describeGranolaCalendar } from './granolaShape';
 
+// Re-exported so callers importing the Granola client get the wording
+// helpers alongside it, wherever they actually live.
+export { describeMissingKey, describeGranolaConnection } from './granolaShape';
+
 // How far back a first-ever sync reaches. Everything after that is
 // incremental (updated_after the last sync), so this only bites once.
 export const DEFAULT_BACKFILL_DAYS = 90;
@@ -161,35 +165,6 @@ export async function probeGranola() {
   }
 }
 
-/**
- * Turn the probe's hint into the sentence shown under the setup message.
- * Each case points at a different fix, which is the whole reason the
- * hint exists.
- */
-export function describeMissingKey(hint) {
-  if (!hint) return '';
-  const where = hint.environment && hint.environment !== 'unknown'
-    ? `The ${hint.environment} deployment`
-    : 'This deployment';
-  const build = hint.commit ? ` (build ${hint.commit})` : '';
-  const named = (hint.granolaVars || []).filter(n => n !== 'GRANOLA_API_KEY');
-
-  if ((hint.granolaVars || []).includes('GRANOLA_API_KEY')) {
-    // Present but empty: the variable exists with a blank or
-    // whitespace-only value, which is a re-paste rather than a re-scope.
-    return `${where}${build} has a GRANOLA_API_KEY, but it is empty. Re-paste the key value and redeploy.`;
-  }
-  if (named.length === 1 && named[0] === 'GRANOLA_API_BASE') {
-    // The two names sit next to each other in .env.example, so this is
-    // usually the key pasted into the wrong row rather than a deliberate
-    // host override.
-    return `${where}${build} can see GRANOLA_API_BASE but no GRANOLA_API_KEY. GRANOLA_API_BASE is an optional override for the API's address, not the key: if you pasted the key into it, delete that variable and add the key as GRANOLA_API_KEY instead.`;
-  }
-  if (named.length > 0) {
-    return `${where}${build} can see ${named.join(', ')} but no GRANOLA_API_KEY: check the variable's name.`;
-  }
-  return `${where}${build} has no environment variable mentioning Granola at all. The most common cause is the variable being saved for a different environment than this one, or against a different Vercel project.`;
-}
 
 /** One page of note metadata. Throws with the API's own message. */
 export async function fetchGranolaPage({ cursor = '', updatedAfter = '', createdAfter = '', limit = 50 } = {}) {
