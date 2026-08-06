@@ -1045,6 +1045,22 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
 
       // Narrative + sources + CA site list behind the run.
       const trailing = [];
+      // The parent comes before HQ: every regime on this sheet tests its
+      // thresholds at the consolidated group, so which entity was screened
+      // is the first thing a reader has to be able to check. Its revenue
+      // travels with it — a verdict reached on the parent's numbers reads
+      // as unsupported when only the subsidiary's figure is on the page.
+      if (co.parent) {
+        trailing.push({
+          label: 'Parent',
+          text: [
+            co.parent,
+            co.parentRevenueLabel
+              ? `revenue ${co.parentRevenueLabel}${co.parentRevenueFiscalYear ? ` (${co.parentRevenueFiscalYear})` : ''}`
+              : 'revenue not researched',
+          ].filter(Boolean).join('  ·  '),
+        });
+      }
       if (co.hq?.location) {
         trailing.push({
           label: 'HQ',

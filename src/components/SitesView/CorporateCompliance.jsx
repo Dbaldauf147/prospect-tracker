@@ -202,6 +202,110 @@ function RevenueSection({ data, loading, error, disabled, onResearch }) {
   );
 }
 
+// The company's parent, and what the parent's revenue is.
+//
+// Every regime on this page tests its thresholds at the CONSOLIDATED
+// group, not at the entity whose sites happen to be in the file. CSRD
+// catches a subsidiary through its ultimate parent; SB 253 and SB 261
+// are written against "total annual revenues" of the parent entity. So
+// screening Barings on Barings' own numbers can answer the wrong
+// question entirely — the number that decides it belongs to whoever
+// owns Barings.
+//
+// Hence a row rather than a note: name the parent, research ITS revenue
+// (the same /api/research-revenue run every other card uses, keyed by
+// the parent's own slug so it is reusable and never overwrites the
+// subsidiary's figure), and the threshold questions below can be
+// answered against the right entity.
+//
+// Left blank means "no parent" — a company that is its own ultimate
+// parent, which is the common case and needs no ceremony.
+function ParentCompanySection({
+  value, onSave, disabled, revenue, revenueLoading, revenueError, onResearch,
+}) {
+  // Adjusted during render rather than in an effect: the saved value can
+  // change underneath this input (a Master Analysis import, an edit on
+  // another device), and the draft has to follow — but an effect for it
+  // is a second render pass for something React can settle in the first.
+  const [draft, setDraft] = useState(value || '');
+  const [lastValue, setLastValue] = useState(value || '');
+  if ((value || '') !== lastValue) {
+    setLastValue(value || '');
+    setDraft(value || '');
+  }
+  const saved = String(value || '').trim();
+  const dirty = draft !== (value || '');
+
+  const commit = () => { if (dirty) onSave(draft.trim()); };
+
+  const btn = (label, onClick, off) => (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={off}
+      style={{
+        fontSize: '0.65rem', fontWeight: 700, fontFamily: 'inherit',
+        padding: '0.2rem 0.55rem', borderRadius: 999, cursor: off ? 'default' : 'pointer',
+        border: '1px solid var(--color-accent)', background: 'var(--color-surface)',
+        color: 'var(--color-accent)', opacity: off ? 0.5 : 1, whiteSpace: 'nowrap',
+      }}
+    >{label}</button>
+  );
+
+  return (
+    <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', display: 'flex', alignItems: 'baseline', gap: '0.5rem', flexWrap: 'wrap' }}>
+      <input
+        value={draft}
+        disabled={disabled}
+        placeholder="Ultimate parent, if any…"
+        aria-label="Parent company"
+        title="The entity the thresholds are actually tested at. Leave blank when this company is its own ultimate parent."
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); commit(); e.currentTarget.blur(); }
+          else if (e.key === 'Escape') { setDraft(value || ''); }
+        }}
+        style={{
+          flex: '1 1 180px', maxWidth: 240, boxSizing: 'border-box',
+          padding: '0.2rem 0.35rem', fontSize: '0.7rem', fontFamily: 'inherit',
+          color: 'var(--color-text)', background: 'var(--color-surface)',
+          border: `1px solid ${dirty ? 'var(--color-accent)' : 'var(--color-border)'}`,
+          borderRadius: 4, opacity: disabled ? 0.5 : 1,
+        }}
+      />
+      {saved && (
+        revenue && (revenue.revenue || revenue.summary) ? (
+          <>
+            <span
+              title={[
+                [revenue.ownership, revenue.ticker].filter(Boolean).join(' · '),
+                revenue.summary,
+                revenue.savedAt ? `researched ${fmtStamp(revenue.savedAt)}` : '',
+              ].filter(Boolean).join('\n\n') || undefined}
+              style={{ fontWeight: 700, color: 'var(--color-text)', fontSize: 'var(--font-size-sm)' }}
+            >
+              {revenue.revenue || '-'}
+            </span>
+            {revenue.fiscalYear && <span style={{ fontSize: '0.65rem' }}>{revenue.fiscalYear}</span>}
+            {btn(revenueLoading ? 'Researching…' : 'Re-run parent revenue', onResearch, revenueLoading)}
+          </>
+        ) : (
+          <>
+            <span style={{ fontStyle: 'italic' }}>
+              {revenueLoading ? 'Researching parent revenue…' : 'Parent revenue: pending research'}
+            </span>
+            {btn(revenueLoading ? 'Researching…' : 'Research parent revenue', onResearch, revenueLoading)}
+          </>
+        )
+      )}
+      {revenueError && (
+        <span style={{ color: '#B91C1C', fontSize: '0.65rem' }}>{revenueError}</span>
+      )}
+    </div>
+  );
+}
+
 // Where the company is headquartered, and whether that puts it in North
 // America. Both halves matter on this page: the location itself is the
 // jurisdiction context for the screening questions below, and the
@@ -1383,6 +1487,15 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
     updateSettingsPath({ [`corporateComplianceScreening.${slug}.${key}`]: value || null });
   }, [updateSettingsPath]);
 
+  // Each company's ultimate parent, keyed the same way the screening
+  // answers are (the canonical company identity, not a raw-name slug) so
+  // the two travel together. Blank means the company is its own parent.
+  const parentCompanies = settings?.corporateComplianceParent || {};
+  const setParentCompany = useCallback((slug, value) => {
+    if (!updateSettingsPath || !slug) return;
+    updateSettingsPath({ [`corporateComplianceParent.${slug}`]: String(value || '').trim() || null });
+  }, [updateSettingsPath]);
+
   // Reference URLs this page used to file per company (company slug →
   // question or regulation key). Nothing writes here any more — links belong
   // to the row, not the company — but it's still read as a fallback, and the
@@ -1972,6 +2085,28 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                         onResearch={() => researchRevenue(c.name)}
                       />
                     </CardRow>
+
+                    {/* Parent — sits directly under Revenue because it is
+                        the same question asked of the right entity: every
+                        regime here tests its thresholds at the
+                        consolidated group, so a subsidiary's own revenue
+                        can answer the wrong one. */}
+                    {(() => {
+                      const parent = String(parentCompanies[c.key] || '').trim();
+                      return (
+                        <CardRow label="Parent">
+                          <ParentCompanySection
+                            value={parent}
+                            disabled={c.name === UNNAMED}
+                            onSave={(value) => setParentCompany(c.key, value)}
+                            revenue={parent ? (revenueResearch[revenueSlug(parent)] || null) : null}
+                            revenueLoading={!!(parent && revState[parent]?.loading)}
+                            revenueError={(parent && revState[parent]?.error) || null}
+                            onResearch={() => researchRevenue(parent)}
+                          />
+                        </CardRow>
+                      );
+                    })()}
 
                     {/* Employees — its own row rather than buried in the
                         Revenue hover, since headcount gates regimes in its
