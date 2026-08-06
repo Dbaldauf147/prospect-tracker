@@ -8,16 +8,12 @@
 import { matchesCdm, findCdmColumnKey } from './cdmMatch';
 import { buildCompanyIndex, findMatchesInIndex, hasMatchInIndex } from './companyIndex';
 
-// Stages that mean an opp is no longer live. Mirrors the closed/invalid
-// sets used by the contacts + My Accounts opp math so "active" agrees
-// across the app.
-const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
-const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
+// The rule lives in ./oppStages.js so the import-free modules can share
+// it; it is re-exported here so existing callers keep importing "is this
+// opp active" from the module they already do.
+import { isActiveOppStage } from './oppStages.js';
 
-export function isActiveOppStage(stage) {
-  const s = String(stage || '').trim();
-  return !!s && !INVALID_STAGES.has(s) && !CLOSED_STAGES.has(s);
-}
+export { isActiveOppStage };
 
 // Normalize the Opps 2 rows down to the active ones with an Account name,
 // as { account, stage, raw }.
