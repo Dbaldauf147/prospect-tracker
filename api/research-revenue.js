@@ -41,9 +41,10 @@ Return ONLY a single JSON object (no prose, no markdown fences) with these field
 - ownership: string: "Public" or "Private" (or "Subsidiary" / "Division" when that's the clearest description). Empty string if unclear.
 - ticker: string: stock exchange and ticker if publicly traded (e.g. "NYSE: CNR"). Empty string otherwise.
 - employees: number | null: approximate employee count if reported. Null if unknown.
+- parentCompany: string: the company's ULTIMATE parent — the top entity of the consolidated group it reports into, not an intermediate holding company. Empty string when the company IS its own ultimate parent (no owner above it), which is the common case, or when ownership is genuinely unclear. Name the parent exactly as it is commonly written (e.g. "Brookfield Corporation", "MassMutual"). For a company owned by a private-equity or asset-management firm, name that firm. Never repeat the requested company's own name here.
 - headquarters: string: the company's global headquarters as "City, State/Province, Country" (e.g. "Toronto, Ontario, Canada", "Zug, Switzerland"). Always name the country. Empty string if you cannot find it.
 - hqRegion: string: exactly "North America" when that headquarters is in the United States, Canada or Mexico, otherwise exactly "Outside of North America". Empty string if the headquarters is unknown.
-- summary: string: 1-2 sentence plain-language note on the figure: how recent it is, whether it's an estimate, and any caveat (e.g. private company estimates, revenue reported by a parent). Note explicitly when the figure is uncertain or public data is sparse.
+- summary: string: 1-2 sentence plain-language note on the figure: how recent it is, whether it's an estimate, and any caveat (e.g. private company estimates, revenue reported by a parent). Note explicitly when the figure is uncertain or public data is sparse, and when a parent is named, say briefly how the ownership was established.
 - sources: array of { title: string, url: string }: citation list of pages you used, most authoritative first. Up to 6 entries.
 
 Prefer official filings and the company's own investor relations pages over third-party estimators. If the company is private and no credible revenue figure surfaces, return the object with revenue and revenueUsd empty/null and explain in summary.`;
@@ -93,6 +94,19 @@ Prefer official filings and the company's own investor relations pages over thir
       return res.status(502).json({ error: 'Claude returned malformed JSON', raw: text });
     }
 
+    // Loose name equality for the self-as-parent check: punctuation, case
+    // and the usual corporate suffixes differ between how a company is
+    // filed here and how the model writes it back.
+    const bareName = (v) => String(v || '')
+      .toLowerCase()
+      .replace(/\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|holdings|holding|group)\b\.?/g, ' ')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+    const sameCompany = (a, b) => {
+      const x = bareName(a);
+      const y = bareName(b);
+      return !!x && x === y;
+    };
     const asNumOrNull = (v) => {
       const n = Number(v);
       return Number.isFinite(n) && n > 0 ? n : null;
@@ -113,6 +127,10 @@ Prefer official filings and the company's own investor relations pages over thir
       ownership: String(parsed.ownership || '').trim(),
       ticker: String(parsed.ticker || '').trim(),
       employees: asNumOrNull(parsed.employees),
+      // A parent echoing the requested company back is the model saying
+      // "it is its own parent" the long way round; blank it so the client
+      // doesn't file a company as its own owner and screen it twice.
+      parentCompany: sameCompany(parsed.parentCompany, company) ? '' : String(parsed.parentCompany || '').trim(),
       headquarters: String(parsed.headquarters || '').trim(),
       // Only the two values the company popup's HQ Region dropdown offers —
       // anything else is dropped so the client never persists a value that
