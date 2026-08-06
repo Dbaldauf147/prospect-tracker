@@ -53,6 +53,14 @@ export function lookupCloseNotSold(competition, reasonNotSold) {
   return byReason?.[normKey(reasonNotSold)] || null;
 }
 
+// Whether the Competition has any close-out rules at all. Blank, "N/A"
+// and custom values have none, so no Reason Not Sold can map under them
+// — a caller that must produce a mapped pair (the Issues tab's editor)
+// uses this to say so instead of offering reasons that can't work.
+export function hasCloseNotSoldRules(competition) {
+  return !!CLOSE_NOT_SOLD_RULES[normKey(competition)];
+}
+
 // The subset of `reasonOptions` that's valid for the given Competition.
 // Competitions with no rules (blank, "N/A", custom values) keep the
 // full list so the popup never paints the user into a corner.
