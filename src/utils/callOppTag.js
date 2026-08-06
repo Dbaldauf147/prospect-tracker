@@ -84,6 +84,8 @@ export function tagOppPatch(opp, { label = '', company = '' } = {}) {
     oppLabel: label,
     oppNa: false,
     oppNaAt: '',
+    oppNaRule: '',
+    oppTagManual: true,
     ...(company ? {} : (account ? { company: account } : {})),
   };
 }
@@ -101,6 +103,27 @@ export function markOppNaPatch(now = new Date()) {
     oppLabel: '',
     oppNa: true,
     oppNaAt: now.toISOString(),
+    oppNaRule: '',
+    oppTagManual: true,
+  };
+}
+
+/**
+ * The same, applied by a name rule rather than by the user.
+ *
+ * `oppNaRule` records WHICH rule did it — so the page can say why a call
+ * it never touched is marked N/A, and so deleting a rule can find what
+ * it did. `oppTagManual` stays false, which is what keeps the two kinds
+ * of N/A apart everywhere it matters.
+ */
+export function autoNaPatch(rule, now = new Date()) {
+  return {
+    oppId: '',
+    oppLabel: '',
+    oppNa: true,
+    oppNaAt: now.toISOString(),
+    oppNaRule: textOf(rule),
+    oppTagManual: false,
   };
 }
 
@@ -108,9 +131,27 @@ export function markOppNaPatch(now = new Date()) {
  * The patch that puts a call back in the queue — neither tagged nor N/A.
  * One button undoes either decision, because from the user's side they
  * are the same action: "this isn't settled after all".
+ *
+ * Marks the call as manually decided even though the decision was to
+ * un-decide. Without that, a rule would re-apply on the next sync and
+ * the user would be arguing with the page: clear it, sync, watch it come
+ * back, clear it again. Saying "leave this one alone" is exactly what
+ * clearing an auto-tag means.
  */
 export function clearOppTagPatch() {
-  return { oppId: '', oppLabel: '', oppNa: false, oppNaAt: '' };
+  return {
+    oppId: '',
+    oppLabel: '',
+    oppNa: false,
+    oppNaAt: '',
+    oppNaRule: '',
+    oppTagManual: true,
+  };
+}
+
+/** Was this N/A put there by a rule rather than by the user? */
+export function isAutoNa(record) {
+  return oppTagStateOf(record) === OPP_TAG_NA && !!textOf(record?.oppNaRule);
 }
 
 /**

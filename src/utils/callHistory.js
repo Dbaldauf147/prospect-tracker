@@ -122,6 +122,9 @@ export function historyRowFromRecord(record) {
     oppTag: oppTagStateOf(record),
     oppTagLabel: oppTagLabelOf(record),
     oppNaAt: textOf(record.oppNaAt),
+    // The rule that marked this N/A, when one did. Empty for an N/A the
+    // user set by hand — which is the distinction the table draws.
+    oppNaRule: textOf(record.oppNaRule),
     attendees: external.map(a => textOf(a?.name) || textOf(a?.email)).filter(Boolean).join(', '),
     attendeeEmails: external.map(a => textOf(a?.email)).filter(Boolean).join(', '),
     attendeeCount: external.length,
