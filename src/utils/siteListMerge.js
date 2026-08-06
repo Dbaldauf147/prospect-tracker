@@ -123,10 +123,22 @@ function buildIndex(rows, cols) {
   return index;
 }
 
+// The column a merged list records its modeled values in: the names of
+// the columns on that row whose numbers were estimated rather than
+// measured. It is what lets the NEXT merge tell a stored reading it must
+// not touch from a stored estimate it may refresh.
+export const ESTIMATED_COLUMN = 'Estimated Values';
+
+function readEstimated(row) {
+  const raw = String(row?.[ESTIMATED_COLUMN] ?? '').trim();
+  if (!raw) return new Set();
+  return new Set(raw.split(',').map(s => s.trim()).filter(Boolean));
+}
+
 /**
  * Merge `incoming` into `existing`, returning the combined list.
  *
- *   { headers, rows, added, updated, matched }
+ *   { headers, rows, added, updated, matched, protected }
  *
  * Headers are the union, in existing-first order, so a stored list keeps
  * the column order someone is used to reading and new columns arrive at
@@ -137,22 +149,49 @@ function buildIndex(rows, cols) {
  * measurement) and a blank one leaves the stored value alone: an upload
  * that happens to omit a column must not erase what another upload filled
  * in. `updated` counts only rows a value actually changed on.
+ *
+ * `opts.soft` marks the incoming values that were MODELED rather than
+ * measured — an array aligned with `incoming.rows`, each entry the column
+ * names estimated on that row. A modeled value is written only where the
+ * stored cell is empty or was itself stored as an estimate: a site whose
+ * real annual kWh someone entered keeps it, and a company's list never
+ * quietly turns a meter reading into a number off a property-type model.
+ * Which cells those were travels with the list in ESTIMATED_COLUMN, so
+ * the rule still holds three saves later. `protected` counts the values
+ * an estimate was held back from.
  */
-export function mergeIntoSiteList(existing, incoming) {
+export function mergeIntoSiteList(existing, incoming, opts = {}) {
   const existingHeaders = (existing?.headers || []).filter(h => typeof h === 'string');
   const existingRows = (existing?.rows || []).filter(r => r && typeof r === 'object');
   const incomingHeaders = (incoming?.headers || []).filter(h => typeof h === 'string');
   const incomingRows = (incoming?.rows || []).filter(r => r && typeof r === 'object');
+
+  // Which incoming values are modeled, per row. Anything not listed is a
+  // measurement and behaves as it always has.
+  const softOf = (i) => {
+    const list = Array.isArray(opts.soft) ? opts.soft[i] : null;
+    return new Set(Array.isArray(list) ? list : (list ? [...list] : []));
+  };
+  const anySoft = incomingRows.some((_, i) => softOf(i).size > 0);
 
   const headers = [...existingHeaders];
   const seen = new Set(existingHeaders);
   for (const h of incomingHeaders) {
     if (!seen.has(h)) { seen.add(h); headers.push(h); }
   }
+  // The provenance column rides along whenever anything is modeled, so a
+  // later save can still tell the estimates from the readings.
+  if (anySoft && !seen.has(ESTIMATED_COLUMN)) { seen.add(ESTIMATED_COLUMN); headers.push(ESTIMATED_COLUMN); }
+
+  const stamp = (row, soft) => {
+    const filled = fill(row, headers);
+    if (anySoft) filled[ESTIMATED_COLUMN] = [...soft].join(', ');
+    return filled;
+  };
 
   if (!existingRows.length) {
-    const rows = incomingRows.map(r => fill(r, headers));
-    return { headers, rows, added: rows.length, updated: 0, matched: 0 };
+    const rows = incomingRows.map((r, i) => stamp(r, softOf(i)));
+    return { headers, rows, added: rows.length, updated: 0, matched: 0, protected: 0 };
   }
 
   // Both sides are keyed by their OWN columns: the stored list may have
@@ -162,11 +201,19 @@ export function mergeIntoSiteList(existing, incoming) {
   const index = buildIndex(existingRows, existingCols);
 
   const rows = existingRows.map(r => fill(r, headers));
+  // What each stored row already holds as an estimate. A row with nothing
+  // recorded is taken as measured — the safe reading, since every list
+  // written before this column existed, and every one a person typed or
+  // pasted, carries real figures.
+  const storedSoft = existingRows.map(readEstimated);
   let added = 0;
   let updated = 0;
   let matched = 0;
+  let held = 0;
 
-  for (const row of incomingRows) {
+  for (let i = 0; i < incomingRows.length; i += 1) {
+    const row = incomingRows[i];
+    const soft = softOf(i);
     const { strong, weak } = candidateKeys(row, incomingCols);
     let at = -1;
     for (const key of [...strong, ...weak]) {
@@ -180,21 +227,41 @@ export function mergeIntoSiteList(existing, incoming) {
     }
 
     if (at === -1) {
-      rows.push(fill(row, headers));
+      rows.push(stamp(row, soft));
       added += 1;
       continue;
     }
     matched += 1;
     let changed = false;
+    // Estimates on the merged row: what stays estimated plus what this
+    // save wrote as one. A column that takes a measured value drops out.
+    const mergedSoft = new Set(storedSoft[at]);
     for (const h of headers) {
+      if (h === ESTIMATED_COLUMN) continue;
       const value = row[h];
       if (value === undefined || value === null || value === '') continue;
-      if (rows[at][h] !== value) { rows[at][h] = value; changed = true; }
+      const stored = rows[at][h];
+      if (soft.has(h)) {
+        // A modeled value may fill a hole or refresh an earlier model. It
+        // may never stand in for a figure that came off a bill.
+        if (stored !== undefined && stored !== null && stored !== '' && !storedSoft[at].has(h)) {
+          held += 1;
+          continue;
+        }
+        mergedSoft.add(h);
+      } else {
+        mergedSoft.delete(h);
+      }
+      if (stored !== value) { rows[at][h] = value; changed = true; }
+    }
+    if (anySoft) {
+      const next = [...mergedSoft].join(', ');
+      if (rows[at][ESTIMATED_COLUMN] !== next) { rows[at][ESTIMATED_COLUMN] = next; }
     }
     if (changed) updated += 1;
   }
 
-  return { headers, rows, added, updated, matched };
+  return { headers, rows, added, updated, matched, protected: held };
 }
 
 // Every row carries every column, so a merged list renders as a table

@@ -6,7 +6,7 @@
 // updates one, and both mistakes are expensive: an over-eager match folds
 // two real sites into one row, a missed match saves the same site twice
 // on every save. So each rule is pinned rather than left to the caller.
-import { mergeIntoSiteList, identityColumns } from '../src/utils/siteListMerge.js';
+import { mergeIntoSiteList, identityColumns, ESTIMATED_COLUMN } from '../src/utils/siteListMerge.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -173,6 +173,113 @@ const site = (name, zip, over = {}) => ({
   const out = mergeIntoSiteList(stored, { headers: ['Site Name', 'ISO / RTO'], rows: [{ 'Site Name': 'New', 'ISO / RTO': 'PJM' }] });
   eq(out.rows[0], { 'Site Name': 'Old', 'ISO / RTO': '' }, 'a stored row gains the new column as a blank, not a hole');
   eq(out.rows[1], { 'Site Name': 'New', 'ISO / RTO': 'PJM' }, 'and the new row carries its value');
+}
+
+// --- a modeled figure never lands on a real one -------------------------
+// The whole point: a company's site list holds consumption someone read
+// off a bill, and the Utility Lookup save carries a number off a
+// property-type model. The measurement wins.
+{
+  const COLS = ['Site Name', 'Postal / Zip Code', 'Annual Electric (kWh)', 'Electric Rate ($/kWh)'];
+  const stored = {
+    headers: COLS,
+    rows: [{ 'Site Name': 'A', 'Postal / Zip Code': '60901', 'Annual Electric (kWh)': 4200000, 'Electric Rate ($/kWh)': '' }],
+  };
+  const incoming = {
+    headers: COLS,
+    rows: [{ 'Site Name': 'A', 'Postal / Zip Code': '60901', 'Annual Electric (kWh)': 9900000, 'Electric Rate ($/kWh)': 0.082 }],
+  };
+  const soft = [['Annual Electric (kWh)', 'Electric Rate ($/kWh)']];
+  const out = mergeIntoSiteList(stored, incoming, { soft });
+  eq(out.rows[0]['Annual Electric (kWh)'], 4200000, 'the actual consumption survives the estimate');
+  eq(out.rows[0]['Electric Rate ($/kWh)'], 0.082, 'but an estimate still fills an empty cell');
+  eq(out.protected, 1, 'and the save reports what it held back');
+  eq(out.rows[0][ESTIMATED_COLUMN], 'Electric Rate ($/kWh)',
+    'only the value that IS an estimate is recorded as one');
+}
+
+// --- a measured value overwrites, as always -----------------------------
+{
+  const COLS = ['Site Name', 'Postal / Zip Code', 'Annual Electric (kWh)'];
+  const stored = { headers: COLS, rows: [{ 'Site Name': 'A', 'Postal / Zip Code': '60901', 'Annual Electric (kWh)': 4200000 }] };
+  const incoming = { headers: COLS, rows: [{ 'Site Name': 'A', 'Postal / Zip Code': '60901', 'Annual Electric (kWh)': 4350000 }] };
+  const out = mergeIntoSiteList(stored, incoming, { soft: [[]] });
+  eq(out.rows[0]['Annual Electric (kWh)'], 4350000, 'a fresher MEASUREMENT still wins');
+  eq(out.protected, 0, 'nothing was held back');
+}
+
+// --- an estimate may refresh an earlier estimate -------------------------
+// Otherwise the first model a site ever got would be frozen onto it, and
+// re-mapping a property type or adding a size would change nothing.
+{
+  const COLS = ['Site Name', 'Postal / Zip Code', 'Annual Electric (kWh)', ESTIMATED_COLUMN];
+  const stored = {
+    headers: COLS,
+    rows: [{ 'Site Name': 'A', 'Postal / Zip Code': '60901', 'Annual Electric (kWh)': 9900000, [ESTIMATED_COLUMN]: 'Annual Electric (kWh)' }],
+  };
+  const incoming = {
+    headers: COLS.slice(0, 3),
+    rows: [{ 'Site Name': 'A', 'Postal / Zip Code': '60901', 'Annual Electric (kWh)': 7200000 }],
+  };
+  const out = mergeIntoSiteList(stored, incoming, { soft: [['Annual Electric (kWh)']] });
+  eq(out.rows[0]['Annual Electric (kWh)'], 7200000, 'a newer model replaces the older one');
+  eq(out.protected, 0, 'which is not a value held back');
+  eq(out.rows[0][ESTIMATED_COLUMN], 'Annual Electric (kWh)', 'and it is still recorded as modeled');
+}
+
+// --- a measurement clears the estimate marker ---------------------------
+{
+  const COLS = ['Site Name', 'Postal / Zip Code', 'Annual Electric (kWh)', ESTIMATED_COLUMN];
+  const stored = {
+    headers: COLS,
+    rows: [{ 'Site Name': 'A', 'Postal / Zip Code': '60901', 'Annual Electric (kWh)': 9900000, [ESTIMATED_COLUMN]: 'Annual Electric (kWh)' }],
+  };
+  const incoming = {
+    headers: COLS.slice(0, 3),
+    rows: [{ 'Site Name': 'A', 'Postal / Zip Code': '60901', 'Annual Electric (kWh)': 4200000 }],
+  };
+  // This save read the figure off the uploaded file, so it is measured.
+  const out = mergeIntoSiteList(stored, incoming, { soft: [['Some Other Column']] });
+  eq(out.rows[0]['Annual Electric (kWh)'], 4200000, 'a real figure replaces the model');
+  eq(out.rows[0][ESTIMATED_COLUMN], '', 'and the row stops calling that column an estimate');
+}
+
+// --- a list with no provenance column is all measurements ---------------
+// Every list saved before this existed, and every one typed or pasted by
+// a person, carries real figures. Absence of the marker means "measured",
+// which is the reading that protects them.
+{
+  const COLS = ['Site Name', 'Postal / Zip Code', 'Annual Electric (kWh)'];
+  const stored = { headers: COLS, rows: [{ 'Site Name': 'A', 'Postal / Zip Code': '60901', 'Annual Electric (kWh)': 4200000 }] };
+  const out = mergeIntoSiteList(stored, {
+    headers: COLS, rows: [{ 'Site Name': 'A', 'Postal / Zip Code': '60901', 'Annual Electric (kWh)': 9900000 }],
+  }, { soft: [['Annual Electric (kWh)']] });
+  eq(out.rows[0]['Annual Electric (kWh)'], 4200000, 'an unmarked stored figure is treated as real');
+}
+
+// --- new rows carry their own provenance --------------------------------
+{
+  const COLS = ['Site Name', 'Postal / Zip Code', 'Annual Electric (kWh)'];
+  const out = mergeIntoSiteList(
+    { headers: COLS, rows: [{ 'Site Name': 'A', 'Postal / Zip Code': '60901', 'Annual Electric (kWh)': 1 }] },
+    { headers: COLS, rows: [{ 'Site Name': 'B', 'Postal / Zip Code': '23860', 'Annual Electric (kWh)': 5000000 }] },
+    { soft: [['Annual Electric (kWh)']] },
+  );
+  eq(out.rows[1][ESTIMATED_COLUMN], 'Annual Electric (kWh)', 'an added site records which of its figures are modeled');
+  eq(out.rows[0][ESTIMATED_COLUMN], '', 'and a stored site is not retroactively called an estimate');
+  eq(out.headers.includes(ESTIMATED_COLUMN), true, 'the provenance column joins the list');
+}
+
+// --- nothing modeled, nothing recorded ----------------------------------
+{
+  const COLS = ['Site Name', 'Postal / Zip Code'];
+  const out = mergeIntoSiteList(
+    { headers: COLS, rows: [{ 'Site Name': 'A', 'Postal / Zip Code': '60901' }] },
+    { headers: COLS, rows: [{ 'Site Name': 'B', 'Postal / Zip Code': '23860' }] },
+    { soft: [[], []] },
+  );
+  eq(out.headers.includes(ESTIMATED_COLUMN), false,
+    'a save with no estimates in it does not add the column');
 }
 
 // --- junk in, no crash ---------------------------------------------------
